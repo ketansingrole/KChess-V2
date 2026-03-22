@@ -1,0 +1,9 @@
+[package]
+name = "kchess_board_api"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "API-layer crate on top of kchess_board for app and service integration"
+
+[dependencies]
+kchess_board = { path = "../kchess_board" }
