@@ -51,6 +51,11 @@ impl SearchInput {
         cx.notify();
     }
 
+    pub fn set_placeholder(&mut self, placeholder: &str, cx: &mut Context<Self>) {
+        self.placeholder = placeholder.to_owned().into();
+        cx.notify();
+    }
+
     pub fn text(&self) -> String {
         self.content.to_string()
     }

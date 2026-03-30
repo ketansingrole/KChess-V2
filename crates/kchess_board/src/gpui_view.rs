@@ -4,27 +4,28 @@ use std::{collections::HashSet, path::Path, time::Instant};
 
 use gpui::{
     canvas, div, img, point, prelude::*, px, rgb, App, Context, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathBuilder, PathStyle, Render,
-    StrokeOptions, Window,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathBuilder, PathStyle, Render, Rgba,
+    ScrollHandle, StrokeOptions, Window,
 };
 use lyon_tessellation::{LineCap, LineJoin};
 
 use crate::board::{
-    BoardError, MoveId, MoveRequest, Perspective, Piece, PieceKind, Side, Square, VisualBoard,
+    BoardError, MoveHistoryRow, MoveId, MoveRequest, Perspective, Piece, PieceKind, Side, Square,
+    VisualBoard,
 };
 
 #[derive(Clone, Copy, Debug)]
 pub struct BoardTheme {
-    pub light_square: u32,
-    pub dark_square: u32,
+    pub light_square: Rgba,
+    pub dark_square: Rgba,
     pub selected_outline: u32,
 }
 
 impl Default for BoardTheme {
     fn default() -> Self {
         Self {
-            light_square: 0xf0d9b5,
-            dark_square: 0xb58863,
+            light_square: rgb(0xf0d9b5),
+            dark_square: rgb(0xb58863),
             selected_outline: 0x38bdf8,
         }
     }
@@ -48,6 +49,7 @@ pub struct ChessBoardView {
     picked_piece_scale: f32,
     auto_confirm_pending: bool,
     theme: BoardTheme,
+    move_history_scroll_handle: ScrollHandle,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +102,7 @@ impl ChessBoardView {
             picked_piece_scale: 1.18,
             auto_confirm_pending: true,
             theme: BoardTheme::default(),
+            move_history_scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -111,8 +114,36 @@ impl ChessBoardView {
         &mut self.board
     }
 
+    pub fn move_history(&self) -> Vec<MoveHistoryRow> {
+        self.board.move_history()
+    }
+
+    pub fn displayed_ply(&self) -> usize {
+        self.board.displayed_ply()
+    }
+
+    pub fn is_viewing_latest(&self) -> bool {
+        self.board.is_viewing_latest()
+    }
+
+    pub fn can_step_back_view(&self) -> bool {
+        self.board.displayed_ply() > 0
+    }
+
+    pub fn can_step_forward_view(&self) -> bool {
+        !self.board.is_viewing_latest()
+    }
+
+    pub fn move_history_scroll_handle(&self) -> ScrollHandle {
+        self.move_history_scroll_handle.clone()
+    }
+
     pub fn set_theme(&mut self, theme: BoardTheme) {
         self.theme = theme;
+    }
+
+    pub fn theme(&self) -> BoardTheme {
+        self.theme
     }
 
     pub fn set_cell_size(&mut self, cell_px: f32) {
@@ -154,6 +185,18 @@ impl ChessBoardView {
     pub fn clear_annotations(&mut self) {
         self.clear_arrows();
         self.clear_highlights();
+    }
+
+    pub fn reset_to_start(&mut self) {
+        self.board.reset_to_start();
+        self.drag = None;
+        self.arrow_draft = None;
+        self.pending_legal_moves_request = None;
+        self.legal_move_source = None;
+        self.legal_move_targets.clear();
+        self.clear_annotations();
+        self.move_history_scroll_handle
+            .set_offset(point(px(0.0), px(0.0)));
     }
 
     pub fn set_arrows(&mut self, arrows: impl IntoIterator<Item = BoardArrow>) {
@@ -198,7 +241,11 @@ impl ChessBoardView {
     }
 
     pub fn confirm_pending(&mut self, move_id: MoveId) -> Result<(), BoardError> {
-        self.board.confirm_pending(move_id)
+        let result = self.board.confirm_pending(move_id);
+        if result.is_ok() {
+            self.move_history_scroll_handle.scroll_to_bottom();
+        }
+        result
     }
 
     pub fn rollback_pending(&mut self, move_id: MoveId) -> Result<(), BoardError> {
@@ -210,7 +257,91 @@ impl ChessBoardView {
     }
 
     pub fn apply_visual_move(&mut self, request: MoveRequest) -> Result<MoveId, BoardError> {
-        self.board.apply_move(request, Instant::now())
+        let result = self.board.apply_move(request, Instant::now());
+        if result.is_ok() {
+            self.move_history_scroll_handle.scroll_to_bottom();
+        }
+        result
+    }
+
+    pub fn step_back_view(&mut self) -> bool {
+        let changed = self.board.step_back_view();
+        if changed {
+            self.drag = None;
+            self.pending_legal_moves_request = None;
+            self.legal_move_source = None;
+            self.legal_move_targets.clear();
+            self.sync_move_history_scroll_to_view();
+        }
+        changed
+    }
+
+    pub fn step_forward_view(&mut self) -> bool {
+        let changed = self.board.step_forward_view();
+        if changed {
+            self.drag = None;
+            self.pending_legal_moves_request = None;
+            self.legal_move_source = None;
+            self.legal_move_targets.clear();
+            self.sync_move_history_scroll_to_view();
+        }
+        changed
+    }
+
+    pub fn jump_to_move(&mut self, move_id: MoveId) -> bool {
+        let changed = self.board.jump_to_move(move_id);
+        if changed {
+            self.drag = None;
+            self.pending_legal_moves_request = None;
+            self.legal_move_source = None;
+            self.legal_move_targets.clear();
+            self.sync_move_history_scroll_to_view();
+        }
+        changed
+    }
+
+    pub fn jump_to_start(&mut self) -> bool {
+        let old_ply = self.board.displayed_ply();
+        self.board.jump_to_start();
+        let changed = old_ply != self.board.displayed_ply();
+        if changed {
+            self.drag = None;
+            self.pending_legal_moves_request = None;
+            self.legal_move_source = None;
+            self.legal_move_targets.clear();
+            self.sync_move_history_scroll_to_view();
+        }
+        changed
+    }
+
+    pub fn jump_to_latest(&mut self) -> bool {
+        let old_ply = self.board.displayed_ply();
+        self.board.jump_to_latest();
+        let changed = old_ply != self.board.displayed_ply();
+        if changed {
+            self.drag = None;
+            self.pending_legal_moves_request = None;
+            self.legal_move_source = None;
+            self.legal_move_targets.clear();
+            self.sync_move_history_scroll_to_view();
+        }
+        changed
+    }
+
+    fn sync_move_history_scroll_to_view(&self) {
+        let history_len = self.board.history_len();
+        if history_len == 0 {
+            return;
+        }
+
+        let displayed_ply = self.board.displayed_ply();
+        if displayed_ply == 0 {
+            self.move_history_scroll_handle.scroll_to_top_of_item(0);
+            return;
+        }
+
+        let row_index = (displayed_ply - 1) / 2;
+        self.move_history_scroll_handle.scroll_to_item(row_index);
     }
 
     fn square_for_row_col(&self, row: u8, col: u8) -> Square {
@@ -222,7 +353,7 @@ impl ChessBoardView {
         Square::from_file_rank(file, rank).expect("row/col map to valid square")
     }
 
-    fn square_color(&self, square: Square) -> u32 {
+    fn square_color(&self, square: Square) -> Rgba {
         if (square.file() + square.rank()).is_multiple_of(2) {
             self.theme.light_square
         } else {
@@ -275,6 +406,10 @@ impl ChessBoardView {
         cx: &mut Context<Self>,
     ) {
         if event.button != MouseButton::Left {
+            return;
+        }
+
+        if !self.board.is_viewing_latest() {
             return;
         }
 
@@ -351,6 +486,10 @@ impl ChessBoardView {
             return;
         }
 
+        if !self.board.is_viewing_latest() {
+            return;
+        }
+
         let Some(drag) = self.drag.take() else {
             return;
         };
@@ -370,7 +509,7 @@ impl ChessBoardView {
                 animation_from,
             ) {
                 if self.auto_confirm_pending {
-                    let _ = self.board.confirm_pending(id);
+                    let _ = self.confirm_pending(id);
                 }
                 self.legal_move_source = None;
                 self.legal_move_targets.clear();
@@ -489,10 +628,11 @@ impl Render for ChessBoardView {
 
         self.board.prune_finished_animation(now);
 
-        let animating = self
-            .board
-            .active_animation()
-            .is_some_and(|animation| !animation.is_finished(now));
+        let animating = self.board.is_viewing_latest()
+            && self
+                .board
+                .active_animation()
+                .is_some_and(|animation| !animation.is_finished(now));
         if animating {
             window.request_animation_frame();
             cx.notify();
@@ -518,7 +658,11 @@ impl Render for ChessBoardView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(rgb(self.square_color(square)));
+                    .bg(self.square_color(square))
+                    .when(row == 0 && col == 0, |this| this.rounded_tl_xl())
+                    .when(row == 0 && col == 7, |this| this.rounded_tr_xl())
+                    .when(row == 7 && col == 0, |this| this.rounded_bl_xl())
+                    .when(row == 7 && col == 7, |this| this.rounded_br_xl());
                 row_div = row_div.child(square_div);
             }
             grid = grid.child(row_div);
@@ -603,7 +747,11 @@ impl Render for ChessBoardView {
                     .top(px(y * self.cell_px))
                     .w(px(self.cell_px))
                     .h(px(self.cell_px))
-                    .bg(with_alpha(rgb(0x16a34a), 0.34)),
+                    .bg(with_alpha(rgb(0x16a34a), 0.34))
+                    .when(x == 0.0 && y == 0.0, |this| this.rounded_tl_xl())
+                    .when(x == 7.0 && y == 0.0, |this| this.rounded_tr_xl())
+                    .when(x == 0.0 && y == 7.0, |this| this.rounded_bl_xl())
+                    .when(x == 7.0 && y == 7.0, |this| this.rounded_br_xl()),
             );
         }
 
@@ -726,6 +874,8 @@ impl Render for ChessBoardView {
             .relative()
             .w(px(board_px))
             .h(px(board_px))
+            .rounded_xl()
+            .overflow_hidden()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))

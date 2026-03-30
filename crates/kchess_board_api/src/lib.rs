@@ -2,8 +2,8 @@ use std::time::Instant;
 use std::{error::Error, fmt};
 
 pub use kchess_board::{
-    AppliedMove, BoardError, Easing, MoveId, MoveRequest, Perspective, Piece, PieceKind,
-    RenderPiece, Side, Square, VisualBoard,
+    AppliedMove, BoardError, Easing, MoveHistoryCell, MoveHistoryRow, MoveId, MoveRequest,
+    Perspective, Piece, PieceKind, RenderPiece, Side, Square, VisualBoard,
 };
 
 #[derive(Debug, Clone)]
@@ -83,6 +83,14 @@ impl BoardApi {
     pub fn render_pieces(&self, now: Instant, perspective: Perspective) -> Vec<RenderPiece> {
         self.board.render_pieces(now, perspective)
     }
+
+    pub fn move_history(&self) -> Vec<MoveHistoryRow> {
+        self.board.move_history()
+    }
+
+    pub fn reset_to_start(&mut self) {
+        self.board.reset_to_start();
+    }
 }
 
 pub fn parse_move(from: &str, to: &str) -> Option<MoveRequest> {
@@ -108,5 +116,26 @@ mod tests {
         let request = super::parse_move("a2", "a4").expect("valid move");
         assert_eq!(request.from.algebraic(), "a2");
         assert_eq!(request.to.algebraic(), "a4");
+    }
+
+    #[test]
+    fn exposes_move_history_and_reset() {
+        let mut api = super::BoardApi::standard();
+        api.apply_algebraic_move("e2", "e4", Instant::now())
+            .expect("move should apply");
+
+        let history = api.move_history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].white.as_ref().unwrap().notation, "e4");
+
+        api.reset_to_start();
+        assert!(api.move_history().is_empty());
+        assert_eq!(
+            api.board()
+                .piece_at(super::Square::from_algebraic("e2").unwrap())
+                .unwrap()
+                .kind,
+            super::PieceKind::Pawn
+        );
     }
 }

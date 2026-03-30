@@ -1,6 +1,6 @@
 use gpui::{Context, MouseButton, Render, Window, div, prelude::*, px, rgb, rgba, svg};
 
-use crate::pages::{render_play_with_computer_page, render_settings_page};
+use crate::pages::render_play_with_computer_page;
 use crate::ui::top_bar::render_top_bar;
 
 use super::{
@@ -53,20 +53,30 @@ impl Render for KChessApp {
         }
 
         let show_play_with_computer = self.navigation.active_pane == ActivePane::PlayWithComputer;
+        let show_history = self.navigation.active_pane == ActivePane::History;
+        let show_settings = self.navigation.active_pane == ActivePane::Settings;
         let window_size = window.bounds().size;
         let window_width = f32::from(window_size.width);
         let window_height = f32::from(window_size.height);
         let board_size = BOARD_CELL_PX * 8.0;
-        let right_width = (window_width - SIDEBAR_WIDTH).max(board_size);
-        let main_height = (window_height - TOP_CHROME_HEIGHT).max(board_size);
-        let board_left = ((right_width - board_size) / 2.0).max(0.0);
-        let board_top = ((main_height - board_size) / 2.0).max(0.0);
+        let _right_width = (window_width - SIDEBAR_WIDTH).max(board_size);
+        let _main_height = (window_height - TOP_CHROME_HEIGHT).max(board_size);
+        let (move_history, move_history_scroll_handle, can_step_back, can_step_forward) = {
+            let board_view = self.board_view.read(cx);
+            (
+                board_view.move_history(),
+                board_view.move_history_scroll_handle(),
+                board_view.can_step_back_view(),
+                board_view.can_step_forward_view(),
+            )
+        };
 
         let shortcut_hint = if self.cmd_held { "⌘ + F" } else { "" };
         let suggestions = NavigationState::matching_tabs_for_query(&search_query);
         let search_has_focus = self.search_input.read(cx).is_focused(window);
         let show_suggestions = self.navigation.search_active || search_has_focus;
         let play_focused = self.play_focus.is_focused(window);
+        let history_focused = self.history_focus.is_focused(window);
         let settings_focused = self.settings_focus.is_focused(window);
         let view = cx.entity();
 
@@ -78,10 +88,13 @@ impl Render for KChessApp {
             .on_action(cx.listener(Self::focus_search_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::open_play_action))
+            .on_action(cx.listener(Self::open_history_action))
             .on_action(cx.listener(Self::search_up_action))
             .on_action(cx.listener(Self::search_down_action))
             .on_action(cx.listener(Self::search_confirm_action))
             .on_action(cx.listener(Self::search_cancel_action))
+            .on_action(cx.listener(Self::play_history_step_back_action))
+            .on_action(cx.listener(Self::play_history_step_forward_action))
             .on_action(cx.listener(Self::show_help_action))
             .relative()
             .flex()
@@ -91,11 +104,13 @@ impl Render for KChessApp {
             .child(
                 div()
                     .flex_1()
+                    .min_h(px(0.0))
                     .flex()
                     .child(
                         div()
                             .w(px(SIDEBAR_WIDTH))
                             .h_full()
+                            .min_h(px(0.0))
                             .p_3()
                             .flex()
                             .flex_col()
@@ -105,6 +120,11 @@ impl Render for KChessApp {
                             .border_color(rgba(0xd9dce2ff))
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_h(px(0.0))
+                                    .id("sidebar-primary-nav")
+                                    .overflow_y_scroll()
+                                    .scrollbar_width(px(8.0))
                                     .flex()
                                     .flex_col()
                                     .gap_2()
@@ -243,6 +263,22 @@ impl Render for KChessApp {
                                                     play_focused,
                                                 )),
                                         ),
+                                    )
+                                    .child(
+                                        div().flex().flex_col().gap_1().pt_1().child(
+                                            div()
+                                                .track_focus(&self.history_focus)
+                                                .on_mouse_up(
+                                                    MouseButton::Left,
+                                                    cx.listener(Self::show_history),
+                                                )
+                                                .child(sidebar_item(
+                                                    TAB_OPTIONS[1].icon_path,
+                                                    TAB_OPTIONS[1].label,
+                                                    show_history,
+                                                    history_focused,
+                                                )),
+                                        ),
                                     ),
                             )
                             .child(
@@ -253,28 +289,30 @@ impl Render for KChessApp {
                                         cx.listener(Self::show_settings),
                                     )
                                     .child(sidebar_item(
-                                        TAB_OPTIONS[1].icon_path,
-                                        TAB_OPTIONS[1].label,
-                                        !show_play_with_computer,
+                                        TAB_OPTIONS[2].icon_path,
+                                        TAB_OPTIONS[2].label,
+                                        show_settings,
                                         settings_focused,
                                     )),
                             ),
                     )
                     .child(
-                        div().flex_1().relative().child(
+                        div().flex_1().min_h(px(0.0)).relative().child(
                             div()
                                 .size_full()
                                 .bg(rgba(0xffffffdb))
                                 .when(show_play_with_computer, |this| {
                                     this.child(render_play_with_computer_page(
                                         self.board_view.clone(),
-                                        board_left,
-                                        board_top,
+                                        move_history.clone(),
+                                        board_size,
+                                        move_history_scroll_handle.clone(),
+                                        can_step_back,
+                                        can_step_forward,
                                     ))
                                 })
-                                .when(!show_play_with_computer, |this| {
-                                    this.child(render_settings_page())
-                                }),
+                                .when(show_history, |this| this.child(self.history_view.clone()))
+                                .when(show_settings, |this| this.child(self.settings_view.clone())),
                         ),
                     ),
             )

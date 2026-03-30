@@ -1,8 +1,8 @@
 pub mod board;
 
 pub use board::{
-    AnimationState, AppliedMove, BoardError, Easing, MoveId, MoveRequest, Perspective, Piece,
-    PieceKind, RenderPiece, Side, Square, VisualBoard,
+    AnimationState, AppliedMove, BoardError, Easing, MoveHistoryCell, MoveHistoryRow, MoveId,
+    MoveRequest, Perspective, Piece, PieceKind, RenderPiece, Side, Square, VisualBoard,
 };
 
 #[cfg(feature = "gpui")]

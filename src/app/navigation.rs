@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivePane {
     PlayWithComputer,
+    History,
     Settings,
 }
 
@@ -13,14 +14,21 @@ pub struct TabOption {
 }
 
 const ICON_COMPUTER: &str = "assets/icons/computer.svg";
+const ICON_HISTORY: &str = "assets/icons/history.svg";
 const ICON_SETTINGS: &str = "assets/icons/settings.svg";
 
-pub const TAB_OPTIONS: [TabOption; 2] = [
+pub const TAB_OPTIONS: [TabOption; 3] = [
     TabOption {
         pane: ActivePane::PlayWithComputer,
         label: "Play with Computer",
         icon_path: ICON_COMPUTER,
         aliases: &["play", "computer", "engine", "board", "ai"],
+    },
+    TabOption {
+        pane: ActivePane::History,
+        label: "History",
+        icon_path: ICON_HISTORY,
+        aliases: &["history", "games", "lichess", "accounts", "archive"],
     },
     TabOption {
         pane: ActivePane::Settings,

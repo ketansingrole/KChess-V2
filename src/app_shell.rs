@@ -5,11 +5,12 @@ use gpui::{
 use kchess_board::ChessBoardView;
 
 use crate::app::navigation::{ActivePane, NavigationState, TAB_OPTIONS};
+use crate::pages::{HistoryPage, SettingsPage};
 use crate::search_input::SearchInput;
 use crate::window_state::save_window_bounds;
 use crate::{
-    FocusSearch, OpenPlayWithComputer, OpenSettings, SearchCancel, SearchConfirm, SearchDown,
-    SearchUp, ShowHelp,
+    FocusSearch, OpenHistory, OpenPlayWithComputer, OpenSettings, PlayHistoryStepBack,
+    PlayHistoryStepForward, SearchCancel, SearchConfirm, SearchDown, SearchUp, ShowHelp,
 };
 
 mod sidebar;
@@ -24,9 +25,12 @@ const ICON_SEARCH: &str = "assets/icons/search.svg";
 pub struct KChessApp {
     root_focus: FocusHandle,
     play_focus: FocusHandle,
+    history_focus: FocusHandle,
     settings_focus: FocusHandle,
     navigation: NavigationState,
     board_view: Entity<ChessBoardView>,
+    history_view: Entity<HistoryPage>,
+    settings_view: Entity<SettingsPage>,
     search_input: Entity<SearchInput>,
     cmd_held: bool,
     ignore_next_outside_search_click: bool,
@@ -36,14 +40,19 @@ impl KChessApp {
     pub fn new(
         cx: &mut Context<Self>,
         board_view: Entity<ChessBoardView>,
+        history_view: Entity<HistoryPage>,
+        settings_view: Entity<SettingsPage>,
         search_input: Entity<SearchInput>,
     ) -> Self {
         Self {
             root_focus: cx.focus_handle().tab_index(-1).tab_stop(false),
             play_focus: cx.focus_handle().tab_index(1).tab_stop(true),
-            settings_focus: cx.focus_handle().tab_index(2).tab_stop(true),
+            history_focus: cx.focus_handle().tab_index(2).tab_stop(true),
+            settings_focus: cx.focus_handle().tab_index(3).tab_stop(true),
             navigation: NavigationState::new(),
             board_view,
+            history_view,
+            settings_view,
             search_input,
             cmd_held: false,
             ignore_next_outside_search_click: false,
@@ -174,6 +183,15 @@ impl KChessApp {
         self.select_tab(ActivePane::PlayWithComputer, true, window, cx);
     }
 
+    fn open_history_action(
+        &mut self,
+        _: &OpenHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_tab(ActivePane::History, true, window, cx);
+    }
+
     fn search_up_action(&mut self, _: &SearchUp, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.navigation.search_active {
             return;
@@ -213,6 +231,8 @@ impl KChessApp {
 
         if self.play_focus.is_focused(window) {
             self.select_tab(ActivePane::PlayWithComputer, true, window, cx);
+        } else if self.history_focus.is_focused(window) {
+            self.select_tab(ActivePane::History, true, window, cx);
         } else if self.settings_focus.is_focused(window) {
             self.select_tab(ActivePane::Settings, true, window, cx);
         }
@@ -233,6 +253,44 @@ impl KChessApp {
         cx.notify();
     }
 
+    fn play_history_step_back_action(
+        &mut self,
+        _: &PlayHistoryStepBack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.navigation.search_active
+            || self.navigation.active_pane != ActivePane::PlayWithComputer
+        {
+            return;
+        }
+
+        self.board_view.update(cx, |view, board_cx| {
+            if view.step_back_view() {
+                board_cx.notify();
+            }
+        });
+    }
+
+    fn play_history_step_forward_action(
+        &mut self,
+        _: &PlayHistoryStepForward,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.navigation.search_active
+            || self.navigation.active_pane != ActivePane::PlayWithComputer
+        {
+            return;
+        }
+
+        self.board_view.update(cx, |view, board_cx| {
+            if view.step_forward_view() {
+                board_cx.notify();
+            }
+        });
+    }
+
     fn show_play_with_computer(
         &mut self,
         _: &MouseUpEvent,
@@ -244,6 +302,10 @@ impl KChessApp {
 
     fn show_settings(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.select_tab(ActivePane::Settings, true, window, cx);
+    }
+
+    fn show_history(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab(ActivePane::History, true, window, cx);
     }
 
     pub(crate) fn save_current_window_bounds(
