@@ -1,3 +1,5 @@
+use crate::engine::stockfish::EngineProfile;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComputerStrength {
     Low,
@@ -14,15 +16,44 @@ impl ComputerStrength {
         }
     }
 
-    pub const fn elo(self) -> u16 {
+    pub const fn engine_profile(self) -> EngineProfile {
         match self {
-            Self::Low => 1200,
-            Self::Medium => 1800,
-            Self::High => 2400,
+            Self::Low => EngineProfile::new(true, Some(1350), 700),
+            Self::Medium => EngineProfile::new(true, Some(1800), 1400),
+            Self::High => EngineProfile::new(false, None, 2500),
         }
     }
 
     pub fn display_label(self) -> String {
-        format!("{} ({})", self.label(), self.elo())
+        match self.engine_profile().elo {
+            Some(elo) => format!("{} ({})", self.label(), elo),
+            None => format!("{} (Max)", self.label()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strength_profiles_match_expected_values() {
+        assert_eq!(
+            ComputerStrength::Low.engine_profile(),
+            EngineProfile::new(true, Some(1350), 700)
+        );
+        assert_eq!(
+            ComputerStrength::Medium.engine_profile(),
+            EngineProfile::new(true, Some(1800), 1400)
+        );
+        assert_eq!(
+            ComputerStrength::High.engine_profile(),
+            EngineProfile::new(false, None, 2500)
+        );
+    }
+
+    #[test]
+    fn high_profile_has_no_elo_limit() {
+        assert_eq!(ComputerStrength::High.engine_profile().elo, None);
     }
 }

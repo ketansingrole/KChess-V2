@@ -292,10 +292,13 @@ impl KChessApp {
             return;
         }
 
+        let profile = strength.engine_profile();
         let position_fingerprint = format!(
-            "{}|elo:{}|user:{}",
+            "{}|limit:{}|elo:{:?}|movetime:{}|user:{}",
             stockfish::build_position_command(&history),
-            strength.elo(),
+            profile.limit_strength,
+            profile.clamped_elo(),
+            profile.movetime_ms,
             Self::side_label(user_side)
         );
 
@@ -316,11 +319,10 @@ impl KChessApp {
             .set_status(Some("Computer is thinking...".to_string()));
         cx.notify();
 
-        let elo = strength.elo();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { stockfish::compute_best_move(&engine_path, &history, elo) })
+                .spawn(async move { stockfish::compute_best_move(&engine_path, &history, profile) })
                 .await;
 
             let _ = this.update(cx, |view, cx| {
