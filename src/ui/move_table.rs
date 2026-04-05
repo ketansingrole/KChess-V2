@@ -17,7 +17,7 @@ fn move_cell(
     let board_for_click = board_view.clone();
 
     div()
-        .size_full()
+        .w_full()
         .min_w(px(0.0))
         .min_h(px(44.0))
         .rounded_sm()
@@ -48,7 +48,8 @@ fn move_cell(
         })
         .child(
             div()
-                .size_full()
+                .w_full()
+                .min_h(px(44.0))
                 .px_3()
                 .py_2()
                 .flex()
@@ -89,32 +90,14 @@ fn move_row(
                 .flex_1()
                 .min_w(px(0.0))
                 .min_h(px(44.0))
-                .relative()
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(0.0))
-                        .right(px(0.0))
-                        .top(px(0.0))
-                        .bottom(px(0.0))
-                        .child(move_cell(row.white.as_ref(), board_for_white, palette)),
-                ),
+                .child(move_cell(row.white.as_ref(), board_for_white, palette)),
         )
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.0))
                 .min_h(px(44.0))
-                .relative()
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(0.0))
-                        .right(px(0.0))
-                        .top(px(0.0))
-                        .bottom(px(0.0))
-                        .child(move_cell(row.black.as_ref(), board_for_black, palette)),
-                ),
+                .child(move_cell(row.black.as_ref(), board_for_black, palette)),
         )
 }
 
@@ -126,15 +109,15 @@ pub fn render_move_table(
 ) -> impl IntoElement {
     let history_empty = move_history.is_empty();
     let history_list = div()
-        .flex_1()
-        .min_h(px(0.0))
-        .w_full()
+        .absolute()
+        .left(px(0.0))
+        .right(px(0.0))
+        .top(px(0.0))
+        .bottom(px(0.0))
         .id("move-history-list")
         .track_scroll(&move_history_scroll_handle)
         .overflow_y_scroll()
         .py_2()
-        .flex()
-        .flex_col()
         .children(
             move_history
                 .iter()
