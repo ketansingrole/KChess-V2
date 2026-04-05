@@ -42,6 +42,7 @@ pub struct ChessBoardView {
     legal_move_targets: HashSet<Square>,
     pending_legal_moves_request: Option<Square>,
     perspective: Perspective,
+    interaction_side_lock: Option<Side>,
     window_origin_x: f32,
     window_origin_y: f32,
     cell_px: f32,
@@ -95,6 +96,7 @@ impl ChessBoardView {
             legal_move_targets: HashSet::new(),
             pending_legal_moves_request: None,
             perspective: Perspective::White,
+            interaction_side_lock: None,
             window_origin_x: 0.0,
             window_origin_y: 0.0,
             cell_px: 72.0,
@@ -162,8 +164,41 @@ impl ChessBoardView {
         self.perspective = perspective;
     }
 
+    pub fn perspective(&self) -> Perspective {
+        self.perspective
+    }
+
+    pub fn toggle_perspective(&mut self) {
+        self.perspective = match self.perspective {
+            Perspective::White => Perspective::Black,
+            Perspective::Black => Perspective::White,
+        };
+        self.drag = None;
+        self.arrow_draft = None;
+    }
+
     pub fn set_auto_confirm_pending(&mut self, auto_confirm_pending: bool) {
         self.auto_confirm_pending = auto_confirm_pending;
+    }
+
+    pub fn set_interaction_side_lock(&mut self, side: Option<Side>) {
+        self.interaction_side_lock = side;
+        if let Some(drag) = self.drag {
+            if self
+                .interaction_side_lock
+                .is_some_and(|locked| locked != drag.piece.side)
+            {
+                self.drag = None;
+            }
+        }
+    }
+
+    pub fn clear_interaction_side_lock(&mut self) {
+        self.interaction_side_lock = None;
+    }
+
+    pub fn interaction_side_lock(&self) -> Option<Side> {
+        self.interaction_side_lock
     }
 
     pub fn arrows(&self) -> &[BoardArrow] {
@@ -446,6 +481,23 @@ impl ChessBoardView {
             }
             return;
         };
+
+        if piece.side != self.board.displayed_side_to_move() {
+            if cleared_annotations {
+                cx.notify();
+            }
+            return;
+        }
+
+        if self
+            .interaction_side_lock
+            .is_some_and(|locked| locked != piece.side)
+        {
+            if cleared_annotations {
+                cx.notify();
+            }
+            return;
+        }
 
         self.pending_legal_moves_request = Some(square);
         self.legal_move_source = None;

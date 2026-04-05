@@ -6,7 +6,9 @@ use std::{
 };
 
 use gpui::Rgba;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+
+use crate::theme::AppearanceMode;
 
 pub const LICHESS_LIGHT_SQUARE_HEX: &str = "#f0d9b5";
 pub const LICHESS_DARK_SQUARE_HEX: &str = "#b58863";
@@ -25,6 +27,11 @@ const SCHEMA_VERSION: i64 = 3;
 const KEY_LIGHT_SQUARE_HEX: &str = "board.light_square_hex";
 const KEY_DARK_SQUARE_HEX: &str = "board.dark_square_hex";
 const KEY_THEME_PRESET: &str = "board.theme_preset";
+const KEY_APP_APPEARANCE_MODE: &str = "app.appearance_mode";
+const KEY_ENGINE_MANAGED_PATH: &str = "engine.managed_path";
+const KEY_ENGINE_CUSTOM_PATH: &str = "engine.custom_path";
+const KEY_ENGINE_RELEASE_TAG: &str = "engine.release_tag";
+const KEY_ENGINE_LAST_ERROR: &str = "engine.last_error";
 
 const INITIAL_GAME_SYNC_PAGE_SIZE: usize = 100;
 const INITIAL_GAME_SYNC_MAX_PAGES: usize = 10;
@@ -34,6 +41,14 @@ pub struct BoardLooksSettings {
     pub light_square_hex: String,
     pub dark_square_hex: String,
     pub theme_preset: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EngineSettings {
+    pub managed_path: Option<String>,
+    pub custom_path: Option<String>,
+    pub release_tag: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -229,11 +244,53 @@ pub fn save_board_looks_settings(settings: &BoardLooksSettings) -> Result<(), St
     save_board_looks_settings_with_path(&path, settings)
 }
 
+pub fn load_app_appearance_mode() -> AppearanceMode {
+    let Some(path) = storage_path() else {
+        return AppearanceMode::System;
+    };
+
+    match load_app_appearance_mode_with_path(&path) {
+        Ok(mode) => mode,
+        Err(err) => {
+            eprintln!("Failed loading app appearance mode, using default: {err}");
+            AppearanceMode::System
+        }
+    }
+}
+
+pub fn save_app_appearance_mode(mode: AppearanceMode) -> Result<(), StorageError> {
+    let Some(path) = storage_path() else {
+        return Err(StorageError::HomeDirectoryUnavailable);
+    };
+    save_app_appearance_mode_with_path(&path, mode)
+}
+
 pub fn load_lichess_accounts() -> Result<Vec<LichessAccount>, StorageError> {
     let Some(path) = storage_path() else {
         return Err(StorageError::HomeDirectoryUnavailable);
     };
     load_lichess_accounts_with_path(&path)
+}
+
+pub fn load_engine_settings() -> EngineSettings {
+    let Some(path) = storage_path() else {
+        return EngineSettings::default();
+    };
+
+    match load_engine_settings_with_path(&path) {
+        Ok(settings) => settings,
+        Err(err) => {
+            eprintln!("Failed loading engine settings, using defaults: {err}");
+            EngineSettings::default()
+        }
+    }
+}
+
+pub fn save_engine_settings(settings: &EngineSettings) -> Result<(), StorageError> {
+    let Some(path) = storage_path() else {
+        return Err(StorageError::HomeDirectoryUnavailable);
+    };
+    save_engine_settings_with_path(&path, settings)
 }
 
 pub fn load_lichess_games(per_account_limit: usize) -> Result<Vec<LichessGame>, StorageError> {
@@ -303,52 +360,72 @@ fn storage_path() -> Option<PathBuf> {
     Some(Path::new(&home).join(DB_REL_PATH))
 }
 
-fn load_board_looks_settings_with_path(path: &Path) -> Result<BoardLooksSettings, StorageError> {
-    let connection = open_connection(path)?;
+fn with_connection<T>(
+    path: &Path,
+    operation: impl FnOnce(&mut Connection) -> Result<T, StorageError>,
+) -> Result<T, StorageError> {
+    let mut connection = open_connection(path)?;
     run_migrations(&connection)?;
+    operation(&mut connection)
+}
 
-    let mut values = HashMap::new();
-    let mut statement = connection.prepare("SELECT key, value FROM app_settings")?;
-    let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
+fn with_transaction<T>(
+    path: &Path,
+    operation: impl FnOnce(&Transaction<'_>) -> Result<T, StorageError>,
+) -> Result<T, StorageError> {
+    with_connection(path, |connection| {
+        let tx = connection.unchecked_transaction()?;
+        let result = operation(&tx)?;
+        tx.commit()?;
+        Ok(result)
+    })
+}
 
-    for row in rows {
-        let (key, value) = row?;
-        values.insert(key, value);
-    }
+fn load_board_looks_settings_with_path(path: &Path) -> Result<BoardLooksSettings, StorageError> {
+    with_connection(path, |connection| {
+        let mut values = HashMap::new();
+        let mut statement = connection.prepare("SELECT key, value FROM app_settings")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
 
-    let mut settings = BoardLooksSettings::default();
+        for row in rows {
+            let (key, value) = row?;
+            values.insert(key, value);
+        }
 
-    if let Some(light) = values
-        .get(KEY_LIGHT_SQUARE_HEX)
-        .and_then(|v| normalize_hex(v))
-    {
-        settings.light_square_hex = light;
-    }
+        let mut settings = BoardLooksSettings::default();
 
-    if let Some(dark) = values
-        .get(KEY_DARK_SQUARE_HEX)
-        .and_then(|v| normalize_hex(v))
-    {
-        settings.dark_square_hex = dark;
-    }
+        if let Some(light) = values
+            .get(KEY_LIGHT_SQUARE_HEX)
+            .and_then(|v| normalize_hex(v))
+        {
+            settings.light_square_hex = light;
+        }
 
-    settings.theme_preset = values
-        .get(KEY_THEME_PRESET)
-        .map(String::as_str)
-        .map(|preset| {
-            normalize_theme_preset(
-                Some(preset),
-                &settings.light_square_hex,
-                &settings.dark_square_hex,
-            )
-        })
-        .unwrap_or_else(|| {
-            resolve_theme_preset(&settings.light_square_hex, &settings.dark_square_hex)
-        });
+        if let Some(dark) = values
+            .get(KEY_DARK_SQUARE_HEX)
+            .and_then(|v| normalize_hex(v))
+        {
+            settings.dark_square_hex = dark;
+        }
 
-    Ok(settings)
+        settings.theme_preset = values
+            .get(KEY_THEME_PRESET)
+            .map(String::as_str)
+            .map(|preset| {
+                normalize_theme_preset(
+                    Some(preset),
+                    &settings.light_square_hex,
+                    &settings.dark_square_hex,
+                )
+            })
+            .unwrap_or_else(|| {
+                resolve_theme_preset(&settings.light_square_hex, &settings.dark_square_hex)
+            });
+
+        Ok(settings)
+    })
 }
 
 fn save_board_looks_settings_with_path(
@@ -369,94 +446,187 @@ fn save_board_looks_settings_with_path(
 
     let preset = normalize_theme_preset(Some(&settings.theme_preset), &light_hex, &dark_hex);
 
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
+    with_transaction(path, |tx| {
+        upsert_setting(tx, KEY_LIGHT_SQUARE_HEX, &light_hex)?;
+        upsert_setting(tx, KEY_DARK_SQUARE_HEX, &dark_hex)?;
+        upsert_setting(tx, KEY_THEME_PRESET, &preset)?;
+        Ok(())
+    })
+}
 
-    let tx = connection.unchecked_transaction()?;
-    upsert_setting(&tx, KEY_LIGHT_SQUARE_HEX, &light_hex)?;
-    upsert_setting(&tx, KEY_DARK_SQUARE_HEX, &dark_hex)?;
-    upsert_setting(&tx, KEY_THEME_PRESET, &preset)?;
-    tx.commit()?;
+fn load_app_appearance_mode_with_path(path: &Path) -> Result<AppearanceMode, StorageError> {
+    with_connection(path, |connection| {
+        let stored_value: Option<String> = connection
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![KEY_APP_APPEARANCE_MODE],
+                |row| row.get(0),
+            )
+            .optional()?;
 
-    Ok(())
+        Ok(stored_value
+            .as_deref()
+            .and_then(AppearanceMode::from_storage_str)
+            .unwrap_or(AppearanceMode::System))
+    })
+}
+
+fn save_app_appearance_mode_with_path(
+    path: &Path,
+    mode: AppearanceMode,
+) -> Result<(), StorageError> {
+    with_connection(path, |connection| {
+        upsert_setting(connection, KEY_APP_APPEARANCE_MODE, mode.as_storage_str())?;
+        Ok(())
+    })
 }
 
 fn load_lichess_accounts_with_path(path: &Path) -> Result<Vec<LichessAccount>, StorageError> {
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
+    with_connection(path, |connection| {
+        let mut statement = connection.prepare(
+            "SELECT username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
+             FROM lichess_accounts
+             ORDER BY added_at ASC, username COLLATE NOCASE ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(LichessAccount {
+                username: row.get(0)?,
+                added_at: row.get(1)?,
+                connected_at: row.get(2)?,
+                auth_kind: row.get(3)?,
+                last_synced_at: row.get(4)?,
+                latest_game_id: row.get(5)?,
+                latest_game_at: row.get(6)?,
+            })
+        })?;
 
-    let mut statement = connection.prepare(
-        "SELECT username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
-         FROM lichess_accounts
-         ORDER BY added_at ASC, username COLLATE NOCASE ASC",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(LichessAccount {
-            username: row.get(0)?,
-            added_at: row.get(1)?,
-            connected_at: row.get(2)?,
-            auth_kind: row.get(3)?,
-            last_synced_at: row.get(4)?,
-            latest_game_id: row.get(5)?,
-            latest_game_at: row.get(6)?,
+        let mut accounts = Vec::new();
+        for row in rows {
+            accounts.push(row?);
+        }
+        Ok(accounts)
+    })
+}
+
+fn load_engine_settings_with_path(path: &Path) -> Result<EngineSettings, StorageError> {
+    with_connection(path, |connection| {
+        let mut statement = connection.prepare(
+            "SELECT key, value FROM app_settings
+             WHERE key IN (?1, ?2, ?3, ?4)",
+        )?;
+        let rows = statement.query_map(
+            params![
+                KEY_ENGINE_MANAGED_PATH,
+                KEY_ENGINE_CUSTOM_PATH,
+                KEY_ENGINE_RELEASE_TAG,
+                KEY_ENGINE_LAST_ERROR
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+
+        let mut values = HashMap::new();
+        for row in rows {
+            let (key, value) = row?;
+            values.insert(key, value);
+        }
+
+        Ok(EngineSettings {
+            managed_path: values
+                .get(KEY_ENGINE_MANAGED_PATH)
+                .cloned()
+                .filter(|value| !value.trim().is_empty()),
+            custom_path: values
+                .get(KEY_ENGINE_CUSTOM_PATH)
+                .cloned()
+                .filter(|value| !value.trim().is_empty()),
+            release_tag: values
+                .get(KEY_ENGINE_RELEASE_TAG)
+                .cloned()
+                .filter(|value| !value.trim().is_empty()),
+            last_error: values
+                .get(KEY_ENGINE_LAST_ERROR)
+                .cloned()
+                .filter(|value| !value.trim().is_empty()),
         })
-    })?;
+    })
+}
 
-    let mut accounts = Vec::new();
-    for row in rows {
-        accounts.push(row?);
-    }
-    Ok(accounts)
+fn save_engine_settings_with_path(
+    path: &Path,
+    settings: &EngineSettings,
+) -> Result<(), StorageError> {
+    with_transaction(path, |tx| {
+        upsert_setting(
+            tx,
+            KEY_ENGINE_MANAGED_PATH,
+            settings.managed_path.as_deref().unwrap_or_default(),
+        )?;
+        upsert_setting(
+            tx,
+            KEY_ENGINE_CUSTOM_PATH,
+            settings.custom_path.as_deref().unwrap_or_default(),
+        )?;
+        upsert_setting(
+            tx,
+            KEY_ENGINE_RELEASE_TAG,
+            settings.release_tag.as_deref().unwrap_or_default(),
+        )?;
+        upsert_setting(
+            tx,
+            KEY_ENGINE_LAST_ERROR,
+            settings.last_error.as_deref().unwrap_or_default(),
+        )?;
+        Ok(())
+    })
 }
 
 fn load_lichess_games_with_path(
     path: &Path,
     per_account_limit: usize,
 ) -> Result<Vec<LichessGame>, StorageError> {
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
+    with_connection(path, |connection| {
+        let mut statement = connection.prepare(
+            "SELECT game_id, account_username, played_at, rated, speed, perf, variant, status, winner,
+                    color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves
+             FROM (
+                 SELECT game_id, account_username, played_at, rated, speed, perf, variant, status, winner,
+                        color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY account_username COLLATE NOCASE
+                            ORDER BY played_at DESC, game_id DESC
+                        ) AS row_num
+                 FROM lichess_games
+             ) ranked
+             WHERE row_num <= ?1
+             ORDER BY played_at DESC, game_id DESC",
+        )?;
+        let rows = statement.query_map(params![per_account_limit as i64], |row| {
+            Ok(LichessGame {
+                game_id: row.get(0)?,
+                account_username: row.get(1)?,
+                played_at: row.get(2)?,
+                rated: row.get::<_, i64>(3)? != 0,
+                speed: row.get(4)?,
+                perf: row.get(5)?,
+                variant: row.get(6)?,
+                status: row.get(7)?,
+                winner: row.get(8)?,
+                color: row.get(9)?,
+                opponent_name: row.get(10)?,
+                opponent_rating: row.get(11)?,
+                player_rating: row.get(12)?,
+                rating_diff: row.get(13)?,
+                opening_name: row.get(14)?,
+                moves: row.get(15)?,
+            })
+        })?;
 
-    let mut statement = connection.prepare(
-        "SELECT game_id, account_username, played_at, rated, speed, perf, variant, status, winner,
-                color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves
-         FROM (
-             SELECT game_id, account_username, played_at, rated, speed, perf, variant, status, winner,
-                    color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY account_username COLLATE NOCASE
-                        ORDER BY played_at DESC, game_id DESC
-                    ) AS row_num
-             FROM lichess_games
-         ) ranked
-         WHERE row_num <= ?1
-         ORDER BY played_at DESC, game_id DESC",
-    )?;
-    let rows = statement.query_map(params![per_account_limit as i64], |row| {
-        Ok(LichessGame {
-            game_id: row.get(0)?,
-            account_username: row.get(1)?,
-            played_at: row.get(2)?,
-            rated: row.get::<_, i64>(3)? != 0,
-            speed: row.get(4)?,
-            perf: row.get(5)?,
-            variant: row.get(6)?,
-            status: row.get(7)?,
-            winner: row.get(8)?,
-            color: row.get(9)?,
-            opponent_name: row.get(10)?,
-            opponent_rating: row.get(11)?,
-            player_rating: row.get(12)?,
-            rating_diff: row.get(13)?,
-            opening_name: row.get(14)?,
-            moves: row.get(15)?,
-        })
-    })?;
-
-    let mut games = Vec::new();
-    for row in rows {
-        games.push(row?);
-    }
-    Ok(games)
+        let mut games = Vec::new();
+        for row in rows {
+            games.push(row?);
+        }
+        Ok(games)
+    })
 }
 
 fn add_lichess_account_with_path(
@@ -464,37 +634,36 @@ fn add_lichess_account_with_path(
     username: &str,
 ) -> Result<LichessAccount, StorageError> {
     let normalized = normalize_lichess_username(username)?;
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
+    with_connection(path, |connection| {
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM lichess_accounts WHERE username = ?1 COLLATE NOCASE",
+                params![normalized],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if exists {
+            return Err(StorageError::DuplicateLichessAccount(normalized));
+        }
 
-    let exists = connection
-        .query_row(
-            "SELECT 1 FROM lichess_accounts WHERE username = ?1 COLLATE NOCASE",
-            params![normalized],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some();
-    if exists {
-        return Err(StorageError::DuplicateLichessAccount(normalized));
-    }
+        let added_at = unix_seconds_now();
+        connection.execute(
+            "INSERT INTO lichess_accounts (
+                username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
+             ) VALUES (?1, ?2, NULL, ?3, NULL, NULL, NULL)",
+            params![normalized, added_at, LICHESS_AUTH_KIND_TRACKED],
+        )?;
 
-    let added_at = unix_seconds_now();
-    connection.execute(
-        "INSERT INTO lichess_accounts (
-            username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
-         ) VALUES (?1, ?2, NULL, ?3, NULL, NULL, NULL)",
-        params![normalized, added_at, LICHESS_AUTH_KIND_TRACKED],
-    )?;
-
-    Ok(LichessAccount {
-        username: normalized,
-        added_at,
-        connected_at: None,
-        auth_kind: LICHESS_AUTH_KIND_TRACKED.to_string(),
-        last_synced_at: None,
-        latest_game_id: None,
-        latest_game_at: None,
+        Ok(LichessAccount {
+            username: normalized,
+            added_at,
+            connected_at: None,
+            auth_kind: LICHESS_AUTH_KIND_TRACKED.to_string(),
+            last_synced_at: None,
+            latest_game_id: None,
+            latest_game_at: None,
+        })
     })
 }
 
@@ -503,24 +672,23 @@ fn upsert_connected_lichess_account_with_path(
     username: &str,
 ) -> Result<LichessAccount, StorageError> {
     let normalized = normalize_lichess_username(username)?;
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
+    with_connection(path, |connection| {
+        let now = unix_seconds_now();
+        connection.execute(
+            "INSERT INTO lichess_accounts (
+                username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
+             ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL)
+             ON CONFLICT(username) DO UPDATE SET
+                connected_at = excluded.connected_at,
+                auth_kind = excluded.auth_kind",
+            params![normalized, now, now, LICHESS_AUTH_KIND_OAUTH],
+        )?;
 
-    let now = unix_seconds_now();
-    connection.execute(
-        "INSERT INTO lichess_accounts (
-            username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
-         ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL)
-         ON CONFLICT(username) DO UPDATE SET
-            connected_at = excluded.connected_at,
-            auth_kind = excluded.auth_kind",
-        params![normalized, now, now, LICHESS_AUTH_KIND_OAUTH],
-    )?;
-
-    load_lichess_accounts_with_path(path)?
-        .into_iter()
-        .find(|account| account.username.eq_ignore_ascii_case(&normalized))
-        .ok_or_else(|| StorageError::InvalidLichessUsername(normalized))
+        load_lichess_accounts_with_path(path)?
+            .into_iter()
+            .find(|account| account.username.eq_ignore_ascii_case(&normalized))
+            .ok_or_else(|| StorageError::InvalidLichessUsername(normalized))
+    })
 }
 
 fn save_lichess_sync_with_path(
@@ -530,92 +698,88 @@ fn save_lichess_sync_with_path(
     games: &[LichessGame],
 ) -> Result<usize, StorageError> {
     let normalized = normalize_lichess_username(username)?;
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
+    with_transaction(path, |tx| {
+        let account_exists: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM lichess_accounts WHERE username = ?1 COLLATE NOCASE",
+                params![normalized],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if account_exists.is_none() {
+            return Ok(0);
+        }
 
-    let tx = connection.unchecked_transaction()?;
-    let now = unix_seconds_now();
-    let mut inserted = 0;
+        let now = unix_seconds_now();
+        let mut inserted = 0;
 
-    tx.execute(
-        "INSERT INTO lichess_accounts (
-            username, added_at, connected_at, auth_kind, last_synced_at, latest_game_id, latest_game_at
-         ) VALUES (?1, ?2, NULL, ?3, NULL, NULL, NULL)
-         ON CONFLICT(username) DO NOTHING",
-        params![normalized, now, LICHESS_AUTH_KIND_TRACKED],
-    )?;
-
-    for game in games {
-        inserted += tx.execute(
-            "INSERT OR IGNORE INTO lichess_games (
-                game_id, account_username, played_at, rated, speed, perf, variant, status, winner,
-                color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves, inserted_at
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
-            )",
-            params![
-                game.game_id,
-                normalized,
-                game.played_at,
-                if game.rated { 1 } else { 0 },
-                game.speed,
-                game.perf,
-                game.variant,
-                game.status,
-                game.winner,
-                game.color,
-                game.opponent_name,
-                game.opponent_rating,
-                game.player_rating,
-                game.rating_diff,
-                game.opening_name,
-                game.moves,
-                now,
-            ],
-        )?;
-    }
-
-    match (&cursor.latest_game_id, cursor.latest_game_at) {
-        (Some(game_id), Some(game_at)) => {
-            tx.execute(
-                "UPDATE lichess_accounts
-                 SET latest_game_id = ?2, latest_game_at = ?3, last_synced_at = ?4
-                 WHERE username = ?1 COLLATE NOCASE",
-                params![normalized, game_id, game_at, now],
+        for game in games {
+            inserted += tx.execute(
+                "INSERT OR IGNORE INTO lichess_games (
+                    game_id, account_username, played_at, rated, speed, perf, variant, status, winner,
+                    color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves, inserted_at
+                ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                    ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                )",
+                params![
+                    game.game_id,
+                    normalized,
+                    game.played_at,
+                    if game.rated { 1 } else { 0 },
+                    game.speed,
+                    game.perf,
+                    game.variant,
+                    game.status,
+                    game.winner,
+                    game.color,
+                    game.opponent_name,
+                    game.opponent_rating,
+                    game.player_rating,
+                    game.rating_diff,
+                    game.opening_name,
+                    game.moves,
+                    now,
+                ],
             )?;
         }
-        _ => {
-            tx.execute(
-                "UPDATE lichess_accounts
-                 SET last_synced_at = ?2
-                 WHERE username = ?1 COLLATE NOCASE",
-                params![normalized, now],
-            )?;
-        }
-    }
 
-    tx.commit()?;
-    Ok(inserted)
+        match (&cursor.latest_game_id, cursor.latest_game_at) {
+            (Some(game_id), Some(game_at)) => {
+                tx.execute(
+                    "UPDATE lichess_accounts
+                     SET latest_game_id = ?2, latest_game_at = ?3, last_synced_at = ?4
+                     WHERE username = ?1 COLLATE NOCASE",
+                    params![normalized, game_id, game_at, now],
+                )?;
+            }
+            _ => {
+                tx.execute(
+                    "UPDATE lichess_accounts
+                     SET last_synced_at = ?2
+                     WHERE username = ?1 COLLATE NOCASE",
+                    params![normalized, now],
+                )?;
+            }
+        }
+
+        Ok(inserted)
+    })
 }
 
 fn remove_lichess_account_with_path(path: &Path, username: &str) -> Result<(), StorageError> {
     let normalized = normalize_lichess_username(username)?;
-    let connection = open_connection(path)?;
-    run_migrations(&connection)?;
-
-    let tx = connection.unchecked_transaction()?;
-    tx.execute(
-        "DELETE FROM lichess_games WHERE account_username = ?1 COLLATE NOCASE",
-        params![normalized],
-    )?;
-    tx.execute(
-        "DELETE FROM lichess_accounts WHERE username = ?1 COLLATE NOCASE",
-        params![normalized],
-    )?;
-    tx.commit()?;
-
-    Ok(())
+    with_transaction(path, |tx| {
+        tx.execute(
+            "DELETE FROM lichess_games WHERE account_username = ?1 COLLATE NOCASE",
+            params![normalized],
+        )?;
+        tx.execute(
+            "DELETE FROM lichess_accounts WHERE username = ?1 COLLATE NOCASE",
+            params![normalized],
+        )?;
+        Ok(())
+    })
 }
 
 fn open_connection(path: &Path) -> Result<Connection, StorageError> {
@@ -918,6 +1082,41 @@ mod tests {
     }
 
     #[test]
+    fn appearance_mode_round_trip_works() {
+        let path = unique_temp_db_path("appearance-mode-round-trip");
+
+        save_app_appearance_mode_with_path(&path, AppearanceMode::Dark).expect("save appearance");
+        let loaded = load_app_appearance_mode_with_path(&path).expect("load appearance");
+        assert_eq!(loaded, AppearanceMode::Dark);
+    }
+
+    #[test]
+    fn invalid_stored_appearance_mode_falls_back_to_system() {
+        let path = unique_temp_db_path("invalid-appearance-mode");
+        let conn = open_connection(&path).expect("open db");
+        run_migrations(&conn).expect("migrate");
+        upsert_setting(&conn, KEY_APP_APPEARANCE_MODE, "retro-solarized").expect("write mode");
+
+        let loaded = load_app_appearance_mode_with_path(&path).expect("load appearance");
+        assert_eq!(loaded, AppearanceMode::System);
+    }
+
+    #[test]
+    fn engine_settings_round_trip_works() {
+        let path = unique_temp_db_path("engine-settings-round-trip");
+        let input = EngineSettings {
+            managed_path: Some("/tmp/managed-stockfish".to_string()),
+            custom_path: Some("/tmp/custom-stockfish".to_string()),
+            release_tag: Some("sf_18".to_string()),
+            last_error: Some("none".to_string()),
+        };
+
+        save_engine_settings_with_path(&path, &input).expect("save engine settings");
+        let loaded = load_engine_settings_with_path(&path).expect("load engine settings");
+        assert_eq!(loaded, input);
+    }
+
+    #[test]
     fn legacy_default_preset_value_maps_to_lichess() {
         let path = unique_temp_db_path("legacy-default-preset");
         let conn = open_connection(&path).expect("open db");
@@ -1093,6 +1292,53 @@ mod tests {
         assert_eq!(games.len(), 2);
         assert_eq!(games[0].game_id, "game-2");
         assert_eq!(games[1].game_id, "game-1");
+    }
+
+    #[test]
+    fn lichess_sync_does_not_recreate_removed_account() {
+        let path = unique_temp_db_path("lichess-sync-removed-account");
+        add_lichess_account_with_path(&path, "TestUser").expect("create account");
+        remove_lichess_account_with_path(&path, "TestUser").expect("remove account");
+
+        let inserted = save_lichess_sync_with_path(
+            &path,
+            "TestUser",
+            &LichessSyncCursor {
+                latest_game_id: Some("game-1".to_string()),
+                latest_game_at: Some(1_000),
+            },
+            &[LichessGame {
+                game_id: "game-1".to_string(),
+                account_username: "TestUser".to_string(),
+                played_at: 1_000,
+                rated: true,
+                speed: "blitz".to_string(),
+                perf: "blitz".to_string(),
+                variant: "standard".to_string(),
+                status: "mate".to_string(),
+                winner: Some("white".to_string()),
+                color: "white".to_string(),
+                opponent_name: "Opponent".to_string(),
+                opponent_rating: Some(1800),
+                player_rating: Some(1820),
+                rating_diff: Some(8),
+                opening_name: Some("Italian Game".to_string()),
+                moves: "e4 e5".to_string(),
+            }],
+        )
+        .expect("save sync");
+
+        assert_eq!(inserted, 0);
+        assert!(
+            load_lichess_accounts_with_path(&path)
+                .expect("load accounts")
+                .is_empty()
+        );
+        assert!(
+            load_lichess_games_with_path(&path, 10)
+                .expect("load games")
+                .is_empty()
+        );
     }
 
     #[test]

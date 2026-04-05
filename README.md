@@ -4,7 +4,7 @@ KChess is a Rust desktop chess app built with GPUI.
 
 ## Highlights
 
-- Play against the built-in computer opponent with interactive board annotations.
+- Play against a Stockfish-powered computer opponent with interactive board annotations.
 - Move history timeline with back/forward stepping for position review.
 - History page for synced Lichess games, including account/rated/result filters and paging.
 - Settings page for board theme presets/custom colors and Lichess account management.
@@ -17,6 +17,7 @@ KChess is a Rust desktop chess app built with GPUI.
 - `crates/kchess_board_api/` - API wrapper crate on top of `kchess_board`
 - `assets/` - app icons and other UI assets
 - `scripts/build_macos_app.sh` - builds a macOS `.app` bundle
+- `electron migration/` - Electron + Vue + Tailwind migration project
 
 ## Lichess Integration
 
@@ -40,6 +41,15 @@ KChess is a Rust desktop chess app built with GPUI.
 cargo run --bin KChess
 ```
 
+## Stockfish Engine Setup (macOS arm64)
+
+- Open `Settings -> Chess Engine`.
+- Click `Install/Update Stockfish` for one-click managed install.
+- Default managed path: `~/.kchess/engines/stockfish/current/stockfish`
+- Optional advanced override: set a custom engine binary path in the same settings section.
+
+KChess does not bundle Stockfish inside the app package in this closed-source setup; the engine is user-installed at runtime.
+
 ## Quality Checks
 
 ```bash
@@ -53,6 +63,14 @@ cargo test --workspace
 ```bash
 ./scripts/build_macos_app.sh
 open "target/macos-bundle/KChess.app"
+```
+
+## Electron Migration Build
+
+```bash
+cd "electron migration"
+npm install
+npm run dev
 ```
 
 ## Keyboard and Board Controls

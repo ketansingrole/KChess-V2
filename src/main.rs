@@ -10,21 +10,27 @@ use kchess_board::{BoardTheme, ChessBoardView, VisualBoard};
 mod app;
 mod app_shell;
 mod assets;
+mod computer;
+mod engine;
+mod engine_state;
 mod lichess;
 mod lichess_auth;
 mod lichess_state;
 mod pages;
 mod search_input;
 mod storage;
+mod theme;
 mod ui;
 mod window_state;
 
 use app_shell::{BOARD_CELL_PX, KChessApp};
 use assets::Assets;
+use engine_state::EngineState;
 use lichess_state::LichessState;
 use pages::{HistoryPage, SettingsPage};
 use search_input::SearchInput;
 use storage::BoardLooksSettings;
+use theme::ThemeState;
 use window_state::{load_window_bounds, save_window_bounds};
 
 actions!(
@@ -37,6 +43,7 @@ actions!(
         OpenHistory,
         PlayHistoryStepBack,
         PlayHistoryStepForward,
+        FlipBoard,
         SearchUp,
         SearchDown,
         SearchConfirm,
@@ -47,9 +54,19 @@ actions!(
         SearchRight,
         SearchSelectLeft,
         SearchSelectRight,
+        SearchWordLeft,
+        SearchWordRight,
+        SearchSelectWordLeft,
+        SearchSelectWordRight,
         SearchSelectAll,
         SearchHome,
         SearchEnd,
+        SearchDeleteWordBackward,
+        SearchDeleteWordForward,
+        SearchDeleteToStart,
+        SearchDeleteToEnd,
+        SearchUndo,
+        SearchRedo,
         SearchPaste,
         SearchCut,
         SearchCopy,
@@ -61,6 +78,7 @@ actions!(
 fn main() {
     let assets = Assets::new(resolve_assets_root());
     let startup_board_looks = storage::load_board_looks_settings();
+    let startup_appearance_mode = storage::load_app_appearance_mode();
 
     Application::new()
         .with_assets(assets)
@@ -69,6 +87,7 @@ fn main() {
             let startup_bounds =
                 load_window_bounds().unwrap_or(WindowBounds::Windowed(default_bounds));
             let startup_board_looks = startup_board_looks.clone();
+            let startup_appearance_mode = startup_appearance_mode;
 
             cx.bind_keys([
                 KeyBinding::new("cmd-q", Quit, None),
@@ -88,11 +107,30 @@ fn main() {
                 KeyBinding::new("right", SearchRight, Some("SearchInput")),
                 KeyBinding::new("left", PlayHistoryStepBack, Some("PlayMoveHistory")),
                 KeyBinding::new("right", PlayHistoryStepForward, Some("PlayMoveHistory")),
-                KeyBinding::new("left", PlayHistoryStepBack, None),
-                KeyBinding::new("right", PlayHistoryStepForward, None),
+                KeyBinding::new("f", FlipBoard, Some("PlayMoveHistory")),
                 KeyBinding::new("shift-left", SearchSelectLeft, Some("SearchInput")),
                 KeyBinding::new("shift-right", SearchSelectRight, Some("SearchInput")),
+                KeyBinding::new("alt-left", SearchWordLeft, Some("SearchInput")),
+                KeyBinding::new("alt-right", SearchWordRight, Some("SearchInput")),
+                KeyBinding::new("alt-shift-left", SearchSelectWordLeft, Some("SearchInput")),
+                KeyBinding::new(
+                    "alt-shift-right",
+                    SearchSelectWordRight,
+                    Some("SearchInput"),
+                ),
+                KeyBinding::new("cmd-left", SearchHome, Some("SearchInput")),
+                KeyBinding::new("cmd-right", SearchEnd, Some("SearchInput")),
                 KeyBinding::new("cmd-a", SearchSelectAll, Some("SearchInput")),
+                KeyBinding::new(
+                    "alt-backspace",
+                    SearchDeleteWordBackward,
+                    Some("SearchInput"),
+                ),
+                KeyBinding::new("alt-delete", SearchDeleteWordForward, Some("SearchInput")),
+                KeyBinding::new("cmd-backspace", SearchDeleteToStart, Some("SearchInput")),
+                KeyBinding::new("cmd-delete", SearchDeleteToEnd, Some("SearchInput")),
+                KeyBinding::new("cmd-z", SearchUndo, Some("SearchInput")),
+                KeyBinding::new("cmd-shift-z", SearchRedo, Some("SearchInput")),
                 KeyBinding::new("cmd-v", SearchPaste, Some("SearchInput")),
                 KeyBinding::new("cmd-c", SearchCopy, Some("SearchInput")),
                 KeyBinding::new("cmd-x", SearchCut, Some("SearchInput")),
@@ -165,7 +203,9 @@ fn main() {
                         window_background: WindowBackgroundAppearance::Blurred,
                         ..Default::default()
                     },
-                    |_window, cx| {
+                    |window, cx| {
+                        let theme_state = cx
+                            .new(|_| ThemeState::new(startup_appearance_mode, window.appearance()));
                         let board_looks = startup_board_looks.clone();
                         let board_view = cx.new(|_| {
                             let mut board = ChessBoardView::new(VisualBoard::standard());
@@ -189,12 +229,18 @@ fn main() {
                         });
 
                         let search_input = cx.new(SearchInput::new);
+                        search_input.update(cx, |input, cx| {
+                            input.set_theme_state(theme_state.clone(), cx);
+                        });
                         let lichess_state = cx.new(LichessState::new);
+                        let engine_state = cx.new(EngineState::new);
                         let settings_view = cx.new(|cx| {
                             SettingsPage::new(
                                 cx,
                                 board_view.clone(),
                                 lichess_state.clone(),
+                                engine_state.clone(),
+                                theme_state.clone(),
                                 BoardLooksSettings::new(
                                     board_looks.light_square_hex.clone(),
                                     board_looks.dark_square_hex.clone(),
@@ -202,7 +248,9 @@ fn main() {
                                 ),
                             )
                         });
-                        let history_view = cx.new(|cx| HistoryPage::new(cx, lichess_state.clone()));
+                        let history_view = cx.new(|cx| {
+                            HistoryPage::new(cx, lichess_state.clone(), theme_state.clone())
+                        });
                         cx.new(|cx| {
                             KChessApp::new(
                                 cx,
@@ -210,6 +258,8 @@ fn main() {
                                 history_view,
                                 settings_view,
                                 search_input,
+                                engine_state,
+                                theme_state,
                             )
                         })
                     },
@@ -219,14 +269,15 @@ fn main() {
             window
                 .update(cx, |view, window, cx| {
                     window.focus(&view.focus_handle(cx));
+                    cx.observe_window_appearance(window, |view, window, cx| {
+                        view.on_window_appearance_changed(window, cx);
+                    })
+                    .detach();
 
                     window.on_window_should_close(cx, |window, _cx| {
                         let _ = save_window_bounds(window.window_bounds());
                         true
                     });
-
-                    cx.observe_window_bounds(window, KChessApp::save_current_window_bounds)
-                        .detach();
                 })
                 .unwrap();
 

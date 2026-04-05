@@ -1,16 +1,21 @@
 use gpui::{
     Context, IntoElement, MouseButton, MouseDownEvent, Render, Window, deferred, div, prelude::*,
-    px, rgb, rgba, svg,
+    px, svg,
 };
 use time::OffsetDateTime;
 
-use crate::{lichess_state::LichessState, storage::LichessGame};
+use crate::{
+    lichess_state::LichessState,
+    storage::LichessGame,
+    theme::{ThemePalette, ThemeState},
+    ui::primitives::{action_button, compact_chip, dropdown_trigger},
+};
 
 const PAGE_SIZES: [usize; 5] = [10, 20, 30, 40, 50];
 const ICON_CHEVRON_DOWN: &str = "assets/icons/chevron-down.svg";
 const ICON_CHECK: &str = "assets/icons/check.svg";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResultFilter {
     All,
     Win,
@@ -33,7 +38,7 @@ impl ResultFilter {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RatedFilter {
     All,
     Rated,
@@ -54,8 +59,8 @@ impl RatedFilter {
     }
 }
 
-pub struct HistoryPage {
-    lichess_state: gpui::Entity<LichessState>,
+#[derive(Clone, Debug)]
+struct HistoryFiltersState {
     result_filter: ResultFilter,
     rated_filter: RatedFilter,
     account_filters: Vec<String>,
@@ -66,10 +71,9 @@ pub struct HistoryPage {
     current_page: usize,
 }
 
-impl HistoryPage {
-    pub fn new(_cx: &mut Context<Self>, lichess_state: gpui::Entity<LichessState>) -> Self {
+impl Default for HistoryFiltersState {
+    fn default() -> Self {
         Self {
-            lichess_state,
             result_filter: ResultFilter::All,
             rated_filter: RatedFilter::All,
             account_filters: Vec::new(),
@@ -80,51 +84,71 @@ impl HistoryPage {
             current_page: 0,
         }
     }
+}
+
+pub struct HistoryPage {
+    lichess_state: gpui::Entity<LichessState>,
+    theme_state: gpui::Entity<ThemeState>,
+    filters: HistoryFiltersState,
+}
+
+impl HistoryPage {
+    pub fn new(
+        _cx: &mut Context<Self>,
+        lichess_state: gpui::Entity<LichessState>,
+        theme_state: gpui::Entity<ThemeState>,
+    ) -> Self {
+        Self {
+            lichess_state,
+            theme_state,
+            filters: HistoryFiltersState::default(),
+        }
+    }
 
     fn set_result_filter(&mut self, filter: ResultFilter, cx: &mut Context<Self>) {
-        if self.result_filter != filter {
-            self.result_filter = filter;
-            self.current_page = 0;
+        if self.filters.result_filter != filter {
+            self.filters.result_filter = filter;
+            self.filters.current_page = 0;
             cx.notify();
         }
     }
 
     fn set_rated_filter(&mut self, filter: RatedFilter, cx: &mut Context<Self>) {
-        if self.rated_filter != filter {
-            self.rated_filter = filter;
-            self.current_page = 0;
+        if self.filters.rated_filter != filter {
+            self.filters.rated_filter = filter;
+            self.filters.current_page = 0;
             cx.notify();
         }
     }
 
     fn set_page_size(&mut self, page_size: usize, cx: &mut Context<Self>) {
-        if self.page_size != page_size {
-            self.page_size = page_size;
-            self.current_page = 0;
+        if self.filters.page_size != page_size {
+            self.filters.page_size = page_size;
+            self.filters.current_page = 0;
             cx.notify();
         }
     }
 
     fn toggle_account_dropdown(&mut self, cx: &mut Context<Self>) {
-        self.account_dropdown_open = !self.account_dropdown_open;
+        self.filters.account_dropdown_open = !self.filters.account_dropdown_open;
         cx.notify();
     }
 
     fn close_account_dropdown(&mut self, cx: &mut Context<Self>) {
-        if self.account_dropdown_open {
-            self.account_dropdown_open = false;
+        if self.filters.account_dropdown_open {
+            self.filters.account_dropdown_open = false;
             cx.notify();
         }
     }
 
     fn on_root_mouse_down(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.account_dropdown_open {
-            self.ignore_next_outside_account_click = false;
+        if !self.filters.account_dropdown_open {
+            self.filters.ignore_next_outside_account_click = false;
             return;
         }
 
-        if self.ignore_next_outside_account_click {
-            self.ignore_next_outside_account_click = false;
+        if self.filters.ignore_next_outside_account_click {
+            self.filters.ignore_next_outside_account_click = false;
             return;
         }
 
@@ -137,51 +161,53 @@ impl HistoryPage {
         _: &mut Window,
         _: &mut Context<Self>,
     ) {
-        self.ignore_next_outside_account_click = true;
+        self.filters.ignore_next_outside_account_click = true;
     }
 
     fn toggle_all_account_filters(&mut self, account_options: &[String], cx: &mut Context<Self>) {
         let all_selected = !account_options.is_empty()
-            && self.account_filters.len() == account_options.len()
+            && self.filters.account_filters.len() == account_options.len()
             && account_options.iter().all(|username| {
-                self.account_filters
+                self.filters
+                    .account_filters
                     .iter()
                     .any(|selected| selected.eq_ignore_ascii_case(username))
             });
 
         if all_selected {
-            self.account_filters.clear();
+            self.filters.account_filters.clear();
         } else {
-            self.account_filters = account_options.to_vec();
+            self.filters.account_filters = account_options.to_vec();
         }
-        self.current_page = 0;
+        self.filters.current_page = 0;
         cx.notify();
     }
 
     fn toggle_account_filter(&mut self, username: &str, cx: &mut Context<Self>) {
         if let Some(index) = self
+            .filters
             .account_filters
             .iter()
             .position(|selected| selected.eq_ignore_ascii_case(username))
         {
-            self.account_filters.remove(index);
+            self.filters.account_filters.remove(index);
         } else {
-            self.account_filters.push(username.to_string());
+            self.filters.account_filters.push(username.to_string());
         }
-        self.current_page = 0;
+        self.filters.current_page = 0;
         cx.notify();
     }
 
     fn go_to_previous_page(&mut self, cx: &mut Context<Self>) {
-        if self.current_page > 0 {
-            self.current_page -= 1;
+        if self.filters.current_page > 0 {
+            self.filters.current_page -= 1;
             cx.notify();
         }
     }
 
     fn go_to_next_page(&mut self, total_pages: usize, cx: &mut Context<Self>) {
-        if self.current_page + 1 < total_pages {
-            self.current_page += 1;
+        if self.filters.current_page + 1 < total_pages {
+            self.filters.current_page += 1;
             cx.notify();
         }
     }
@@ -198,128 +224,23 @@ fn pill(label: impl IntoElement, bg: gpui::Rgba, fg: gpui::Rgba) -> impl IntoEle
         .child(label)
 }
 
-fn action_button(
-    label: impl IntoElement,
-    disabled: bool,
-    on_click: impl Fn(&mut Window, &mut gpui::App) + 'static,
+fn toolbar_group(
+    title: &'static str,
+    body: impl IntoElement,
+    palette: ThemePalette,
 ) -> impl IntoElement {
-    div()
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(if disabled {
-            rgba(0xcbd5e166)
-        } else {
-            rgba(0x3f7fe544)
-        })
-        .bg(if disabled {
-            rgba(0xf8fafcff)
-        } else {
-            rgba(0xe8f0feff)
-        })
-        .text_sm()
-        .text_color(if disabled {
-            rgb(0x94a3b8)
-        } else {
-            rgb(0x1d4ed8)
-        })
-        .when(!disabled, |this| {
-            this.cursor_pointer()
-                .hover(|this| this.bg(rgba(0xdbeafeff)))
-                .on_mouse_up(MouseButton::Left, move |_, window, app| {
-                    on_click(window, app);
-                })
-        })
-        .child(label)
-}
-
-fn compact_chip(
-    label: impl IntoElement,
-    active: bool,
-    enabled: bool,
-    on_click: impl Fn(&mut Window, &mut gpui::App) + 'static,
-) -> impl IntoElement {
-    div()
-        .px_2()
-        .py_1()
-        .rounded_full()
-        .border_1()
-        .border_color(if active {
-            rgba(0x3f7fe588)
-        } else {
-            rgba(0xcbd5e1ff)
-        })
-        .bg(if active {
-            rgba(0xe8f0feff)
-        } else {
-            rgba(0xffffffff)
-        })
-        .text_xs()
-        .text_color(if enabled {
-            if active { rgb(0x1d4ed8) } else { rgb(0x475569) }
-        } else {
-            rgb(0x94a3b8)
-        })
-        .when(enabled, |this| {
-            this.cursor_pointer()
-                .hover(|this| this.bg(rgba(0xf8fafcff)))
-                .on_mouse_up(MouseButton::Left, move |_, window, app| {
-                    on_click(window, app);
-                })
-        })
-        .when(!enabled, |this| this.opacity(0.45))
-        .child(label)
-}
-
-fn toolbar_group(title: &'static str, body: impl IntoElement) -> impl IntoElement {
     div()
         .flex()
         .items_center()
         .gap_2()
-        .child(div().text_xs().text_color(rgb(0x64748b)).child(title))
+        .child(div().text_xs().text_color(palette.text_muted).child(title))
         .child(body)
-}
-
-fn dropdown_trigger(
-    label: impl IntoElement,
-    on_click: impl Fn(&mut Window, &mut gpui::App) + 'static,
-) -> impl IntoElement {
-    div()
-        .w_full()
-        .h(px(34.0))
-        .rounded_full()
-        .border_1()
-        .border_color(rgba(0xcbd5e1ff))
-        .bg(rgba(0xf8fafcff))
-        .cursor_pointer()
-        .hover(|this| this.bg(rgba(0xf1f5f9ff)))
-        .on_mouse_up(MouseButton::Left, move |_, window, app| {
-            on_click(window, app);
-        })
-        .child(
-            div()
-                .h_full()
-                .w_full()
-                .px_3()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .child(div().text_sm().text_color(rgb(0x334155)).child(label))
-                .child(
-                    svg()
-                        .path(ICON_CHEVRON_DOWN)
-                        .w(px(12.0))
-                        .h(px(12.0))
-                        .text_color(rgb(0x64748b)),
-                ),
-        )
 }
 
 fn checkbox_menu_item(
     label: impl IntoElement,
     checked: bool,
+    palette: ThemePalette,
     on_click: impl Fn(&mut Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     div()
@@ -331,7 +252,7 @@ fn checkbox_menu_item(
         .py_1()
         .rounded_md()
         .cursor_pointer()
-        .hover(|this| this.bg(rgba(0xf1f5f9ff)))
+        .hover(|this| this.bg(palette.surface_hover))
         .on_mouse_up(MouseButton::Left, move |_, window, app| {
             on_click(window, app);
         })
@@ -342,14 +263,14 @@ fn checkbox_menu_item(
                 .rounded_sm()
                 .border_1()
                 .border_color(if checked {
-                    rgba(0x3f7fe5ff)
+                    palette.accent
                 } else {
-                    rgba(0xcbd5e1ff)
+                    palette.input_border
                 })
                 .bg(if checked {
-                    rgba(0xe8f0feff)
+                    palette.accent_bg
                 } else {
-                    rgba(0xffffffff)
+                    palette.input_bg
                 })
                 .flex()
                 .items_center()
@@ -360,11 +281,16 @@ fn checkbox_menu_item(
                             .path(ICON_CHECK)
                             .w(px(10.0))
                             .h(px(10.0))
-                            .text_color(rgb(0x1d4ed8)),
+                            .text_color(palette.accent_text),
                     )
                 }),
         )
-        .child(div().text_sm().text_color(rgb(0x334155)).child(label))
+        .child(
+            div()
+                .text_sm()
+                .text_color(palette.text_secondary)
+                .child(label),
+        )
 }
 
 fn game_result(game: &LichessGame) -> ResultFilter {
@@ -376,11 +302,17 @@ fn game_result(game: &LichessGame) -> ResultFilter {
     }
 }
 
-fn result_badge(game: &LichessGame) -> impl IntoElement {
+fn result_badge(game: &LichessGame, palette: ThemePalette) -> impl IntoElement {
     let (label, bg, fg) = match game_result(game) {
-        ResultFilter::Win => ("Win", rgba(0xdcfce7ff), rgb(0x166534)),
-        ResultFilter::Loss => ("Loss", rgba(0xfee2e2ff), rgb(0xb91c1c)),
-        ResultFilter::Draw | ResultFilter::All => ("Draw", rgba(0xe2e8f0ff), rgb(0x475569)),
+        ResultFilter::Win => (
+            "Win",
+            palette.status_success_bg,
+            palette.status_success_text,
+        ),
+        ResultFilter::Loss => ("Loss", palette.status_error_bg, palette.status_error_text),
+        ResultFilter::Draw | ResultFilter::All => {
+            ("Draw", palette.surface_alt, palette.text_secondary)
+        }
     };
 
     pill(label, bg, fg)
@@ -416,11 +348,11 @@ fn opening_text(game: &LichessGame) -> String {
         .unwrap_or_else(|| "Opening unavailable".to_string())
 }
 
-fn history_row(game: &LichessGame) -> impl IntoElement {
+fn history_row(game: &LichessGame, palette: ThemePalette) -> impl IntoElement {
     let row_bg = if game.color == "white" {
-        rgba(0xf8fafcff)
+        palette.surface_alt
     } else {
-        rgba(0xf1f5f9ff)
+        palette.surface_hover
     };
 
     div()
@@ -430,7 +362,7 @@ fn history_row(game: &LichessGame) -> impl IntoElement {
         .rounded_lg()
         .bg(row_bg)
         .border_1()
-        .border_color(rgba(0xe2e8f0ff))
+        .border_color(palette.border_muted)
         .flex()
         .flex_col()
         .gap_2()
@@ -445,11 +377,16 @@ fn history_row(game: &LichessGame) -> impl IntoElement {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(result_badge(game))
-                        .child(div().text_sm().text_color(rgb(0x0f172a)).child(format!(
-                            "@{} vs {}",
-                            game.account_username, game.opponent_name
-                        ))),
+                        .child(result_badge(game, palette))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(palette.text_primary)
+                                .child(format!(
+                                    "@{} vs {}",
+                                    game.account_username, game.opponent_name
+                                )),
+                        ),
                 )
                 .child(
                     div()
@@ -462,20 +399,20 @@ fn history_row(game: &LichessGame) -> impl IntoElement {
                                 game.speed,
                                 if game.rated { "rated" } else { "casual" }
                             ),
-                            rgba(0xe0f2feff),
-                            rgb(0x075985),
+                            palette.status_info_bg,
+                            palette.status_info_text,
                         ))
                         .child(pill(
                             rating_diff_text(game),
-                            rgba(0xf8fafcff),
-                            rgb(0x475569),
+                            palette.surface_alt,
+                            palette.text_secondary,
                         )),
                 ),
         )
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0x475569))
+                .text_color(palette.text_secondary)
                 .child(opening_text(game)),
         )
         .child(
@@ -484,23 +421,37 @@ fn history_row(game: &LichessGame) -> impl IntoElement {
                 .items_center()
                 .justify_between()
                 .gap_3()
-                .child(div().text_xs().text_color(rgb(0x64748b)).child(format!(
-                    "{} | {} | {}",
-                    game.variant,
-                    game.status,
-                    played_at_text(game.played_at)
-                )))
-                .child(div().text_xs().text_color(rgb(0x64748b)).child(format!(
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(palette.text_muted)
+                        .child(format!(
+                            "{} | {} | {}",
+                            game.variant,
+                            game.status,
+                            played_at_text(game.played_at)
+                        )),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(palette.text_muted)
+                        .child(format!(
                             "{} {}",
-                            if game.color == "white" { "White" } else { "Black" },
+                            if game.color == "white" {
+                                "White"
+                            } else {
+                                "Black"
+                            },
                             game.player_rating
                                 .map(|rating| rating.to_string())
                                 .unwrap_or_else(|| "rating ?".to_string())
-                        ))),
+                        )),
+                ),
         )
 }
 
-fn empty_state(message: &'static str) -> impl IntoElement {
+fn empty_state(message: &'static str, palette: ThemePalette) -> impl IntoElement {
     div()
         .h_full()
         .w_full()
@@ -511,12 +462,13 @@ fn empty_state(message: &'static str) -> impl IntoElement {
         .px_6()
         .text_sm()
         .text_center()
-        .text_color(rgb(0x64748b))
+        .text_color(palette.text_muted)
         .child(message)
 }
 
 impl Render for HistoryPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = self.theme_state.read(cx).palette();
         let (accounts, games, syncing, status_message, error_message) = {
             let state = self.lichess_state.read(cx);
             (
@@ -533,60 +485,62 @@ impl Render for HistoryPage {
             .map(|account| account.username.clone())
             .collect::<Vec<_>>();
 
-        if !self.account_filters_initialized && !account_options.is_empty() {
-            self.account_filters = account_options.clone();
-            self.account_filters_initialized = true;
+        if !self.filters.account_filters_initialized && !account_options.is_empty() {
+            self.filters.account_filters = account_options.clone();
+            self.filters.account_filters_initialized = true;
         }
 
-        self.account_filters.retain(|selected| {
+        self.filters.account_filters.retain(|selected| {
             account_options
                 .iter()
                 .any(|option| option.eq_ignore_ascii_case(selected))
         });
         let all_accounts_selected = !account_options.is_empty()
-            && self.account_filters.len() == account_options.len()
+            && self.filters.account_filters.len() == account_options.len()
             && account_options.iter().all(|username| {
-                self.account_filters
+                self.filters
+                    .account_filters
                     .iter()
                     .any(|selected| selected.eq_ignore_ascii_case(username))
             });
 
         let selected_account_label =
-            if account_options.is_empty() || self.account_filters.is_empty() {
+            if account_options.is_empty() || self.filters.account_filters.is_empty() {
                 "No accounts".to_string()
             } else if all_accounts_selected {
                 "All accounts".to_string()
-            } else if self.account_filters.len() == 1 {
-                format!("@{}", self.account_filters[0])
+            } else if self.filters.account_filters.len() == 1 {
+                format!("@{}", self.filters.account_filters[0])
             } else {
-                format!("{} selected", self.account_filters.len())
+                format!("{} selected", self.filters.account_filters.len())
             };
 
         let filtered_games = games
             .iter()
-            .filter(|game| match self.result_filter {
+            .filter(|game| match self.filters.result_filter {
                 ResultFilter::All => true,
                 filter => game_result(game) == filter,
             })
-            .filter(|game| match self.rated_filter {
+            .filter(|game| match self.filters.rated_filter {
                 RatedFilter::All => true,
                 RatedFilter::Rated => game.rated,
                 RatedFilter::Casual => !game.rated,
             })
             .filter(|game| {
-                self.account_filters
+                self.filters
+                    .account_filters
                     .iter()
                     .any(|selected| game.account_username.eq_ignore_ascii_case(selected))
             })
             .collect::<Vec<_>>();
 
         let total_filtered = filtered_games.len();
-        let total_pages = total_filtered.max(1).div_ceil(self.page_size);
-        if self.current_page >= total_pages {
-            self.current_page = total_pages.saturating_sub(1);
+        let total_pages = total_filtered.max(1).div_ceil(self.filters.page_size);
+        if self.filters.current_page >= total_pages {
+            self.filters.current_page = total_pages.saturating_sub(1);
         }
-        let start_index = self.current_page * self.page_size;
-        let end_index = (start_index + self.page_size).min(total_filtered);
+        let start_index = self.filters.current_page * self.filters.page_size;
+        let end_index = (start_index + self.filters.page_size).min(total_filtered);
         let visible_games = if start_index < end_index {
             filtered_games[start_index..end_index].to_vec()
         } else {
@@ -611,8 +565,8 @@ impl Render for HistoryPage {
                     div()
                         .rounded_xl()
                         .border_1()
-                        .border_color(rgba(0xdbe1e8ff))
-                        .bg(rgba(0xffffffed))
+                        .border_color(palette.border)
+                        .bg(palette.surface)
                         .px_4()
                         .py_3()
                         .flex()
@@ -624,22 +578,22 @@ impl Render for HistoryPage {
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .child(div().text_lg().text_color(rgb(0x0f172a)).child("Game History"))
+                                .child(div().text_lg().text_color(palette.text_primary).child("Game History"))
                                 .child(pill(
                                     format!("{} account(s)", accounts.len()),
-                                    rgba(0xe0e7ffff),
-                                    rgb(0x3730a3),
+                                    palette.accent_bg,
+                                    palette.accent_text,
                                 ))
                                 .child(pill(
                                     format!("{} filtered", total_filtered),
-                                    rgba(0xfef3c7ff),
-                                    rgb(0x92400e),
+                                    palette.surface_alt,
+                                    palette.text_secondary,
                                 ))
                                 .when(syncing, |this| {
-                                    this.child(pill("Syncing", rgba(0xdbeafeff), rgb(0x1d4ed8)))
+                                    this.child(pill("Syncing", palette.accent_bg, palette.accent_text))
                                 }),
                         )
-                        .child(action_button("Sync now", syncing, move |_, app| {
+                        .child(action_button("Sync now", syncing, palette, move |_, app| {
                             history_view.update(app, |view, cx| {
                                 view.lichess_state.update(cx, |state, cx| state.sync_all(cx));
                             });
@@ -650,7 +604,7 @@ impl Render for HistoryPage {
                         div()
                             .px_1()
                             .text_sm()
-                            .text_color(rgb(0x0369a1))
+                            .text_color(palette.status_info_text)
                             .child(status_message.unwrap_or_default()),
                     )
                 })
@@ -659,7 +613,7 @@ impl Render for HistoryPage {
                         div()
                             .px_1()
                             .text_sm()
-                            .text_color(rgb(0xb91c1c))
+                            .text_color(palette.status_error_text)
                             .child(error_message.unwrap_or_default()),
                     )
                 })
@@ -669,8 +623,8 @@ impl Render for HistoryPage {
                         .min_h(px(0.0))
                         .rounded_xl()
                         .border_1()
-                        .border_color(rgba(0xdbe1e8ff))
-                        .bg(rgba(0xffffffed))
+                        .border_color(palette.border)
+                        .bg(palette.surface)
                         .flex()
                         .flex_col()
                         .child(
@@ -679,7 +633,7 @@ impl Render for HistoryPage {
                                 .px_4()
                                 .py_2()
                                 .border_b_1()
-                                .border_color(rgba(0xe2e8f088))
+                                .border_color(palette.border_muted)
                                 .flex()
                                 .items_center()
                                 .justify_between()
@@ -687,14 +641,14 @@ impl Render for HistoryPage {
                                 .child(
                                     div()
                                         .text_sm()
-                                        .text_color(rgb(0x334155))
+                                        .text_color(palette.text_secondary)
                                         .child("Recent games"),
                                 )
                                 .child(
                                     div().flex().items_center().gap_3().child(
                                         div()
                                             .text_xs()
-                                            .text_color(rgb(0x64748b))
+                                            .text_color(palette.text_muted)
                                             .child(if total_filtered == 0 {
                                                 "Showing 0".to_string()
                                             } else {
@@ -716,8 +670,9 @@ impl Render for HistoryPage {
                                                 let view = cx.entity();
                                                 compact_chip(
                                                     format!("{page_size}"),
-                                                    self.page_size == page_size,
+                                                    self.filters.page_size == page_size,
                                                     true,
+                                                    palette,
                                                     move |_, app| {
                                                         view.update(app, |view, cx| {
                                                             view.set_page_size(page_size, cx);
@@ -725,6 +680,7 @@ impl Render for HistoryPage {
                                                     },
                                                 )
                                             })),
+                                        palette,
                                     ))
                                     .child(toolbar_group(
                                         "Page",
@@ -737,7 +693,8 @@ impl Render for HistoryPage {
                                                 compact_chip(
                                                     "Prev",
                                                     false,
-                                                    self.current_page > 0,
+                                                    self.filters.current_page > 0,
+                                                    palette,
                                                     move |_, app| {
                                                         view.update(app, |view, cx| {
                                                             view.go_to_previous_page(cx);
@@ -749,10 +706,10 @@ impl Render for HistoryPage {
                                                 div()
                                                     .px_1()
                                                     .text_xs()
-                                                    .text_color(rgb(0x64748b))
+                                                    .text_color(palette.text_muted)
                                                     .child(format!(
                                                         "{} / {}",
-                                                        self.current_page + 1,
+                                                        self.filters.current_page + 1,
                                                         total_pages
                                                     )),
                                             )
@@ -761,7 +718,8 @@ impl Render for HistoryPage {
                                                 compact_chip(
                                                     "Next",
                                                     false,
-                                                    self.current_page + 1 < total_pages,
+                                                    self.filters.current_page + 1 < total_pages,
+                                                    palette,
                                                     move |_, app| {
                                                         view.update(app, |view, cx| {
                                                             view.go_to_next_page(total_pages, cx);
@@ -769,6 +727,7 @@ impl Render for HistoryPage {
                                                     },
                                                 )
                                             }),
+                                        palette,
                                     )),
                                 ),
                         )
@@ -778,7 +737,7 @@ impl Render for HistoryPage {
                                 .px_4()
                                 .py_2()
                                 .border_b_1()
-                                .border_color(rgba(0xe2e8f088))
+                                .border_color(palette.border_muted)
                                 .flex()
                                 .items_center()
                                 .gap_4()
@@ -792,8 +751,9 @@ impl Render for HistoryPage {
                                             let view = cx.entity();
                                             compact_chip(
                                                 filter.label(),
-                                                self.result_filter == filter,
+                                                self.filters.result_filter == filter,
                                                 true,
+                                                palette,
                                                 move |_, app| {
                                                     view.update(app, |view, cx| {
                                                         view.set_result_filter(filter, cx);
@@ -801,6 +761,7 @@ impl Render for HistoryPage {
                                                 },
                                             )
                                         })),
+                                    palette,
                                 ))
                                 .child(toolbar_group(
                                     "Type",
@@ -812,8 +773,9 @@ impl Render for HistoryPage {
                                             let view = cx.entity();
                                             compact_chip(
                                                 filter.label(),
-                                                self.rated_filter == filter,
+                                                self.filters.rated_filter == filter,
                                                 true,
+                                                palette,
                                                 move |_, app| {
                                                     view.update(app, |view, cx| {
                                                         view.set_rated_filter(filter, cx);
@@ -821,6 +783,7 @@ impl Render for HistoryPage {
                                                 },
                                             )
                                         })),
+                                    palette,
                                 ))
                                 .child(toolbar_group(
                                     "Account",
@@ -832,13 +795,22 @@ impl Render for HistoryPage {
                                         )
                                         .child({
                                             let view = cx.entity();
-                                            dropdown_trigger(selected_account_label, move |_, app| {
-                                                view.update(app, |view, cx| {
-                                                    view.toggle_account_dropdown(cx);
-                                                });
-                                            })
+                                            dropdown_trigger(
+                                                selected_account_label.clone(),
+                                                palette,
+                                                svg()
+                                                    .path(ICON_CHEVRON_DOWN)
+                                                    .w(px(12.0))
+                                                    .h(px(12.0))
+                                                    .text_color(palette.text_muted),
+                                                move |_, app| {
+                                                    view.update(app, |view, cx| {
+                                                        view.toggle_account_dropdown(cx);
+                                                    });
+                                                },
+                                            )
                                         })
-                                        .when(self.account_dropdown_open, |this| {
+                                        .when(self.filters.account_dropdown_open, |this| {
                                             this.child(
                                                 deferred(
                                                     div()
@@ -857,8 +829,8 @@ impl Render for HistoryPage {
                                                         .scrollbar_width(px(8.0))
                                                         .rounded_lg()
                                                         .border_1()
-                                                        .border_color(rgba(0xdbe1e8ff))
-                                                        .bg(rgba(0xffffffff))
+                                                        .border_color(palette.border)
+                                                        .bg(palette.overlay_bg)
                                                         .shadow_lg()
                                                         .p_2()
                                                         .flex()
@@ -870,7 +842,7 @@ impl Render for HistoryPage {
                                                                     .px_2()
                                                                     .py_2()
                                                                     .text_sm()
-                                                                    .text_color(rgb(0x94a3b8))
+                                                                    .text_color(palette.text_muted)
                                                                     .child("No accounts"),
                                                             )
                                                         })
@@ -882,6 +854,7 @@ impl Render for HistoryPage {
                                                                 checkbox_menu_item(
                                                                     "All accounts",
                                                                     all_accounts_selected,
+                                                                    palette,
                                                                     move |_, app| {
                                                                         view.update(
                                                                             app,
@@ -898,12 +871,13 @@ impl Render for HistoryPage {
                                                             .child(
                                                                 div()
                                                                     .h(px(1.0))
-                                                                    .bg(rgba(0xe2e8f0ff))
+                                                                    .bg(palette.border_muted)
                                                                     .my_1(),
                                                             )
                                                             .children(account_options.iter().map(
                                                                 |username| {
                                                                     let checked = self
+                                                                        .filters
                                                                         .account_filters
                                                                         .iter()
                                                                         .any(|selected| {
@@ -914,6 +888,7 @@ impl Render for HistoryPage {
                                                                     checkbox_menu_item(
                                                                         format!("@{username}"),
                                                                         checked,
+                                                                        palette,
                                                                         move |_, app| {
                                                                             view.update(
                                                                                 app,
@@ -933,6 +908,7 @@ impl Render for HistoryPage {
                                                 .with_priority(10_000),
                                             )
                                         }),
+                                    palette,
                                 )),
                         )
                         .child(
@@ -950,14 +926,16 @@ impl Render for HistoryPage {
                                 .when(accounts.is_empty(), |this| {
                                     this.child(empty_state(
                                         "No linked Lichess accounts yet. Add or connect one in Settings to build local history.",
+                                        palette,
                                     ))
                                 })
                                 .when(!accounts.is_empty() && total_filtered == 0, |this| {
                                     this.child(empty_state(
                                         "No games match the current filters. Adjust the filters or sync more games.",
+                                        palette,
                                     ))
                                 })
-                                .children(visible_games.into_iter().map(history_row)),
+                                .children(visible_games.into_iter().map(|game| history_row(game, palette))),
                         ),
                 ),
             )

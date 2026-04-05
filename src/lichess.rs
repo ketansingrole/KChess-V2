@@ -14,6 +14,7 @@ pub struct SyncSummary {
     pub checked_accounts: usize,
     pub updated_accounts: usize,
     pub new_games: usize,
+    pub failed_accounts: usize,
 }
 
 #[derive(Debug)]
@@ -57,17 +58,32 @@ impl From<serde_json::Error> for SyncError {
 
 pub fn sync_accounts(accounts: &[LichessAccount]) -> Result<SyncSummary, SyncError> {
     let client = Client::builder().timeout(Duration::from_secs(20)).build()?;
+    Ok(sync_accounts_with(accounts, |account| {
+        sync_account(&client, account)
+    }))
+}
 
+fn sync_accounts_with<F>(accounts: &[LichessAccount], mut sync_fn: F) -> SyncSummary
+where
+    F: FnMut(&LichessAccount) -> Result<AccountSyncResult, SyncError>,
+{
     let mut summary = SyncSummary::default();
 
     for account in accounts {
-        let result = sync_account(&client, account)?;
         summary.checked_accounts += 1;
-        summary.updated_accounts += usize::from(result.updated);
-        summary.new_games += result.new_games;
+        let result = sync_fn(account);
+        match result {
+            Ok(result) => {
+                summary.updated_accounts += usize::from(result.updated);
+                summary.new_games += result.new_games;
+            }
+            Err(_err) => {
+                summary.failed_accounts += 1;
+            }
+        }
     }
 
-    Ok(summary)
+    summary
 }
 
 struct AccountSyncResult {
@@ -310,6 +326,18 @@ impl ApiPlayer {
 mod tests {
     use super::*;
 
+    fn test_account(username: &str) -> LichessAccount {
+        LichessAccount {
+            username: username.to_string(),
+            added_at: 0,
+            connected_at: None,
+            auth_kind: "tracked".to_string(),
+            last_synced_at: None,
+            latest_game_id: None,
+            latest_game_at: None,
+        }
+    }
+
     #[test]
     fn parses_ndjson_games_for_account() {
         let body = r#"{"id":"abc123","createdAt":1710000000000,"rated":true,"speed":"blitz","perf":"blitz","variant":"standard","status":"mate","winner":"white","players":{"white":{"user":{"name":"TestUser"},"rating":1810,"ratingDiff":8},"black":{"user":{"name":"Other"},"rating":1790,"ratingDiff":-8}},"opening":{"name":"Italian Game"},"moves":"e4 e5 Nf3 Nc6"}"#;
@@ -320,5 +348,37 @@ mod tests {
         assert_eq!(games[0].color, "white");
         assert_eq!(games[0].opponent_name, "Other");
         assert_eq!(games[0].rating_diff, Some(8));
+    }
+
+    #[test]
+    fn sync_accounts_continues_after_account_error() {
+        let accounts = vec![
+            test_account("Alpha"),
+            test_account("Beta"),
+            test_account("Gamma"),
+        ];
+
+        let summary = sync_accounts_with(&accounts, |account| match account.username.as_str() {
+            "Alpha" => Err(SyncError::InvalidResponse("boom".to_string())),
+            "Beta" => Ok(AccountSyncResult {
+                updated: true,
+                new_games: 2,
+            }),
+            "Gamma" => Ok(AccountSyncResult {
+                updated: false,
+                new_games: 0,
+            }),
+            _ => unreachable!("unexpected test account"),
+        });
+
+        assert_eq!(
+            summary,
+            SyncSummary {
+                checked_accounts: 3,
+                updated_accounts: 1,
+                new_games: 2,
+                failed_accounts: 1,
+            }
+        );
     }
 }

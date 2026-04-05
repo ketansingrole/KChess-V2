@@ -317,15 +317,29 @@ fn sync_summary_message(summary: &SyncSummary) -> String {
         return "Add a Lichess account to start syncing games.".to_string();
     }
 
-    if summary.new_games == 0 {
+    if summary.new_games == 0 && summary.failed_accounts == 0 {
         return format!(
             "Checked {} account(s). No new games found.",
             summary.checked_accounts
         );
     }
 
+    if summary.failed_accounts == 0 {
+        return format!(
+            "Checked {} account(s). Added {} new game(s).",
+            summary.checked_accounts, summary.new_games
+        );
+    }
+
+    if summary.new_games == 0 {
+        return format!(
+            "Checked {} account(s). No new games found. {} account(s) failed to sync.",
+            summary.checked_accounts, summary.failed_accounts
+        );
+    }
+
     format!(
-        "Checked {} account(s). Added {} new game(s).",
-        summary.checked_accounts, summary.new_games
+        "Checked {} account(s). Added {} new game(s). {} account(s) failed to sync.",
+        summary.checked_accounts, summary.new_games, summary.failed_accounts
     )
 }

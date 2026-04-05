@@ -77,6 +77,13 @@ pub enum Side {
     Black,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameState {
+    Ongoing,
+    Checkmate { winner: Side },
+    Stalemate,
+}
+
 impl Side {
     pub const fn opposite(self) -> Self {
         match self {
@@ -420,6 +427,24 @@ struct PreparedMove {
     san: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ValidatedMoveParts {
+    request: MoveRequest,
+    moved_piece_before: Piece,
+    moved_piece_after: Piece,
+    captured_piece: Option<Piece>,
+    captured_square: Option<Square>,
+    rook_move: Option<RookMove>,
+    castle_side: Option<CastleSide>,
+    new_en_passant_target: Option<Square>,
+}
+
+#[derive(Clone, Debug)]
+struct MoveApplication {
+    id: MoveId,
+    applied_move: AppliedMove,
+}
+
 #[derive(Clone, Debug)]
 pub struct VisualBoard {
     squares: [Option<Piece>; BOARD_SQUARES],
@@ -548,6 +573,21 @@ impl VisualBoard {
         self.side_to_move
     }
 
+    pub fn current_game_state(&self) -> GameState {
+        let side = self.side_to_move;
+        if self.has_any_legal_move(side) {
+            return GameState::Ongoing;
+        }
+
+        if self.is_in_check(side) {
+            GameState::Checkmate {
+                winner: side.opposite(),
+            }
+        } else {
+            GameState::Stalemate
+        }
+    }
+
     pub fn displayed_ply(&self) -> usize {
         self.view_ply
     }
@@ -620,33 +660,7 @@ impl VisualBoard {
             .checked_sub(1)
             .and_then(|index| self.history.get(index))
             .map(|entry| entry.id);
-        let mut rows = Vec::with_capacity((self.history.len() + 1) / 2);
-
-        for (index, applied) in self.history.iter().enumerate() {
-            let row_index = index / 2;
-            if rows.len() <= row_index {
-                rows.push(MoveHistoryRow {
-                    move_number: row_index + 1,
-                    white: None,
-                    black: None,
-                });
-            }
-
-            let cell = MoveHistoryCell {
-                id: applied.id,
-                notation: applied.san.clone(),
-                is_latest: latest_id == Some(applied.id),
-                is_current: current_id == Some(applied.id),
-            };
-
-            if applied.side == Side::White {
-                rows[row_index].white = Some(cell);
-            } else {
-                rows[row_index].black = Some(cell);
-            }
-        }
-
-        rows
+        build_move_history_rows(&self.history, latest_id, current_id)
     }
 
     pub fn pending_move_id(&self) -> Option<MoveId> {
@@ -673,9 +687,9 @@ impl VisualBoard {
         }
 
         let prepared = self.prepare_move(request)?;
-        let applied = self.apply_prepared_move(prepared, now, None);
-        let id = applied.id;
-        self.history.push(applied);
+        let application = self.apply_prepared_move(prepared, now, None);
+        let id = application.id;
+        self.history.push(application.applied_move);
         self.view_ply = self.history.len();
         Ok(id)
     }
@@ -691,9 +705,9 @@ impl VisualBoard {
         }
 
         let prepared = self.prepare_move(request)?;
-        let applied = self.apply_prepared_move(prepared, now, Some(from_xy));
-        let id = applied.id;
-        self.history.push(applied);
+        let application = self.apply_prepared_move(prepared, now, Some(from_xy));
+        let id = application.id;
+        self.history.push(application.applied_move);
         self.view_ply = self.history.len();
         Ok(id)
     }
@@ -708,9 +722,9 @@ impl VisualBoard {
         }
 
         let prepared = self.prepare_move(request)?;
-        let applied = self.apply_prepared_move(prepared, now, None);
-        let id = applied.id;
-        self.pending = Some(applied);
+        let application = self.apply_prepared_move(prepared, now, None);
+        let id = application.id;
+        self.pending = Some(application.applied_move);
         self.view_ply = self.history.len();
         Ok(id)
     }
@@ -726,9 +740,9 @@ impl VisualBoard {
         }
 
         let prepared = self.prepare_move(request)?;
-        let applied = self.apply_prepared_move(prepared, now, Some(from_xy));
-        let id = applied.id;
-        self.pending = Some(applied);
+        let application = self.apply_prepared_move(prepared, now, Some(from_xy));
+        let id = application.id;
+        self.pending = Some(application.applied_move);
         self.view_ply = self.history.len();
         Ok(id)
     }
@@ -867,7 +881,7 @@ impl VisualBoard {
         prepared: PreparedMove,
         now: Instant,
         from_override_xy: Option<(f32, f32)>,
-    ) -> AppliedMove {
+    ) -> MoveApplication {
         let id = MoveId(self.next_move_id);
         self.next_move_id += 1;
 
@@ -886,19 +900,22 @@ impl VisualBoard {
             easing: self.animation_easing,
         });
 
-        AppliedMove {
+        MoveApplication {
             id,
-            request: prepared.validated.request,
-            moved_piece_before: prepared.validated.moved_piece_before,
-            moved_piece_after: prepared.validated.moved_piece_after,
-            captured_piece: prepared.validated.captured_piece,
-            side: prepared.validated.side,
-            san: prepared.san,
-            captured_square: prepared.validated.captured_square,
-            rook_move: prepared.validated.rook_move,
-            previous_en_passant_target: prepared.validated.previous_en_passant_target,
-            previous_castling_rights: prepared.validated.previous_castling_rights,
-            previous_side_to_move: prepared.validated.previous_side_to_move,
+            applied_move: AppliedMove {
+                id,
+                request: prepared.validated.request,
+                moved_piece_before: prepared.validated.moved_piece_before,
+                moved_piece_after: prepared.validated.moved_piece_after,
+                captured_piece: prepared.validated.captured_piece,
+                side: prepared.validated.side,
+                san: prepared.san,
+                captured_square: prepared.validated.captured_square,
+                rook_move: prepared.validated.rook_move,
+                previous_en_passant_target: prepared.validated.previous_en_passant_target,
+                previous_castling_rights: prepared.validated.previous_castling_rights,
+                previous_side_to_move: prepared.validated.previous_side_to_move,
+            },
         }
     }
 
@@ -1103,16 +1120,16 @@ impl VisualBoard {
             kind: request.promotion.unwrap_or(PieceKind::Pawn),
         };
 
-        Ok(self.finish_validated_move(
+        Ok(self.finish_validated_move(ValidatedMoveParts {
             request,
-            moving_piece,
+            moved_piece_before: moving_piece,
             moved_piece_after,
             captured_piece,
             captured_square,
-            None,
-            None,
+            rook_move: None,
+            castle_side: None,
             new_en_passant_target,
-        ))
+        }))
     }
 
     fn validate_knight_move(
@@ -1129,16 +1146,16 @@ impl VisualBoard {
             });
         }
 
-        Ok(self.finish_validated_move(
+        Ok(self.finish_validated_move(ValidatedMoveParts {
             request,
-            moving_piece,
-            moving_piece,
-            self.piece_at(request.to),
-            self.piece_at(request.to).map(|_| request.to),
-            None,
-            None,
-            None,
-        ))
+            moved_piece_before: moving_piece,
+            moved_piece_after: moving_piece,
+            captured_piece: self.piece_at(request.to),
+            captured_square: self.piece_at(request.to).map(|_| request.to),
+            rook_move: None,
+            castle_side: None,
+            new_en_passant_target: None,
+        }))
     }
 
     fn validate_sliding_move(
@@ -1182,16 +1199,16 @@ impl VisualBoard {
             });
         }
 
-        Ok(self.finish_validated_move(
+        Ok(self.finish_validated_move(ValidatedMoveParts {
             request,
-            moving_piece,
-            moving_piece,
-            self.piece_at(request.to),
-            self.piece_at(request.to).map(|_| request.to),
-            None,
-            None,
-            None,
-        ))
+            moved_piece_before: moving_piece,
+            moved_piece_after: moving_piece,
+            captured_piece: self.piece_at(request.to),
+            captured_square: self.piece_at(request.to).map(|_| request.to),
+            rook_move: None,
+            castle_side: None,
+            new_en_passant_target: None,
+        }))
     }
 
     fn validate_king_move(
@@ -1203,16 +1220,16 @@ impl VisualBoard {
         let rank_delta = request.to.rank() as i8 - request.from.rank() as i8;
 
         if file_delta.abs() <= 1 && rank_delta.abs() <= 1 {
-            return Ok(self.finish_validated_move(
+            return Ok(self.finish_validated_move(ValidatedMoveParts {
                 request,
-                moving_piece,
-                moving_piece,
-                self.piece_at(request.to),
-                self.piece_at(request.to).map(|_| request.to),
-                None,
-                None,
-                None,
-            ));
+                moved_piece_before: moving_piece,
+                moved_piece_after: moving_piece,
+                captured_piece: self.piece_at(request.to),
+                captured_square: self.piece_at(request.to).map(|_| request.to),
+                rook_move: None,
+                castle_side: None,
+                new_en_passant_target: None,
+            }));
         }
 
         if rank_delta != 0 || file_delta.abs() != 2 {
@@ -1301,33 +1318,34 @@ impl VisualBoard {
             });
         }
 
-        Ok(self.finish_validated_move(
+        Ok(self.finish_validated_move(ValidatedMoveParts {
             request,
-            moving_piece,
-            moving_piece,
-            None,
-            None,
-            Some(RookMove {
+            moved_piece_before: moving_piece,
+            moved_piece_after: moving_piece,
+            captured_piece: None,
+            captured_square: None,
+            rook_move: Some(RookMove {
                 from: rook_from,
                 to: rook_to,
                 piece: rook,
             }),
-            Some(castle_side),
-            None,
-        ))
+            castle_side: Some(castle_side),
+            new_en_passant_target: None,
+        }))
     }
 
-    fn finish_validated_move(
-        &self,
-        request: MoveRequest,
-        moved_piece_before: Piece,
-        moved_piece_after: Piece,
-        captured_piece: Option<Piece>,
-        captured_square: Option<Square>,
-        rook_move: Option<RookMove>,
-        castle_side: Option<CastleSide>,
-        new_en_passant_target: Option<Square>,
-    ) -> ValidatedMove {
+    fn finish_validated_move(&self, parts: ValidatedMoveParts) -> ValidatedMove {
+        let ValidatedMoveParts {
+            request,
+            moved_piece_before,
+            moved_piece_after,
+            captured_piece,
+            captured_square,
+            rook_move,
+            castle_side,
+            new_en_passant_target,
+        } = parts;
+
         let previous_castling_rights = self.castling_rights;
         let mut new_castling_rights = previous_castling_rights;
         update_castling_rights_for_move(
@@ -1642,6 +1660,40 @@ impl VisualBoard {
             view_ply: self.view_ply,
         }
     }
+}
+
+fn build_move_history_rows(
+    history: &[AppliedMove],
+    latest_id: Option<MoveId>,
+    current_id: Option<MoveId>,
+) -> Vec<MoveHistoryRow> {
+    let mut rows = Vec::with_capacity(history.len().div_ceil(2));
+
+    for (index, applied) in history.iter().enumerate() {
+        let row_index = index / 2;
+        if rows.len() <= row_index {
+            rows.push(MoveHistoryRow {
+                move_number: row_index + 1,
+                white: None,
+                black: None,
+            });
+        }
+
+        let cell = MoveHistoryCell {
+            id: applied.id,
+            notation: applied.san.clone(),
+            is_latest: latest_id == Some(applied.id),
+            is_current: current_id == Some(applied.id),
+        };
+
+        if applied.side == Side::White {
+            rows[row_index].white = Some(cell);
+        } else {
+            rows[row_index].black = Some(cell);
+        }
+    }
+
+    rows
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2299,6 +2351,64 @@ mod tests {
 
         assert_eq!(board.history()[0].san, "e8=Q+");
         assert_eq!(board.piece_at(square("e8")).unwrap().kind, PieceKind::Queen);
+    }
+
+    #[test]
+    fn current_game_state_detects_checkmate_and_stalemate() {
+        let mut checkmate_board = VisualBoard::empty();
+        checkmate_board.set_piece(
+            square("a8"),
+            Some(Piece {
+                side: Side::Black,
+                kind: PieceKind::King,
+            }),
+        );
+        checkmate_board.set_piece(
+            square("b7"),
+            Some(Piece {
+                side: Side::White,
+                kind: PieceKind::Queen,
+            }),
+        );
+        checkmate_board.set_piece(
+            square("c6"),
+            Some(Piece {
+                side: Side::White,
+                kind: PieceKind::King,
+            }),
+        );
+        checkmate_board.side_to_move = Side::Black;
+        assert_eq!(
+            checkmate_board.current_game_state(),
+            GameState::Checkmate {
+                winner: Side::White
+            }
+        );
+
+        let mut stalemate_board = VisualBoard::empty();
+        stalemate_board.set_piece(
+            square("a8"),
+            Some(Piece {
+                side: Side::Black,
+                kind: PieceKind::King,
+            }),
+        );
+        stalemate_board.set_piece(
+            square("b6"),
+            Some(Piece {
+                side: Side::White,
+                kind: PieceKind::Queen,
+            }),
+        );
+        stalemate_board.set_piece(
+            square("c6"),
+            Some(Piece {
+                side: Side::White,
+                kind: PieceKind::King,
+            }),
+        );
+        stalemate_board.side_to_move = Side::Black;
+        assert_eq!(stalemate_board.current_game_state(), GameState::Stalemate);
     }
 
     #[test]

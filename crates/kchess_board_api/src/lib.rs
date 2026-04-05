@@ -2,8 +2,8 @@ use std::time::Instant;
 use std::{error::Error, fmt};
 
 pub use kchess_board::{
-    AppliedMove, BoardError, Easing, MoveHistoryCell, MoveHistoryRow, MoveId, MoveRequest,
-    Perspective, Piece, PieceKind, RenderPiece, Side, Square, VisualBoard,
+    AppliedMove, BoardError, Easing, GameState, MoveHistoryCell, MoveHistoryRow, MoveId,
+    MoveRequest, Perspective, Piece, PieceKind, RenderPiece, Side, Square, VisualBoard,
 };
 
 #[derive(Debug, Clone)]
