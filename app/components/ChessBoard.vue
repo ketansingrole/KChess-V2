@@ -3,6 +3,7 @@ import { Chessground } from '@lichess-org/chessground'
 import type { Api } from '@lichess-org/chessground/api'
 import type { Config } from '@lichess-org/chessground/config'
 import type { Color, Key } from '@lichess-org/chessground/types'
+import type { DrawShape } from '@lichess-org/chessground/draw'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isPromotionMove, type Dests } from '../utils/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
@@ -29,14 +30,19 @@ const props = defineProps<{
   coordinates?: CoordinateMode
   pieceSet?: string
   animation?: PieceAnimation
+  /** Arrows and circles the app draws (hints, targets); the player's own right-click drawings are separate. */
+  shapes?: DrawShape[]
+  /** Change it to put the pieces back where `fen` says (after a move the app rejected). */
+  resetKey?: number
 }>()
 
-const emit = defineEmits<{ move: [uci: string] }>()
+const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
 
 const el = ref<HTMLElement | null>(null)
 let ground: Api | undefined
 /** Chessground wipes drawn arrows whenever it is handed a FEN, so it only gets one when the position changed. */
 let shownFen: string | undefined
+let shownReset: number | undefined
 
 type PromotionRole = 'q' | 'r' | 'b' | 'n'
 const pending = ref<{ orig: Key; dest: Key } | null>(null)
@@ -116,11 +122,13 @@ function configuration(): Config {
     },
     draggable: { enabled: true, showGhost: true },
     selectable: { enabled: true },
-    drawable: { enabled: true, visible: true },
+    drawable: { enabled: true, visible: true, autoShapes: props.shapes ?? [] },
+    events: { select: (square) => emit('select', square) },
   }
 }
 
 onMounted(() => {
+  shownReset = props.resetKey
   if (el.value) ground = Chessground(el.value, configuration())
 })
 
@@ -128,6 +136,10 @@ watch(
   () => ({ ...props }),
   () => {
     if (!ground) return
+    if (props.resetKey !== shownReset) {
+      shownReset = props.resetKey
+      shownFen = undefined
+    }
     ground.set(configuration())
     // A queued premove plays as soon as it is our turn; if nothing can be queued any more, drop it.
     if ((props.interactive ?? true) && props.movable) ground.playPremove()

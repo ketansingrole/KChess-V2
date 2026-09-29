@@ -11,6 +11,7 @@ import type {
   LichessGame,
   LichessRatingHistory,
   LichessUser,
+  NeedsReconnect,
   OnlineAction,
   OnlineEvent,
   FollowedUser,
@@ -18,7 +19,16 @@ import type {
   FollowingReport,
   OnlineOptions,
   PresenceReport,
+  Puzzle,
+  PuzzleActivityEntry,
+  PuzzleDashboard,
+  PuzzleDraw,
+  PuzzleRequest,
+  PuzzleSolveRequest,
+  PuzzleSolveResult,
+  StormDashboard,
 } from '../shared/types'
+import { puzzleFromApi, type ApiPuzzle } from '../shared/puzzle'
 import { LichessError, throwLichessErrors } from '../shared/lichessError'
 import { isGameInProgress } from '../shared/gameStatus'
 import { readLines } from './ndjson'
@@ -403,7 +413,7 @@ export async function connectLichess(): Promise<{ data: AppData; username: strin
         response_type: 'code',
         client_id: OAUTH_CLIENT_ID,
         redirect_uri: redirect,
-        scope: 'board:play challenge:write follow:read',
+        scope: 'board:play challenge:write follow:read puzzle:read puzzle:write',
         code_challenge_method: 'S256',
         code_challenge: challenge,
         state,
@@ -430,6 +440,125 @@ export async function connectLichess(): Promise<{ data: AppData; username: strin
   )
   await saveToken(account.username, token.access_token)
   return { data: await addAccount(account.username, true), username: account.username }
+}
+
+/**
+ * Run a puzzle request as `account`. A missing login, or one Lichess refuses (it was connected
+ * before puzzles were requested, or was revoked), answers "reconnect" instead of failing.
+ */
+async function asAccount<T>(
+  account: string,
+  work: (token: string) => Promise<T>,
+): Promise<T | NeedsReconnect> {
+  const token = await getToken(account)
+  if (!token) return { needsReconnect: true }
+  try {
+    return await withUsage(account, 'puzzles', () => work(token))
+  } catch (cause) {
+    if (cause instanceof LichessError && (cause.status === 401 || cause.status === 403))
+      return { needsReconnect: true }
+    throw cause
+  }
+}
+
+function readablePuzzle(raw: ApiPuzzle): Puzzle {
+  const puzzle = puzzleFromApi(raw)
+  if (!puzzle) throw new Error('Lichess sent a puzzle KChess could not read.')
+  return puzzle
+}
+
+/** The next puzzle. With an account it is chosen for its rating and one it has not seen; without, it is random. */
+export async function puzzleNext(request: PuzzleRequest): Promise<PuzzleDraw | NeedsReconnect> {
+  const { angle, difficulty, color } = request
+  if (!request.account) {
+    const raw = await withUsage('', 'puzzles', () =>
+      unwrap(client.GET('/api/puzzle/next', { params: { query: { angle, difficulty, color } } })),
+    )
+    return { puzzle: readablePuzzle(raw as unknown as ApiPuzzle) }
+  }
+  return asAccount(request.account, async (token) => {
+    const batch = await unwrap(
+      client.GET('/api/puzzle/batch/{angle}', {
+        params: { path: { angle }, query: { nb: 1, difficulty, color } },
+        headers: authorize(token),
+      }),
+    )
+    const first = batch.puzzles?.[0]
+    if (!first) throw new Error('Lichess has no more puzzles for this theme and difficulty.')
+    return { puzzle: readablePuzzle(first as unknown as ApiPuzzle), glicko: batch.glicko }
+  })
+}
+
+/** Tell Lichess how a puzzle went. Rated results move the account's Lichess puzzle rating. */
+export async function puzzleSolve(
+  request: PuzzleSolveRequest,
+): Promise<PuzzleSolveResult | NeedsReconnect> {
+  return asAccount(request.account, async (token) => {
+    const result = await unwrap(
+      client.POST('/api/puzzle/batch/{angle}', {
+        params: { path: { angle: request.angle } },
+        body: { solutions: [{ id: request.id, win: request.win, rated: request.rated }] },
+        headers: authorize(token),
+      }),
+    )
+    const round = result.rounds?.find((entry) => entry.id === request.id)
+    return { ratingDiff: request.rated ? round?.ratingDiff : undefined }
+  })
+}
+
+export async function puzzleDaily(): Promise<Puzzle> {
+  const raw = await withUsage('', 'puzzles', () => unwrap(client.GET('/api/puzzle/daily')))
+  return readablePuzzle(raw as unknown as ApiPuzzle)
+}
+
+export async function puzzleDashboard(
+  account: string,
+  days: number,
+): Promise<PuzzleDashboard | NeedsReconnect> {
+  return asAccount(account, (token) =>
+    unwrap(
+      client.GET('/api/puzzle/dashboard/{days}', {
+        params: { path: { days } },
+        headers: authorize(token),
+      }),
+    ),
+  )
+}
+
+export async function puzzleActivity(
+  account: string,
+  max: number,
+): Promise<PuzzleActivityEntry[] | NeedsReconnect> {
+  return asAccount(account, async (token) => {
+    const stream = await unwrap(
+      client.GET('/api/puzzle/activity', {
+        params: { query: { max } },
+        headers: { ...authorize(token), Accept: 'application/x-ndjson' },
+        parseAs: 'stream',
+      }),
+    )
+    const entries: PuzzleActivityEntry[] = []
+    await readLines(stream, (line) => {
+      const raw = JSON.parse(line) as components['schemas']['PuzzleActivity']
+      const puzzle = puzzleFromApi({
+        game: {},
+        puzzle: { ...raw.puzzle, initialPly: 0 },
+      })
+      if (puzzle) entries.push({ date: raw.date, win: raw.win, puzzle })
+    })
+    return entries
+  })
+}
+
+/** Anyone's public Storm results; needs no login. */
+export async function stormDashboard(username: string, days: number): Promise<StormDashboard> {
+  return withUsage('', 'puzzles', () =>
+    unwrap(
+      client.GET('/api/storm/dashboard/{username}', {
+        params: { path: { username }, query: { days } },
+      }),
+    ).catch(noSuchUser(username)),
+  )
 }
 
 const MAX_RECONNECTS = 6

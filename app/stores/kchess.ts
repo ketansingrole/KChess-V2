@@ -44,7 +44,8 @@ import type {
   Settings,
 } from '../../src/shared/types'
 
-export type Page = 'dashboard' | 'online' | 'computer' | 'history' | 'friends' | 'settings'
+export type Page =
+  'dashboard' | 'online' | 'computer' | 'puzzles' | 'practice' | 'history' | 'friends' | 'settings'
 
 /** Sections of the Settings page; while it is open they replace the sidebar's pages. */
 export const SETTINGS_SECTIONS = [
@@ -65,13 +66,17 @@ export const useKChessStore = defineStore('kchess', () => {
     { id: 'dashboard', label: 'Dashboard', icon: 'i-lucide-layout-dashboard' },
     { id: 'online', label: 'Play Online', icon: 'i-lucide-globe-2' },
     { id: 'computer', label: 'Play with Computer', icon: 'i-lucide-monitor' },
+    { id: 'puzzles', label: 'Puzzles', icon: 'i-lucide-puzzle' },
+    { id: 'practice', label: 'Practice', icon: 'i-lucide-graduation-cap' },
     { id: 'history', label: 'History', icon: 'i-lucide-history' },
     { id: 'friends', label: 'Friends', icon: 'i-lucide-users' },
   ]
   const route = useRoute()
   const page = computed<Page>(() => {
     const section = route.path.slice(1)
-    return ['online', 'computer', 'history', 'friends', 'settings'].includes(section)
+    return ['online', 'computer', 'puzzles', 'practice', 'history', 'friends', 'settings'].includes(
+      section,
+    )
       ? (section as Page)
       : 'dashboard'
   })
@@ -510,6 +515,9 @@ export const useKChessStore = defineStore('kchess', () => {
       : [10, 0]
     void startOnlineGame(minutes, increment, rated, username)
   }
+  // The same keys the Puzzles and Practice pages remember their tab in (VueUse keeps every reader in sync).
+  const puzzleTab = useLocalStorage('kchess:puzzle-tab', 'train')
+  const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
   const pagesForSearch = [
     ...nav,
     { id: 'settings' as Page, label: 'Settings', icon: 'i-lucide-settings-2' },
@@ -579,6 +587,40 @@ export const useKChessStore = defineStore('kchess', () => {
           icon: item.icon,
           onSelect: () => chooseSearch(item.id),
         })),
+      },
+      {
+        id: 'train',
+        label: 'Puzzles and practice',
+        items: [
+          ['train', 'Train puzzles', 'i-lucide-puzzle'],
+          ['daily', 'Daily puzzle', 'i-lucide-calendar-days'],
+          ['rush', 'Puzzle Storm, Streak and Rush (local)', 'i-lucide-zap'],
+          ['stats', 'Puzzle stats (from Lichess)', 'i-lucide-chart-column'],
+        ]
+          .map(([tab, label, icon]) => ({
+            id: `puzzles-${tab}`,
+            label: label!,
+            icon: icon!,
+            onSelect: () => {
+              puzzleTab.value = tab!
+              chooseSearch('puzzles')
+            },
+          }))
+          .concat(
+            [
+              ['coordinates', 'Practice: board coordinates', 'i-lucide-grid-3x3'],
+              ['knight', 'Practice: knight paths', 'i-lucide-crown'],
+              ['endgames', 'Practice: endgame drills', 'i-lucide-swords'],
+            ].map(([tab, label, icon]) => ({
+              id: `practice-${tab}`,
+              label: label!,
+              icon: icon!,
+              onSelect: () => {
+                practiceTab.value = tab!
+                chooseSearch('practice')
+              },
+            })),
+          ),
       },
       { id: 'play-computer', label: 'Play the computer', items: computerItems },
       { id: 'play-online', label: 'Play online', items: [...onlineItems, ...friendItems] },

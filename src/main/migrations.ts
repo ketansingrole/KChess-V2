@@ -103,6 +103,33 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE settings ADD COLUMN darkTheme TEXT NOT NULL DEFAULT 'kchess';
   UPDATE settings SET lightTheme = colorTheme, darkTheme = colorTheme;
   `,
+  // Local puzzle database (a sample of Lichess's public one) and local scores for Storm, Streak,
+  // Rush and the practice drills. Neither is ever sent anywhere.
+  `
+  CREATE TABLE IF NOT EXISTS puzzles (
+    id TEXT PRIMARY KEY,
+    fen TEXT NOT NULL,
+    moves TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    plays INTEGER NOT NULL DEFAULT 0,
+    themes TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_puzzles_rating ON puzzles (rating);
+  CREATE TABLE IF NOT EXISTS puzzle_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    importedAt INTEGER NOT NULL,
+    count INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    variant TEXT NOT NULL DEFAULT '',
+    score REAL NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}',
+    playedAt INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs (kind, variant, playedAt DESC);
+  `,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

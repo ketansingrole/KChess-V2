@@ -37,6 +37,10 @@ const {
   openThemesFolder,
 } = store
 
+const confirmClearRuns = ref(false)
+async function clearLocalRuns(): Promise<void> {
+  await window.kchess.clearRuns()
+}
 const confirmResetUsage = ref(false)
 
 /** One row per account with anything to report; removed accounts stay listed so past downloads are not hidden. */
@@ -227,7 +231,7 @@ function removePending(): void {
 
 <template>
   <div>
-    <PageHeader :title="category.label" subtitle="Settings · changes save automatically" />
+    <PageHeader :title="category.label" subtitle="Changes save automatically" />
 
     <div class="settings-page">
       <section
@@ -849,8 +853,39 @@ function removePending(): void {
           description="Downloads from Lichess are counted from now on and listed here per account."
         />
       </section>
+      <section
+        v-if="category.id === 'data'"
+        id="settings-puzzles"
+        class="card"
+        aria-labelledby="local-puzzles-title"
+      >
+        <div class="card-header">
+          <div>
+            <h2 id="local-puzzles-title" class="section-title">Puzzles &amp; practice</h2>
+            <p class="section-hint">
+              Storm, Streak, Rush, offline puzzles and drills. Local only, never sent to Lichess.
+            </p>
+          </div>
+          <UButton
+            variant="outline"
+            color="neutral"
+            icon="i-lucide-eraser"
+            @click="confirmClearRuns = true"
+            >Clear local scores</UButton
+          >
+        </div>
+        <PuzzleDbCard compact />
+      </section>
     </div>
 
+    <ConfirmDialog
+      v-model:open="confirmClearRuns"
+      title="Clear your local scores?"
+      description="This deletes the Storm, Streak, Rush and practice scores stored on this computer. Nothing on Lichess is affected."
+      confirm-label="Clear"
+      color="error"
+      @confirm="clearLocalRuns"
+    />
     <ConfirmDialog
       v-model:open="confirmResetUsage"
       title="Reset the data counters?"

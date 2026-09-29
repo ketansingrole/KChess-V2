@@ -9,16 +9,25 @@ import {
   ONLINE_ACTIONS,
   PIECE_ANIMATIONS,
   PROMOTION_MODES,
+  PUZZLE_DIFFICULTIES,
+  RUN_KINDS,
+  type BestMoveOptions,
   type EngineLevel,
+  type LocalLadderQuery,
+  type LocalPuzzleQuery,
+  type PuzzleRequest,
+  type PuzzleSolveRequest,
+  type RunInput,
+  type RunKind,
   type AppTheme,
   type NotificationRequest,
   type OnlineAction,
   type OnlineOptions,
   type Settings,
 } from './types.ts'
-import { GAME_ID, UCI_MOVE, USERNAME } from './patterns.ts'
+import { FEN, GAME_ID, PUZZLE_ANGLE, PUZZLE_ID, UCI_MOVE, USERNAME } from './patterns.ts'
 
-export { GAME_ID, UCI_MOVE, USERNAME }
+export { FEN, GAME_ID, PUZZLE_ANGLE, PUZZLE_ID, UCI_MOVE, USERNAME }
 export { ENGINE_LEVELS, ONLINE_ACTIONS }
 export type { EngineLevel, OnlineAction }
 
@@ -161,6 +170,88 @@ const notificationSchema = v.object(
   'Invalid notification.',
 )
 
+/** A connected account, or empty for "no account" (anonymous puzzles). */
+const optionalAccountSchema = v.union([v.literal(''), usernameSchema], 'Invalid account.')
+const angleSchema = v.pipe(
+  v.string('Invalid puzzle theme.'),
+  v.regex(PUZZLE_ANGLE, 'Invalid puzzle theme.'),
+)
+const intInRange = (min: number, max: number, message: string) =>
+  v.pipe(v.number(message), v.integer(message), v.minValue(min, message), v.maxValue(max, message))
+
+const puzzleRequestSchema = v.object(
+  {
+    account: optionalAccountSchema,
+    angle: angleSchema,
+    difficulty: v.picklist(PUZZLE_DIFFICULTIES, 'Invalid difficulty.'),
+    color: v.optional(v.picklist(['white', 'black'] as const, 'Invalid color.')),
+  },
+  'Invalid puzzle request.',
+)
+const puzzleSolveSchema = v.object(
+  {
+    account: usernameSchema,
+    angle: angleSchema,
+    id: v.pipe(v.string('Invalid puzzle.'), v.regex(PUZZLE_ID, 'Invalid puzzle.')),
+    win: v.boolean('Invalid puzzle result.'),
+    rated: v.boolean('Invalid puzzle result.'),
+  },
+  'Invalid puzzle result.',
+)
+const daysSchema = intInRange(1, 365, 'Invalid number of days.')
+const activityMaxSchema = intInRange(1, 200, 'Invalid number of puzzles.')
+const localQuerySchema = v.object(
+  {
+    theme: v.optional(angleSchema),
+    minRating: v.optional(intInRange(0, 4000, 'Invalid rating.')),
+    maxRating: v.optional(intInRange(0, 4000, 'Invalid rating.')),
+    count: intInRange(1, 300, 'Invalid puzzle count.'),
+  },
+  'Invalid puzzle query.',
+)
+const ladderQuerySchema = v.object(
+  {
+    from: intInRange(0, 4000, 'Invalid rating.'),
+    to: intInRange(0, 4000, 'Invalid rating.'),
+    count: intInRange(1, 300, 'Invalid puzzle count.'),
+  },
+  'Invalid puzzle query.',
+)
+const runKindSchema = v.picklist(RUN_KINDS, 'Invalid kind of run.')
+const runInputSchema = v.object(
+  {
+    kind: runKindSchema,
+    variant: v.pipe(v.string('Invalid run.'), v.regex(/^[a-zA-Z0-9_-]{0,40}$/, 'Invalid run.')),
+    score: v.pipe(
+      v.number('Invalid score.'),
+      v.finite('Invalid score.'),
+      v.minValue(0),
+      v.maxValue(1_000_000),
+    ),
+    detail: v.pipe(
+      v.record(
+        v.pipe(v.string(), v.regex(/^[a-zA-Z0-9_]{1,30}$/, 'Invalid run.')),
+        v.union([v.pipe(v.string(), v.maxLength(80)), v.pipe(v.number(), v.finite()), v.boolean()]),
+        'Invalid run.',
+      ),
+      v.check((detail) => Object.keys(detail).length <= 20, 'Invalid run.'),
+    ),
+  },
+  'Invalid run.',
+)
+const bestMoveOptionsSchema = v.optional(
+  v.object(
+    {
+      fen: v.optional(
+        v.pipe(v.string('Invalid position.'), v.maxLength(100), v.regex(FEN, 'Invalid position.')),
+      ),
+      movetime: v.optional(intInRange(50, 5000, 'Invalid think time.')),
+    },
+    'Invalid engine options.',
+  ),
+  {},
+)
+
 /** Parse `value` or throw an Error carrying the schema's UI-safe message. */
 function parse<const S extends v.GenericSchema>(schema: S, value: unknown): v.InferOutput<S> {
   const result = v.safeParse(schema, value)
@@ -182,3 +273,16 @@ export const assertTheme = (value: unknown): AppTheme => parse(themeSchema, valu
 export const assertNotification = (value: unknown): NotificationRequest =>
   parse(notificationSchema, value)
 export const assertSettings = (value: unknown): Settings => parse(settingsSchema, value)
+export const assertPuzzleRequest = (value: unknown): PuzzleRequest =>
+  parse(puzzleRequestSchema, value)
+export const assertPuzzleSolve = (value: unknown): PuzzleSolveRequest =>
+  parse(puzzleSolveSchema, value)
+export const assertDays = (value: unknown): number => parse(daysSchema, value)
+export const assertActivityMax = (value: unknown): number => parse(activityMaxSchema, value)
+export const assertLocalQuery = (value: unknown): LocalPuzzleQuery => parse(localQuerySchema, value)
+export const assertLadderQuery = (value: unknown): LocalLadderQuery =>
+  parse(ladderQuerySchema, value)
+export const assertRunKind = (value: unknown): RunKind => parse(runKindSchema, value)
+export const assertRunInput = (value: unknown): RunInput => parse(runInputSchema, value)
+export const assertBestMoveOptions = (value: unknown): BestMoveOptions =>
+  parse(bestMoveOptionsSchema, value)

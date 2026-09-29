@@ -24,6 +24,14 @@ export function positionAfter(moves: readonly string[]): Position {
   return pos
 }
 
+/** The position a FEN describes, or undefined when it is not a playable one. */
+export function positionFromFen(text: string): Position | undefined {
+  const setup = parseFen(text)
+  if (setup.isErr) return undefined
+  const pos = Chess.fromSetup(setup.value)
+  return pos.isOk ? pos.value : undefined
+}
+
 /** Play a single UCI move on a position; returns the SAN, or false when illegal. */
 export function playUci(pos: Position, uci: string): string | false {
   const move = parseUci(uci.trim())

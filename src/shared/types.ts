@@ -25,6 +25,20 @@ export const ONLINE_ACTIONS = ['resign', 'abort', 'takeback', 'declineTakeback']
 export type OnlineAction = (typeof ONLINE_ACTIONS)[number]
 export const CHALLENGE_COLORS = ['random', 'white', 'black'] as const
 export type ChallengeColor = (typeof CHALLENGE_COLORS)[number]
+export const PUZZLE_DIFFICULTIES = ['easiest', 'easier', 'normal', 'harder', 'hardest'] as const
+/** How far from your Lichess puzzle rating the next puzzle is aimed. */
+export type PuzzleDifficulty = (typeof PUZZLE_DIFFICULTIES)[number]
+/** Everything the runs table (local scores) records. */
+export const RUN_KINDS = [
+  'storm',
+  'streak',
+  'rush',
+  'coordinates',
+  'squareColor',
+  'knightPath',
+  'endgame',
+] as const
+export type RunKind = (typeof RUN_KINDS)[number]
 
 /** Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest. */
 export interface ThemePalette {
@@ -226,7 +240,7 @@ export interface FollowingReport {
 }
 
 /** What a request to Lichess was for; usage is broken down by it. */
-export type UsageKind = 'games' | 'profile' | 'play' | 'presence' | 'other'
+export type UsageKind = 'games' | 'profile' | 'play' | 'presence' | 'puzzles' | 'database' | 'other'
 
 export interface UsageCell {
   requests: number
@@ -272,6 +286,170 @@ export interface PresenceReport {
   latencyMs: number
 }
 
+/** One puzzle, whichever source it came from. */
+export interface Puzzle {
+  id: string
+  /** The position the player starts from: it is the player's move, after the opponent's `lastMove`. */
+  fen: string
+  /** UCI of the opponent's move that led here (for the board highlight). */
+  lastMove?: string
+  /** UCI moves, alternating player, opponent, … and ending with the player's move. */
+  solution: string[]
+  rating: number
+  themes: string[]
+  plays?: number
+  /** Lichess game the position came from. */
+  gameId?: string
+}
+
+export interface PuzzleGlicko {
+  rating?: number
+  deviation?: number
+  provisional?: boolean
+}
+
+export interface PuzzleRequest {
+  /** Connected account to train as; empty trains anonymously (no rating, nothing recorded). */
+  account: string
+  /** A puzzle theme key (`mateIn2`, `fork`, …) or `mix`. */
+  angle: string
+  difficulty: PuzzleDifficulty
+  color?: 'white' | 'black'
+}
+
+export interface PuzzleDraw {
+  puzzle: Puzzle
+  /** The account's current puzzle rating, when Lichess reports it. */
+  glicko?: PuzzleGlicko
+}
+
+export interface PuzzleSolveRequest {
+  account: string
+  angle: string
+  id: string
+  win: boolean
+  /** Rated results change the Lichess puzzle rating; unrated ones are only marked as seen. */
+  rated: boolean
+}
+
+export interface PuzzleSolveResult {
+  /** Rating change Lichess applied; absent for unrated results. */
+  ratingDiff?: number
+}
+
+/** Returned instead of data when the account's Lichess login lacks (or lost) the puzzle permission. */
+export interface NeedsReconnect {
+  needsReconnect: true
+}
+
+export interface PuzzlePerformance {
+  firstWins: number
+  nb: number
+  performance: number
+  puzzleRatingAvg: number
+  replayWins: number
+}
+
+export interface PuzzleDashboard {
+  days: number
+  global: PuzzlePerformance
+  themes: Record<string, { theme: string; results: PuzzlePerformance }>
+}
+
+export interface PuzzleActivityEntry {
+  /** When it was played, in ms since the epoch. */
+  date: number
+  win: boolean
+  puzzle: Puzzle
+}
+
+export interface StormDashboard {
+  high: { allTime: number; day: number; month: number; week: number }
+  days: {
+    /** `YYYY/M/D` (Lichess's own key). */
+    _id: string
+    combo: number
+    errors: number
+    highest: number
+    moves: number
+    runs: number
+    score: number
+    time: number
+  }[]
+}
+
+/** A puzzle-database download or import in progress (or finished), streamed to the window. */
+export interface PuzzleDbProgress {
+  phase: 'downloading' | 'importing' | 'done' | 'cancelled' | 'failed'
+  /** Compressed bytes received so far. */
+  received: number
+  /** Total compressed bytes, when the server said. */
+  total?: number
+  /** Puzzles kept so far. */
+  kept: number
+  message?: string
+}
+
+export interface PuzzleDbStatus {
+  installed: boolean
+  count: number
+  /** Approximate size on disk. */
+  bytes: number
+  importedAt?: number
+  /** True while a download runs; its progress arrives as events. */
+  busy: boolean
+}
+
+export interface LocalPuzzleQuery {
+  theme?: string
+  minRating?: number
+  maxRating?: number
+  count: number
+}
+
+export interface LocalLadderQuery {
+  from: number
+  to: number
+  count: number
+}
+
+export interface RunInput {
+  kind: RunKind
+  /** Which flavour of the kind (`3min`, `find`, `kq-vs-k`, …). */
+  variant: string
+  score: number
+  /** Extra numbers and words shown with the score (accuracy, combo, …). */
+  detail: Record<string, string | number | boolean>
+}
+
+export interface RunRecord extends RunInput {
+  id: number
+  playedAt: number
+}
+
+export interface RunSummary {
+  kind: RunKind
+  /** Best score per variant. */
+  best: Record<string, { score: number; playedAt: number }>
+  /** Newest first. */
+  recent: RunRecord[]
+  /** All runs of this kind. */
+  total: number
+}
+
+export interface RunSaved {
+  summary: RunSummary
+  /** The run beat every earlier run of its variant. */
+  isBest: boolean
+}
+
+export interface BestMoveOptions {
+  /** Start from this position instead of the standard one. */
+  fen?: string
+  /** Think for this many milliseconds instead of the level's default. */
+  movetime?: number
+}
+
 export interface DesktopApi {
   loadData(): Promise<AppData>
   saveSettings(settings: Settings): Promise<Settings>
@@ -299,7 +477,7 @@ export interface DesktopApi {
   installEngine(): Promise<{ path: string; version: string; updated: boolean }>
   /** Delete the downloaded engine; the bundled and chosen ones are never touched. */
   deleteEngine(): Promise<void>
-  bestMove(moves: string[], level: EngineLevel): Promise<string>
+  bestMove(moves: string[], level: EngineLevel, options?: BestMoveOptions): Promise<string>
   startOnline(options: OnlineOptions): Promise<{ id?: string; url?: string; seeking?: boolean }>
   /** Reattach to a game in progress on any connected account. */
   resumeOnline(): Promise<{ id: string; account: string } | null>
@@ -328,4 +506,32 @@ export interface DesktopApi {
   onNotification(callback: (alert: { title: string; body: string }) => void): () => void
   onOnlineEvent(callback: (event: OnlineEvent) => void): () => void
   onOnlineError(callback: (message: string) => void): () => void
+
+  /** Lichess puzzle training. Rated results change the account's Lichess puzzle rating. */
+  puzzleNext(request: PuzzleRequest): Promise<PuzzleDraw | NeedsReconnect>
+  /** Report a puzzle result to Lichess (needs `puzzle:write`). */
+  puzzleSolve(request: PuzzleSolveRequest): Promise<PuzzleSolveResult | NeedsReconnect>
+  /** The daily puzzle; public, nothing is recorded. */
+  puzzleDaily(): Promise<Puzzle>
+  /** Read-only: the account's puzzle dashboard. */
+  puzzleDashboard(account: string, days: number): Promise<PuzzleDashboard | NeedsReconnect>
+  /** Read-only: the account's most recent puzzle attempts. */
+  puzzleActivity(account: string, max: number): Promise<PuzzleActivityEntry[] | NeedsReconnect>
+  /** Read-only: anyone's public Storm dashboard. */
+  stormDashboard(username: string, days: number): Promise<StormDashboard>
+
+  /** Local puzzle database (downloaded from database.lichess.org). */
+  puzzleDbStatus(): Promise<PuzzleDbStatus>
+  puzzleDbInstall(): Promise<PuzzleDbStatus>
+  puzzleDbCancel(): Promise<void>
+  puzzleDbDelete(): Promise<PuzzleDbStatus>
+  localPuzzles(query: LocalPuzzleQuery): Promise<Puzzle[]>
+  /** Puzzles of rising difficulty, for Storm, Streak and Rush. */
+  localLadder(query: LocalLadderQuery): Promise<Puzzle[]>
+  onPuzzleDbProgress(callback: (progress: PuzzleDbProgress) => void): () => void
+
+  /** Local scores (Storm, Streak, Rush and the practice drills). They never leave this computer. */
+  saveRun(run: RunInput): Promise<RunSaved>
+  runSummary(kind: RunKind): Promise<RunSummary>
+  clearRuns(kind?: RunKind): Promise<void>
 }

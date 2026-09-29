@@ -23,9 +23,24 @@ import {
   forgetProfile,
   primeProfiles,
   profile,
+  puzzleActivity,
+  puzzleDaily,
+  puzzleDashboard,
+  puzzleNext,
+  puzzleSolve,
   ratingHistory,
+  stormDashboard,
   syncGames,
 } from './lichess'
+import {
+  cancelPuzzleDb,
+  deletePuzzleDb,
+  installPuzzleDb,
+  localLadder,
+  localPuzzles,
+  puzzleDbStatus,
+} from './puzzleDb'
+import { clearRuns, runSummary, saveRun } from './runs'
 import {
   addAccount,
   addFriends,
@@ -39,12 +54,21 @@ import {
 import type { OnlineEvent } from '../shared/types'
 import {
   assertAction,
+  assertActivityMax,
+  assertBestMoveOptions,
+  assertDays,
   assertFriendList,
   assertGameId,
+  assertLadderQuery,
   assertLevel,
+  assertLocalQuery,
   assertMoves,
   assertNotification,
   assertOnlineOptions,
+  assertPuzzleRequest,
+  assertPuzzleSolve,
+  assertRunInput,
+  assertRunKind,
   assertUsernames,
   assertSettings,
   assertUci,
@@ -236,8 +260,15 @@ app.whenReady().then(() => {
     stopEngine()
     await deleteManagedEngine()
   })
-  ipcMain.handle('engine:bestmove', async (_event, moves: unknown, level: unknown) =>
-    bestMove(assertMoves(moves), assertLevel(level), (await getSettings()).enginePath),
+  ipcMain.handle(
+    'engine:bestmove',
+    async (_event, moves: unknown, level: unknown, options: unknown) =>
+      bestMove(
+        assertMoves(moves),
+        assertLevel(level),
+        (await getSettings()).enginePath,
+        assertBestMoveOptions(options),
+      ),
   )
   ipcMain.handle('online:start', (_event, options: unknown) =>
     online.start(assertOnlineOptions(options)),
@@ -286,6 +317,39 @@ app.whenReady().then(() => {
     await shell.openExternal(url)
     return true
   })
+  ipcMain.handle('puzzle:next', (_event, request: unknown) =>
+    puzzleNext(assertPuzzleRequest(request)),
+  )
+  ipcMain.handle('puzzle:solve', (_event, request: unknown) =>
+    puzzleSolve(assertPuzzleSolve(request)),
+  )
+  ipcMain.handle('puzzle:daily', () => puzzleDaily())
+  ipcMain.handle('puzzle:dashboard', (_event, account: unknown, days: unknown) =>
+    puzzleDashboard(assertUsername(account), assertDays(days)),
+  )
+  ipcMain.handle('puzzle:activity', (_event, account: unknown, max: unknown) =>
+    puzzleActivity(assertUsername(account), assertActivityMax(max)),
+  )
+  ipcMain.handle('puzzle:storm', (_event, username: unknown, days: unknown) =>
+    stormDashboard(assertUsername(username), assertDays(days)),
+  )
+  ipcMain.handle('puzzledb:status', () => puzzleDbStatus())
+  ipcMain.handle('puzzledb:install', () =>
+    installPuzzleDb((progress) => send('puzzledb:progress', progress)),
+  )
+  ipcMain.handle('puzzledb:cancel', () => cancelPuzzleDb())
+  ipcMain.handle('puzzledb:delete', () => deletePuzzleDb())
+  ipcMain.handle('puzzledb:query', (_event, query: unknown) =>
+    localPuzzles(assertLocalQuery(query)),
+  )
+  ipcMain.handle('puzzledb:ladder', (_event, query: unknown) =>
+    localLadder(assertLadderQuery(query)),
+  )
+  ipcMain.handle('runs:save', (_event, run: unknown) => saveRun(assertRunInput(run)))
+  ipcMain.handle('runs:summary', (_event, kind: unknown) => runSummary(assertRunKind(kind)))
+  ipcMain.handle('runs:clear', (_event, kind: unknown) =>
+    clearRuns(kind === undefined ? undefined : assertRunKind(kind)),
+  )
   ipcMain.handle('usage:report', () => usageReport())
   ipcMain.handle('usage:reset', () => resetUsage())
   createWindow()
@@ -295,6 +359,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  cancelPuzzleDb()
   online.cancel()
   stopEngine()
   if (process.platform !== 'darwin') app.quit()

@@ -5,8 +5,8 @@ import { cpus } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { app } from 'electron'
-import { assertMoves, type EngineLevel } from '../shared/validate'
-import type { EngineStatus } from '../shared/types'
+import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/validate'
+import type { BestMoveOptions, EngineStatus } from '../shared/types'
 import { MANAGED_PATH, managedEngine } from './managedEngine'
 
 /**
@@ -72,8 +72,10 @@ export async function bestMove(
   moveList: unknown,
   level: EngineLevel,
   configured = '',
+  options: BestMoveOptions = {},
 ): Promise<string> {
   const moves = assertMoves(moveList)
+  const { fen, movetime } = assertBestMoveOptions(options)
   const status = await engineStatus(configured)
   if (!status.ready)
     throw new Error(
@@ -123,8 +125,10 @@ export async function bestMove(
         child.stdin.write('isready\n')
         phase = 'ready'
       } else if (phase === 'ready' && line === 'readyok') {
-        child.stdin.write(`position startpos${moves.length ? ` moves ${moves.join(' ')}` : ''}\n`)
-        child.stdin.write(`go movetime ${profile.time}\n`)
+        child.stdin.write(
+          `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}\n`,
+        )
+        child.stdin.write(`go movetime ${movetime ?? profile.time}\n`)
         phase = 'search'
       } else if (phase === 'search' && line.startsWith('bestmove ')) {
         const move = line.split(/\s+/)[1]

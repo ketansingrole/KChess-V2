@@ -23,7 +23,8 @@
     "format": "prettier --write \"app/**/*.{vue,ts}\" \"src/**/*.ts\" \"scripts/**/*.{ts,mjs}\"",
     "format:check": "prettier --check \"app/**/*.{vue,ts}\" \"src/**/*.ts\" \"scripts/**/*.{ts,mjs}\"",
     "test:chess": "node --experimental-strip-types scripts/chess-smoke.ts",
-    "test": "npm run test:chess && node --experimental-strip-types scripts/main-smoke.ts",
+    "test:puzzles": "node --experimental-strip-types scripts/puzzle-smoke.ts",
+    "test": "npm run test:chess && npm run test:puzzles && node --experimental-strip-types scripts/main-smoke.ts",
     "start": "node scripts/with-branded-electron.mjs electron .",
     "pack:mac": "npm run build && electron-builder --mac dir"
   },
