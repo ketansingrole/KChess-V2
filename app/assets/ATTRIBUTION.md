@@ -1,0 +1,29 @@
+# Third-party assets
+
+These assets are taken from Lichess open source projects. See the
+[lichess-org](https://github.com/lichess-org) organisation.
+
+## Board themes — `boards/`
+
+Source: [lichess-org/lila `public/images/board`](https://github.com/lichess-org/lila/tree/master/public/images/board)
+Authors: the lila authors and [pirouetti](https://lichess.org/@/pirouetti)
+License: AGPLv3+
+
+## Sound effects — `sounds/`
+
+Source: [lichess-org/lila `public/sound/standard`](https://github.com/lichess-org/lila/tree/master/public/sound/standard)
+License: AGPLv3+ (see [lila COPYING.md](https://github.com/lichess-org/lila/blob/master/COPYING.md))
+
+Lichess's standard `Check`/`Checkmate` clips are silence (they are symlinks to
+`Silence.mp3` in lila), so this app ships the move, capture, low-time and
+generic notification clips only.
+
+## Chess pieces
+
+The cburnett piece set is embedded in the CSS shipped by
+[lichess-org/chessground](https://github.com/lichess-org/chessground)
+(`assets/chessground.cburnett.css`).
+
+Author: Colin M.L. Burnett
+License: GPLv2+ (as listed by lichess)
+Reference: https://github.com/lichess-org/lila/blob/master/COPYING.md

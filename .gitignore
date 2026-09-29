@@ -1,11 +1,40 @@
+# Dependencies and build output
 node_modules/
 out/
 dist/
-.nuxt-ui/
-components.d.ts
-auto-imports.d.ts
+.dev/
+.nuxt/
+.output/
+.data/
+*.tsbuildinfo
+
+# OS
 .DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
 *.log
+
+# Env (Lichess tokens etc.)
+.env
+.env.*
+!.env.example
+
+# Electron-builder installers that can land outside dist/
+*.dmg
+*.exe
+*.AppImage
+*.snap
+*.deb
+*.blockmap
+latest*.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Local agent and editor state
 .agents/
@@ -18,6 +47,7 @@ auto-imports.d.ts
 .cursor/
 .gemini/
 .opencode/
+.openchamber/
 .roo/
 skills-lock.json
 skills.json

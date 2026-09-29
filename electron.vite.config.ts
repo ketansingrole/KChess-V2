@@ -1,13 +1,11 @@
-import { resolve } from 'node:path'
 import { defineConfig } from 'electron-vite'
-import vue from '@vitejs/plugin-vue'
-import ui from '@nuxt/ui/vite'
 
 export default defineConfig({
   main: {},
   preload: { build: { rollupOptions: { output: { format: 'cjs' } } } },
   renderer: {
-    resolve: { alias: { '@': resolve('src/renderer/src') } },
-    plugins: [vue(), ui({ icon: { clientBundle: { scan: true } } })]
+    // electron-vite still needs an HTML entry; the actual renderer runs through Nuxt.
+    server: { open: false },
+    preview: { open: false }
   }
 })

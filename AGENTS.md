@@ -1,0 +1,42 @@
+# AGENTS.md — instructions for AI coding agents working in this repo
+
+## Dev server: reuse, don't duplicate
+
+`npm run dev` starts Nuxt on `http://127.0.0.1:3000` plus Electron
+(`electron-vite dev` with `KCHESS_NUXT_URL` set) via
+`scripts/with-branded-electron.mjs`. Running it twice causes port conflicts
+and confusing behavior.
+
+**Before starting anything, check whether it is already running:**
+
+```bash
+curl -sf http://127.0.0.1:3000 >/dev/null && echo NUXT-UP || echo NUXT-DOWN
+pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOWN
+```
+
+- If both are up, **use the running instance** (open/preview against port 3000,
+  verify Electron via its window). Do not start another one.
+- If either side is down, that dev session is unhealthy: kill leftovers
+  (`pkill -f "nuxt dev"; pkill -f "electron-vite dev"`) and start one fresh
+  instance with `npm run dev` in the background.
+- Only ever have **one** dev session at a time. If you started it yourself for
+  verification, kill it when done. If it was already running (the user's),
+  leave it running.
+
+## Related rules
+
+- Launch Electron only through `scripts/with-branded-electron.mjs`
+  (`npm run dev` / `npm run app` / `npm start` already do). Never invoke the
+  stock `electron` binary or `electron-vite dev` directly — the menu-bar name
+  and Dock icon depend on the branded copy in `.dev/`.
+- `npm run app` / `npm start` (`electron .`) require a fresh build first:
+  `npm run build` (typecheck + `nuxt generate` + `electron-vite build`).
+  Stale `.output/` means stale UI.
+- Verify with `npm run typecheck` (`nuxt typecheck` + Electron `tsc`). The
+  chess engine smoke test is `npm run test:chess`.
+- Do not edit generated output: `.dev/`, `out/`, `.output/`, `dist/`, `.nuxt/`.
+  App icons live in `build/` + `public/` (see `src/main/index.ts` icon paths).
+- `screencapture` triggers a macOS screen-recording permission prompt for the
+  host on first use — prefer AppleScript process checks
+  (`tell application "System Events" to get short name of ...`) and reserve
+  screenshots for visual layout verification only.
