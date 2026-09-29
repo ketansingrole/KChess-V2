@@ -28,7 +28,7 @@ body {
 }
 body {
   margin: 0;
-  min-width: 880px;
+  min-width: 320px;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
@@ -64,7 +64,8 @@ button:disabled {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(40px, 1fr) minmax(0, 360px) minmax(40px, 1fr);
+  gap: 8px;
   align-items: center;
   height: var(--topbar-height);
   padding: 0 20px;
@@ -86,6 +87,8 @@ button:disabled {
 .topbar-center {
   display: flex;
   justify-content: center;
+  /* Centre on the window rather than on the area right of the sidebar (see app.vue). */
+  transform: translateX(calc(var(--main-left, 0px) / -2));
 }
 .topbar-right {
   display: flex;
@@ -100,7 +103,8 @@ button:disabled {
   gap: 6px;
 }
 .search-trigger {
-  width: min(360px, 32vw);
+  width: 100%;
+  min-width: 0;
   font-weight: 400;
 }
 .search-trigger-label {
@@ -181,8 +185,8 @@ button:disabled {
 
 /* ── Page chrome ───────────────────────────────────────────────────────── */
 .page {
-  padding: 24px 32px 40px;
-  max-width: 1280px;
+  padding: 24px clamp(14px, 2.6vw, 36px) 40px;
+  max-width: 1680px;
   margin: auto;
   container-type: inline-size;
   container-name: page;
@@ -191,7 +195,8 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
   margin-bottom: 20px;
 }
 .page-title {
@@ -221,6 +226,7 @@ button:disabled {
 }
 .card-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
@@ -398,6 +404,7 @@ button:disabled {
 }
 .pager {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 12px;
@@ -410,9 +417,9 @@ button:disabled {
 .play-layout {
   /* Board is as large as the viewport height and the page width allow. */
   --board-chrome: 300px; /* vertical space taken by everything but the board */
-  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 384px), 720px);
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 760px);
   display: grid;
-  grid-template-columns: var(--board-size) minmax(300px, 360px);
+  grid-template-columns: var(--board-size) minmax(300px, 440px);
   gap: 24px;
   justify-content: center;
   align-items: stretch;
@@ -961,18 +968,9 @@ button.move-cell:hover {
 }
 
 /* ── Settings ──────────────────────────────────────────────────────────── */
-.settings-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  align-items: start;
-}
-.settings-grid .span-2 {
-  grid-column: 1 / -1;
-}
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 92px), 1fr));
   gap: 8px;
 }
 .theme-option {
@@ -1009,6 +1007,7 @@ button.move-cell:hover {
 .account-row,
 .engine-option {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
@@ -1052,7 +1051,7 @@ button.move-cell:hover {
 }
 .friends-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
   gap: 16px;
 }
 .friend-card {
@@ -1083,7 +1082,7 @@ button.move-cell:hover {
 }
 .friend-ratings {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   gap: 8px;
 }
 .friend-rating {
@@ -1096,7 +1095,7 @@ button.move-cell:hover {
 }
 .friend-facts {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px 16px;
   margin: 0;
   font-size: 13px;
@@ -1156,15 +1155,16 @@ button.move-cell:hover {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 340px;
+  max-height: min(340px, 40dvh);
   overflow: auto;
   border: 1px solid var(--ui-border);
   border-radius: 10px;
 }
 .import-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 8px 12px;
   cursor: pointer;
   border-bottom: 1px solid var(--ui-border);
@@ -1183,7 +1183,18 @@ button.move-cell:hover {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex: 1;
+  /* Takes what it needs first; ratings and "via" wrap to a second line when the row is narrow. */
+  flex: 1 1 180px;
+}
+.import-ratings,
+.import-via {
+  margin-left: 26px;
+}
+@container page (min-width: 640px) {
+  .import-ratings,
+  .import-via {
+    margin-left: 0;
+  }
 }
 .import-ratings {
   white-space: nowrap;
@@ -1208,16 +1219,113 @@ button.move-cell:hover {
   background: var(--ui-primary);
 }
 
+/* Settings rows: title and hint on the left, the control on the right, a divider between rows. */
+.settings-list {
+  padding-block: 4px;
+}
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 420px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 40px;
+  padding: 18px 4px;
+  border-top: 1px solid var(--ui-border);
+}
+.setting-row:first-child {
+  border-top: 0;
+}
+/* A control that needs the full width (the board-theme picker) goes under its title. */
+.setting-row.stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+.setting-info {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.setting-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ui-text-highlighted);
+}
+.setting-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ui-text-muted);
+}
+.setting-control {
+  min-width: 0;
+  width: 100%;
+  max-width: 520px;
+}
+.setting-row.stacked .setting-control {
+  max-width: none;
+}
+.setting-switch {
+  justify-self: start;
+}
+@container page (max-width: 640px) {
+  .setting-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .setting-switch {
+    justify-self: start;
+  }
+}
+
 /* One settings category per page. */
 .settings-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
-  max-width: 820px;
+  width: 100%;
+}
+/* Grid items refuse to shrink below their content by default; let them, so narrow windows never overflow. */
+.settings-page > .card > * {
+  min-width: 0;
+}
+/* A category card lays its fields out in as many columns as fit; headings and wide
+   controls span the whole row. */
+.settings-page > .card.form-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 20px 36px;
+  align-items: start;
+}
+.settings-page > .card > .span-all {
+  grid-column: 1 / -1;
+}
+.settings-page .switch-row {
+  align-self: start;
+}
+/* Engine choices are settings rows too: what it is on the left, its actions beside it. */
+.settings-list .engine-option {
+  display: grid;
+  grid-template-columns: minmax(200px, 420px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 40px;
+  padding: 18px 4px;
+  border-top: 1px solid var(--ui-border);
+}
+.settings-list .engine-option .toolbar-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+@container page (max-width: 640px) {
+  .settings-list .engine-option {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.table-scroll {
+  overflow-x: auto;
+  margin-inline: -4px;
+  padding-inline: 4px;
 }
 
 /* ── Data & storage (Settings) ─────────────────────────────────────────── */
 .data-table {
   width: 100%;
+  min-width: 460px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -1243,19 +1351,19 @@ button.move-cell:hover {
   font-size: 11px;
   color: var(--ui-text-muted);
 }
-.settings-grid > section,
-.settings-grid > div > section {
-  scroll-margin-top: 16px;
-}
 .data-totals {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 40px;
-  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
 }
 .data-totals > div {
   display: grid;
   gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-bg);
 }
 .data-totals strong {
   font-size: 20px;
@@ -1312,12 +1420,12 @@ button.move-cell:hover {
 
 /* ── Online form ───────────────────────────────────────────────────────── */
 .online-form {
-  max-width: 640px;
+  max-width: 760px;
   margin: 0 auto;
 }
 .tc-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
   gap: 8px;
 }
 .tc-option {
@@ -1355,20 +1463,18 @@ button.move-cell:hover {
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
 @container page (max-width: 800px) {
-  .two-columns,
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-  .settings-grid .span-2 {
-    grid-column: auto;
+  .two-columns {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
-@container page (max-width: 640px) {
+@container page (max-width: 760px) {
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .tc-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container page (max-width: 300px) {
+  .stats-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 @container page (max-width: 620px) {
@@ -1390,9 +1496,25 @@ button.move-cell:hover {
     display: none;
   }
 }
-@media (max-width: 1100px) {
-  .page {
-    padding-inline: 22px;
+/* Portrait windows (tablets held upright, phones) have height to spare and width to lack:
+   stack the panel under a full-width board instead of squeezing them side by side. */
+@media (max-width: 900px) and (orientation: portrait) {
+  .play-layout {
+    --board-size: min(100cqw, max(260px, 100dvh - 260px), 760px);
+    grid-template-columns: minmax(0, var(--board-size));
+    justify-content: center;
+  }
+  .moves-wrap {
+    flex: none;
+    height: 240px;
+  }
+}
+@media (max-width: 560px) {
+  .search-trigger-keys {
+    display: none;
+  }
+  .topbar {
+    padding-inline: 12px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1406,4 +1528,38 @@ button.move-cell:hover {
   font-size: 11px;
   font-weight: 600;
   opacity: 0.7;
+}
+
+/* Segmented controls (UTabs) must never cut their labels off: let them wrap onto a second
+   line, and let the row itself wrap when there are many options and little room. */
+[role='tablist'] {
+  flex-wrap: wrap;
+  height: auto;
+}
+[role='tab'] {
+  height: auto;
+  min-height: 32px;
+}
+[role='tab'] .truncate {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
+  line-height: 1.25;
+}
+/* The sliding highlight is one absolutely positioned block sized for a single row, so it cannot
+   follow a wrapped list. Paint the active tab itself instead; it looks the same and wraps safely. */
+[role='tablist'] [data-slot='indicator'] {
+  display: none;
+}
+[role='tablist'][data-orientation='horizontal'] [role='tab'][data-state='active'] {
+  background: var(--ui-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
+}
+
+/* Give segmented controls a visible track: against a card their default background matches it,
+   which makes the options look like loose text. */
+[role='tablist'] {
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
 }

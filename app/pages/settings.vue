@@ -144,25 +144,50 @@ function removePending(): void {
       <section
         v-if="category.id === 'appearance'"
         id="settings-appearance"
-        class="card form-stack"
+        class="card settings-list"
         aria-labelledby="appearance-title"
       >
-        <h2 id="appearance-title" class="section-title">Appearance</h2>
-        <div class="field">
-          <span class="field-label">Theme</span>
+        <h2 id="appearance-title" class="sr-only">Appearance</h2>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="theme-label" class="setting-title">Theme</span>
+            <span class="setting-hint">Light, dark, or follow your system.</span>
+          </div>
           <UTabs
             v-model="settings.appearance"
             :items="[...appearanceItems]"
-            aria-label="Theme"
+            aria-labelledby="theme-label"
             :content="false"
             variant="pill"
-            class="w-full"
+            class="setting-control"
             :ui="{ trigger: 'grow' }"
           />
         </div>
-        <div class="field">
-          <span id="board-theme-label" class="field-label">Board theme</span>
-          <div class="theme-grid" role="radiogroup" aria-labelledby="board-theme-label">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="coords-label" class="setting-title">Board coordinates</span>
+            <span class="setting-hint">Where the a–h and 1–8 labels appear.</span>
+          </div>
+          <UTabs
+            v-model="settings.coordinates"
+            :items="[...coordinateItems]"
+            aria-labelledby="coords-label"
+            :content="false"
+            variant="pill"
+            class="setting-control"
+            :ui="{ trigger: 'grow' }"
+          />
+        </div>
+        <div class="setting-row stacked">
+          <div class="setting-info">
+            <span id="board-theme-label" class="setting-title">Board theme</span>
+            <span class="setting-hint">The colors or texture of the board squares.</span>
+          </div>
+          <div
+            class="theme-grid setting-control"
+            role="radiogroup"
+            aria-labelledby="board-theme-label"
+          >
             <button
               v-for="theme in boardThemes"
               :key="theme.id"
@@ -178,46 +203,53 @@ function removePending(): void {
             </button>
           </div>
         </div>
-        <div class="field">
-          <span class="field-label">Board coordinates</span>
-          <UTabs
-            v-model="settings.coordinates"
-            :items="[...coordinateItems]"
-            aria-label="Board coordinates"
-            :content="false"
-            variant="pill"
-            class="w-full"
-            :ui="{ trigger: 'grow' }"
-          />
-        </div>
       </section>
 
       <section
         v-if="category.id === 'gameplay'"
         id="settings-gameplay"
-        class="card form-stack"
+        class="card settings-list"
         aria-labelledby="gameplay-title"
       >
-        <h2 id="gameplay-title" class="section-title">Gameplay</h2>
-        <USwitch
-          v-model="settings.showLegalMoves"
-          label="Show possible moves"
-          description="Dot the squares a piece can move to when you select it."
-        />
-        <USwitch
-          v-model="settings.premove"
-          label="Premoves"
-          description="Queue a move while it is your opponent's turn; it plays automatically if legal."
-        />
-        <div class="field">
-          <span class="field-label">Pawn promotion</span>
+        <h2 id="gameplay-title" class="sr-only">Gameplay</h2>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="legal-label" class="setting-title">Show possible moves</span>
+            <span class="setting-hint"
+              >Dot the squares a piece can move to when you select it.</span
+            >
+          </div>
+          <USwitch
+            v-model="settings.showLegalMoves"
+            aria-labelledby="legal-label"
+            class="setting-switch"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="premove-label" class="setting-title">Premoves</span>
+            <span class="setting-hint"
+              >Queue a move while it is your opponent's turn; it plays automatically if legal.</span
+            >
+          </div>
+          <USwitch
+            v-model="settings.premove"
+            aria-labelledby="premove-label"
+            class="setting-switch"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="promotion-label" class="setting-title">Pawn promotion</span>
+            <span class="setting-hint">Which piece a pawn becomes on the last rank.</span>
+          </div>
           <UTabs
             v-model="settings.promotion"
             :items="[...promotionItems]"
-            aria-label="Pawn promotion"
+            aria-labelledby="promotion-label"
             :content="false"
             variant="pill"
-            class="w-full"
+            class="setting-control"
             :ui="{ trigger: 'grow' }"
           />
         </div>
@@ -226,27 +258,34 @@ function removePending(): void {
       <section
         v-if="category.id === 'sound'"
         id="settings-sound"
-        class="card form-stack"
+        class="card settings-list"
         aria-labelledby="sound-title"
       >
-        <h2 id="sound-title" class="section-title">Sound</h2>
-        <USwitch
-          v-model="settings.soundEnabled"
-          label="Game sounds"
-          description="Moves, captures and low-time warnings."
-        />
-        <div class="field">
-          <span class="field-label flex justify-between">
-            <span>Volume</span>
-            <span class="tabular muted">{{ Math.round(settings.soundVolume * 100) }}%</span>
-          </span>
+        <h2 id="sound-title" class="sr-only">Sound</h2>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="sounds-label" class="setting-title">Game sounds</span>
+            <span class="setting-hint">Moves, captures and low-time warnings.</span>
+          </div>
+          <USwitch
+            v-model="settings.soundEnabled"
+            aria-labelledby="sounds-label"
+            class="setting-switch"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="volume-label" class="setting-title">Volume</span>
+            <span class="setting-hint tabular">{{ Math.round(settings.soundVolume * 100) }}%</span>
+          </div>
           <USlider
             v-model="settings.soundVolume"
+            class="setting-control"
             :min="0"
             :max="1"
             :step="0.05"
             :disabled="!settings.soundEnabled"
-            aria-label="Volume"
+            aria-labelledby="volume-label"
           />
         </div>
       </section>
@@ -254,12 +293,16 @@ function removePending(): void {
       <section
         v-if="category.id === 'engine'"
         id="settings-engine"
-        class="card form-stack"
+        class="card settings-list"
         aria-labelledby="engine-title"
       >
-        <div>
-          <div class="flex items-center justify-between gap-2">
-            <h2 id="engine-title" class="section-title">Chess engine</h2>
+        <h2 id="engine-title" class="sr-only">Chess engine</h2>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Status</span>
+            <span class="setting-hint">Choose which Stockfish plays the computer games.</span>
+          </div>
+          <div>
             <UBadge
               :color="engineReady ? 'success' : 'warning'"
               variant="soft"
@@ -267,9 +310,8 @@ function removePending(): void {
               >{{ engineReady ? 'Ready' : 'Not found' }}</UBadge
             >
           </div>
-          <p class="section-hint">Choose which Stockfish plays the computer games.</p>
         </div>
-        <div>
+        <div class="engine-options">
           <EngineOption
             title="Bundled Stockfish 19"
             description="Included with KChess. Works offline on every platform."
@@ -346,7 +388,7 @@ function removePending(): void {
       >
         <div class="card-header">
           <div>
-            <h2 id="own-title" class="section-title">My Lichess accounts</h2>
+            <h2 id="own-title" class="sr-only">My Lichess accounts</h2>
             <p class="section-hint">
               Accounts you own. Connect each one you want to play online games with from KChess.
             </p>
@@ -395,7 +437,7 @@ function removePending(): void {
       >
         <div class="card-header">
           <div>
-            <h2 id="data-title" class="section-title">Data &amp; storage</h2>
+            <h2 id="data-title" class="sr-only">Data &amp; storage</h2>
             <p class="section-hint">
               What KChess has downloaded from Lichess for each account, and how much space it takes
               on this computer. Sizes are after decompression. Followed players live on the
@@ -434,33 +476,35 @@ function removePending(): void {
             <span class="muted text-xs">Everything KChess keeps on disk</span>
           </div>
         </div>
-        <table v-if="dataRows.length" class="data-table">
-          <thead>
-            <tr>
-              <th scope="col">Account</th>
-              <th scope="col" class="num">Stored here</th>
-              <th scope="col" class="num">Downloaded</th>
-              <th scope="col" class="num">Requests</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in dataRows" :key="row.name">
-              <td>
-                <strong>{{ row.label }}</strong>
-                <UBadge v-if="row.badge" variant="soft" size="sm" color="neutral" class="ml-2">{{
-                  row.badge
-                }}</UBadge>
-                <span v-if="row.detail" class="sub">{{ row.detail }}</span>
-              </td>
-              <td class="num tabular">
-                {{ formatBytes(row.stored) }}
-                <span class="sub">{{ formatCount(row.games) }} games</span>
-              </td>
-              <td class="num tabular">{{ formatBytes(row.downloaded) }}</td>
-              <td class="num tabular">{{ formatCount(row.requests) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="dataRows.length" class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Account</th>
+                <th scope="col" class="num">Stored here</th>
+                <th scope="col" class="num">Downloaded</th>
+                <th scope="col" class="num">Requests</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in dataRows" :key="row.name">
+                <td>
+                  <strong>{{ row.label }}</strong>
+                  <UBadge v-if="row.badge" variant="soft" size="sm" color="neutral" class="ml-2">{{
+                    row.badge
+                  }}</UBadge>
+                  <span v-if="row.detail" class="sub">{{ row.detail }}</span>
+                </td>
+                <td class="num tabular">
+                  {{ formatBytes(row.stored) }}
+                  <span class="sub">{{ formatCount(row.games) }} games</span>
+                </td>
+                <td class="num tabular">{{ formatBytes(row.downloaded) }}</td>
+                <td class="num tabular">{{ formatCount(row.requests) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <UEmpty
           v-else
           variant="naked"

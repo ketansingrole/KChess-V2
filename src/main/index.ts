@@ -108,7 +108,7 @@ function createWindow(): void {
     title: 'KChess',
     width: 1320,
     height: 880,
-    minWidth: 880,
+    minWidth: 640,
     minHeight: 620,
     backgroundColor: '#111827',
     icon,

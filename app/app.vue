@@ -10,10 +10,27 @@ useHead({
 })
 
 const store = useKChessStore()
+
+// The search box should sit in the middle of the window, but the top bar only spans the area
+// right of the sidebar. Tell the CSS how far that area starts from the window's left edge so it
+// can shift the box back by half; the observer also follows the sidebar's open/close animation.
+const mainEl = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | undefined
+function trackMainOffset(): void {
+  const main = mainEl.value
+  if (main) main.style.setProperty('--main-left', `${main.getBoundingClientRect().left}px`)
+}
+
 onMounted(() => {
   void store.init()
+  if (mainEl.value) {
+    resizeObserver = new ResizeObserver(trackMainOffset)
+    resizeObserver.observe(mainEl.value)
+    trackMainOffset()
+  }
 })
 onUnmounted(() => {
+  resizeObserver?.disconnect()
   store.dispose()
 })
 const {
@@ -61,6 +78,7 @@ const isMac = computed(
         v-model:open="sidebarOpen"
         collapsible="icon"
         rail
+        :menu="{ ui: { content: 'max-w-[85vw] sm:max-w-xs' } }"
         :ui="{ header: 'h-(--topbar-height) min-h-(--topbar-height)' }"
       >
         <template #header="{ state }">
@@ -109,7 +127,7 @@ const isMac = computed(
           </UDropdownMenu>
         </template>
       </USidebar>
-      <main class="main-area">
+      <main ref="mainEl" class="main-area">
         <header class="topbar">
           <div class="topbar-left">
             <UTooltip v-if="!sidebarOpen" text="Show sidebar">

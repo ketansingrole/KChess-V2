@@ -1,6 +1,17 @@
 {
   "name": "kchess-electron",
   "version": "0.1.0",
+  "description": "A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.",
+  "license": "GPL-3.0-or-later",
+  "author": "Ketan Singrole",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ketansingrole/KChess-V2.git"
+  },
+  "homepage": "https://github.com/ketansingrole/KChess-V2#readme",
+  "bugs": {
+    "url": "https://github.com/ketansingrole/KChess-V2/issues"
+  },
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
@@ -51,6 +62,7 @@
   "build": {
     "appId": "com.kchess.electron",
     "productName": "KChess",
+    "copyright": "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
     "directories": {
       "output": "dist",
       "buildResources": "build"

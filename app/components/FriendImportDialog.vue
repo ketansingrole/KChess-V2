@@ -145,7 +145,7 @@ async function add(): Promise<void> {
                   <template v-if="user.ratings.blitz">Blitz {{ user.ratings.blitz }}</template>
                   <template v-if="user.ratings.rapid"> · Rapid {{ user.ratings.rapid }}</template>
                 </span>
-                <span v-if="connectedAccounts.length > 1" class="muted text-xs">
+                <span v-if="connectedAccounts.length > 1" class="muted text-xs import-via">
                   via {{ user.followedBy.map((name) => `@${name}`).join(', ') }}
                 </span>
               </label>

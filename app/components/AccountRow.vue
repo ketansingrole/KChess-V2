@@ -47,7 +47,7 @@ defineEmits<{ sync: []; remove: []; activate: [] }>()
         </div>
       </div>
     </div>
-    <div class="toolbar-row flex-nowrap">
+    <div class="toolbar-row">
       <UButton
         v-if="canActivate"
         size="sm"

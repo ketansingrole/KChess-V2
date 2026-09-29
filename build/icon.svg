@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="512" height="512">
+  <title>KChess</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7DC90"/>
+      <stop offset="1" stop-color="#D8A23F"/>
+    </linearGradient>
+    <linearGradient id="rook" gradientUnits="userSpaceOnUse" x1="0" y1="204" x2="0" y2="820">
+      <stop offset="0" stop-color="#3B2D20"/>
+      <stop offset="1" stop-color="#1E1610"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#140a00" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="229" fill="url(#tile)"/>
+  <g fill="url(#rook)" filter="url(#shadow)">
+    <rect x="254.4" y="758.4" width="515.2" height="61.6" rx="20.2"/>
+    <rect x="288.0" y="696.8" width="448.0" height="69.4" rx="17.9"/>
+    <polygon points="366.4,366.4 657.6,366.4 702.4,708.0 321.6,708.0"/>
+    <rect x="299.2" y="316.0" width="425.6" height="58.2" rx="13.4"/>
+    <rect x="310.4" y="260.0" width="403.2" height="58.2" rx="0.0"/>
+    <rect x="310.4" y="204.0" width="100.8" height="114.2" rx="7.8"/>
+    <rect x="461.6" y="204.0" width="100.8" height="114.2" rx="7.8"/>
+    <rect x="612.8" y="204.0" width="100.8" height="114.2" rx="7.8"/>
+  </g>
+</svg>
