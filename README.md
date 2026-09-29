@@ -1,90 +1,29 @@
 # KChess
 
-KChess is a Rust desktop chess app built with GPUI.
+KChess is a TypeScript desktop chess app built with Electron, Vue 3, Nuxt UI, and Tailwind CSS. Chess rules and game replay use `chess.js`; the Electron main process handles Stockfish, Lichess, local storage, and OAuth.
 
-## Highlights
+## Run
 
-- Play against a Stockfish-powered computer opponent with interactive board annotations.
-- Move history timeline with back/forward stepping for position review.
-- History page for synced Lichess games, including account/rated/result filters and paging.
-- Settings page for board theme presets/custom colors and Lichess account management.
-- Sidebar + search-driven navigation across Play, History, and Settings panes.
-
-## Workspace Layout
-
-- `src/` - app shell, page views, Lichess sync/auth/state, storage, and UI wiring
-- `crates/kchess_board/` - board state engine and GPUI board view
-- `crates/kchess_board_api/` - API wrapper crate on top of `kchess_board`
-- `assets/` - app icons and other UI assets
-- `scripts/build_macos_app.sh` - builds a macOS `.app` bundle
-- `electron migration/` - Electron + Vue + Tailwind migration project
-
-## Lichess Integration
-
-- Supports adding tracked public Lichess usernames and syncing recent games.
-- Supports browser-based OAuth connect flow for your own Lichess account.
-- Stores synced game history locally and keeps account sync cursors per user.
-
-## Local Data and Credentials
-
-- SQLite storage path: `~/.kchess/kchess.db`
-- OAuth access tokens are stored via OS credential storage (keychain), not in the SQLite DB.
-
-## Prerequisites
-
-- Rust stable toolchain
-- macOS (required for the `.app` bundle script)
-
-## Run in Development
+Requires Node.js 22.12+ and npm.
 
 ```bash
-cargo run --bin KChess
-```
-
-## Stockfish Engine Setup (macOS arm64)
-
-- Open `Settings -> Chess Engine`.
-- Click `Install/Update Stockfish` for one-click managed install.
-- Default managed path: `~/.kchess/engines/stockfish/current/stockfish`
-- Optional advanced override: set a custom engine binary path in the same settings section.
-
-KChess does not bundle Stockfish inside the app package in this closed-source setup; the engine is user-installed at runtime.
-
-## Quality Checks
-
-```bash
-cargo fmt
-cargo clippy -- -D warnings
-cargo test --workspace
-```
-
-## Build macOS App Bundle
-
-```bash
-./scripts/build_macos_app.sh
-open "target/macos-bundle/KChess.app"
-```
-
-## Electron Migration Build
-
-```bash
-cd "electron migration"
 npm install
 npm run dev
 ```
 
-## Keyboard and Board Controls
+`npm run build` runs Vue/TypeScript checks and builds the Electron main, preload, and renderer bundles. `npm start` opens the built app.
 
-- `Cmd+F`: open search
-- `Cmd+,`: open Settings
-- `Left` / `Right`: step backward/forward through move history (Play view)
-- `Up` / `Down`: navigate search suggestions
-- `Enter`: confirm selected search result
-- `Esc`: close search
-- Right-click drag on board: draw/remove arrows
-- Right-click square: toggle square highlight
-- Left-click square: clear all board annotations (highlights + arrows)
+On macOS, `npm run pack:mac` creates an unsigned local `.app` in `dist/mac-arm64/` (or the matching architecture directory).
 
-## Icon Sources
+## Features
 
-- Primary source bundle used by app/UI: `assets/app/kchess.icon`
+- Dashboard with public Lichess profile ratings, rating history when Lichess provides it, and recent games.
+- Computer games at low, medium, and high Stockfish strengths, with move history, replay, takeback, board flip, and annotations.
+- Live Lichess play via OAuth, public seeks, direct challenges, clocks, resign, and takeback offers.
+- Synced Lichess history with account, result, rated, and page-size filters, plus board replay and auto-play.
+- Board themes, appearance, sound, account management, and managed Stockfish installation on macOS Apple Silicon.
+- `Cmd+F` for navigation search and `Cmd+,` for Settings.
+
+On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. New app data is stored in Electron's user-data directory; OAuth tokens are encrypted with Electron `safeStorage`.
+
+Nuxt UI is installed through its standalone Vue/Vite integration. This app does not run a Nuxt server.
