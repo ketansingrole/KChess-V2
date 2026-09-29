@@ -27,6 +27,15 @@ const api: DesktopApi = {
   addFriends: (usernames) => ipcRenderer.invoke('friends:add-many', usernames),
   usage: () => ipcRenderer.invoke('usage:report'),
   resetUsage: () => ipcRenderer.invoke('usage:reset'),
+  notify: (request) => ipcRenderer.invoke('notify:show', request),
+  loadThemes: () => ipcRenderer.invoke('themes:load'),
+  openThemesFolder: () => ipcRenderer.invoke('themes:open-folder'),
+  openNotificationSettings: () => ipcRenderer.invoke('notify:open-settings'),
+  onNotification: (callback) => {
+    const listener = (_: unknown, alert: { title: string; body: string }): void => callback(alert)
+    ipcRenderer.on('notify:alert', listener)
+    return () => ipcRenderer.removeListener('notify:alert', listener)
+  },
   presence: (usernames) => ipcRenderer.invoke('online:presence', usernames),
   onOnlineEvent: (callback) => {
     const listener = (_: unknown, event: OnlineEvent): void => callback(event)

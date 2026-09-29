@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { Dests } from '../utils/chess'
-import type { CoordinateMode, PromotionMode } from '../../src/shared/types'
+import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
 import type { PlayerInfo } from './PlayerLine.vue'
 
 const props = withDefaults(
@@ -11,6 +11,8 @@ const props = withDefaults(
     orientation: Color
     theme: string
     coordinates: CoordinateMode
+    pieceSet?: string
+    animation?: PieceAnimation
     /** It is the player's turn. */
     movable: boolean
     /** Pieces may be touched (turn or premove); false when reviewing or the game is over. */
@@ -46,6 +48,8 @@ const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' 
         :orientation="orientation"
         :theme="theme"
         :coordinates="coordinates"
+        :piece-set="pieceSet"
+        :animation="animation"
         :movable="movable"
         :interactive="interactive"
         :movable-color="movableColor"

@@ -2,6 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import type { LichessAccount } from '../../src/shared/types'
 import { formatBytes, formatCount } from '../utils/format'
+import { pieceSets, pieceVars } from '../utils/pieces'
+import { previewColors } from '../utils/themes'
+import type { NotificationSkip } from '../../src/shared/types'
 import { SETTINGS_SECTIONS } from '../stores/kchess'
 
 const store = useKChessStore()
@@ -15,6 +18,9 @@ const {
   connectedAccounts,
   activeOnlineAccount,
   settingsSection,
+  themeList,
+  themeProblems,
+  themesDir,
 } = storeToRefs(store)
 const {
   boardThemes,
@@ -27,6 +33,8 @@ const {
   connect,
   setOnlineAccount,
   removeAccount,
+  reloadThemes,
+  openThemesFolder,
 } = store
 
 const confirmResetUsage = ref(false)
@@ -111,6 +119,87 @@ const coordinateItems = [
   { label: 'Hidden', value: 'none' },
 ] as const
 
+/** The two pickers on the App theme page: one theme for each appearance. */
+const themePickers = [
+  {
+    key: 'lightTheme',
+    label: 'Light mode theme',
+    hint: 'Used when the app is light.',
+    dark: false,
+  },
+  { key: 'darkTheme', label: 'Dark mode theme', hint: 'Used when the app is dark.', dark: true },
+] as const
+
+const animationItems = [
+  { label: 'Off', value: 'none' },
+  { label: 'Fast', value: 'fast' },
+  { label: 'Normal', value: 'normal' },
+  { label: 'Slow', value: 'slow' },
+] as const
+const notifyCategories = [
+  {
+    key: 'notifyOpponentMove',
+    title: 'Opponent moves',
+    hint: 'Your Lichess opponent has moved and it is your turn.',
+  },
+  {
+    key: 'notifyLowTime',
+    title: 'Low on time',
+    hint: 'Your clock is running low in an online game.',
+  },
+  {
+    key: 'notifyGameEvents',
+    title: 'Game start and result',
+    hint: 'An online game begins, or ends with a win, loss or draw.',
+  },
+  {
+    key: 'notifyComputerMove',
+    title: 'Computer moves',
+    hint: 'Stockfish has replied in a game against the computer.',
+  },
+] as const
+
+const testNote = ref('')
+const skipReasons: Record<NotificationSkip, string> = {
+  disabled: 'Notifications are turned off.',
+  'category-off': 'That kind of notification is turned off.',
+  'window-state': 'Alerts are off for the current window state.',
+  unsupported: 'This system does not support desktop notifications.',
+  failed: 'The system refused the notification.',
+}
+async function openSystemSettings(): Promise<void> {
+  const opened = await window.kchess.openNotificationSettings().catch(() => false)
+  if (!opened) testNote.value = 'Open your system notification settings and allow KChess there.'
+}
+
+const TEST_DELAY_SECONDS = 5
+const testPending = ref(false)
+/** Delayed so there is time to switch to another app: macOS does not show banners for the app in front. */
+async function sendTest(): Promise<void> {
+  testPending.value = true
+  try {
+    for (let left = TEST_DELAY_SECONDS; left > 0; left--) {
+      testNote.value = `Switch to another app now… sending in ${left}s`
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    testNote.value = ''
+    const result = await window.kchess.notify({
+      kind: 'test',
+      title: 'KChess notifications',
+      body: 'This is how game alerts will look. Click it to return to KChess.',
+    })
+    testNote.value = result.shown
+      ? result.via === 'in-app'
+        ? 'Shown inside KChess. Switch to another app before it sends to try the system notification.'
+        : 'Sent. If nothing appeared, check KChess in your system notification settings and that Focus is off.'
+      : `${skipReasons[result.skipped ?? 'unsupported']}${result.error ? ` (${result.error})` : ''}`
+  } catch (cause) {
+    testNote.value = cause instanceof Error ? cause.message : 'Could not send the notification.'
+  } finally {
+    testPending.value = false
+  }
+}
+
 // The account stays set after the dialog closes so its text doesn't flicker while it animates out.
 const pendingRemoval = ref<LichessAccount | null>(null)
 const confirmRemove = ref(false)
@@ -178,6 +267,49 @@ function removePending(): void {
             :ui="{ trigger: 'grow' }"
           />
         </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="animation-label" class="setting-title">Piece animation</span>
+            <span class="setting-hint">How quickly pieces slide to their squares.</span>
+          </div>
+          <UTabs
+            v-model="settings.pieceAnimation"
+            :items="[...animationItems]"
+            aria-labelledby="animation-label"
+            :content="false"
+            variant="pill"
+            class="setting-control"
+            :ui="{ trigger: 'grow' }"
+          />
+        </div>
+        <div class="setting-row stacked">
+          <div class="setting-info">
+            <span id="piece-set-label" class="setting-title">Piece set</span>
+            <span class="setting-hint">The look of the pieces, from Lichess's open sets.</span>
+          </div>
+          <div
+            class="theme-grid setting-control"
+            role="radiogroup"
+            aria-labelledby="piece-set-label"
+          >
+            <button
+              v-for="set in pieceSets"
+              :key="set.id"
+              type="button"
+              role="radio"
+              class="theme-option"
+              :aria-checked="settings.pieceSet === set.id"
+              :style="pieceVars(set.id)"
+              @click="settings.pieceSet = set.id"
+            >
+              <span class="piece-preview" aria-hidden="true">
+                <span class="piece-preview-piece" style="background-image: var(--piece-wN)" />
+                <span class="piece-preview-piece" style="background-image: var(--piece-bQ)" />
+              </span>
+              {{ set.name }}
+            </button>
+          </div>
+        </div>
         <div class="setting-row stacked">
           <div class="setting-info">
             <span id="board-theme-label" class="setting-title">Board theme</span>
@@ -202,6 +334,103 @@ function removePending(): void {
               {{ theme.name }}
             </button>
           </div>
+        </div>
+      </section>
+
+      <section
+        v-if="category.id === 'themes'"
+        id="settings-themes"
+        class="card settings-list"
+        aria-labelledby="themes-title"
+      >
+        <h2 id="themes-title" class="sr-only">App theme</h2>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="mode-label" class="setting-title">Appearance</span>
+            <span class="setting-hint"
+              >Light, dark, or follow your system. Each has its own theme below.</span
+            >
+          </div>
+          <UTabs
+            v-model="settings.appearance"
+            :items="[...appearanceItems]"
+            aria-labelledby="mode-label"
+            :content="false"
+            variant="pill"
+            class="setting-control"
+            :ui="{ trigger: 'grow' }"
+          />
+        </div>
+        <div v-for="picker in themePickers" :key="picker.key" class="setting-row stacked">
+          <div class="setting-info">
+            <span :id="`${picker.key}-label`" class="setting-title">{{ picker.label }}</span>
+            <span class="setting-hint">{{ picker.hint }}</span>
+          </div>
+          <div
+            class="theme-grid app-theme-grid setting-control"
+            role="radiogroup"
+            :aria-labelledby="`${picker.key}-label`"
+          >
+            <button
+              v-for="theme in themeList"
+              :key="theme.id"
+              type="button"
+              role="radio"
+              class="theme-option"
+              :aria-checked="settings[picker.key] === theme.id"
+              @click="settings[picker.key] = theme.id"
+            >
+              <span
+                class="app-theme-preview"
+                aria-hidden="true"
+                :style="{
+                  background: previewColors(theme, picker.dark).bg,
+                  borderColor: previewColors(theme, picker.dark).border,
+                }"
+              >
+                <span
+                  class="app-theme-card"
+                  :style="{ background: previewColors(theme, picker.dark).elevated }"
+                >
+                  <i :style="{ background: previewColors(theme, picker.dark).text }" />
+                  <i :style="{ background: previewColors(theme, picker.dark).primary }" />
+                </span>
+              </span>
+              {{ theme.name }}
+              <span v-if="theme.custom" class="theme-tag">custom</span>
+            </button>
+          </div>
+        </div>
+        <div class="setting-row stacked">
+          <div class="setting-info">
+            <span class="setting-title">Your own themes</span>
+            <span class="setting-hint"
+              >Drop a JSON file in the themes folder to add one. Open it, copy
+              <code>_template.json</code>, change the colors, then choose Reload. Only
+              <code>bg</code>, <code>text</code> and <code>primary</code> are required; the rest are
+              worked out from them. A theme with one palette is used in both modes.</span
+            >
+            <span v-if="themesDir" class="setting-hint tabular">{{ themesDir }}</span>
+          </div>
+          <div class="friend-actions">
+            <UButton
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-folder-open"
+              @click="openThemesFolder"
+              >Open themes folder</UButton
+            >
+            <UButton
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-refresh-cw"
+              @click="reloadThemes"
+              >Reload themes</UButton
+            >
+          </div>
+          <ul v-if="themeProblems.length" class="theme-problems" role="status">
+            <li v-for="problem in themeProblems" :key="problem">{{ problem }}</li>
+          </ul>
         </div>
       </section>
 
@@ -287,6 +516,112 @@ function removePending(): void {
             :disabled="!settings.soundEnabled"
             aria-labelledby="volume-label"
           />
+        </div>
+      </section>
+
+      <section
+        v-if="category.id === 'notifications'"
+        id="settings-notifications"
+        class="card settings-list"
+        aria-labelledby="notifications-title"
+      >
+        <h2 id="notifications-title" class="sr-only">Notifications</h2>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="notify-label" class="setting-title">Desktop notifications</span>
+            <span class="setting-hint"
+              >Get an alert from your system when something happens in a game.</span
+            >
+          </div>
+          <USwitch
+            v-model="settings.notificationsEnabled"
+            aria-labelledby="notify-label"
+            class="setting-switch"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="notify-active-label" class="setting-title">While I'm using KChess</span>
+            <span class="setting-hint"
+              >An alert appears inside the window, for example when you are on another page.</span
+            >
+          </div>
+          <USwitch
+            v-model="settings.notifyActive"
+            aria-labelledby="notify-active-label"
+            class="setting-switch"
+            :disabled="!settings.notificationsEnabled"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="notify-background-label" class="setting-title"
+              >While KChess is in the background</span
+            >
+            <span class="setting-hint"
+              >A system notification when another app is in front or KChess is minimized or hidden.
+              Click it to come back.</span
+            >
+          </div>
+          <USwitch
+            v-model="settings.notifyBackground"
+            aria-labelledby="notify-background-label"
+            class="setting-switch"
+            :disabled="!settings.notificationsEnabled"
+          />
+        </div>
+        <div v-for="item in notifyCategories" :key="item.key" class="setting-row">
+          <div class="setting-info">
+            <span :id="`${item.key}-label`" class="setting-title">{{ item.title }}</span>
+            <span class="setting-hint">{{ item.hint }}</span>
+          </div>
+          <USwitch
+            v-model="settings[item.key]"
+            :aria-labelledby="`${item.key}-label`"
+            class="setting-switch"
+            :disabled="!settings.notificationsEnabled"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span id="notify-sound-label" class="setting-title">System sound</span>
+            <span class="setting-hint"
+              >Let your system play its notification sound. KChess's own game sounds are under
+              Sound.</span
+            >
+          </div>
+          <USwitch
+            v-model="settings.notifySound"
+            aria-labelledby="notify-sound-label"
+            class="setting-switch"
+            :disabled="!settings.notificationsEnabled"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Try it</span>
+            <span class="setting-hint" role="status">{{
+              testNote ||
+              'Sends a sample in 5 seconds. Stay here to see the in-app alert, or switch to another app for the system one.'
+            }}</span>
+          </div>
+          <div class="friend-actions">
+            <UButton
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-settings-2"
+              @click="openSystemSettings"
+              >System settings</UButton
+            >
+            <UButton
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-bell-ring"
+              :disabled="testPending"
+              @click="sendTest"
+              >Send test</UButton
+            >
+          </div>
         </div>
       </section>
 

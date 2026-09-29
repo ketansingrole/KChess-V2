@@ -192,6 +192,8 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
         :orientation="orientation"
         :theme="settings.boardTheme"
         :coordinates="settings.coordinates"
+        :piece-set="settings.pieceSet"
+        :animation="settings.pieceAnimation"
         :movable="localInteractive"
         :interactive="localCanPlay"
         :movable-color="userColor"

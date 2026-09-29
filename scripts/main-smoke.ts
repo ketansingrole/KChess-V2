@@ -14,8 +14,10 @@ import {
   assertGameId,
   assertLevel,
   assertMoves,
+  assertNotification,
   assertOnlineOptions,
   assertSettings,
+  assertTheme,
   assertUci,
   assertUsername,
 } from '../src/shared/validate.ts'
@@ -114,6 +116,10 @@ throws('online options reject huge clock', () =>
 const settings = {
   appearance: 'dark',
   boardTheme: 'brown',
+  lightTheme: 'kchess',
+  darkTheme: 'nord',
+  pieceSet: 'merida',
+  pieceAnimation: 'fast',
   coordinates: 'inside',
   soundEnabled: true,
   soundVolume: 3,
@@ -121,10 +127,51 @@ const settings = {
   premove: true,
   promotion: 'ask',
   showLegalMoves: true,
+  notificationsEnabled: true,
+  notifyActive: false,
+  notifyBackground: true,
+  notifyOpponentMove: true,
+  notifyLowTime: true,
+  notifyGameEvents: true,
+  notifyComputerMove: false,
+  notifySound: false,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
 throws('settings reject NaN volume', () => assertSettings({ ...settings, soundVolume: NaN }))
 throws('settings reject bad promotion', () => assertSettings({ ...settings, promotion: 'rook' }))
+throws('settings reject bad theme id', () => assertSettings({ ...settings, darkTheme: 'No Way!' }))
+assert(
+  'custom theme accepted',
+  assertTheme({ id: 'mine', name: ' Mine ', dark: { bg: '#111', text: '#eee', primary: '#0af' } })
+    .name,
+  'Mine',
+)
+throws('custom theme rejects non-hex colors', () =>
+  assertTheme({ id: 'x', name: 'X', dark: { bg: 'red', text: '#eee', primary: '#0af' } }),
+)
+throws('custom theme needs a palette', () => assertTheme({ id: 'x', name: 'X' }))
+throws('settings reject bad piece set', () => assertSettings({ ...settings, pieceSet: '../x' }))
+throws('settings reject bad animation', () =>
+  assertSettings({ ...settings, pieceAnimation: 'warp' }),
+)
+throws('settings reject non-boolean notify switch', () =>
+  assertSettings({ ...settings, notifyActive: 'yes' }),
+)
+throws('settings require every notification switch', () => {
+  const { notifyLowTime: _omitted, ...rest } = settings
+  return assertSettings(rest)
+})
+assert(
+  'notification request accepted',
+  assertNotification({ kind: 'lowTime', title: 'Low on time', body: '0:20 left' }).kind,
+  'lowTime',
+)
+throws('notification rejects unknown kind', () =>
+  assertNotification({ kind: 'spam', title: 't', body: 'b' }),
+)
+throws('notification rejects huge body', () =>
+  assertNotification({ kind: 'test', title: 't', body: 'x'.repeat(401) }),
+)
 throws('settings reject bad theme', () => assertSettings({ ...settings, boardTheme: '../x' }))
 
 // Stockfish's current release only ships a universal macOS build; it must be found.

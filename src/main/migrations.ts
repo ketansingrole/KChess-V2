@@ -75,6 +75,34 @@ export const MIGRATIONS: readonly string[] = [
     dismissedAt INTEGER NOT NULL
   );
   `,
+  `
+  ALTER TABLE settings ADD COLUMN pieceSet TEXT NOT NULL DEFAULT 'cburnett';
+  ALTER TABLE settings ADD COLUMN pieceAnimation TEXT NOT NULL DEFAULT 'normal';
+  ALTER TABLE settings ADD COLUMN notificationsEnabled INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN notifyWhen TEXT NOT NULL DEFAULT 'away';
+  ALTER TABLE settings ADD COLUMN notifyOpponentMove INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN notifyLowTime INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN notifyGameEvents INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN notifyComputerMove INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN notifySound INTEGER NOT NULL DEFAULT 0;
+  `,
+  // "Only in the background / always" became two independent switches. `notifyWhen` stays in old
+  // databases, unused.
+  `
+  ALTER TABLE settings ADD COLUMN notifyActive INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE settings ADD COLUMN notifyBackground INTEGER NOT NULL DEFAULT 1;
+  UPDATE settings SET notifyActive = (notifyWhen = 'always');
+  `,
+  `
+  ALTER TABLE settings ADD COLUMN colorTheme TEXT NOT NULL DEFAULT 'kchess';
+  `,
+  // One theme per appearance: light and dark are chosen separately. `colorTheme` stays in old
+  // databases, unused; its value seeds both.
+  `
+  ALTER TABLE settings ADD COLUMN lightTheme TEXT NOT NULL DEFAULT 'kchess';
+  ALTER TABLE settings ADD COLUMN darkTheme TEXT NOT NULL DEFAULT 'kchess';
+  UPDATE settings SET lightTheme = colorTheme, darkTheme = colorTheme;
+  `,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

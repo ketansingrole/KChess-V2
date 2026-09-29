@@ -9,14 +9,73 @@ export type EngineLevel = (typeof ENGINE_LEVELS)[number]
 export const PROMOTION_MODES = ['ask', 'queen', 'premove'] as const
 /** How a pawn reaching the last rank is promoted: always ask, always to a queen, or a queen only when premoving. */
 export type PromotionMode = (typeof PROMOTION_MODES)[number]
+export const PIECE_ANIMATIONS = ['none', 'fast', 'normal', 'slow'] as const
+/** How long a piece takes to slide to its square. */
+export type PieceAnimation = (typeof PIECE_ANIMATIONS)[number]
+export const NOTIFICATION_KINDS = [
+  'opponentMove',
+  'lowTime',
+  'gameEvents',
+  'computerMove',
+  'test',
+] as const
+/** What a desktop notification is about; each kind (except `test`) has its own switch in Settings. */
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number]
 export const ONLINE_ACTIONS = ['resign', 'abort', 'takeback', 'declineTakeback'] as const
 export type OnlineAction = (typeof ONLINE_ACTIONS)[number]
 export const CHALLENGE_COLORS = ['random', 'white', 'black'] as const
 export type ChallengeColor = (typeof CHALLENGE_COLORS)[number]
 
+/** Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest. */
+export interface ThemePalette {
+  /** Page background. */
+  bg: string
+  /** Main text. */
+  text: string
+  /** Accent: buttons, links, focus. */
+  primary: string
+  /** Slightly raised areas. */
+  muted?: string
+  /** Cards. */
+  elevated?: string
+  /** Hover and selected backgrounds. */
+  accented?: string
+  border?: string
+  textMuted?: string
+  success?: string
+  warning?: string
+  error?: string
+  info?: string
+}
+
+/** A color theme for the whole app. A theme with only one variant uses it in both light and dark mode. */
+export interface AppTheme {
+  id: string
+  name: string
+  light?: ThemePalette
+  dark?: ThemePalette
+  /** Loaded from the user's themes folder rather than shipped with the app. */
+  custom?: boolean
+}
+
+export interface CustomThemeReport {
+  themes: AppTheme[]
+  /** The folder custom theme files are read from. */
+  dir: string
+  /** One line per file that could not be used. */
+  problems: string[]
+}
+
 export interface Settings {
   appearance: Appearance
   boardTheme: string
+  /** Color theme of the app itself in light mode: `kchess` (the default look), a preset, or a custom theme id. */
+  lightTheme: string
+  /** The same for dark mode; the two are chosen independently. */
+  darkTheme: string
+  /** One of the piece sets shipped in `app/assets/pieces`. */
+  pieceSet: string
+  pieceAnimation: PieceAnimation
   coordinates: CoordinateMode
   soundEnabled: boolean
   soundVolume: number
@@ -26,6 +85,40 @@ export interface Settings {
   promotion: PromotionMode
   /** Dot the squares a selected piece can move to. */
   showLegalMoves: boolean
+  /** Master switch for desktop notifications. */
+  notificationsEnabled: boolean
+  /** Alert (in the app) while KChess is the window in use. */
+  notifyActive: boolean
+  /** Alert (a system notification) while KChess is in the background: unfocused, minimized or hidden. */
+  notifyBackground: boolean
+  /** Your online opponent has moved. */
+  notifyOpponentMove: boolean
+  /** Your clock is running low in an online game. */
+  notifyLowTime: boolean
+  /** An online game starts or ends. */
+  notifyGameEvents: boolean
+  /** Stockfish has replied in a computer game. */
+  notifyComputerMove: boolean
+  /** Let the operating system play its notification sound (KChess's own game sounds are separate). */
+  notifySound: boolean
+}
+
+export interface NotificationRequest {
+  kind: NotificationKind
+  title: string
+  body: string
+}
+
+/** Why a notification was not shown, when it was not. */
+export type NotificationSkip =
+  'disabled' | 'category-off' | 'window-state' | 'unsupported' | 'failed'
+export interface NotificationResult {
+  shown: boolean
+  /** `system` is an operating-system notification; `in-app` is an alert inside the window. */
+  via?: 'system' | 'in-app'
+  skipped?: NotificationSkip
+  /** The operating system's reason, when it refused the notification (`skipped` is `failed`). */
+  error?: string
 }
 
 export interface LichessAccount {
@@ -224,6 +317,15 @@ export interface DesktopApi {
   resetUsage(): Promise<void>
   /** Online/playing/signal of the given users, for the game in progress. */
   presence(usernames: string[]): Promise<PresenceReport>
+  /** Show a desktop notification if Settings allow it for this kind and the window's state. */
+  notify(request: NotificationRequest): Promise<NotificationResult>
+  /** Custom themes from the themes folder (created on first use). */
+  loadThemes(): Promise<CustomThemeReport>
+  openThemesFolder(): Promise<void>
+  /** Open the operating system's notification settings (macOS and Windows); false where unsupported. */
+  openNotificationSettings(): Promise<boolean>
+  /** Alerts for the window to show itself, sent instead of a system notification while KChess is in use. */
+  onNotification(callback: (alert: { title: string; body: string }) => void): () => void
   onOnlineEvent(callback: (event: OnlineEvent) => void): () => void
   onOnlineError(callback: (message: string) => void): () => void
 }

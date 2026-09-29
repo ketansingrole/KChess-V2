@@ -5,7 +5,8 @@ import type { Config } from '@lichess-org/chessground/config'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isPromotionMove, type Dests } from '../utils/chess'
-import type { CoordinateMode, PromotionMode } from '../../src/shared/types'
+import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
+import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
 
 const props = defineProps<{
   fen: string
@@ -26,6 +27,8 @@ const props = defineProps<{
   turnColor?: Color
   theme?: string
   coordinates?: CoordinateMode
+  pieceSet?: string
+  animation?: PieceAnimation
 }>()
 
 const emit = defineEmits<{ move: [uci: string] }>()
@@ -43,13 +46,14 @@ watch(pending, async (value) => {
   await nextTick()
   promoDialog.value?.querySelector<HTMLElement>('button')?.focus()
 })
-const promotionChoices = computed<{ role: PromotionRole; label: string; glyph: string }[]>(() => {
-  const black = props.movableColor === 'black'
+const pieceStyle = computed(() => pieceVars(props.pieceSet ?? DEFAULT_PIECE_SET))
+const promotionChoices = computed<{ role: PromotionRole; label: string; image: string }[]>(() => {
+  const color = props.movableColor === 'black' ? 'b' : 'w'
   return [
-    { role: 'q', label: 'Queen', glyph: black ? '♛' : '♕' },
-    { role: 'r', label: 'Rook', glyph: black ? '♜' : '♖' },
-    { role: 'b', label: 'Bishop', glyph: black ? '♝' : '♗' },
-    { role: 'n', label: 'Knight', glyph: black ? '♞' : '♘' },
+    { role: 'q', label: 'Queen', image: `var(--piece-${color}Q)` },
+    { role: 'r', label: 'Rook', image: `var(--piece-${color}R)` },
+    { role: 'b', label: 'Bishop', image: `var(--piece-${color}B)` },
+    { role: 'n', label: 'Knight', image: `var(--piece-${color}N)` },
   ]
 })
 
@@ -90,7 +94,10 @@ function configuration(): Config {
     lastMove: props.lastMove,
     coordinates: props.coordinates !== 'none',
     highlight: { lastMove: true, check: true },
-    animation: { enabled: true, duration: 180 },
+    animation: {
+      enabled: animationMs[props.animation ?? 'normal'] > 0,
+      duration: animationMs[props.animation ?? 'normal'],
+    },
     disableContextMenu: true,
     // Never view-only: Chessground ignores drawing and premoves entirely in that mode.
     viewOnly: false,
@@ -144,6 +151,7 @@ onBeforeUnmount(() => {
   <div
     class="cg-host"
     :class="[`board-theme-${theme ?? 'brown'}`, `coords-${coordinates ?? 'inside'}`]"
+    :style="pieceStyle"
     @mousedown.capture="clearShapes"
   >
     <div ref="el" />
@@ -165,7 +173,7 @@ onBeforeUnmount(() => {
           :title="choice.label"
           @click="promote(choice.role)"
         >
-          {{ choice.glyph }}
+          <span class="promo-piece" :style="{ backgroundImage: choice.image }" />
         </button>
       </div>
     </div>

@@ -342,6 +342,8 @@ const banner = computed(() =>
         :orientation="onlineOrientation"
         :theme="settings.boardTheme"
         :coordinates="settings.coordinates"
+        :piece-set="settings.pieceSet"
+        :animation="settings.pieceAnimation"
         :movable="onlineInteractive"
         :interactive="onlineCanPlay"
         :movable-color="onlineColor"

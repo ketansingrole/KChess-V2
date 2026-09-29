@@ -4,12 +4,16 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { getDb } from './db'
-import type { AppData, LichessGame, Settings } from '../shared/types'
+import { PIECE_ANIMATIONS, type AppData, type LichessGame, type Settings } from '../shared/types'
 import { assertUsername } from '../shared/validate'
 
 const defaults: Settings = {
   appearance: 'system',
   boardTheme: 'brown',
+  lightTheme: 'kchess',
+  darkTheme: 'kchess',
+  pieceSet: 'cburnett',
+  pieceAnimation: 'normal',
   coordinates: 'inside',
   soundEnabled: true,
   soundVolume: 0.7,
@@ -17,6 +21,14 @@ const defaults: Settings = {
   premove: true,
   promotion: 'ask',
   showLegalMoves: true,
+  notificationsEnabled: true,
+  notifyActive: false,
+  notifyBackground: true,
+  notifyOpponentMove: true,
+  notifyLowTime: true,
+  notifyGameEvents: true,
+  notifyComputerMove: true,
+  notifySound: false,
 }
 
 /** Games kept per account. */
@@ -34,6 +46,10 @@ function encryptionAvailable(): boolean {
 const SETTINGS_KEYS = [
   'appearance',
   'boardTheme',
+  'lightTheme',
+  'darkTheme',
+  'pieceSet',
+  'pieceAnimation',
   'coordinates',
   'soundEnabled',
   'soundVolume',
@@ -41,6 +57,14 @@ const SETTINGS_KEYS = [
   'premove',
   'promotion',
   'showLegalMoves',
+  'notificationsEnabled',
+  'notifyActive',
+  'notifyBackground',
+  'notifyOpponentMove',
+  'notifyLowTime',
+  'notifyGameEvents',
+  'notifyComputerMove',
+  'notifySound',
 ] as const satisfies readonly (keyof Settings)[]
 
 const placeholders = (count: number): string => Array(count).fill('?').join(', ')
@@ -93,6 +117,9 @@ function normalizeSettings(stored: Partial<Settings> & { boardPreset?: string })
     coordinates:
       rest.coordinates === 'none' || rest.coordinates === 'outside' ? rest.coordinates : 'inside',
     promotion: rest.promotion === 'queen' || rest.promotion === 'premove' ? rest.promotion : 'ask',
+    pieceAnimation: PIECE_ANIMATIONS.includes(rest.pieceAnimation as never)
+      ? (rest.pieceAnimation as Settings['pieceAnimation'])
+      : defaults.pieceAnimation,
   }
   if (settings.soundVolume > 1) settings.soundVolume = Math.min(1, settings.soundVolume / 100)
   return settings
@@ -102,6 +129,10 @@ function rowToSettings(row: SettingsRow): Settings {
   return normalizeSettings({
     appearance: row.appearance as Settings['appearance'],
     boardTheme: row.boardTheme as string,
+    lightTheme: row.lightTheme as string,
+    darkTheme: row.darkTheme as string,
+    pieceSet: row.pieceSet as string,
+    pieceAnimation: row.pieceAnimation as Settings['pieceAnimation'],
     coordinates: row.coordinates as Settings['coordinates'],
     soundEnabled: row.soundEnabled === 1,
     soundVolume: row.soundVolume as number,
@@ -109,6 +140,14 @@ function rowToSettings(row: SettingsRow): Settings {
     premove: row.premove === 1,
     promotion: row.promotion as Settings['promotion'],
     showLegalMoves: row.showLegalMoves === 1,
+    notificationsEnabled: row.notificationsEnabled === 1,
+    notifyActive: row.notifyActive === 1,
+    notifyBackground: row.notifyBackground === 1,
+    notifyOpponentMove: row.notifyOpponentMove === 1,
+    notifyLowTime: row.notifyLowTime === 1,
+    notifyGameEvents: row.notifyGameEvents === 1,
+    notifyComputerMove: row.notifyComputerMove === 1,
+    notifySound: row.notifySound === 1,
   })
 }
 

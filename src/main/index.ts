@@ -11,6 +11,8 @@ import {
 import { join } from 'node:path'
 import { bestMove, engineStatus, isTrustedEnginePath, stopEngine, trustEnginePath } from './engine'
 import { closeDb } from './db'
+import { notify } from './notify'
+import { loadCustomThemes, themesDir } from './themes'
 import { flushUsage, resetUsage, usageReport } from './usage'
 import { deleteManagedEngine, installManagedEngine } from './managedEngine'
 import {
@@ -41,6 +43,7 @@ import {
   assertGameId,
   assertLevel,
   assertMoves,
+  assertNotification,
   assertOnlineOptions,
   assertUsernames,
   assertSettings,
@@ -262,6 +265,26 @@ app.whenReady().then(() => {
     const data = await addFriends(names)
     await primeProfiles(names)
     return data
+  })
+  ipcMain.handle('notify:show', (_event, request: unknown) =>
+    notify(window, assertNotification(request), (alert) => send('notify:alert', alert)),
+  )
+  ipcMain.handle('themes:load', () => loadCustomThemes())
+  ipcMain.handle('themes:open-folder', async () => {
+    await loadCustomThemes() // makes sure the folder exists
+    await shell.openPath(themesDir())
+  })
+  ipcMain.handle('notify:open-settings', async () => {
+    // Fixed URLs only: nothing from the renderer reaches openExternal.
+    const url =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.Notifications-Settings.extension'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : undefined
+    if (!url) return false
+    await shell.openExternal(url)
+    return true
   })
   ipcMain.handle('usage:report', () => usageReport())
   ipcMain.handle('usage:reset', () => resetUsage())

@@ -6,13 +6,15 @@ import { parsePgn, startingPosition } from 'chessops/pgn'
 import { parseSan } from 'chessops/san'
 import { makeSquare } from 'chessops/util'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { CoordinateMode } from '../../src/shared/types'
+import type { CoordinateMode, PieceAnimation } from '../../src/shared/types'
 
 const props = defineProps<{
   pgn: string
   orientation?: Color
   theme?: string
   coordinates?: CoordinateMode
+  pieceSet?: string
+  animation?: PieceAnimation
   playerName?: string
   opponentName?: string
 }>()
@@ -104,6 +106,8 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       :orientation="orientation"
       :theme="theme ?? 'brown'"
       :coordinates="coordinates ?? 'inside'"
+      :piece-set="pieceSet"
+      :animation="animation"
       :movable="false"
       :interactive="false"
       :movable-color="orientation"

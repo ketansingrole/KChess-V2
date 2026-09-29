@@ -480,9 +480,7 @@ button:disabled {
   width: 60px;
   height: 60px;
   border-radius: 8px;
-  font-size: 42px;
-  line-height: 1;
-  color: var(--ui-text-highlighted);
+  padding: 4px;
   background: var(--ui-bg);
   border: 1px solid var(--ui-border);
   cursor: pointer;
@@ -498,6 +496,50 @@ button:disabled {
 }
 cg-board,
 .board-swatch {
+  background-size: cover;
+}
+/* Pieces: the set's images arrive as --piece-wK … --piece-bP custom properties (see utils/pieces.ts),
+   set on the board and on the settings previews. Selectors match chessground's own piece rules. */
+.cg-wrap piece.pawn.white {
+  background-image: var(--piece-wP);
+}
+.cg-wrap piece.knight.white {
+  background-image: var(--piece-wN);
+}
+.cg-wrap piece.bishop.white {
+  background-image: var(--piece-wB);
+}
+.cg-wrap piece.rook.white {
+  background-image: var(--piece-wR);
+}
+.cg-wrap piece.queen.white {
+  background-image: var(--piece-wQ);
+}
+.cg-wrap piece.king.white {
+  background-image: var(--piece-wK);
+}
+.cg-wrap piece.pawn.black {
+  background-image: var(--piece-bP);
+}
+.cg-wrap piece.knight.black {
+  background-image: var(--piece-bN);
+}
+.cg-wrap piece.bishop.black {
+  background-image: var(--piece-bB);
+}
+.cg-wrap piece.rook.black {
+  background-image: var(--piece-bR);
+}
+.cg-wrap piece.queen.black {
+  background-image: var(--piece-bQ);
+}
+.cg-wrap piece.king.black {
+  background-image: var(--piece-bK);
+}
+.promo-piece {
+  display: block;
+  width: 100%;
+  height: 100%;
   background-size: cover;
 }
 /* Coordinates, following lila's ui/lib/css/theme/board/_coords-*.scss.
@@ -1003,6 +1045,67 @@ button.move-cell:hover {
   width: 100%;
   aspect-ratio: 1;
   border-radius: 6px;
+}
+.app-theme-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 112px), 1fr));
+}
+.app-theme-preview {
+  display: flex;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  align-items: flex-end;
+  padding: 6px;
+  border: 1px solid;
+  border-radius: 6px;
+}
+.app-theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 70%;
+  padding: 5px;
+  border-radius: 4px;
+}
+.app-theme-card i {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+}
+.app-theme-card i:first-child {
+  width: 80%;
+  opacity: 0.75;
+}
+.app-theme-card i:last-child {
+  width: 45%;
+}
+.theme-tag {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ui-primary);
+}
+.theme-problems {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--ui-warning);
+}
+.piece-preview {
+  display: flex;
+  width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+}
+/* Each piece sits on a light or dark square so every set reads against the same backdrop. */
+.piece-preview-piece {
+  flex: 1;
+  aspect-ratio: 1;
+  background-size: cover;
+  background-color: #f0d9b5;
+}
+.piece-preview-piece + .piece-preview-piece {
+  background-color: #b58863;
 }
 .account-row,
 .engine-option {

@@ -6,6 +6,7 @@ import { pickConnectedAccount } from '../../src/shared/accounts'
 import { canPlayOnline, perfFor } from '../../src/shared/timeControl'
 import { isGameInProgress } from '../../src/shared/gameStatus'
 import { boardThemes } from '../utils/boards'
+import { allThemes, applyTheme, findTheme } from '../utils/themes'
 import {
   checkColor,
   destsFor,
@@ -37,6 +38,8 @@ import type {
   LichessRatingHistory,
   LichessUser,
   OnlineEvent,
+  AppTheme,
+  NotificationKind,
   PresenceReport,
   Settings,
 } from '../../src/shared/types'
@@ -46,8 +49,10 @@ export type Page = 'dashboard' | 'online' | 'computer' | 'history' | 'friends' |
 /** Sections of the Settings page; while it is open they replace the sidebar's pages. */
 export const SETTINGS_SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: 'i-lucide-palette' },
+  { id: 'themes', label: 'App theme', icon: 'i-lucide-swatch-book' },
   { id: 'gameplay', label: 'Gameplay', icon: 'i-lucide-gamepad-2' },
   { id: 'sound', label: 'Sound', icon: 'i-lucide-volume-2' },
+  { id: 'notifications', label: 'Notifications', icon: 'i-lucide-bell' },
   { id: 'engine', label: 'Chess engine', icon: 'i-lucide-cpu' },
   { id: 'accounts', label: 'My accounts', icon: 'i-lucide-user-round' },
   { id: 'data', label: 'Data & storage', icon: 'i-lucide-database' },
@@ -142,15 +147,30 @@ export const useKChessStore = defineStore('kchess', () => {
   /** How long Lichess took to accept our last move. */
   const moveAckMs = ref<number | null>(null)
   const clock = new Clock()
+  /** Ask the main process for a desktop notification; it applies the Settings and window-state rules. */
+  function notifyDesktop(kind: NotificationKind, title: string, body: string): void {
+    void window.kchess.notify({ kind, title, body }).catch(() => undefined)
+  }
   let offOnline: (() => void) | undefined
   let offOnlineError: (() => void) | undefined
+  let offNotification: (() => void) | undefined
   let initialized = false
   /** Drives the on-screen clocks and the low-time alert; runs only while the app is initialised. */
   const ticker = useIntervalFn(
     () => {
       now.value = performance.now()
-      if (onlinePhase.value === 'playing' && clock.lowTimeAlert(onlineTurn.value))
-        void play('lowTime')
+      if (onlinePhase.value === 'playing') {
+        const turn = onlineTurn.value
+        if (clock.lowTimeAlert(turn)) {
+          void play('lowTime')
+          if (turn === onlineColor.value)
+            notifyDesktop(
+              'lowTime',
+              'Low on time',
+              `${formatClock(clock.remaining(turn))} left against ${onlineOpponent.value}.`,
+            )
+        }
+      }
     },
     250,
     { immediate: false },
@@ -880,16 +900,39 @@ export const useKChessStore = defineStore('kchess', () => {
   })
   // Sound and appearance follow the form as it is edited; saving happens in the background.
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+  /** Themes the user dropped in the themes folder. */
+  const customThemes = ref<AppTheme[]>([])
+  const themeProblems = ref<string[]>([])
+  const themesDir = ref('')
+  const themeList = computed(() => allThemes(customThemes.value))
+  /** Whether the app is showing its dark variant (the appearance setting, or the system's). */
+  const darkMode = ref(false)
   function applySettings(value: Settings): void {
     configure({ enabled: value.soundEnabled, volume: value.soundVolume })
     const dark =
       value.appearance === 'dark' || (value.appearance === 'system' && systemDark.matches)
+    darkMode.value = dark
     document.documentElement.classList.toggle('dark', dark)
+    const chosen = dark ? value.darkTheme : value.lightTheme
+    applyTheme(document.documentElement, findTheme(chosen, customThemes.value), dark)
+  }
+  async function reloadThemes(): Promise<void> {
+    try {
+      const report = await window.kchess.loadThemes()
+      customThemes.value = report.themes
+      themeProblems.value = report.problems
+      themesDir.value = report.dir
+    } catch (cause) {
+      themeProblems.value = [cause instanceof Error ? cause.message : 'Could not read the themes.']
+    }
+  }
+  async function openThemesFolder(): Promise<void> {
+    await window.kchess.openThemesFolder().catch(fail)
   }
   function applyCurrentSettings(): void {
     if (settings.value) applySettings(settings.value)
   }
-  watch(settings, applyCurrentSettings, { deep: true, immediate: true })
+  watch([settings, customThemes], applyCurrentSettings, { deep: true, immediate: true })
 
   function makeMove(uci: string): void {
     if (localPly.value !== localMoves.value.length || localOver.value || thinking.value) return
@@ -913,6 +956,7 @@ export const useKChessStore = defineStore('kchess', () => {
       localMoves.value = [...localMoves.value, move]
       localPly.value = localMoves.value.length
       playMoveSound(san)
+      notifyDesktop('computerMove', 'Stockfish moved', `${san}. Your move.`)
     } catch (cause) {
       // A new game or takeback cancels the search; that is not an error.
       if (epoch === gameEpoch.value) {
@@ -994,11 +1038,30 @@ export const useKChessStore = defineStore('kchess', () => {
       onlineInitial.value = 0
       onlinePhase.value = 'playing'
       onlineStatus.value = 'Game in progress'
+      notifyDesktop(
+        'gameEvents',
+        'Game started',
+        `You are playing ${onlineOpponent.value} as ${onlineColor.value}.`,
+      )
       return
     }
     if (event.type === 'gameFinish') {
+      const wasPlaying = onlinePhase.value === 'playing'
+      const reason = event.game.status?.name ?? 'finished'
       onlinePhase.value = 'finished'
-      onlineStatus.value = `Game ended: ${event.game.status?.name ?? 'finished'}`
+      onlineStatus.value = `Game ended: ${reason}`
+      if (wasPlaying) {
+        const winner = event.game.winner
+        const outcome =
+          reason === 'aborted'
+            ? 'Game aborted'
+            : !winner
+              ? 'Draw'
+              : winner === (event.game.color ?? onlineColor.value)
+                ? 'You won'
+                : 'You lost'
+        notifyDesktop('gameEvents', outcome, `Against ${onlineOpponent.value} · ${reason}.`)
+      }
       return
     }
     if (event.type === 'opponentGone') {
@@ -1032,8 +1095,14 @@ export const useKChessStore = defineStore('kchess', () => {
       .trim()
       .split(/\s+/)
       .filter(Boolean)
-    if (previousCount && onlineMoves.value.length > previousCount)
-      playMoveSound(sanHistory(onlineMoves.value).at(-1))
+    if (previousCount && onlineMoves.value.length > previousCount) {
+      const san = sanHistory(onlineMoves.value).at(-1)
+      playMoveSound(san)
+      // Even plies are white's moves; a move by the other colour is the opponent's.
+      const mover = (onlineMoves.value.length - 1) % 2 === 0 ? 'white' : 'black'
+      if (mover !== onlineColor.value)
+        notifyDesktop('opponentMove', `${onlineOpponent.value} moved`, `${san}. Your move.`)
+    }
     const running = isGameInProgress(state.status)
     clock.set({
       white: Number(state.wtime ?? 0),
@@ -1118,6 +1187,7 @@ export const useKChessStore = defineStore('kchess', () => {
       selectedAccount.value = defaultAccount(data.value.accounts)
       // The engine check is not needed to show the app; it flips `engineReady` when it lands.
       void refreshEngine().catch(() => undefined)
+      void reloadThemes()
       error.value = ''
     } catch (cause) {
       initialized = false
@@ -1128,6 +1198,9 @@ export const useKChessStore = defineStore('kchess', () => {
     window.addEventListener('beforeunload', flushSettings)
     offOnline = window.kchess.onOnlineEvent(readOnlineEvent)
     offOnlineError = window.kchess.onOnlineError(fail)
+    offNotification = window.kchess.onNotification(({ title, body }) =>
+      toast.add({ title, description: body, icon: 'i-lucide-bell', duration: 8000 }),
+    )
     void window.kchess
       .resumeOnline()
       .then((resumed) => {
@@ -1148,6 +1221,8 @@ export const useKChessStore = defineStore('kchess', () => {
     offOnlineError?.()
     offOnline = undefined
     offOnlineError = undefined
+    offNotification?.()
+    offNotification = undefined
     ticker.pause()
     presenceTicker.pause()
     window.removeEventListener('keydown', keydown)
@@ -1266,6 +1341,12 @@ export const useKChessStore = defineStore('kchess', () => {
     historyPageCount,
     save,
     boardThemes,
+    themeList,
+    themeProblems,
+    themesDir,
+    darkMode,
+    reloadThemes,
+    openThemesFolder,
     useBundledEngine,
     installEngine,
     useDownloadedEngine,

@@ -7,7 +7,6 @@ export default defineNuxtConfig({
   css: [
     '@lichess-org/chessground/assets/chessground.base.css',
     '@lichess-org/chessground/assets/chessground.brown.css',
-    '@lichess-org/chessground/assets/chessground.cburnett.css',
     '~/assets/css/main.css',
   ],
   vite: { server: { open: false } },
