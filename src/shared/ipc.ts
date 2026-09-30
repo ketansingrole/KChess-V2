@@ -47,6 +47,8 @@ export const IPC_CHANNELS = {
   loadThemes: 'themes:load',
   openThemesFolder: 'themes:open-folder',
   openNotificationSettings: 'notify:open-settings',
+  microphoneAccess: 'voice:microphone-access',
+  openMicrophoneSettings: 'voice:open-settings',
   presence: 'online:presence',
   puzzleNext: 'puzzle:next',
   puzzleSolve: 'puzzle:solve',
@@ -64,6 +66,11 @@ export const IPC_CHANNELS = {
   runSummary: 'runs:summary',
   clearRuns: 'runs:clear',
   exportDiagnostics: 'diagnostics:export',
+  saveVoiceAttempt: 'voice:log-save',
+  updateVoiceAttempt: 'voice:log-update',
+  voiceHistory: 'voice:log',
+  clearVoiceHistory: 'voice:log-clear',
+  exportVoiceHistory: 'voice:log-export',
 } as const satisfies Record<InvokeMethod, string>
 
 export type IpcArguments<K extends InvokeMethod> = Parameters<DesktopApi[K]>

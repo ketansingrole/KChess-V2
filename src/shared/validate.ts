@@ -11,7 +11,11 @@ import {
   PROMOTION_MODES,
   PUZZLE_DIFFICULTIES,
   RUN_KINDS,
+  VOICE_OUTCOMES,
+  VOICE_SOURCES,
   type BestMoveOptions,
+  type VoiceAttemptInput,
+  type VoiceAttemptUpdate,
   type EngineLevel,
   type LocalLadderQuery,
   type LocalPuzzleQuery,
@@ -118,6 +122,9 @@ const settingsSchema = v.object(
     notifyGameEvents: v.boolean('Invalid notification setting.'),
     notifyComputerMove: v.boolean('Invalid notification setting.'),
     notifySound: v.boolean('Invalid notification setting.'),
+    voicePushToTalk: v.boolean('Invalid voice setting.'),
+    voiceConfirmMoves: v.boolean('Invalid voice setting.'),
+    voiceHistory: v.boolean('Invalid voice setting.'),
   },
   'Invalid settings.',
 )
@@ -239,6 +246,35 @@ const runInputSchema = v.object(
   },
   'Invalid run.',
 )
+const voiceText = (max: number) => v.pipe(v.string('Invalid voice entry.'), v.maxLength(max))
+const voiceOutcomeSchema = v.picklist(VOICE_OUTCOMES, 'Invalid voice entry.')
+const voiceIdSchema = intInRange(1, Number.MAX_SAFE_INTEGER, 'Invalid voice entry.')
+const voiceAttemptSchema = v.object(
+  {
+    source: v.picklist(VOICE_SOURCES, 'Invalid voice entry.'),
+    heard: voiceText(200),
+    confidence: v.pipe(v.number('Invalid voice entry.'), v.minValue(0), v.maxValue(1)),
+    words: v.pipe(
+      v.array(
+        v.object({
+          word: voiceText(40),
+          conf: v.pipe(v.number('Invalid voice entry.'), v.minValue(0), v.maxValue(1)),
+        }),
+      ),
+      v.maxLength(40, 'Invalid voice entry.'),
+    ),
+    outcome: voiceOutcomeSchema,
+    parsed: v.optional(voiceText(120)),
+    expected: v.optional(voiceText(20)),
+    fen: v.optional(v.pipe(voiceText(100), v.regex(FEN, 'Invalid position.'))),
+    retryOf: v.optional(voiceIdSchema),
+  },
+  'Invalid voice entry.',
+)
+const voiceUpdateSchema = v.object(
+  { outcome: v.optional(voiceOutcomeSchema), expected: v.optional(voiceText(20)) },
+  'Invalid voice entry.',
+)
 const bestMoveOptionsSchema = v.optional(
   v.object(
     {
@@ -286,3 +322,10 @@ export const assertRunKind = (value: unknown): RunKind => parse(runKindSchema, v
 export const assertRunInput = (value: unknown): RunInput => parse(runInputSchema, value)
 export const assertBestMoveOptions = (value: unknown): BestMoveOptions =>
   parse(bestMoveOptionsSchema, value)
+export const assertVoiceAttempt = (value: unknown): VoiceAttemptInput =>
+  parse(voiceAttemptSchema, value)
+export const assertVoiceUpdate = (value: unknown): VoiceAttemptUpdate =>
+  parse(voiceUpdateSchema, value)
+export const assertVoiceId = (value: unknown): number => parse(voiceIdSchema, value)
+export const assertVoiceLimit = (value: unknown): number =>
+  parse(intInRange(1, 5000, 'Invalid number of entries.'), value)

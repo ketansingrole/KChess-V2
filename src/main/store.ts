@@ -45,6 +45,9 @@ const SETTINGS_KEYS = [
   'notifyGameEvents',
   'notifyComputerMove',
   'notifySound',
+  'voicePushToTalk',
+  'voiceConfirmMoves',
+  'voiceHistory',
 ] as const satisfies readonly (keyof Settings)[]
 
 const placeholders = (count: number): string => Array(count).fill('?').join(', ')
@@ -128,6 +131,9 @@ function rowToSettings(row: SettingsRow): Settings {
     notifyGameEvents: row.notifyGameEvents === 1,
     notifyComputerMove: row.notifyComputerMove === 1,
     notifySound: row.notifySound === 1,
+    voicePushToTalk: row.voicePushToTalk === 1,
+    voiceConfirmMoves: row.voiceConfirmMoves !== 0,
+    voiceHistory: row.voiceHistory !== 0,
   })
 }
 

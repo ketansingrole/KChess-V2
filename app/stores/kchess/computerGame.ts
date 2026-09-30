@@ -26,12 +26,15 @@ export function useComputerGame(options: {
   const localPly = ref(0)
   const level = ref<EngineLevel>('medium')
   const userColor = ref<'white' | 'black'>('white')
-  const flipped = ref(false)
   const thinking = ref(false)
   const gameEpoch = ref(0)
+  /** The player gave up; the game is over whatever the position. */
+  const resigned = ref(false)
   const localGame = computed(() => positionAfter(localMoves.value))
   const localDraw = computed(() => drawReason(localMoves.value))
-  const localOver = computed(() => localGame.value.isEnd() || Boolean(localDraw.value))
+  const localOver = computed(
+    () => resigned.value || localGame.value.isEnd() || Boolean(localDraw.value),
+  )
   const localDisplay = computed(() => positionAfter(localMoves.value.slice(0, localPly.value)))
   const localHistory = computed(() => sanHistory(localMoves.value))
   const localLast = computed(() => lastMoveKeys(localMoves.value.slice(0, localPly.value)))
@@ -45,6 +48,7 @@ export function useComputerGame(options: {
     detail: string
   } | null>(() => {
     if (!localOver.value) return null
+    if (resigned.value) return { kind: 'loss', title: 'Stockfish won', detail: 'You resigned' }
     const game = localGame.value
     if (game.isCheckmate()) {
       const won = game.turn !== userColor.value
@@ -100,21 +104,31 @@ export function useComputerGame(options: {
   function newGame(): void {
     gameEpoch.value++
     thinking.value = false
+    resigned.value = false
     localMoves.value = []
     localPly.value = 0
-    flipped.value = userColor.value === 'black'
     void computerTurn()
   }
   function takeback(): void {
     if (!localMoves.value.length) return
     gameEpoch.value++
     thinking.value = false
+    resigned.value = false
     localMoves.value = takebackMoves(localMoves.value, userColor.value)
     localPly.value = localMoves.value.length
     // Playing black and undoing back to the start hands the move to the computer.
     void computerTurn()
   }
+  /** Give up the game in progress; it stays on the board to review. */
+  function resign(): void {
+    if (!localMoves.value.length || localOver.value) return
+    gameEpoch.value++
+    thinking.value = false
+    resigned.value = true
+    localPly.value = localMoves.value.length
+  }
   function localStatus(): string {
+    if (resigned.value) return 'Resigned'
     if (localGame.value.isCheckmate()) return 'Checkmate'
     if (localGame.value.isEnd()) return 'Draw'
     if (localDraw.value) return `Draw · ${localDraw.value}`
@@ -122,11 +136,11 @@ export function useComputerGame(options: {
     return thinking.value ? 'Computer is thinking…' : `Your move · ${statusText(localGame.value)}`
   }
   return {
+    localGameEpoch: gameEpoch,
     localMoves,
     localPly,
     level,
     userColor,
-    flipped,
     thinking,
     localOver,
     localDisplay,
@@ -140,6 +154,7 @@ export function useComputerGame(options: {
     localResult,
     newGame,
     takeback,
+    resign,
     localStatus,
     makeMove,
   }

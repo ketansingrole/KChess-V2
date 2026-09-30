@@ -1,4 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import { handleAppProtocol, registerAppScheme } from './appProtocol'
+import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle } from './ipc'
 import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
 import { join } from 'node:path'
@@ -37,6 +39,13 @@ import {
 } from './puzzleDb'
 import { clearRuns, runSummary, saveRun } from './runs'
 import {
+  clearVoiceHistory,
+  exportVoiceHistory,
+  saveVoiceAttempt,
+  updateVoiceAttempt,
+  voiceHistory,
+} from './voiceLog'
+import {
   addAccount,
   addFriends,
   clearAccountData,
@@ -68,9 +77,14 @@ import {
   assertSettings,
   assertUci,
   assertUsername,
+  assertVoiceAttempt,
+  assertVoiceId,
+  assertVoiceLimit,
+  assertVoiceUpdate,
 } from '../shared/validate'
 
 let window: BrowserWindow | null = null
+registerAppScheme()
 app.setName('KChess')
 // An explicit profile is useful for isolated tests and development with fresh data.
 if (process.env.KCHESS_USER_DATA_DIR) {
@@ -157,7 +171,7 @@ function createWindow(): void {
     window = null
   })
   // The app only ever shows its own UI: never let the window navigate elsewhere.
-  const appOrigin = process.env.KCHESS_NUXT_URL ?? 'file://'
+  const appOrigin = process.env.KCHESS_NUXT_URL || 'kchess://app/'
   window.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(appOrigin)) event.preventDefault()
   })
@@ -179,8 +193,7 @@ function createWindow(): void {
   })
   if (process.env.KCHESS_NUXT_URL)
     void window.loadURL(process.env.KCHESS_NUXT_URL).catch(console.error)
-  else
-    void window.loadFile(join(app.getAppPath(), '.output/public/index.html')).catch(console.error)
+  else void window.loadURL('kchess://app/index.html').catch(console.error)
 }
 
 function setupAppMenu(): void {
@@ -214,6 +227,8 @@ function setupAppMenu(): void {
 void app
   .whenReady()
   .then(() => {
+    handleAppProtocol()
+    setupMediaPermissions((url) => url.startsWith(process.env.KCHESS_NUXT_URL || 'kchess://app/'))
     // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
     // the system appearance changes. Packaged builds fall back to the bundle
     // .icns until this override applies.
@@ -317,6 +332,8 @@ void app
       await shell.openExternal(url)
       return true
     })
+    handle('microphoneAccess', (_event, request: unknown) => microphoneAccess(request === true))
+    handle('openMicrophoneSettings', () => openMicrophoneSettings())
     handle('puzzleNext', (_event, request: unknown) => puzzleNext(assertPuzzleRequest(request)))
     handle('puzzleSolve', (_event, request: unknown) => puzzleSolve(assertPuzzleSolve(request)))
     handle('puzzleDaily', () => puzzleDaily())
@@ -342,6 +359,15 @@ void app
     handle('clearRuns', (_event, kind: unknown) =>
       clearRuns(kind === undefined ? undefined : assertRunKind(kind)),
     )
+    handle('saveVoiceAttempt', (_event, attempt: unknown) =>
+      saveVoiceAttempt(assertVoiceAttempt(attempt)),
+    )
+    handle('updateVoiceAttempt', (_event, id: unknown, update: unknown) =>
+      updateVoiceAttempt(assertVoiceId(id), assertVoiceUpdate(update)),
+    )
+    handle('voiceHistory', (_event, limit: unknown) => voiceHistory(assertVoiceLimit(limit)))
+    handle('clearVoiceHistory', () => clearVoiceHistory())
+    handle('exportVoiceHistory', () => exportVoiceHistory())
     handle('usage', () => usageReport())
     handle('resetUsage', () => resetUsage())
     createWindow()

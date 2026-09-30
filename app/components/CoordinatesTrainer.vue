@@ -7,6 +7,11 @@ import { EMPTY_FEN, FILES, RANKS, randomSquare, type Square } from '../utils/coo
 import { useCountdown } from '../utils/countdown'
 import { play } from '../utils/sound'
 import { formatRunClock } from '../utils/rush'
+import { COORDINATE_GRAMMAR, spokenSquare } from '../utils/voiceCommands'
+import type { VoiceResult } from '../utils/voiceCapture'
+import { heardFields, logVoice } from '../utils/voiceLog'
+import type { VoiceOutcome } from '../../src/shared/types'
+import VoiceInput from './VoiceInput.vue'
 
 /**
  * Board coordinates, the way Lichess trains them: name a square shown on the board, or find one that is
@@ -16,7 +21,13 @@ const store = useKChessStore()
 const { settings } = storeToRefs(store)
 
 const RUN_MS = 30_000
-const mode = ref<'find' | 'name'>('find')
+const mode = ref<'find' | 'name' | 'voice'>('find')
+const voiceEnabled = ref(false)
+const voiceControl = ref<InstanceType<typeof VoiceInput>>()
+const voiceFeedback = ref('')
+const starting = ref(false)
+const runEpoch = ref(0)
+const question = ref(0)
 const side = ref<'white' | 'black' | 'random'>('white')
 const showCoordinates = ref(false)
 const stage = ref<'idle' | 'running' | 'over'>('idle')
@@ -30,9 +41,12 @@ const flash = ref<{ square: Key; brush: 'green' | 'red' } | null>(null)
 const saved = ref<RunSaved | null>(null)
 const summary = ref<RunSummary | null>(null)
 let flashTimer: ReturnType<typeof setTimeout> | undefined
+let mounted = true
 
 const countdown = useCountdown(RUN_MS, () => void finish())
-const best = computed(() => summary.value?.best[mode.value]?.score)
+const best = computed(
+  () => summary.value?.best[mode.value === 'voice' ? 'name-voice' : mode.value]?.score,
+)
 const accuracy = computed(() =>
   score.value + mistakes.value
     ? Math.round((score.value / (score.value + mistakes.value)) * 100)
@@ -47,7 +61,7 @@ const boardCoordinates = computed(() =>
 )
 const shapes = computed<DrawShape[]>(() => {
   const list: DrawShape[] = []
-  if (stage.value === 'running' && mode.value === 'name')
+  if (stage.value === 'running' && mode.value !== 'find')
     list.push({ orig: target.value, brush: 'yellow' })
   if (flash.value) list.push({ orig: flash.value.square, brush: flash.value.brush })
   return list
@@ -58,11 +72,23 @@ onMounted(async () => {
   window.addEventListener('keydown', keydown)
 })
 onBeforeUnmount(() => {
+  mounted = false
   window.removeEventListener('keydown', keydown)
   clearTimeout(flashTimer)
 })
 
-function start(): void {
+async function start(): Promise<void> {
+  if (starting.value || stage.value === 'running') return
+  if (mode.value === 'voice') {
+    if (!voiceEnabled.value) return
+    starting.value = true
+    const ready = await voiceControl.value?.prepare()
+    starting.value = false
+    if (!mounted || !ready || !voiceEnabled.value || mode.value !== 'voice') return
+  }
+  runEpoch.value++
+  question.value = 0
+  voiceFeedback.value = ''
   orientation.value =
     side.value === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : side.value
   score.value = 0
@@ -76,9 +102,42 @@ function start(): void {
 }
 
 function advance(): void {
+  question.value++
   target.value = upcoming.value
   upcoming.value = randomSquare(target.value)
   pendingFile.value = ''
+}
+
+/** The asked square is known, so every phrase logged here says exactly what was meant. */
+let lastMiss: { asked: string; entry: Promise<number | undefined> } | undefined
+function logAnswer(result: VoiceResult, outcome: VoiceOutcome, parsed?: string): void {
+  const asked = `${runEpoch.value}:${question.value}`
+  const retryOf = lastMiss?.asked === asked ? lastMiss.entry : undefined
+  const entry = (async () =>
+    logVoice({
+      source: 'coordinates',
+      ...heardFields(result),
+      outcome,
+      parsed,
+      expected: target.value,
+      retryOf: (await retryOf) ?? undefined,
+    }))()
+  if (outcome !== 'correct') lastMiss = { asked, entry }
+}
+function voiceMissed(result: VoiceResult): void {
+  if (stage.value === 'running' && mode.value === 'voice') logAnswer(result, 'unclear')
+}
+function voiceAnswer(result: VoiceResult): void {
+  if (stage.value !== 'running' || mode.value !== 'voice') return
+  const square = spokenSquare(result.text)
+  if (!square) {
+    logAnswer(result, 'invalid')
+    voiceFeedback.value = 'Say one square, such as “E four” or “Echo four”.'
+    return
+  }
+  logAnswer(result, square === target.value ? 'correct' : 'wrong', square)
+  voiceFeedback.value = square === target.value ? `${square} · correct` : `${square} · try again`
+  answer(square)
 }
 
 function answer(square: string): void {
@@ -122,7 +181,7 @@ async function finish(): Promise<void> {
   try {
     saved.value = await window.kchess.saveRun({
       kind: 'coordinates',
-      variant: mode.value,
+      variant: mode.value === 'voice' ? 'name-voice' : mode.value,
       score: score.value,
       detail: { mistakes: mistakes.value, accuracy: accuracy.value, side: orientation.value },
     })
@@ -173,6 +232,7 @@ async function finish(): Promise<void> {
             :items="[
               { label: 'Find the square', value: 'find', icon: 'i-lucide-mouse-pointer-click' },
               { label: 'Name the square', value: 'name', icon: 'i-lucide-keyboard' },
+              { label: 'Say the square', value: 'voice', icon: 'i-lucide-mic' },
             ]"
             aria-labelledby="coord-mode"
             size="sm"
@@ -180,13 +240,15 @@ async function finish(): Promise<void> {
             variant="pill"
             class="w-full"
             :ui="{ trigger: 'grow' }"
-            :disabled="stage === 'running'"
+            :disabled="stage === 'running' || starting"
           />
           <span class="field-hint">
             {{
               mode === 'find'
                 ? 'A square is named above the board: click it.'
-                : 'A square is marked on the board: type its file and rank (or use the buttons).'
+                : mode === 'voice'
+                  ? 'A square is marked on the board: say its file and rank.'
+                  : 'A square is marked on the board: type its file and rank (or use the buttons).'
             }}
           </span>
         </div>
@@ -214,6 +276,19 @@ async function finish(): Promise<void> {
           :disabled="stage === 'running'"
         />
       </div>
+
+      <VoiceInput
+        v-if="mode === 'voice'"
+        ref="voiceControl"
+        v-model:enabled="voiceEnabled"
+        :active="stage === 'running'"
+        :context-key="`${runEpoch}:${question}:${stage}`"
+        :grammar="COORDINATE_GRAMMAR"
+        hint="Say “E four” or “Echo four”."
+        :feedback="voiceFeedback"
+        @result="voiceAnswer"
+        @unclear="voiceMissed"
+      />
 
       <div class="panel-divider" />
       <template v-if="stage === 'running'">
@@ -271,11 +346,17 @@ async function finish(): Promise<void> {
           </div>
         </div>
         <p v-else class="section-hint tabular">
-          Best ({{ mode === 'find' ? 'find' : 'name' }}): {{ best ?? '—' }}
+          Best ({{ mode === 'find' ? 'find' : mode === 'voice' ? 'voice' : 'name' }}):
+          {{ best ?? '—' }}
         </p>
-        <UButton size="lg" icon="i-lucide-play" @click="start">{{
-          stage === 'over' ? 'Play again' : 'Start'
-        }}</UButton>
+        <UButton
+          size="lg"
+          icon="i-lucide-play"
+          :loading="starting"
+          :disabled="mode === 'voice' && !voiceEnabled"
+          @click="start"
+          >{{ stage === 'over' ? 'Play again' : 'Start' }}</UButton
+        >
       </template>
     </div>
   </div>

@@ -142,6 +142,9 @@ const settings = {
   notifyGameEvents: true,
   notifyComputerMove: false,
   notifySound: false,
+  voicePushToTalk: false,
+  voiceConfirmMoves: true,
+  voiceHistory: true,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
 throws('settings reject NaN volume', () => assertSettings({ ...settings, soundVolume: NaN }))

@@ -18,6 +18,49 @@ npm run dev
 
 `npm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. `npm start` opens the latest build; `npm run app` builds first.
 
+Dev/build prepares the offline English voice model automatically. The first preparation downloads
+the 40 MB Apache-2.0 Vosk model from `alphacephei.com` and verifies its pinned SHA-256 digest.
+The download is cached in `.data/voice/`; the generated `public/voice/model.tar.gz` is bundled
+in the app, so recognition needs no network connection at runtime. `npm run prepare:voice`
+prepares it separately. These generated model files are ignored by Git.
+
+### Voice input
+
+In **Play with Computer**, turn on voice with the **Voice** button under the board and allow
+microphone access. Say “E two to E four”, “Knight F three”, “Queen takes D five”, “pawn to E four”
+or “castle kingside”. Phonetic file names (Alpha through Hotel) also work, for example “Echo two to
+Echo four”. Spoken moves require confirmation by default: say “confirm” or select the move.
+Ambiguous moves and unspecified promotions show numbered choices; say the number or select one.
+Say “cancel” to discard a pending move. A move heard with low confidence always asks
+“Did you mean …?” before it is played. Ordinary board input continues to work.
+
+Game commands work at any time, not only on your turn: “take back” (or “undo”), “new game”,
+“resign” and “switch sides” (or “flip board”). New game, resign and switching sides mid-game ask
+first; answer by saying “confirm” or “cancel”. Moves are only taken on your turn.
+
+In **Practice → Coordinates → Say the square**, enable voice input, then start a run and name
+the highlighted square (“E four” or “Echo four”). Recognition is prepared before the timer starts.
+These scores are stored separately from keyboard training. Unrecognized or uncertain speech asks
+for a repeat; a recognized incorrect square counts as a mistake.
+
+Audio is processed locally by Vosk WebAssembly in a worker, and is never uploaded or recorded by
+KChess. Microphone tracks stop between runs/turns, when voice is disabled, and when leaving the
+page. Disabling voice also releases the model. The implementation currently recognizes English;
+accent/noise accuracy still needs evaluation with real speakers. Tests cover command parsing,
+stale-result cancellation, microphone cleanup, and actual worker/model startup in Electron.
+
+**Settings → Voice input** shows the microphone permission, has a live mic level test, and holds
+the _Confirm spoken moves_, _Hold to speak_ and _Keep voice history_ preferences. The **voice
+history** below them logs each phrase as text (never audio): what was heard with per-word
+confidence, how it was read, what you meant (the square asked for, or the move you then played),
+and the outcome. It lists the least certain words and the most common “heard → meant” mistakes,
+and can be exported as JSON or cleared. On macOS, KChess asks the system for
+microphone access the first time voice starts (Electron doesn't do this on its own). If access is
+blocked, the voice panel offers **Open privacy settings** and resumes automatically once you allow
+it. In a dev build started from a terminal (`npm run dev`), macOS attributes the microphone to the
+app that launched KChess (your terminal or editor), so allow _that_ app under
+Privacy & Security → Microphone.
+
 | Command                                 | Purpose                                                                              |
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
 | `npm run check`                         | Formatting, ESLint, all type checks, smoke and unit tests                            |
@@ -37,6 +80,31 @@ Settings → Data & storage → **Export diagnostics** saves a JSON report conta
 On macOS, dev and local runs launch through `scripts/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `build/icon.icns` changes; quit any running dev session first.
 
 On macOS, `npm run pack:mac` creates an unsigned local `.app` in `dist/mac-arm64/` (or the matching architecture directory).
+
+### Releasing
+
+Installers are built by `.github/workflows/release.yml`. Set the version in `package.json`, commit,
+then push a matching tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The workflow builds on macOS, Windows and Linux and attaches the installers, plus `SHA256SUMS.txt`,
+to a **draft** GitHub Release; review it and press _Publish_. A tag that doesn't match the
+`package.json` version fails the build. _Run workflow_ in the Actions tab builds the same installers
+as downloadable artifacts without creating a release.
+
+| Platform | Files                                                                       |
+| -------- | --------------------------------------------------------------------------- |
+| macOS    | `.dmg` and `.zip`, separately for Apple Silicon (`arm64`) and Intel (`x64`) |
+| Windows  | `.exe` installer (x64)                                                      |
+| Linux    | `.AppImage` and `.deb` (x64)                                                |
+
+Releases are not code-signed. macOS builds are ad-hoc signed (`scripts/release-config.cjs`), so on
+first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
+and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).
 
 ## Features
 

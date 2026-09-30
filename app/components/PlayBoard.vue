@@ -41,7 +41,10 @@ const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' 
 
 <template>
   <div class="board-stack">
-    <PlayerLine :player="top" :color="topColor" :active="live && turnColor === topColor" />
+    <PlayerLine :player="top" :color="topColor" :active="live && turnColor === topColor">
+      <template v-if="$slots['top-name']" #name><slot name="top-name" /></template>
+      <template v-if="$slots['top-aside']" #aside><slot name="top-aside" /></template>
+    </PlayerLine>
     <div class="board-shell">
       <ChessBoard
         :fen="fen"
@@ -63,6 +66,9 @@ const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' 
         @move="emit('move', $event)"
       />
     </div>
-    <PlayerLine :player="bottom" :color="orientation" :active="live && turnColor === orientation" />
+    <PlayerLine :player="bottom" :color="orientation" :active="live && turnColor === orientation">
+      <template v-if="$slots['bottom-name']" #name><slot name="bottom-name" /></template>
+      <template v-if="$slots['bottom-aside']" #aside><slot name="bottom-aside" /></template>
+    </PlayerLine>
   </div>
 </template>

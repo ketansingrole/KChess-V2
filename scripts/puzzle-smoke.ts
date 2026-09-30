@@ -384,8 +384,8 @@ assert(
 )
 assert('ladder puzzles are distinct', new Set(ladder.map((puzzle) => puzzle.id)).size, 60)
 assert(
-  'the migration list ends with the puzzle tables',
-  MIGRATIONS.at(-1)!.includes('CREATE TABLE IF NOT EXISTS puzzles'),
+  'a migration creates the puzzle tables',
+  MIGRATIONS.some((migration) => migration.includes('CREATE TABLE IF NOT EXISTS puzzles')),
   true,
 )
 // A second import replaces the first completely.

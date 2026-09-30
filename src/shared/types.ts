@@ -39,6 +39,30 @@ export const RUN_KINDS = [
   'endgame',
 ] as const
 export type RunKind = (typeof RUN_KINDS)[number]
+/** Where a spoken phrase was said. */
+export const VOICE_SOURCES = ['computer', 'coordinates'] as const
+export type VoiceSource = (typeof VOICE_SOURCES)[number]
+/**
+ * What became of a spoken phrase. Moves: `played` at once, `pending` a choice that then was
+ * `confirmed` (by voice), `picked` (clicked), `cancelled`, `replaced` by another phrase or
+ * `abandoned` (the position moved on). `invalid` matched no legal move, `unclear` was too uncertain
+ * to use, `command` was “confirm”/“cancel”. Coordinates: `correct` or `wrong`.
+ */
+export const VOICE_OUTCOMES = [
+  'played',
+  'pending',
+  'confirmed',
+  'picked',
+  'cancelled',
+  'replaced',
+  'abandoned',
+  'invalid',
+  'unclear',
+  'command',
+  'correct',
+  'wrong',
+] as const
+export type VoiceOutcome = (typeof VOICE_OUTCOMES)[number]
 
 /** Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest. */
 export interface ThemePalette {
@@ -115,6 +139,22 @@ export interface Settings {
   notifyComputerMove: boolean
   /** Let the operating system play its notification sound (KChess's own game sounds are separate). */
   notifySound: boolean
+  /** Voice input listens only while Space or the on-screen button is held. */
+  voicePushToTalk: boolean
+  /** A spoken move waits for "confirm" (or a click) before it is played. */
+  voiceConfirmMoves: boolean
+  /** Keep a local log of what voice input heard and what came of it, to find what it mishears. */
+  voiceHistory: boolean
+}
+
+/** The operating system's microphone permission for KChess (`granted` where the OS has none). */
+export type MicrophoneStatus = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
+export interface MicrophoneAccess {
+  status: MicrophoneStatus
+  /** A privacy settings page can be opened (macOS and Windows). */
+  canOpenSettings: boolean
+  /** A macOS dev build: the permission belongs to the terminal or editor that launched KChess. */
+  launchedFromTerminal: boolean
 }
 
 export interface NotificationRequest {
@@ -443,6 +483,41 @@ export interface RunSaved {
   isBest: boolean
 }
 
+/** One recognized word and the recognizer's confidence in it (0–1). */
+export interface VoiceWord {
+  word: string
+  conf: number
+}
+
+export interface VoiceAttemptInput {
+  source: VoiceSource
+  /** The recognizer's text, as heard. */
+  heard: string
+  /** Average word confidence, 0–1. */
+  confidence: number
+  words: VoiceWord[]
+  outcome: VoiceOutcome
+  /** How KChess read it: SAN choices joined by `|`, a square, or `confirm`/`cancel`. */
+  parsed?: string
+  /** What the player meant, when known: the square asked for, or the move they went on to play. */
+  expected?: string
+  /** The position it was said in (FEN), so the phrase can be parsed again later. */
+  fen?: string
+  /** An earlier attempt at the same move or question that this one repeats. */
+  retryOf?: number
+}
+
+export interface VoiceAttempt extends VoiceAttemptInput {
+  id: number
+  at: number
+}
+
+/** What is learned about an attempt after it was logged. */
+export interface VoiceAttemptUpdate {
+  outcome?: VoiceOutcome
+  expected?: string
+}
+
 export interface BestMoveOptions {
   /** Start from this position instead of the standard one. */
   fen?: string
@@ -504,6 +579,10 @@ export interface DesktopApi {
   openThemesFolder(): Promise<void>
   /** Open the operating system's notification settings (macOS and Windows); false where unsupported. */
   openNotificationSettings(): Promise<boolean>
+  /** The microphone permission; with `request`, asks the OS (shows its prompt) when undecided. */
+  microphoneAccess(request: boolean): Promise<MicrophoneAccess>
+  /** Open the operating system's microphone privacy settings; false where unsupported. */
+  openMicrophoneSettings(): Promise<boolean>
   /** Alerts for the window to show itself, sent instead of a system notification while KChess is in use. */
   onNotification(callback: (alert: { title: string; body: string }) => void): () => void
   onOnlineEvent(callback: (event: OnlineEvent) => void): () => void
@@ -536,4 +615,13 @@ export interface DesktopApi {
   saveRun(run: RunInput): Promise<RunSaved>
   runSummary(kind: RunKind): Promise<RunSummary>
   clearRuns(kind?: RunKind): Promise<void>
+
+  /** Local log of voice input (Settings › Voice). It never leaves this computer unless exported. */
+  saveVoiceAttempt(attempt: VoiceAttemptInput): Promise<number>
+  updateVoiceAttempt(id: number, update: VoiceAttemptUpdate): Promise<void>
+  /** Newest first. */
+  voiceHistory(limit: number): Promise<VoiceAttempt[]>
+  clearVoiceHistory(): Promise<void>
+  /** Save the whole log as JSON where the native dialog says; false when cancelled. */
+  exportVoiceHistory(): Promise<boolean>
 }

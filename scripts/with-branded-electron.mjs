@@ -75,6 +75,10 @@ function brandElectronApp() {
     ['CFBundleExecutable', APP_NAME],
     ['CFBundleIdentifier', BUNDLE_ID],
     ['CFBundleIconFile', 'icon.icns'],
+    [
+      'NSMicrophoneUsageDescription',
+      'KChess recognizes spoken chess moves and square names on this device.',
+    ],
   ])
   // Helper apps: Electron looks them up as "<executable name> Helper…".
   const frameworks = path.join(contents, 'Frameworks')

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { prepareVoiceModel } from './prepare-voice-model.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 async function run(cli, args, env = process.env) {
@@ -19,6 +20,7 @@ async function run(cli, args, env = process.env) {
   })
   if (code) process.exit(code)
 }
+await prepareVoiceModel()
 await run('../node_modules/nuxt/bin/nuxt.mjs', ['typecheck'])
 await run('../node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.electron.json'])
 await run('../node_modules/vue-tsc/bin/vue-tsc.js', ['--noEmit', '-p', 'tsconfig.tests.json'])

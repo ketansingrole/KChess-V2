@@ -23,6 +23,9 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 
 ## Build-time only
 
+`fflate` (MIT) and `tar` (ISC) prepare the offline speech model at build time; they do not
+run in the renderer's recognition pipeline.
+
 `@lichess-org/types` (AGPL-3.0-or-later) provides TypeScript type definitions for the
 Lichess API. It contains no runtime code and nothing from it is included in the built app.
 The remaining development dependencies (TypeScript, Vite, electron-builder, Prettier, and
@@ -48,6 +51,22 @@ The bundled engine is unmodified Stockfish (via the `stockfish` npm package). It
 is available from <https://github.com/official-stockfish/Stockfish> and the npm package's
 repository. The optional native download fetches an official build from the Stockfish
 release page and verifies it against the SHA-256 digest GitHub publishes.
+
+## Offline voice recognition
+
+[`vosk-browser`](https://github.com/ccoreilly/vosk-browser), by Ciaran O'Reilly and contributors,
+is distributed under Apache-2.0. Its unmodified WebAssembly worker includes
+[Vosk](https://github.com/alphacep/vosk-api) and [Kaldi](https://github.com/kaldi-asr/kaldi)
+(Apache-2.0), plus its bundled JavaScript dependencies under their respective licenses.
+KChess's voice parser, microphone worklet, and UI are original code; no Lichess voice
+application code is copied.
+
+The bundled `vosk-model-small-en-us-0.15` model is from
+[Alpha Cephei's model catalog](https://alphacephei.com/vosk/models) and is Apache-2.0.
+Its official ZIP archive has SHA-256
+`30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498`.
+The build verifies this digest and repackages the unchanged model files into a gzip tar
+archive for the browser loader. Attribution and the Apache license ship in `public/voice/`.
 
 ## Not affiliated
 

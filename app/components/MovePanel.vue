@@ -11,8 +11,10 @@ const props = withDefaults(
     controls?: boolean
     /** Let moves be clicked to jump to that position. */
     selectable?: boolean
+    /** What the flip button does, for its tooltip and label. */
+    flipLabel?: string
   }>(),
-  { title: 'Moves', controls: true, selectable: true },
+  { title: 'Moves', controls: true, selectable: true, flipLabel: 'Flip board' },
 )
 
 const emit = defineEmits<{
@@ -98,13 +100,13 @@ const controlButtons = [
           @click="emit('select', [0, props.ply - 1, props.ply + 1, props.moves.length][index] ?? 0)"
         />
       </UTooltip>
-      <UTooltip text="Flip board">
+      <UTooltip :text="flipLabel">
         <UButton
           size="sm"
           variant="ghost"
           color="neutral"
           icon="i-lucide-arrow-up-down"
-          aria-label="Flip board"
+          :aria-label="flipLabel"
           @click="emit('flip')"
         />
       </UTooltip>

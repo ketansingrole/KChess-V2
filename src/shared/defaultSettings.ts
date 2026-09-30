@@ -22,4 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifyGameEvents: true,
   notifyComputerMove: true,
   notifySound: false,
+  voicePushToTalk: false,
+  voiceConfirmMoves: true,
+  voiceHistory: true,
 }

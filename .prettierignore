@@ -5,6 +5,7 @@ dist/
 .nuxt/
 .output/
 .data/
+public/voice/model.tar.gz*
 playwright-report/
 test-results/
 coverage/

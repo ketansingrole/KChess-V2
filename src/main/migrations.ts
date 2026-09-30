@@ -130,6 +130,28 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs (kind, variant, playedAt DESC);
   `,
+  `
+  ALTER TABLE settings ADD COLUMN voicePushToTalk INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE settings ADD COLUMN voiceConfirmMoves INTEGER NOT NULL DEFAULT 1;
+  `,
+  // What voice input heard and what came of it, kept to see which words it mishears.
+  `
+  ALTER TABLE settings ADD COLUMN voiceHistory INTEGER NOT NULL DEFAULT 1;
+  CREATE TABLE IF NOT EXISTS voice_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    heard TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    words TEXT NOT NULL DEFAULT '[]',
+    outcome TEXT NOT NULL,
+    parsed TEXT,
+    expected TEXT,
+    fen TEXT,
+    retryOf INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_voice_log_at ON voice_log (at DESC);
+  `,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

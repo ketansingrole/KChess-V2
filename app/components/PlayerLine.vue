@@ -48,7 +48,9 @@ function presenceTitle(presence: PlayerPresence): string {
       <span class="player-avatar" :class="color" aria-hidden="true"
         ><UIcon :name="player.icon"
       /></span>
-      <span class="player-name">{{ player.name }}</span>
+      <slot name="name"
+        ><span class="player-name">{{ player.name }}</span></slot
+      >
       <span
         v-if="player.presence"
         class="presence"
@@ -75,5 +77,6 @@ function presenceTitle(presence: PlayerPresence): string {
     <span v-if="player.clock" class="player-clock" :aria-label="`${color} clock`">{{
       player.clock
     }}</span>
+    <slot name="aside" />
   </div>
 </template>

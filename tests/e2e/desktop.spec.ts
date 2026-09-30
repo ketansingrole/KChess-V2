@@ -36,7 +36,12 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
         )
       app = await _electron.launch({
         executablePath,
-        args: process.env.KCHESS_PACKAGED_EXEC_PATH ? [] : ['.'],
+        args: [
+          ...(process.env.KCHESS_PACKAGED_EXEC_PATH ? [] : ['.']),
+          ...(testInfo.title.includes('voice')
+            ? ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream']
+            : []),
+        ],
         env: { ...process.env, KCHESS_NUXT_URL: '', KCHESS_USER_DATA_DIR: profile },
       })
       await app.context().tracing.start({ screenshots: true, snapshots: true })
@@ -67,6 +72,26 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       await rm(profile, { recursive: true, force: true })
     }
   },
+})
+
+test('loads offline voice recognition and releases the microphone after a training run @packaged', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Say the square' }).click()
+  await page.getByRole('switch', { name: 'Voice input', exact: true }).click()
+  await expect(page.getByText('Ready for your next turn or run', { exact: true })).toBeVisible({
+    timeout: 60_000,
+  })
+  await page.getByRole('button', { name: 'Start', exact: true }).click()
+  await expect(page.getByText('Listening…', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'End run', exact: true }).click()
+  await expect(page.getByText('Ready for your next turn or run', { exact: true })).toBeVisible()
+  await navigate(page, 'Play with Computer')
+  await page.getByRole('switch', { name: 'Voice input', exact: true }).click()
+  await expect(page.getByText('Listening…', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await page.getByRole('switch', { name: 'Voice input', exact: true }).click()
+  await expect(page.getByText('Listening…', { exact: true })).toBeHidden()
 })
 
 async function navigate(page: Page, label: string) {

@@ -44,6 +44,8 @@ const api: DesktopApi = {
   loadThemes: () => invoke('loadThemes'),
   openThemesFolder: () => invoke('openThemesFolder'),
   openNotificationSettings: () => invoke('openNotificationSettings'),
+  microphoneAccess: (request) => invoke('microphoneAccess', request),
+  openMicrophoneSettings: () => invoke('openMicrophoneSettings'),
   onNotification: (callback) => {
     const listener = (_: unknown, alert: { title: string; body: string }): void => callback(alert)
     ipcRenderer.on(IPC_EVENTS.notification, listener)
@@ -75,6 +77,11 @@ const api: DesktopApi = {
   saveRun: (run) => invoke('saveRun', run),
   runSummary: (kind) => invoke('runSummary', kind),
   clearRuns: (kind) => invoke('clearRuns', kind),
+  saveVoiceAttempt: (attempt) => invoke('saveVoiceAttempt', attempt),
+  updateVoiceAttempt: (id, update) => invoke('updateVoiceAttempt', id, update),
+  voiceHistory: (limit) => invoke('voiceHistory', limit),
+  clearVoiceHistory: () => invoke('clearVoiceHistory'),
+  exportVoiceHistory: () => invoke('exportVoiceHistory'),
   onOnlineError: (callback) => {
     const listener = (_: unknown, message: string): void => callback(message)
     ipcRenderer.on(IPC_EVENTS.error, listener)

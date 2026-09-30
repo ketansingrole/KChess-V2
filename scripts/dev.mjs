@@ -11,6 +11,7 @@ import {
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
+import { prepareVoiceModel } from './prepare-voice-model.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const url = 'http://127.0.0.1:3000'
@@ -119,6 +120,7 @@ process.once('SIGTERM', () => cleanup())
 process.once('exit', () => cleanup(process.exitCode ?? 0))
 
 try {
+  await prepareVoiceModel()
   // Recover only processes whose command belongs to this checkout.
   for (const row of projectProcesses) stop(row.pid)
   for (let attempt = 0; attempt < 20 && (await nuxtUp()); attempt++) await delay(250)
