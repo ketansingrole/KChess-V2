@@ -1,7 +1,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
   ssr: false,
-  modules: ['@pinia/nuxt', '@nuxt/ui'],
+  modules: ['@pinia/nuxt', '@nuxt/ui', '@nuxt/eslint'],
   ui: { fonts: false },
   router: { options: { hashMode: true } },
   css: [

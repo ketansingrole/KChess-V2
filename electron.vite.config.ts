@@ -6,6 +6,6 @@ export default defineConfig({
   renderer: {
     // electron-vite still needs an HTML entry; the actual renderer runs through Nuxt.
     server: { open: false },
-    preview: { open: false }
-  }
+    preview: { open: false },
+  },
 })

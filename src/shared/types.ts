@@ -451,6 +451,8 @@ export interface BestMoveOptions {
 }
 
 export interface DesktopApi {
+  /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
+  exportDiagnostics(): Promise<boolean>
   loadData(): Promise<AppData>
   saveSettings(settings: Settings): Promise<Settings>
   addAccount(username: string): Promise<AppData>

@@ -7,14 +7,32 @@ KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, a
 
 ## Run
 
-Requires Node.js 22.12+ and npm.
+Requires Node.js **24.21.0** (Node 24 LTS) and npm 11. The runtime is pinned in `.nvmrc` and `.node-version`; use `nvm install && nvm use` if you use nvm.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-`npm run dev` runs Nuxt and Electron together. `npm run build` type-checks both sides, generates the static Nuxt renderer, and builds Electron's main and preload bundles. `npm start` opens the built app. `npm test` runs the chess-logic, puzzle/practice and main-process smoke tests (`test:chess` and `test:puzzles` run just those parts). `npm run format:check` and `npm run typecheck` run in CI (`.github/workflows/ci.yml`).
+`npm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error.
+
+`npm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. `npm start` opens the latest build; `npm run app` builds first.
+
+| Command                                 | Purpose                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------ |
+| `npm run check`                         | Formatting, ESLint, all type checks, smoke and unit tests                            |
+| `npm test`                              | Chess, puzzle/database and main-process smoke tests, plus Vitest                     |
+| `npm run test:unit`                     | Mounted Vue components, real Pinia stores, lifecycle and diagnostic regression tests |
+| `npm run test:watch`                    | Vitest watch mode                                                                    |
+| `npm run lint:fix` / `npm run format`   | Apply lint fixes / formatting                                                        |
+| `npm run build && npm run test:e2e`     | Playwright against the built Electron app                                            |
+| `npm run pack && npm run test:packaged` | Package for this platform and verify the packaged app                                |
+
+UI tests launch through the branded wrapper, use a separate `.dev/automation` copy on macOS and a temporary profile, and never import legacy accounts or use your saved tokens. They cover SQLite and preload startup, bundled Stockfish, board moves, navigation, puzzle remounting, promotion and settings persistence. On headless Linux, run Electron checks through `xvfb-run --auto-servernum`. Failure traces and screenshots are written to `test-results/`.
+
+CI runs `npm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
+
+Settings → Data & storage → **Export diagnostics** saves a JSON report containing app/runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
 
 On macOS, dev and local runs launch through `scripts/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `build/icon.icns` changes; quit any running dev session first.
 
@@ -38,11 +56,11 @@ On macOS, `npm run pack:mac` creates an unsigned local `.app` in `dist/mac-arm64
 
 Puzzles mix three kinds of data, and the app marks each one with a badge so it is never a guess:
 
-| Badge                        | Meaning                                                      | What it covers                                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Synced to Lichess**        | Doing it here changes your Lichess account                  | Rated puzzle results (`POST /api/puzzle/batch`, needs the `puzzle:write` permission)                                                                |
-| **From Lichess · read-only** | Fetched from Lichess; KChess never edits it                  | Puzzle rating and history, the puzzle dashboard, the Storm dashboard, the daily puzzle                                                              |
-| **Local only**               | Stays on this computer and is never sent to Lichess          | Storm, Streak and Rush runs and scores, practice and offline puzzles, retrying a puzzle from history, the daily puzzle result, every practice drill |
+| Badge                        | Meaning                                             | What it covers                                                                                                                                      |
+| ---------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Synced to Lichess**        | Doing it here changes your Lichess account          | Rated puzzle results (`POST /api/puzzle/batch`, needs the `puzzle:write` permission)                                                                |
+| **From Lichess · read-only** | Fetched from Lichess; KChess never edits it         | Puzzle rating and history, the puzzle dashboard, the Storm dashboard, the daily puzzle                                                              |
+| **Local only**               | Stays on this computer and is never sent to Lichess | Storm, Streak and Rush runs and scores, practice and offline puzzles, retrying a puzzle from history, the daily puzzle result, every practice drill |
 
 Lichess has no way for an app to submit Storm, Streak or Racer results, so those modes are played locally against the puzzle database and never count toward your Lichess Storm or Streak numbers; your Lichess Storm and Streak results are shown next to them, read-only. Rush is KChess's own mode and has no Lichess counterpart. Puzzle Racer is not included.
 
@@ -57,10 +75,10 @@ On first launch on macOS, the app imports accounts, game history, settings, and 
 ## Structure
 
 - `app/pages/` contains separate Dashboard, Online, Computer, Puzzles, Practice, History, Friends, and Settings routes (Settings shows one category at a time, chosen from the sidebar).
-- `app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (games, navigation, settings), `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `app/components/` holds reusable board, game row, and page header components.
+- `app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (navigation, accounts, settings), with `kchess/computerGame.ts`, `onlineGame.ts` and `gameHistory.ts` owning their respective game state, `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `app/components/` holds reusable board, game row, and page header components.
 - `app/assets/` and `app/utils/` hold styles, media, and chess utilities, including the rules of the timed runs (`rush.ts`) and drills (`coordinates.ts`, `knight.ts`, `endgames.ts`).
 - `src/main/` and `src/preload/` contain Electron's desktop integration.
-- `src/shared/` contains types and pure helpers shared by both sides, including `validate.ts`, which checks every value the renderer sends over IPC, and `puzzle.ts`, which turns Lichess puzzles into one shape and holds the rules of solving them.
+- `src/shared/` contains types and pure helpers shared by both sides, including `ipc.ts`, the typed request channel and event definitions shared by main and preload, and `validate.ts`, which checks every value the renderer sends over IPC, and `puzzle.ts`, which turns Lichess puzzles into one shape and holds the rules of solving them.
 - `nuxt.config.ts` enables client rendering and hash routing, so the generated app works from Electron's local file URL without a running server. Nuxt's generated files live in `.output/public/` and are included in the macOS package.
 
 Nuxt UI is loaded as a Nuxt module. Desktop APIs remain exposed through Electron's preload bridge at `window.kchess`.

@@ -29,6 +29,8 @@ const props = withDefaults(
     flipped?: boolean
     /** Milliseconds before the opponent replies. */
     replyDelay?: number
+    /** A training verdict retained by the parent when this board is remounted. */
+    initialOutcome?: boolean | null
   }>(),
   { retry: true, replyDelay: 350 },
 )
@@ -48,8 +50,8 @@ const { settings } = storeToRefs(store)
 const state = ref<PuzzleState>(startPuzzle(props.puzzle))
 const resetKey = ref(0)
 const waiting = ref(false)
-const mistakes = ref(0)
-const outcome = ref<boolean | null>(null)
+const mistakes = ref(props.initialOutcome === false ? 1 : 0)
+const outcome = ref<boolean | null>(props.initialOutcome ?? null)
 const revealed = ref(false)
 const hinted = ref(false)
 const feedback = ref<'' | 'good' | 'wrong'>('')
@@ -62,8 +64,8 @@ function begin(): void {
   clearTimeout(timer)
   state.value = startPuzzle(props.puzzle)
   waiting.value = false
-  mistakes.value = 0
-  outcome.value = null
+  mistakes.value = props.initialOutcome === false ? 1 : 0
+  outcome.value = props.initialOutcome ?? null
   revealed.value = false
   hinted.value = false
   feedback.value = ''
@@ -173,6 +175,7 @@ async function showSolution(): Promise<void> {
 }
 
 const status = computed(() => (revealed.value ? 'revealed' : state.value.status))
+const lastMove = computed(() => state.value.lastMove as Key[] | undefined)
 
 defineExpose({ hint, showSolution, status, mistakes, feedback, waiting, outcome })
 </script>
@@ -194,7 +197,7 @@ defineExpose({ hint, showSolution, status, mistakes, feedback, waiting, outcome 
         :show-dests="settings.showLegalMoves"
         :promotion="settings.promotion === 'premove' ? 'queen' : settings.promotion"
         :dests="dests"
-        :last-move="state.lastMove as Key[] | undefined"
+        :last-move="lastMove"
         :check="check"
         :turn-color="position?.turn"
         :shapes="shapes"

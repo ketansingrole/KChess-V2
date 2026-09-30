@@ -4,16 +4,55 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run format:check
-      - run: npm run typecheck
-      - run: npm test
+      - run: npm run check
+
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:e2e
+        if: runner.os != 'Linux'
+      - run: xvfb-run --auto-servernum npm run test:e2e
+        if: runner.os == 'Linux'
+      - run: npx electron-builder --dir --publish never
+      - run: npm run test:packaged
+        if: runner.os != 'Linux'
+      - run: xvfb-run --auto-servernum npm run test:packaged
+        if: runner.os == 'Linux'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: desktop-failure-${{ matrix.os }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

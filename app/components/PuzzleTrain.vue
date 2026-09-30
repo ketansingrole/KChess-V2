@@ -9,6 +9,7 @@ const {
   phase,
   current,
   puzzleKey,
+  attemptOutcome,
   isRetry,
   trainError,
   rating,
@@ -77,6 +78,7 @@ function onOutcome(win: boolean): void {
         ref="board"
         :key="puzzleKey"
         :puzzle="current"
+        :initial-outcome="attemptOutcome"
         :flipped="flipped"
         @outcome="onOutcome"
       />

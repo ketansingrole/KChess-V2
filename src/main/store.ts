@@ -1,3 +1,5 @@
+import { DEFAULT_SETTINGS } from '../shared/defaultSettings'
+import { registerDiagnosticSecret } from './diagnosticLog'
 import { app, safeStorage } from 'electron'
 import { readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -7,29 +9,7 @@ import { getDb } from './db'
 import { PIECE_ANIMATIONS, type AppData, type LichessGame, type Settings } from '../shared/types'
 import { assertUsername } from '../shared/validate'
 
-const defaults: Settings = {
-  appearance: 'system',
-  boardTheme: 'brown',
-  lightTheme: 'kchess',
-  darkTheme: 'kchess',
-  pieceSet: 'cburnett',
-  pieceAnimation: 'normal',
-  coordinates: 'inside',
-  soundEnabled: true,
-  soundVolume: 0.7,
-  enginePath: '',
-  premove: true,
-  promotion: 'ask',
-  showLegalMoves: true,
-  notificationsEnabled: true,
-  notifyActive: false,
-  notifyBackground: true,
-  notifyOpponentMove: true,
-  notifyLowTime: true,
-  notifyGameEvents: true,
-  notifyComputerMove: true,
-  notifySound: false,
-}
+const defaults = DEFAULT_SETTINGS
 
 /** Games kept per account. */
 export const MAX_GAMES = 5000
@@ -266,7 +246,7 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
     accounts?: AppData['accounts']
     games?: AppData['games']
   }
-  let raw: JsonBackup | null = null
+  let raw: JsonBackup | null
   try {
     raw = JSON.parse(await readFile(dataPath, 'utf8')) as JsonBackup
   } catch {
@@ -276,7 +256,7 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
   const settings = normalizeSettings(raw.settings ?? {})
   const accounts = raw.accounts ?? []
   const games = [...(raw.games ?? [])].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_GAMES)
-  let tokens: Record<string, string> = {}
+  let tokens: Record<string, string>
   try {
     tokens = JSON.parse(await readFile(tokenPath, 'utf8')) as Record<string, string>
   } catch {
@@ -318,9 +298,9 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
 }
 
 async function migrateLegacy(database: DatabaseSync): Promise<void> {
-  if (process.platform !== 'darwin') return
+  if (process.platform !== 'darwin' || process.env.KCHESS_USER_DATA_DIR) return
   const legacyPath = join(homedir(), '.kchess', 'kchess.db')
-  let legacy: DatabaseSync | null = null
+  let legacy: DatabaseSync
   try {
     legacy = new DatabaseSync(legacyPath, { readOnly: true })
   } catch {
@@ -668,6 +648,7 @@ export async function saveGames(
 }
 
 export async function saveToken(username: string, token: string): Promise<void> {
+  registerDiagnosticSecret(token)
   if (!encryptionAvailable()) throw new Error('OS credential encryption is unavailable.')
   await ensureMigrated()
   const encrypted = safeStorage.encryptString(token).toString('base64')
@@ -683,7 +664,9 @@ export async function getToken(username: string): Promise<string | null> {
     .get(username) as unknown as { encrypted: string } | undefined
   if (!row || !encryptionAvailable()) return null
   try {
-    return safeStorage.decryptString(Buffer.from(row.encrypted, 'base64'))
+    const token = safeStorage.decryptString(Buffer.from(row.encrypted, 'base64'))
+    registerDiagnosticSecret(token)
+    return token
   } catch {
     return null
   }

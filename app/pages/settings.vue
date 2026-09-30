@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { LichessAccount } from '../../src/shared/types'
+import type { LichessAccount, NotificationSkip } from '../../src/shared/types'
 import { formatBytes, formatCount } from '../utils/format'
 import { pieceSets, pieceVars } from '../utils/pieces'
 import { previewColors } from '../utils/themes'
-import type { NotificationSkip } from '../../src/shared/types'
 import { SETTINGS_SECTIONS } from '../stores/kchess'
 
 const store = useKChessStore()
@@ -36,6 +35,20 @@ const {
   reloadThemes,
   openThemesFolder,
 } = store
+
+const exportingDiagnostics = ref(false)
+const diagnosticsNote = ref('')
+async function exportDiagnostics(): Promise<void> {
+  exportingDiagnostics.value = true
+  diagnosticsNote.value = ''
+  try {
+    if (await window.kchess.exportDiagnostics()) diagnosticsNote.value = 'Diagnostics exported.'
+  } catch (cause) {
+    diagnosticsNote.value = cause instanceof Error ? cause.message : 'Could not export diagnostics.'
+  } finally {
+    exportingDiagnostics.value = false
+  }
+}
 
 const confirmClearRuns = ref(false)
 async function clearLocalRuns(): Promise<void> {
@@ -875,6 +888,29 @@ function removePending(): void {
           >
         </div>
         <PuzzleDbCard compact />
+      </section>
+      <section
+        v-if="category.id === 'data'"
+        class="card settings-list"
+        aria-labelledby="diagnostics-title"
+      >
+        <div class="setting-row">
+          <div class="setting-info">
+            <h2 id="diagnostics-title" class="setting-title">Diagnostics</h2>
+            <p class="setting-hint">
+              Export recent app logs to help investigate a problem. Tokens are redacted; games and
+              account databases are excluded.
+            </p>
+          </div>
+          <UButton
+            variant="outline"
+            color="neutral"
+            :loading="exportingDiagnostics"
+            @click="exportDiagnostics"
+            >Export diagnostics</UButton
+          >
+        </div>
+        <p v-if="diagnosticsNote" role="status" class="setting-hint">{{ diagnosticsNote }}</p>
       </section>
     </div>
 

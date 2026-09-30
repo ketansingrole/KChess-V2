@@ -1,14 +1,9 @@
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  Menu,
-  nativeImage,
-  nativeTheme,
-  shell,
-} from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import { handle } from './ipc'
+import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
 import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
+import { setupDiagnostics, exportDiagnostics } from './diagnostics'
 import { bestMove, engineStatus, isTrustedEnginePath, stopEngine, trustEnginePath } from './engine'
 import { closeDb } from './db'
 import { notify } from './notify'
@@ -77,14 +72,20 @@ import {
 
 let window: BrowserWindow | null = null
 app.setName('KChess')
+// An explicit profile is useful for isolated tests and development with fresh data.
+if (process.env.KCHESS_USER_DATA_DIR) {
+  mkdirSync(process.env.KCHESS_USER_DATA_DIR, { recursive: true })
+  app.setPath('userData', process.env.KCHESS_USER_DATA_DIR)
+  app.setPath('sessionData', process.env.KCHESS_USER_DATA_DIR)
+}
 
 /** Send to the renderer unless the window is gone (e.g. closed on macOS while a stream is live). */
-function send(channel: string, payload: unknown): void {
+function send<K extends keyof IpcEvents>(channel: K, payload: IpcEvents[K]): void {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
 }
 const online = new OnlineSession(
-  (event: OnlineEvent) => send('online:event', event),
-  (message: string) => send('online:error', message),
+  (event: OnlineEvent) => send(IPC_EVENTS.online, event),
+  (message: string) => send(IPC_EVENTS.error, message),
 )
 
 function appIconPath(): string | undefined {
@@ -160,6 +161,15 @@ function createWindow(): void {
   window.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(appOrigin)) event.preventDefault()
   })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('Renderer exited:', details.reason, details.exitCode)
+  })
+  window.webContents.on('preload-error', (_event, _path, error) => {
+    console.error('Preload failed:', error)
+  })
+  window.webContents.on('console-message', (_event, level, message) => {
+    if (level >= 2) console.error('Renderer:', message)
+  })
   window.webContents.on('did-fail-load', (_event, code, description, url) =>
     console.error('Renderer load failed:', code, description, url),
   )
@@ -201,162 +211,148 @@ function setupAppMenu(): void {
   )
 }
 
-app.whenReady().then(() => {
-  // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
-  // the system appearance changes. Packaged builds fall back to the bundle
-  // .icns until this override applies.
-  refreshAppIcon()
-  nativeTheme.on('updated', refreshAppIcon)
-  setupAppMenu()
-  ipcMain.handle('data:load', () => loadData())
-  ipcMain.handle('settings:save', async (_event, raw: unknown) => {
-    const settings = assertSettings(raw)
-    // The renderer may not point the app at an arbitrary executable: only a path
-    // picked in the native dialog, downloaded by KChess, or already saved is accepted.
-    if (settings.enginePath && !isTrustedEnginePath(settings.enginePath)) {
-      const stored = await getSettings()
-      if (settings.enginePath !== stored.enginePath)
-        throw new Error('Choose the Stockfish executable with the file picker.')
-    }
-    return saveSettings(settings)
-  })
-  ipcMain.handle('account:add', (_event, username: unknown) => addAccount(assertUsername(username)))
-  ipcMain.handle('account:remove', (_event, username: unknown) =>
-    removeAccount(assertUsername(username)),
-  )
-  ipcMain.handle('games:sync', (_event, username?: unknown) =>
-    syncGames(username === undefined ? undefined : assertUsername(username)),
-  )
-  ipcMain.handle('games:pgn', (_event, account: unknown, id: unknown) => {
-    return gamePgn(assertUsername(account), assertGameId(id))
-  })
-  ipcMain.handle('lichess:cached-profile', (_event, username: unknown) =>
-    cachedProfile(assertUsername(username)),
-  )
-  ipcMain.handle('lichess:profile', (_event, username: unknown) =>
-    profile(assertUsername(username)),
-  )
-  ipcMain.handle('lichess:rating', (_event, username: unknown) =>
-    ratingHistory(assertUsername(username)),
-  )
-  ipcMain.handle('lichess:connect', () => connectLichess())
-  ipcMain.handle('engine:status', async () => engineStatus((await getSettings()).enginePath))
-  ipcMain.handle('engine:choose', async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Choose Stockfish executable',
-      properties: ['openFile'],
+void app
+  .whenReady()
+  .then(() => {
+    // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
+    // the system appearance changes. Packaged builds fall back to the bundle
+    // .icns until this override applies.
+    setupDiagnostics()
+    handle('exportDiagnostics', exportDiagnostics)
+    refreshAppIcon()
+    nativeTheme.on('updated', refreshAppIcon)
+    setupAppMenu()
+    handle('loadData', () => loadData())
+    handle('saveSettings', async (_event, raw: unknown) => {
+      const settings = assertSettings(raw)
+      // The renderer may not point the app at an arbitrary executable: only a path
+      // picked in the native dialog, downloaded by KChess, or already saved is accepted.
+      if (settings.enginePath && !isTrustedEnginePath(settings.enginePath)) {
+        const stored = await getSettings()
+        if (settings.enginePath !== stored.enginePath)
+          throw new Error('Choose the Stockfish executable with the file picker.')
+      }
+      return saveSettings(settings)
     })
-    const path = result.canceled ? null : (result.filePaths[0] ?? null)
-    if (path) trustEnginePath(path)
-    return path
-  })
-  ipcMain.handle('engine:install', async () => {
-    if (process.platform !== 'darwin')
-      throw new Error('Downloading Stockfish currently supports macOS.')
-    const { path, version, updated } = await installManagedEngine()
-    return { path, version, updated }
-  })
-  ipcMain.handle('engine:delete', async () => {
-    stopEngine()
-    await deleteManagedEngine()
-  })
-  ipcMain.handle(
-    'engine:bestmove',
-    async (_event, moves: unknown, level: unknown, options: unknown) =>
+    handle('addAccount', (_event, username: unknown) => addAccount(assertUsername(username)))
+    handle('removeAccount', (_event, username: unknown) => removeAccount(assertUsername(username)))
+    handle('syncGames', (_event, username?: unknown) =>
+      syncGames(username === undefined ? undefined : assertUsername(username)),
+    )
+    handle('gamePgn', (_event, account: unknown, id: unknown) => {
+      return gamePgn(assertUsername(account), assertGameId(id))
+    })
+    handle('cachedProfile', (_event, username: unknown) => cachedProfile(assertUsername(username)))
+    handle('profile', (_event, username: unknown) => profile(assertUsername(username)))
+    handle('ratingHistory', (_event, username: unknown) => ratingHistory(assertUsername(username)))
+    handle('connectLichess', () => connectLichess())
+    handle('engineStatus', async () => engineStatus((await getSettings()).enginePath))
+    handle('chooseEngine', async () => {
+      const result = await dialog.showOpenDialog({
+        title: 'Choose Stockfish executable',
+        properties: ['openFile'],
+      })
+      const path = result.canceled ? null : (result.filePaths[0] ?? null)
+      if (path) trustEnginePath(path)
+      return path
+    })
+    handle('installEngine', async () => {
+      if (process.platform !== 'darwin')
+        throw new Error('Downloading Stockfish currently supports macOS.')
+      const { path, version, updated } = await installManagedEngine()
+      return { path, version, updated }
+    })
+    handle('deleteEngine', async () => {
+      stopEngine()
+      await deleteManagedEngine()
+    })
+    handle('bestMove', async (_event, moves: unknown, level: unknown, options?: unknown) =>
       bestMove(
         assertMoves(moves),
         assertLevel(level),
         (await getSettings()).enginePath,
         assertBestMoveOptions(options),
       ),
-  )
-  ipcMain.handle('online:start', (_event, options: unknown) =>
-    online.start(assertOnlineOptions(options)),
-  )
-  ipcMain.handle('online:resume', () => online.resume())
-  ipcMain.handle('online:cancel', () => online.cancel())
-  ipcMain.handle('online:move', (_event, id: unknown, move: unknown) =>
-    online.move(assertGameId(id), assertUci(move)),
-  )
-  ipcMain.handle('online:action', (_event, id: unknown, action: unknown) =>
-    online.action(assertGameId(id), assertAction(action)),
-  )
-  ipcMain.handle('online:presence', (_event, usernames: unknown) =>
-    online.presence(assertUsernames(usernames)),
-  )
-  ipcMain.handle('account:clear-data', async (_event, username: unknown) => {
-    const name = assertUsername(username)
-    const data = await clearAccountData(name)
-    forgetProfile(name)
-    return data
+    )
+    handle('startOnline', (_event, options: unknown) => online.start(assertOnlineOptions(options)))
+    handle('resumeOnline', () => online.resume())
+    handle('cancelOnline', () => online.cancel())
+    handle('playOnline', (_event, id: unknown, move: unknown) =>
+      online.move(assertGameId(id), assertUci(move)),
+    )
+    handle('onlineAction', (_event, id: unknown, action: unknown) =>
+      online.action(assertGameId(id), assertAction(action)),
+    )
+    handle('presence', (_event, usernames: unknown) => online.presence(assertUsernames(usernames)))
+    handle('clearAccountData', async (_event, username: unknown) => {
+      const name = assertUsername(username)
+      const data = await clearAccountData(name)
+      forgetProfile(name)
+      return data
+    })
+    handle('following', () => followedUsers())
+    handle('addFriends', async (_event, usernames: unknown) => {
+      const names = assertFriendList(usernames)
+      const data = await addFriends(names)
+      await primeProfiles(names)
+      return data
+    })
+    handle('notify', (_event, request: unknown) =>
+      notify(window, assertNotification(request), (alert) => send(IPC_EVENTS.notification, alert)),
+    )
+    handle('loadThemes', () => loadCustomThemes())
+    handle('openThemesFolder', async () => {
+      await loadCustomThemes() // makes sure the folder exists
+      await shell.openPath(themesDir())
+    })
+    handle('openNotificationSettings', async () => {
+      // Fixed URLs only: nothing from the renderer reaches openExternal.
+      const url =
+        process.platform === 'darwin'
+          ? 'x-apple.systempreferences:com.apple.Notifications-Settings.extension'
+          : process.platform === 'win32'
+            ? 'ms-settings:notifications'
+            : undefined
+      if (!url) return false
+      await shell.openExternal(url)
+      return true
+    })
+    handle('puzzleNext', (_event, request: unknown) => puzzleNext(assertPuzzleRequest(request)))
+    handle('puzzleSolve', (_event, request: unknown) => puzzleSolve(assertPuzzleSolve(request)))
+    handle('puzzleDaily', () => puzzleDaily())
+    handle('puzzleDashboard', (_event, account: unknown, days: unknown) =>
+      puzzleDashboard(assertUsername(account), assertDays(days)),
+    )
+    handle('puzzleActivity', (_event, account: unknown, max: unknown) =>
+      puzzleActivity(assertUsername(account), assertActivityMax(max)),
+    )
+    handle('stormDashboard', (_event, username: unknown, days: unknown) =>
+      stormDashboard(assertUsername(username), assertDays(days)),
+    )
+    handle('puzzleDbStatus', () => puzzleDbStatus())
+    handle('puzzleDbInstall', () =>
+      installPuzzleDb((progress) => send(IPC_EVENTS.puzzleProgress, progress)),
+    )
+    handle('puzzleDbCancel', () => cancelPuzzleDb())
+    handle('puzzleDbDelete', () => deletePuzzleDb())
+    handle('localPuzzles', (_event, query: unknown) => localPuzzles(assertLocalQuery(query)))
+    handle('localLadder', (_event, query: unknown) => localLadder(assertLadderQuery(query)))
+    handle('saveRun', (_event, run: unknown) => saveRun(assertRunInput(run)))
+    handle('runSummary', (_event, kind: unknown) => runSummary(assertRunKind(kind)))
+    handle('clearRuns', (_event, kind: unknown) =>
+      clearRuns(kind === undefined ? undefined : assertRunKind(kind)),
+    )
+    handle('usage', () => usageReport())
+    handle('resetUsage', () => resetUsage())
+    createWindow()
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
-  ipcMain.handle('friends:following', () => followedUsers())
-  ipcMain.handle('friends:add-many', async (_event, usernames: unknown) => {
-    const names = assertFriendList(usernames)
-    const data = await addFriends(names)
-    await primeProfiles(names)
-    return data
+  .catch((error: unknown) => {
+    console.error('Startup failed:', error)
+    app.quit()
   })
-  ipcMain.handle('notify:show', (_event, request: unknown) =>
-    notify(window, assertNotification(request), (alert) => send('notify:alert', alert)),
-  )
-  ipcMain.handle('themes:load', () => loadCustomThemes())
-  ipcMain.handle('themes:open-folder', async () => {
-    await loadCustomThemes() // makes sure the folder exists
-    await shell.openPath(themesDir())
-  })
-  ipcMain.handle('notify:open-settings', async () => {
-    // Fixed URLs only: nothing from the renderer reaches openExternal.
-    const url =
-      process.platform === 'darwin'
-        ? 'x-apple.systempreferences:com.apple.Notifications-Settings.extension'
-        : process.platform === 'win32'
-          ? 'ms-settings:notifications'
-          : undefined
-    if (!url) return false
-    await shell.openExternal(url)
-    return true
-  })
-  ipcMain.handle('puzzle:next', (_event, request: unknown) =>
-    puzzleNext(assertPuzzleRequest(request)),
-  )
-  ipcMain.handle('puzzle:solve', (_event, request: unknown) =>
-    puzzleSolve(assertPuzzleSolve(request)),
-  )
-  ipcMain.handle('puzzle:daily', () => puzzleDaily())
-  ipcMain.handle('puzzle:dashboard', (_event, account: unknown, days: unknown) =>
-    puzzleDashboard(assertUsername(account), assertDays(days)),
-  )
-  ipcMain.handle('puzzle:activity', (_event, account: unknown, max: unknown) =>
-    puzzleActivity(assertUsername(account), assertActivityMax(max)),
-  )
-  ipcMain.handle('puzzle:storm', (_event, username: unknown, days: unknown) =>
-    stormDashboard(assertUsername(username), assertDays(days)),
-  )
-  ipcMain.handle('puzzledb:status', () => puzzleDbStatus())
-  ipcMain.handle('puzzledb:install', () =>
-    installPuzzleDb((progress) => send('puzzledb:progress', progress)),
-  )
-  ipcMain.handle('puzzledb:cancel', () => cancelPuzzleDb())
-  ipcMain.handle('puzzledb:delete', () => deletePuzzleDb())
-  ipcMain.handle('puzzledb:query', (_event, query: unknown) =>
-    localPuzzles(assertLocalQuery(query)),
-  )
-  ipcMain.handle('puzzledb:ladder', (_event, query: unknown) =>
-    localLadder(assertLadderQuery(query)),
-  )
-  ipcMain.handle('runs:save', (_event, run: unknown) => saveRun(assertRunInput(run)))
-  ipcMain.handle('runs:summary', (_event, kind: unknown) => runSummary(assertRunKind(kind)))
-  ipcMain.handle('runs:clear', (_event, kind: unknown) =>
-    clearRuns(kind === undefined ? undefined : assertRunKind(kind)),
-  )
-  ipcMain.handle('usage:report', () => usageReport())
-  ipcMain.handle('usage:reset', () => resetUsage())
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
 
 app.on('window-all-closed', () => {
   cancelPuzzleDb()

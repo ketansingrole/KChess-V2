@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.electron.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": [
+    "tests/**/*.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "app/env.d.ts",
+    ".nuxt/types/imports.d.ts"
+  ]
+}

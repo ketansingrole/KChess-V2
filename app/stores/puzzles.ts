@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { pickConnectedAccount } from '../../src/shared/accounts'
 import type {
@@ -72,7 +72,10 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const session = ref({ solved: 0, failed: 0, ratingChange: 0 })
   /** What Lichess did with the last rated result. */
   const lastReport = ref<{ win: boolean; ratingDiff?: number; failed?: string } | null>(null)
+  const attemptOutcome = ref<boolean | null>(null)
+  let attempt: { key: number; account: string; angle: string; mode: TrainMode } | null = null
   let loadToken = 0
+  let sessionVersion = 0
 
   const syncsToLichess = computed(
     () => mode.value === 'rated' && !isRetry.value && Boolean(account.value),
@@ -143,6 +146,13 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   function show(puzzle: Puzzle): void {
     current.value = puzzle
     puzzleKey.value++
+    attemptOutcome.value = null
+    attempt = {
+      key: puzzleKey.value,
+      account: account.value,
+      angle: angle.value,
+      mode: mode.value,
+    }
     phase.value = 'ready'
   }
 
@@ -169,18 +179,41 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   /** The first attempt on the current puzzle has been decided. */
   async function report(win: boolean): Promise<void> {
     const puzzle = current.value
-    if (!puzzle || isRetry.value) return
+    const started = attempt
+    if (
+      !puzzle ||
+      !started ||
+      isRetry.value ||
+      phase.value !== 'ready' ||
+      attemptOutcome.value !== null ||
+      started.account !== account.value ||
+      started.mode !== mode.value ||
+      started.angle !== angle.value
+    )
+      return
+    // The verdict belongs to the store's attempt, so remounting the board cannot submit it again.
+    attemptOutcome.value = win
     if (win) session.value.solved++
     else session.value.failed++
     if (!syncsToLichess.value) return
+    const token = loadToken
+    const version = sessionVersion
+    const stillCurrent = (): boolean =>
+      token === loadToken &&
+      version === sessionVersion &&
+      started === attempt &&
+      started.account === account.value &&
+      started.mode === mode.value &&
+      started.angle === angle.value
     try {
       const result = await window.kchess.puzzleSolve({
-        account: account.value,
-        angle: angle.value,
+        account: started.account,
+        angle: started.angle,
         id: puzzle.id,
         win,
         rated: true,
       })
+      if (!stillCurrent()) return
       if (isReconnect(result)) {
         phase.value = 'reconnect'
         lastReport.value = {
@@ -195,11 +228,13 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       }
       if (current.value?.id === puzzle.id) lastReport.value = { win, ratingDiff: result.ratingDiff }
     } catch (cause) {
+      if (!stillCurrent()) return
       lastReport.value = { win, failed: message(cause) }
     }
   }
 
   function resetSession(): void {
+    sessionVersion++
     session.value = { solved: 0, failed: 0, ratingChange: 0 }
   }
 
@@ -227,8 +262,10 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const dashboardDays = useLocalStorage('kchess:puzzle-dashboard-days', 30)
   const storm = ref<StormDashboard | null>(null)
   const stats = ref({ loading: false, error: '', needsReconnect: false, account: '' })
+  let statsToken = 0
 
   async function loadStats(): Promise<void> {
+    const token = ++statsToken
     const who = account.value
     if (!who) {
       profile.value = null
@@ -245,7 +282,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       window.kchess.puzzleDashboard(who, dashboardDays.value),
       window.kchess.stormDashboard(who, 30),
     ])
-    if (who !== account.value) return
+    if (token !== statsToken || who !== account.value) return
     profile.value = user.status === 'fulfilled' ? user.value : null
     if (user.status === 'fulfilled' && user.value.perfs?.puzzle?.rating !== undefined)
       rating.value ??= Math.round(user.value.perfs.puzzle.rating)
@@ -254,8 +291,10 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     let needsReconnect = false
     let error = ''
     if (board.status === 'fulfilled') {
-      if (isReconnect(board.value)) needsReconnect = true
-      else dashboard.value = board.value
+      if (isReconnect(board.value)) {
+        dashboard.value = null
+        needsReconnect = true
+      } else dashboard.value = board.value
     } else {
       dashboard.value = null
       error = message(board.reason)
@@ -265,13 +304,15 @@ export const usePuzzleStore = defineStore('puzzles', () => {
 
   const activity = ref<PuzzleActivityEntry[]>([])
   const activityState = ref({ loading: false, error: '', needsReconnect: false, loaded: '' })
+  let activityToken = 0
   async function loadActivity(force = false): Promise<void> {
     const who = account.value
     if (!who || (!force && activityState.value.loaded === who)) return
+    const token = ++activityToken
     activityState.value = { loading: true, error: '', needsReconnect: false, loaded: '' }
     try {
       const result = await window.kchess.puzzleActivity(who, 100)
-      if (who !== account.value) return
+      if (token !== activityToken || who !== account.value) return
       if (isReconnect(result)) {
         activityState.value = { loading: false, error: '', needsReconnect: true, loaded: '' }
         return
@@ -279,6 +320,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       activity.value = result
       activityState.value = { loading: false, error: '', needsReconnect: false, loaded: who }
     } catch (cause) {
+      if (token !== activityToken || who !== account.value) return
       activityState.value = {
         loading: false,
         error: message(cause),
@@ -287,6 +329,29 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       }
     }
   }
+
+  watch(
+    account,
+    () => {
+      ++loadToken
+      ++statsToken
+      ++activityToken
+      attempt = null
+      attemptOutcome.value = null
+      phase.value = 'idle'
+      rating.value = undefined
+      lastReport.value = null
+      resetSession()
+      profile.value = null
+      ratingHistory.value = []
+      dashboard.value = null
+      storm.value = null
+      stats.value = { loading: false, error: '', needsReconnect: false, account: account.value }
+      activity.value = []
+      activityState.value = { loading: false, error: '', needsReconnect: false, loaded: '' }
+    },
+    { flush: 'sync' },
+  )
 
   /** Connecting again grants the puzzle permission that older logins lack. */
   async function reconnect(): Promise<void> {
@@ -349,6 +414,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     phase,
     current,
     puzzleKey,
+    attemptOutcome,
     isRetry,
     trainError,
     rating,

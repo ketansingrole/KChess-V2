@@ -82,11 +82,11 @@ const profileKey = (username: string, kind: 'profile' | 'rating'): string =>
   `${username.toLowerCase()}:${kind}`
 
 /** TTL memory cache; `fetch` also makes concurrent callers for a key share one request. */
-const profileCache = new LRUCache<string, {}, () => Promise<unknown>>({
+const profileCache = new LRUCache<string, object, () => Promise<unknown>>({
   max: 100,
   ttl: PROFILE_TTL_MS,
   fetchMethod: async (key, _stale, { context: load }) => {
-    const value = (await load()) as {}
+    const value = (await load()) as object
     await writeApiCache(key, value).catch(() => undefined)
     return value
   },
@@ -96,7 +96,7 @@ const profileCache = new LRUCache<string, {}, () => Promise<unknown>>({
  * Memory first, then the network. The result is also persisted, and if
  * Lichess is unreachable the last persisted copy is served instead of an error.
  */
-async function cachedFetch<T extends {}>(key: string, load: () => Promise<T>): Promise<T> {
+async function cachedFetch<T extends object>(key: string, load: () => Promise<T>): Promise<T> {
   try {
     return (await profileCache.fetch(key, { context: load })) as T
   } catch (cause) {
@@ -604,6 +604,7 @@ export class OnlineSession {
       try {
         const stream = await unwrap(open())
         await readLines(stream, (line) => {
+          if (signal.aborted) return
           received = true
           emit(JSON.parse(line) as OnlineEvent)
         })
@@ -686,27 +687,32 @@ export class OnlineSession {
       throw new Error(
         `Lichess blocks ${perf} (${label}) for public seeks. The Board API allows Rapid and slower for matchmaking — add a username to challenge directly (Blitz allowed) or pick a longer control.`,
       )
-    const connected = (await loadData()).accounts.filter((a) => a.connected)
-    if (!connected.length) throw new Error('Connect your Lichess account in Settings first.')
-    // An explicit account must match exactly: never play as a different one.
-    const account = options.account
-      ? connected.find((a) => a.username.toLowerCase() === options.account?.toLowerCase())
-      : connected[0]
-    if (!account) throw new Error(`@${options.account} is not connected. Connect it in Settings.`)
-    this.currentAccount = account.username
-    attributeTo(account.username, 'play')
-    const token = await getToken(account.username)
-    if (!token) throw new Error('Your Lichess login is unavailable. Reconnect in Settings.')
     const controller = new AbortController()
     this.controller = controller
-    void this.eventStream(token, controller.signal, (event) => {
-      if (event.type === 'gameStart') {
-        this.pendingId = ''
-        void this.openGame(event.game.gameId, token)
-      }
-      this.emit(event)
-    })
     try {
+      const connected = (await loadData()).accounts.filter((a) => a.connected)
+      controller.signal.throwIfAborted()
+      if (!connected.length) throw new Error('Connect your Lichess account in Settings first.')
+      // An explicit account must match exactly: never play as a different one.
+      const account = options.account
+        ? connected.find((a) => a.username.toLowerCase() === options.account?.toLowerCase())
+        : connected[0]
+      if (!account) throw new Error(`@${options.account} is not connected. Connect it in Settings.`)
+      this.currentAccount = account.username
+      attributeTo(account.username, 'play')
+      const token = await getToken(account.username)
+      controller.signal.throwIfAborted()
+      if (!token) throw new Error('Your Lichess login is unavailable. Reconnect in Settings.')
+      let gameStarted = false
+      void this.eventStream(token, controller.signal, (event) => {
+        if (controller.signal.aborted) return
+        if (event.type === 'gameStart') {
+          gameStarted = true
+          this.pendingId = ''
+          void this.openGame(event.game.gameId, token)
+        }
+        this.emit(event)
+      })
       if (target) {
         try {
           const challenge = await unwrap(
@@ -720,14 +726,21 @@ export class OnlineSession {
               },
               bodySerializer: urlencoded,
               headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
+              signal: controller.signal,
             }),
           )
-          this.pendingId = challenge.id
+          // A server may finish creating the challenge just as cancellation arrives.
+          if (controller.signal.aborted) {
+            await this.cancelChallenge(challenge.id, token)
+            controller.signal.throwIfAborted()
+          }
+          if (!gameStarted) this.pendingId = challenge.id
           return { id: challenge.id, url: challenge.url }
         } catch (cause) {
           if (cause instanceof LichessError && cause.status === 400)
             throw new Error(
               `Lichess rejected this ${perf} (${label}) challenge. The Board API allows Blitz and slower for direct challenges — pick a longer control.`,
+              { cause },
             )
           throw cause
         }
@@ -758,6 +771,15 @@ export class OnlineSession {
       if (this.controller === controller) this.controller = null
       throw cause
     }
+  }
+
+  private async cancelChallenge(id: string, token: string): Promise<void> {
+    await unwrap(
+      client.POST('/api/challenge/{challengeId}/cancel', {
+        params: { path: { challengeId: id } },
+        headers: authorize(token),
+      }),
+    ).catch(() => undefined)
   }
 
   private async openGame(id: string, token: string): Promise<void> {
@@ -857,15 +879,12 @@ export class OnlineSession {
     if (this.pendingId) {
       const id = this.pendingId
       this.pendingId = ''
-      void getToken(this.currentAccount).then((token) => {
-        if (!token) return undefined
-        return unwrap(
-          client.POST('/api/challenge/{challengeId}/cancel', {
-            params: { path: { challengeId: id } },
-            headers: authorize(token),
-          }),
-        ).catch(() => undefined)
-      })
+      void getToken(this.currentAccount)
+        .then((token) => {
+          if (!token) return undefined
+          return this.cancelChallenge(id, token)
+        })
+        .catch(() => undefined)
     }
   }
 }

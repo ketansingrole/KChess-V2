@@ -40,6 +40,18 @@ const saved = ref<RunSaved | null>(null)
 const bonusFlash = ref(0)
 const startedAt = ref(0)
 const elapsedMs = ref(0)
+const locked = ref(false)
+let generation = 0
+let advanceTimer: ReturnType<typeof setTimeout> | undefined
+let bonusTimer: ReturnType<typeof setTimeout> | undefined
+
+function clearTimers(): void {
+  generation++
+  clearTimeout(advanceTimer)
+  clearTimeout(bonusTimer)
+  locked.value = false
+  bonusFlash.value = 0
+}
 
 const summaries = ref<Partial<Record<'storm' | 'streak' | 'rush', RunSummary>>>({})
 async function loadSummaries(): Promise<void> {
@@ -78,22 +90,32 @@ const clock = useIntervalFn(
   100,
   { immediate: false },
 )
-onBeforeUnmount(() => clock.pause())
+onBeforeUnmount(() => {
+  clock.pause()
+  clearTimers()
+})
 
 async function start(): Promise<void> {
+  clock.pause()
+  clearTimers()
+  const mine = generation
+  const chosen = config.value
   error.value = ''
   stage.value = 'loading'
   try {
-    ladder.value = await window.kchess.localLadder(config.value.ladder)
+    const loaded = await window.kchess.localLadder(chosen.ladder)
+    if (mine !== generation) return
+    ladder.value = loaded
     if (ladder.value.length < 10)
       throw new Error('The puzzle database is too small; download it again.')
   } catch (cause) {
+    if (mine !== generation) return
     error.value = cause instanceof Error ? cause.message : String(cause)
     stage.value = 'menu'
     return
   }
   index.value = 0
-  state.value = newRush(config.value)
+  state.value = newRush(chosen)
   saved.value = null
   warned = false
   startedAt.value = performance.now()
@@ -103,7 +125,6 @@ async function start(): Promise<void> {
 }
 
 const puzzle = computed(() => ladder.value[index.value])
-const locked = ref(false)
 
 function advance(): void {
   if (state.value.over) return
@@ -119,7 +140,11 @@ function onMove(correct: boolean): void {
     const bonus = correctMove(state.value, config.value)
     if (bonus) {
       bonusFlash.value = bonus
-      setTimeout(() => (bonusFlash.value = 0), 1200)
+      clearTimeout(bonusTimer)
+      const mine = generation
+      bonusTimer = setTimeout(() => {
+        if (mine === generation) bonusFlash.value = 0
+      }, 1200)
     }
   } else mistake(state.value, config.value)
   if (state.value.over) void endRun()
@@ -130,8 +155,10 @@ function onDone(): void {
   const solved = board.value?.status === 'solved'
   if (solved && puzzle.value) puzzleSolved(state.value, puzzle.value.rating)
   locked.value = true
-  setTimeout(
+  const mine = generation
+  advanceTimer = setTimeout(
     () => {
+      if (mine !== generation || stage.value !== 'running') return
       locked.value = false
       advance()
     },
@@ -146,13 +173,16 @@ function skipPuzzle(): void {
 async function endRun(): Promise<void> {
   if (stage.value !== 'running') return
   clock.pause()
+  clearTimers()
+  const mine = generation
+  const ended = config.value
   elapsedMs.value = performance.now() - startedAt.value
   if (!state.value.over) finish(state.value, 'ended')
   stage.value = 'over'
   try {
-    saved.value = await window.kchess.saveRun({
-      kind: config.value.mode,
-      variant: config.value.variant,
+    const result = await window.kchess.saveRun({
+      kind: ended.mode,
+      variant: ended.variant,
       score: state.value.score,
       detail: {
         moves: state.value.moves,
@@ -163,8 +193,10 @@ async function endRun(): Promise<void> {
         seconds: Math.round(elapsedMs.value / 1000),
       },
     })
-    summaries.value = { ...summaries.value, [config.value.mode]: saved.value.summary }
+    summaries.value = { ...summaries.value, [ended.mode]: result.summary }
+    if (mine === generation) saved.value = result
   } catch (cause) {
+    if (mine !== generation) return
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
@@ -211,6 +243,7 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
             class="rush-choice"
             :class="{ active: choice === key }"
             :aria-checked="choice === key"
+            :disabled="stage === 'loading'"
             @click="choice = key"
           >
             <strong>{{ RUSH_CONFIGS[key]!.title }}</strong>

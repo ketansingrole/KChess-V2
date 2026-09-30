@@ -1,0 +1,25 @@
+import type { Settings } from './types'
+
+export const DEFAULT_SETTINGS: Settings = {
+  appearance: 'system',
+  boardTheme: 'brown',
+  lightTheme: 'kchess',
+  darkTheme: 'kchess',
+  pieceSet: 'cburnett',
+  pieceAnimation: 'normal',
+  coordinates: 'inside',
+  soundEnabled: true,
+  soundVolume: 0.7,
+  enginePath: '',
+  premove: true,
+  promotion: 'ask',
+  showLegalMoves: true,
+  notificationsEnabled: true,
+  notifyActive: false,
+  notifyBackground: true,
+  notifyOpponentMove: true,
+  notifyLowTime: true,
+  notifyGameEvents: true,
+  notifyComputerMove: true,
+  notifySound: false,
+}

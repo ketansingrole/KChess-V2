@@ -6,20 +6,20 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 
 ## Code that ships in the app
 
-| Project                                                                       | License          | Used for                                                                          |
-| ----------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------- |
-| [`@lichess-org/chessground`](https://github.com/lichess-org/chessground)      | GPL-3.0-or-later | The interactive chess board                                                       |
-| [`chessops`](https://github.com/niklasf/chessops)                             | GPL-3.0-or-later | Chess rules, FEN, PGN, SAN                                                        |
-| [`stockfish`](https://www.npmjs.com/package/stockfish) (WASM build, "lite")   | GPL-3.0          | The bundled computer opponent, run as a separate UCI process                      |
-| [Electron](https://www.electronjs.org)                                        | MIT              | Desktop shell (includes Chromium and other components under their own licenses)   |
-| [Nuxt](https://nuxt.com), [Vue](https://vuejs.org), Vue Router                | MIT              | Application framework                                                             |
-| [Nuxt UI](https://ui.nuxt.com), [Tailwind CSS](https://tailwindcss.com)       | MIT              | Interface components and styling                                                  |
-| [Pinia](https://pinia.vuejs.org), [VueUse](https://vueuse.org)                | MIT              | State and utilities                                                               |
-| [`@unovis/ts`](https://unovis.dev), `@unovis/vue`                             | Apache-2.0       | The rating chart                                                                  |
-| [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/)                      | MIT              | Typed Lichess API client                                                          |
-| [Valibot](https://valibot.dev)                                                | MIT              | Validating values that cross the Electron IPC boundary                            |
-| [`lru-cache`](https://github.com/isaacs/node-lru-cache)                       | BlueOak-1.0.0    | In-memory cache for profile requests                                              |
-| [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                   | ISC              | Interface icons                                                                   |
+| Project                                                                     | License          | Used for                                                                        |
+| --------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------- |
+| [`@lichess-org/chessground`](https://github.com/lichess-org/chessground)    | GPL-3.0-or-later | The interactive chess board                                                     |
+| [`chessops`](https://github.com/niklasf/chessops)                           | GPL-3.0-or-later | Chess rules, FEN, PGN, SAN                                                      |
+| [`stockfish`](https://www.npmjs.com/package/stockfish) (WASM build, "lite") | GPL-3.0          | The bundled computer opponent, run as a separate UCI process                    |
+| [Electron](https://www.electronjs.org)                                      | MIT              | Desktop shell (includes Chromium and other components under their own licenses) |
+| [Nuxt](https://nuxt.com), [Vue](https://vuejs.org), Vue Router              | MIT              | Application framework                                                           |
+| [Nuxt UI](https://ui.nuxt.com), [Tailwind CSS](https://tailwindcss.com)     | MIT              | Interface components and styling                                                |
+| [Pinia](https://pinia.vuejs.org), [VueUse](https://vueuse.org)              | MIT              | State and utilities                                                             |
+| [`@unovis/ts`](https://unovis.dev), `@unovis/vue`                           | Apache-2.0       | The rating chart                                                                |
+| [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/)                    | MIT              | Typed Lichess API client                                                        |
+| [Valibot](https://valibot.dev)                                              | MIT              | Validating values that cross the Electron IPC boundary                          |
+| [`lru-cache`](https://github.com/isaacs/node-lru-cache)                     | BlueOak-1.0.0    | In-memory cache for profile requests                                            |
+| [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                 | ISC              | Interface icons                                                                 |
 
 ## Build-time only
 
@@ -30,13 +30,13 @@ similar) are MIT or Apache-2.0 and are not distributed with the app.
 
 ## Assets
 
-| Asset                                    | Source and license                                                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Board themes (`app/assets/boards/`)      | [lichess-org/lila](https://github.com/lichess-org/lila) — AGPL-3.0-or-later; authors: the lila contributors and pirouetti            |
-| Move and notification sounds             | [lichess-org/lila](https://github.com/lichess-org/lila) `public/sound/standard` — AGPL-3.0-or-later                                  |
-| Chess pieces (`app/assets/pieces/`)      | [lichess-org/lila](https://github.com/lichess-org/lila) `public/piece` — 11 sets, each under a GPL-compatible license, listed in `app/assets/ATTRIBUTION.md` |
-| App color themes (`app/utils/themePresets.ts`) | [openchamber/openchamber](https://github.com/openchamber/openchamber) built-in themes — MIT; colors only, credits in `app/assets/ATTRIBUTION.md`                |
-| App icon (`build/`, `public/`)           | Original artwork by the KChess authors, generated by `scripts/make-icons.py` — GPL-3.0-or-later like the code                        |
+| Asset                                          | Source and license                                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Board themes (`app/assets/boards/`)            | [lichess-org/lila](https://github.com/lichess-org/lila) — AGPL-3.0-or-later; authors: the lila contributors and pirouetti                                    |
+| Move and notification sounds                   | [lichess-org/lila](https://github.com/lichess-org/lila) `public/sound/standard` — AGPL-3.0-or-later                                                          |
+| Chess pieces (`app/assets/pieces/`)            | [lichess-org/lila](https://github.com/lichess-org/lila) `public/piece` — 11 sets, each under a GPL-compatible license, listed in `app/assets/ATTRIBUTION.md` |
+| App color themes (`app/utils/themePresets.ts`) | [openchamber/openchamber](https://github.com/openchamber/openchamber) built-in themes — MIT; colors only, credits in `app/assets/ATTRIBUTION.md`             |
+| App icon (`build/`, `public/`)                 | Original artwork by the KChess authors, generated by `scripts/make-icons.py` — GPL-3.0-or-later like the code                                                |
 
 | Puzzle database (downloaded on request, sampled into `kchess.db`) | [database.lichess.org](https://database.lichess.org/#puzzles) — CC0 (public domain); the puzzles come from Lichess games and the Lichess puzzle community |
 
@@ -52,3 +52,13 @@ release page and verifies it against the SHA-256 digest GitHub publishes.
 ## Not affiliated
 
 KChess is not affiliated with or endorsed by Lichess or the Stockfish team.
+
+## Development and verification tooling
+
+The following development-only tools do not ship in KChess's runtime application:
+
+- `@nuxt/eslint`, `eslint`, `eslint-config-prettier` — MIT; linting for Nuxt, Vue and TypeScript.
+- `vitest`, `@vitejs/plugin-vue`, `@vue/test-utils`, `happy-dom` — MIT; unit and mounted component tests.
+- `@playwright/test` — Apache-2.0; Electron UI and packaged-app verification.
+
+Their licenses are included in their npm package distributions.

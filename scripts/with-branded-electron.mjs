@@ -123,7 +123,9 @@ if (args.length === 0) {
 
 let command = args[0]
 let commandArgs = args.slice(1)
-if (process.platform === 'darwin') {
+if (process.env.KCHESS_PACKAGED_EXEC_PATH) {
+  process.env.ELECTRON_EXEC_PATH = process.env.KCHESS_PACKAGED_EXEC_PATH
+} else if (process.platform === 'darwin') {
   try {
     const bundle = brandElectronApp()
     const binary = path.join(bundle, 'Contents', 'MacOS', APP_NAME)
@@ -132,11 +134,27 @@ if (process.platform === 'darwin') {
     process.env.ELECTRON_EXEC_PATH = binary
     if (command === 'electron') command = binary
   } catch (error) {
-    console.warn(
-      '[kchess] dev branding failed, falling back to stock Electron:',
-      error instanceof Error ? error.message : error,
-    )
+    console.error('[kchess] dev branding failed:', error instanceof Error ? error.message : error)
+    process.exit(1)
   }
+} else {
+  process.env.ELECTRON_EXEC_PATH = path.join(
+    root,
+    'node_modules',
+    'electron',
+    'dist',
+    process.platform === 'win32' ? 'electron.exe' : 'electron',
+  )
+}
+
+// Resolve known launchers directly so Windows never needs to shell-quote a Node path.
+if (command === 'electron') command = process.env.ELECTRON_EXEC_PATH
+if (command === 'electron-vite') {
+  commandArgs = [
+    path.join(root, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
+    ...commandArgs,
+  ]
+  command = process.execPath
 }
 
 // PATH lookup works without a shell on POSIX (execvp); Windows needs a shell
@@ -151,8 +169,13 @@ if (!process.env.PATH?.split(path.delimiter).includes(localBin)) {
 
 const child = spawn(command, commandArgs, {
   stdio: 'inherit',
-  shell: process.platform === 'win32',
+  shell: process.platform === 'win32' && !path.isAbsolute(command),
 })
+child.on('error', (error) => {
+  console.error(error)
+  process.exitCode = 1
+})
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => child.kill(signal))
 child.on('exit', (code, signal) => {
   if (signal) process.kill(process.pid, signal)
   else process.exit(code ?? 0)

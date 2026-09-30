@@ -51,3 +51,8 @@ latest*.yml
 .roo/
 skills-lock.json
 skills.json
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/

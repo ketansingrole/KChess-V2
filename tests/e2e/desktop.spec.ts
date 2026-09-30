@@ -1,0 +1,192 @@
+import {
+  test as base,
+  expect,
+  _electron,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { migrate } from '../../src/main/migrations'
+import { storeSample } from '../../src/main/puzzleQueries'
+
+const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; profile: string } }>({
+  desktop: async ({ playwright: _playwright }, use, testInfo) => {
+    const profile = await mkdtemp(join(tmpdir(), 'kchess-e2e-'))
+    const db = new DatabaseSync(join(profile, 'kchess.db'))
+    migrate(db)
+    storeSample(db, [
+      {
+        id: 'promo123',
+        fen: '6k1/P6p/8/8/8/8/5PPP/6K1 b - - 0 1',
+        moves: 'h7h6 a7a8q',
+        rating: 1500,
+        themes: 'promotion',
+      },
+    ])
+    db.close()
+    let app: ElectronApplication | undefined
+    try {
+      const executablePath = process.env.ELECTRON_EXEC_PATH
+      if (!executablePath)
+        throw new Error(
+          'Use npm run test:e2e or npm run test:packaged to launch through the branded wrapper.',
+        )
+      app = await _electron.launch({
+        executablePath,
+        args: process.env.KCHESS_PACKAGED_EXEC_PATH ? [] : ['.'],
+        env: { ...process.env, KCHESS_NUXT_URL: '', KCHESS_USER_DATA_DIR: profile },
+      })
+      await app.context().tracing.start({ screenshots: true, snapshots: true })
+      const page = await app.firstWindow()
+      await page.waitForSelector('.main-area')
+      await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible()
+      await use({ app, page, profile })
+    } finally {
+      if (app) {
+        if (testInfo.status !== testInfo.expectedStatus) {
+          try {
+            await app
+              .firstWindow()
+              .then((page) => page.screenshot({ path: testInfo.outputPath('desktop.png') }))
+          } catch {
+            /* Window may have crashed. */
+          }
+        }
+        await app
+          .context()
+          .tracing.stop(
+            testInfo.status !== testInfo.expectedStatus
+              ? { path: testInfo.outputPath('trace.zip') }
+              : {},
+          )
+        await app.close()
+      }
+      await rm(profile, { recursive: true, force: true })
+    }
+  },
+})
+
+async function navigate(page: Page, label: string) {
+  await page.locator('aside').getByText(label, { exact: true }).click()
+}
+
+/** Click board squares through Chessground's real pointer handlers. */
+async function move(page: Page, from: string, to: string) {
+  const board = page.locator('cg-board')
+  const bounds = await board.boundingBox()
+  if (!bounds) throw new Error('Board is not visible')
+  for (const square of [from, to]) {
+    const file = square.charCodeAt(0) - 97
+    const rank = Number(square[1]) - 1
+    await page.mouse.click(
+      bounds.x + ((file + 0.5) * bounds.width) / 8,
+      bounds.y + ((7 - rank + 0.5) * bounds.height) / 8,
+    )
+  }
+}
+
+test('launches with SQLite, sandboxed preload and bundled Stockfish @packaged', async ({
+  desktop: { app, page, profile },
+}) => {
+  const runtime = await app.evaluate(({ app }) => ({
+    version: process.versions.electron,
+    packaged: app.isPackaged,
+    profile: app.getPath('userData'),
+  }))
+  const expectedVersion = JSON.parse(
+    await readFile(new URL('../../node_modules/electron/package.json', import.meta.url), 'utf8'),
+  ).version
+  expect(runtime.version).toBe(expectedVersion)
+  expect(runtime.profile).toBe(profile)
+  if (process.env.KCHESS_PACKAGED_EXEC_PATH) expect(runtime.packaged).toBe(true)
+  const status = await page.evaluate(async () => {
+    const data = await window.kchess.loadData()
+    const engine = await window.kchess.engineStatus()
+    const move = await window.kchess.bestMove([], 'low', { movetime: 100 })
+    return { accounts: data.accounts, engine, move, nodeExposed: 'require' in window }
+  })
+  expect(status.accounts).toEqual([])
+  expect(status.engine.ready).toBe(true)
+  expect(status.engine.bundled).toBe(true)
+  expect(status.move).toMatch(/^[a-h][1-8][a-h][1-8][qrbn]?$/)
+  expect(status.nodeExposed).toBe(false)
+})
+
+test('plays a move through the board and keeps the game when navigating', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Play with Computer')
+  await expect(page.getByText('Your move', { exact: true })).toBeVisible()
+  await move(page, 'e2', 'e4')
+  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+  await expect(page.getByText('Your move', { exact: true })).toBeVisible()
+  await navigate(page, 'History')
+  await navigate(page, 'Play with Computer')
+  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+})
+
+test('keeps a failed offline puzzle verdict on remount and opens the promotion picker', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Puzzles')
+  await page.getByRole('tab', { name: 'Offline', exact: true }).click()
+  await expect(page.locator('cg-board')).toBeVisible()
+  await move(page, 'f2', 'f3')
+  await expect(page.getByText('That’s not the move — try again', { exact: true })).toBeVisible()
+  await navigate(page, 'History')
+  await navigate(page, 'Puzzles')
+  await expect(page.locator('cg-board')).toBeVisible()
+  await move(page, 'a7', 'a8')
+  const picker = page.getByRole('dialog', { name: 'Choose promotion piece' })
+  await expect(picker).toBeVisible()
+  await picker.getByRole('button', { name: 'Queen', exact: true }).click()
+  await expect(
+    page.getByText('Solved after a mistake — not counted', { exact: true }),
+  ).toBeVisible()
+})
+
+test('persists appearance settings after reloading', async ({ desktop: { page } }) => {
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await expect(
+    page.getByRole('heading', { name: 'Appearance', exact: true, level: 1 }),
+  ).toBeVisible()
+  await page.getByRole('tab', { name: 'Dark', exact: true }).click()
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => (await window.kchess.loadData()).settings.appearance),
+    )
+    .toBe('dark')
+  await page.reload()
+  await expect(page.locator('html')).toHaveClass(/dark/)
+  expect(
+    await page.evaluate(async () => (await window.kchess.loadData()).settings.appearance),
+  ).toBe('dark')
+})
+
+test('exports redacted diagnostics through Settings', async ({
+  desktop: { app, page, profile },
+}) => {
+  const destination = join(profile, 'diagnostics.json')
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath })
+    console.error('Diagnostic test: Bearer test-oauth-secret')
+  }, destination)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await page.locator('aside').getByText('Data & storage', { exact: true }).click()
+  await page.getByRole('button', { name: 'Export diagnostics', exact: true }).click()
+  await expect(page.getByText('Diagnostics exported.', { exact: true })).toBeVisible()
+  const report = await readFile(destination, 'utf8')
+  expect(report).toContain('Bearer [redacted]')
+  expect(report).not.toContain('test-oauth-secret')
+  expect(Object.keys(JSON.parse(report))).toEqual([
+    'generatedAt',
+    'version',
+    'platform',
+    'arch',
+    'versions',
+    'logs',
+  ])
+})

@@ -4,19 +4,19 @@ Thanks for helping! Bug reports, fixes, and ideas are all welcome.
 
 ## Getting started
 
-Requires Node.js 22.12+ and npm (see the [README](README.md#run) for details).
+Requires Node.js 24.21.0 (pinned in `.nvmrc`) and npm 11 (see the [README](README.md#run) for details).
 
 ```bash
-npm install
+npm ci
 npm run dev        # Nuxt + Electron together, with hot reload
 ```
 
 Before opening a pull request, run the same checks CI runs:
 
 ```bash
-npm run format:check   # fix with: npm run format
-npm run typecheck
-npm test
+npm run check
+npm run build
+npm run test:e2e
 ```
 
 ## Guidelines
@@ -25,6 +25,8 @@ npm test
   how you checked it (screenshots help for UI changes).
 - Match the surrounding code: naming, comment density, and idiom. Prettier settings are in
   `.prettierrc.json`.
+- Add lifecycle regression cases under `tests/unit/` using Vitest, real Pinia stores and mounted Vue components. Put actual Electron integration checks under `tests/e2e/`; these use temporary profiles and the branded launcher.
+- Keep request channels in `src/shared/ipc.ts` and signatures in `DesktopApi`. IPC handlers accept unknown inputs and must validate them before use.
 - Anything that crosses the Electron IPC boundary must be validated in
   `src/shared/validate.ts`. The renderer is sandboxed and must never choose what the main
   process executes.

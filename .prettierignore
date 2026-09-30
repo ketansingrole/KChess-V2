@@ -1,0 +1,13 @@
+node_modules/
+.dev/
+out/
+dist/
+.nuxt/
+.output/
+.data/
+playwright-report/
+test-results/
+coverage/
+package-lock.json
+src/renderer/auto-imports.d.ts
+src/renderer/components.d.ts

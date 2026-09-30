@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Notification } from 'electron'
+import type { BrowserWindow } from 'electron'
+import { app, Notification } from 'electron'
 import { getSettings } from './store'
 import type {
   NotificationKind,
