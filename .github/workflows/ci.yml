@@ -63,7 +63,7 @@ jobs:
         if: runner.os != 'Linux'
       - run: xvfb-run --auto-servernum npm run test:packaged
         if: runner.os == 'Linux'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: desktop-failure-${{ matrix.os }}
