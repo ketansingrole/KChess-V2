@@ -47,7 +47,7 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       await app.context().tracing.start({ screenshots: true, snapshots: true })
       const page = await app.firstWindow()
       await page.waitForSelector('.main-area')
-      await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible()
+      await expect(page.locator('aside').getByText('Dashboard', { exact: true })).toBeAttached()
       await use({ app, page, profile })
     } finally {
       if (app) {
@@ -88,14 +88,23 @@ test('loads offline voice recognition and releases the microphone after a traini
   await page.getByRole('button', { name: 'End run', exact: true }).click()
   await expect(page.getByText('Ready for your next turn or run', { exact: true })).toBeVisible()
   await navigate(page, 'Play with Computer')
-  await page.getByRole('switch', { name: 'Voice input', exact: true }).click()
-  await expect(page.getByText('Listening…', { exact: true })).toBeVisible({ timeout: 60_000 })
-  await page.getByRole('switch', { name: 'Voice input', exact: true }).click()
-  await expect(page.getByText('Listening…', { exact: true })).toBeHidden()
+  // The game page shows the compact voice bar: a toggle button rather than a switch.
+  const voice = page.getByRole('button', { name: 'Voice input', exact: true })
+  const bar = page.locator('.voice-bar')
+  await voice.click()
+  await expect(bar).toHaveAttribute('data-state', 'listening', { timeout: 60_000 })
+  await voice.click()
+  await expect(bar).toHaveAttribute('data-state', 'off')
 })
 
 async function navigate(page: Page, label: string) {
-  await page.locator('aside').getByText(label, { exact: true }).click()
+  const link = page.locator('aside').getByText(label, { exact: true })
+  if (await link.isVisible()) return link.click()
+  // Below 1024px (e.g. the 1024×768 Windows CI screen) the sidebar is a slide-over menu instead.
+  const menu = page.getByRole('dialog')
+  if (!(await menu.isVisible())) await page.getByRole('button', { name: 'Show sidebar' }).click()
+  await menu.getByText(label, { exact: true }).click()
+  await expect(menu).toBeHidden()
 }
 
 /** Click board squares through Chessground's real pointer handlers. */
@@ -200,7 +209,10 @@ test('exports redacted diagnostics through Settings', async ({
     console.error('Diagnostic test: Bearer test-oauth-secret')
   }, destination)
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
-  await page.locator('aside').getByText('Data & storage', { exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Appearance', exact: true, level: 1 }),
+  ).toBeVisible()
+  await navigate(page, 'Data & storage')
   await page.getByRole('button', { name: 'Export diagnostics', exact: true }).click()
   await expect(page.getByText('Diagnostics exported.', { exact: true })).toBeVisible()
   const report = await readFile(destination, 'utf8')
