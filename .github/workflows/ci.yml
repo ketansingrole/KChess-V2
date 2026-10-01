@@ -39,6 +39,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Windows Server runners deny microphone access in privacy settings, which the app
+      # (correctly) reports as "denied". Allow it so the voice e2e test can run.
+      - name: Allow microphone access (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $paths = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged'
+          )
+          foreach ($p in $paths) {
+            New-Item -Path $p -Force | Out-Null
+            Set-ItemProperty -Path $p -Name Value -Value Allow
+          }
       - run: npm run test:e2e
         if: runner.os != 'Linux'
       - run: xvfb-run --auto-servernum npm run test:e2e

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import type { RunSaved, RunSummary } from '../../src/shared/types'
+import type { RunSaved, RunSummary, VoiceOutcome } from '../../src/shared/types'
 import { EMPTY_FEN, FILES, RANKS, randomSquare, type Square } from '../utils/coordinates'
 import { useCountdown } from '../utils/countdown'
 import { play } from '../utils/sound'
@@ -10,7 +10,6 @@ import { formatRunClock } from '../utils/rush'
 import { COORDINATE_GRAMMAR, spokenSquare } from '../utils/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
-import type { VoiceOutcome } from '../../src/shared/types'
 import VoiceInput from './VoiceInput.vue'
 
 /**
