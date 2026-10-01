@@ -50,7 +50,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx electron-builder ${{ matrix.platform }} --config scripts/release-config.cjs --publish never
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kchess-${{ runner.os }}
           path: |
