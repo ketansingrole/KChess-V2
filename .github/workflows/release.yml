@@ -1,6 +1,7 @@
 name: Release
 
-# Push a version tag (git tag v0.2.0 && git push origin v0.2.0) to build installers for macOS,
+# Versions are YEAR.MONTH.COUNTER (v2026.10.0, v2026.10.1, … v2026.11.0); `npm run release:version`
+# sets the next one in package.json. Push the matching tag to build installers for macOS,
 # Windows and Linux and attach them to a draft GitHub Release, which you then publish by hand.
 # "Run workflow" in the Actions tab builds the same installers as downloads, without a release.
 on:
@@ -42,6 +43,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v20[0-9]{2}\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not YEAR.MONTH.COUNTER (e.g. v2026.10.0, no zero padding)."
+            exit 1
+          fi
           expected="v$(node -p "require('./package.json').version")"
           if [ "$GITHUB_REF_NAME" != "$expected" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($expected)."

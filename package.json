@@ -38,7 +38,8 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
     "test:e2e": "node scripts/e2e.mjs",
     "test:packaged": "node scripts/e2e.mjs --packaged",
-    "pack": "npm run build && electron-builder --dir"
+    "pack": "npm run build && electron-builder --dir",
+    "release:version": "node scripts/next-version.mjs"
   },
   "dependencies": {
     "@pinia/nuxt": "^1.0.2",

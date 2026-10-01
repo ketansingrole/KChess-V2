@@ -83,17 +83,21 @@ On macOS, `npm run pack:mac` creates an unsigned local `.app` in `dist/mac-arm64
 
 ### Releasing
 
-Installers are built by `.github/workflows/release.yml`. Set the version in `package.json`, commit,
-then push a matching tag:
+Installers are built by `.github/workflows/release.yml`. Versions are dates with a counter,
+`YEAR.MONTH.COUNTER`: the first release in October 2026 is `2026.10.0`, the next `2026.10.1`, and
+the counter restarts each month. There's no zero padding (`2026.10.0`, not `2026.10.00`), which keeps
+the version valid semver. Set the next version, commit, then push the matching tag:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+npm run release:version   # e.g. sets package.json to 2026.10.0
+git commit -am "Release 2026.10.0"
+git tag v2026.10.0
+git push origin HEAD v2026.10.0
 ```
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, plus `SHA256SUMS.txt`,
-to a **draft** GitHub Release; review it and press _Publish_. A tag that doesn't match the
-`package.json` version fails the build. _Run workflow_ in the Actions tab builds the same installers
+to a **draft** GitHub Release; review it and press _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER`
+or doesn't match the `package.json` version fails the build. _Run workflow_ in the Actions tab builds the same installers
 as downloadable artifacts without creating a release.
 
 | Platform | Files                                                                       |
