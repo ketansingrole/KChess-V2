@@ -69,7 +69,7 @@
     "@vueuse/core": "^15.0.0",
     "chessops": "^0.15.1",
     "electron": "^44.5.0",
-    "electron-builder": "^26.0.0",
+    "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
