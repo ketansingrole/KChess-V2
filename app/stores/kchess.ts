@@ -245,7 +245,7 @@ export const useKChessStore = defineStore('kchess', () => {
   /** Show one settings category (the sidebar lists them while Settings is open), from the top. */
   function jumpToSection(id: SettingsSection): void {
     settingsSection.value = id
-    document.querySelector('.main-area')?.scrollTo({ top: 0 })
+    document.querySelector('.main-content')?.scrollTo({ top: 0 })
     if (isNarrow.value) sidebarOpen.value = false
   }
   // While Settings is open the sidebar lists its categories, with a way back.

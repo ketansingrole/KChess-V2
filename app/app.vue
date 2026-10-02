@@ -215,20 +215,22 @@ function toggleMaximize(event?: MouseEvent): void {
             <WindowControls v-if="isFrameless" />
           </div>
         </header>
-        <div v-if="!ready" class="splash">
-          <img src="./assets/icon.png" alt="" class="splash-logo" />
-          <template v-if="error">
-            <h1 class="splash-title">KChess couldn't start</h1>
-            <p class="splash-text" role="alert">{{ error }}</p>
-            <UButton icon="i-lucide-rotate-cw" @click="store.init()">Try again</UButton>
-          </template>
-          <template v-else>
-            <UIcon name="i-lucide-loader-circle" class="animate-spin splash-spinner" />
-            <p class="splash-text">Loading KChess…</p>
-          </template>
-        </div>
-        <div v-else class="page">
-          <NuxtPage />
+        <div class="main-content">
+          <div v-if="!ready" class="splash">
+            <img src="./assets/icon.png" alt="" class="splash-logo" />
+            <template v-if="error">
+              <h1 class="splash-title">KChess couldn't start</h1>
+              <p class="splash-text" role="alert">{{ error }}</p>
+              <UButton icon="i-lucide-rotate-cw" @click="store.init()">Try again</UButton>
+            </template>
+            <template v-else>
+              <UIcon name="i-lucide-loader-circle" class="animate-spin splash-spinner" />
+              <p class="splash-text">Loading KChess…</p>
+            </template>
+          </div>
+          <div v-else class="page">
+            <NuxtPage />
+          </div>
         </div>
       </main>
       <UModal

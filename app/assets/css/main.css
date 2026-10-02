@@ -54,8 +54,16 @@ button:disabled {
   color: var(--ui-text);
 }
 .main-area {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+}
+.main-content {
+  /* Reserve scrollbar space below the titlebar so caption buttons reach the window edge. */
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
 }
@@ -67,6 +75,7 @@ button:disabled {
   grid-template-columns: minmax(40px, 1fr) minmax(0, 360px) minmax(40px, 1fr);
   gap: 8px;
   align-items: center;
+  flex: none;
   height: var(--topbar-height);
   padding: 0 20px;
   border-bottom: 1px solid var(--ui-border);
