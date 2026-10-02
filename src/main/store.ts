@@ -48,6 +48,9 @@ const SETTINGS_KEYS = [
   'voicePushToTalk',
   'voiceConfirmMoves',
   'voiceHistory',
+  'updateAutoCheck',
+  'updateAutoDownload',
+  'updateInstallOnQuit',
 ] as const satisfies readonly (keyof Settings)[]
 
 const placeholders = (count: number): string => Array(count).fill('?').join(', ')
@@ -134,6 +137,9 @@ function rowToSettings(row: SettingsRow): Settings {
     voicePushToTalk: row.voicePushToTalk === 1,
     voiceConfirmMoves: row.voiceConfirmMoves !== 0,
     voiceHistory: row.voiceHistory !== 0,
+    updateAutoCheck: row.updateAutoCheck !== 0,
+    updateAutoDownload: row.updateAutoDownload !== 0,
+    updateInstallOnQuit: row.updateInstallOnQuit !== 0,
   })
 }
 

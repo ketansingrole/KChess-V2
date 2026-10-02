@@ -96,7 +96,7 @@ git push origin HEAD v2026.10.0
 ```
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, plus `SHA256SUMS.txt`,
-to a **draft** GitHub Release; review it and press _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER`
+and updater manifests/blockmaps to a **draft** GitHub Release; review it and press _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER`
 or doesn't match the `package.json` version fails the build. _Run workflow_ in the Actions tab builds the same installers
 as downloadable artifacts without creating a release.
 
@@ -106,9 +106,50 @@ as downloadable artifacts without creating a release.
 | Windows  | `.exe` installer (x64)                                                      |
 | Linux    | `.AppImage` and `.deb` (x64)                                                |
 
-Releases are not code-signed. macOS builds are ad-hoc signed (`scripts/release-config.cjs`), so on
+Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`scripts/release-config.cjs`), so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
 and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).
+
+### App updates
+
+**Settings → Updates** shows the installed version, update status, last successful check,
+download progress, manual check/download/restart actions and a link to release notes.
+By default, installed builds check stable GitHub releases ten seconds after startup and every
+six hours, download updates in the background, and install when the user quits. Each behaviour
+has its own switch. KChess never initiates a restart while you are playing; **Restart and install**
+asks first. A normal quit with an update ready installs it without reopening the app.
+Accounts, preferences and saved history remain in the existing user-data directory.
+Development builds do not check for updates; unsupported unpacked installations cannot update themselves.
+
+Windows NSIS, Linux AppImage and Debian installations support automatic installation
+(Debian may require an operating-system authorization prompt). Ad-hoc signed Mac releases
+check for updates and link to a manual download. [macOS automatic installation requires
+Developer ID signing](https://www.electron.build/v26/docs/features/auto-update/).
+
+To enable Mac automatic installation, add these GitHub Actions repository secrets:
+
+- `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
+- `MAC_CSC_KEY_PASSWORD`: its export password.
+- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
+
+The release config imports the certificate, requires signing and notarization, and marks only
+those Mac builds as able to install updates. Keep the same app ID and signing identity across
+releases. Never put signing credentials or a GitHub token in the app. Windows signing can be
+added separately without changing the update feed.
+
+Publish the complete release: installers, `latest.yml` (Windows), `latest-mac.yml` (Mac),
+`latest-linux.yml` (Linux), and `.blockmap` files. The workflow verifies and attaches the manifests;
+electron-builder generates the packaged `app-update.yml` from the fixed public GitHub provider.
+Drafts and prereleases are excluded. Do not overwrite an already published release to ship a
+fix: advance `YEAR.MONTH.COUNTER`, create a new tag, and publish its draft once all platforms
+are ready. macOS requires the ZIP artifacts as well as DMGs.
+
+**Bootstrap:** releases shipped before the updater was added cannot acquire it automatically.
+Users must install the first updater-enabled release manually; subsequent releases use this flow.
+An ad-hoc Mac installation also needs a manual upgrade to the first Developer ID signed release.
+Before publishing broadly, verify a real version A → B update on installed copies of each
+supported platform, including restart, normal quit, opt-out, offline retry and data preservation.
+Mocked tests and local unsigned builds cannot verify signing or the published feed end to end.
 
 ## Features
 

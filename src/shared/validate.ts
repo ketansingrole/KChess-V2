@@ -125,6 +125,9 @@ const settingsSchema = v.object(
     voicePushToTalk: v.boolean('Invalid voice setting.'),
     voiceConfirmMoves: v.boolean('Invalid voice setting.'),
     voiceHistory: v.boolean('Invalid voice setting.'),
+    updateAutoCheck: v.boolean('Invalid update setting.'),
+    updateAutoDownload: v.boolean('Invalid update setting.'),
+    updateInstallOnQuit: v.boolean('Invalid update setting.'),
   },
   'Invalid settings.',
 )

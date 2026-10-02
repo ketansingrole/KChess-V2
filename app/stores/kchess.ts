@@ -39,6 +39,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'engine', label: 'Chess engine', icon: 'i-lucide-cpu' },
   { id: 'accounts', label: 'My accounts', icon: 'i-lucide-user-round' },
   { id: 'data', label: 'Data & storage', icon: 'i-lucide-database' },
+  { id: 'updates', label: 'Updates', icon: 'i-lucide-download' },
 ] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['id']
 

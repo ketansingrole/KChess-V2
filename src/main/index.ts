@@ -5,6 +5,8 @@ import { handle } from './ipc'
 import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
+import { setupAppUpdates, APP_RELEASES_URL } from './setupAppUpdates'
+import type { AppUpdates } from './appUpdates'
 import { setupDiagnostics, exportDiagnostics } from './diagnostics'
 import { bestMove, engineStatus, isTrustedEnginePath, stopEngine, trustEnginePath } from './engine'
 import { closeDb } from './db'
@@ -84,6 +86,7 @@ import {
 } from '../shared/validate'
 
 let window: BrowserWindow | null = null
+let appUpdates: AppUpdates | undefined
 registerAppScheme()
 app.setName('KChess')
 // An explicit profile is useful for isolated tests and development with fresh data.
@@ -226,7 +229,7 @@ function setupAppMenu(): void {
 
 void app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     handleAppProtocol()
     setupMediaPermissions((url) => url.startsWith(process.env.KCHESS_NUXT_URL || 'kchess://app/'))
     // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
@@ -237,6 +240,12 @@ void app
     refreshAppIcon()
     nativeTheme.on('updated', refreshAppIcon)
     setupAppMenu()
+    appUpdates = await setupAppUpdates((status) => send(IPC_EVENTS.appUpdate, status))
+    handle('appUpdateStatus', () => appUpdates!.status())
+    handle('checkAppUpdate', () => appUpdates!.check())
+    handle('downloadAppUpdate', () => appUpdates!.download())
+    handle('installAppUpdate', () => appUpdates!.install())
+    handle('openAppReleases', () => shell.openExternal(APP_RELEASES_URL))
     handle('loadData', () => loadData())
     handle('saveSettings', async (_event, raw: unknown) => {
       const settings = assertSettings(raw)
@@ -247,7 +256,9 @@ void app
         if (settings.enginePath !== stored.enginePath)
           throw new Error('Choose the Stockfish executable with the file picker.')
       }
-      return saveSettings(settings)
+      const saved = await saveSettings(settings)
+      appUpdates!.applyPreferences(saved)
+      return saved
     })
     handle('addAccount', (_event, username: unknown) => addAccount(assertUsername(username)))
     handle('removeAccount', (_event, username: unknown) => removeAccount(assertUsername(username)))
@@ -371,6 +382,7 @@ void app
     handle('usage', () => usageReport())
     handle('resetUsage', () => resetUsage())
     createWindow()
+    appUpdates.start()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
@@ -386,7 +398,20 @@ app.on('window-all-closed', () => {
   stopEngine()
   if (process.platform !== 'darwin') app.quit()
 })
+app.on('before-quit', (event) => {
+  if (appUpdates?.shouldInstallOnQuit()) {
+    // Squirrel.Mac may need to finish staging the verified ZIP before it can quit.
+    event.preventDefault()
+    try {
+      appUpdates.install(false)
+    } catch (cause) {
+      // The updater reports the failure in Settings; leave the app open so it can be retried.
+      console.warn('Could not install on quit:', cause)
+    }
+  }
+})
 app.on('will-quit', () => {
+  appUpdates?.stop()
   online.cancel()
   stopEngine()
   flushUsage()

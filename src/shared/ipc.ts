@@ -1,23 +1,31 @@
-import type { DesktopApi, OnlineEvent, PuzzleDbProgress } from './types'
+import type { AppUpdateStatus, DesktopApi, OnlineEvent, PuzzleDbProgress } from './types'
 
 export interface IpcEvents {
   'online:event': OnlineEvent
   'online:error': string
   'notify:alert': { title: string; body: string }
   'puzzledb:progress': PuzzleDbProgress
+  'app:update': AppUpdateStatus
 }
 export const IPC_EVENTS = {
   online: 'online:event',
   error: 'online:error',
   notification: 'notify:alert',
   puzzleProgress: 'puzzledb:progress',
+  appUpdate: 'app:update',
 } as const satisfies Record<string, keyof IpcEvents>
 
-type Subscription = 'onOnlineEvent' | 'onOnlineError' | 'onNotification' | 'onPuzzleDbProgress'
+type Subscription =
+  'onAppUpdate' | 'onOnlineEvent' | 'onOnlineError' | 'onNotification' | 'onPuzzleDbProgress'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
 export const IPC_CHANNELS = {
+  appUpdateStatus: 'app-update:status',
+  checkAppUpdate: 'app-update:check',
+  downloadAppUpdate: 'app-update:download',
+  installAppUpdate: 'app-update:install',
+  openAppReleases: 'app-update:releases',
   loadData: 'data:load',
   saveSettings: 'settings:save',
   addAccount: 'account:add',

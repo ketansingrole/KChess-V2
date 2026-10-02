@@ -11,6 +11,7 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 | [`@lichess-org/chessground`](https://github.com/lichess-org/chessground)    | GPL-3.0-or-later | The interactive chess board                                                     |
 | [`chessops`](https://github.com/niklasf/chessops)                           | GPL-3.0-or-later | Chess rules, FEN, PGN, SAN                                                      |
 | [`stockfish`](https://www.npmjs.com/package/stockfish) (WASM build, "lite") | GPL-3.0          | The bundled computer opponent, run as a separate UCI process                    |
+| [`electron-updater`](https://github.com/electron-userland/electron-builder) | MIT              | Checks, verifies and installs desktop app updates                               |
 | [Electron](https://www.electronjs.org)                                      | MIT              | Desktop shell (includes Chromium and other components under their own licenses) |
 | [Nuxt](https://nuxt.com), [Vue](https://vuejs.org), Vue Router              | MIT              | Application framework                                                           |
 | [Nuxt UI](https://ui.nuxt.com), [Tailwind CSS](https://tailwindcss.com)     | MIT              | Interface components and styling                                                |
