@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { cp, mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -15,6 +15,10 @@ import { storeSample } from '../../src/main/puzzleQueries'
 const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; profile: string } }>({
   desktop: async ({ playwright: _playwright }, use, testInfo) => {
     const profile = await mkdtemp(join(tmpdir(), 'kchess-e2e-'))
+    if (testInfo.title.includes('voice'))
+      await cp(join(process.cwd(), '.data', 'voice', 'cache'), join(profile, 'voice'), {
+        recursive: true,
+      })
     const db = new DatabaseSync(join(profile, 'kchess.db'))
     migrate(db)
     storeSample(db, [
@@ -74,9 +78,13 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
   },
 })
 
-test('loads offline voice recognition and releases the microphone after a training run @packaged', async ({
-  desktop: { page },
+test('loads cached voice recognition offline and releases the microphone after a training run @packaged', async ({
+  desktop: { app, page },
 }) => {
+  await app.evaluate(() => {
+    globalThis.fetch = () =>
+      Promise.reject(new Error('Offline voice test: network is unavailable.'))
+  })
   await navigate(page, 'Practice')
   await page.getByRole('tab', { name: 'Say the square' }).click()
   await page.getByRole('switch', { name: 'Voice input', exact: true }).click()

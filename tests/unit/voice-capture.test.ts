@@ -24,7 +24,7 @@ class FakeModel {
   ready = true
   terminate = vi.fn()
   KaldiRecognizer = FakeRecognizer
-  constructor() {
+  constructor(readonly url: string) {
     vosk.models.push(this)
   }
   on(event: string, callback: (message: { result: boolean }) => void) {
@@ -73,9 +73,51 @@ beforeEach(() => {
   FakeNode.nodes.length = 0
   vi.stubGlobal('AudioContext', FakeContext)
   vi.stubGlobal('AudioWorkletNode', FakeNode)
+  window.kchess = {
+    ensureVoiceModel: vi.fn(async () => 'kchess://app/voice/model.tar.gz'),
+    onVoiceModelProgress: vi.fn(() => vi.fn()),
+  } as unknown as typeof window.kchess
 })
 
 describe('voice capture lifecycle', () => {
+  it('prepares the cached model before starting recognition', async () => {
+    const { capture } = setupCapture()
+    await capture.prepare(['e four'])
+    expect(window.kchess.ensureVoiceModel).toHaveBeenCalledOnce()
+    expect(vosk.models[0]!.url).toBe('kchess://app/voice/model.tar.gz')
+    capture.dispose()
+  })
+
+  it('reports download failures as retryable model errors and closes the microphone', async () => {
+    const { capture, callbacks, track } = setupCapture()
+    vi.mocked(window.kchess.ensureVoiceModel).mockRejectedValueOnce(
+      new Error('Connect to the internet and try again.'),
+    )
+    await expect(capture.prepare(['e four'])).rejects.toThrow('Connect to the internet')
+    expect(callbacks.error).toHaveBeenCalledWith(
+      expect.stringContaining('Connect to the internet'),
+      'model',
+    )
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(vosk.models).toHaveLength(0)
+    await capture.prepare(['e four'])
+    expect(vosk.models).toHaveLength(1)
+    capture.dispose()
+  })
+
+  it('does not allocate a model after being disabled during download', async () => {
+    const { capture, callbacks, track } = setupCapture()
+    const download = deferred<string>()
+    vi.mocked(window.kchess.ensureVoiceModel).mockReturnValueOnce(download.promise)
+    const opening = capture.prepare(['e four'])
+    await vi.waitFor(() => expect(window.kchess.ensureVoiceModel).toHaveBeenCalled())
+    capture.dispose()
+    download.resolve('kchess://app/voice/model.tar.gz')
+    await opening
+    expect(vosk.models).toHaveLength(0)
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(callbacks.error).not.toHaveBeenCalled()
+  })
   it('drops queued results from a previous question and accepts each final utterance once', async () => {
     const { capture, callbacks } = setupCapture()
     await capture.prepare(['e four', '[unk]'])

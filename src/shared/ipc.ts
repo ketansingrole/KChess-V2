@@ -1,4 +1,10 @@
-import type { AppUpdateStatus, DesktopApi, OnlineEvent, PuzzleDbProgress } from './types'
+import type {
+  AppUpdateStatus,
+  DesktopApi,
+  OnlineEvent,
+  PuzzleDbProgress,
+  VoiceModelProgress,
+} from './types'
 
 export interface IpcEvents {
   'online:event': OnlineEvent
@@ -6,6 +12,7 @@ export interface IpcEvents {
   'notify:alert': { title: string; body: string }
   'puzzledb:progress': PuzzleDbProgress
   'app:update': AppUpdateStatus
+  'voice:model-progress': VoiceModelProgress
 }
 export const IPC_EVENTS = {
   online: 'online:event',
@@ -13,10 +20,16 @@ export const IPC_EVENTS = {
   notification: 'notify:alert',
   puzzleProgress: 'puzzledb:progress',
   appUpdate: 'app:update',
+  voiceModelProgress: 'voice:model-progress',
 } as const satisfies Record<string, keyof IpcEvents>
 
 type Subscription =
-  'onAppUpdate' | 'onOnlineEvent' | 'onOnlineError' | 'onNotification' | 'onPuzzleDbProgress'
+  | 'onAppUpdate'
+  | 'onOnlineEvent'
+  | 'onOnlineError'
+  | 'onNotification'
+  | 'onPuzzleDbProgress'
+  | 'onVoiceModelProgress'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
@@ -56,6 +69,7 @@ export const IPC_CHANNELS = {
   openThemesFolder: 'themes:open-folder',
   openNotificationSettings: 'notify:open-settings',
   microphoneAccess: 'voice:microphone-access',
+  ensureVoiceModel: 'voice:model-ensure',
   openMicrophoneSettings: 'voice:open-settings',
   presence: 'online:presence',
   puzzleNext: 'puzzle:next',

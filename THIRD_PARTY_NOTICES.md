@@ -22,10 +22,10 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 | [`lru-cache`](https://github.com/isaacs/node-lru-cache)                     | BlueOak-1.0.0    | In-memory cache for profile requests                                            |
 | [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                 | ISC              | Interface icons                                                                 |
 
-## Build-time only
+## Voice model preparation
 
-`fflate` (MIT) and `tar` (ISC) prepare the offline speech model at build time; they do not
-run in the renderer's recognition pipeline.
+`fflate` (MIT) and `tar` (ISC) verify and repackage the downloaded speech model in the
+desktop process on first use; they do not run in the renderer's recognition pipeline.
 
 `@lichess-org/types` (AGPL-3.0-or-later) provides TypeScript type definitions for the
 Lichess API. It contains no runtime code and nothing from it is included in the built app.
@@ -62,12 +62,12 @@ is distributed under Apache-2.0. Its unmodified WebAssembly worker includes
 KChess's voice parser, microphone worklet, and UI are original code; no Lichess voice
 application code is copied.
 
-The bundled `vosk-model-small-en-us-0.15` model is from
+The optionally downloaded `vosk-model-small-en-us-0.15` model is from
 [Alpha Cephei's model catalog](https://alphacephei.com/vosk/models) and is Apache-2.0.
 Its official ZIP archive has SHA-256
 `30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498`.
-The build verifies this digest and repackages the unchanged model files into a gzip tar
-archive for the browser loader. Attribution and the Apache license ship in `public/voice/`.
+The app verifies this digest on download and repackages the unchanged model files into a
+gzip tar archive for the browser loader. The cached archive is verified before reuse. Attribution and the Apache license ship in `public/voice/`.
 
 ## Not affiliated
 

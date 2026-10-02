@@ -16,13 +16,15 @@ npm run dev
 
 `npm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error.
 
-`npm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. `npm start` opens the latest build; `npm run app` builds first.
+`npm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. Renderer assets and every packaged app are checked for nested apps/installers, redundant renderer dependencies, unused engine builds, and a 32 MiB app-payload budget (excluding Electron). `npm start` opens the latest build; `npm run app` builds first.
 
-Dev/build prepares the offline English voice model automatically. The first preparation downloads
-the 40 MB Apache-2.0 Vosk model from `alphacephei.com` and verifies its pinned SHA-256 digest.
-The download is cached in `.data/voice/`; the generated `public/voice/model.tar.gz` is bundled
-in the app, so recognition needs no network connection at runtime. `npm run prepare:voice`
-prepares it separately. These generated model files are ignored by Git.
+Voice input downloads the 40 MB Apache-2.0 English Vosk model from `alphacephei.com`
+on first use, verifies its pinned SHA-256 digest, and caches it in the app's user-data
+folder. Subsequent use works offline. Download progress and retry errors appear in the
+voice control. Dev/build no longer downloads or bundles the model.
+`npm run prepare:voice` prepares a verified test fixture in `.data/voice/cache/`;
+voice e2e tests copy this fixture into their isolated profile to run offline.
+These generated files are ignored by Git.
 
 ### Voice input
 
@@ -79,32 +81,45 @@ Settings → Data & storage → **Export diagnostics** saves a JSON report conta
 
 On macOS, dev and local runs launch through `scripts/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `build/icon.icns` changes; quit any running dev session first.
 
-On macOS, `npm run pack:mac` creates an unsigned local `.app` in `dist/mac-arm64/` (or the matching architecture directory).
+On macOS, `npm run pack:mac` creates an unsigned local Apple Silicon `.app` in `dist/mac-arm64/`.
 
 ### Releasing
 
 Installers are built by `.github/workflows/release.yml`. Versions are dates with a counter,
 `YEAR.MONTH.COUNTER`: the first release in October 2026 is `2026.10.0`, the next `2026.10.1`, and
-the counter restarts each month. There's no zero padding (`2026.10.0`, not `2026.10.00`), which keeps
-the version valid semver. Set the next version, commit, then push the matching tag:
+the counter restarts each UTC month. There's no zero padding (`2026.10.0`, not `2026.10.00`), which keeps
+the version valid semver. Follow the release checklist in [AGENTS.md](AGENTS.md).
+Merge the intended changes with green CI first, then prepare the version change:
 
 ```bash
-npm run release:version   # e.g. sets package.json to 2026.10.0
-git commit -am "Release 2026.10.0"
-git tag v2026.10.0
-git push origin HEAD v2026.10.0
+npm run release:version   # fetches origin's tags; updates package.json and package-lock.json
+npm run release:verify
+npm run check
+git diff -- package.json package-lock.json
+git add package.json package-lock.json
+git commit -m "Release $(node -p "require('./package.json').version")"
 ```
+
+Merge the reviewed version commit into `main` and wait for green CI. From a clean checkout
+of that commit, create an annotated tag derived from its package version and push only
+that tag, as shown in `AGENTS.md`. Never reuse or move a release tag. The version helper
+stops if it cannot refresh remote tags; it does not guess using a stale local list.
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, plus `SHA256SUMS.txt`,
 and updater manifests/blockmaps to a **draft** GitHub Release; review it and press _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER`
-or doesn't match the `package.json` version fails the build. _Run workflow_ in the Actions tab builds the same installers
-as downloadable artifacts without creating a release.
+or doesn't match `package.json` and both lockfile version fields fails validation, as does
+a release commit outside `main` or failing repository checks. Reruns can replace assets
+on an existing draft, but refuse to overwrite a published release. Creating a release
+prepares a draft; publishing it is a separate action.
+_Run workflow_ in the Actions tab builds the same installers as downloadable artifacts
+without creating a release, including when a tag is selected. Retry a draft release by
+rerunning its original tag-push workflow.
 
-| Platform | Files                                                                       |
-| -------- | --------------------------------------------------------------------------- |
-| macOS    | `.dmg` and `.zip`, separately for Apple Silicon (`arm64`) and Intel (`x64`) |
-| Windows  | `.exe` installer (x64)                                                      |
-| Linux    | `.AppImage` and `.deb` (x64)                                                |
+| Platform | Files                                         |
+| -------- | --------------------------------------------- |
+| macOS    | `.dmg` and `.zip` for Apple Silicon (`arm64`) |
+| Windows  | `.exe` installer (x64)                        |
+| Linux    | `.AppImage` and `.deb` (x64)                  |
 
 Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`scripts/release-config.cjs`), so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
@@ -134,7 +149,9 @@ To enable Mac automatic installation, add these GitHub Actions repository secret
 
 The release config imports the certificate, requires signing and notarization, and marks only
 those Mac builds as able to install updates. Keep the same app ID and signing identity across
-releases. Never put signing credentials or a GitHub token in the app. Windows signing can be
+releases. Before uploading signed Mac packages, the workflow verifies their code signature,
+signing team, Gatekeeper acceptance and stapled notarization ticket.
+Never put signing credentials or a GitHub token in the app. Windows signing can be
 added separately without changing the update feed.
 
 Publish the complete release: installers, `latest.yml` (Windows), `latest-mac.yml` (Mac),
