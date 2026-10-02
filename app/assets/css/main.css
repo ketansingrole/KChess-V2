@@ -195,10 +195,15 @@ button:disabled {
 }
 /* Reserve in the main topbar for the overlaid toggle while the macOS sidebar
    is collapsed to its 64px rail. The toggle spans x84..x112, i.e. rel. 20..48
-   of the topbar, so 36px keeps content 8px clear past the 20px padding. */
+   of the topbar, so 36px keeps content 8px clear past the 20px padding.
+   Carve out a full-height no-drag region here too: macOS clips the sidebar's
+   no-drag region to its collapsed width, leaving the overlaid toggle inside
+   the main topbar's native drag region unless this spacer excludes it. */
 .mac-toggle-spacer {
   flex: none;
   width: 36px;
+  height: calc(var(--topbar-height) - 1px);
+  -webkit-app-region: no-drag;
 }
 .sidebar-toggle-wrap .sidebar-toggle {
   -webkit-app-region: no-drag;
