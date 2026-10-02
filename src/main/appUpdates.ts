@@ -35,6 +35,7 @@ export class AppUpdates {
     capabilities: Pick<AppUpdateStatus, 'currentVersion' | 'canCheck' | 'canInstall' | 'reason'>,
     private preferences: () => Promise<UpdatePreferences>,
     private emit: (status: AppUpdateStatus) => void,
+    private onInstallFailure?: () => void,
   ) {
     this.state = { ...capabilities, phase: capabilities.canCheck ? 'idle' : 'disabled' }
     // Own downloads ourselves so preferences changed during a check are honoured.
@@ -65,6 +66,7 @@ export class AppUpdates {
     updater.on('error', (error) => this.failed(error))
   }
 
+  /** Returns a defensive snapshot for IPC and callers. */
   status(): AppUpdateStatus {
     return structuredClone(this.state)
   }
@@ -75,16 +77,21 @@ export class AppUpdates {
   }
 
   private failed(cause: unknown): void {
+    const wasInstalling = this.installing
     this.installing = false
     console.warn('App update failed:', cause)
+    // A preference read or an unrelated late error does not invalidate the verified installer.
+    if (this.state.phase === 'downloaded' && !wasInstalling) return
     this.set({
       phase: 'error',
       progress: undefined,
       error:
         'Could not update KChess. Check your internet connection and try again. If it keeps failing, download the latest release or export diagnostics.',
     })
+    if (wasInstalling) this.onInstallFailure?.()
   }
 
+  /** Applies quit behaviour immediately, including after an installer has downloaded. */
   applyPreferences(settings: UpdatePreferences): void {
     // Own quit installation as well: the library only registers its quit handler at download
     // time, so changing this preference after downloading would otherwise be ignored.
@@ -118,6 +125,7 @@ export class AppUpdates {
     return this.status()
   }
 
+  /** Shares an active download and permits retrying failed downloads or installations. */
   download(): Promise<AppUpdateStatus> {
     if (this.downloading) return this.downloading
     if (
@@ -144,6 +152,7 @@ export class AppUpdates {
     return this.status()
   }
 
+  /** Reports whether the next user quit should apply a verified installer. */
   shouldInstallOnQuit(): boolean {
     return (
       this.installWhenQuitting &&
@@ -153,6 +162,7 @@ export class AppUpdates {
     )
   }
 
+  /** Applies a verified installer; normal quits must not relaunch the app. */
   install(restart = true): void {
     if (!this.state.canInstall || this.state.phase !== 'downloaded')
       throw new Error('Download an update before restarting KChess.')
@@ -168,6 +178,7 @@ export class AppUpdates {
     }
   }
 
+  /** Schedules preference-aware background checks without delaying app startup. */
   start(): void {
     if (!this.state.canCheck || this.startup || this.interval) return
     // Let startup, engine loading and the online-game reconnection finish first.
@@ -185,6 +196,7 @@ export class AppUpdates {
     }
   }
 
+  /** Cancels background checks and stops forwarding update events at shutdown. */
   stop(): void {
     this.stopped = true
     clearTimeout(this.startup)

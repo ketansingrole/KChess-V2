@@ -15,10 +15,12 @@ const percent = computed(() =>
   Math.round(Math.max(0, Math.min(100, status.value?.progress?.percent ?? 0))),
 )
 
+/** Flushes preference edits before a manual check can trigger a download. */
 async function check(): Promise<void> {
   await store.save()
   await updates.action('check')
 }
+/** Saves settings before the confirmed restart closes this renderer. */
 async function restart(): Promise<void> {
   await store.save()
   await updates.action('install')

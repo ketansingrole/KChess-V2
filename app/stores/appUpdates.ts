@@ -30,6 +30,7 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
     }
   })
 
+  /** Subscribes before reading initial state so newer progress cannot be overwritten. */
   async function init(): Promise<void> {
     if (offUpdate || !window.kchess) return
     offUpdate = window.kchess.onAppUpdate((next) => {
@@ -46,6 +47,7 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
     }
   }
 
+  /** Invokes a main-process update action and surfaces IPC failures to settings. */
   async function action(kind: 'check' | 'download' | 'install' | 'releases'): Promise<void> {
     error.value = ''
     try {
@@ -59,6 +61,7 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
     }
   }
 
+  /** Releases the status subscription when the app root unmounts. */
   function dispose(): void {
     offUpdate?.()
     offUpdate = undefined

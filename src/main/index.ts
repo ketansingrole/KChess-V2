@@ -240,7 +240,19 @@ void app
     refreshAppIcon()
     nativeTheme.on('updated', refreshAppIcon)
     setupAppMenu()
-    appUpdates = await setupAppUpdates((status) => send(IPC_EVENTS.appUpdate, status))
+    appUpdates = await setupAppUpdates(
+      (status) => send(IPC_EVENTS.appUpdate, status),
+      () => {
+        // Closing the last window can initiate quit before an installer fails (e.g. elevation
+        // is cancelled). Restore the UI so a prevented quit never leaves a hidden process.
+        if (!window || window.isDestroyed()) createWindow()
+        else {
+          if (window.isMinimized()) window.restore()
+          window.show()
+          window.focus()
+        }
+      },
+    )
     handle('appUpdateStatus', () => appUpdates!.status())
     handle('checkAppUpdate', () => appUpdates!.check())
     handle('downloadAppUpdate', () => appUpdates!.download())

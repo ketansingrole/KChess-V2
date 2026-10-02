@@ -8,8 +8,10 @@ import type { AppUpdateStatus } from '../shared/types'
 
 export const APP_RELEASES_URL = 'https://github.com/ketansingrole/KChess-V2/releases'
 
+/** Configures the public stable feed and capabilities of this installed package. */
 export async function setupAppUpdates(
   emit: (status: AppUpdateStatus) => void,
+  onInstallFailure: () => void,
 ): Promise<AppUpdates> {
   const { autoUpdater } = updaterPackage
   autoUpdater.logger = console
@@ -45,6 +47,7 @@ export async function setupAppUpdates(
     { currentVersion: app.getVersion(), canCheck, canInstall, reason },
     getSettings,
     emit,
+    onInstallFailure,
   )
   updates.applyPreferences(await getSettings())
   return updates

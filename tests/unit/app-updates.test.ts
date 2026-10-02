@@ -9,6 +9,7 @@ import { deferred, desktop } from './fixtures'
 const capabilities = { currentVersion: '2026.10.0', canCheck: true, canInstall: true }
 const release = { version: '2026.10.1', releaseDate: '2026-10-03T00:00:00.000Z' }
 
+/** Models the updater's synchronous events and mutable saved preferences. */
 function fixture(
   options: { canCheck?: boolean; canInstall?: boolean; settings?: Partial<UpdatePreferences> } = {},
 ) {
@@ -37,17 +38,22 @@ function fixture(
     quitAndInstall: vi.fn(),
   })
   const emit = vi.fn()
+  const readPreferences = vi.fn(async () => settings)
+  const onInstallFailure = vi.fn()
   const updates = new AppUpdates(
     updater as unknown as ConstructorParameters<typeof AppUpdates>[0],
     { ...capabilities, canCheck: options.canCheck ?? true, canInstall: options.canInstall ?? true },
-    async () => settings,
+    readPreferences,
     emit,
+    onInstallFailure,
   )
   updates.applyPreferences(settings)
   return {
     updater,
     updates,
     emit,
+    readPreferences,
+    onInstallFailure,
     preferences: (patch: Partial<UpdatePreferences>) => {
       settings = { ...settings, ...patch }
       updates.applyPreferences(settings)
@@ -162,6 +168,50 @@ describe('desktop updater', () => {
     await updates.check()
     expect(updates.status().phase).toBe('available')
   })
+
+  it('keeps a verified installer ready after late errors and scheduled preference-read failures', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { updates, updater, readPreferences, onInstallFailure } = fixture()
+    await updates.check()
+    await updates.download()
+    const ready = updates.status()
+    updater.emit('error', new Error('Unrelated late network error'))
+    expect(updates.status()).toEqual(ready)
+    expect(updates.shouldInstallOnQuit()).toBe(true)
+    readPreferences.mockRejectedValueOnce(new Error('Temporary settings read failure'))
+    updates.start()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(updates.status()).toEqual(ready)
+    expect(onInstallFailure).not.toHaveBeenCalled()
+    updates.install()
+    expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
+    updates.stop()
+  })
+
+  it.each(['throw', 'emit'])(
+    'reports a real installation failure through %s instead of hiding it',
+    async (kind) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { updates, updater, onInstallFailure } = fixture()
+      await updates.check()
+      await updates.download()
+      updater.quitAndInstall.mockImplementationOnce(() => {
+        const failure = new Error('Installer failed')
+        if (kind === 'throw') throw failure
+        updater.emit('error', failure)
+      })
+      if (kind === 'throw') expect(() => updates.install(false)).toThrow('Installer failed')
+      else updates.install(false)
+      expect(updates.status().phase).toBe('error')
+      expect(updates.shouldInstallOnQuit()).toBe(false)
+      expect(onInstallFailure).toHaveBeenCalledTimes(1)
+      await updates.download()
+      expect(updates.status().phase).toBe('downloaded')
+      updates.install(false)
+      expect(updater.quitAndInstall).toHaveBeenLastCalledWith(true, false)
+    },
+  )
 
   it('checks on unsigned Macs but cannot download or install; development never checks', async () => {
     const mac = fixture({ canInstall: false })
