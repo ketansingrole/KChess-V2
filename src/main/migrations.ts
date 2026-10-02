@@ -152,6 +152,11 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS idx_voice_log_at ON voice_log (at DESC);
   `,
+  `
+  ALTER TABLE settings ADD COLUMN updateAutoCheck INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN updateAutoDownload INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN updateInstallOnQuit INTEGER NOT NULL DEFAULT 1;
+  `,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

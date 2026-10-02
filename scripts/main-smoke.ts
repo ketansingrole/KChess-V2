@@ -145,8 +145,14 @@ const settings = {
   voicePushToTalk: false,
   voiceConfirmMoves: true,
   voiceHistory: true,
+  updateAutoCheck: true,
+  updateAutoDownload: true,
+  updateInstallOnQuit: true,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
+throws('settings reject non-boolean update preference', () =>
+  assertSettings({ ...settings, updateAutoCheck: 'yes' }),
+)
 throws('settings reject NaN volume', () => assertSettings({ ...settings, soundVolume: NaN }))
 throws('settings reject bad promotion', () => assertSettings({ ...settings, promotion: 'rook' }))
 throws('settings reject bad theme id', () => assertSettings({ ...settings, darkTheme: 'No Way!' }))
@@ -334,6 +340,27 @@ assert(
   (old.prepare('SELECT username FROM accounts').get() as { username: string }).username,
   'magnus',
 )
+
+// Upgrade an existing settings row, preserving user preferences while enabling update defaults.
+const previous = new DatabaseSync(':memory:')
+for (const migration of MIGRATIONS.slice(0, -1)) previous.exec(migration)
+previous.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`)
+previous.exec(`INSERT INTO settings (id, appearance, boardTheme, coordinates, soundEnabled, soundVolume, enginePath)
+  VALUES (1, 'dark', 'brown', 'inside', 0, 0.3, '')`)
+migrate(previous)
+const updatedSettings = previous
+  .prepare(
+    'SELECT appearance, soundVolume, updateAutoCheck, updateAutoDownload, updateInstallOnQuit FROM settings',
+  )
+  .get()
+assert('existing settings survive the updater migration', updatedSettings, {
+  appearance: 'dark',
+  soundVolume: 0.3,
+  updateAutoCheck: 1,
+  updateAutoDownload: 1,
+  updateInstallOnQuit: 1,
+})
+previous.close()
 
 // NDJSON streams: lines split across chunks, keep-alive blanks, and a final line without a newline.
 const encoder = new TextEncoder()

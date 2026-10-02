@@ -25,4 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voicePushToTalk: false,
   voiceConfirmMoves: true,
   voiceHistory: true,
+  updateAutoCheck: true,
+  updateAutoDownload: true,
+  updateInstallOnQuit: true,
 }

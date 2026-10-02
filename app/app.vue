@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useKChessStore } from './stores/kchess'
+import { useAppUpdatesStore } from './stores/appUpdates'
 
 useHead({
   title: 'KChess',
@@ -10,6 +11,11 @@ useHead({
 })
 
 const store = useKChessStore()
+const updates = useAppUpdatesStore()
+function showUpdates(): void {
+  store.settingsSection = 'updates'
+  void navigateTo('/settings')
+}
 
 // The search box should sit in the middle of the window, but the top bar only spans the area
 // right of the sidebar. Tell the CSS how far that area starts from the window's left edge so it
@@ -23,6 +29,7 @@ function trackMainOffset(): void {
 
 onMounted(() => {
   void store.init()
+  void updates.init()
   if (mainEl.value) {
     resizeObserver = new ResizeObserver(trackMainOffset)
     resizeObserver.observe(mainEl.value)
@@ -32,6 +39,7 @@ onMounted(() => {
 onUnmounted(() => {
   resizeObserver?.disconnect()
   store.dispose()
+  updates.dispose()
 })
 const {
   ready,
@@ -158,6 +166,14 @@ const isMac = computed(
             </UButton>
           </div>
           <div class="topbar-right">
+            <UButton
+              v-if="updates.attention"
+              size="sm"
+              variant="soft"
+              icon="i-lucide-download"
+              :label="updates.status?.phase === 'downloaded' ? 'Update ready' : 'Update available'"
+              @click="showUpdates"
+            />
             <span v-if="busy" class="working" role="status">
               <UIcon name="i-lucide-loader-circle" class="animate-spin" /> Working…
             </span>

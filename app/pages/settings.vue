@@ -332,6 +332,7 @@ function removePending(): void {
     <PageHeader :title="category.label" subtitle="Changes save automatically" />
 
     <div class="settings-page">
+      <AppUpdateSettings v-if="category.id === 'updates'" />
       <section
         v-if="category.id === 'appearance'"
         id="settings-appearance"

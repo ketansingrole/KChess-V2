@@ -145,6 +145,34 @@ export interface Settings {
   voiceConfirmMoves: boolean
   /** Keep a local log of what voice input heard and what came of it, to find what it mishears. */
   voiceHistory: boolean
+  /** Check stable releases on startup and periodically while KChess is open. */
+  updateAutoCheck: boolean
+  /** Download verified updates in the background when a check finds one. */
+  updateAutoDownload: boolean
+  /** Apply a downloaded update when the user quits; never restart during play. */
+  updateInstallOnQuit: boolean
+}
+
+export interface AppUpdateStatus {
+  phase:
+    | 'idle'
+    | 'checking'
+    | 'up-to-date'
+    | 'available'
+    | 'downloading'
+    | 'downloaded'
+    | 'error'
+    | 'disabled'
+  currentVersion: string
+  canCheck: boolean
+  canInstall: boolean
+  /** Why this installation needs a manual download, or cannot check at all. */
+  reason?: string
+  version?: string
+  releaseDate?: string
+  checkedAt?: number
+  progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }
+  error?: string
 }
 
 /** The operating system's microphone permission for KChess (`granted` where the OS has none). */
@@ -528,6 +556,13 @@ export interface BestMoveOptions {
 export interface DesktopApi {
   /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
   exportDiagnostics(): Promise<boolean>
+  appUpdateStatus(): Promise<AppUpdateStatus>
+  checkAppUpdate(): Promise<AppUpdateStatus>
+  downloadAppUpdate(): Promise<AppUpdateStatus>
+  installAppUpdate(): Promise<void>
+  /** Opens only this app's official GitHub Releases page. */
+  openAppReleases(): Promise<void>
+  onAppUpdate(callback: (status: AppUpdateStatus) => void): () => void
   loadData(): Promise<AppData>
   saveSettings(settings: Settings): Promise<Settings>
   addAccount(username: string): Promise<AppData>

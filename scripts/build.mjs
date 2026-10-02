@@ -1,8 +1,24 @@
 import { spawn } from 'node:child_process'
+import { lstat, mkdir, readlink, unlink } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareVoiceModel } from './prepare-voice-model.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+// Nuxt generate creates a dist -> .output/public alias when dist doesn't exist. electron-builder
+// also writes to dist, which would put installers inside the renderer and bundle them recursively.
+const installerOutput = join(root, 'dist')
+try {
+  if ((await lstat(installerOutput)).isSymbolicLink()) {
+    if (resolve(root, await readlink(installerOutput)) !== join(root, '.output', 'public'))
+      throw new Error('dist must be a directory, not a symlink to another location.')
+    await unlink(installerOutput)
+  }
+} catch (cause) {
+  if (cause.code !== 'ENOENT') throw cause
+}
+await mkdir(installerOutput, { recursive: true })
+
 async function run(cli, args, env = process.env) {
   const code = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [fileURLToPath(new URL(cli, import.meta.url)), ...args], {

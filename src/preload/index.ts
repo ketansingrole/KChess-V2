@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DesktopApi, OnlineEvent, PuzzleDbProgress } from '../shared/types'
+import type { AppUpdateStatus, DesktopApi, OnlineEvent, PuzzleDbProgress } from '../shared/types'
 
 import {
   IPC_CHANNELS,
@@ -14,6 +14,16 @@ function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): Ip
 }
 
 const api: DesktopApi = {
+  appUpdateStatus: () => invoke('appUpdateStatus'),
+  checkAppUpdate: () => invoke('checkAppUpdate'),
+  downloadAppUpdate: () => invoke('downloadAppUpdate'),
+  installAppUpdate: () => invoke('installAppUpdate'),
+  openAppReleases: () => invoke('openAppReleases'),
+  onAppUpdate: (callback) => {
+    const listener = (_: unknown, status: AppUpdateStatus): void => callback(status)
+    ipcRenderer.on(IPC_EVENTS.appUpdate, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.appUpdate, listener)
+  },
   exportDiagnostics: () => invoke('exportDiagnostics'),
   loadData: () => invoke('loadData'),
   saveSettings: (settings) => invoke('saveSettings', settings),

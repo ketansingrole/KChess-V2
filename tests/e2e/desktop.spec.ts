@@ -200,6 +200,67 @@ test('persists appearance settings after reloading', async ({ desktop: { page } 
   ).toBe('dark')
 })
 
+test('shows update capabilities and persists update preferences @packaged', async ({
+  desktop: { app, page },
+}) => {
+  const status = await page.evaluate(() => window.kchess.appUpdateStatus())
+  expect(status.currentVersion).toBe(await app.evaluate(({ app }) => app.getVersion()))
+  if (status.canCheck) expect(status.phase).not.toBe('disabled')
+  else expect(status.phase).toBe('disabled')
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await expect(
+    page.getByRole('heading', { name: 'Appearance', exact: true, level: 1 }),
+  ).toBeVisible()
+  await navigate(page, 'Updates')
+  await expect(page.getByRole('heading', { name: 'Updates', level: 1 })).toBeVisible()
+  await expect(
+    page.getByText(`Installed version ${status.currentVersion} · Stable releases`),
+  ).toBeVisible()
+  const check = page.getByRole('button', { name: 'Check for updates', exact: true })
+  const download = page.getByRole('switch', {
+    name: 'Download updates in the background',
+    exact: true,
+  })
+  if (status.canCheck) await expect(check).toBeEnabled()
+  else await expect(check).toBeDisabled()
+  if (status.canInstall) await expect(download).toBeEnabled()
+  else await expect(download).toBeDisabled()
+  if (status.canCheck) {
+    await page.getByRole('switch', { name: 'Automatically check for updates', exact: true }).click()
+    await expect
+      .poll(() =>
+        page.evaluate(async () => (await window.kchess.loadData()).settings.updateAutoCheck),
+      )
+      .toBe(false)
+  }
+  // Exercise the actual preload, IPC validation and SQLite round trip without downloading a release.
+  await page.evaluate(async () => {
+    const { settings } = await window.kchess.loadData()
+    await window.kchess.saveSettings({
+      ...settings,
+      updateAutoCheck: false,
+      updateAutoDownload: false,
+      updateInstallOnQuit: false,
+    })
+  })
+  await page.reload()
+  await expect(
+    page.getByRole('heading', { name: 'Appearance', exact: true, level: 1 }),
+  ).toBeVisible()
+  await navigate(page, 'Updates')
+  await expect(
+    page.getByRole('switch', { name: 'Automatically check for updates', exact: true }),
+  ).not.toBeChecked()
+  await expect(download).not.toBeChecked()
+  await expect(
+    page.getByRole('switch', { name: 'Install updates when I quit', exact: true }),
+  ).not.toBeChecked()
+  await expect(page.evaluate(() => window.kchess.installAppUpdate())).rejects.toThrow(
+    'Download an update',
+  )
+  await page.screenshot({ path: 'test-results/app-updates.png' })
+})
+
 test('exports redacted diagnostics through Settings', async ({
   desktop: { app, page, profile },
 }) => {
