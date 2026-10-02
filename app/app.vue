@@ -69,9 +69,11 @@ watch(confirmOpen, (open) => {
 })
 
 // macOS Electron uses a hiddenInset titlebar: traffic lights float over the
-// sidebar header. The sidebar toggle is fixed to the window (OpenChamber-style)
-// so it never migrates between the sidebar and the topbar while the sidebar
-// animates: on macOS it sits right beside the traffic lights.
+// sidebar header (x12, wider on recent macOS). The sidebar toggle is fixed to
+// the window (OpenChamber-style) so it never migrates while the sidebar
+// animates: on macOS it holds a constant x84, clear of the lights in both
+// sidebar states. Collapsed, it floats over the main topbar, which reserves
+// matching space beside the 64px rail (see .mac-toggle-spacer).
 // Windows/Linux use OpenChamber-style frameless chrome: no OS title bar, the
 // renderer draws its own minimize/maximize/close buttons in the topbar.
 // (Gated on the Electron user agent so plain browser previews are unaffected.)
@@ -164,6 +166,11 @@ function toggleMaximize(event?: MouseEvent): void {
       <main ref="mainEl" class="main-area">
         <header class="topbar" @dblclick="toggleMaximize">
           <div class="topbar-left">
+            <div
+              v-if="isMac && !sidebarOpen"
+              class="mac-toggle-spacer hidden lg:block"
+              aria-hidden="true"
+            />
             <div v-if="!sidebarOpen" class="lg:hidden">
               <UTooltip text="Show sidebar">
                 <UButton

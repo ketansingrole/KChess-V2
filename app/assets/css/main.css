@@ -110,6 +110,13 @@ button:disabled {
   height: var(--topbar-height);
   -webkit-app-region: no-drag;
 }
+/* The topbar keeps a 1px bottom border inside its 52px height, so 52px-tall
+   buttons would paint over that divider on hover and poke 1px below it.
+   Stop the frameless caption buttons above the border: the header rule then
+   runs uninterrupted in every button state. */
+.is-frameless .window-controls {
+  height: calc(var(--topbar-height) - 1px);
+}
 .window-control {
   display: inline-flex;
   align-items: center;
@@ -166,8 +173,9 @@ button:disabled {
   -webkit-app-region: drag;
 }
 /* One button, mounted once, painted at a constant window position in both
-   sidebar states. It stays a descendant of the drag region so its no-drag
-   carve keeps it clickable on every platform. */
+   sidebar states (OpenChamber-style fixed cluster): the panels slide
+   underneath it while the sidebar animates. It stays a descendant of the
+   drag region so its no-drag carve keeps it clickable on every platform. */
 .sidebar-toggle-wrap {
   position: fixed;
   top: 0;
@@ -179,8 +187,18 @@ button:disabled {
   -webkit-app-region: no-drag;
 }
 .is-mac .sidebar-toggle-wrap {
-  /* Clear the traffic lights (x12 + ~52px wide), as the old 64px padding did. */
-  left: 64px;
+  /* Clear the traffic lights (x12 + up to ~68px cluster on recent macOS).
+     Identical open or collapsed so the button never migrates; collapsed, it
+     floats over the main topbar, which reserves matching space beside the
+     64px rail (see .mac-toggle-spacer). */
+  left: 84px;
+}
+/* Reserve in the main topbar for the overlaid toggle while the macOS sidebar
+   is collapsed to its 64px rail. The toggle spans x84..x112, i.e. rel. 20..48
+   of the topbar, so 36px keeps content 8px clear past the 20px padding. */
+.mac-toggle-spacer {
+  flex: none;
+  width: 36px;
 }
 .sidebar-toggle-wrap .sidebar-toggle {
   -webkit-app-region: no-drag;
