@@ -1,5 +1,5 @@
 import type { Model, KaldiRecognizer } from 'vosk-browser/dist/model'
-import type { VoiceWord } from '../../src/shared/types'
+import type { VoiceWord, VoiceModelProgress } from '../../src/shared/types'
 
 export type VoiceState = 'off' | 'loading' | 'paused' | 'listening' | 'error'
 /** Why voice input stopped, so the UI can offer the right fix (e.g. open privacy settings). */
@@ -21,6 +21,7 @@ interface Callbacks {
   error: (message: string, kind: VoiceErrorKind) => void
   /** Input loudness 0–1 while listening, for a level meter. */
   level?: (value: number) => void
+  modelProgress?: (progress: VoiceModelProgress) => void
 }
 
 class VoiceError extends Error {
@@ -94,9 +95,26 @@ export class VoiceCapture {
     this.callbacks.state('loading')
     this.loading = (async () => {
       // The package embeds Vosk's WASM in a worker. Import it only after an explicit enable action.
+      const unsubscribe = window.kchess.onVoiceModelProgress((progress) => {
+        if (!this.disposed) this.callbacks.modelProgress?.(progress)
+      })
+      let modelUrl: string
+      try {
+        modelUrl = await window.kchess.ensureVoiceModel()
+      } catch (cause) {
+        throw new VoiceError(
+          cause instanceof Error
+            ? cause.message
+            : 'The voice model couldn’t download. Connect to the internet and try again.',
+          'model',
+        )
+      } finally {
+        unsubscribe()
+      }
+      if (this.disposed) throw new Error('Voice input was stopped.')
       const { Model } = await import('vosk-browser')
       if (this.disposed) throw new Error('Voice input was stopped.')
-      const model = new Model(voiceAssetUrl('model.tar.gz'), -1)
+      const model = new Model(modelUrl, -1)
       this.model = model
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(

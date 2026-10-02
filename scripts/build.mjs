@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { lstat, mkdir, readlink, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareVoiceModel } from './prepare-voice-model.mjs'
+import { verifyRenderer } from './verify-package.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 // Nuxt generate creates a dist -> .output/public alias when dist doesn't exist. electron-builder
@@ -36,7 +36,6 @@ async function run(cli, args, env = process.env) {
   })
   if (code) process.exit(code)
 }
-await prepareVoiceModel()
 await run('../node_modules/nuxt/bin/nuxt.mjs', ['typecheck'])
 await run('../node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.electron.json'])
 await run('../node_modules/vue-tsc/bin/vue-tsc.js', ['--noEmit', '-p', 'tsconfig.tests.json'])
@@ -44,4 +43,5 @@ await run('../node_modules/nuxt/bin/nuxt.mjs', ['generate'], {
   ...process.env,
   NUXT_APP_BASE_URL: './',
 })
+await verifyRenderer(join(root, '.output', 'public'))
 await run('../node_modules/electron-vite/bin/electron-vite.js', ['build'])

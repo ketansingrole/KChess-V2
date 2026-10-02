@@ -17,14 +17,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Verify release metadata
+        run: npm run release:verify
+      - name: Verify the release commit belongs to main
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: git merge-base --is-ancestor HEAD origin/main
+      - run: npm ci
+      - run: npm run check
+
   package:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Apple Silicon runner; the Intel (x64) build is cross-packaged there.
+          # macOS releases support Apple Silicon only.
           - os: macos-latest
-            platform: --mac
+            platform: --mac --arm64
           - os: windows-latest
             platform: --win
           - os: ubuntu-latest
@@ -33,28 +52,18 @@ jobs:
     env:
       # Certificates are imported explicitly; never use an unrelated keychain identity.
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
-      - name: Check the tag matches package.json
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          if ! [[ "$GITHUB_REF_NAME" =~ ^v20[0-9]{2}\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME is not YEAR.MONTH.COUNTER (e.g. v2026.10.0, no zero padding)."
-            exit 1
-          fi
-          expected="v$(node -p "require('./package.json').version")"
-          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($expected)."
-            exit 1
-          fi
       - run: npm ci
       - run: npm run build
-      - run: npx electron-builder ${{ matrix.platform }} --config scripts/release-config.cjs --publish never
+      # afterPack rejects nested installers/apps, redundant dependencies, and oversized payloads.
+      - name: Build installers and verify package contents
+        run: npx electron-builder ${{ matrix.platform }} --config scripts/release-config.cjs --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
           CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
@@ -62,6 +71,21 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Verify Mac signing and notarization
+        if: runner.os == 'macOS' && env.KCHESS_MAC_SIGNING == 'true'
+        shell: bash
+        env:
+          EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          mac_app=dist/mac-arm64/KChess.app
+          codesign --verify --deep --strict --verbose=2 "$mac_app"
+          signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
+            echo "::error::The app's signing team does not match APPLE_TEAM_ID."
+            exit 1
+          fi
+          spctl --assess --type execute --verbose=2 "$mac_app"
+          xcrun stapler validate "$mac_app"
       - name: Verify update metadata exists
         shell: bash
         run: |
@@ -75,23 +99,29 @@ jobs:
         with:
           name: kchess-${{ runner.os }}
           path: |
-            dist/*.dmg
-            dist/*.zip
+            dist/*-mac-arm64.dmg
+            dist/*-mac-arm64.zip
             dist/*.exe
             dist/*.AppImage
             dist/*.deb
             dist/latest*.yml
-            dist/*.blockmap
+            dist/*-mac-arm64.*.blockmap
+            dist/*.exe.blockmap
+            dist/*.AppImage.blockmap
           if-no-files-found: error
           retention-days: 14
 
   release:
     needs: package
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
       - uses: actions/download-artifact@v8
         with:
           path: packages
@@ -103,11 +133,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          # A re-run replaces the files on the existing draft instead of failing.
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" packages/* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" packages/* --draft --generate-notes \
-              --title "KChess ${GITHUB_REF_NAME#v}"
-          fi
+        run: node scripts/attach-draft-release.mjs packages

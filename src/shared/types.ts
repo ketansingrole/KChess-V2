@@ -517,6 +517,12 @@ export interface VoiceWord {
   conf: number
 }
 
+export interface VoiceModelProgress {
+  phase: 'checking' | 'downloading' | 'preparing'
+  received: number
+  total?: number
+}
+
 export interface VoiceAttemptInput {
   source: VoiceSource
   /** The recognizer's text, as heard. */
@@ -616,6 +622,9 @@ export interface DesktopApi {
   openNotificationSettings(): Promise<boolean>
   /** The microphone permission; with `request`, asks the OS (shows its prompt) when undecided. */
   microphoneAccess(request: boolean): Promise<MicrophoneAccess>
+  /** Downloads the verified English model on first use, then reuses the local cache. */
+  ensureVoiceModel(): Promise<string>
+  onVoiceModelProgress(callback: (progress: VoiceModelProgress) => void): () => void
   /** Open the operating system's microphone privacy settings; false where unsupported. */
   openMicrophoneSettings(): Promise<boolean>
   /** Alerts for the window to show itself, sent instead of a system notification while KChess is in use. */

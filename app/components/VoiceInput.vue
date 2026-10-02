@@ -35,6 +35,7 @@ const partial = ref('')
 const heard = ref('')
 const retry = ref('')
 const level = ref(0)
+const modelMessage = ref('Preparing voice input…')
 /** Hold-to-speak is a saved preference, offered only where a control allows it. */
 const pushTalk = computed(() => !!props.allowPushTalk && !!settings.value?.voicePushToTalk)
 let capture: VoiceCapture | undefined
@@ -48,7 +49,7 @@ const label = computed(() =>
   state.value === 'listening'
     ? 'Listening…'
     : state.value === 'loading'
-      ? 'Preparing voice input…'
+      ? modelMessage.value
       : state.value === 'error'
         ? 'Voice input unavailable'
         : pushTalk.value && props.active
@@ -87,7 +88,16 @@ const lineTitle = computed(() =>
 )
 
 function newCapture(): VoiceCapture {
+  modelMessage.value = 'Preparing voice input…'
   return new VoiceCapture({
+    modelProgress: (progress) => {
+      modelMessage.value =
+        progress.phase === 'downloading'
+          ? `Downloading voice model${progress.total ? ` · ${Math.min(100, Math.round((progress.received / progress.total) * 100))}%` : ' · about 40 MB'}…`
+          : progress.phase === 'preparing'
+            ? 'Preparing voice model…'
+            : 'Loading voice model…'
+    },
     state: (value) => {
       state.value = value
       if (value !== 'listening') level.value = 0
@@ -285,7 +295,7 @@ onBeforeUnmount(() => {
     <USwitch
       v-model="enabled"
       label="Voice input"
-      description="English · recognized on this device, nothing is uploaded."
+      description="English · first use downloads about 40 MB, then works offline. Nothing is uploaded."
       :disabled="disabled"
     />
     <template v-if="enabled">

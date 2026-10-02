@@ -58,7 +58,8 @@ jobs:
         if: runner.os != 'Linux'
       - run: xvfb-run --auto-servernum npm run test:e2e
         if: runner.os == 'Linux'
-      - run: npx electron-builder --dir --publish never
+      - name: Package and verify contents
+        run: npx electron-builder --dir --publish never
       - run: npm run test:packaged
         if: runner.os != 'Linux'
       - run: xvfb-run --auto-servernum npm run test:packaged

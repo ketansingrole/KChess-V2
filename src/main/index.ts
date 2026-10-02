@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
+import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle } from './ipc'
 import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
@@ -230,7 +231,14 @@ function setupAppMenu(): void {
 void app
   .whenReady()
   .then(async () => {
-    handleAppProtocol()
+    const voiceModel = new VoiceModelCache(join(app.getPath('userData'), 'voice'))
+    handleAppProtocol(voiceModel.path)
+    handle('ensureVoiceModel', async (event) => {
+      await voiceModel.ensure((progress) => {
+        if (!event.sender.isDestroyed()) event.sender.send(IPC_EVENTS.voiceModelProgress, progress)
+      })
+      return 'kchess://app/voice/model.tar.gz'
+    })
     setupMediaPermissions((url) => url.startsWith(process.env.KCHESS_NUXT_URL || 'kchess://app/'))
     // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
     // the system appearance changes. Packaged builds fall back to the bundle

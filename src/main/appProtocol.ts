@@ -18,11 +18,23 @@ export function registerAppScheme(): void {
   ])
 }
 
-export function handleAppProtocol(): void {
+export function handleAppProtocol(voiceModelPath: string): void {
   const root = resolve(join(app.getAppPath(), '.output', 'public'))
   protocol.handle('kchess', async (request) => {
     const url = new URL(request.url)
     if (url.host !== 'app' || request.method !== 'GET') return new Response(null, { status: 403 })
+    if (url.pathname === '/voice/model.tar.gz') {
+      try {
+        const response = await net.fetch(pathToFileURL(voiceModelPath).href)
+        // The same local asset is used by the localhost renderer during development.
+        return new Response(response.body, {
+          status: response.status,
+          headers: { 'Content-Type': 'application/gzip', 'Access-Control-Allow-Origin': '*' },
+        })
+      } catch {
+        return new Response(null, { status: 404 })
+      }
+    }
     let path: string
     try {
       path = resolve(

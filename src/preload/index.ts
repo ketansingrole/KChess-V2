@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppUpdateStatus, DesktopApi, OnlineEvent, PuzzleDbProgress } from '../shared/types'
+import type {
+  AppUpdateStatus,
+  DesktopApi,
+  OnlineEvent,
+  PuzzleDbProgress,
+  VoiceModelProgress,
+} from '../shared/types'
 
 import {
   IPC_CHANNELS,
@@ -55,6 +61,12 @@ const api: DesktopApi = {
   openThemesFolder: () => invoke('openThemesFolder'),
   openNotificationSettings: () => invoke('openNotificationSettings'),
   microphoneAccess: (request) => invoke('microphoneAccess', request),
+  ensureVoiceModel: () => invoke('ensureVoiceModel'),
+  onVoiceModelProgress: (callback) => {
+    const listener = (_: unknown, progress: VoiceModelProgress): void => callback(progress)
+    ipcRenderer.on(IPC_EVENTS.voiceModelProgress, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.voiceModelProgress, listener)
+  },
   openMicrophoneSettings: () => invoke('openMicrophoneSettings'),
   onNotification: (callback) => {
     const listener = (_: unknown, alert: { title: string; body: string }): void => callback(alert)

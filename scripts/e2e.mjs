@@ -2,15 +2,13 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { prepareVoiceModel } from './prepare-voice-model.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packaged = process.argv.includes('--packaged')
 const candidates =
   process.platform === 'darwin'
-    ? [
-        `dist/mac-${process.arch}/KChess.app/Contents/MacOS/KChess`,
-        'dist/mac/KChess.app/Contents/MacOS/KChess',
-      ]
+    ? ['dist/mac-arm64/KChess.app/Contents/MacOS/KChess']
     : process.platform === 'win32'
       ? ['dist/win-unpacked/KChess.exe']
       : ['dist/linux-unpacked/kchess', 'dist/linux-unpacked/kchess-electron']
@@ -18,6 +16,7 @@ const executable = candidates.map((file) => join(root, file)).find(existsSync)
 if (packaged && !executable) throw new Error('Packaged app missing. Run npm run pack first.')
 if (!packaged && !existsSync(join(root, 'out/main/index.js')))
   throw new Error('Built app missing. Run npm run build first.')
+await prepareVoiceModel()
 
 const env = {
   ...process.env,

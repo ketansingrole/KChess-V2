@@ -1,5 +1,51 @@
 # AGENTS.md — instructions for AI coding agents working in this repo
 
+## Releases and tags
+
+Creating a release means preparing a **draft**. Publish it only when the user asks to
+publish. A request to fix code, build installers, or reduce size does not authorize
+creating/pushing a tag or publishing a release.
+
+- Versions are `YEAR.MONTH.COUNTER`, using the **UTC release month**. Start a new month
+  at `0`; otherwise use one more than the highest existing tag's counter for that month.
+  No zero padding: package version `2026.10.1`, Git tag `v2026.10.1`.
+  Do not use ordinary `v1.2.3`, date/day tags, prerelease suffixes, or guess a counter.
+- Use `npm run release:version`. It must successfully fetch tags from `origin` first.
+  If fetching fails, restore access and retry; do not select a version from stale tags.
+  Commit both `package.json` and `package-lock.json`; all three version fields must match.
+- Release only a reviewed commit merged into `origin/main`. Include every intended file,
+  including new/untracked files; explicitly stage the files instead of relying on
+  `git commit -am`. Keep the working tree clean before tagging and verify CI is green
+  for the intended release commit.
+- Run `npm run release:verify` and `npm run check`. Verify the release commit and tag
+  before creating an annotated tag. Push **only that tag**, not `--tags` or an arbitrary
+  `HEAD` branch. Never force-push, move, reuse, or delete an existing release tag.
+- Tag pushes run the Release workflow and create a draft after all platform packages
+  succeed. Manual `workflow_dispatch` builds produce downloadable artifacts only,
+  even when the selected ref is a tag. To retry a failed draft build, rerun its original
+  tag-push workflow; do not recreate the tag.
+- Replacing assets is allowed only while the release is a draft. A published release
+  is permanent: ship fixes with the next version and a new tag. Never bypass the
+  workflow's published-release guard with a direct `gh release upload --clobber`.
+- Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
+  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`). Keep updater manifests, blockmaps,
+  and `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
+  publishing; macOS ZIPs are required for the update feed.
+
+Before an authorized tag push, derive its name from the committed package version,
+confirm the named commit is the intended release, and inspect the exact local tag:
+
+```bash
+release_tag="v$(node -p "require('./package.json').version")"
+release_commit="$(git rev-parse HEAD)"
+git status --short                          # must be empty
+git merge-base --is-ancestor "$release_commit" origin/main  # must succeed
+git tag --list "$release_tag"               # must be empty for a new release
+git tag -a "$release_tag" -m "KChess ${release_tag#v}" "$release_commit"
+git show --no-patch "$release_tag"           # verify version and target commit
+git push origin "refs/tags/$release_tag"
+```
+
 ## Dev server: reuse, don't duplicate
 
 `npm run dev` starts Nuxt on `http://127.0.0.1:3000` plus Electron
