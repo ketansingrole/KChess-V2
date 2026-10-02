@@ -13,6 +13,7 @@ export interface IpcEvents {
   'puzzledb:progress': PuzzleDbProgress
   'app:update': AppUpdateStatus
   'voice:model-progress': VoiceModelProgress
+  'window:maximized-changed': { maximized: boolean }
 }
 export const IPC_EVENTS = {
   online: 'online:event',
@@ -21,6 +22,7 @@ export const IPC_EVENTS = {
   puzzleProgress: 'puzzledb:progress',
   appUpdate: 'app:update',
   voiceModelProgress: 'voice:model-progress',
+  windowMaximized: 'window:maximized-changed',
 } as const satisfies Record<string, keyof IpcEvents>
 
 type Subscription =
@@ -30,6 +32,7 @@ type Subscription =
   | 'onNotification'
   | 'onPuzzleDbProgress'
   | 'onVoiceModelProgress'
+  | 'onWindowMaximized'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
@@ -93,6 +96,10 @@ export const IPC_CHANNELS = {
   voiceHistory: 'voice:log',
   clearVoiceHistory: 'voice:log-clear',
   exportVoiceHistory: 'voice:log-export',
+  windowMinimize: 'window:minimize',
+  windowToggleMaximize: 'window:toggle-maximize',
+  windowClose: 'window:close',
+  windowIsMaximized: 'window:is-maximized',
 } as const satisfies Record<InvokeMethod, string>
 
 export type IpcArguments<K extends InvokeMethod> = Parameters<DesktopApi[K]>

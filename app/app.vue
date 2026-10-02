@@ -69,7 +69,11 @@ watch(confirmOpen, (open) => {
 })
 
 // macOS Electron uses a hiddenInset titlebar: traffic lights float over the
-// sidebar header, so the toggle lives there, right beside them.
+// sidebar header. The sidebar toggle is fixed to the window (OpenChamber-style)
+// so it never migrates between the sidebar and the topbar while the sidebar
+// animates: on macOS it sits right beside the traffic lights.
+// Windows/Linux use OpenChamber-style frameless chrome: no OS title bar, the
+// renderer draws its own minimize/maximize/close buttons in the topbar.
 // (Gated on the Electron user agent so plain browser previews are unaffected.)
 const isMac = computed(
   () =>
@@ -77,11 +81,31 @@ const isMac = computed(
     /Mac/.test(navigator.platform || navigator.userAgent) &&
     navigator.userAgent.includes('Electron'),
 )
+const isFrameless = computed(
+  () =>
+    typeof navigator !== 'undefined' &&
+    navigator.userAgent.includes('Electron') &&
+    !/Mac/.test(navigator.platform || navigator.userAgent),
+)
+
+function toggleMaximize(event?: MouseEvent): void {
+  if (!isFrameless.value) return
+  // Double-clicking a button (e.g. rapidly pressing maximize) must not toggle twice.
+  if (event?.target instanceof HTMLElement && event.target.closest('button, input, a')) return
+  try {
+    const api = (
+      window as unknown as { kchess?: { windowToggleMaximize?: () => Promise<unknown> } }
+    ).kchess
+    void api?.windowToggleMaximize?.()?.catch(() => {})
+  } catch {
+    /* browser preview has no window controls */
+  }
+}
 </script>
 
 <template>
   <UApp>
-    <div class="app-shell" :class="{ 'is-mac': isMac }">
+    <div class="app-shell" :class="{ 'is-mac': isMac, 'is-frameless': isFrameless }">
       <USidebar
         v-model:open="sidebarOpen"
         collapsible="icon"
@@ -89,19 +113,21 @@ const isMac = computed(
         :menu="{ ui: { content: 'max-w-[85vw] sm:max-w-xs' } }"
         :ui="{ header: 'h-(--topbar-height) min-h-(--topbar-height)' }"
       >
-        <template #header="{ state }">
-          <div class="sidebar-titlebar" :class="state">
-            <UTooltip v-if="state === 'expanded'" text="Hide sidebar">
-              <UButton
-                icon="i-lucide-panel-left"
-                color="neutral"
-                variant="ghost"
-                size="sm"
-                aria-label="Hide sidebar"
-                class="sidebar-toggle"
-                @click="sidebarOpen = false"
-              />
-            </UTooltip>
+        <template #header>
+          <div class="sidebar-titlebar">
+            <div class="sidebar-toggle-wrap">
+              <UTooltip :text="sidebarOpen ? 'Hide sidebar' : 'Show sidebar'">
+                <UButton
+                  icon="i-lucide-panel-left"
+                  color="neutral"
+                  variant="ghost"
+                  size="sm"
+                  :aria-label="sidebarOpen ? 'Hide sidebar' : 'Show sidebar'"
+                  class="sidebar-toggle"
+                  @click="sidebarOpen = !sidebarOpen"
+                />
+              </UTooltip>
+            </div>
           </div>
         </template>
         <template #default="{ state }">
@@ -136,18 +162,20 @@ const isMac = computed(
         </template>
       </USidebar>
       <main ref="mainEl" class="main-area">
-        <header class="topbar">
+        <header class="topbar" @dblclick="toggleMaximize">
           <div class="topbar-left">
-            <UTooltip v-if="!sidebarOpen" text="Show sidebar">
-              <UButton
-                icon="i-lucide-panel-left"
-                color="neutral"
-                variant="ghost"
-                size="sm"
-                aria-label="Show sidebar"
-                @click="sidebarOpen = true"
-              />
-            </UTooltip>
+            <div v-if="!sidebarOpen" class="lg:hidden">
+              <UTooltip text="Show sidebar">
+                <UButton
+                  icon="i-lucide-panel-left"
+                  color="neutral"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Show sidebar"
+                  @click="sidebarOpen = true"
+                />
+              </UTooltip>
+            </div>
           </div>
           <div class="topbar-center">
             <UButton
@@ -177,6 +205,7 @@ const isMac = computed(
             <span v-if="busy" class="working" role="status">
               <UIcon name="i-lucide-loader-circle" class="animate-spin" /> Working…
             </span>
+            <WindowControls v-if="isFrameless" />
           </div>
         </header>
         <div v-if="!ready" class="splash">

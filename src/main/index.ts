@@ -150,6 +150,11 @@ function refreshAppIcon(): void {
 
 function createWindow(): void {
   const icon = windowIcon()
+  // macOS keeps its traffic lights (hiddenInset). Windows/Linux use OpenChamber-style
+  // frameless chrome: no OS title bar at all, the renderer draws its own
+  // minimize/maximize/close buttons in the topbar. The menu bar stays available
+  // via Alt but is hidden so the window doesn't look like a legacy Win32 app.
+  const frameless = process.platform === 'win32' || process.platform === 'linux'
   window = new BrowserWindow({
     title: 'KChess',
     width: 1320,
@@ -158,12 +163,20 @@ function createWindow(): void {
     minHeight: 620,
     backgroundColor: '#111827',
     icon,
+    frame: frameless ? false : undefined,
+    autoHideMenuBar: process.platform !== 'darwin',
+    titleBarStyle:
+      process.platform === 'darwin'
+        ? ('hiddenInset' as const)
+        : frameless
+          ? ('hidden' as const)
+          : undefined,
     // macOS: traffic lights (close/minimize/maximize) float over the sidebar
     // header, vertically centered on the 52px header row so they share one
     // center line with the sidebar toggle and the topbar controls.
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 12, y: 20 } }
-      : {}),
+    trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 20 } : undefined,
+    // Frameless windows draw their own controls; never show the overlay ones.
+    titleBarOverlay: frameless ? false : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -173,6 +186,14 @@ function createWindow(): void {
   })
   window.on('closed', () => {
     window = null
+  })
+  window.on('maximize', () => {
+    if (window && !window.isDestroyed())
+      window.webContents.send(IPC_EVENTS.windowMaximized, { maximized: true })
+  })
+  window.on('unmaximize', () => {
+    if (window && !window.isDestroyed())
+      window.webContents.send(IPC_EVENTS.windowMaximized, { maximized: false })
   })
   // The app only ever shows its own UI: never let the window navigate elsewhere.
   const appOrigin = process.env.KCHESS_NUXT_URL || 'kchess://app/'
@@ -245,6 +266,23 @@ void app
     // .icns until this override applies.
     setupDiagnostics()
     handle('exportDiagnostics', exportDiagnostics)
+    handle('windowMinimize', () => {
+      if (window && !window.isDestroyed()) window.minimize()
+    })
+    handle('windowToggleMaximize', () => {
+      if (window && !window.isDestroyed()) {
+        if (window.isMaximized()) window.unmaximize()
+        else window.maximize()
+        return { maximized: window.isMaximized() }
+      }
+      return { maximized: false }
+    })
+    handle('windowClose', () => {
+      if (window && !window.isDestroyed()) window.close()
+    })
+    handle('windowIsMaximized', () =>
+      Boolean(window && !window.isDestroyed() && window.isMaximized()),
+    )
     refreshAppIcon()
     nativeTheme.on('updated', refreshAppIcon)
     setupAppMenu()

@@ -562,6 +562,12 @@ export interface BestMoveOptions {
 export interface DesktopApi {
   /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
   exportDiagnostics(): Promise<boolean>
+  /** Frameless-chrome window controls (Windows/Linux); no-ops where the OS draws its own chrome. */
+  windowMinimize(): Promise<void>
+  windowToggleMaximize(): Promise<{ maximized: boolean }>
+  windowClose(): Promise<void>
+  windowIsMaximized(): Promise<boolean>
+  onWindowMaximized(callback: (state: { maximized: boolean }) => void): () => void
   appUpdateStatus(): Promise<AppUpdateStatus>
   checkAppUpdate(): Promise<AppUpdateStatus>
   downloadAppUpdate(): Promise<AppUpdateStatus>

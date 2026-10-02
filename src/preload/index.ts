@@ -31,6 +31,15 @@ const api: DesktopApi = {
     return () => ipcRenderer.removeListener(IPC_EVENTS.appUpdate, listener)
   },
   exportDiagnostics: () => invoke('exportDiagnostics'),
+  windowMinimize: () => invoke('windowMinimize'),
+  windowToggleMaximize: () => invoke('windowToggleMaximize'),
+  windowClose: () => invoke('windowClose'),
+  windowIsMaximized: () => invoke('windowIsMaximized'),
+  onWindowMaximized: (callback) => {
+    const listener = (_: unknown, state: { maximized: boolean }): void => callback(state)
+    ipcRenderer.on(IPC_EVENTS.windowMaximized, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.windowMaximized, listener)
+  },
   loadData: () => invoke('loadData'),
   saveSettings: (settings) => invoke('saveSettings', settings),
   addAccount: (username) => invoke('addAccount', username),
