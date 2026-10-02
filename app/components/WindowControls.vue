@@ -63,7 +63,10 @@ onUnmounted(() => {
       :aria-label="isMaximized ? 'Restore' : 'Maximize'"
       @click="toggleMaximize"
     >
-      <UIcon :name="isMaximized ? 'i-lucide-copy' : 'i-lucide-square'" class="window-control-icon" />
+      <UIcon
+        :name="isMaximized ? 'i-lucide-copy' : 'i-lucide-square'"
+        class="window-control-icon"
+      />
     </button>
     <button
       type="button"
