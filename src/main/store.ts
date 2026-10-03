@@ -483,7 +483,8 @@ export async function loadData(): Promise<AppData> {
   return loaded
 }
 
-const RESULT_SQL =
+/** Must match the indexed expression in `migrations.ts` verbatim, or SQLite falls back to a full scan. */
+export const RESULT_SQL =
   "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END"
 
 /** Bounded list rows; full PGNs are fetched separately when a game is opened. */
@@ -761,15 +762,18 @@ function upsertGames(username: string, games: LichessGame[], syncedAt?: number):
         completed.run(username, game.id)
       }
     }
-    database
-      .prepare(
-        `DELETE FROM games WHERE account = ? AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? ORDER BY createdAt DESC LIMIT ${MAX_GAMES})`,
-      )
-      .run(username, username)
-    if (syncedAt !== undefined)
+    // Trim once per completed sync rather than after every page; an interrupted
+    // sync may briefly exceed the cap until the next one completes.
+    if (syncedAt !== undefined) {
+      database
+        .prepare(
+          `DELETE FROM games WHERE account = ? AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? ORDER BY createdAt DESC LIMIT ${MAX_GAMES})`,
+        )
+        .run(username, username)
       database
         .prepare('UPDATE accounts SET lastSyncedAt = ? WHERE username = ? COLLATE NOCASE')
         .run(syncedAt, username)
+    }
     database.exec('COMMIT')
   } catch (cause) {
     rollback(database)

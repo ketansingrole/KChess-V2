@@ -14,12 +14,15 @@ import {
   gamePgn,
   gameRatingHistory,
   loadData,
+  MAX_GAMES,
   pendingGameIds,
   removeAccount,
+  RESULT_SQL,
   saveGames,
   saveGamesPage,
 } from '../../src/main/store'
 import { syncGames } from '../../src/main/lichess'
+import { safeStorage } from 'electron'
 
 const state = vi.hoisted(() => ({ db: null as DatabaseSync | null, fetch: vi.fn() }))
 vi.mock('electron', () => ({ shell: {}, app: {}, safeStorage: {} }))
@@ -189,11 +192,40 @@ describe('SQLite game library', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+  it('trims to the retention cap once per completed sync, not on every page', async () => {
+    const games = Array.from({ length: MAX_GAMES + 1 }, (_, i) =>
+      game(`T${i.toString().padStart(7, '0')}`, { createdAt: i + 1 }),
+    )
+    await saveGamesPage('Alice', games)
+    expect((await loadData()).gameCount).toBe(MAX_GAMES + 1)
+    await saveGames('Alice', [], 3000)
+    expect((await loadData()).gameCount).toBe(MAX_GAMES)
+    expect(await gamePgn('Alice', 'T0000000')).toBeNull()
+  })
+  it('serves result filters from the result indexes', () => {
+    const plan = (sql: string, ...params: string[]): string =>
+      state
+        .db!.prepare(`EXPLAIN QUERY PLAN ${sql}`)
+        .all(...params)
+        .map((row) => String(row.detail))
+        .join(' | ')
+    expect(plan(`SELECT COUNT(*) FROM games WHERE (${RESULT_SQL}) = ?`, 'loss')).toContain(
+      'idx_games_result_page',
+    )
+    expect(
+      plan(
+        `SELECT COUNT(*) FROM games WHERE account = ? COLLATE NOCASE AND (${RESULT_SQL}) = ?`,
+        'alice',
+        'loss',
+      ),
+    ).toContain('idx_games_account_result_page')
+  })
   it('appends a one-time backfill migration without losing completed games', () => {
     const db = new DatabaseSync(':memory:')
     try {
-      for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql)
-      db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`)
+      const backfill = MIGRATIONS.findIndex((sql) => sql.includes('CREATE TABLE pending_game_sync'))
+      for (const sql of MIGRATIONS.slice(0, backfill)) db.exec(sql)
+      db.exec(`PRAGMA user_version = ${backfill}`)
       db.exec("INSERT INTO accounts (username, connected, lastSyncedAt) VALUES ('Alice', 1, 1000)")
       const insert = db.prepare(
         "INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, color, opponent, moves) VALUES ('Alice', ?, 1, 1, 1, 'blitz', 'blitz', ?, 'white', 'Bob', 'e4')",
@@ -249,5 +281,45 @@ describe('Lichess creation-time sync', () => {
     const saved = (await gamePage({ offset: 0, limit: 20 })).games[0]!
     expect(saved.status).toBe('mate')
     expect(saved.moves).toBe('e4 e5 Nf3')
+  })
+})
+
+describe('Lichess export authentication', () => {
+  beforeEach(() => {
+    Object.assign(safeStorage, {
+      isEncryptionAvailable: () => true,
+      getSelectedStorageBackend: () => 'keychain',
+      decryptString: (buffer: Buffer) => buffer.toString(),
+    })
+    state.db!.exec(
+      `INSERT INTO tokens (username, encrypted) VALUES ('Alice', '${Buffer.from('lip_alice').toString('base64')}')`,
+    )
+  })
+  afterEach(() => {
+    for (const key of ['isEncryptionAvailable', 'getSelectedStorageBackend', 'decryptString'])
+      delete (safeStorage as unknown as Record<string, unknown>)[key]
+  })
+
+  it("sends the account's own token, and none for a friend without one", async () => {
+    const seen: { url: string; auth: string | null }[] = []
+    state.fetch.mockImplementation(async (request: Request) => {
+      seen.push({ url: request.url, auth: request.headers.get('authorization') })
+      return response([])
+    })
+    await syncGames()
+    expect(seen.find((r) => r.url.includes('/user/Alice'))?.auth).toBe('Bearer lip_alice')
+    expect(seen.find((r) => r.url.includes('/user/Bob'))?.auth).toBeNull()
+  })
+  it('falls back to an anonymous export when the token is rejected', async () => {
+    const auths: (string | null)[] = []
+    state.fetch.mockImplementation(async (request: Request) => {
+      auths.push(request.headers.get('authorization'))
+      return request.headers.has('authorization')
+        ? new Response('{"error":"No such token"}', { status: 401 })
+        : response([])
+    })
+    await syncGames('Alice')
+    expect(auths).toEqual(['Bearer lip_alice', null])
+    expect((await loadData()).accounts[0]!.lastSyncedAt).toBeGreaterThan(1)
   })
 })

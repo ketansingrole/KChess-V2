@@ -339,6 +339,25 @@ export function reviewFromLichess(
 
 const SYNC_PAGE = 1000
 
+/**
+ * Run an export with the account's own token when it has one: Lichess streams
+ * a user's own games at 60/s authenticated versus 20/s anonymously. A rejected
+ * token falls back to the anonymous request, so sync is never worse than before.
+ */
+async function asOwner<T>(
+  account: string,
+  call: (auth: Record<string, string>) => Promise<T>,
+): Promise<T> {
+  const token = await getToken(account).catch(() => null)
+  if (!token) return call({})
+  try {
+    return await call(authorize(token))
+  } catch (cause) {
+    if (cause instanceof LichessError && cause.status === 401) return call({})
+    throw cause
+  }
+}
+
 /** Games that ended this long ago have had their chance to be analysed on Lichess. */
 const ANALYSIS_SETTLED_MS = 86_400_000
 
@@ -347,26 +366,28 @@ async function fetchGamesPage(
   since: number | undefined,
   until: number | undefined,
 ): Promise<LichessGame[]> {
-  const stream = await unwrap(
-    client.GET('/api/games/user/{username}', {
-      params: {
-        path: { username: account },
-        query: {
-          max: SYNC_PAGE,
-          ongoing: true,
-          since,
-          until,
-          opening: true,
-          moves: true,
-          pgnInJson: true,
-          clocks: true,
-          evals: true,
-          accuracy: true,
+  const stream = await asOwner(account, (auth) =>
+    unwrap(
+      client.GET('/api/games/user/{username}', {
+        params: {
+          path: { username: account },
+          query: {
+            max: SYNC_PAGE,
+            ongoing: true,
+            since,
+            until,
+            opening: true,
+            moves: true,
+            pgnInJson: true,
+            clocks: true,
+            evals: true,
+            accuracy: true,
+          },
         },
-      },
-      headers: { Accept: 'application/x-ndjson' },
-      parseAs: 'stream',
-    }),
+        headers: { ...auth, Accept: 'application/x-ndjson' },
+        parseAs: 'stream',
+      }),
+    ),
   )
   const games: LichessGame[] = []
   const settled: string[] = []
@@ -397,14 +418,16 @@ export async function fetchLichessReviews(
   if (!ids.length) return []
   const found: StoredReview[] = []
   await withUsage(account, 'games', async () => {
-    const stream = await unwrap(
-      client.POST('/api/games/export/_ids', {
-        params: { query: { moves: true, evals: true, accuracy: true } },
-        body: ids.slice(0, 300).join(','),
-        bodySerializer: (body: string) => body,
-        headers: { Accept: 'application/x-ndjson', 'Content-Type': 'text/plain' },
-        parseAs: 'stream',
-      }) as Promise<StreamCall>,
+    const stream = await asOwner(account, (auth) =>
+      unwrap(
+        client.POST('/api/games/export/_ids', {
+          params: { query: { moves: true, evals: true, accuracy: true } },
+          body: ids.slice(0, 300).join(','),
+          bodySerializer: (body: string) => body,
+          headers: { ...auth, Accept: 'application/x-ndjson', 'Content-Type': 'text/plain' },
+          parseAs: 'stream',
+        }) as Promise<StreamCall>,
+      ),
     )
     await readLines(stream, (line) => {
       const review = reviewFromLichess(JSON.parse(line) as components['schemas']['GameJson'])
@@ -419,23 +442,25 @@ export async function fetchLichessReviews(
 async function refreshPendingGames(account: string): Promise<void> {
   const ids = await pendingGameIds(account)
   for (let offset = 0; offset < ids.length; offset += 300) {
-    const stream = await unwrap(
-      client.POST('/api/games/export/_ids', {
-        params: {
-          query: {
-            moves: true,
-            pgnInJson: true,
-            clocks: true,
-            opening: true,
-            evals: true,
-            accuracy: true,
+    const stream = await asOwner(account, (auth) =>
+      unwrap(
+        client.POST('/api/games/export/_ids', {
+          params: {
+            query: {
+              moves: true,
+              pgnInJson: true,
+              clocks: true,
+              opening: true,
+              evals: true,
+              accuracy: true,
+            },
           },
-        },
-        body: ids.slice(offset, offset + 300).join(','),
-        bodySerializer: (body: string) => body,
-        headers: { Accept: 'application/x-ndjson', 'Content-Type': 'text/plain' },
-        parseAs: 'stream',
-      }) as Promise<StreamCall>,
+          body: ids.slice(offset, offset + 300).join(','),
+          bodySerializer: (body: string) => body,
+          headers: { ...auth, Accept: 'application/x-ndjson', 'Content-Type': 'text/plain' },
+          parseAs: 'stream',
+        }) as Promise<StreamCall>,
+      ),
     )
     const requested = new Set(ids.slice(offset, offset + 300))
     const games: LichessGame[] = []

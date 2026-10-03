@@ -203,6 +203,14 @@ export const MIGRATIONS: readonly string[] = [
   UPDATE accounts SET lastSyncedAt = NULL;
   CREATE INDEX idx_games_page ON games (createdAt DESC, account, id);
   CREATE INDEX idx_games_account_page ON games (account COLLATE NOCASE, createdAt DESC, id);`,
+  // Result filters count and page by an expression; index it so they avoid a full scan.
+  // The expression must match `RESULT_SQL` in store.ts verbatim.
+  `CREATE INDEX idx_games_result_page ON games (
+    (CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END),
+    createdAt DESC, account, id);
+  CREATE INDEX idx_games_account_result_page ON games (account COLLATE NOCASE,
+    (CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END),
+    createdAt DESC, id);`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

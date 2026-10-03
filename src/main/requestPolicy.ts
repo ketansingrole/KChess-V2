@@ -11,9 +11,108 @@ function pump(): void {
     waiting.shift()!.start()
   }
 }
+/**
+ * Game exports stream for up to minutes, long after their headers free a slot above.
+ * Lichess asks for one export at a time, so they hold a lane of their own until the
+ * body is read, cancelled or fails; interactive requests never queue behind them.
+ */
+const BULK_EXPORT = /\/api\/games\/(user|export)\//
+/** Backstop in case a caller drops a body without reading or cancelling it. */
+const BULK_HOLD_MS = 10 * 60_000
+let bulkActive = false
+const bulkWaiting: (() => void)[] = []
+
+function acquireBulk(signal: AbortSignal): Promise<() => void> {
+  return new Promise((resolve, reject) => {
+    let released = false
+    const release = (): void => {
+      if (released) return
+      released = true
+      const next = bulkWaiting.shift()
+      if (next) next()
+      else bulkActive = false
+    }
+    const start = (): void => {
+      signal.removeEventListener('abort', abort)
+      resolve(release)
+    }
+    const abort = (): void => {
+      const at = bulkWaiting.indexOf(start)
+      if (at >= 0) bulkWaiting.splice(at, 1)
+      reject(signal.reason)
+    }
+    if (signal.aborted) {
+      reject(signal.reason)
+      return
+    }
+    if (!bulkActive) {
+      bulkActive = true
+      resolve(release)
+      return
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    bulkWaiting.push(start)
+  })
+}
+
+/** Pass the body through, calling `release` once it ends, errors or is cancelled. */
+function releaseWithBody(response: Response, release: () => void): Response {
+  if (!response.ok || !response.body) {
+    release()
+    return response
+  }
+  const backstop = setTimeout(release, BULK_HOLD_MS)
+  backstop.unref()
+  const done = (): void => {
+    clearTimeout(backstop)
+    release()
+  }
+  const reader = response.body.getReader()
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done: ended, value } = await reader.read()
+        if (ended) {
+          done()
+          controller.close()
+        } else controller.enqueue(value)
+      } catch (cause) {
+        done()
+        controller.error(cause)
+      }
+    },
+    cancel(reason) {
+      done()
+      return reader.cancel(reason)
+    },
+  })
+  const wrapped = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+  Object.defineProperty(wrapped, 'url', { value: response.url })
+  return wrapped
+}
+
 /** Share rate-limit cooldown and foreground priority; never replay an ambiguous mutation. */
 export const lichessFetch: typeof fetch = async (input, init) => {
   const original = new Request(input, init)
+  if (BULK_EXPORT.test(original.url)) {
+    const release = await acquireBulk(original.signal)
+    let response: Response
+    try {
+      response = await admitted(original)
+    } catch (cause) {
+      release()
+      throw cause
+    }
+    return releaseWithBody(response, release)
+  }
+  return admitted(original)
+}
+
+async function admitted(original: Request): Promise<Response> {
   const foreground =
     /\/api\/board\/game\/.*\/(move|resign|abort|takeback)\//.test(original.url) ||
     /\/api\/board\/game\/.*\/(resign|abort)$/.test(original.url)
