@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_ENGINE_LEVELS,
   ENGINE_LADDER,
@@ -12,7 +12,9 @@ import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
 
 // The bundled Stockfish is found relative to the app; here that is the repository.
 vi.mock('electron', () => ({ app: { getAppPath: () => process.cwd() } }))
-const { bestMove } = await import('../../src/main/engine')
+const { bestMove, stopEngine } = await import('../../src/main/engine')
+
+afterAll(() => stopEngine(true))
 
 describe('engine level ladder', () => {
   it('covers every level, weakest to strongest', () => {

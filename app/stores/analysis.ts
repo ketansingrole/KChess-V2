@@ -1,9 +1,12 @@
 import { defineStore } from 'pinia'
 import { computed, effectScope, ref, watch, type EffectScope } from 'vue'
+import { readSession, persistSession } from '../utils/sessionPersistence'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
 import type { AnalysisUpdate, Judgment } from '../../src/shared/types'
+import { analysisContext } from '../../src/shared/analysisContext'
 import { analyseReview, reviewKey, type GameAnalysis } from '../../src/shared/review'
+import { useKChessStore } from './kchess'
 import { useReviewStore } from './review'
 import {
   addMove,
@@ -47,9 +50,36 @@ export interface ReviewMark {
  * survives leaving the page, and the editor can hand its position to analysis (and back).
  */
 export const useAnalysisStore = defineStore('analysis', () => {
-  const root = ref<TreeNode>(newTree())
-  const path = ref('')
-  const orientation = ref<Color>('white')
+  const app = useKChessStore()
+  const saved = readSession('kchess:analysis:v1', (raw) => {
+    if (!raw || typeof raw !== 'object') return undefined
+    const value = raw as { version?: unknown; pgn?: unknown; path?: unknown; orientation?: unknown }
+    if (value.version !== 1 || typeof value.pgn !== 'string') return undefined
+    const root = treeFromPgn(value.pgn)
+    if (!root) return undefined
+    const path =
+      typeof value.path === 'string'
+        ? pathOf(
+            nodesAlong(root, value.path)
+              .slice(1)
+              .map((n) => n.uci),
+          )
+        : ''
+    return {
+      root,
+      path,
+      orientation: value.orientation === 'black' ? ('black' as const) : ('white' as const),
+    }
+  })
+  const root = ref<TreeNode>(saved?.root ?? newTree())
+  const path = ref(saved?.path ?? '')
+  const orientation = ref<Color>(saved?.orientation ?? 'white')
+  const saveError = persistSession('kchess:analysis:v1', () => ({
+    version: 1,
+    pgn: treeToPgn(root.value),
+    path: path.value,
+    orientation: orientation.value,
+  }))
   /** The board editor's position, kept while you visit other pages. */
   const editor = ref<EditorSetup>(structuredClone(START_SETUP))
   const editorOrientation = ref<Color>('white')
@@ -123,19 +153,25 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /* ── Engine ──────────────────────────────────────────────────────── */
 
   const evaluations = new Map<string, AnalysisUpdate>()
+  const assistanceAllowed = computed(
+    () => !['playing', 'seeking', 'disconnected'].includes(app.onlinePhase),
+  )
   const live = ref<AnalysisUpdate | null>(null)
   const engineError = ref('')
   const engineBusy = ref(false)
   let wanted = ''
+  let clientId = 0
+  const context = (): string => analysisContext(root.value.fen, movesOf(path.value))
   let latestId = 0
   let scope: EffectScope | undefined
   let off: (() => void) | undefined
 
   /** The deepest evaluation known for the position on the board. */
   const evaluation = computed<AnalysisUpdate | null>(() => {
+    if (!assistanceAllowed.value) return null
     const fen = node.value.fen
-    if (live.value?.fen === fen) return live.value
-    return evaluations.get(fen) ?? null
+    if (live.value?.fen === fen && live.value.context === context()) return live.value
+    return evaluations.get(context()) ?? null
   })
   const gameOver = computed(() => {
     const pos = position.value
@@ -147,40 +183,58 @@ export const useAnalysisStore = defineStore('analysis', () => {
   })
 
   function remember(update: AnalysisUpdate): void {
-    const known = evaluations.get(update.fen)
+    const key = update.context ?? update.fen
+    const known = evaluations.get(key)
     if (!update.lines.length) return
     if (known && known.depth > update.depth && known.lines.length >= update.lines.length) return
-    evaluations.delete(update.fen)
-    evaluations.set(update.fen, update)
+    evaluations.delete(key)
+    evaluations.set(key, update)
     if (evaluations.size > CACHE_SIZE) evaluations.delete(evaluations.keys().next().value!)
   }
 
   function receive(update: AnalysisUpdate): void {
     // Updates for a position no longer on the board (or an older request for it) are stale.
-    if (update.fen !== wanted || update.id < latestId) return
+    if (
+      update.fen !== wanted ||
+      update.clientId !== clientId ||
+      update.context !== context() ||
+      update.id < latestId
+    )
+      return
     latestId = update.id
+    live.value = update
+    remember(update)
     if (update.error) {
       engineError.value = update.error
       engineBusy.value = false
       return
     }
-    live.value = update
-    remember(update)
     if (update.done) engineBusy.value = false
   }
 
   async function analyse(): Promise<void> {
     const fen = node.value.fen
+    const requestId = ++clientId
     engineError.value = ''
-    if (!engineOn.value || gameOver.value || !position.value) {
+    if (
+      !engineOn.value ||
+      gameOver.value ||
+      !position.value ||
+      ['playing', 'seeking', 'disconnected'].includes(app.onlinePhase) ||
+      reviews.status.current?.key === mainlineKey.value
+    ) {
       wanted = ''
       engineBusy.value = false
       void window.kchess.stopAnalysis().catch(() => {})
       return
     }
-    const known = evaluations.get(fen)
+    const known = evaluations.get(context())
     // A finished search with enough lines needs no new one, unless analysis is meant to go on.
-    if (!infinite.value && known?.done && known.lines.length >= engineLines.value) {
+    if (
+      !infinite.value &&
+      known?.reason === 'completed' &&
+      known.lines.length >= engineLines.value
+    ) {
       wanted = fen
       engineBusy.value = false
       void window.kchess.stopAnalysis().catch(() => {})
@@ -192,12 +246,15 @@ export const useAnalysisStore = defineStore('analysis', () => {
     try {
       const id = await window.kchess.startAnalysis({
         fen,
+        clientId: requestId,
+        rootFen: root.value.fen,
+        moves: movesOf(path.value),
         lines: Math.max(1, Math.min(5, engineLines.value)),
         infinite: infinite.value,
       })
-      if (wanted === fen) latestId = Math.max(latestId, id)
+      if (wanted === fen && clientId === requestId) latestId = Math.max(latestId, id)
     } catch (cause) {
-      if (wanted !== fen) return
+      if (wanted !== fen || clientId !== requestId) return
       engineBusy.value = false
       engineError.value = cause instanceof Error ? cause.message : String(cause)
     }
@@ -210,7 +267,25 @@ export const useAnalysisStore = defineStore('analysis', () => {
     scope = effectScope()
     scope.run(() => {
       watch(
-        () => [node.value.fen, engineOn.value, engineLines.value, infinite.value] as const,
+        () => app.settings.enginePath,
+        () => {
+          evaluations.clear()
+          live.value = null
+        },
+        { flush: 'sync' },
+      )
+      watch(
+        () =>
+          [
+            root.value.fen,
+            path.value,
+            engineOn.value,
+            engineLines.value,
+            infinite.value,
+            app.settings.enginePath,
+            app.onlinePhase,
+            reviews.status.current?.key,
+          ] as const,
         () => void analyse(),
         { immediate: true },
       )
@@ -268,7 +343,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     () => !!review.value && reviewedPlies.value === review.value.moves.length,
   )
   const gameAnalysis = computed<GameAnalysis | null>(() =>
-    review.value && review.value.fen === root.value.fen ? analyseReview(review.value) : null,
+    assistanceAllowed.value && review.value && review.value.fen === root.value.fen
+      ? analyseReview(review.value)
+      : null,
   )
   /** The review's verdict on each main-line move, by path. */
   const reviewMarks = computed(() => {
@@ -300,6 +377,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   })
   async function requestReview(): Promise<void> {
     if (!mainline.value.length) return
+    wanted = ''
+    await window.kchess.stopAnalysis()
     const stored = await reviews.request({
       fen: root.value.fen,
       moves: mainline.value,
@@ -324,6 +403,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   return {
+    saveError,
     root,
     path,
     orientation,
@@ -337,6 +417,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     node,
     position,
     evaluation,
+    assistanceAllowed,
     engineError,
     engineBusy,
     gameOver,

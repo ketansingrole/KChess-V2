@@ -13,7 +13,6 @@ import { formatBytes, formatCount } from '../utils/format'
 import { pieceSets, pieceVars } from '../utils/pieces'
 import { previewColors } from '../utils/themes'
 import { SETTINGS_SECTIONS } from '../stores/kchess'
-import { useReviewStore } from '../stores/review'
 
 const store = useKChessStore()
 const usage = useUsageStore()
@@ -21,9 +20,6 @@ const {
   busy,
   data,
   settings,
-  engineReady,
-  engineInfo,
-  engineName,
   connectedAccounts,
   activeOnlineAccount,
   settingsSection,
@@ -33,11 +29,6 @@ const {
 } = storeToRefs(store)
 const {
   boardThemes,
-  useBundledEngine,
-  useDownloadedEngine,
-  installEngine,
-  deleteEngine,
-  chooseEngine,
   sync,
   connect,
   setOnlineAccount,
@@ -109,46 +100,6 @@ const category = computed(
     SETTINGS_SECTIONS[0],
 )
 onMounted(() => void usage.refresh())
-
-const reviewAutoItems = [
-  { label: 'Off', value: 'off' },
-  { label: 'Last 30 days', value: 'recent' },
-  { label: 'All', value: 'all' },
-]
-const { status: reviewQueue } = storeToRefs(useReviewStore())
-const reviewStatusText = computed(() => {
-  const { current, waiting, paused } = reviewQueue.value
-  if (current)
-    return `Reviewing a game: ${current.done} of ${current.total} positions${
-      waiting ? ` · ${waiting} more waiting` : ''
-    }.`
-  if (paused === 'battery') return 'Paused while on battery power.'
-  if (paused === 'engine') return 'Paused while the engine is in use.'
-  if (paused === 'online') return 'Paused during your online game.'
-  if (paused === 'off' || settings.value?.reviewAuto === 'off')
-    return 'Games are reviewed when you ask for it.'
-  return waiting ? `${waiting} games waiting.` : 'All caught up.'
-})
-
-const confirmDeleteEngine = ref(false)
-/** Which Stockfish is in use: the bundled one (no path), the one KChess downloaded, or a chosen file. */
-const engineSource = computed<'bundled' | 'downloaded' | 'custom'>(() => {
-  const path = settings.value?.enginePath
-  if (!path) return 'bundled'
-  return path === engineInfo.value?.managed.path ? 'downloaded' : 'custom'
-})
-const downloadedDescription = computed(() => {
-  const managed = engineInfo.value?.managed
-  if (managed?.installed) return managed.version ? `Version ${managed.version}` : 'Installed'
-  return engineInfo.value?.canDownload === false
-    ? 'Downloading is available on macOS.'
-    : 'Native build from the official Stockfish release, verified by checksum.'
-})
-const customDescription = computed(() =>
-  engineSource.value === 'custom'
-    ? settings.value!.enginePath
-    : 'Pick a Stockfish executable already on this computer.',
-)
 
 const appearanceItems = [
   { label: 'System', value: 'system', icon: 'i-lucide-monitor' },
@@ -919,149 +870,7 @@ function removePending(): void {
       </section>
       <VoiceHistory v-if="category.id === 'voice'" />
 
-      <section
-        v-if="category.id === 'engine'"
-        id="settings-engine"
-        class="card settings-list"
-        aria-labelledby="engine-title"
-      >
-        <h2 id="engine-title" class="sr-only">Chess engine</h2>
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-title">Status</span>
-            <span class="setting-hint">{{
-              engineReady && engineName
-                ? `Computer games are played by ${engineName}. Choose another below.`
-                : 'No working Stockfish yet. Use the bundled one, download one, or pick a file.'
-            }}</span>
-          </div>
-          <div>
-            <UBadge
-              :color="engineReady ? 'success' : 'warning'"
-              variant="soft"
-              :icon="engineReady ? 'i-lucide-circle-check' : 'i-lucide-triangle-alert'"
-              >{{ engineReady ? 'Ready' : 'Not found' }}</UBadge
-            >
-          </div>
-        </div>
-        <div class="engine-options">
-          <EngineOption
-            title="Bundled Stockfish 19"
-            description="Included with KChess. Works offline on every platform."
-            :active="engineSource === 'bundled'"
-          >
-            <UButton
-              v-if="engineSource !== 'bundled'"
-              size="sm"
-              variant="outline"
-              color="neutral"
-              :disabled="busy"
-              @click="useBundledEngine"
-              >Use</UButton
-            >
-          </EngineOption>
-          <EngineOption
-            title="Downloaded Stockfish"
-            :description="downloadedDescription"
-            :active="engineSource === 'downloaded'"
-          >
-            <UButton
-              v-if="engineInfo?.managed.installed && engineSource !== 'downloaded'"
-              size="sm"
-              variant="outline"
-              color="neutral"
-              :disabled="busy"
-              @click="useDownloadedEngine"
-              >Use</UButton
-            >
-            <UButton
-              v-if="engineInfo?.canDownload"
-              size="sm"
-              variant="outline"
-              color="neutral"
-              icon="i-lucide-download"
-              :loading="busy"
-              @click="installEngine"
-              >{{ engineInfo.managed.installed ? 'Check for update' : 'Download' }}</UButton
-            >
-            <UButton
-              v-if="engineInfo?.managed.installed"
-              size="sm"
-              variant="ghost"
-              color="error"
-              icon="i-lucide-trash-2"
-              :disabled="busy"
-              @click="confirmDeleteEngine = true"
-              >Delete</UButton
-            >
-          </EngineOption>
-          <EngineOption
-            title="Your own executable"
-            :description="customDescription"
-            :active="engineSource === 'custom'"
-          >
-            <UButton
-              size="sm"
-              variant="outline"
-              color="neutral"
-              icon="i-lucide-folder-open"
-              :disabled="busy"
-              @click="chooseEngine"
-              >Choose file…</UButton
-            >
-          </EngineOption>
-        </div>
-      </section>
-
-      <section
-        v-if="category.id === 'engine' && settings"
-        id="settings-review"
-        class="card"
-        aria-labelledby="review-title"
-      >
-        <div class="card-header">
-          <div>
-            <h2 id="review-title" class="section-title">Game review</h2>
-            <p class="section-hint" aria-live="polite">{{ reviewStatusText }}</p>
-          </div>
-        </div>
-        <div class="settings-list">
-          <div class="setting-row">
-            <div class="setting-info">
-              <span id="review-auto-label" class="setting-title"
-                >Review my games automatically</span
-              >
-              <span class="setting-hint"
-                >Your synced Lichess games get labelled inaccuracies, mistakes and blunders in the
-                background. Lichess's own analysis is used when a game has it.</span
-              >
-            </div>
-            <UTabs
-              v-model="settings.reviewAuto"
-              :items="reviewAutoItems"
-              aria-labelledby="review-auto-label"
-              :content="false"
-              variant="pill"
-              class="setting-control"
-              :ui="{ trigger: 'grow' }"
-            />
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span id="review-battery-label" class="setting-title">Also on battery power</span>
-              <span class="setting-hint"
-                >Automatic reviews keep Stockfish busy; by default they wait for a charger.</span
-              >
-            </div>
-            <USwitch
-              v-model="settings.reviewOnBattery"
-              aria-labelledby="review-battery-label"
-              :disabled="settings.reviewAuto === 'off'"
-              class="setting-switch"
-            />
-          </div>
-        </div>
-      </section>
+      <EngineSettings v-if="category.id === 'engine'" />
 
       <section
         v-if="category.id === 'accounts'"
@@ -1259,14 +1068,6 @@ function removePending(): void {
       description="This only clears the download counts shown here. Your stored games and accounts are not touched."
       confirm-label="Reset"
       @confirm="usage.reset()"
-    />
-    <ConfirmDialog
-      v-model:open="confirmDeleteEngine"
-      title="Delete downloaded Stockfish?"
-      description="This removes the copy KChess downloaded. The bundled engine and any executable you chose yourself are not touched, and you can download it again later."
-      confirm-label="Delete"
-      color="error"
-      @confirm="deleteEngine"
     />
     <ConfirmDialog
       v-model:open="confirmRemove"

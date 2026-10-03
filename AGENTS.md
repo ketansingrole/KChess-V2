@@ -89,3 +89,14 @@ pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOW
   host on first use — prefer AppleScript process checks
   (`tell application "System Events" to get short name of ...`) and reserve
   screenshots for visual layout verification only.
+
+## Architecture and regression ownership
+
+- Renderer stores own view state; main owns credentials, networking, privileged files and engine processes. Every new desktop method belongs in `DesktopApi`, the shared IPC channel map and preload. IPC must authenticate the owned top-level frame as well as validate input.
+- `UciController` owns UCI deadlines and pipes; acquire the shared engine scheduler before configuring search threads and release in `finally`. Cancellation must reach the search, not merely discard its result. Infinite analysis has no runtime deadline, but startup/readiness/stop remain bounded.
+- Preserve root FEN plus move history for repetition context. Analysis caches distinguish completed/interrupted/failed output and engine/context/client identity. Do not mark interrupted output as complete.
+- `puzzleWorker.ts` is the only owner of `puzzles.db`. Main and renderer must use its async service. Failed or cancelled replacements retain the previous transaction and metadata; migrations are append-only.
+- Studies and restored computer sessions have bounded, versioned local documents and semantic move validation. PGN edits must preserve headers, results, variations, comments and NAGs.
+- Lichess stream events are authoritative. Connection recovery must retain the playing account and reject stale epochs. Never retry an ambiguous move mutation automatically, and never expose engine/review/explorer assistance during a live human game.
+- Use deterministic local HTTP/stream fixtures and the isolated branded Electron launcher. `npm run check` covers formatting, lint, types, smoke and unit regressions; `npm run build && npm run test:e2e` verifies the production protocol, worker, startup, engine and UI. Package changes also need `npm run pack` and `npm run test:packaged`.
+- Current upstream advisories without patched releases are documented in `docs/reviews/2026-10-03-implementation.md`. Never downgrade frameworks or use forced audit fixes solely to change a vulnerability count.

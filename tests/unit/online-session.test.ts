@@ -3,12 +3,14 @@ import { flushPromises } from '@vue/test-utils'
 import { deferred } from './fixtures'
 
 import { OnlineSession } from '../../src/main/lichess'
+import { LichessError } from '../../src/shared/lichessError'
 
 const mocks = vi.hoisted(() => ({
   GET: vi.fn(),
   POST: vi.fn(),
   use: vi.fn(),
   getToken: vi.fn(async () => 'Alice-token'),
+  readLines: vi.fn(async () => {}),
 }))
 vi.mock('electron', () => ({ shell: {} }))
 vi.mock('openapi-fetch', () => ({ default: () => mocks }))
@@ -21,9 +23,10 @@ vi.mock('../../src/main/usage', () => ({
   attributeTo: vi.fn(),
   withUsage: (_account: string, _kind: string, fn: () => unknown) => fn(),
 }))
-vi.mock('../../src/main/ndjson', () => ({ readLines: async () => {} }))
+vi.mock('../../src/main/ndjson', () => ({ readLines: mocks.readLines }))
 
 beforeEach(() => {
+  mocks.readLines.mockResolvedValue(undefined)
   mocks.getToken.mockResolvedValue('Alice-token')
   mocks.GET.mockImplementation(
     (_path: string, { signal }: { signal: AbortSignal }) =>
@@ -31,6 +34,27 @@ beforeEach(() => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }),
       ),
   )
+})
+
+it('keeps assistance blocked after a failed game stream and cancellation until the server confirms no game', async () => {
+  mocks.GET.mockImplementation((path: string) =>
+    path === '/api/account/playing'
+      ? Promise.resolve({ data: { nowPlaying: [{ gameId: 'AbCd1234' }] } })
+      : Promise.reject(new LichessError(401, path)),
+  )
+  const state = vi.fn()
+  const session = new OnlineSession(vi.fn(), vi.fn(), state)
+  expect(await session.resume()).toEqual({ id: 'AbCd1234', account: 'Alice' })
+  await flushPromises()
+  expect(state).toHaveBeenCalledWith(
+    expect.objectContaining({ phase: 'auth-required', gameId: 'AbCd1234' }),
+  )
+  expect(session.playing).toBe(true)
+  session.cancel()
+  expect(session.playing).toBe(true)
+  mocks.GET.mockResolvedValue({ data: { nowPlaying: [] } })
+  expect(await session.resume()).toBeNull()
+  expect(session.playing).toBe(false)
 })
 
 it('aborts an outstanding challenge and cancels a late challenge creation', async () => {

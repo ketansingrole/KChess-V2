@@ -32,6 +32,7 @@ import {
   type OnlineOptions,
   type Settings,
 } from './types.ts'
+import { replay } from './review.ts'
 import { FEN, GAME_ID, PUZZLE_ANGLE, PUZZLE_ID, UCI_MOVE, USERNAME } from './patterns.ts'
 
 export { FEN, GAME_ID, PUZZLE_ANGLE, PUZZLE_ID, UCI_MOVE, USERNAME }
@@ -306,6 +307,9 @@ const analysisRequestSchema = v.object(
     fen: v.pipe(v.string('Invalid position.'), v.maxLength(100), v.regex(FEN, 'Invalid position.')),
     lines: intInRange(1, 5, 'Invalid number of engine lines.'),
     infinite: v.optional(v.boolean('Invalid engine options.')),
+    rootFen: v.optional(v.pipe(v.string(), v.maxLength(100), v.regex(FEN))),
+    moves: v.optional(movesSchema),
+    clientId: v.optional(intInRange(1, Number.MAX_SAFE_INTEGER, 'Invalid analysis request.')),
   },
   'Invalid engine options.',
 )
@@ -354,10 +358,24 @@ export const assertRunKind = (value: unknown): RunKind => parse(runKindSchema, v
 export const assertRunInput = (value: unknown): RunInput => parse(runInputSchema, value)
 export const assertBestMoveOptions = (value: unknown): BestMoveOptions =>
   parse(bestMoveOptionsSchema, value)
-export const assertAnalysisRequest = (value: unknown): AnalysisRequest =>
-  parse(analysisRequestSchema, value)
-export const assertReviewRequest = (value: unknown): ReviewRequest =>
-  parse(reviewRequestSchema, value)
+export function assertAnalysisRequest(value: unknown): AnalysisRequest {
+  const request = parse(analysisRequestSchema, value)
+  const positions = replay(request.rootFen ?? request.fen, request.moves ?? [])
+  const normalized = replay(request.fen, [])[0]?.fen
+  if (
+    !normalized ||
+    positions.length !== (request.moves?.length ?? 0) + 1 ||
+    positions.at(-1)?.fen !== normalized
+  )
+    throw new Error('Invalid analysis position or move history.')
+  return request
+}
+export function assertReviewRequest(value: unknown): ReviewRequest {
+  const request = parse(reviewRequestSchema, value)
+  if (replay(request.fen, request.moves).length !== request.moves.length + 1)
+    throw new Error('Invalid game position or move history.')
+  return request
+}
 export const assertReviewKey = (value: unknown): string =>
   parse(v.pipe(v.string('Invalid review.'), v.regex(/^[0-9a-f]{16}$/, 'Invalid review.')), value)
 export const assertVoiceAttempt = (value: unknown): VoiceAttemptInput =>

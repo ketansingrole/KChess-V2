@@ -1,14 +1,16 @@
-import { spawn, type ChildProcess, type ChildProcessByStdio } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
-import { cpus } from 'node:os'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
 import { app } from 'electron'
 import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/validate'
 import type { BestMoveOptions, EngineStatus } from '../shared/types'
 import { MANAGED_PATH, managedEngine } from './managedEngine'
+import { UciController, SearchCancelled } from './uci'
+import { acquireEngine, searchThreads } from './engineScheduler'
+import { replay } from '../shared/review'
+import { INITIAL_FEN } from 'chessops/fen'
 import { engineLevelInfo } from '../shared/engineLevels'
 
 /**
@@ -44,7 +46,9 @@ async function isExecutableFile(path: string): Promise<boolean> {
 
 export async function engineStatus(configured = ''): Promise<EngineStatus> {
   const managed = await managedEngine()
-  const canDownload = process.platform === 'darwin'
+  const canDownload =
+    ['darwin', 'win32', 'linux'].includes(process.platform) &&
+    ['arm64', 'x64'].includes(process.arch)
   if (configured && (await isExecutableFile(configured)))
     return { ready: true, path: configured, bundled: false, managed, canDownload }
   try {
@@ -67,23 +71,30 @@ export function spawnEngine(
     : spawn(status.path, [], { stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
-/** Threads for a search: leave one core for the app itself. */
-export const engineThreads = (): number => Math.max(1, Math.min(4, cpus().length - 1))
-
+export const engineThreads = searchThreads
 export const SUPERSEDED = 'Engine search superseded.'
-
-let active: { child: ChildProcess; cancel: (reason: Error) => void } | null = null
+let active: AbortController | undefined
+let generation = 0
 let lastMoveAt = 0
-
-/** The computer is playing (or played a moment ago): background work should keep out of its way. */
+let warm: { key: string; uci: UciController } | undefined
+let serial = Promise.resolve()
+let idle: ReturnType<typeof setTimeout> | undefined
 export const computerPlaying = (withinMs: number): boolean =>
-  active !== null || Date.now() - lastMoveAt < withinMs
-
-/** Kill any running search (new game, takeback, app quit). */
-export function stopEngine(): void {
-  active?.cancel(new Error(SUPERSEDED))
+  Boolean(active) || Date.now() - lastMoveAt < withinMs
+export async function engineIdentity(status: EngineStatus): Promise<string> {
+  if (status.bundled) return 'stockfish-19-lite'
+  const file = await stat(status.path)
+  return `${status.path}:${file.size}:${file.mtimeMs}`
 }
-
+export function stopEngine(close = false): void {
+  generation++
+  active?.abort()
+  if (close) {
+    warm?.uci.close()
+    warm = undefined
+    clearTimeout(idle)
+  }
+}
 export async function bestMove(
   moveList: unknown,
   level: EngineLevel,
@@ -92,80 +103,87 @@ export async function bestMove(
 ): Promise<string> {
   const moves = assertMoves(moveList)
   const { fen, movetime } = assertBestMoveOptions(options)
-  const status = await engineStatus(configured)
-  if (!status.ready)
-    throw new Error(
-      'Stockfish could not be found. Reinstall KChess or choose an engine in Settings.',
-    )
-  const profile = engineLevelInfo(level)
-  // The weakest levels sometimes play any legal move: Stockfish alone cannot play that badly.
-  const random = Math.random() < (profile.randomMove ?? 0)
-  // A newer request makes any in-flight search stale; the renderer drops stale results.
+  if (replay(fen ?? INITIAL_FEN, moves).length !== moves.length + 1)
+    throw new Error('Invalid computer position or move history.')
   stopEngine()
+  const epoch = generation
+  const controller = new AbortController()
+  active = controller
+  clearTimeout(idle)
   lastMoveAt = Date.now()
-  return new Promise((resolve, reject) => {
-    const child = spawnEngine(status)
-    let phase: 'uci' | 'ready' | 'search' | 'perft' = 'uci'
-    const legal: string[] = []
-    let settled = false
-    const finish = (error?: Error, move?: string): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      if (active?.child === child) active = null
-      child.kill()
-      if (error) reject(error)
-      else resolve(move ?? '')
-    }
-    const timeout = setTimeout(() => finish(new Error('Stockfish timed out.')), 15_000)
-    active = { child, cancel: (reason) => finish(reason) }
-    child.on('error', (error) => finish(error))
-    child.on('exit', (code) => {
-      if (!settled) finish(new Error(`Stockfish exited (${code}).`))
-    })
-    // Drain stderr so a chatty engine can never block on a full pipe.
-    child.stderr.resume()
-    child.stdin.on('error', () => undefined)
-    createInterface({ input: child.stdout }).on('line', (raw) => {
-      const line = raw.trim()
-      if (phase === 'uci' && line === 'uciok') {
-        child.stdin.write(`setoption name Threads value ${engineThreads()}\n`)
-        child.stdin.write('setoption name Hash value 64\n')
-        if (profile.uciElo) {
-          child.stdin.write('setoption name UCI_LimitStrength value true\n')
-          child.stdin.write(`setoption name UCI_Elo value ${profile.uciElo}\n`)
-        } else {
-          child.stdin.write('setoption name UCI_LimitStrength value false\n')
-          child.stdin.write(`setoption name Skill Level value ${profile.skill ?? 20}\n`)
+  let resolveResult!: (move: string) => void
+  let rejectResult!: (error: Error) => void
+  const result = new Promise<string>((resolve, reject) => {
+    resolveResult = resolve
+    rejectResult = reject
+  })
+  serial = serial
+    .catch(() => {})
+    .then(async () => {
+      let release: (() => void) | undefined
+      try {
+        controller.signal.throwIfAborted()
+        const status = await engineStatus(configured)
+        if (!status.ready)
+          throw new Error('Stockfish could not be found. Choose an engine in Settings.')
+        const key = await engineIdentity(status)
+        if (epoch !== generation) throw new SearchCancelled()
+        if (warm?.key !== key || warm.uci.failed) {
+          warm?.uci.close()
+          warm = { key, uci: new UciController(spawnEngine(status)) }
         }
-        child.stdin.write('isready\n')
-        phase = 'ready'
-      } else if (phase === 'ready' && line === 'readyok') {
-        child.stdin.write(
-          `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}\n`,
+        const target = warm.uci
+        release = await acquireEngine(3, () => controller.abort(), controller.signal)
+        await target.ready
+        controller.signal.throwIfAborted()
+        const profile = engineLevelInfo(level)
+        target.write('ucinewgame')
+        target.write(`setoption name Threads value ${searchThreads()}`)
+        target.write('setoption name Hash value 64')
+        target.write(`setoption name UCI_LimitStrength value ${Boolean(profile.uciElo)}`)
+        if (profile.uciElo) target.write(`setoption name UCI_Elo value ${profile.uciElo}`)
+        else target.write(`setoption name Skill Level value ${profile.skill ?? 20}`)
+        await target.sync()
+        controller.signal.throwIfAborted()
+        target.write(
+          `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}`,
         )
-        if (random) {
-          child.stdin.write('go perft 1\n')
-          phase = 'perft'
-        } else {
-          child.stdin.write(`go movetime ${movetime ?? profile.time}\n`)
-          phase = 'search'
+        const random = Math.random() < (profile.randomMove ?? 0)
+        const legal: string[] = []
+        const response = await target.search(
+          random ? 'go perft 1' : `go movetime ${movetime ?? profile.time}`,
+          (line) => {
+            const found = /^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/.exec(line)
+            if (found) legal.push(found[1]!)
+          },
+          Math.max(15_000, (movetime ?? profile.time) + 10_000),
+          controller.signal,
+        )
+        const move = random
+          ? legal[Math.floor(Math.random() * legal.length)]
+          : response.split(/\s+/)[1]
+        if (!move || move === '(none)' || move === '0000')
+          throw new Error('Stockfish found no legal move.')
+        resolveResult(move)
+      } catch (cause) {
+        rejectResult(
+          controller.signal.aborted || cause instanceof SearchCancelled
+            ? new Error(SUPERSEDED)
+            : cause instanceof Error
+              ? cause
+              : new Error(String(cause)),
+        )
+      } finally {
+        release?.()
+        if (active === controller) {
+          active = undefined
+          idle = setTimeout(() => {
+            warm?.uci.close()
+            warm = undefined
+          }, 120_000)
+          idle.unref()
         }
-      } else if (phase === 'perft') {
-        // `go perft 1` lists every legal move as "e2e4: 1", then "Nodes searched: N".
-        const found = /^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/.exec(line)
-        if (found) legal.push(found[1]!)
-        else if (line.startsWith('Nodes searched')) {
-          const move = legal[Math.floor(Math.random() * legal.length)]
-          if (!move) finish(new Error('Stockfish found no legal move.'))
-          else finish(undefined, move)
-        }
-      } else if (phase === 'search' && line.startsWith('bestmove ')) {
-        const move = line.split(/\s+/)[1]
-        if (!move || move === '(none)') finish(new Error('Stockfish found no legal move.'))
-        else finish(undefined, move)
       }
     })
-    child.stdin.write('uci\n')
-  })
+  return result
 }

@@ -1,9 +1,10 @@
 import { computed, ref, watch } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useIntervalFn, useTimeoutPoll } from '@vueuse/core'
 import type {
   ChallengeColor,
   NotificationKind,
   OnlineEvent,
+  OnlineConnection,
   PresenceReport,
 } from '../../../src/shared/types'
 import type { PlayerPresence } from '../../components/PlayerLine.vue'
@@ -28,8 +29,13 @@ export function useOnlineGame(options: {
   notifyDesktop: (kind: NotificationKind, title: string, body: string) => void
 }) {
   const { activeAccount, run, fail, notifyDesktop } = options
-  const onlinePhase = ref<'idle' | 'seeking' | 'playing' | 'finished'>('idle')
+  const onlinePhase = ref<'idle' | 'seeking' | 'playing' | 'finished' | 'disconnected'>('idle')
   const onlineId = ref('')
+  const onlineAccount = ref('')
+  const onlineConnection = ref<OnlineConnection | null>(null)
+  let presenceEpoch = 0
+  let presencePending = false
+  let stateEpoch = -1
   const onlineMoves = ref<string[]>([])
   const onlineColor = ref<'white' | 'black'>('white')
   const onlineOpponent = ref('Opponent')
@@ -110,7 +116,7 @@ export function useOnlineGame(options: {
   const onlinePresence = computed<{ self?: PlayerPresence; opponent?: PlayerPresence }>(() => {
     if (onlinePhase.value !== 'playing') return {}
     const report = presence.value
-    const me = report?.users[activeAccount().toLowerCase()]
+    const me = report?.users[(onlineAccount.value || activeAccount()).toLowerCase()]
     const them = report?.users[opponentId.value.toLowerCase()]
     const ping = pingStats.value
     return {
@@ -143,27 +149,33 @@ export function useOnlineGame(options: {
       quality: signalFromLatency(current),
     }
   })
-  /** How often the connection is measured while a game is on; Lichess asks for about once per 5 s at most per check, this stays under that. */
-  const PRESENCE_INTERVAL_MS = 3000
+  /** One request at a time, with stale responses rejected after a phase/session change. */
+  const PRESENCE_INTERVAL_MS = 5000
   async function pollPresence(): Promise<void> {
-    const me = activeAccount()
-    if (onlinePhase.value !== 'playing' || !me) return
+    const me = onlineAccount.value || activeAccount()
+    if (presencePending || onlinePhase.value !== 'playing' || !me) return
+    const epoch = presenceEpoch
+    presencePending = true
     try {
       // Measure even before the opponent is known, so the ping shows from the first second.
       const ids = opponentId.value ? [me, opponentId.value] : [me]
       const report = await window.kchess.presence(ids)
+      if (epoch !== presenceEpoch || onlinePhase.value !== 'playing') return
       presence.value = report
       latencySamples.value = [...latencySamples.value, report.latencyMs].slice(-30)
     } catch {
-      // A missed poll just leaves the last reading up; the next one recovers.
+      // A missed poll leaves the last reading; a later tick recovers.
+    } finally {
+      presencePending = false
     }
   }
-  const presenceTicker = useIntervalFn(() => void pollPresence(), PRESENCE_INTERVAL_MS, {
+  const presenceTicker = useTimeoutPoll(pollPresence, PRESENCE_INTERVAL_MS, {
     immediate: false,
   })
   watch(
     onlinePhase,
     (phase) => {
+      presenceEpoch++
       if (phase === 'playing') {
         presenceTicker.resume()
         void pollPresence()
@@ -181,9 +193,11 @@ export function useOnlineGame(options: {
 
   let onlineRequest = 0
   async function startOnline(): Promise<void> {
+    if (onlinePhase.value === 'disconnected' && onlineId.value) return
     if (onlinePhase.value === 'playing' || onlinePhase.value === 'seeking') return
     const request = ++onlineRequest
     onlineId.value = ''
+    onlineAccount.value = activeAccount()
     onlinePhase.value = 'seeking'
     onlineStatus.value = 'Looking for an opponent…'
     const result = await run(async () => {
@@ -194,7 +208,7 @@ export function useOnlineGame(options: {
           color: onlineChoice.value,
           rated: onlineRated.value,
           target: onlineTarget.value || undefined,
-          account: activeAccount() || undefined,
+          account: onlineAccount.value || undefined,
         })
       } catch (cause) {
         if (request === onlineRequest) throw cause
@@ -216,6 +230,40 @@ export function useOnlineGame(options: {
     onlineStatus.value = ''
     onlineViewPly.value = null
     await window.kchess.cancelOnline().catch(fail)
+  }
+  function readOnlineState(state: OnlineConnection): void {
+    if (state.session < stateEpoch) return
+    if (state.session !== stateEpoch) {
+      stateEpoch = state.session
+      presenceEpoch++
+    }
+    onlineConnection.value = state
+    if (state.account) onlineAccount.value = state.account
+    if (state.gameId) onlineId.value = state.gameId
+    if (state.lane === 'events' && onlineId.value) return
+    if (state.lane === 'game' && state.phase === 'idle') {
+      onlinePhase.value = 'idle'
+      onlineId.value = ''
+      onlineStatus.value = 'No game in progress.'
+      clock.pause()
+    }
+    if (['reconnecting', 'disconnected', 'auth-required'].includes(state.phase)) {
+      onlinePhase.value = 'disconnected'
+      onlineStatus.value =
+        state.message ?? 'Connection interrupted. Reconnect to recover your game.'
+      clock.pause()
+    }
+  }
+  async function reconnectOnline(): Promise<void> {
+    const resumed = await run(() => window.kchess.resumeOnline())
+    if (resumed) {
+      onlineAccount.value = resumed.account
+      onlineId.value = resumed.id
+      onlineStatus.value = 'Reconnecting…'
+    } else if (resumed === null) {
+      onlinePhase.value = 'idle'
+      onlineStatus.value = 'No game in progress. You can find another game.'
+    }
   }
   function readOnlineEvent(event: OnlineEvent): void {
     if (event.type === 'gameStart') {
@@ -280,7 +328,7 @@ export function useOnlineGame(options: {
       onlineId.value = event.id
       onlineInitial.value = (event.clock?.initial ?? 0) / 1000
       onlineGameRated.value = event.rated
-      const ours = activeAccount().toLowerCase()
+      const ours = (onlineAccount.value || activeAccount()).toLowerCase()
       // Match by account; if neither side does, keep the colour `gameStart` announced.
       if (event.white.id?.toLowerCase() === ours) onlineColor.value = 'white'
       else if (event.black.id?.toLowerCase() === ours) onlineColor.value = 'black'
@@ -326,6 +374,11 @@ export function useOnlineGame(options: {
       await window.kchess.playOnline(onlineId.value, uci)
       moveAckMs.value = Math.round(performance.now() - sent)
     } catch (cause) {
+      // The server may have accepted the move before the response was lost. Never replay it.
+      onlinePhase.value = 'disconnected'
+      onlineStatus.value =
+        'The move could not be confirmed. Reconnect to check the server position.'
+      clock.pause()
       fail(cause)
     }
   }
@@ -342,6 +395,10 @@ export function useOnlineGame(options: {
   const now = ref(performance.now())
   return {
     onlinePhase,
+    onlineAccount,
+    onlineConnection,
+    readOnlineState,
+    reconnectOnline,
     onlineId,
     onlineMoves,
     onlineColor,

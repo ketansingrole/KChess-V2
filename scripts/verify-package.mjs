@@ -61,6 +61,15 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
   }
   walk(getRawHeader(archive).header.files)
   const bytes = verifyEntries(entries)
+  for (const path of [
+    'out/main/index.js',
+    'out/main/puzzleWorker.js',
+    'out/preload/index.cjs',
+    '.output/public/_nuxt/vosk-worker.js',
+  ]) {
+    if (!entries.some((entry) => entry.path === path && entry.size > 0))
+      throw new Error(`Missing desktop service: ${path}`)
+  }
   for (const file of ['js', 'wasm']) {
     const path = `node_modules/stockfish/bin/stockfish-19-lite.${file}`
     if (!entries.some((entry) => entry.path === path))

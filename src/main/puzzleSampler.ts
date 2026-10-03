@@ -43,13 +43,17 @@ export class PuzzleSampler {
   lines = 0
 
   add(line: string): void {
+    if (line.length > 16_000) throw new Error('Puzzle database contains an oversized CSV line.')
     const cells = line.split(',')
     if (cells.length < 8 || cells[0] === 'PuzzleId') return
     const rating = Number(cells[3])
     const deviation = Number(cells[4])
     const popularity = Number(cells[5])
     const plays = Number(cells[6])
-    if (!Number.isFinite(rating) || !Number.isFinite(deviation)) return
+    if (!Number.isFinite(rating) || rating < 0 || rating > 4000 || !Number.isFinite(deviation))
+      return
+    if (!/^[a-zA-Z0-9]+$/.test(cells[0]!) || cells[0]!.length > 64) return
+    if (cells[7]!.length > 256 || !/^[a-zA-Z0-9 ]*$/.test(cells[7]!)) return
     this.lines++
     const solid = isSolid(deviation, popularity, plays)
     const solidForTheme = isSolidForTheme(deviation, popularity, plays)
@@ -70,11 +74,19 @@ export class PuzzleSampler {
     }
     if (solidForTheme)
       for (const theme of row.themes.split(' ')) {
-        if (!theme) continue
+        if (!theme || theme.length > 40) continue
         let reservoir = this.themes.get(theme)
-        if (!reservoir) this.themes.set(theme, (reservoir = new Reservoir(PER_THEME)))
+        if (!reservoir) {
+          if (this.themes.size >= 256) continue
+          this.themes.set(theme, (reservoir = new Reservoir(PER_THEME)))
+        }
         reservoir.add(row)
       }
+  }
+
+  /** Cheap bounded progress counter; exact deduplication is only done at import. */
+  get count(): number {
+    return [...this.buckets.values()].reduce((sum, bucket) => sum + bucket.rows.length, 0)
   }
 
   /** Every puzzle kept, once. */
@@ -100,6 +112,7 @@ export async function sampleZstdCsv(
     if (signal.aborted) throw new DOMException('Cancelled', 'AbortError')
     const lines = (tail + decoder.decode(chunk, { stream: true })).split('\n')
     tail = lines.pop() ?? ''
+    if (tail.length > 16_000) throw new Error('Puzzle database contains an oversized CSV line.')
     for (const line of lines) sampler.add(line)
   }
   sampler.add(tail + decoder.decode())

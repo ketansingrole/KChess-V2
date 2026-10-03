@@ -17,3 +17,18 @@ export function pickMacAsset(assets: ReleaseAsset[], arch: string): ReleaseAsset
   }
   return undefined
 }
+
+/** Conservative universal builds dispatch at runtime to supported CPU instructions. */
+export function pickStockfishAsset(
+  assets: ReleaseAsset[],
+  platform: string,
+  arch: string,
+): ReleaseAsset | undefined {
+  if (platform === 'darwin')
+    return ['arm64', 'x64'].includes(arch) ? pickMacAsset(assets, arch) : undefined
+  const os = platform === 'win32' ? 'windows' : platform === 'linux' ? 'linux' : ''
+  const cpu = arch === 'x64' ? 'x86-64' : arch === 'arm64' ? 'arm64' : ''
+  if (!os || !cpu) return undefined
+  const name = `stockfish-${os}-${cpu}-universal.${platform === 'win32' ? 'zip' : 'tar.gz'}`
+  return assets.find((asset) => asset.name === name)
+}

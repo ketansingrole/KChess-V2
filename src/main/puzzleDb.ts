@@ -1,8 +1,8 @@
-import { Readable } from 'node:stream'
-import { getDb } from './db'
-import { meteredFetch, withUsage } from './usage'
-import { PuzzleSampler, sampleZstdCsv } from './puzzleSampler'
-import { clearStored, queryLadder, queryPuzzles, readStatus, storeSample } from './puzzleQueries'
+import { Worker } from 'node:worker_threads'
+import { join } from 'node:path'
+import { app } from 'electron'
+import { dbPath, getDb } from './db'
+import { recordUsage } from './usage'
 import type {
   LocalLadderQuery,
   LocalPuzzleQuery,
@@ -10,70 +10,86 @@ import type {
   PuzzleDbProgress,
   PuzzleDbStatus,
 } from '../shared/types'
-
-/** Lichess's public puzzle database (CC0); `puzzleSampler.ts` says what is kept of it. */
 export const PUZZLE_DB_URL = 'https://database.lichess.org/lichess_db_puzzle.csv.zst'
-
-let running: AbortController | null = null
-
-export const puzzleDbStatus = (): PuzzleDbStatus => readStatus(getDb(), running !== null)
-
-export function cancelPuzzleDb(): void {
-  running?.abort()
+let worker: Worker | undefined
+let nextId = 0
+const waiting = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: Error) => void }
+>()
+let progress: ((event: PuzzleDbProgress) => void) | undefined
+let cancellation: Int32Array | undefined
+function service(): Worker {
+  if (worker) return worker
+  getDb() // Ensure legacy schema/migrations are ready before the worker reads it.
+  const self = new Worker(join(__dirname, 'puzzleWorker.js'), {
+    workerData: { path: join(app.getPath('userData'), 'puzzles.db'), legacyPath: dbPath() },
+  })
+  worker = self
+  const failed = (error: Error): void => {
+    if (worker !== self) return
+    worker = undefined
+    for (const entry of waiting.values()) entry.reject(error)
+    waiting.clear()
+  }
+  self.on(
+    'message',
+    (message: {
+      id?: number
+      error?: string
+      result?: unknown
+      progress?: PuzzleDbProgress
+      usage?: { requests: number; bytes: number }
+    }) => {
+      if (worker !== self) return
+      if (message.progress) progress?.(message.progress)
+      if (message.usage) recordUsage('', 'database', message.usage.requests, message.usage.bytes)
+      if (message.id !== undefined) {
+        const entry = waiting.get(message.id)
+        waiting.delete(message.id)
+        if (message.error) entry?.reject(new Error(message.error))
+        else entry?.resolve(message.result)
+      }
+    },
+  )
+  self.on('error', failed)
+  self.on('exit', () => failed(new Error('Puzzle service stopped. Retry the operation.')))
+  return self
 }
-
-/** Download, sample and store the puzzle database. Replaces the old copy only once the new one is complete. */
+function call<T>(method: string, options: object = {}): Promise<T> {
+  const self = service()
+  const id = ++nextId
+  return new Promise((resolve, reject) => {
+    waiting.set(id, { resolve: (value) => resolve(value as T), reject })
+    self.postMessage({ id, method, ...options })
+  })
+}
+export const puzzleDbStatus = (): Promise<PuzzleDbStatus> => call('status')
+export function cancelPuzzleDb(): void {
+  if (cancellation) Atomics.store(cancellation, 0, 1)
+  worker?.postMessage({ method: 'cancel' })
+}
 export async function installPuzzleDb(
-  onProgress: (progress: PuzzleDbProgress) => void,
+  onProgress: (event: PuzzleDbProgress) => void,
   url = PUZZLE_DB_URL,
 ): Promise<PuzzleDbStatus> {
-  if (running) throw new Error('The puzzle database is already downloading.')
-  const controller = new AbortController()
-  running = controller
-  const sampler = new PuzzleSampler()
-  let received = 0
-  let total: number | undefined
-  let lastReport = 0
-  const report = (phase: PuzzleDbProgress['phase'], message?: string, force = false): void => {
-    const now = Date.now()
-    if (!force && now - lastReport < 250) return
-    lastReport = now
-    onProgress({ phase, received, total, kept: sampler.kept().length, message })
-  }
+  if (cancellation) throw new Error('The puzzle database is already downloading.')
+  progress = onProgress
+  cancellation = new Int32Array(new SharedArrayBuffer(4))
   try {
-    const response = await withUsage('', 'database', () =>
-      meteredFetch(url, { signal: controller.signal }),
-    )
-    if (!response.ok || !response.body)
-      throw new Error(`Lichess answered ${response.status} for the puzzle database.`)
-    total = Number(response.headers.get('content-length')) || undefined
-    const source = Readable.fromWeb(response.body as never)
-    source.on('data', (chunk: Buffer) => {
-      received += chunk.byteLength
-      report('downloading')
-    })
-    await sampleZstdCsv(source, sampler, controller.signal)
-    report('importing', undefined, true)
-    const count = storeSample(getDb(), sampler.kept())
-    if (!count) throw new Error('The downloaded file held no usable puzzles.')
-    report('done', undefined, true)
-  } catch (cause) {
-    if (controller.signal.aborted) onProgress({ phase: 'cancelled', received, total, kept: 0 })
-    else {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      onProgress({ phase: 'failed', received, total, kept: 0, message })
-      throw cause
-    }
+    return await call('install', { url, cancellation: cancellation.buffer })
   } finally {
-    running = null
+    cancellation = undefined
+    progress = undefined
   }
-  return puzzleDbStatus()
 }
-
-export function deletePuzzleDb(): PuzzleDbStatus {
-  clearStored(getDb())
-  return puzzleDbStatus()
+export const deletePuzzleDb = (): Promise<PuzzleDbStatus> => call('delete')
+export const localPuzzles = (query: LocalPuzzleQuery): Promise<Puzzle[]> => call('query', { query })
+export const localLadder = (query: LocalLadderQuery): Promise<Puzzle[]> => call('ladder', { query })
+export function closePuzzleWorker(): void {
+  cancelPuzzleDb()
+  for (const entry of waiting.values()) entry.reject(new Error('Puzzle service closed.'))
+  waiting.clear()
+  void worker?.terminate()
+  worker = undefined
 }
-
-export const localPuzzles = (query: LocalPuzzleQuery): Puzzle[] => queryPuzzles(getDb(), query)
-export const localLadder = (query: LocalLadderQuery): Puzzle[] => queryLadder(getDb(), query)

@@ -77,6 +77,19 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       },
     ])
     if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)
+    if (testInfo.title.includes('saved position lookup')) {
+      const saved = {
+        kind: 'opening',
+        fen: START_FEN,
+        fetchedAt: 1,
+        moves: [{ uci: 'e2e4', san: 'e4', white: 100, draws: 20, black: 50 }],
+      }
+      db.prepare('INSERT INTO position_lookups (key, data, fetchedAt) VALUES (?, ?, ?)').run(
+        'opening:' + START_FEN,
+        JSON.stringify(saved),
+        1,
+      )
+    }
     db.close()
     let app: ElectronApplication | undefined
     try {
@@ -97,6 +110,10 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       })
       await app.context().tracing.start({ screenshots: true, snapshots: true })
       const page = await app.firstWindow()
+      page.on('console', (message) => {
+        if (message.type() === 'error') console.error(`[renderer] ${message.text()}`)
+      })
+      page.on('pageerror', (error) => console.error(`[renderer] ${error.message}`))
       await page.waitForSelector('.main-area')
       await expect(page.locator('aside').getByText('Dashboard', { exact: true })).toBeAttached()
       await use({ app, page, profile })
@@ -205,6 +222,83 @@ test('launches with SQLite, sandboxed preload and bundled Stockfish @packaged', 
   expect(status.engine.bundled).toBe(true)
   expect(status.move).toMatch(/^[a-h][1-8][a-h][1-8][qrbn]?$/)
   expect(status.nodeExposed).toBe(false)
+  const policies = await page.evaluate(async () => {
+    const document = await fetch('kchess://app/index.html')
+    const worker = await fetch('kchess://app/_nuxt/vosk-worker.js')
+    return {
+      document: document.headers.get('Content-Security-Policy'),
+      worker: worker.headers.get('Content-Security-Policy'),
+    }
+  })
+  expect(policies.document).not.toContain("'unsafe-eval'")
+  expect(policies.document).not.toContain("script-src 'unsafe-inline'")
+  expect(policies.worker).toContain("'unsafe-eval'")
+})
+
+test('plays keyboard moves and restores an annotated saved study after reload @packaged', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Analysis board')
+  const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  await input.fill('e4')
+  await input.press('Enter')
+  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+  await input.fill('e7e5')
+  await input.press('Enter')
+  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e5')
+  await page.getByText('Study details and saved studies', { exact: true }).click()
+  await page.getByLabel('White', { exact: true }).fill('Alice')
+  await page.getByLabel('Comment on this position', { exact: true }).fill('Keep this annotation.')
+  await page.getByRole('textbox', { name: 'Study name', exact: true }).fill('Opening study')
+  await page.getByRole('button', { name: 'Save study', exact: true }).click()
+  await expect(page.getByText('Study saved on this device.', { exact: true })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('kchess:studies:v1')))
+    .toContain('Opening study')
+  await page.reload()
+  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e5')
+  await page.getByText('Study details and saved studies', { exact: true }).click()
+  await expect(page.getByLabel('White', { exact: true })).toHaveValue('Alice')
+  await expect(page.getByLabel('Comment on this position', { exact: true })).toHaveValue(
+    'Keep this annotation.',
+  )
+  await expect(page.getByRole('button', { name: 'Opening study', exact: true })).toBeVisible()
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'study-library.png') })
+})
+
+test('turns a reviewed game mistake into a scheduled practice position @packaged', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'History')
+  await page.getByRole('button', { name: /against rival/ }).click()
+  await page.getByRole('button', { name: 'Review', exact: true }).click()
+  await page.getByRole('button', { name: "Practice Black's mistakes", exact: true }).click()
+  await expect(page.getByText(/positions added to Practice/)).toBeVisible()
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
+  await page.getByRole('button', { name: 'Start practice', exact: true }).click()
+  await expect(page.locator('cg-board')).toBeVisible()
+  await page.getByRole('button', { name: 'Show engine line', exact: true }).click()
+  await expect(
+    page.getByText('Position completed. Your next revisit has been scheduled.', { exact: true }),
+  ).toBeVisible()
+})
+
+test('recovers a saved position lookup offline and rejects unsupported tablebases @packaged', async ({
+  desktop: { app, page },
+}) => {
+  await app.evaluate(() => {
+    globalThis.fetch = async () => {
+      throw new Error('offline')
+    }
+  })
+  await navigate(page, 'Analysis board')
+  await page.getByText('Opening explorer and tablebases', { exact: true }).click()
+  await page.getByRole('button', { name: 'Opening games', exact: true }).click()
+  await expect(page.getByText(/Could not refresh. Showing the saved lookup/)).toBeVisible()
+  await expect(page.getByText('White 100 · Draw 20 · Black 50', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Endgame tablebase', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('seven pieces')
 })
 
 test('plays a move through the board and keeps the game when navigating', async ({
@@ -220,7 +314,7 @@ test('plays a move through the board and keeps the game when navigating', async 
   await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
 })
 
-test('keeps a failed offline puzzle verdict on remount and opens the promotion picker', async ({
+test('keeps a failed offline puzzle verdict on remount and opens the promotion picker @packaged', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Puzzles')
@@ -234,6 +328,11 @@ test('keeps a failed offline puzzle verdict on remount and opens the promotion p
   await move(page, 'a7', 'a8')
   const picker = page.getByRole('dialog', { name: 'Choose promotion piece' })
   await expect(picker).toBeVisible()
+  await expect(picker.getByRole('button', { name: 'Queen', exact: true })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(picker.getByRole('button', { name: 'Knight', exact: true })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(picker.getByRole('button', { name: 'Queen', exact: true })).toBeFocused()
   await picker.getByRole('button', { name: 'Queen', exact: true }).click()
   await expect(
     page.getByText('Solved after a mistake — not counted', { exact: true }),
@@ -344,7 +443,9 @@ test('exports redacted diagnostics through Settings', async ({
     'arch',
     'versions',
     'logs',
+    'performance',
   ])
+  expect(JSON.parse(report).performance).toHaveProperty('eventLoopMs')
 })
 
 test('sets up a position in the board editor and analyses it with Stockfish', async ({

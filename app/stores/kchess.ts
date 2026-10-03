@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { useDebounceFn, useLocalStorage, useMediaQuery } from '@vueuse/core'
+import { useLocalStorage, useMediaQuery } from '@vueuse/core'
 import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
 import { pickConnectedAccount } from '../../src/shared/accounts'
 import {
@@ -17,14 +17,14 @@ import { formatGameDate } from '../utils/games'
 import { useOnlineGame } from './kchess/onlineGame'
 import { useComputerGame } from './kchess/computerGame'
 import { useGameHistory } from './kchess/gameHistory'
+import { useEngineSettings } from './kchess/engineSettings'
+import { useSettingsPersistence } from './kchess/settingsPersistence'
+import { useAccountProfile } from './kchess/accountProfile'
 import { formatBytes } from '../utils/format'
 import { useUsageStore } from './usage'
 import type {
   AppData,
   EngineLevel,
-  EngineStatus,
-  LichessRatingHistory,
-  LichessUser,
   AppTheme,
   NotificationKind,
   Settings,
@@ -100,13 +100,13 @@ export const useKChessStore = defineStore('kchess', () => {
   const toast = useToast()
   const data = ref<AppData | null>(null)
   const settings = ref<Settings | null>(null)
-  const busy = ref(false)
+  const activeOperations = ref(0)
+  const busy = computed(() => activeOperations.value > 0)
   const message = ref('')
   const error = ref('')
   const usernameInput = ref('')
   const selectedAccount = ref('')
-  const profile = ref<LichessUser | null>(null)
-  const ratingHistories = ref<LichessRatingHistory>([])
+  const { profile, ratingHistories, loadProfile } = useAccountProfile(selectedAccount, fail)
   const chartMode = ref('Blitz')
   const chartRange = ref('All')
   const {
@@ -135,10 +135,24 @@ export const useKChessStore = defineStore('kchess', () => {
     chartRange,
     selectPage,
   })
-  const engineReady = ref(false)
-  /** True until the first engine check lands, and while a re-check runs. */
-  const engineChecking = ref(true)
-  const engineInfo = ref<EngineStatus | null>(null)
+  const {
+    engineReady,
+    engineChecking,
+    engineInfo,
+    engineName,
+    refreshEngine,
+    recheckEngine,
+    chooseEngine,
+    useBundledEngine,
+    installEngine,
+    useDownloadedEngine,
+    deleteEngine,
+  } = useEngineSettings({ settings, run, info, save })
+  const persistence = useSettingsPersistence({ settings, data, fail, refreshEngine })
+  function save(): Promise<void> {
+    return persistence.save()
+  }
+  const { flushSettings } = persistence
   /** A yes/no question raised outside any page (e.g. from the search palette). */
   const confirmation = ref<{
     title: string
@@ -148,6 +162,7 @@ export const useKChessStore = defineStore('kchess', () => {
   } | null>(null)
   const {
     localMoves,
+    localSaveError,
     localGameEpoch,
     localPly,
     level,
@@ -184,6 +199,10 @@ export const useKChessStore = defineStore('kchess', () => {
   )
   const {
     onlinePhase,
+    onlineAccount,
+    onlineConnection,
+    readOnlineState,
+    reconnectOnline,
     onlineId,
     onlineMoves,
     onlineColor,
@@ -233,6 +252,7 @@ export const useKChessStore = defineStore('kchess', () => {
     void window.kchess.notify({ kind, title, body }).catch(() => undefined)
   }
   let offOnline: (() => void) | undefined
+  let offOnlineState: (() => void) | undefined
   let offOnlineError: (() => void) | undefined
   let offNotification: (() => void) | undefined
   let initialized = false
@@ -254,7 +274,7 @@ export const useKChessStore = defineStore('kchess', () => {
     })
   }
   async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
-    busy.value = true
+    activeOperations.value++
     error.value = ''
     try {
       return await action()
@@ -262,7 +282,7 @@ export const useKChessStore = defineStore('kchess', () => {
       fail(cause)
       return undefined
     } finally {
-      busy.value = false
+      activeOperations.value--
     }
   }
   function selectPage(next: Page): void {
@@ -545,129 +565,6 @@ export const useKChessStore = defineStore('kchess', () => {
     searchOpen.value = false
   }
   /** True while the form differs from what is stored; auto-save clears it. */
-  const settingsDirty = computed(
-    () =>
-      Boolean(settings.value && data.value) &&
-      JSON.stringify(settings.value) !== JSON.stringify(data.value?.settings),
-  )
-  // Settings save themselves. Saves run one at a time, and each is a no-op
-  // when nothing changed, so explicit calls (engine actions) and the debounced
-  // watcher below never double-write.
-  let saveChain: Promise<void> = Promise.resolve()
-  function save(): Promise<void> {
-    saveChain = saveChain.then(persistSettings)
-    return saveChain
-  }
-  async function persistSettings(): Promise<void> {
-    if (!settings.value || !data.value || !settingsDirty.value) return
-    // A reactive array cannot cross IPC (structured clone): send a plain copy of the list.
-    const sent = { ...settings.value, engineLevels: [...settings.value.engineLevels] }
-    const previousEngine = data.value.settings.enginePath
-    try {
-      const saved = await window.kchess.saveSettings(sent)
-      data.value = { ...data.value, settings: saved }
-      // Keep edits made while the request was in flight; only adopt the stored
-      // (normalised) copy when the form still matches what was sent.
-      if (settings.value && JSON.stringify(settings.value) === JSON.stringify(sent))
-        settings.value = { ...saved }
-      if (saved.enginePath !== previousEngine) void refreshEngine()
-    } catch (cause) {
-      fail(cause)
-      // Show what is actually stored rather than a change that did not stick.
-      if (data.value) settings.value = { ...data.value.settings }
-    }
-  }
-  const saveSoon = useDebounceFn(() => void save(), 400)
-  watch(
-    settings,
-    () => {
-      if (settingsDirty.value) void saveSoon()
-    },
-    { deep: true },
-  )
-  /** Write pending edits at once, e.g. when the window is closing. */
-  function flushSettings(): void {
-    if (settingsDirty.value) void save()
-  }
-  async function refreshEngine(): Promise<void> {
-    engineChecking.value = true
-    try {
-      const result = await window.kchess.engineStatus()
-      engineInfo.value = result
-      engineReady.value = result.ready
-    } finally {
-      engineChecking.value = false
-    }
-  }
-  /** Which Stockfish is in use, in words; empty until the first check lands. */
-  const engineName = computed(() => {
-    const status = engineInfo.value
-    if (!status?.ready) return ''
-    if (status.bundled) return 'Bundled Stockfish'
-    return status.path === status.managed.path
-      ? `Downloaded Stockfish${status.managed.version ? ` ${status.managed.version}` : ''}`
-      : 'Your Stockfish'
-  })
-  async function recheckEngine(): Promise<void> {
-    await refreshEngine().catch(() => {
-      engineReady.value = false
-    })
-  }
-  async function chooseEngine(): Promise<void> {
-    const path = await window.kchess.chooseEngine()
-    if (path && settings.value) {
-      settings.value.enginePath = path
-      await save()
-    }
-  }
-  async function useBundledEngine(): Promise<void> {
-    if (!settings.value) return
-    settings.value.enginePath = ''
-    await save()
-  }
-  /**
-   * Check for the latest native Stockfish and download it if needed. A first
-   * download becomes the engine in use; updating an existing copy leaves the
-   * current choice alone.
-   */
-  async function installEngine(): Promise<void> {
-    const hadDownload = engineInfo.value?.managed.installed ?? false
-    const result = await run(() => window.kchess.installEngine())
-    if (!result || !settings.value) return
-    if (!result.updated) {
-      info(`You already have the latest Stockfish (${result.version}).`)
-      await refreshEngine()
-      return
-    }
-    if (hadDownload) {
-      await refreshEngine()
-      info(`Stockfish updated to ${result.version}.`)
-      return
-    }
-    settings.value.enginePath = result.path
-    await save()
-    info(`Stockfish ${result.version} downloaded.`)
-  }
-  async function useDownloadedEngine(): Promise<void> {
-    const path = engineInfo.value?.managed.path
-    if (!path || !settings.value) return
-    settings.value.enginePath = path
-    await save()
-  }
-  /** Delete the downloaded engine; if it was in use, fall back to the bundled one. */
-  async function deleteEngine(): Promise<void> {
-    const managedPath = engineInfo.value?.managed.path
-    const deleted = await run(async () => {
-      await window.kchess.deleteEngine()
-      return true
-    })
-    if (!deleted) return
-    if (settings.value && settings.value.enginePath === managedPath) {
-      settings.value.enginePath = ''
-      await save()
-    } else await refreshEngine()
-    info('Downloaded Stockfish deleted.')
-  }
   async function addAccount(): Promise<void> {
     const result = await run(() => window.kchess.addAccount(usernameInput.value))
     if (result) {
@@ -750,37 +647,6 @@ export const useKChessStore = defineStore('kchess', () => {
       void loadProfile()
     }
   }
-  function applyRatingHistory(history: LichessRatingHistory): void {
-    ratingHistories.value = history
-  }
-  async function loadProfile(): Promise<void> {
-    const account = selectedAccount.value
-    if (!account) {
-      profile.value = null
-      ratingHistories.value = []
-      return
-    }
-    try {
-      // Paint what was saved last time straight away, then refresh from Lichess.
-      const saved = await window.kchess.cachedProfile(account)
-      if (account !== selectedAccount.value) return
-      profile.value = saved.profile
-      if (saved.ratingHistory) applyRatingHistory(saved.ratingHistory)
-      else ratingHistories.value = []
-      const [p, history] = await Promise.all([
-        window.kchess.profile(account),
-        window.kchess.ratingHistory(account),
-      ])
-      if (account !== selectedAccount.value) return
-      profile.value = p
-      applyRatingHistory(history)
-    } catch (cause) {
-      fail(cause)
-    }
-  }
-  watch(selectedAccount, () => {
-    void loadProfile()
-  })
   // Sound and appearance follow the form as it is edited; saving happens in the background.
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
   /** Themes the user dropped in the themes folder. */
@@ -872,6 +738,7 @@ export const useKChessStore = defineStore('kchess', () => {
     window.addEventListener('beforeunload', flushSettings)
     offOnline = window.kchess.onOnlineEvent(readOnlineEvent)
     offOnlineError = window.kchess.onOnlineError(fail)
+    offOnlineState = window.kchess.onOnlineState(readOnlineState)
     offNotification = window.kchess.onNotification(({ title, body }) =>
       toast.add({ title, description: body, icon: 'i-lucide-bell', duration: 8000 }),
     )
@@ -881,8 +748,9 @@ export const useKChessStore = defineStore('kchess', () => {
         if (resumed) {
           // The game may belong to any connected account; make that the active one.
           setOnlineAccount(resumed.account)
+          onlineAccount.value = resumed.account
           onlineId.value = resumed.id
-          onlinePhase.value = 'playing'
+          if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
         }
       })
       .catch(() => undefined)
@@ -893,6 +761,8 @@ export const useKChessStore = defineStore('kchess', () => {
   function dispose(): void {
     offOnline?.()
     offOnlineError?.()
+    offOnlineState?.()
+    offOnlineState = undefined
     offOnline = undefined
     offOnlineError = undefined
     offNotification?.()
@@ -943,6 +813,7 @@ export const useKChessStore = defineStore('kchess', () => {
     selectPage,
     openReview,
     localMoves,
+    localSaveError,
     localGameEpoch,
     localPly,
     level,
@@ -969,6 +840,10 @@ export const useKChessStore = defineStore('kchess', () => {
     makeMove,
     fen,
     onlinePhase,
+    onlineAccount,
+    onlineConnection,
+    readOnlineState,
+    reconnectOnline,
     onlineMinutes,
     onlineIncrement,
     onlineChoice,

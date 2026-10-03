@@ -33,6 +33,11 @@ export class Clock {
     if (data.ticking) this.alerted[data.ticking] = false
   }
 
+  pause(): void {
+    this.times = { white: this.remaining('white'), black: this.remaining('black') }
+    this.ticking = undefined
+  }
+
   remaining(color: Color, now = performance.now()): number {
     const elapsed = this.ticking === color ? Math.max(0, now - this.lastUpdate) : 0
     return Math.max(0, this.times[color] - elapsed)

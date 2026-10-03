@@ -131,7 +131,8 @@ export class VoiceCapture {
           if ('result' in message && message.result) resolve()
           else reject(new VoiceError('The offline voice model couldn’t load.', 'model'))
         })
-        model.on('error', () => {
+        model.on('error', (message) => {
+          console.error('Offline voice model failed:', message)
           clearTimeout(timer)
           reject(new VoiceError('The offline voice model couldn’t load. Try again.', 'model'))
         })
@@ -162,6 +163,7 @@ export class VoiceCapture {
   }
 
   private async open(revision: number): Promise<void> {
+    const started = performance.now()
     let stream: MediaStream | undefined
     let context: AudioContext | undefined
     try {
@@ -223,6 +225,9 @@ export class VoiceCapture {
         throw error
       }
     } finally {
+      void window.kchess
+        ?.recordPerformance?.('voice.activation', performance.now() - started)
+        .catch(() => {})
       stream?.getTracks().forEach((track) => track.stop())
       if (context) await context.close().catch(() => {})
     }

@@ -114,6 +114,21 @@ describe('analysis move tree', () => {
     expect(text).toContain(`[FEN "${fen}"]`)
     expect(treeFromPgn(text)!.fen).toBe(fen)
   })
+  it('preserves headers, result and annotations through PGN round trips', () => {
+    const pgn =
+      '[Event "Study"]\n[White "Alice"]\n[Black "Bob"]\n[Result "1-0"]\n\n{Introduction} 1. e4 $1 {A useful move [%clk 0:10:00]} e5 (1... c5 {Sicilian}) 1-0'
+    const root = treeFromPgn(pgn)!
+    const exported = treeToPgn(root)
+    expect(exported).toContain('[White "Alice"]')
+    expect(exported).toContain('[Result "1-0"]')
+    expect(exported).toContain('Introduction')
+    expect(exported).toContain('$1')
+    expect(exported).toContain('[%clk 0:10:00]')
+    expect(exported).toContain('Sicilian')
+    expect(treeToPgn(treeFromPgn(exported)!)).toBe(exported)
+    expect(treeFromPgn('1. e4 e5 2. Ke3 *')).toBeUndefined()
+    expect(treeFromPgn('[Event "One"]\n1. e4 *\n\n[Event "Two"]\n1. d4 *')).toBeUndefined()
+  })
   it('numbers moves from a position with Black to move', () => {
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
     expect(pvSan(fen, ['e7e5', 'g1f3', 'zzzz']).map((m) => m.label)).toEqual(['1… e5', '2. Nf3'])

@@ -23,6 +23,7 @@ const {
   onlineTarget,
   busy,
   onlineStatus,
+  onlineConnection,
   onlineOpponent,
   onlineColor,
   onlineHistory,
@@ -159,7 +160,13 @@ const banner = computed(() =>
           title: onlineInteractive.value ? 'Your move' : 'Waiting for opponent',
           detail: onlineStatus.value,
         }
-      : { icon: 'i-lucide-flag', title: 'Game over', detail: onlineStatus.value },
+      : onlinePhase.value === 'disconnected'
+        ? {
+            icon: 'i-lucide-triangle-alert',
+            title: 'Connection interrupted',
+            detail: onlineStatus.value,
+          }
+        : { icon: 'i-lucide-flag', title: 'Game over', detail: onlineStatus.value },
 )
 </script>
 
@@ -336,6 +343,25 @@ const banner = computed(() =>
     </div>
 
     <div v-else class="play-layout">
+      <div v-if="onlinePhase === 'disconnected'" class="card col-span-full" role="status">
+        <h2 class="section-title">
+          {{
+            onlineConnection?.phase === 'auth-required' ? 'Sign in again' : 'Connection interrupted'
+          }}
+        </h2>
+        <p class="section-hint">
+          {{ onlineStatus }} Clocks are paused until a fresh server update arrives.
+        </p>
+        <div class="mt-3 flex gap-2">
+          <UButton :loading="busy" @click="store.reconnectOnline">Reconnect</UButton>
+          <UButton variant="outline" color="neutral" @click="store.selectPage('settings')"
+            >Account settings</UButton
+          >
+          <UButton v-if="!onlineId" variant="ghost" color="neutral" @click="stopOnline"
+            >Find another game</UButton
+          >
+        </div>
+      </div>
       <PlayBoard
         :fen="fen(onlineDisplay)"
         :orientation="onlineOrientation"

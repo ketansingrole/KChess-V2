@@ -3,6 +3,7 @@ import type {
   AppUpdateStatus,
   DesktopApi,
   OnlineEvent,
+  OnlineConnection,
   PuzzleDbProgress,
   ReviewStatus,
   ReviewUpdate,
@@ -10,6 +11,7 @@ import type {
 } from './types'
 
 export interface IpcEvents {
+  'online:state': OnlineConnection
   'online:event': OnlineEvent
   'online:error': string
   'notify:alert': { title: string; body: string }
@@ -22,6 +24,7 @@ export interface IpcEvents {
   'review:status': ReviewStatus
 }
 export const IPC_EVENTS = {
+  onlineState: 'online:state',
   online: 'online:event',
   error: 'online:error',
   notification: 'notify:alert',
@@ -37,6 +40,7 @@ export const IPC_EVENTS = {
 type Subscription =
   | 'onAppUpdate'
   | 'onOnlineEvent'
+  | 'onOnlineState'
   | 'onOnlineError'
   | 'onNotification'
   | 'onPuzzleDbProgress'
@@ -49,6 +53,8 @@ export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
 export const IPC_CHANNELS = {
+  recordPerformance: 'diagnostics:performance',
+  positionLookup: 'analysis:position-lookup',
   appUpdateStatus: 'app-update:status',
   checkAppUpdate: 'app-update:check',
   downloadAppUpdate: 'app-update:download',
@@ -69,6 +75,7 @@ export const IPC_CHANNELS = {
   installEngine: 'engine:install',
   deleteEngine: 'engine:delete',
   bestMove: 'engine:bestmove',
+  stopEngine: 'engine:stop',
   startAnalysis: 'engine:analysis-start',
   stopAnalysis: 'engine:analysis-stop',
   reviewGet: 'review:get',

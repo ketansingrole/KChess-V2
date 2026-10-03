@@ -4,6 +4,7 @@ import type {
   AppUpdateStatus,
   DesktopApi,
   OnlineEvent,
+  OnlineConnection,
   PuzzleDbProgress,
   ReviewStatus,
   ReviewUpdate,
@@ -23,6 +24,8 @@ function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): Ip
 }
 
 const api: DesktopApi = {
+  recordPerformance: (name, milliseconds) => invoke('recordPerformance', name, milliseconds),
+  positionLookup: (kind, fen) => invoke('positionLookup', kind, fen),
   appUpdateStatus: () => invoke('appUpdateStatus'),
   checkAppUpdate: () => invoke('checkAppUpdate'),
   downloadAppUpdate: () => invoke('downloadAppUpdate'),
@@ -57,6 +60,7 @@ const api: DesktopApi = {
   chooseEngine: () => invoke('chooseEngine'),
   installEngine: () => invoke('installEngine'),
   deleteEngine: () => invoke('deleteEngine'),
+  stopEngine: () => invoke('stopEngine'),
   bestMove: (moves, level, options) => invoke('bestMove', moves, level, options),
   startAnalysis: (request) => invoke('startAnalysis', request),
   stopAnalysis: () => invoke('stopAnalysis'),
@@ -108,6 +112,11 @@ const api: DesktopApi = {
     return () => ipcRenderer.removeListener(IPC_EVENTS.notification, listener)
   },
   presence: (usernames) => invoke('presence', usernames),
+  onOnlineState: (callback) => {
+    const listener = (_: unknown, state: OnlineConnection): void => callback(state)
+    ipcRenderer.on(IPC_EVENTS.onlineState, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.onlineState, listener)
+  },
   onOnlineEvent: (callback) => {
     const listener = (_: unknown, event: OnlineEvent): void => callback(event)
     ipcRenderer.on(IPC_EVENTS.online, listener)

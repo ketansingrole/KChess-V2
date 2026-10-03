@@ -29,11 +29,13 @@ const {
   orientation,
   evaluation,
   engineOn,
+  assistanceAllowed,
   engineLines,
   infinite,
   showArrows,
   engineBusy,
   engineError,
+  saveError,
   gameOver,
 } = storeToRefs(analysis)
 const toast = useToast()
@@ -108,6 +110,8 @@ const engineStatus = computed(() => {
   if (engineError.value) return engineError.value
   if (!engineOn.value) return 'Engine off'
   if (gameOver.value) return gameOver.value
+  if (['playing', 'seeking', 'disconnected'].includes(store.onlinePhase))
+    return 'Analysis paused during online play'
   const update = evaluation.value
   if (!update) return 'Starting…'
   const depth = `Depth ${update.depth}${infinite.value ? '' : '/26'}`
@@ -118,7 +122,7 @@ const engineStatus = computed(() => {
       : nps
         ? ` · ${Math.round(nps / 1000)}k nodes/s`
         : ''
-  return `${depth}${speed}${update.done ? '' : '…'}`
+  return `${depth}${speed}${update.reason === 'interrupted' ? ' · Interrupted — retry or change position' : update.done ? '' : '…'}`
 })
 const lineChoices = [1, 2, 3, 4, 5].map((count) => ({
   label: `${count} ${count === 1 ? 'line' : 'lines'}`,
@@ -207,7 +211,7 @@ function runImport(): void {
     }
     analysis.load(fen)
   } else if (!analysis.loadPgn(text)) {
-    importError.value = 'That is neither a FEN nor a PGN KChess can read.'
+    importError.value = 'Use a valid FEN or one PGN game with legal moves, under 2 MB.'
     return
   } else if (!root.value.children.length) {
     importError.value = 'No moves could be read from that PGN.'
@@ -359,7 +363,10 @@ function missed(result: VoiceResult): void {
 
 <template>
   <div>
+    <p v-if="saveError" role="alert" class="p-3 text-error">Automatic saving: {{ saveError }}</p>
+
     <PageHeader title="Analysis board" />
+    <AnalysisDocument />
 
     <div class="play-layout analysis-layout">
       <div class="board-stack">
@@ -425,7 +432,11 @@ function missed(result: VoiceResult): void {
       <div class="card side-panel analysis-panel">
         <section class="ceval" aria-label="Engine">
           <div class="ceval-head">
-            <USwitch v-model="engineOn" aria-label="Engine analysis" :disabled="!engineReady" />
+            <USwitch
+              v-model="engineOn"
+              aria-label="Engine analysis"
+              :disabled="!engineReady || !assistanceAllowed"
+            />
             <strong class="ceval-score" :class="{ dim: !engineOn }">{{
               !engineOn ? '—' : result || formatEval(best)
             }}</strong>
@@ -537,7 +548,11 @@ function missed(result: VoiceResult): void {
           </Teleport>
         </section>
 
-        <AnalysisReview class="panel-divider pt-3.5" />
+        <AnalysisReview v-if="assistanceAllowed" class="panel-divider pt-3.5" />
+        <PositionExplorer v-if="assistanceAllowed" />
+        <p v-else class="panel-divider pt-3.5 text-sm">
+          Engine assistance is paused during your live Lichess game.
+        </p>
 
         <div class="moves-wrap">
           <div ref="treeList" class="tree-list" role="list" aria-label="Moves">

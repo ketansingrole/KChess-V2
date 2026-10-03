@@ -1,6 +1,3 @@
-import type { ChildProcessByStdio } from 'node:child_process'
-import { createInterface } from 'node:readline'
-import type { Readable, Writable } from 'node:stream'
 import {
   endEval,
   hasScore,
@@ -19,7 +16,9 @@ import type {
   StoredReview,
 } from '../shared/types'
 import { parseInfo } from '../shared/uciInfo'
-import { engineStatus, engineThreads, spawnEngine } from './engine'
+import { UciController, SearchCancelled } from './uci'
+import { acquireEngine, searchThreads } from './engineScheduler'
+import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { gamesToReview, markChecked, readReview, writeReview } from './reviewStore'
 
 /**
@@ -90,97 +89,77 @@ export function setupReviews(next: ReviewHost): void {
 
 interface Engine {
   key: string
-  child: ChildProcessByStdio<Writable, Readable, Readable>
-  threads: number
-  search?: { whiteToMove: boolean; best?: ReviewEval; done: (score: ReviewEval) => void }
-  ready?: () => void
-  failed?: Error
+  uci: UciController
 }
-
 let engine: Engine | null = null
+let searchController: AbortController | undefined
 let idleTimer: ReturnType<typeof setTimeout> | undefined
-
 function write(target: Engine, command: string): void {
-  if (!target.child.stdin.destroyed) target.child.stdin.write(`${command}\n`)
+  target.uci.write(command)
 }
-
 async function openEngine(configured: string): Promise<Engine> {
   clearTimeout(idleTimer)
   const status = await engineStatus(configured)
-  if (!status.ready)
-    throw new Error('Stockfish could not be found. Choose an engine in Settings › Chess engine.')
-  const key = status.bundled ? 'bundled' : status.path
-  if (engine && engine.key === key && !engine.failed) return engine
-  closeEngine()
-  const child = spawnEngine(status)
-  const self: Engine = { key, child, threads: 0 }
-  engine = self
-  const fail = (error: Error): void => {
-    self.failed ??= error
-    if (engine === self) engine = null
-    self.search?.done({})
-    self.ready?.()
+  if (!status.ready) throw new Error('Stockfish could not be found. Choose an engine in Settings.')
+  const key = await engineIdentity(status)
+  if (engine?.key !== key || engine.uci.failed) {
+    closeEngine()
+    engine = { key, uci: new UciController(spawnEngine(status)) }
   }
-  child.on('error', fail)
-  child.on('exit', () => fail(new Error('Stockfish stopped unexpectedly.')))
-  child.stderr.resume()
-  child.stdin.on('error', () => undefined)
-  createInterface({ input: child.stdout }).on('line', (raw) => {
-    const line = raw.trim()
-    if (line === 'uciok') write(self, 'isready')
-    else if (line === 'readyok') {
-      const ready = self.ready
-      self.ready = undefined
-      ready?.()
-    } else if (line.startsWith('info ') && self.search) {
-      const parsed = parseInfo(line, self.search.whiteToMove)
-      if (!parsed || parsed.line.rank !== 1) return
-      const { cp, mate, pv, depth } = parsed.line
-      self.search.best = {
-        ...(mate !== undefined ? { mate } : { cp }),
-        best: pv[0],
-        pv: pv.slice(0, PV_LENGTH),
-        depth,
-      }
-    } else if (line.startsWith('bestmove') && self.search) {
-      const search = self.search
-      self.search = undefined
-      search.done(search.best ?? {})
-    }
-  })
-  await new Promise<void>((resolve, reject) => {
-    self.ready = resolve
-    child.once('exit', () => reject(self.failed ?? new Error('Stockfish stopped unexpectedly.')))
-    write(self, 'uci')
-  })
-  write(self, 'setoption name Hash value 64')
-  return self
+  await engine.uci.ready
+  return engine
 }
-
-async function configure(target: Engine, threads: number): Promise<void> {
-  if (target.threads === threads) return
-  target.threads = threads
-  write(target, `setoption name Threads value ${threads}`)
-  await new Promise<void>((resolve) => {
-    target.ready = resolve
-    write(target, 'isready')
-  })
+async function search(
+  target: Engine,
+  job: Job,
+  index: number,
+  depth: number,
+  ms: number,
+): Promise<ReviewEval> {
+  const controller = new AbortController()
+  searchController = controller
+  let release: (() => void) | undefined
+  let score: ReviewEval = {}
+  try {
+    release = await acquireEngine(1, () => controller.abort(), controller.signal)
+    if (job.cancelled || !host || host.busy() === 'online') throw new SearchCancelled()
+    write(target, `setoption name Threads value ${job.background ? 1 : searchThreads()}`)
+    await target.uci.sync()
+    controller.signal.throwIfAborted()
+    write(
+      target,
+      `position fen ${job.fen}${index ? ` moves ${job.moves.slice(0, index).join(' ')}` : ''}`,
+    )
+    await target.uci.search(
+      `go depth ${depth} movetime ${ms}`,
+      (line) => {
+        const parsed = parseInfo(line, job.positions[index]!.turn === 'white')
+        if (!parsed || parsed.line.rank !== 1) return
+        const { cp, mate, pv, depth } = parsed.line
+        score = {
+          ...(mate !== undefined ? { mate } : { cp }),
+          best: pv[0],
+          pv: pv.slice(0, PV_LENGTH),
+          depth,
+        }
+      },
+      ms + 10_000,
+      controller.signal,
+    )
+    return score
+  } catch (error) {
+    if (controller.signal.aborted) throw new SearchCancelled()
+    throw error
+  } finally {
+    release?.()
+    if (searchController === controller) searchController = undefined
+  }
 }
-
-function search(target: Engine, position: ReplayedPosition, depth: number, ms: number) {
-  return new Promise<ReviewEval>((resolve) => {
-    if (target.failed) return resolve({})
-    target.search = { whiteToMove: position.turn === 'white', done: resolve }
-    write(target, `position fen ${position.fen}`)
-    write(target, `go depth ${depth} movetime ${ms}`)
-  })
-}
-
 function closeEngine(): void {
   clearTimeout(idleTimer)
-  const old = engine
+  searchController?.abort()
+  engine?.uci.close()
   engine = null
-  old?.child.kill()
 }
 
 /* ── The queue ────────────────────────────────────────────────────── */
@@ -243,7 +222,7 @@ export function requestReview(request: ReviewRequest): StoredReview | null {
   const job = jobFor(request, false)
   if (!job) return null
   const stored = readReview(job.key)
-  if (stored?.complete) return stored
+  if (stored?.complete && stored.source === 'lichess') return stored
   if (running?.key === job.key) {
     running.background = false
     return stored
@@ -263,7 +242,10 @@ export function requestReview(request: ReviewRequest): StoredReview | null {
 export function cancelReview(key: string): void {
   const queued = asked.findIndex((job) => job.key === key)
   if (queued >= 0) asked.splice(queued, 1)
-  if (running?.key === key) running.cancelled = true
+  if (running?.key === key) {
+    running.cancelled = true
+    searchController?.abort()
+  }
   sendStatus()
 }
 
@@ -352,6 +334,12 @@ async function pump(): Promise<void> {
   pumping = true
   try {
     while (host) {
+      if (host.busy() === 'online') {
+        paused = 'online'
+        sendStatus()
+        scheduleRecheck()
+        break
+      }
       let job = asked.shift() ?? null
       if (!job) {
         paused = await backgroundBlock()
@@ -383,7 +371,7 @@ async function pump(): Promise<void> {
 
 /** Should the job in progress give way (to a game someone asked for, or to the foreground)? */
 async function shouldYield(job: Job): Promise<boolean> {
-  if (job.cancelled || !host) return true
+  if (job.cancelled || !host || host.busy() === 'online') return true
   // A game asked for more recently goes first; this one carries on after it.
   if (asked.length) return true
   if (!job.background) return false
@@ -413,7 +401,15 @@ async function run(job: Job): Promise<void> {
     while (review.evals.length < total) review.evals.push(null)
     const settings = await host.settings()
     const target = await openEngine(settings.enginePath)
+    if (review.engine !== target.key)
+      review = {
+        ...review,
+        engine: target.key,
+        complete: false,
+        evals: job.positions.map(() => null),
+      }
     write(target, 'ucinewgame')
+    write(target, 'setoption name Hash value 64')
     const passes: { depth: number; ms: number }[] = job.background
       ? [{ depth: FULL_DEPTH, ms: FULL_MS }]
       : [
@@ -421,7 +417,6 @@ async function run(job: Job): Promise<void> {
           { depth: FULL_DEPTH, ms: FULL_MS },
         ]
     for (const pass of passes) {
-      await configure(target, job.background ? 1 : engineThreads())
       let sinceSave = 0
       let done = 0
       for (let i = 0; i < total; i++) {
@@ -434,8 +429,7 @@ async function run(job: Job): Promise<void> {
             if (!job.cancelled && !job.background) asked.push(job)
             return
           }
-          const score = await search(target, position, pass.depth, pass.ms)
-          if (target.failed) throw target.failed
+          const score = await search(target, job, i, pass.depth, pass.ms)
           if (hasScore(score)) review.evals[i] = score
           sinceSave++
         }
@@ -453,6 +447,15 @@ async function run(job: Job): Promise<void> {
     host.update(updateOf(review))
     if (!review.complete) skipped.add(job.gameId ?? job.key)
   } catch (cause) {
+    if (
+      job.cancelled ||
+      cause instanceof SearchCancelled ||
+      (searchController?.signal.aborted && !engine?.uci.failed)
+    ) {
+      if (review.evals.some(Boolean)) host?.update(updateOf(review))
+      if (!job.cancelled && !job.background && host) asked.push(job)
+      return
+    }
     // The engine is missing or failed: try other games, and this one again next session.
     skipped.add(job.gameId ?? job.key)
     if (!job.background)

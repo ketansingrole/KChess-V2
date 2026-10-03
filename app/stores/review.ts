@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, shallowRef, triggerRef } from 'vue'
+import { onScopeDispose, ref, shallowRef, triggerRef } from 'vue'
 import type {
   ReviewRequest,
   ReviewStatus,
@@ -18,6 +18,7 @@ export const useReviewStore = defineStore('review', () => {
   const summaries = ref<Record<string, ReviewSummary>>({})
   const status = ref<ReviewStatus>({ waiting: 0 })
   let listening = false
+  const subscriptions: (() => void)[] = []
 
   function remember(review: StoredReview): void {
     reviews.value.set(review.key, review)
@@ -33,8 +34,8 @@ export const useReviewStore = defineStore('review', () => {
   function listen(): void {
     if (listening || typeof window === 'undefined' || !window.kchess) return
     listening = true
-    window.kchess.onReviewUpdate(receive)
-    window.kchess.onReviewStatus((next) => (status.value = next))
+    subscriptions.push(window.kchess.onReviewUpdate(receive))
+    subscriptions.push(window.kchess.onReviewStatus((next) => (status.value = next)))
     void window.kchess
       .reviewStatus()
       .then((next) => (status.value = next))
@@ -75,5 +76,11 @@ export const useReviewStore = defineStore('review', () => {
     await window.kchess.reviewCancel(key).catch(() => undefined)
   }
 
-  return { reviews, summaries, status, listen, load, request, cancel, loadSummaries }
+  function dispose(): void {
+    subscriptions.splice(0).forEach((off) => off())
+    listening = false
+  }
+  onScopeDispose(dispose)
+
+  return { dispose, reviews, summaries, status, listen, load, request, cancel, loadSummaries }
 })

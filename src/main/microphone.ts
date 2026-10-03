@@ -60,9 +60,24 @@ export async function openMicrophoneSettings(): Promise<boolean> {
 /** Grant audio capture to the app's own pages only; never camera or screen capture. */
 export function setupMediaPermissions(isAppUrl: (url: string) => boolean): void {
   const ses = session.defaultSession
+  ses.setPermissionCheckHandler((contents, permission, origin, details) =>
+    Boolean(
+      contents &&
+      permission === 'media' &&
+      isAppUrl(contents.getURL()) &&
+      isAppUrl(origin) &&
+      details.mediaType === 'audio',
+    ),
+  )
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
-    if (permission !== 'media') return callback(true)
+    if (permission !== 'media') return callback(false)
     const types = 'mediaTypes' in details ? (details.mediaTypes ?? []) : []
-    callback(isAppUrl(contents.getURL()) && types.length > 0 && types.every((t) => t === 'audio'))
+    callback(
+      isAppUrl(contents.getURL()) &&
+        isAppUrl(details.requestingUrl) &&
+        details.isMainFrame &&
+        types.length > 0 &&
+        types.every((t) => t === 'audio'),
+    )
   })
 }

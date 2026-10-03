@@ -29,6 +29,11 @@ export interface TreeNode {
   /** Half-moves since the game's start: 0 is White's first move still to play. */
   ply: number
   children: TreeNode[]
+  /** PGN document metadata is stored on the root; annotations belong to each move. */
+  headers?: Record<string, string>
+  comments?: string[]
+  startingComments?: string[]
+  nags?: number[]
 }
 
 export const pathOf = (moves: readonly string[]): string => moves.join(' ')
@@ -117,14 +122,23 @@ export function moveNumber(ply: number, always: boolean): string {
 
 /* ── PGN ─────────────────────────────────────────────────────────────── */
 
-export function treeToPgn(root: TreeNode, headers: Record<string, string> = {}): string {
+export function treeToPgn(
+  root: TreeNode,
+  headers: Record<string, string> = root.headers ?? {},
+): string {
   const game = defaultGame<PgnNodeData>()
   for (const [key, value] of Object.entries(headers)) game.headers.set(key, value)
+  game.comments = root.comments
   const pos = positionFromFen(root.fen)
   if (pos && root.fen !== INITIAL_FEN) setStartingPosition(game.headers, pos)
   const copy = (from: TreeNode, to: Node<PgnNodeData>): void => {
     for (const child of from.children) {
-      const node = new ChildNode<PgnNodeData>({ san: child.san })
+      const node = new ChildNode<PgnNodeData>({
+        san: child.san,
+        comments: child.comments,
+        startingComments: child.startingComments,
+        nags: child.nags,
+      })
       to.children.push(node)
       copy(child, node)
     }
@@ -133,18 +147,35 @@ export function treeToPgn(root: TreeNode, headers: Record<string, string> = {}):
   return makePgn(game)
 }
 
-/** The first game of a PGN with all its variations, or undefined when it has no usable start. */
+/** One bounded PGN document, or undefined when it cannot be imported without loss. */
 export function treeFromPgn(text: string): TreeNode | undefined {
-  const game = parsePgn(text)[0]
-  if (!game) return undefined
+  if (text.length > 2_000_000) return undefined
+  const games = parsePgn(text)
+  if (games.length !== 1) return undefined
+  const game = games[0]!
   const start = startingPosition(game.headers)
   if (start.isErr) return undefined
   const root = newTree(makeFen(start.value.toSetup()))
-  const walk = (from: Node<PgnNodeData>, to: TreeNode, pos: Position): void => {
+  root.headers = Object.fromEntries(game.headers)
+  root.comments = game.comments
+  let invalid = false
+  let count = 0
+  const walk = (from: Node<PgnNodeData>, to: TreeNode, pos: Position, depth = 0): void => {
+    if (depth > 1024) {
+      invalid = true
+      return
+    }
     for (const child of from.children) {
+      if (++count > 10_000) {
+        invalid = true
+        return
+      }
       const position = pos.clone()
       const move = parseSan(position, child.data.san)
-      if (!move) continue
+      if (!move) {
+        invalid = true
+        continue
+      }
       const uci = makeUci(move)
       const san = makeSanAndPlay(position, move)
       const node: TreeNode = {
@@ -153,13 +184,16 @@ export function treeFromPgn(text: string): TreeNode | undefined {
         fen: makeFen(position.toSetup()),
         ply: to.ply + 1,
         children: [],
+        comments: child.data.comments,
+        startingComments: child.data.startingComments,
+        nags: child.data.nags,
       }
       to.children.push(node)
-      walk(child, node, position)
+      walk(child, node, position, depth + 1)
     }
   }
   walk(game.moves, root, start.value)
-  return root
+  return invalid ? undefined : root
 }
 
 /* ── Engine output ───────────────────────────────────────────────────── */

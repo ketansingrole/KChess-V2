@@ -39,6 +39,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run test:puzzle-worker
       # Windows Server runners deny microphone access in privacy settings, which the app
       # (correctly) reports as "denied". Allow it so the voice e2e test can run.
       - name: Allow microphone access (Windows)

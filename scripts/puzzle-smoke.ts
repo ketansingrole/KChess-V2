@@ -391,3 +391,23 @@ assert(
 // A second import replaces the first completely.
 storeSample(database, sample.slice(0, 10))
 assert('re-importing replaces the puzzles', readStatus(database, false).count, 10)
+
+// A failed replacement must keep the existing puzzles and metadata.
+const previousStatus = readStatus(database, false)
+for (const replacement of [[], [{ ...sample[0]!, fen: 'invalid' }]]) {
+  let rejected = false
+  try {
+    storeSample(database, replacement)
+  } catch {
+    rejected = true
+  }
+  assert('invalid replacement rejected', rejected, true)
+  assert('invalid replacement retains previous sample', readStatus(database, false), previousStatus)
+}
+try {
+  storeSample(database, sample, () => true)
+} catch {
+  /* expected cancellation */
+}
+assert('cancelled replacement retains previous sample', readStatus(database, false), previousStatus)
+assert('duplicate IDs counted once', storeSample(database, [sample[0]!, sample[0]!]), 1)

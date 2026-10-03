@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { explainReviewedMove } from '../utils/coach'
+import { useMistakeStore } from '../stores/mistakes'
 import { movesOf, pathOf } from '../utils/analysisTree'
 import { useAnalysisStore, type ReviewMark } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
@@ -58,7 +60,25 @@ function stop(): void {
   analysis.cancelReview()
 }
 /** A Lichess game can be reviewed from Lichess's analysis even without a local engine. */
-const canReview = computed(() => engineReady.value || !!origin.value?.gameId)
+const canReview = computed(
+  () =>
+    !['playing', 'seeking', 'disconnected'].includes(store.onlinePhase) &&
+    (engineReady.value || !!origin.value?.gameId),
+)
+const practice = useMistakeStore()
+const practiceFeedback = ref('')
+function addPractice(color: 'white' | 'black'): void {
+  if (!review.value || !complete.value) return
+  const count = practice.add(review.value, color)
+  practiceFeedback.value = count
+    ? `${count} positions added to Practice → Your mistakes.`
+    : 'No new verified mistakes to add.'
+}
+const explanation = computed(() =>
+  review.value && currentIndex.value > 0
+    ? explainReviewedMove(review.value, currentIndex.value - 1)
+    : '',
+)
 
 const sourceLabel = computed(() => {
   const stored = review.value
@@ -201,6 +221,16 @@ function showBest(): void {
       </tbody>
     </table>
 
+    <div v-if="complete" class="flex flex-wrap gap-2">
+      <UButton size="xs" variant="outline" @click="addPractice('white')"
+        >Practice White's mistakes</UButton
+      >
+      <UButton size="xs" variant="outline" @click="addPractice('black')"
+        >Practice Black's mistakes</UButton
+      >
+    </div>
+    <p v-if="practiceFeedback" role="status" class="review-note">{{ practiceFeedback }}</p>
+    <p v-if="explanation" class="review-note">{{ explanation }}</p>
     <EvalChart
       v-if="chart"
       :points="chart.points"

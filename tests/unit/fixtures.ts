@@ -44,6 +44,8 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
       onEvent = fn
       return vi.fn()
     },
+    stopEngine: async () => {},
+    onOnlineState: () => vi.fn(),
     onOnlineError: () => vi.fn(),
     onNotification: () => vi.fn(),
     resumeOnline: async () => null,

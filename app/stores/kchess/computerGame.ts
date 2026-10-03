@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type { EngineLevel, NotificationKind } from '../../../src/shared/types'
 import {
   checkColor,
@@ -12,6 +12,11 @@ import {
   takebackMoves,
   turnColor,
 } from '../../utils/chess'
+import { readSession, persistSession } from '../../utils/sessionPersistence'
+import { ENGINE_LEVELS } from '../../../src/shared/types'
+import { UCI_MOVE } from '../../../src/shared/patterns'
+import { replay } from '../../../src/shared/review'
+import { INITIAL_FEN } from 'chessops/fen'
 import { playMoveSound } from '../../utils/sound'
 
 /** Computer-game state lives for the store's lifetime, including across route changes. */
@@ -22,14 +27,56 @@ export function useComputerGame(options: {
   notifyDesktop: (kind: NotificationKind, title: string, body: string) => void
 }) {
   const { engineReady, fail, recheckEngine, notifyDesktop } = options
-  const localMoves = ref<string[]>([])
-  const localPly = ref(0)
-  const level = ref<EngineLevel>('club')
-  const userColor = ref<'white' | 'black'>('white')
+  const saved = readSession('kchess:computer:v1', (raw) => {
+    if (!raw || typeof raw !== 'object') return undefined
+    const value = raw as {
+      version?: unknown
+      moves?: unknown
+      ply?: unknown
+      level?: unknown
+      color?: unknown
+      resigned?: unknown
+    }
+    if (
+      value.version !== 1 ||
+      !Array.isArray(value.moves) ||
+      value.moves.length > 1024 ||
+      !value.moves.every((m) => typeof m === 'string' && UCI_MOVE.test(m)) ||
+      replay(INITIAL_FEN, value.moves).length !== value.moves.length + 1 ||
+      !ENGINE_LEVELS.includes(value.level as EngineLevel) ||
+      !['white', 'black'].includes(String(value.color))
+    )
+      return undefined
+    return {
+      moves: value.moves as string[],
+      ply:
+        typeof value.ply === 'number'
+          ? Math.max(0, Math.min(value.moves.length, Math.floor(value.ply)))
+          : value.moves.length,
+      level: value.level as EngineLevel,
+      color: value.color as 'white' | 'black',
+      resigned: value.resigned === true,
+    }
+  })
+  const localMoves = ref<string[]>(saved?.moves ?? [])
+  const localPly = ref(saved?.ply ?? 0)
+  const level = ref<EngineLevel>(saved?.level ?? 'club')
+  const userColor = ref<'white' | 'black'>(saved?.color ?? 'white')
   const thinking = ref(false)
   const gameEpoch = ref(0)
   /** The player gave up; the game is over whatever the position. */
-  const resigned = ref(false)
+  const resigned = ref(saved?.resigned ?? false)
+  const localSaveError = persistSession('kchess:computer:v1', () => ({
+    version: 1,
+    moves: localMoves.value,
+    ply: localPly.value,
+    level: level.value,
+    color: userColor.value,
+    resigned: resigned.value,
+  }))
+  watch(engineReady, (ready) => {
+    if (ready && saved) void computerTurn()
+  })
   const localGame = computed(() => positionAfter(localMoves.value))
   const localDraw = computed(() => drawReason(localMoves.value))
   const localOver = computed(
@@ -77,7 +124,13 @@ export function useComputerGame(options: {
     void computerTurn()
   }
   async function computerTurn(): Promise<void> {
-    if (localGame.value.turn === userColor.value || localOver.value || !engineReady.value) return
+    if (
+      thinking.value ||
+      localGame.value.turn === userColor.value ||
+      localOver.value ||
+      !engineReady.value
+    )
+      return
     const epoch = gameEpoch.value,
       moveCount = localMoves.value.length
     thinking.value = true
@@ -103,6 +156,7 @@ export function useComputerGame(options: {
   }
   function newGame(): void {
     gameEpoch.value++
+    void window.kchess.stopEngine().catch(() => {})
     thinking.value = false
     resigned.value = false
     localMoves.value = []
@@ -112,6 +166,7 @@ export function useComputerGame(options: {
   function takeback(): void {
     if (!localMoves.value.length) return
     gameEpoch.value++
+    void window.kchess.stopEngine().catch(() => {})
     thinking.value = false
     resigned.value = false
     localMoves.value = takebackMoves(localMoves.value, userColor.value)
@@ -123,6 +178,7 @@ export function useComputerGame(options: {
   function resign(): void {
     if (!localMoves.value.length || localOver.value) return
     gameEpoch.value++
+    void window.kchess.stopEngine().catch(() => {})
     thinking.value = false
     resigned.value = true
     localPly.value = localMoves.value.length
@@ -136,6 +192,7 @@ export function useComputerGame(options: {
     return thinking.value ? 'Computer is thinking…' : `Your move · ${statusText(localGame.value)}`
   }
   return {
+    localSaveError,
     localGameEpoch: gameEpoch,
     localMoves,
     localPly,

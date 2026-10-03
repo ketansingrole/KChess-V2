@@ -12,24 +12,24 @@ interface PuzzleRow {
 }
 
 export function readStatus(database: DatabaseSync, busy: boolean): PuzzleDbStatus {
-  const meta = database.prepare('SELECT importedAt, count FROM puzzle_meta WHERE id = 1').get() as
-    { importedAt: number; count: number } | undefined
-  const size = database
-    .prepare(
-      'SELECT SUM(LENGTH(id) + LENGTH(fen) + LENGTH(moves) + LENGTH(themes) + 24) AS bytes FROM puzzles',
-    )
-    .get() as unknown as { bytes: number | null }
+  const meta = database
+    .prepare('SELECT importedAt, count, bytes FROM puzzle_meta WHERE id = 1')
+    .get() as { importedAt: number; count: number; bytes: number } | undefined
   return {
     installed: Boolean(meta && meta.count > 0),
     count: meta?.count ?? 0,
-    bytes: size.bytes ?? 0,
+    bytes: meta?.bytes ?? 0,
     importedAt: meta?.importedAt,
     busy,
   }
 }
 
 /** Replace the stored puzzles with `rows` in one transaction; a failure keeps the old ones. */
-export function storeSample(database: DatabaseSync, rows: DbPuzzle[]): number {
+export function storeSample(
+  database: DatabaseSync,
+  rows: DbPuzzle[],
+  cancelled: () => boolean = () => false,
+): number {
   const insert = database.prepare(
     'INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes) VALUES (?, ?, ?, ?, ?, ?)',
   )
@@ -37,15 +37,22 @@ export function storeSample(database: DatabaseSync, rows: DbPuzzle[]): number {
   try {
     database.exec('DELETE FROM puzzles')
     let count = 0
+    let bytes = 0
     for (const row of rows) {
       // Skip anything the app could not play (a malformed line).
       if (!puzzleFromDb(row)) continue
-      insert.run(row.id, row.fen, row.moves, row.rating, row.plays ?? 0, row.themes)
-      count++
+      if (cancelled()) throw new Error('Puzzle import cancelled.')
+      const result = insert.run(row.id, row.fen, row.moves, row.rating, row.plays ?? 0, row.themes)
+      count += Number(result.changes)
+      if (result.changes) bytes += Buffer.byteLength(row.id + row.fen + row.moves + row.themes) + 24
     }
+    if (!count) throw new Error('The downloaded file held no usable puzzles.')
+    if (cancelled()) throw new Error('Puzzle import cancelled.')
     database
-      .prepare('INSERT OR REPLACE INTO puzzle_meta (id, importedAt, count) VALUES (1, ?, ?)')
-      .run(Date.now(), count)
+      .prepare(
+        'INSERT OR REPLACE INTO puzzle_meta (id, importedAt, count, bytes) VALUES (1, ?, ?, ?)',
+      )
+      .run(Date.now(), count, bytes)
     database.exec('COMMIT')
     return count
   } catch (cause) {
@@ -61,7 +68,7 @@ export function clearStored(database: DatabaseSync): void {
 }
 
 function requireInstalled(database: DatabaseSync): void {
-  if (!readStatus(database, false).installed)
+  if (!database.prepare('SELECT count FROM puzzle_meta WHERE id = 1 AND count > 0').get())
     throw new Error(
       'Download the puzzle database first (Settings → Data & storage, or the Rush tab).',
     )

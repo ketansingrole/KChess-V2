@@ -14,18 +14,19 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
-import { pickMacAsset, type ReleaseAsset } from './stockfishAsset.ts'
+import { pickStockfishAsset, type ReleaseAsset } from './stockfishAsset.ts'
 
 const execFileAsync = promisify(execFile)
 
 /** The Stockfish KChess downloads and owns; the only engine directory KChess ever deletes. */
 export const MANAGED_DIR = join(homedir(), '.kchess/engines/stockfish/current')
-export const MANAGED_PATH = join(MANAGED_DIR, 'stockfish')
+const EXECUTABLE = process.platform === 'win32' ? 'stockfish.exe' : 'stockfish'
+export const MANAGED_PATH = join(MANAGED_DIR, EXECUTABLE)
 const VERSION_FILE = 'VERSION'
 const RELEASE_URL = 'https://api.github.com/repos/official-stockfish/Stockfish/releases/latest'
 const MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
@@ -45,7 +46,7 @@ export interface ManagedLocation {
 }
 
 export async function managedEngine(dir = MANAGED_DIR): Promise<ManagedEngine> {
-  const path = join(dir, 'stockfish')
+  const path = join(dir, EXECUTABLE)
   try {
     if (!(await stat(path)).isFile()) return { installed: false, path }
   } catch {
@@ -86,7 +87,7 @@ export interface InstallResult extends ManagedEngine {
 }
 
 /**
- * Install the latest official macOS build, verified against the digest GitHub
+ * Install the latest official native build, verified against the digest GitHub
  * publishes. Checks the latest release first and downloads nothing when the
  * installed engine is already that version.
  */
@@ -99,11 +100,20 @@ export async function installManagedEngine(location: ManagedLocation = {}): Prom
   if (!releaseResponse.ok)
     throw new Error(`Could not check Stockfish releases (${releaseResponse.status}).`)
   const release = (await releaseResponse.json()) as { tag_name: string; assets: ReleaseAsset[] }
+  if (!Array.isArray(release.assets) || typeof release.tag_name !== 'string')
+    throw new Error('Invalid Stockfish release metadata.')
   const current = await managedEngine(dir)
   if (current.installed && current.version === release.tag_name)
     return { ...current, version: release.tag_name, updated: false }
-  const asset = pickMacAsset(release.assets, process.arch)
-  if (!asset) throw new Error('No macOS Stockfish download was found.')
+  const asset = pickStockfishAsset(release.assets, process.platform, process.arch)
+  if (!asset) throw new Error('No compatible official Stockfish download was found.')
+  if (
+    typeof asset.name !== 'string' ||
+    basename(asset.name) !== asset.name ||
+    !Number.isFinite(asset.size) ||
+    typeof asset.browser_download_url !== 'string'
+  )
+    throw new Error('Invalid Stockfish download metadata.')
   const expected = /^sha256:([0-9a-f]{64})$/i.exec(asset.digest ?? '')?.[1]?.toLowerCase()
   if (!expected)
     throw new Error('The Stockfish release has no SHA-256 digest, so it cannot be verified.')
@@ -136,21 +146,49 @@ export async function installManagedEngine(location: ManagedLocation = {}): Prom
 
     const extracted = join(staging, 'extracted')
     await mkdir(extracted)
-    if (/\.zip$/i.test(asset.name))
-      await execFileAsync('/usr/bin/unzip', ['-q', archive, '-d', extracted])
-    else if (/\.(tar\.gz|tgz)$/i.test(asset.name))
-      await execFileAsync('/usr/bin/tar', ['-xzf', archive, '-C', extracted])
-    else if (/\.tar$/i.test(asset.name))
-      await execFileAsync('/usr/bin/tar', ['-xf', archive, '-C', extracted])
-    else throw new Error(`Unsupported Stockfish archive: ${asset.name}`)
+    // macOS/Linux tar and Windows' bundled bsdtar both support the official archive formats.
+    if (!/\.(zip|tar\.gz|tgz|tar)$/i.test(asset.name))
+      throw new Error('Unsupported Stockfish archive.')
+    await execFileAsync(
+      process.platform === 'win32'
+        ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+        : '/usr/bin/tar',
+      ['-xf', archive, '-C', extracted],
+      { timeout: 60_000 },
+    )
     const source = await findBinary(extracted)
     if (!source) throw new Error('Stockfish executable was missing from the release.')
 
     await mkdir(dir, { recursive: true })
-    const path = join(dir, 'stockfish')
+    const path = join(dir, EXECUTABLE)
     const pending = `${path}.pending`
     await copyFile(source, pending)
     await chmod(pending, 0o755)
+    // Verify UCI before replacing the working engine; this catches wrong architecture and broken downloads.
+    const probe = execFile(pending, [], { timeout: 15_000, maxBuffer: 1_000_000 }, () => {})
+    await new Promise<void>((resolve, reject) => {
+      let output = ''
+      let settled = false
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        probe.kill()
+        if (error) reject(error)
+        else resolve()
+      }
+      probe.on('error', (error) => finish(error))
+      probe.on('exit', () =>
+        finish(
+          new Error('The downloaded Stockfish could not start. The previous engine was retained.'),
+        ),
+      )
+      probe.stdout?.on('data', (chunk: Buffer) => {
+        output += chunk.toString()
+        if (/^uciok\s*$/m.test(output)) finish()
+        else if (output.length > 1_000_000) finish(new Error('Invalid Stockfish output.'))
+      })
+      probe.stdin?.end('uci\n')
+    })
     await rename(pending, path)
     await writeFile(join(dir, VERSION_FILE), `${release.tag_name}\n`)
     return { installed: true, path, version: release.tag_name, updated: true }

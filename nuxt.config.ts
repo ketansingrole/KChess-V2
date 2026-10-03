@@ -1,3 +1,5 @@
+import { localIcons, voskWorkerPlugin } from './scripts/vosk-worker-plugin'
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
   ssr: false,
@@ -11,5 +13,6 @@ export default defineNuxtConfig({
     '@lichess-org/chessground/assets/chessground.brown.css',
     '~/assets/css/main.css',
   ],
-  vite: { server: { open: false } },
+  icon: { clientBundle: { icons: localIcons() } },
+  vite: { server: { open: false }, plugins: [voskWorkerPlugin()] },
 })

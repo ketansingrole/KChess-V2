@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { parseSan } from 'chessops/san'
+import { makeUci, parseUci } from 'chessops/util'
+import { usePreferredReducedMotion } from '@vueuse/core'
 import { Chessground } from '@lichess-org/chessground'
 import type { Api } from '@lichess-org/chessground/api'
 import type { Config } from '@lichess-org/chessground/config'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { isPromotionMove, type Dests } from '../utils/chess'
+import { positionFromFen, isPromotionMove, type Dests } from '../utils/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
 
@@ -39,6 +42,39 @@ const props = defineProps<{
 const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
 
 const el = ref<HTMLElement | null>(null)
+const reducedMotion = usePreferredReducedMotion()
+const moveInput = ref('')
+const moveMessage = ref('')
+const keyboardInput = ref<HTMLInputElement | null>(null)
+let restoreFocus: HTMLElement | null = null
+function submitMove(uci: string): void {
+  const started = performance.now()
+  emit('move', uci)
+  requestAnimationFrame(() => {
+    void window.kchess
+      ?.recordPerformance?.('board.frame', performance.now() - started)
+      .catch(() => {})
+  })
+}
+function keyboardMove(): void {
+  const pos = positionFromFen(props.fen)
+  const text = moveInput.value.trim()
+  const move = pos && (parseUci(text) ?? parseSan(pos, text))
+  if (
+    !pos ||
+    !move ||
+    !pos.isLegal(move) ||
+    !props.dests?.get(makeUci(move).slice(0, 2) as Key)?.includes(makeUci(move).slice(2, 4) as Key)
+  ) {
+    moveMessage.value = 'Enter a legal move, such as Nf3 or g1f3.'
+    return
+  }
+  const uci = makeUci(move)
+  moveMessage.value = `Move submitted: ${text}`
+  moveInput.value = ''
+  if (uci.length === 4) put(uci.slice(0, 2) as Key, uci.slice(2, 4) as Key)
+  else submitMove(uci)
+}
 let ground: Api | undefined
 /** Chessground wipes drawn arrows whenever it is handed a FEN, so it only gets one when the position changed. */
 let shownFen: string | undefined
@@ -48,7 +84,14 @@ type PromotionRole = 'q' | 'r' | 'b' | 'n'
 const pending = ref<{ orig: Key; dest: Key } | null>(null)
 const promoDialog = ref<HTMLElement | null>(null)
 watch(pending, async (value) => {
-  if (!value) return
+  if (!value) {
+    await nextTick()
+    if (restoreFocus?.isConnected) restoreFocus.focus()
+    restoreFocus = null
+    return
+  }
+  restoreFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : keyboardInput.value
   await nextTick()
   promoDialog.value?.querySelector<HTMLElement>('button')?.focus()
 })
@@ -65,11 +108,11 @@ const promotionChoices = computed<{ role: PromotionRole; label: string; image: s
 
 function put(orig: Key, dest: Key, metadata?: { premove?: boolean }): void {
   if (!isPromotionMove(props.fen, orig, dest)) {
-    emit('move', `${orig}${dest}`)
+    submitMove(`${orig}${dest}`)
     return
   }
   const auto = props.promotion === 'queen' || (props.promotion === 'premove' && metadata?.premove)
-  if (auto) emit('move', `${orig}${dest}q`)
+  if (auto) submitMove(`${orig}${dest}q`)
   else pending.value = { orig, dest }
 }
 
@@ -77,7 +120,7 @@ function promote(role: PromotionRole): void {
   const move = pending.value
   if (!move) return
   pending.value = null
-  emit('move', `${move.orig}${move.dest}${role}`)
+  submitMove(`${move.orig}${move.dest}${role}`)
 }
 
 /** Dismissing the picker puts the pawn back where the position says it is. */
@@ -101,8 +144,8 @@ function configuration(): Config {
     coordinates: props.coordinates !== 'none',
     highlight: { lastMove: true, check: true },
     animation: {
-      enabled: animationMs[props.animation ?? 'normal'] > 0,
-      duration: animationMs[props.animation ?? 'normal'],
+      enabled: reducedMotion.value !== 'reduce' && animationMs[props.animation ?? 'normal'] > 0,
+      duration: reducedMotion.value === 'reduce' ? 0 : animationMs[props.animation ?? 'normal'],
     },
     disableContextMenu: true,
     // Never view-only: Chessground ignores drawing and premoves entirely in that mode.
@@ -133,7 +176,7 @@ onMounted(() => {
 })
 
 watch(
-  () => ({ ...props }),
+  () => ({ ...props, reducedMotion: reducedMotion.value }),
   () => {
     if (!ground) return
     if (props.resetKey !== shownReset) {
@@ -148,6 +191,20 @@ watch(
 )
 
 /** A plain click on the board clears drawn arrows and circles, like on Lichess. */
+function trapPromotion(event: KeyboardEvent): void {
+  if (event.key !== 'Tab') return
+  const buttons = promoDialog.value?.querySelectorAll<HTMLElement>('button')
+  if (!buttons?.length) return
+  const first = buttons[0]!,
+    last = buttons[buttons.length - 1]!
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
 function clearShapes(event: MouseEvent): void {
   if (event.button === 0 && !event.shiftKey && ground?.state.drawable.shapes.length)
     ground.setShapes([])
@@ -166,7 +223,32 @@ onBeforeUnmount(() => {
     :style="pieceStyle"
     @mousedown.capture="clearShapes"
   >
-    <div ref="el" />
+    <div ref="el" :inert="pending ? true : undefined" aria-label="Chess board" />
+    <form
+      v-if="interactive !== false && movable !== false && dests?.size"
+      class="mt-2 flex gap-2"
+      :inert="pending ? true : undefined"
+      @submit.prevent="keyboardMove"
+    >
+      <input
+        ref="keyboardInput"
+        v-model="moveInput"
+        aria-label="Enter a chess move in SAN or UCI"
+        placeholder="Move: Nf3 or g1f3"
+        autocomplete="off"
+        class="min-w-0 flex-1 rounded border border-default bg-default px-2 py-1 text-sm"
+      />
+      <button type="submit" class="rounded border border-default px-3 text-sm">Play move</button>
+    </form>
+    <p class="sr-only" aria-live="polite">
+      {{ moveMessage }} ·
+      {{
+        (turnColor ?? (fen.split(' ')[1] === 'w' ? 'white' : 'black')) === 'white'
+          ? 'White'
+          : 'Black'
+      }}
+      to move
+    </p>
     <div v-if="pending" class="promo-backdrop" @click.self="cancelPromotion">
       <div
         ref="promoDialog"
@@ -175,6 +257,7 @@ onBeforeUnmount(() => {
         aria-modal="true"
         aria-label="Choose promotion piece"
         @keydown.esc.stop="cancelPromotion"
+        @keydown="trapPromotion"
       >
         <button
           v-for="choice in promotionChoices"

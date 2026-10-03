@@ -1,11 +1,13 @@
 import { app, dialog } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { startPerformanceMonitoring, performanceSnapshot } from './performance'
 import { DiagnosticLog } from './diagnosticLog'
 
 let log: DiagnosticLog | undefined
 
 export function setupDiagnostics(): void {
+  startPerformanceMonitoring()
   try {
     log = new DiagnosticLog(join(app.getPath('userData'), 'logs'))
   } catch (error) {
@@ -58,6 +60,7 @@ export async function exportDiagnostics(): Promise<boolean> {
         arch: process.arch,
         versions: process.versions,
         logs: log?.read() ?? [],
+        performance: performanceSnapshot(),
       },
       null,
       2,

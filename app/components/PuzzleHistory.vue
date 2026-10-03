@@ -98,18 +98,16 @@ const rows = computed(() =>
           <UButton size="xs" variant="soft" color="neutral" @click="puzzles.retry(row.puzzle)"
             >Try again</UButton
           >
-          <UTooltip text="Open on Lichess">
-            <UButton
-              size="xs"
-              variant="ghost"
-              color="neutral"
-              icon="i-lucide-external-link"
-              aria-label="Open this puzzle on Lichess"
-              :to="`https://lichess.org/training/${row.puzzle.id}`"
-              target="_blank"
-              rel="noopener"
-            />
-          </UTooltip>
+          <a
+            :href="'https://lichess.org/training/' + row.puzzle.id"
+            target="_blank"
+            rel="noopener"
+            aria-label="Open this puzzle on Lichess"
+            title="Open on Lichess"
+            class="inline-flex rounded p-1 text-muted hover:text-default focus-visible:outline-2"
+          >
+            <UIcon name="i-lucide-external-link" />
+          </a>
         </span>
       </div>
     </div>

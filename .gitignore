@@ -28,7 +28,9 @@ Desktop.ini
 *.AppImage
 *.snap
 *.deb
+*.zip
 *.blockmap
+SHA256SUMS.txt
 latest*.yml
 
 # IDE
@@ -57,3 +59,6 @@ skills.json
 coverage/
 playwright-report/
 test-results/
+
+# Local docs / review notes
+docs/

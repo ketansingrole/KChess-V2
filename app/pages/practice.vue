@@ -4,6 +4,7 @@ import { useLocalStorage } from '@vueuse/core'
 const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
 
 const tabs = [
+  { label: 'Your mistakes', value: 'mistakes', icon: 'i-lucide-book-open' },
   { label: 'Coordinates', value: 'coordinates', icon: 'i-lucide-grid-3x3' },
   { label: 'Square colours', value: 'colors', icon: 'i-lucide-contrast' },
   { label: 'Knight paths', value: 'knight', icon: 'i-lucide-crown' },
@@ -26,7 +27,8 @@ const tabs = [
       class="mb-5"
       @update:model-value="practiceTab = $event as string"
     />
-    <CoordinatesTrainer v-if="practiceTab === 'coordinates'" />
+    <MistakeTrainer v-if="practiceTab === 'mistakes'" />
+    <CoordinatesTrainer v-else-if="practiceTab === 'coordinates'" />
     <SquareColorTrainer v-else-if="practiceTab === 'colors'" />
     <KnightPath v-else-if="practiceTab === 'knight'" />
     <EndgameDrills v-else-if="practiceTab === 'endgames'" />

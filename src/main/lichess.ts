@@ -15,6 +15,7 @@ import type {
   NeedsReconnect,
   OnlineAction,
   OnlineEvent,
+  OnlineConnection,
   FollowedUser,
   FollowingProblem,
   FollowingReport,
@@ -37,8 +38,10 @@ import { lichessLine, replay, reviewKey, sanToUci } from '../shared/review'
 import { markChecked, writeReview } from './reviewStore'
 import { LichessError, throwLichessErrors } from '../shared/lichessError'
 import { isGameInProgress } from '../shared/gameStatus'
+import { lichessFetch } from './requestPolicy'
+import { validateOnlineEvent } from '../shared/onlineEvent'
 import { readLines } from './ndjson'
-import { attributeTo, meteredFetch, withUsage } from './usage'
+import { attributeTo, withUsage } from './usage'
 import { canBoardSeek, canDirectChallenge, perfFor } from '../shared/timeControl'
 import {
   MAX_GAMES,
@@ -54,7 +57,7 @@ import {
 } from './store'
 
 const BASE = 'https://lichess.org'
-const client = createClient<paths>({ baseUrl: BASE, fetch: meteredFetch })
+const client = createClient<paths>({ baseUrl: BASE, fetch: lichessFetch })
 client.use(throwLichessErrors)
 const OAUTH_CLIENT_ID = 'kchess-desktop'
 
@@ -664,6 +667,7 @@ export async function stormDashboard(username: string, days: number): Promise<St
 const MAX_RECONNECTS = 6
 
 interface ListenOptions {
+  lane?: OnlineConnection['lane']
   /** Re-open the stream when it drops (event and game streams, not one-shot seeks). */
   reconnect?: boolean
   /** Checked after a clean end of stream; true stops reconnecting (the game is over). */
@@ -675,11 +679,16 @@ export class OnlineSession {
   private gameController: AbortController | null = null
   /** The game whose stream is open, while it lasts. */
   private liveGame = ''
+  private protectedGame = ''
   private currentAccount = ''
   private pendingId = ''
+  private epoch = 0
+  private resumeAttempt = 0
+  private presenceCache = new LRUCache<string, Promise<PresenceReport>>({ max: 100, ttl: 4000 })
   constructor(
     private emit: (event: OnlineEvent) => void,
     private error: (error: string) => void,
+    private state: (state: OnlineConnection) => void = () => {},
   ) {}
 
   private report(cause: unknown): void {
@@ -701,30 +710,59 @@ export class OnlineSession {
     options: ListenOptions = {},
   ): Promise<void> {
     let failures = 0
+    const session = this.epoch
+    const account = this.currentAccount
+    const gameId = options.lane === 'game' ? this.liveGame : ''
+    const state = (phase: OnlineConnection['phase'], message?: string): void => {
+      if (!signal.aborted && session === this.epoch)
+        this.state({ session, account, gameId, lane: options.lane ?? 'events', phase, message })
+    }
+    state('connecting')
     while (!signal.aborted) {
       let received = false
       try {
         const stream = await unwrap(open())
-        await readLines(stream, (line) => {
-          if (signal.aborted) return
-          received = true
-          emit(JSON.parse(line) as OnlineEvent)
-        })
+        signal.throwIfAborted()
+        await readLines(
+          stream,
+          (line) => {
+            if (signal.aborted) return
+            received = true
+            const event = validateOnlineEvent(JSON.parse(line))
+            if (event) {
+              state('connected')
+              emit(event)
+            }
+          },
+          { signal },
+        )
       } catch (cause) {
         if (signal.aborted) return
         const permanent =
           cause instanceof LichessError && cause.status < 500 && cause.status !== 429
         if (!options.reconnect || permanent) {
+          state(
+            cause instanceof LichessError && [401, 403].includes(cause.status)
+              ? 'auth-required'
+              : 'disconnected',
+            asError(cause).message,
+          )
           this.report(cause)
           return
         }
       }
-      if (signal.aborted || !options.reconnect || options.finished?.()) return
+      if (signal.aborted || options.finished?.()) return
+      if (!options.reconnect) {
+        state('disconnected', 'The seek ended. Try finding a game again.')
+        return
+      }
       failures = received ? 1 : failures + 1
       if (failures > MAX_RECONNECTS) {
+        state('disconnected', 'Lost connection to Lichess. Reconnect to recover the game.')
         this.error('Lost connection to Lichess. Check your network and reopen the game.')
         return
       }
+      state('reconnecting', 'Connection interrupted. Reconnecting…')
       // Resolves early (rejects) if the session is cancelled while backing off; the loop then exits.
       await sleep(Math.min(15_000, 500 * 2 ** failures), undefined, { signal }).catch(
         () => undefined,
@@ -742,12 +780,13 @@ export class OnlineSession {
         client.GET('/api/stream/event', { headers: authorize(token), parseAs: 'stream', signal }),
       signal,
       emit,
-      { reconnect: true },
+      { reconnect: true, lane: 'events' },
     )
   }
 
   /** Reattach to a game in progress on any connected account. */
   async resume(): Promise<{ id: string; account: string } | null> {
+    const attempt = ++this.resumeAttempt
     const accounts = (await loadData()).accounts.filter((a) => a.connected)
     let firstError: unknown
     for (const account of accounts) {
@@ -758,6 +797,7 @@ export class OnlineSession {
           unwrap(client.GET('/api/account/playing', { headers: authorize(token) })),
         )
         const id = playing.nowPlaying?.[0]?.gameId
+        if (attempt !== this.resumeAttempt) return null
         if (!id) continue
         this.cancel()
         this.currentAccount = account.username
@@ -772,10 +812,19 @@ export class OnlineSession {
       }
     }
     if (firstError) throw firstError
+    this.protectedGame = ''
+    this.state({
+      session: this.epoch,
+      account: this.currentAccount,
+      gameId: '',
+      lane: 'game',
+      phase: 'idle',
+    })
     return null
   }
 
   async start(options: OnlineOptions): Promise<{ id?: string; url?: string; seeking?: boolean }> {
+    if (this.playing) throw new Error('Reconnect to your current game before finding another.')
     this.cancel()
     const target = options.target?.trim()
     const perf = perfFor(options.minutes, options.increment)
@@ -865,6 +914,7 @@ export class OnlineSession {
           }),
         seekController.signal,
         (event) => this.emit(event),
+        { lane: 'seek' },
       )
       return { seeking: true }
     } catch (cause) {
@@ -890,6 +940,7 @@ export class OnlineSession {
     this.gameController = controller
     let finished = false
     this.liveGame = id
+    this.protectedGame = id
     await this.listen(
       () =>
         client.GET('/api/board/game/stream/{gameId}', {
@@ -908,21 +959,26 @@ export class OnlineSession {
             : raw.type === 'gameState'
               ? raw.status
               : undefined
-        if (!isGameInProgress(status)) finished = true
+        if (status && !isGameInProgress(status)) {
+          finished = true
+          this.liveGame = ''
+          if (this.protectedGame === id) this.protectedGame = ''
+        }
         this.emit({ ...event, id } as OnlineEvent)
       },
-      { reconnect: true, finished: () => finished },
+      { reconnect: true, finished: () => finished, lane: 'game' },
     ).finally(() => {
-      if (this.liveGame === id) this.liveGame = ''
+      if (finished && this.gameController === controller && this.liveGame === id) this.liveGame = ''
     })
   }
 
   /** An online game is being played: background work should keep out of its way. */
   get playing(): boolean {
-    return this.liveGame !== ''
+    return this.liveGame !== '' || this.protectedGame !== ''
   }
 
   async move(id: string, uci: string): Promise<void> {
+    if (id !== this.liveGame) throw new Error('Reconnect to this game before sending a move.')
     const token = await getToken(this.currentAccount)
     if (!token) throw new Error('Lichess login unavailable.')
     await withUsage(this.currentAccount, 'play', () =>
@@ -940,9 +996,20 @@ export class OnlineSession {
    * Works with no game in progress too (the Friends page), just without a login.
    */
   async presence(usernames: string[]): Promise<PresenceReport> {
-    const token = this.currentAccount ? await getToken(this.currentAccount) : null
+    const account = this.currentAccount
+    const ids = [...new Set(usernames.map((name) => name.toLowerCase()))].sort()
+    const key = `${account}|${ids.join(',')}`
+    const existing = this.presenceCache.get(key)
+    if (existing) return existing
+    const request = this.fetchPresence(ids, account)
+    this.presenceCache.set(key, request)
+    void request.catch(() => this.presenceCache.delete(key))
+    return request
+  }
+  private async fetchPresence(usernames: string[], account: string): Promise<PresenceReport> {
+    const token = account ? await getToken(account) : null
     const started = performance.now()
-    const rows = await withUsage(this.currentAccount, 'presence', () =>
+    const rows = await withUsage(account, 'presence', () =>
       unwrap(
         client.GET('/api/users/status', {
           params: { query: { ids: usernames.join(','), withSignal: true } },
@@ -963,6 +1030,7 @@ export class OnlineSession {
   }
 
   async action(id: string, action: OnlineAction): Promise<void> {
+    if (id !== this.liveGame) throw new Error('Reconnect to this game before sending an action.')
     attributeTo(this.currentAccount, 'play')
     const token = await getToken(this.currentAccount)
     if (!token) throw new Error('Lichess login unavailable.')
@@ -982,11 +1050,23 @@ export class OnlineSession {
   }
 
   cancel(): void {
+    this.resumeAttempt++
+    this.presenceCache.clear()
+    this.epoch++
     this.liveGame = ''
     this.controller?.abort()
     this.gameController?.abort()
     this.controller = null
     this.gameController = null
+    if (this.protectedGame)
+      this.state({
+        session: this.epoch,
+        account: this.currentAccount,
+        gameId: this.protectedGame,
+        lane: 'game',
+        phase: 'disconnected',
+        message: 'Reconnect to verify the current game before using engine assistance.',
+      })
     if (this.pendingId) {
       const id = this.pendingId
       this.pendingId = ''

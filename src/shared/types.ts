@@ -279,6 +279,15 @@ export type OnlineEvent =
   | LichessChatLineEvent
   | LichessOpponentGoneEvent
 
+export interface OnlineConnection {
+  session: number
+  account: string
+  gameId: string
+  lane: 'events' | 'game' | 'seek'
+  phase: 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'auth-required' | 'idle'
+  message?: string
+}
+
 export interface EngineStatus {
   ready: boolean
   /** The executable in use (a downloaded or chosen one), or empty when the bundled engine is. */
@@ -286,7 +295,7 @@ export interface EngineStatus {
   bundled: boolean
   /** The Stockfish KChess downloaded, whether or not it is the one in use. */
   managed: { installed: boolean; path: string; version?: string }
-  /** Downloading is only wired up for macOS releases. */
+  /** An official native download exists for this platform and architecture. */
   canDownload: boolean
 }
 
@@ -581,6 +590,10 @@ export interface BestMoveOptions {
 /** Ask the analysis engine to study one position until stopped or a limit is reached. */
 export interface AnalysisRequest {
   fen: string
+  /** Repetition context: root plus moves must produce fen. */
+  rootFen?: string
+  moves?: string[]
+  clientId?: number
   /** How many of the best lines to report (MultiPV). */
   lines: number
   /** Keep searching until stopped instead of stopping at a sensible depth. */
@@ -610,6 +623,10 @@ export interface AnalysisUpdate {
   lines: EngineLine[]
   /** The search finished (limit reached, or stopped) and no more updates follow. */
   done: boolean
+  context?: string
+  clientId?: number
+  reason?: 'completed' | 'interrupted' | 'failed'
+  engine?: string
   error?: string
 }
 
@@ -641,6 +658,7 @@ export interface StoredReview {
   /** UCI, from `fen`. */
   moves: string[]
   source: ReviewSource
+  engine?: string
   /** Index 0 is the starting position, index i the position after move i; null until analysed. */
   evals: (ReviewEval | null)[]
   /** Lichess's own label for each move (index i is move i+1), when Lichess did the analysis. */
@@ -669,6 +687,7 @@ export interface ReviewSide {
 export interface ReviewSummary {
   key: string
   source: ReviewSource
+  engine?: string
   complete: boolean
   white: ReviewSide
   black: ReviewSide
@@ -702,7 +721,34 @@ export interface ReviewUpdate {
   summary: ReviewSummary
 }
 
+export type PositionLookupKind = 'opening' | 'tablebase'
+export interface PositionLookup {
+  kind: PositionLookupKind
+  fen: string
+  fetchedAt: number
+  cached: boolean
+  stale: boolean
+  message?: string
+  opening?: string
+  category?: string
+  dtz?: number | null
+  moves: {
+    uci: string
+    san: string
+    white?: number
+    draws?: number
+    black?: number
+    category?: string
+    dtz?: number | null
+  }[]
+}
+
 export interface DesktopApi {
+  recordPerformance(
+    name: 'app.ready' | 'board.frame' | 'voice.activation',
+    milliseconds: number,
+  ): Promise<void>
+  positionLookup(kind: PositionLookupKind, fen: string): Promise<PositionLookup>
   /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
   exportDiagnostics(): Promise<boolean>
   /** Frameless-chrome window controls (Windows/Linux); no-ops where the OS draws its own chrome. */
@@ -744,6 +790,7 @@ export interface DesktopApi {
   installEngine(): Promise<{ path: string; version: string; updated: boolean }>
   /** Delete the downloaded engine; the bundled and chosen ones are never touched. */
   deleteEngine(): Promise<void>
+  stopEngine(): Promise<void>
   bestMove(moves: string[], level: EngineLevel, options?: BestMoveOptions): Promise<string>
   /** Start analysing a position (replacing any running analysis); updates arrive on `onAnalysis`. */
   startAnalysis(request: AnalysisRequest): Promise<number>
@@ -795,6 +842,7 @@ export interface DesktopApi {
   openMicrophoneSettings(): Promise<boolean>
   /** Alerts for the window to show itself, sent instead of a system notification while KChess is in use. */
   onNotification(callback: (alert: { title: string; body: string }) => void): () => void
+  onOnlineState(callback: (state: OnlineConnection) => void): () => void
   onOnlineEvent(callback: (event: OnlineEvent) => void): () => void
   onOnlineError(callback: (message: string) => void): () => void
 

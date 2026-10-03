@@ -11,13 +11,17 @@ import {
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
 import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
-import { handle } from './ipc'
+import { handle, setIpcOwner } from './ipc'
+import { isAppUrl } from './appOrigin'
 import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { setupAppUpdates, APP_RELEASES_URL } from './setupAppUpdates'
 import type { AppUpdates } from './appUpdates'
 import { setupDiagnostics, exportDiagnostics } from './diagnostics'
+import { configureEngineResources } from './engineScheduler'
+import { recordTiming } from './performance'
+import { positionLookups } from './setupPositionLookup'
 import {
   bestMove,
   computerPlaying,
@@ -63,6 +67,7 @@ import {
 } from './lichess'
 import {
   cancelPuzzleDb,
+  closePuzzleWorker,
   deletePuzzleDb,
   installPuzzleDb,
   localLadder,
@@ -119,6 +124,7 @@ import {
 
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
+setIpcOwner(() => window)
 registerAppScheme()
 app.setName('KChess')
 // An explicit profile is useful for isolated tests and development with fresh data.
@@ -135,6 +141,14 @@ function send<K extends keyof IpcEvents>(channel: K, payload: IpcEvents[K]): voi
 const online = new OnlineSession(
   (event: OnlineEvent) => send(IPC_EVENTS.online, event),
   (message: string) => send(IPC_EVENTS.error, message),
+  (state) => {
+    if (state.gameId && state.phase !== 'idle') {
+      stopEngine()
+      stopAnalysis()
+      restartReviewEngine()
+    }
+    send(IPC_EVENTS.onlineState, state)
+  },
 )
 
 function appIconPath(): string | undefined {
@@ -227,9 +241,8 @@ function createWindow(): void {
       window.webContents.send(IPC_EVENTS.windowMaximized, { maximized: false })
   })
   // The app only ever shows its own UI: never let the window navigate elsewhere.
-  const appOrigin = process.env.KCHESS_NUXT_URL || 'kchess://app/'
   window.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(appOrigin)) event.preventDefault()
+    if (!isAppUrl(url)) event.preventDefault()
   })
   window.webContents.on('render-process-gone', (_event, details) => {
     console.error('Renderer exited:', details.reason, details.exitCode)
@@ -291,12 +304,24 @@ void app
       })
       return 'kchess://app/voice/model.tar.gz'
     })
-    setupMediaPermissions((url) => url.startsWith(process.env.KCHESS_NUXT_URL || 'kchess://app/'))
+    setupMediaPermissions(isAppUrl)
     // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
     // the system appearance changes. Packaged builds fall back to the bundle
     // .icns until this override applies.
     setupDiagnostics()
+    configureEngineResources(() => powerMonitor.isOnBatteryPower())
     handle('exportDiagnostics', exportDiagnostics)
+    handle('recordPerformance', (_event, name: unknown, milliseconds: unknown) => {
+      if (
+        !['app.ready', 'board.frame', 'voice.activation'].includes(String(name)) ||
+        typeof milliseconds !== 'number' ||
+        !Number.isFinite(milliseconds) ||
+        milliseconds < 0 ||
+        milliseconds > 300_000
+      )
+        throw new Error('Invalid timing sample.')
+      recordTiming(String(name), milliseconds)
+    })
     handle('windowMinimize', () => {
       if (window && !window.isDestroyed()) window.minimize()
     })
@@ -338,6 +363,7 @@ void app
     handle('loadData', () => loadData())
     handle('saveSettings', async (_event, raw: unknown) => {
       const settings = assertSettings(raw)
+      const previous = await getSettings()
       // The renderer may not point the app at an arbitrary executable: only a path
       // picked in the native dialog, downloaded by KChess, or already saved is accepted.
       if (settings.enginePath && !isTrustedEnginePath(settings.enginePath)) {
@@ -346,6 +372,11 @@ void app
           throw new Error('Choose the Stockfish executable with the file picker.')
       }
       const saved = await saveSettings(settings)
+      if (previous.enginePath !== saved.enginePath) {
+        stopEngine(true)
+        stopAnalysis(true)
+        restartReviewEngine()
+      }
       appUpdates!.applyPreferences(saved)
       reviewsChanged()
       return saved
@@ -375,38 +406,46 @@ void app
       return path
     })
     handle('installEngine', async () => {
-      if (process.platform !== 'darwin')
-        throw new Error('Downloading Stockfish currently supports macOS.')
       const { path, version, updated } = await installManagedEngine()
       return { path, version, updated }
     })
     handle('deleteEngine', async () => {
-      stopEngine()
+      stopEngine(true)
       stopAnalysis(true)
       restartReviewEngine()
       await deleteManagedEngine()
     })
-    handle('bestMove', async (_event, moves: unknown, level: unknown, options?: unknown) =>
-      bestMove(
+    handle('stopEngine', () => stopEngine())
+    handle('bestMove', async (_event, moves: unknown, level: unknown, options?: unknown) => {
+      if (online.playing)
+        throw new Error('Engine assistance is unavailable during a live Lichess game.')
+      return bestMove(
         assertMoves(moves),
         assertLevel(level),
         (await getSettings()).enginePath,
         assertBestMoveOptions(options),
-      ),
-    )
-    handle('startAnalysis', async (_event, request: unknown) =>
-      startAnalysis(request, (await getSettings()).enginePath, (update) =>
+      )
+    })
+    handle('startAnalysis', async (_event, request: unknown) => {
+      if (online.playing) throw new Error('Analysis is unavailable during a live Lichess game.')
+      return startAnalysis(request, (await getSettings()).enginePath, (update) =>
         send(IPC_EVENTS.analysis, update),
-      ),
-    )
+      )
+    })
+    handle('positionLookup', async (_event, kind: unknown, fen: unknown) => {
+      if (online.playing)
+        throw new Error('Position lookups are unavailable during a live Lichess game.')
+      return positionLookups.lookup(kind, fen)
+    })
     handle('stopAnalysis', () => stopAnalysis())
     handle('reviewGet', (_event, fen: unknown, moves: unknown) => {
       const request = assertReviewRequest({ fen, moves })
       return getReview(request.fen, request.moves)
     })
-    handle('reviewRequest', (_event, request: unknown) =>
-      requestReview(assertReviewRequest(request)),
-    )
+    handle('reviewRequest', (_event, request: unknown) => {
+      if (online.playing) throw new Error('Review is unavailable during a live Lichess game.')
+      return requestReview(assertReviewRequest(request))
+    })
     handle('reviewCancel', (_event, key: unknown) => cancelReview(assertReviewKey(key)))
     handle('reviewStatus', () => reviewStatus())
     handle('reviewSummaries', () => reviewSummaries())
@@ -525,7 +564,7 @@ void app
 app.on('window-all-closed', () => {
   cancelPuzzleDb()
   online.cancel()
-  stopEngine()
+  stopEngine(true)
   stopAnalysis(true)
   if (process.platform !== 'darwin') app.quit()
 })
@@ -544,9 +583,10 @@ app.on('before-quit', (event) => {
 app.on('will-quit', () => {
   appUpdates?.stop()
   online.cancel()
-  stopEngine()
+  stopEngine(true)
   stopAnalysis(true)
   stopReviews()
   flushUsage()
+  closePuzzleWorker()
   closeDb()
 })

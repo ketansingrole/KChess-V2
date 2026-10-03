@@ -388,6 +388,10 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 
 <template>
   <div>
+    <p v-if="store.localSaveError" role="alert" class="p-3 text-error">
+      Automatic saving: {{ store.localSaveError }}
+    </p>
+
     <PageHeader title="Play with Computer" />
 
     <div class="play-layout">

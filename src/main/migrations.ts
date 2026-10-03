@@ -182,6 +182,13 @@ export const MIGRATIONS: readonly string[] = [
     checkedAt INTEGER NOT NULL
   );
   `,
+  `
+  ALTER TABLE puzzle_meta ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0;
+  UPDATE puzzle_meta SET bytes = COALESCE((SELECT SUM(LENGTH(id) + LENGTH(fen) + LENGTH(moves) + LENGTH(themes) + 24) FROM puzzles), 0);
+  `,
+  `CREATE TABLE IF NOT EXISTS position_lookups (
+    key TEXT PRIMARY KEY, data TEXT NOT NULL, fetchedAt INTEGER NOT NULL
+  );`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

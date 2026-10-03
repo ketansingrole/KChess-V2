@@ -29,7 +29,9 @@ function trackMainOffset(): void {
 }
 
 onMounted(() => {
-  void store.init()
+  void store
+    .init()
+    .then(() => window.kchess.recordPerformance?.('app.ready', performance.now()).catch(() => {}))
   void updates.init()
   useReviewStore().listen()
   if (mainEl.value) {

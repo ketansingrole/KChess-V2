@@ -46,6 +46,15 @@ function record(ctx: Context, requests: number, bytesIn: number): void {
   flushTimer.unref()
 }
 
+export function recordUsage(
+  account: string,
+  kind: UsageKind,
+  requests: number,
+  bytesIn: number,
+): void {
+  record({ account, kind }, requests, bytesIn)
+}
+
 /** `fetch` that counts requests and the (decompressed) bytes of every response body. */
 export const meteredFetch: typeof fetch = async (input, init) => {
   const ctx = context.getStore() ?? UNATTRIBUTED
@@ -157,6 +166,10 @@ export async function usageReport(): Promise<UsageReport> {
   }
 
   const path = dbPath()
-  report.dbBytes = (await fileSize(path)) + (await fileSize(`${path}-wal`))
+  report.dbBytes =
+    (await fileSize(path)) +
+    (await fileSize(`${path}-wal`)) +
+    (await fileSize(path.replace(/kchess\.db$/, 'puzzles.db'))) +
+    (await fileSize(path.replace(/kchess\.db$/, 'puzzles.db-wal')))
   return report
 }
