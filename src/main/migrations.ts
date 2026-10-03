@@ -189,6 +189,20 @@ export const MIGRATIONS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS position_lookups (
     key TEXT PRIMARY KEY, data TEXT NOT NULL, fetchedAt INTEGER NOT NULL
   );`,
+  // Retain unfinished IDs independently of the creation-time sync cursor. Reset existing
+  // cursors once so the next sync repairs games skipped by older releases (within retention).
+  `CREATE TABLE pending_game_sync (
+    account TEXT NOT NULL COLLATE NOCASE REFERENCES accounts(username) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    PRIMARY KEY (account, id)
+  );
+  INSERT INTO pending_game_sync (account, id)
+    SELECT account, id FROM games WHERE status IN ('created', 'started')
+      AND account IN (SELECT username FROM accounts);
+  DELETE FROM games WHERE status IN ('created', 'started');
+  UPDATE accounts SET lastSyncedAt = NULL;
+  CREATE INDEX idx_games_page ON games (createdAt DESC, account, id);
+  CREATE INDEX idx_games_account_page ON games (account COLLATE NOCASE, createdAt DESC, id);`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

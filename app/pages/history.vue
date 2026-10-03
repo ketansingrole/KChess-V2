@@ -17,8 +17,10 @@ const {
   historyPage,
   historyPageSize,
   data,
-  games,
-  filteredGames,
+  gameCount,
+  historyTotal,
+  historyLoading,
+  historyError,
   visibleGames,
 } = storeToRefs(store)
 const { sync, date, openReview, selectPage } = store
@@ -83,7 +85,7 @@ const pageNumber = computed({
   },
 })
 const rangeText = computed(() => {
-  const total = filteredGames.value.length
+  const total = historyTotal.value
   if (!total) return '0 games'
   const from = historyPage.value * historyPageSize.value + 1
   return `${from}–${Math.min(total, from + historyPageSize.value - 1)} of ${total} games`
@@ -162,7 +164,7 @@ const reviewColor = computed(() =>
     </template>
 
     <template v-else>
-      <div v-if="!games.length" class="card">
+      <div v-if="!gameCount" class="card">
         <UEmpty
           variant="naked"
           icon="i-lucide-history"
@@ -215,8 +217,10 @@ const reviewColor = computed(() =>
         </div>
 
         <div class="card">
+          <p v-if="historyLoading" class="p-6 text-muted" role="status">Loading games…</p>
+          <p v-else-if="historyError" class="p-6 text-error" role="alert">{{ historyError }}</p>
           <UEmpty
-            v-if="!visibleGames.length"
+            v-else-if="!visibleGames.length"
             variant="naked"
             size="sm"
             icon="i-lucide-search-x"
@@ -255,7 +259,7 @@ const reviewColor = computed(() =>
             />
             <UPagination
               v-model:page="pageNumber"
-              :total="filteredGames.length"
+              :total="historyTotal"
               :items-per-page="historyPageSize"
               :sibling-count="1"
               size="sm"

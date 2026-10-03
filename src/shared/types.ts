@@ -251,7 +251,32 @@ export interface LichessGame {
 export interface AppData {
   settings: Settings
   accounts: LichessAccount[]
+  gameCount: number
+}
+
+export interface GamePageQuery {
+  account?: string
+  result?: 'win' | 'loss' | 'draw'
+  rated?: boolean
+  offset: number
+  limit: number
+}
+
+export interface GamePage {
   games: LichessGame[]
+  total: number
+}
+
+export interface GameRecord {
+  total: number
+  win: number
+  loss: number
+  draw: number
+}
+
+export interface GameLibraryOverview {
+  byAccount: Record<string, GameRecord>
+  versus: Record<string, GameRecord>
 }
 
 /** Types published by the Lichess team in `@lichess-org/types`. */
@@ -289,6 +314,8 @@ export interface OnlineConnection {
 }
 
 export interface EngineStatus {
+  /** Identity of the executable currently selected, including native file changes. */
+  identity?: string
   ready: boolean
   /** The executable in use (a downloaded or chosen one), or empty when the bundled engine is. */
   path: string
@@ -769,6 +796,10 @@ export interface DesktopApi {
   addAccount(username: string): Promise<AppData>
   removeAccount(username: string): Promise<AppData>
   syncGames(username?: string): Promise<AppData>
+  /** Filtered, bounded library rows; full PGN is fetched separately. */
+  gamePage(query: GamePageQuery): Promise<GamePage>
+  gameLibraryOverview(): Promise<GameLibraryOverview>
+  gameRatingHistory(account: string): Promise<LichessRatingHistory>
   /** Full PGN of one game; list rows omit it to keep the payload small. */
   gamePgn(account: string, id: string): Promise<string | null>
   /** Last profile data saved locally (no network); null fields when never fetched. */

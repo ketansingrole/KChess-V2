@@ -11,10 +11,16 @@ import {
   PIECE_ANIMATIONS,
   REVIEW_AUTO,
   type AppData,
+  type GamePageQuery,
+  type GamePage,
+  type GameLibraryOverview,
+  type GameRecord,
+  type LichessRatingHistory,
   type LichessGame,
   type Settings,
 } from '../shared/types'
-import { assertUsername } from '../shared/validate'
+import { isGameInProgress } from '../shared/gameStatus'
+import { assertGamePageQuery, assertUsername } from '../shared/validate'
 
 const defaults = DEFAULT_SETTINGS
 
@@ -171,11 +177,6 @@ function writeSettings(database: DatabaseSync, settings: Settings): void {
   database.prepare(SETTINGS_UPSERT).run(...SETTINGS_KEYS.map((key) => toSql(settings[key])))
 }
 
-function fixTimestamp(value: number | undefined): number | undefined {
-  if (value && value < 1e11) return value * 1000
-  return value
-}
-
 function rowToGame(row: GameRow): LichessGame {
   return {
     id: row.id,
@@ -227,6 +228,15 @@ const gameParams = (game: LichessGame): (string | number | null)[] =>
   GAME_KEYS.map((key) => toSql(game[key]))
 
 function runInsertGame(database: DatabaseSync, game: LichessGame): void {
+  if (isGameInProgress(game.status)) {
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO pending_game_sync (account, id)
+      SELECT ?, ? WHERE EXISTS (SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE)`,
+      )
+      .run(game.account, game.id, game.account)
+    return
+  }
   database
     .prepare(`INSERT OR REPLACE INTO games (${GAME_COLUMNS}) VALUES (${GAME_PLACEHOLDERS})`)
     .run(...gameParams(game))
@@ -275,7 +285,7 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
   interface JsonBackup {
     settings?: Partial<Settings> & { boardPreset?: string }
     accounts?: AppData['accounts']
-    games?: AppData['games']
+    games?: LichessGame[]
   }
   let raw: JsonBackup | null
   try {
@@ -303,7 +313,7 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
       insertAccount.run(
         account.username,
         account.connected ? 1 : 0,
-        fixTimestamp(account.lastSyncedAt) ?? null,
+        null, // Rebuild the creation-time cursor after importing an older library.
       )
     for (const game of games) runInsertGame(database, game)
     const insertToken = database.prepare(
@@ -410,7 +420,7 @@ async function migrateLegacy(database: DatabaseSync): Promise<void> {
         insertAccount.run(
           account.username,
           account.auth_kind === 'oauth' ? 1 : 0,
-          account.last_synced_at ? account.last_synced_at * 1000 : null,
+          null, // Older clients could skip games that finished between syncs.
         )
       }
       for (const game of games) runInsertGame(database, game)
@@ -440,7 +450,7 @@ export async function getSettings(): Promise<Settings> {
 }
 
 /**
- * Everything the renderer shows, kept in memory between writes. Mutations
+ * Settings, accounts and the library size, kept in memory between writes. Mutations
  * clear it, so a read after a write sees fresh rows and all other reads skip
  * SQLite and the row mapping. Callers must treat the result as read-only.
  */
@@ -457,9 +467,9 @@ export async function loadData(): Promise<AppData> {
   const accountRows = database
     .prepare('SELECT username, connected, lastSyncedAt FROM accounts ORDER BY rowid')
     .all() as unknown as AccountRow[]
-  const gameRows = database
-    .prepare(`SELECT ${LIST_COLUMNS} FROM games ORDER BY createdAt DESC`)
-    .all() as unknown as GameRow[]
+  const { total } = database.prepare('SELECT COUNT(*) AS total FROM games').get() as unknown as {
+    total: number
+  }
   const loaded: AppData = {
     settings: readSettings(database) ?? { ...defaults },
     accounts: accountRows.map((row) => ({
@@ -467,10 +477,105 @@ export async function loadData(): Promise<AppData> {
       connected: row.connected === 1,
       lastSyncedAt: row.lastSyncedAt ?? undefined,
     })),
-    games: gameRows.map(rowToGame),
+    gameCount: total,
   }
   snapshot = loaded
   return loaded
+}
+
+const RESULT_SQL =
+  "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END"
+
+/** Bounded list rows; full PGNs are fetched separately when a game is opened. */
+export async function gamePage(input: GamePageQuery): Promise<GamePage> {
+  const query = assertGamePageQuery(input)
+  await ensureMigrated()
+  const clauses: string[] = []
+  const params: (string | number)[] = []
+  if (query.account) {
+    clauses.push('account = ? COLLATE NOCASE')
+    params.push(query.account)
+  }
+  if (query.result) {
+    clauses.push(`(${RESULT_SQL}) = ?`)
+    params.push(query.result)
+  }
+  if (query.rated !== undefined) {
+    clauses.push('rated = ?')
+    params.push(+query.rated)
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+  const database = getDb()
+  const { total } = database
+    .prepare(`SELECT COUNT(*) AS total FROM games ${where}`)
+    .get(...params) as unknown as { total: number }
+  const rows = database
+    .prepare(
+      `SELECT ${LIST_COLUMNS} FROM games ${where} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?`,
+    )
+    .all(...params, query.limit, query.offset) as unknown as GameRow[]
+  return { games: rows.map(rowToGame), total }
+}
+
+export async function gameLibraryOverview(): Promise<GameLibraryOverview> {
+  await ensureMigrated()
+  const database = getDb()
+  const aggregates = `COUNT(*) AS total,
+    SUM(winner = color) AS win,
+    SUM(winner IS NOT NULL AND winner != color) AS loss,
+    SUM(winner IS NULL) AS draw`
+  const records = (sql: string): Record<string, GameRecord> =>
+    Object.fromEntries(
+      (database.prepare(sql).all() as unknown as (GameRecord & { name: string })[]).map(
+        ({ name, total, win, loss, draw }) => [name, { total, win: win ?? 0, loss, draw }],
+      ),
+    )
+  return {
+    byAccount: records(
+      `SELECT lower(account) AS name, ${aggregates} FROM games GROUP BY lower(account)`,
+    ),
+    // Only tracked opponents need a card; never transfer the entire opponent list.
+    versus: records(`SELECT lower(opponent) AS name, ${aggregates} FROM games
+      WHERE account IN (SELECT username FROM accounts WHERE connected = 1)
+        AND opponent COLLATE NOCASE IN (SELECT username FROM accounts)
+      GROUP BY lower(opponent)`),
+  }
+}
+
+export async function gameRatingHistory(account: string): Promise<LichessRatingHistory> {
+  await ensureMigrated()
+  const rows = getDb()
+    .prepare(
+      `SELECT perf, day, rating FROM (
+    SELECT perf, CAST(createdAt / 86400000 AS INTEGER) * 86400000 AS day,
+      playerRating + ratingDiff AS rating,
+      ROW_NUMBER() OVER (PARTITION BY perf, CAST(createdAt / 86400000 AS INTEGER)
+        ORDER BY createdAt DESC, id DESC) AS rank
+    FROM games WHERE account = ? COLLATE NOCASE AND rated = 1
+      AND playerRating IS NOT NULL AND ratingDiff IS NOT NULL
+  ) WHERE rank = 1 ORDER BY day, perf`,
+    )
+    .all(account) as unknown as { perf: string; day: number; rating: number }[]
+  const byPerf = new Map<string, number[][]>()
+  for (const { perf, day, rating } of rows) {
+    const date = new Date(day)
+    const points = byPerf.get(perf) ?? []
+    points.push([date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), rating])
+    byPerf.set(perf, points)
+  }
+  return [...byPerf].map(([perf, points]) => ({
+    name: perf.charAt(0).toUpperCase() + perf.slice(1),
+    points,
+  }))
+}
+
+export async function pendingGameIds(account: string): Promise<string[]> {
+  await ensureMigrated()
+  return (
+    getDb()
+      .prepare('SELECT id FROM pending_game_sync WHERE account = ? COLLATE NOCASE ORDER BY id')
+      .all(account) as unknown as { id: string }[]
+  ).map((row) => row.id)
 }
 
 export async function gamePgn(account: string, id: string): Promise<string | null> {
@@ -592,6 +697,7 @@ export async function removeAccount(username: string): Promise<AppData> {
         .prepare('INSERT OR REPLACE INTO dismissed_friends (username, dismissedAt) VALUES (?, ?)')
         .run(username, Date.now())
     database.prepare('DELETE FROM games WHERE account = ? COLLATE NOCASE').run(username)
+    database.prepare('DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE').run(username)
     database.prepare('DELETE FROM tokens WHERE username = ? COLLATE NOCASE').run(username)
     database.prepare('DELETE FROM accounts WHERE username = ? COLLATE NOCASE').run(username)
     database.exec('COMMIT')
@@ -614,6 +720,7 @@ export async function clearAccountData(username: string): Promise<AppData> {
   database.exec('BEGIN IMMEDIATE')
   try {
     database.prepare('DELETE FROM games WHERE account = ? COLLATE NOCASE').run(username)
+    database.prepare('DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE').run(username)
     database
       .prepare('UPDATE accounts SET lastSyncedAt = NULL WHERE username = ? COLLATE NOCASE')
       .run(username)
@@ -639,7 +746,21 @@ function upsertGames(username: string, games: LichessGame[], syncedAt?: number):
   const upsert = database.prepare(UPSERT_GAME)
   database.exec('BEGIN IMMEDIATE')
   try {
-    for (const game of games) upsert.run(...gameParams(game))
+    if (!database.prepare('SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE').get(username))
+      throw new Error('This account was removed during sync.')
+    const pending = database.prepare(
+      'INSERT OR IGNORE INTO pending_game_sync (account, id) VALUES (?, ?)',
+    )
+    const completed = database.prepare(
+      'DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE AND id = ?',
+    )
+    for (const game of games) {
+      if (isGameInProgress(game.status)) pending.run(username, game.id)
+      else {
+        upsert.run(...gameParams(game))
+        completed.run(username, game.id)
+      }
+    }
     database
       .prepare(
         `DELETE FROM games WHERE account = ? AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? ORDER BY createdAt DESC LIMIT ${MAX_GAMES})`,

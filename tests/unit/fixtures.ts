@@ -30,8 +30,11 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
         { username: 'Alice', connected: true },
         { username: 'Bob', connected: true },
       ],
-      games: [],
+      gameCount: 0,
     }),
+    gamePage: async () => ({ games: [], total: 0 }),
+    gameLibraryOverview: async () => ({ byAccount: {}, versus: {} }),
+    gameRatingHistory: async () => [],
     engineStatus: async () => ({
       ready: true,
       path: '',

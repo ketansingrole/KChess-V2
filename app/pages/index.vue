@@ -8,7 +8,7 @@ const {
   profile,
   chartMode,
   chartRange,
-  games,
+  selectedGameCount,
   recentGames,
   counts,
   chartSeries,
@@ -23,11 +23,7 @@ const ratingChange = computed(() => {
   return values.length >= 2 ? values[values.length - 1]! - values[0]! : null
 })
 const blitzProg = computed(() => profile.value?.perfs?.blitz?.prog ?? 0)
-const trackedCount = computed(
-  () =>
-    profile.value?.count?.all ??
-    games.value.filter((g) => g.account === selectedAccount.value).length,
-)
+const trackedCount = computed(() => profile.value?.count?.all ?? selectedGameCount.value)
 const accountItems = computed(() => data.value.accounts.map((account) => account.username))
 </script>
 

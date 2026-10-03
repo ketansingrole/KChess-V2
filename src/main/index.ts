@@ -26,6 +26,7 @@ import {
   bestMove,
   computerPlaying,
   engineStatus,
+  engineIdentity,
   isTrustedEnginePath,
   stopEngine,
   trustEnginePath,
@@ -87,6 +88,9 @@ import {
   addFriends,
   clearAccountData,
   gamePgn,
+  gamePage,
+  gameLibraryOverview,
+  gameRatingHistory,
   getSettings,
   loadData,
   removeAccount,
@@ -100,6 +104,7 @@ import {
   assertDays,
   assertFriendList,
   assertGameId,
+  assertGamePageQuery,
   assertLadderQuery,
   assertLevel,
   assertLocalQuery,
@@ -388,6 +393,11 @@ void app
       reviewsChanged()
       return data
     })
+    handle('gamePage', (_event, query: unknown) => gamePage(assertGamePageQuery(query)))
+    handle('gameLibraryOverview', () => gameLibraryOverview())
+    handle('gameRatingHistory', (_event, account: unknown) =>
+      gameRatingHistory(assertUsername(account)),
+    )
     handle('gamePgn', (_event, account: unknown, id: unknown) => {
       return gamePgn(assertUsername(account), assertGameId(id))
     })
@@ -395,7 +405,10 @@ void app
     handle('profile', (_event, username: unknown) => profile(assertUsername(username)))
     handle('ratingHistory', (_event, username: unknown) => ratingHistory(assertUsername(username)))
     handle('connectLichess', () => connectLichess())
-    handle('engineStatus', async () => engineStatus((await getSettings()).enginePath))
+    handle('engineStatus', async () => {
+      const status = await engineStatus((await getSettings()).enginePath)
+      return { ...status, identity: status.ready ? await engineIdentity(status) : undefined }
+    })
     handle('chooseEngine', async () => {
       const result = await dialog.showOpenDialog({
         title: 'Choose Stockfish executable',

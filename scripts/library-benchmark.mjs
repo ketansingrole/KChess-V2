@@ -37,6 +37,7 @@ for (const count of [1000, 5000, 50_000]) {
       cloneMs: +(cloned - queried).toFixed(2),
       serializedBytes: Buffer.byteLength(JSON.stringify(rows)),
       pageRows: page.length,
+      pageSerializedBytes: Buffer.byteLength(JSON.stringify(page)),
       pageQueryMs,
     }),
   )

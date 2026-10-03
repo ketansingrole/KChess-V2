@@ -14,6 +14,7 @@ import {
   RUN_KINDS,
   VOICE_OUTCOMES,
   VOICE_SOURCES,
+  type GamePageQuery,
   type AnalysisRequest,
   type ReviewRequest,
   type BestMoveOptions,
@@ -385,3 +386,15 @@ export const assertVoiceUpdate = (value: unknown): VoiceAttemptUpdate =>
 export const assertVoiceId = (value: unknown): number => parse(voiceIdSchema, value)
 export const assertVoiceLimit = (value: unknown): number =>
   parse(intInRange(1, 5000, 'Invalid number of entries.'), value)
+
+export const assertGamePageQuery = (value: unknown): GamePageQuery =>
+  parse(
+    v.object({
+      account: v.optional(usernameSchema),
+      result: v.optional(v.picklist(['win', 'loss', 'draw'] as const)),
+      rated: v.optional(v.boolean()),
+      offset: intInRange(0, Number.MAX_SAFE_INTEGER, 'Invalid game offset.'),
+      limit: intInRange(1, 100, 'Invalid game page size.'),
+    }),
+    value,
+  )

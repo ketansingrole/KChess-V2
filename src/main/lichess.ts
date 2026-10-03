@@ -49,6 +49,7 @@ import {
   dismissedFriends,
   getToken,
   loadData,
+  pendingGameIds,
   readApiCache,
   saveGames,
   saveGamesPage,
@@ -290,7 +291,7 @@ function normalizeGame(raw: components['schemas']['GameJson'], account: string):
 export function reviewFromLichess(
   raw: components['schemas']['GameJson'],
 ): StoredReview | undefined {
-  if (!raw.analysis?.length) return undefined
+  if (isGameInProgress(raw.status) || !raw.analysis?.length) return undefined
   if (raw.variant !== 'standard' && raw.variant !== 'fromPosition') return undefined
   const { fen, moves } = lichessLine({ moves: raw.moves ?? '', initialFen: raw.initialFen })
   if (!moves.length) return undefined
@@ -352,6 +353,7 @@ async function fetchGamesPage(
         path: { username: account },
         query: {
           max: SYNC_PAGE,
+          ongoing: true,
           since,
           until,
           opening: true,
@@ -373,7 +375,11 @@ async function fetchGamesPage(
     games.push(normalizeGame(raw, account))
     const review = reviewFromLichess(raw)
     if (review) writeReview(review)
-    if (review || Date.now() - raw.lastMoveAt > ANALYSIS_SETTLED_MS) settled.push(raw.id)
+    if (
+      !isGameInProgress(raw.status) &&
+      (review || Date.now() - raw.lastMoveAt > ANALYSIS_SETTLED_MS)
+    )
+      settled.push(raw.id)
   })
   // Lichess was effectively asked about these: the background review need not ask again.
   markChecked(settled)
@@ -409,6 +415,42 @@ export async function fetchLichessReviews(
   return found
 }
 
+/** Re-fetch unfinished games by ID, even when their creation predates the next sync window. */
+async function refreshPendingGames(account: string): Promise<void> {
+  const ids = await pendingGameIds(account)
+  for (let offset = 0; offset < ids.length; offset += 300) {
+    const stream = await unwrap(
+      client.POST('/api/games/export/_ids', {
+        params: {
+          query: {
+            moves: true,
+            pgnInJson: true,
+            clocks: true,
+            opening: true,
+            evals: true,
+            accuracy: true,
+          },
+        },
+        body: ids.slice(offset, offset + 300).join(','),
+        bodySerializer: (body: string) => body,
+        headers: { Accept: 'application/x-ndjson', 'Content-Type': 'text/plain' },
+        parseAs: 'stream',
+      }) as Promise<StreamCall>,
+    )
+    const requested = new Set(ids.slice(offset, offset + 300))
+    const games: LichessGame[] = []
+    await readLines(stream, (line) => {
+      const raw = JSON.parse(line) as components['schemas']['GameJson']
+      if (!requested.has(raw.id)) return
+      games.push(normalizeGame(raw, account))
+      const review = reviewFromLichess(raw)
+      if (review) writeReview(review)
+    })
+    // Missing IDs remain pending; a failed request never advances the sync cursor.
+    await saveGamesPage(account, games)
+  }
+}
+
 const syncs = new Map<string, Promise<void>>()
 
 /** One sync per account at a time: a second request joins the running one. */
@@ -417,11 +459,10 @@ function syncAccount(account: LichessAccount): Promise<void> {
   const running = syncs.get(key)
   if (running) return running
   const run = withUsage(account.username, 'games', async () => {
-    // Stamp the cursor with when the sync began, so games that finish while it runs are re-fetched next time.
     const startedAt = Date.now()
+    await refreshPendingGames(account.username)
     // Incremental sync: Lichess supports `since` (ms). Overlap by 60s for
-    // clock skew; the upsert makes overlap harmless, and games that finished
-    // around the last sync reappear with their final moves.
+    // clock skew. Unfinished games are tracked separately because Lichess filters by creation time.
     const since = account.lastSyncedAt ? account.lastSyncedAt - 60_000 : undefined
     // Lichess returns newest first and caps each response, so page backwards
     // with `until`; otherwise a long gap between syncs would silently lose games.

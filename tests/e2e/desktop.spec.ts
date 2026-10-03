@@ -77,6 +77,20 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       },
     ])
     if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)
+    if (testInfo.title.includes('paged history')) {
+      db.exec("INSERT INTO accounts (username, connected) VALUES ('tester', 0)")
+      const insert =
+        db.prepare(`INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, moves, pgn)
+        VALUES ('tester', ?, ?, ?, 1, 'blitz', 'blitz', 'mate', ?, 'white', ?, 'e4 e5', '1. e4 e5 *')`)
+      for (let i = 0; i < 41; i++)
+        insert.run(
+          `Paged${String(i).padStart(3, '0')}`,
+          1_600_000_000_000 + i,
+          1_600_000_000_000 + i,
+          i % 2 ? 'black' : 'white',
+          `rival${i}`,
+        )
+    }
     if (testInfo.title.includes('saved position lookup')) {
       const saved = {
         kind: 'opening',
@@ -542,4 +556,38 @@ test('shows a reviewed game’s accuracy in History and opens its review', async
   await expect(review.getByRole('table')).toContainText('tester')
   await expect(review.getByRole('table')).toContainText('rival')
   await expect(page.locator('.tree-glyph.blunder')).toHaveText('??')
+})
+
+test('browses paged history through validated IPC with filters and on-demand PGN', async ({
+  desktop: { page },
+}) => {
+  const metadata = await page.evaluate(() => window.kchess.loadData())
+  expect(metadata.gameCount).toBe(41)
+  expect(metadata).not.toHaveProperty('games')
+  const rows = await page.evaluate(() => window.kchess.gamePage({ offset: 20, limit: 20 }))
+  expect(rows.total).toBe(41)
+  expect(rows.games).toHaveLength(20)
+  expect(rows.games[0]!.pgn).toBeUndefined()
+  expect(await page.evaluate(() => window.kchess.gamePgn('tester', 'Paged040'))).toBe('1. e4 e5 *')
+  expect(
+    await page.evaluate(async () => {
+      try {
+        await window.kchess.gamePage({ offset: 0, limit: 5000 })
+        return false
+      } catch {
+        return true
+      }
+    }),
+  ).toBe(true)
+  await navigate(page, 'History')
+  await expect(page.locator('.game-row')).toHaveCount(20)
+  await expect(page.locator('.pager')).toContainText('1–20 of 41 games')
+  await page.getByRole('button', { name: 'Next page' }).click()
+  await expect(page.locator('.pager')).toContainText('21–40 of 41 games')
+  await expect(page.locator('.game-row').first()).toContainText('rival20')
+  await page.getByRole('tab', { name: 'Wins', exact: true }).click()
+  await expect(page.locator('.pager')).toContainText('1–20 of 21 games')
+  await expect(page.locator('.game-row').first()).toContainText('rival40')
+  await page.locator('.game-row').first().click()
+  await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible()
 })

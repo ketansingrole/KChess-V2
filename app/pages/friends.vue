@@ -2,13 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import type { LichessAccount } from '../../src/shared/types'
-import { gameResult } from '../utils/games'
 import { formatBytes, formatCount, timeAgo } from '../utils/format'
 
 const store = useKChessStore()
 const usage = useUsageStore()
 const friendsStore = useFriendsStore()
-const { busy, usernameInput, trackedAccounts, connectedAccounts, games, historyAccount } =
+const { busy, usernameInput, trackedAccounts, connectedAccounts, libraryOverview, historyAccount } =
   storeToRefs(store)
 const { profiles, status, loading, onlineCount } = storeToRefs(friendsStore)
 const { addAccount, removeAccount, sync, selectPage, challengeFriend } = store
@@ -17,22 +16,11 @@ const key = (name: string): string => name.toLowerCase()
 
 /** Results of a friend's own stored games, from their point of view. */
 function recordOf(username: string): { win: number; loss: number; draw: number } {
-  const record = { win: 0, loss: 0, draw: 0 }
-  for (const game of games.value)
-    if (key(game.account) === key(username)) record[gameResult(game)]++
-  return record
+  return libraryOverview.value.byAccount[key(username)] ?? { win: 0, loss: 0, draw: 0 }
 }
 /** How the connected accounts have fared against a friend. */
 function versusOf(username: string): { win: number; loss: number; draw: number } | undefined {
-  const mine = new Set(connectedAccounts.value.map((account) => key(account.username)))
-  const record = { win: 0, loss: 0, draw: 0 }
-  let met = 0
-  for (const game of games.value)
-    if (mine.has(key(game.account)) && key(game.opponent) === key(username)) {
-      record[gameResult(game)]++
-      met++
-    }
-  return met ? record : undefined
+  return libraryOverview.value.versus[key(username)]
 }
 
 const stored = (username: string): number => {

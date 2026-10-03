@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, effectScope, ref, watch, type EffectScope } from 'vue'
+import { computed, effectScope, ref, shallowReactive, watch, type EffectScope } from 'vue'
 import { readSession, persistSession } from '../utils/sessionPersistence'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
@@ -152,7 +152,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   /* ── Engine ──────────────────────────────────────────────────────── */
 
-  const evaluations = new Map<string, AnalysisUpdate>()
+  const evaluations = shallowReactive(new Map<string, AnalysisUpdate>())
   const assistanceAllowed = computed(
     () => !['playing', 'seeking', 'disconnected'].includes(app.onlinePhase),
   )
@@ -165,6 +165,19 @@ export const useAnalysisStore = defineStore('analysis', () => {
   let latestId = 0
   let scope: EffectScope | undefined
   let off: (() => void) | undefined
+
+  // Settings can change while this page is detached. Invalidate in the store's lifetime scope.
+  watch(
+    [() => app.settings?.enginePath, () => app.engineInfo?.identity],
+    () => {
+      ++clientId
+      wanted = ''
+      evaluations.clear()
+      live.value = null
+      engineBusy.value = false
+    },
+    { flush: 'sync' },
+  )
 
   /** The deepest evaluation known for the position on the board. */
   const evaluation = computed<AnalysisUpdate | null>(() => {
@@ -233,6 +246,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     if (
       !infinite.value &&
       known?.reason === 'completed' &&
+      known.engine === app.engineInfo?.identity &&
       known.lines.length >= engineLines.value
     ) {
       wanted = fen
@@ -267,14 +281,6 @@ export const useAnalysisStore = defineStore('analysis', () => {
     scope = effectScope()
     scope.run(() => {
       watch(
-        () => app.settings.enginePath,
-        () => {
-          evaluations.clear()
-          live.value = null
-        },
-        { flush: 'sync' },
-      )
-      watch(
         () =>
           [
             root.value.fen,
@@ -283,6 +289,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
             engineLines.value,
             infinite.value,
             app.settings.enginePath,
+            app.engineInfo?.identity,
             app.onlinePhase,
             reviews.status.current?.key,
           ] as const,

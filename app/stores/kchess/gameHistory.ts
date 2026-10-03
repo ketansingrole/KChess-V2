@@ -1,8 +1,12 @@
-import { computed, ref, watch, type Ref } from 'vue'
-import type { AppData, LichessGame, LichessRatingHistory } from '../../../src/shared/types'
+import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
+import type {
+  AppData,
+  GameLibraryOverview,
+  LichessGame,
+  LichessRatingHistory,
+} from '../../../src/shared/types'
 import { pgnFromMoves } from '../../utils/chess'
-import { gameResult } from '../../utils/games'
-import { mergeRatingHistories, ratingHistoryFromGames } from '../../utils/ratings'
+import { mergeRatingHistories } from '../../utils/ratings'
 
 export function useGameHistory(options: {
   data: Ref<AppData | null>
@@ -22,44 +26,113 @@ export function useGameHistory(options: {
   const reviewMoves = computed(() => reviewGame.value?.moves.split(/\s+/).filter(Boolean) ?? [])
   const reviewPgn = computed(() => reviewGame.value?.pgn?.trim() || pgnFromMoves(reviewMoves.value))
 
-  const games = computed(() => data.value?.games ?? [])
-  const filteredGames = computed(() =>
-    games.value.filter((game) => {
-      if (historyAccount.value !== 'all' && game.account !== historyAccount.value) return false
-      if (historyRated.value !== 'all' && (game.rated ? 'rated' : 'casual') !== historyRated.value)
-        return false
-      return historyResult.value === 'all' || gameResult(game) === historyResult.value
-    }),
+  const gameCount = computed(() => data.value?.gameCount ?? 0)
+  const visibleGames = ref<LichessGame[]>([])
+  const recentGames = ref<LichessGame[]>([])
+  const historyTotal = ref(0)
+  const historyLoading = ref(false)
+  const historyError = ref('')
+  const libraryOverview = ref<GameLibraryOverview>({ byAccount: {}, versus: {} })
+  const fallbackRatings = ref<LichessRatingHistory>([])
+  const selectedRecord = computed(
+    () => libraryOverview.value.byAccount[selectedAccount.value.toLowerCase()],
   )
+  const selectedGameCount = computed(() => selectedRecord.value?.total ?? 0)
+  const counts = computed(() => selectedRecord.value ?? { win: 0, loss: 0, draw: 0 })
   const historyPageCount = computed(() =>
-    Math.max(1, Math.ceil(filteredGames.value.length / historyPageSize.value)),
+    Math.max(1, Math.ceil(historyTotal.value / historyPageSize.value)),
   )
-  const visibleGames = computed(() =>
-    filteredGames.value.slice(
-      historyPage.value * historyPageSize.value,
-      (historyPage.value + 1) * historyPageSize.value,
-    ),
-  )
-  const recentGames = computed(() =>
-    games.value.filter((g) => g.account === selectedAccount.value).slice(0, 6),
-  )
-  const counts = computed(() => {
-    const own = games.value.filter((g) => g.account === selectedAccount.value)
-    return {
-      win: own.filter((g) => gameResult(g) === 'win').length,
-      loss: own.filter((g) => gameResult(g) === 'loss').length,
-      draw: own.filter((g) => gameResult(g) === 'draw').length,
-    }
+  let pageEpoch = 0
+  let overviewEpoch = 0
+  let accountEpoch = 0
+  onScopeDispose(() => {
+    ++pageEpoch
+    ++overviewEpoch
+    ++accountEpoch
   })
-  /**
-   * Lichess's rating history, completed from synced games where it has none
-   * (some accounts return an empty history despite thousands of rated games).
-   */
+
+  watch(
+    [historyResult, historyRated, historyAccount, historyPageSize],
+    () => {
+      historyPage.value = 0
+    },
+    { flush: 'sync' },
+  )
+  watch(
+    [data, historyResult, historyRated, historyAccount, historyPageSize, historyPage],
+    async () => {
+      const epoch = ++pageEpoch
+      visibleGames.value = []
+      historyError.value = ''
+      if (!data.value) {
+        historyTotal.value = 0
+        historyLoading.value = false
+        return
+      }
+      historyLoading.value = true
+      try {
+        const result = await window.kchess.gamePage({
+          account: historyAccount.value === 'all' ? undefined : historyAccount.value,
+          result:
+            historyResult.value === 'all'
+              ? undefined
+              : (historyResult.value as 'win' | 'loss' | 'draw'),
+          rated: historyRated.value === 'all' ? undefined : historyRated.value === 'rated',
+          offset: historyPage.value * historyPageSize.value,
+          limit: historyPageSize.value,
+        })
+        if (epoch !== pageEpoch) return
+        historyTotal.value = result.total
+        const lastPage = Math.max(0, Math.ceil(result.total / historyPageSize.value) - 1)
+        if (historyPage.value > lastPage) {
+          historyPage.value = lastPage
+          return
+        }
+        visibleGames.value = result.games
+      } catch (cause) {
+        if (epoch === pageEpoch)
+          historyError.value = cause instanceof Error ? cause.message : String(cause)
+      } finally {
+        if (epoch === pageEpoch) historyLoading.value = false
+      }
+    },
+    { immediate: true },
+  )
+
+  watch(
+    data,
+    async () => {
+      const epoch = ++overviewEpoch
+      libraryOverview.value = { byAccount: {}, versus: {} }
+      if (!data.value) return
+      try {
+        const result = await window.kchess.gameLibraryOverview()
+        if (epoch === overviewEpoch) libraryOverview.value = result
+      } catch {
+        /* An unavailable overview must not show another account's counts. */
+      }
+    },
+    { immediate: true },
+  )
+  watch(
+    [data, selectedAccount],
+    async () => {
+      const epoch = ++accountEpoch
+      recentGames.value = []
+      fallbackRatings.value = []
+      if (!data.value || !selectedAccount.value) return
+      const results = await Promise.allSettled([
+        window.kchess.gamePage({ account: selectedAccount.value, offset: 0, limit: 6 }),
+        window.kchess.gameRatingHistory(selectedAccount.value),
+      ])
+      if (epoch !== accountEpoch) return
+      if (results[0].status === 'fulfilled') recentGames.value = results[0].value.games
+      if (results[1].status === 'fulfilled') fallbackRatings.value = results[1].value
+    },
+    { immediate: true },
+  )
   const ratingHistoriesResolved = computed(() =>
-    mergeRatingHistories(
-      ratingHistories.value,
-      ratingHistoryFromGames(games.value.filter((game) => game.account === selectedAccount.value)),
-    ),
+    mergeRatingHistories(ratingHistories.value, fallbackRatings.value),
   )
   /** The chosen mode's points come from synced games rather than Lichess. */
   const chartFromGames = computed(
@@ -92,9 +165,6 @@ export function useGameHistory(options: {
   })
   const chartValues = computed(() => chartSeries.value.map((point) => point.rating))
 
-  watch([historyResult, historyRated, historyAccount, historyPageSize], () => {
-    historyPage.value = 0
-  })
   async function openReview(game: LichessGame): Promise<void> {
     // List rows carry no PGN; it is read locally on demand.
     const pgn = game.pgn ?? (await window.kchess.gamePgn(game.account, game.id).catch(() => null))
@@ -110,8 +180,12 @@ export function useGameHistory(options: {
     historyPageSize,
     reviewGame,
     reviewPgn,
-    games,
-    filteredGames,
+    gameCount,
+    selectedGameCount,
+    libraryOverview,
+    historyTotal,
+    historyLoading,
+    historyError,
     historyPageCount,
     visibleGames,
     recentGames,
