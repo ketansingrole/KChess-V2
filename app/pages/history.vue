@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { gameResult } from '../utils/games'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
@@ -26,7 +26,12 @@ const {
 const { sync, date, openReview, selectPage } = store
 
 const analysis = useAnalysisStore()
-const { summaries } = storeToRefs(useReviewStore())
+const reviews = useReviewStore()
+const { summaries } = storeToRefs(reviews)
+// A new page (or the same page re-fetched after a sync) brings its own summaries.
+watch(visibleGames, (games) => void reviews.loadSummaries(games.map((game) => game.id)), {
+  immediate: true,
+})
 const reviewer = ref<{ ply: number } | null>(null)
 /** Review the game on the analysis board, opened at the move being looked at. */
 function openGameReview(): void {

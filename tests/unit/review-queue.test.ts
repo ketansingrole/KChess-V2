@@ -55,13 +55,13 @@ describe('automatic game review', () => {
     reviewsChanged()
     await vi.waitFor(
       () => {
-        if (!reviewSummaries().scholar1?.complete) throw new Error('not yet')
+        if (!reviewSummaries(['scholar1']).scholar1?.complete) throw new Error('not yet')
       },
       { timeout: 60_000, interval: 100 },
     )
     expect(asked).toEqual([['scholar1']])
-    expect(reviewSummaries().scholar1?.black.blunder).toBe(1)
-    expect(reviewSummaries().variant1).toBeUndefined()
+    expect(reviewSummaries(['scholar1']).scholar1?.black.blunder).toBe(1)
+    expect(reviewSummaries(['variant1']).variant1).toBeUndefined()
     expect(updates.at(-1)?.review).toMatchObject({ gameId: 'scholar1', complete: true })
   }, 90_000)
 
@@ -70,11 +70,11 @@ describe('automatic game review', () => {
     addGame('waiting1', 'd4 d5 c4')
     reviewsChanged()
     await vi.waitFor(() => expect(statuses.at(-1)?.paused).toBe('engine'))
-    expect(reviewSummaries().waiting1).toBeUndefined()
+    expect(reviewSummaries(['waiting1']).waiting1).toBeUndefined()
     busy = undefined
     settings.reviewAuto = 'off'
     reviewsChanged()
     await vi.waitFor(() => expect(statuses.at(-1)?.paused).toBe('off'))
-    expect(reviewSummaries().waiting1).toBeUndefined()
+    expect(reviewSummaries(['waiting1']).waiting1).toBeUndefined()
   })
 })

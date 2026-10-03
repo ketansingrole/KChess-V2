@@ -76,7 +76,7 @@ const api: DesktopApi = {
   reviewRequest: (request) => invoke('reviewRequest', request),
   reviewCancel: (key) => invoke('reviewCancel', key),
   reviewStatus: () => invoke('reviewStatus'),
-  reviewSummaries: () => invoke('reviewSummaries'),
+  reviewSummaries: (ids) => invoke('reviewSummaries', ids),
   onReviewUpdate: (callback) => {
     const listener = (_: unknown, update: ReviewUpdate): void => callback(update)
     ipcRenderer.on(IPC_EVENTS.reviewUpdate, listener)

@@ -49,6 +49,11 @@ const usernameSchema = v.pipe(
   v.regex(USERNAME, USERNAME_MESSAGE),
 )
 const gameIdSchema = v.pipe(v.string('Invalid game id.'), v.regex(GAME_ID, 'Invalid game id.'))
+/** At most one history page (`GamePageQuery.limit`) of game ids. */
+const gameIdsSchema = v.pipe(
+  v.array(gameIdSchema, 'Invalid game list.'),
+  v.maxLength(100, 'Too many games.'),
+)
 const uciSchema = v.pipe(v.string('Invalid move.'), v.regex(UCI_MOVE, 'Invalid move.'))
 const movesSchema = v.pipe(
   v.array(uciSchema, 'Invalid move list.'),
@@ -334,6 +339,7 @@ function parse<const S extends v.GenericSchema>(schema: S, value: unknown): v.In
 
 export const assertUsername = (value: unknown): string => parse(usernameSchema, value)
 export const assertGameId = (value: unknown): string => parse(gameIdSchema, value)
+export const assertGameIds = (value: unknown): string[] => parse(gameIdsSchema, value)
 export const assertUci = (value: unknown): string => parse(uciSchema, value)
 export const assertMoves = (value: unknown): string[] => parse(movesSchema, value)
 export const assertLevel = (value: unknown): EngineLevel => parse(levelSchema, value)

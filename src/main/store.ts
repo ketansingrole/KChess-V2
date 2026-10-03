@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { getDb } from './db'
+import { writeReview } from './reviewStore'
 import {
   PIECE_ANIMATIONS,
   REVIEW_AUTO,
@@ -18,6 +19,7 @@ import {
   type LichessRatingHistory,
   type LichessGame,
   type Settings,
+  type StoredReview,
 } from '../shared/types'
 import { isGameInProgress } from '../shared/gameStatus'
 import { assertGamePageQuery, assertUsername } from '../shared/validate'
@@ -456,8 +458,12 @@ export async function getSettings(): Promise<Settings> {
  */
 let snapshot: AppData | null = null
 
+/** `gamePage` totals by filter; games change only through writes that call `invalidate`. */
+const pageTotals = new Map<string, number>()
+
 function invalidate(): void {
   snapshot = null
+  pageTotals.clear()
 }
 
 export async function loadData(): Promise<AppData> {
@@ -507,9 +513,16 @@ export async function gamePage(input: GamePageQuery): Promise<GamePage> {
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
   const database = getDb()
-  const { total } = database
-    .prepare(`SELECT COUNT(*) AS total FROM games ${where}`)
-    .get(...params) as unknown as { total: number }
+  // Paging through one filter re-counts nothing; the counts stay valid until games change.
+  const totalKey = JSON.stringify([where, params])
+  let total = pageTotals.get(totalKey)
+  if (total === undefined) {
+    const row = database
+      .prepare(`SELECT COUNT(*) AS total FROM games ${where}`)
+      .get(...params) as unknown as { total: number }
+    total = row.total
+    pageTotals.set(totalKey, total)
+  }
   const rows = database
     .prepare(
       `SELECT ${LIST_COLUMNS} FROM games ${where} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?`,
@@ -741,8 +754,16 @@ const UPSERT_GAME = `INSERT INTO games (${GAME_COLUMNS}) VALUES (${GAME_PLACEHOL
   .map((key) => `${key} = excluded.${key}`)
   .join(', ')}`
 
-/** Upsert one batch in a single transaction; `syncedAt` also marks the account as synced. */
-function upsertGames(username: string, games: LichessGame[], syncedAt?: number): void {
+/**
+ * Upsert one batch, and the Lichess reviews that came with it, in a single transaction;
+ * `syncedAt` also marks the account as synced.
+ */
+function upsertGames(
+  username: string,
+  games: LichessGame[],
+  syncedAt?: number,
+  reviews: readonly StoredReview[] = [],
+): void {
   const database = getDb()
   const upsert = database.prepare(UPSERT_GAME)
   database.exec('BEGIN IMMEDIATE')
@@ -762,6 +783,7 @@ function upsertGames(username: string, games: LichessGame[], syncedAt?: number):
         completed.run(username, game.id)
       }
     }
+    for (const review of reviews) writeReview(review)
     // Trim once per completed sync rather than after every page; an interrupted
     // sync may briefly exceed the cap until the next one completes.
     if (syncedAt !== undefined) {
@@ -788,9 +810,13 @@ function upsertGames(username: string, games: LichessGame[], syncedAt?: number):
  * interrupted sync keeps what it fetched and the next one still starts from
  * the old cursor.
  */
-export async function saveGamesPage(username: string, games: LichessGame[]): Promise<void> {
+export async function saveGamesPage(
+  username: string,
+  games: LichessGame[],
+  reviews: readonly StoredReview[] = [],
+): Promise<void> {
   await ensureMigrated()
-  upsertGames(username, games)
+  upsertGames(username, games, undefined, reviews)
 }
 
 export async function saveGames(

@@ -361,11 +361,19 @@ async function asOwner<T>(
 /** Games that ended this long ago have had their chance to be analysed on Lichess. */
 const ANALYSIS_SETTLED_MS = 86_400_000
 
+interface GamesPage {
+  games: LichessGame[]
+  /** Lichess's own analysis of these games, saved with them. */
+  reviews: StoredReview[]
+  /** Games Lichess was effectively asked about; the background review need not ask again. */
+  settled: string[]
+}
+
 async function fetchGamesPage(
   account: string,
   since: number | undefined,
   until: number | undefined,
-): Promise<LichessGame[]> {
+): Promise<GamesPage> {
   const stream = await asOwner(account, (auth) =>
     unwrap(
       client.GET('/api/games/user/{username}', {
@@ -389,22 +397,19 @@ async function fetchGamesPage(
       }),
     ),
   )
-  const games: LichessGame[] = []
-  const settled: string[] = []
+  const page: GamesPage = { games: [], reviews: [], settled: [] }
   await readLines(stream, (line) => {
     const raw = JSON.parse(line) as components['schemas']['GameJson']
-    games.push(normalizeGame(raw, account))
+    page.games.push(normalizeGame(raw, account))
     const review = reviewFromLichess(raw)
-    if (review) writeReview(review)
+    if (review) page.reviews.push(review)
     if (
       !isGameInProgress(raw.status) &&
       (review || Date.now() - raw.lastMoveAt > ANALYSIS_SETTLED_MS)
     )
-      settled.push(raw.id)
+      page.settled.push(raw.id)
   })
-  // Lichess was effectively asked about these: the background review need not ask again.
-  markChecked(settled)
-  return games
+  return page
 }
 
 /**
@@ -464,15 +469,16 @@ async function refreshPendingGames(account: string): Promise<void> {
     )
     const requested = new Set(ids.slice(offset, offset + 300))
     const games: LichessGame[] = []
+    const reviews: StoredReview[] = []
     await readLines(stream, (line) => {
       const raw = JSON.parse(line) as components['schemas']['GameJson']
       if (!requested.has(raw.id)) return
       games.push(normalizeGame(raw, account))
       const review = reviewFromLichess(raw)
-      if (review) writeReview(review)
+      if (review) reviews.push(review)
     })
     // Missing IDs remain pending; a failed request never advances the sync cursor.
-    await saveGamesPage(account, games)
+    await saveGamesPage(account, games, reviews)
   }
 }
 
@@ -494,12 +500,14 @@ function syncAccount(account: LichessAccount): Promise<void> {
     let fetched = 0
     let until: number | undefined
     while (fetched < MAX_GAMES) {
-      const page = await fetchGamesPage(account.username, since, until)
+      const { games, reviews, settled } = await fetchGamesPage(account.username, since, until)
       // Save as we go: an interrupted sync keeps its pages (the cursor only moves once all are in).
-      if (page.length) await saveGamesPage(account.username, page)
-      fetched += page.length
-      if (page.length < SYNC_PAGE) break
-      const oldest = page.reduce((min, g) => Math.min(min, g.createdAt), Infinity)
+      // Reviews go in the page's transaction; games are marked checked only once they are saved.
+      if (games.length) await saveGamesPage(account.username, games, reviews)
+      markChecked(settled)
+      fetched += games.length
+      if (games.length < SYNC_PAGE) break
+      const oldest = games.reduce((min, g) => Math.min(min, g.createdAt), Infinity)
       if (until !== undefined && oldest >= until) break
       until = oldest
     }

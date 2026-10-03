@@ -22,6 +22,7 @@ import {
   saveGamesPage,
 } from '../../src/main/store'
 import { syncGames } from '../../src/main/lichess'
+import { reviewSummaries } from '../../src/main/reviewStore'
 import { safeStorage } from 'electron'
 
 const state = vi.hoisted(() => ({ db: null as DatabaseSync | null, fetch: vi.fn() }))
@@ -75,6 +76,19 @@ function raw(status: string) {
       black: { user: { name: 'Bob' }, rating: 1490 },
     },
     moves: status === 'mate' ? 'e4 e5 Nf3' : 'e4',
+  }
+}
+/** A finished game as Lichess exports it with its own computer analysis. */
+function analysed() {
+  const game = raw('mate')
+  const analysis = { inaccuracy: 0, mistake: 0, blunder: 0, acpl: 12, accuracy: 91 }
+  return {
+    ...game,
+    players: {
+      white: { ...game.players.white, analysis },
+      black: { ...game.players.black, analysis: { ...analysis, accuracy: 84 } },
+    },
+    analysis: [{ eval: 30 }, { eval: 25 }, { eval: 35 }],
   }
 }
 function response(rows: unknown[]) {
@@ -281,6 +295,36 @@ describe('Lichess creation-time sync', () => {
     const saved = (await gamePage({ offset: 0, limit: 20 })).games[0]!
     expect(saved.status).toBe('mate')
     expect(saved.moves).toBe('e4 e5 Nf3')
+  })
+})
+
+describe('Lichess analysis saved during sync', () => {
+  const checked = () =>
+    state
+      .db!.prepare('SELECT id FROM lichess_review_checks')
+      .all()
+      .map((row) => row.id)
+
+  it('saves the analysis with its page, so the list can show it straight away', async () => {
+    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(0)
+    state.fetch.mockImplementation(async () => response([analysed()]))
+    await syncGames('Alice')
+    // The cached count was dropped by the write rather than going stale.
+    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(1)
+    const summary = reviewSummaries(['Pending1', 'Missing1'])
+    expect(Object.keys(summary)).toEqual(['Pending1'])
+    expect(summary.Pending1).toMatchObject({ source: 'lichess', complete: true })
+    expect(summary.Pending1!.white.accuracy).toBe(91)
+    expect(checked()).toEqual(['Pending1'])
+  })
+  it('keeps neither the analysis nor the check when its page cannot be saved', async () => {
+    state.fetch.mockImplementation(async () => {
+      state.db!.exec("DELETE FROM accounts WHERE username = 'Alice'")
+      return response([analysed()])
+    })
+    await expect(syncGames('Alice')).rejects.toThrow('removed during sync')
+    expect(reviewSummaries(['Pending1'])).toEqual({})
+    expect(checked()).toEqual([])
   })
 })
 

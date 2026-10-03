@@ -66,11 +66,18 @@ export function writeReview(review: StoredReview): {
   return { review: merged, summary }
 }
 
-/** Summaries of reviewed Lichess games, by game id. */
-export function reviewSummaries(): Record<string, ReviewSummary> {
+/**
+ * Summaries of these Lichess games' reviews, by game id; games without one are left out.
+ * When a game has several, the finished, most recent one wins.
+ */
+export function reviewSummaries(ids: readonly string[]): Record<string, ReviewSummary> {
+  if (!ids.length) return {}
   const rows = getDb()
-    .prepare('SELECT gameId, summary FROM reviews WHERE gameId IS NOT NULL')
-    .all() as unknown as { gameId: string; summary: string }[]
+    .prepare(
+      `SELECT gameId, summary FROM reviews WHERE gameId IN (${ids.map(() => '?').join(', ')})
+       ORDER BY complete, updatedAt`,
+    )
+    .all(...ids) as unknown as { gameId: string; summary: string }[]
   const result: Record<string, ReviewSummary> = {}
   for (const row of rows) {
     const summary = parse<ReviewSummary>(row.summary)

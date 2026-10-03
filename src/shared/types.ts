@@ -836,8 +836,8 @@ export interface DesktopApi {
   reviewRequest(request: ReviewRequest): Promise<StoredReview | null>
   reviewCancel(key: string): Promise<void>
   reviewStatus(): Promise<ReviewStatus>
-  /** Summaries of reviewed Lichess games, by game id. */
-  reviewSummaries(): Promise<Record<string, ReviewSummary>>
+  /** Review summaries of up to one history page of games, by game id. */
+  reviewSummaries(ids: string[]): Promise<Record<string, ReviewSummary>>
   onReviewUpdate(callback: (update: ReviewUpdate) => void): () => void
   onReviewStatus(callback: (status: ReviewStatus) => void): () => void
   startOnline(options: OnlineOptions): Promise<{ id?: string; url?: string; seeking?: boolean }>

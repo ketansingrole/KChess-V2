@@ -14,8 +14,11 @@ import type {
  */
 export const useReviewStore = defineStore('review', () => {
   const reviews = shallowRef(new Map<string, StoredReview>())
-  /** Summaries of reviewed Lichess games, by game id. */
+  /** Summaries of reviewed Lichess games, by game id, for the games the list has shown. */
   const summaries = ref<Record<string, ReviewSummary>>({})
+  /** When each game's summary last streamed in, so an older lookup cannot overwrite it. */
+  const streamedAt = new Map<string, number>()
+  let tick = 0
   const status = ref<ReviewStatus>({ waiting: 0 })
   let listening = false
   const subscriptions: (() => void)[] = []
@@ -27,7 +30,10 @@ export const useReviewStore = defineStore('review', () => {
 
   function receive(update: ReviewUpdate): void {
     remember(update.review)
-    if (update.review.gameId) summaries.value[update.review.gameId] = update.summary
+    const id = update.review.gameId
+    if (!id) return
+    summaries.value[id] = update.summary
+    streamedAt.set(id, ++tick)
   }
 
   /** Follow the main process's reviews; safe to call more than once. */
@@ -40,15 +46,29 @@ export const useReviewStore = defineStore('review', () => {
       .reviewStatus()
       .then((next) => (status.value = next))
       .catch(() => undefined)
-    void loadSummaries()
   }
 
-  async function loadSummaries(): Promise<void> {
+  /**
+   * Look up the stored summaries of these games (one history page). Called whenever the page
+   * changes, including after a sync, which saves Lichess's own analysis without streaming it.
+   */
+  async function loadSummaries(ids: readonly string[]): Promise<void> {
+    if (!ids.length) return
+    const startedAt = tick
+    let found: Record<string, ReviewSummary>
     try {
-      summaries.value = await window.kchess.reviewSummaries()
+      found = await window.kchess.reviewSummaries([...ids])
     } catch {
-      // The list simply shows no accuracy.
+      return // The list simply shows no accuracy.
     }
+    const next = { ...summaries.value }
+    for (const id of ids) {
+      if ((streamedAt.get(id) ?? 0) > startedAt) continue
+      const summary = found[id]
+      if (summary) next[id] = summary
+      else delete next[id]
+    }
+    summaries.value = next
   }
 
   /** The stored review of these moves, if there is one. */

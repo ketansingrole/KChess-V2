@@ -104,6 +104,7 @@ import {
   assertDays,
   assertFriendList,
   assertGameId,
+  assertGameIds,
   assertGamePageQuery,
   assertLadderQuery,
   assertLevel,
@@ -461,7 +462,7 @@ void app
     })
     handle('reviewCancel', (_event, key: unknown) => cancelReview(assertReviewKey(key)))
     handle('reviewStatus', () => reviewStatus())
-    handle('reviewSummaries', () => reviewSummaries())
+    handle('reviewSummaries', (_event, ids: unknown) => reviewSummaries(assertGameIds(ids)))
     setupReviews({
       settings: getSettings,
       accounts: async () => {

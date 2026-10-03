@@ -5,6 +5,7 @@ import { INITIAL_FEN } from 'chessops/fen'
 import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
+import { useReviewStore } from '../../app/stores/review'
 import { analysisContext } from '../../src/shared/analysisContext'
 import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
 import type {
@@ -15,6 +16,8 @@ import type {
   GamePageQuery,
   LichessGame,
   LichessRatingHistory,
+  ReviewSummary,
+  ReviewUpdate,
 } from '../../src/shared/types'
 import { deferred, desktop } from './fixtures'
 
@@ -241,5 +244,56 @@ describe('analysis engine cache identity', () => {
     expect(analysis.engineError).toBe('Engine startup failed')
     expect(analysis.engineBusy).toBe(false)
     analysis.detach()
+  })
+})
+
+describe('review summaries for the visible page', () => {
+  const summary = (accuracy: number): ReviewSummary => ({
+    key: `key${accuracy}`,
+    source: 'lichess',
+    complete: true,
+    white: { accuracy, inaccuracy: 0, mistake: 0, blunder: 0 },
+    black: { accuracy, inaccuracy: 0, mistake: 0, blunder: 0 },
+  })
+
+  it('looks up only the page, keeps other pages, and never lets a lookup undo a streamed review', async () => {
+    const lookup = deferred<Record<string, ReviewSummary>>()
+    let stream: (update: ReviewUpdate) => void = () => {}
+    const asked: string[][] = []
+    desktop({
+      reviewStatus: async () => ({ waiting: 0 }),
+      onReviewUpdate: (callback) => {
+        stream = callback
+        return vi.fn()
+      },
+      onReviewStatus: () => vi.fn(),
+      reviewSummaries: async (ids) => {
+        asked.push(ids)
+        return asked.length === 1
+          ? { Page1Aaa: summary(70), Gone0001: summary(10) }
+          : lookup.promise
+      },
+    })
+    const reviews = useReviewStore()
+    reviews.listen()
+    // Only looked up when a page asks; nothing is transferred on startup.
+    expect(asked).toEqual([])
+    await reviews.loadSummaries(['Page1Aaa', 'Gone0001'])
+    expect(reviews.summaries.Page1Aaa?.white.accuracy).toBe(70)
+    const pending = reviews.loadSummaries(['Page2Aaa', 'Gone0001'])
+    stream({
+      review: { gameId: 'Page2Aaa' } as ReviewUpdate['review'],
+      summary: summary(95),
+    })
+    lookup.resolve({})
+    await pending
+    expect(asked).toEqual([
+      ['Page1Aaa', 'Gone0001'],
+      ['Page2Aaa', 'Gone0001'],
+    ])
+    expect(reviews.summaries.Page1Aaa?.white.accuracy).toBe(70)
+    expect(reviews.summaries.Page2Aaa?.white.accuracy).toBe(95)
+    expect(reviews.summaries.Gone0001).toBeUndefined()
+    reviews.dispose()
   })
 })
