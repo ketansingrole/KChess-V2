@@ -157,6 +157,31 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE settings ADD COLUMN updateAutoDownload INTEGER NOT NULL DEFAULT 1;
   ALTER TABLE settings ADD COLUMN updateInstallOnQuit INTEGER NOT NULL DEFAULT 1;
   `,
+  `
+  ALTER TABLE settings ADD COLUMN engineLevels TEXT NOT NULL DEFAULT 'beginner,club,expert,fm,im,gm,max';
+  `,
+  // Game reviews: the scores of every position (from Lichess or local Stockfish) and a summary
+  // for the game list. Keyed by start position and moves, so a game is reviewed once wherever it
+  // is opened. `lichess_review_checks` remembers games Lichess had no analysis for.
+  `
+  ALTER TABLE settings ADD COLUMN reviewAuto TEXT NOT NULL DEFAULT 'recent';
+  ALTER TABLE settings ADD COLUMN reviewOnBattery INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE IF NOT EXISTS reviews (
+    key TEXT PRIMARY KEY,
+    gameId TEXT,
+    source TEXT NOT NULL,
+    complete INTEGER NOT NULL,
+    depth INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reviews_game ON reviews (gameId);
+  CREATE TABLE IF NOT EXISTS lichess_review_checks (
+    id TEXT PRIMARY KEY,
+    checkedAt INTEGER NOT NULL
+  );
+  `,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

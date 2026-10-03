@@ -13,11 +13,18 @@
   --ui-win: #4f9f66;
   --ui-loss: #d05f5f;
   --topbar-height: 52px;
+  /* Game review labels, in Lichess's colors: ?! inaccuracy, ? mistake, ?? blunder. */
+  --judgment-inaccuracy: #3d9ad6;
+  --judgment-mistake: #d48a00;
+  --judgment-blunder: #d14848;
 }
 .dark {
   --ui-primary: #91af6a;
   --ui-win: #62b57a;
   --ui-loss: #e07979;
+  --judgment-inaccuracy: #56b4e9;
+  --judgment-mistake: #e69f00;
+  --judgment-blunder: #df5353;
 }
 * {
   box-sizing: border-box;
@@ -421,7 +428,7 @@ button:disabled {
 .game-head,
 .game-row {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 96px 88px 104px;
+  grid-template-columns: 64px minmax(0, 1fr) 96px 72px 84px 104px;
   gap: 12px;
   align-items: center;
 }
@@ -476,6 +483,22 @@ button:disabled {
 .rating-diff {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+.game-row .inaccuracy,
+.review-line .inaccuracy {
+  color: var(--judgment-inaccuracy);
+}
+.game-row .mistake,
+.review-line .mistake {
+  color: var(--judgment-mistake);
+}
+.game-row .blunder,
+.review-line .blunder {
+  color: var(--judgment-blunder);
+}
+.review-line {
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-muted);
 }
 .rating-diff.up {
   color: var(--ui-win);
@@ -979,9 +1002,20 @@ coords .coord-dark {
   display: block;
   font-weight: 650;
 }
+.status-banner .banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.status-banner .banner-text .detail {
+  display: block;
+}
 .status-banner .detail {
   color: var(--ui-text-muted);
   font-size: 12px;
+}
+.status-banner .banner-action {
+  flex: none;
+  align-self: center;
 }
 .status-banner.win {
   background: color-mix(in srgb, var(--ui-win) 18%, transparent);

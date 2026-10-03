@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { shell } from 'electron'
 import { LRUCache } from 'lru-cache'
 import createClient from 'openapi-fetch'
+import { INITIAL_FEN } from 'chessops/fen'
 import type { components, paths } from '@lichess-org/types'
 import type {
   AppData,
@@ -27,8 +28,13 @@ import type {
   PuzzleSolveRequest,
   PuzzleSolveResult,
   StormDashboard,
+  Judgment,
+  ReviewEval,
+  StoredReview,
 } from '../shared/types'
 import { puzzleFromApi, type ApiPuzzle } from '../shared/puzzle'
+import { lichessLine, replay, reviewKey, sanToUci } from '../shared/review'
+import { markChecked, writeReview } from './reviewStore'
 import { LichessError, throwLichessErrors } from '../shared/lichessError'
 import { isGameInProgress } from '../shared/gameStatus'
 import { readLines } from './ndjson'
@@ -274,7 +280,63 @@ function normalizeGame(raw: components['schemas']['GameJson'], account: string):
   }
 }
 
+/**
+ * Lichess's computer analysis of a game, as a review (scores from White's side, its labels and
+ * accuracy); undefined when Lichess has not analysed it.
+ */
+export function reviewFromLichess(
+  raw: components['schemas']['GameJson'],
+): StoredReview | undefined {
+  if (!raw.analysis?.length) return undefined
+  if (raw.variant !== 'standard' && raw.variant !== 'fromPosition') return undefined
+  const { fen, moves } = lichessLine({ moves: raw.moves ?? '', initialFen: raw.initialFen })
+  if (!moves.length) return undefined
+  const positions = replay(fen, moves)
+  const evals: (ReviewEval | null)[] = Array.from({ length: moves.length + 1 }, () => null)
+  // Lichess scores the standard start as +0.15 when it works out accuracy.
+  if (fen === INITIAL_FEN) evals[0] = { cp: 15 }
+  const judgments: (Judgment | null)[] = moves.map(() => null)
+  raw.analysis.slice(0, moves.length).forEach((entry, i) => {
+    // Entry i scores the position after move i+1; its `best` is what should have been played.
+    const score =
+      entry.mate !== undefined
+        ? { mate: entry.mate }
+        : entry.eval !== undefined
+          ? { cp: entry.eval }
+          : null
+    if (score) evals[i + 1] = { ...evals[i + 1], ...score }
+    if (entry.best) {
+      const pv = entry.variation
+        ? sanToUci(positions[i]?.fen ?? fen, entry.variation.split(/\s+/))
+        : [entry.best]
+      evals[i] = { ...(evals[i] ?? {}), best: entry.best, pv: pv.length ? pv : [entry.best] }
+    }
+    const name = entry.judgment?.name?.toLowerCase()
+    if (name === 'inaccuracy' || name === 'mistake' || name === 'blunder') judgments[i] = name
+  })
+  const accuracyOf = (color: 'white' | 'black'): number | undefined => {
+    const player = raw.players[color]
+    return 'analysis' in player ? player.analysis?.accuracy : undefined
+  }
+  return {
+    key: reviewKey(fen, moves),
+    fen,
+    moves,
+    source: 'lichess',
+    evals,
+    judgments,
+    accuracy: { white: accuracyOf('white'), black: accuracyOf('black') },
+    depth: 0,
+    complete: true,
+    updatedAt: Date.now(),
+    gameId: raw.id,
+  }
+}
+
 const SYNC_PAGE = 1000
+
+/** Games that ended this long ago have had their chance to be analysed on Lichess. */
+const ANALYSIS_SETTLED_MS = 86_400_000
 
 async function fetchGamesPage(
   account: string,
@@ -293,6 +355,8 @@ async function fetchGamesPage(
           moves: true,
           pgnInJson: true,
           clocks: true,
+          evals: true,
+          accuracy: true,
         },
       },
       headers: { Accept: 'application/x-ndjson' },
@@ -300,10 +364,46 @@ async function fetchGamesPage(
     }),
   )
   const games: LichessGame[] = []
-  await readLines(stream, (line) =>
-    games.push(normalizeGame(JSON.parse(line) as components['schemas']['GameJson'], account)),
-  )
+  const settled: string[] = []
+  await readLines(stream, (line) => {
+    const raw = JSON.parse(line) as components['schemas']['GameJson']
+    games.push(normalizeGame(raw, account))
+    const review = reviewFromLichess(raw)
+    if (review) writeReview(review)
+    if (review || Date.now() - raw.lastMoveAt > ANALYSIS_SETTLED_MS) settled.push(raw.id)
+  })
+  // Lichess was effectively asked about these: the background review need not ask again.
+  markChecked(settled)
   return games
+}
+
+/**
+ * Ask Lichess for its analysis of games already synced (up to 300 per request), saving each one
+ * it has; every game asked about is remembered so it is not asked again.
+ */
+export async function fetchLichessReviews(
+  account: string,
+  ids: readonly string[],
+): Promise<StoredReview[]> {
+  if (!ids.length) return []
+  const found: StoredReview[] = []
+  await withUsage(account, 'games', async () => {
+    const stream = await unwrap(
+      client.POST('/api/games/export/_ids', {
+        params: { query: { moves: true, evals: true, accuracy: true } },
+        body: ids.slice(0, 300).join(','),
+        bodySerializer: (body: string) => body,
+        headers: { Accept: 'application/x-ndjson', 'Content-Type': 'text/plain' },
+        parseAs: 'stream',
+      }) as Promise<StreamCall>,
+    )
+    await readLines(stream, (line) => {
+      const review = reviewFromLichess(JSON.parse(line) as components['schemas']['GameJson'])
+      if (review) found.push(writeReview(review).review)
+    })
+  })
+  markChecked(ids.slice(0, 300))
+  return found
 }
 
 const syncs = new Map<string, Promise<void>>()
@@ -573,6 +673,8 @@ interface ListenOptions {
 export class OnlineSession {
   private controller: AbortController | null = null
   private gameController: AbortController | null = null
+  /** The game whose stream is open, while it lasts. */
+  private liveGame = ''
   private currentAccount = ''
   private pendingId = ''
   constructor(
@@ -787,6 +889,7 @@ export class OnlineSession {
     const controller = new AbortController()
     this.gameController = controller
     let finished = false
+    this.liveGame = id
     await this.listen(
       () =>
         client.GET('/api/board/game/stream/{gameId}', {
@@ -809,7 +912,14 @@ export class OnlineSession {
         this.emit({ ...event, id } as OnlineEvent)
       },
       { reconnect: true, finished: () => finished },
-    )
+    ).finally(() => {
+      if (this.liveGame === id) this.liveGame = ''
+    })
+  }
+
+  /** An online game is being played: background work should keep out of its way. */
+  get playing(): boolean {
+    return this.liveGame !== ''
   }
 
   async move(id: string, uci: string): Promise<void> {
@@ -872,6 +982,7 @@ export class OnlineSession {
   }
 
   cancel(): void {
+    this.liveGame = ''
     this.controller?.abort()
     this.gameController?.abort()
     this.controller = null

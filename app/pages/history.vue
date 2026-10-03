@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { gameResult } from '../utils/games'
+import { useAnalysisStore } from '../stores/analysis'
+import { useReviewStore } from '../stores/review'
+import { judgmentCounts } from '../utils/review'
 
 const store = useKChessStore()
 const {
@@ -19,6 +22,30 @@ const {
   visibleGames,
 } = storeToRefs(store)
 const { sync, date, openReview, selectPage } = store
+
+const analysis = useAnalysisStore()
+const { summaries } = storeToRefs(useReviewStore())
+const reviewer = ref<{ ply: number } | null>(null)
+/** Review the game on the analysis board, opened at the move being looked at. */
+function openGameReview(): void {
+  const game = reviewGame.value
+  if (!game || !analysis.loadPgn(reviewPgn.value, reviewer.value?.ply ?? 0)) return
+  analysis.orientation = game.color
+  analysis.origin = {
+    gameId: game.id,
+    account: game.account,
+    white: game.color === 'white' ? game.account : game.opponent,
+    black: game.color === 'black' ? game.account : game.opponent,
+  }
+  void analysis.requestReview()
+  selectPage('analysis')
+}
+/** The review of the game being looked at, from its player's side. */
+const reviewSide = computed(() => {
+  const game = reviewGame.value
+  const summary = game && summaries.value[game.id]
+  return summary ? summary[game.color] : null
+})
 
 const accountItems = computed(() => [
   { label: 'All accounts', value: 'all' },
@@ -103,8 +130,26 @@ const reviewColor = computed(() =>
           · {{ date(reviewGame.createdAt) }}
           <template v-if="reviewGame.opening"> · {{ reviewGame.opening }}</template>
         </span>
+        <span class="ms-auto" />
+        <span v-if="reviewSide" class="review-line text-sm">
+          <template v-if="reviewSide.accuracy !== undefined"
+            >{{ reviewSide.accuracy }}% accuracy</template
+          >
+          <template v-for="count in judgmentCounts(reviewSide)" :key="count.judgment">
+            · <span :class="count.judgment">{{ count.text }}</span>
+          </template>
+        </span>
+        <UButton
+          icon="i-lucide-sparkles"
+          variant="soft"
+          color="neutral"
+          size="sm"
+          @click="openGameReview"
+          >Review</UButton
+        >
       </div>
       <GameReview
+        ref="reviewer"
         :pgn="reviewPgn"
         :orientation="reviewGame.color"
         :theme="settings.boardTheme"
@@ -188,12 +233,13 @@ const reviewColor = computed(() =>
           <div v-else class="game-list">
             <div class="game-head" aria-hidden="true">
               <span>Result</span><span>Opponent</span><span>Mode</span><span>Rating</span
-              ><span>Date</span>
+              ><span>Accuracy</span><span>Date</span>
             </div>
             <GameRow
               v-for="game in visibleGames"
               :key="`${game.account}-${game.id}`"
               :game="game"
+              :review="summaries[game.id]"
               detailed
               @select="openReview(game)"
             />

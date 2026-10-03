@@ -107,6 +107,24 @@ describe('spoken legal moves', () => {
       choices: [{ uci: 'e1c1', san: 'O-O-O' }],
     })
   })
+  it('reads “eight” before a rank as the letter a, which it is often heard for', () => {
+    const pos = positionAfter(['b2b3', 'e7e5'])
+    for (const text of ['bishop a three', 'bishop eight three', 'bishop to eight three'])
+      expect(spokenMove(text, pos)).toEqual({
+        kind: 'move',
+        choices: [{ uci: 'c1a3', san: 'Ba3' }],
+      })
+    expect(spokenSquare('eight three')).toBe('a3')
+    expect(spokenSquare('h eight')).toBe('h8')
+    // A real source rank before a square stays a rank.
+    const rooks = positionFromFen('R7/8/7k/8/8/8/8/R3K3 w - - 0 1')!
+    expect(spokenMove('rook eight to a three', rooks)).toEqual({
+      kind: 'move',
+      choices: [{ uci: 'a8a3', san: 'R8a3' }],
+    })
+    // …and never becomes a2 when “to” is heard as “two”.
+    expect(spokenMove('rook eight two a three', rooks)).toEqual({ kind: 'invalid' })
+  })
   it('requires a promotion choice rather than silently choosing a queen', () => {
     const pos = positionFromFen('7k/P7/8/8/8/8/8/7K w - - 0 1')!
     const parsed = spokenMove('alpha eight', pos)

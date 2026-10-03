@@ -11,6 +11,52 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { migrate } from '../../src/main/migrations'
 import { storeSample } from '../../src/main/puzzleQueries'
+import { reviewKey, summarize } from '../../src/shared/review'
+import type { StoredReview } from '../../src/shared/types'
+
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+const SCHOLARS_PGN = '1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0'
+const SCHOLARS_UCI = ['e2e4', 'e7e5', 'd1h5', 'b8c6', 'f1c4', 'g8f6', 'h5f7']
+
+/** A synced Lichess game (old enough to stay out of automatic reviews) and its stored review. */
+function seedReviewedGame(db: DatabaseSync): void {
+  db.prepare('INSERT INTO accounts (username, connected) VALUES (?, 0)').run('tester')
+  db.prepare(
+    `INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner,
+      color, opponent, moves) VALUES (?, ?, ?, ?, 1, 'blitz', 'blitz', 'mate', 'white', 'black', ?, ?)`,
+  ).run(
+    'tester',
+    'scholar1',
+    1_600_000_000_000,
+    1_600_000_000_000,
+    'rival',
+    'e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#',
+  )
+  const review: StoredReview = {
+    key: reviewKey(START_FEN, SCHOLARS_UCI),
+    fen: START_FEN,
+    moves: SCHOLARS_UCI,
+    source: 'local',
+    evals: [
+      { cp: 20, depth: 18 },
+      { cp: 30, depth: 18 },
+      { cp: 20, depth: 18 },
+      { cp: 20, depth: 18 },
+      { cp: 30, depth: 18 },
+      { cp: 30, depth: 18, best: 'g7g6', pv: ['g7g6'] },
+      { mate: 1, depth: 18 },
+      null,
+    ],
+    depth: 18,
+    complete: true,
+    updatedAt: 0,
+    gameId: 'scholar1',
+  }
+  db.prepare(
+    `INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
+     VALUES (?, ?, 'local', 1, 18, ?, ?, 0)`,
+  ).run(review.key, 'scholar1', JSON.stringify(review), JSON.stringify(summarize(review)))
+}
 
 const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; profile: string } }>({
   desktop: async ({ playwright: _playwright }, use, testInfo) => {
@@ -30,6 +76,7 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
         themes: 'promotion',
       },
     ])
+    if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)
     db.close()
     let app: ElectronApplication | undefined
     try {
@@ -115,19 +162,22 @@ async function navigate(page: Page, label: string) {
   await expect(menu).toBeHidden()
 }
 
+/** Click one square; in the board editor this puts down the chosen spare piece. */
+async function clickSquare(page: Page, square: string) {
+  const bounds = await page.locator('cg-board').boundingBox()
+  if (!bounds) throw new Error('Board is not visible')
+  const file = square.charCodeAt(0) - 97
+  const rank = Number(square[1]) - 1
+  await page.mouse.click(
+    bounds.x + ((file + 0.5) * bounds.width) / 8,
+    bounds.y + ((7 - rank + 0.5) * bounds.height) / 8,
+  )
+}
+
 /** Click board squares through Chessground's real pointer handlers. */
 async function move(page: Page, from: string, to: string) {
-  const board = page.locator('cg-board')
-  const bounds = await board.boundingBox()
-  if (!bounds) throw new Error('Board is not visible')
-  for (const square of [from, to]) {
-    const file = square.charCodeAt(0) - 97
-    const rank = Number(square[1]) - 1
-    await page.mouse.click(
-      bounds.x + ((file + 0.5) * bounds.width) / 8,
-      bounds.y + ((7 - rank + 0.5) * bounds.height) / 8,
-    )
-  }
+  await clickSquare(page, from)
+  await clickSquare(page, to)
 }
 
 test('launches with SQLite, sandboxed preload and bundled Stockfish @packaged', async ({
@@ -147,7 +197,7 @@ test('launches with SQLite, sandboxed preload and bundled Stockfish @packaged', 
   const status = await page.evaluate(async () => {
     const data = await window.kchess.loadData()
     const engine = await window.kchess.engineStatus()
-    const move = await window.kchess.bestMove([], 'low', { movetime: 100 })
+    const move = await window.kchess.bestMove([], 'casual', { movetime: 100 })
     return { accounts: data.accounts, engine, move, nodeExposed: 'require' in window }
   })
   expect(status.accounts).toEqual([])
@@ -295,4 +345,100 @@ test('exports redacted diagnostics through Settings', async ({
     'versions',
     'logs',
   ])
+})
+
+test('sets up a position in the board editor and analyses it with Stockfish', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Board editor')
+  await page.getByRole('button', { name: 'Clear board', exact: true }).click()
+  await expect(page.getByText('The board is empty.', { exact: true })).toBeVisible()
+  const pieces: [string, string[]][] = [
+    ['White king', ['g1']],
+    ['White rook', ['a1']],
+    ['Black king', ['g8']],
+    ['Black pawn', ['f7', 'g7', 'h7']],
+  ]
+  for (const [piece, squares] of pieces) {
+    await page.getByRole('button', { name: piece, exact: true }).click()
+    for (const square of squares) await clickSquare(page, square)
+  }
+  await expect(page.getByLabel('FEN', { exact: true })).toHaveValue(
+    '6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1',
+  )
+  await page.getByRole('button', { name: 'Analyse this position', exact: true }).click()
+  await expect(page.locator('.ceval-score')).toHaveText('#1', { timeout: 30_000 })
+  await expect(page.locator('.pv-list')).toContainText('Ra8#')
+})
+
+test('keeps variations on the analysis board and steps through them', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Analysis board')
+  await page.locator('.analysis-panel').getByRole('button', { name: 'Import', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'FEN or PGN' })
+    .fill('1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *')
+  await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+  const moves = page.getByRole('list', { name: 'Moves', exact: true })
+  await expect(moves).toContainText('Nc6')
+  await moves.getByRole('button', { name: /c5$/ }).click()
+  await expect(moves.locator('.tree-move.active')).toHaveText(/c5/)
+  await page.keyboard.press('ArrowLeft')
+  await expect(moves.locator('.tree-move.active')).toHaveText(/e4/)
+  // A move played from a position that already has moves becomes another variation.
+  await move(page, 'd7', 'd5')
+  await expect(moves.locator('.tree-move.active')).toHaveText(/d5/)
+  await expect(moves.locator('.tree-variations')).toContainText('d5')
+  await expect(page.locator('.pv-row:not(.pending)').first()).toBeVisible({ timeout: 30_000 })
+})
+
+test('reviews a game on the analysis board, labelling the blunder and the better move', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Analysis board')
+  await page.locator('.analysis-panel').getByRole('button', { name: 'Import', exact: true }).click()
+  await page.getByRole('textbox', { name: 'FEN or PGN' }).fill(SCHOLARS_PGN)
+  await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+  const review = page.getByRole('region', { name: 'Game review' })
+  await review.getByRole('button', { name: 'Review game', exact: true }).click()
+  const moves = page.getByRole('list', { name: 'Moves', exact: true })
+  // The quick pass labels the blunder within seconds; the deep pass then finishes the review.
+  await expect(moves.locator('.tree-glyph.blunder')).toHaveText('??', { timeout: 30_000 })
+  await expect(moves.getByRole('button', { name: /Nf6\?\?$/ })).toBeVisible()
+  await expect
+    .poll(
+      async () =>
+        (
+          await page.evaluate(([fen, moves]) => window.kchess.reviewGet(fen, moves), [
+            START_FEN,
+            SCHOLARS_UCI,
+          ] as const)
+        )?.complete,
+      { timeout: 90_000 },
+    )
+    .toBe(true)
+  await expect(review.getByText('Reviewing…')).toBeHidden()
+  await expect(review.getByRole('table')).toContainText('%')
+  await review.getByRole('button', { name: /1 blunder by Black/ }).click()
+  await expect(moves.locator('.tree-move.active')).toHaveText(/Nf6/)
+  await expect(review.getByText(/is a blunder\./)).toBeVisible()
+  await expect(review.getByText(/Best was/)).toBeVisible()
+  await review.getByRole('button', { name: 'Show', exact: true }).click()
+  await expect(moves.locator('.tree-variations')).toBeVisible()
+})
+
+test('shows a reviewed game’s accuracy in History and opens its review', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'History')
+  const row = page.getByRole('button', { name: /against rival/ })
+  await expect(row).toContainText('%')
+  await row.click()
+  await expect(page.locator('.review-line')).toContainText('accuracy')
+  await page.getByRole('button', { name: 'Review', exact: true }).click()
+  const review = page.getByRole('region', { name: 'Game review' })
+  await expect(review.getByRole('table')).toContainText('tester')
+  await expect(review.getByRole('table')).toContainText('rival')
+  await expect(page.locator('.tree-glyph.blunder')).toHaveText('??')
 })

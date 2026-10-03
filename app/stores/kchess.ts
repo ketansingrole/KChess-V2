@@ -3,6 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useDebounceFn, useLocalStorage, useMediaQuery } from '@vueuse/core'
 import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
 import { pickConnectedAccount } from '../../src/shared/accounts'
+import {
+  DEFAULT_ENGINE_LEVELS,
+  engineLevelLabel,
+  nearestEngineLevel,
+} from '../../src/shared/engineLevels'
 import { canPlayOnline, perfFor } from '../../src/shared/timeControl'
 import { boardThemes } from '../utils/boards'
 import { allThemes, applyTheme, findTheme } from '../utils/themes'
@@ -26,7 +31,16 @@ import type {
 } from '../../src/shared/types'
 
 export type Page =
-  'dashboard' | 'online' | 'computer' | 'puzzles' | 'practice' | 'history' | 'friends' | 'settings'
+  | 'dashboard'
+  | 'online'
+  | 'computer'
+  | 'analysis'
+  | 'editor'
+  | 'puzzles'
+  | 'practice'
+  | 'history'
+  | 'friends'
+  | 'settings'
 
 /** Sections of the Settings page; while it is open they replace the sidebar's pages. */
 export const SETTINGS_SECTIONS = [
@@ -49,6 +63,8 @@ export const useKChessStore = defineStore('kchess', () => {
     { id: 'dashboard', label: 'Dashboard', icon: 'i-lucide-layout-dashboard' },
     { id: 'online', label: 'Play Online', icon: 'i-lucide-globe-2' },
     { id: 'computer', label: 'Play with Computer', icon: 'i-lucide-monitor' },
+    { id: 'analysis', label: 'Analysis board', icon: 'i-lucide-microscope' },
+    { id: 'editor', label: 'Board editor', icon: 'i-lucide-pencil-ruler' },
     { id: 'puzzles', label: 'Puzzles', icon: 'i-lucide-puzzle' },
     { id: 'practice', label: 'Practice', icon: 'i-lucide-graduation-cap' },
     { id: 'history', label: 'History', icon: 'i-lucide-history' },
@@ -57,9 +73,17 @@ export const useKChessStore = defineStore('kchess', () => {
   const route = useRoute()
   const page = computed<Page>(() => {
     const section = route.path.slice(1)
-    return ['online', 'computer', 'puzzles', 'practice', 'history', 'friends', 'settings'].includes(
-      section,
-    )
+    return [
+      'online',
+      'computer',
+      'analysis',
+      'editor',
+      'puzzles',
+      'practice',
+      'history',
+      'friends',
+      'settings',
+    ].includes(section)
       ? (section as Page)
       : 'dashboard'
   })
@@ -150,6 +174,14 @@ export const useKChessStore = defineStore('kchess', () => {
     recheckEngine,
     notifyDesktop,
   })
+  // A level turned off in Settings gives way to the closest one still offered.
+  watch(
+    () => settings.value?.engineLevels,
+    (enabled) => {
+      if (enabled) level.value = nearestEngineLevel(level.value, enabled)
+    },
+    { immediate: true },
+  )
   const {
     onlinePhase,
     onlineId,
@@ -335,11 +367,10 @@ export const useKChessStore = defineStore('kchess', () => {
     { id: 'settings' as Page, label: 'Settings', icon: 'i-lucide-settings-2' },
   ]
   const searchGroups = computed(() => {
-    const computerLevels: { id: EngineLevel; label: string }[] = [
-      { id: 'low', label: 'Low' },
-      { id: 'medium', label: 'Medium' },
-      { id: 'high', label: 'High' },
-    ]
+    const computerLevels = (settings.value?.engineLevels ?? DEFAULT_ENGINE_LEVELS).map((id) => ({
+      id,
+      label: engineLevelLabel(id),
+    }))
     const computerItems = computerLevels.flatMap((entry) =>
       (['white', 'black'] as const).map((color) => ({
         id: `stockfish-${entry.id}-${color}`,
@@ -529,7 +560,8 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   async function persistSettings(): Promise<void> {
     if (!settings.value || !data.value || !settingsDirty.value) return
-    const sent = { ...settings.value }
+    // A reactive array cannot cross IPC (structured clone): send a plain copy of the list.
+    const sent = { ...settings.value, engineLevels: [...settings.value.engineLevels] }
     const previousEngine = data.value.settings.enginePath
     try {
       const saved = await window.kchess.saveSettings(sent)

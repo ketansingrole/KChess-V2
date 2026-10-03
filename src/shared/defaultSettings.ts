@@ -1,3 +1,4 @@
+import { DEFAULT_ENGINE_LEVELS } from './engineLevels.ts'
 import type { Settings } from './types'
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -28,4 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   updateAutoCheck: true,
   updateAutoDownload: true,
   updateInstallOnQuit: true,
+  engineLevels: [...DEFAULT_ENGINE_LEVELS],
+  reviewAuto: 'recent',
+  reviewOnBattery: false,
 }

@@ -22,6 +22,14 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 | [`lru-cache`](https://github.com/isaacs/node-lru-cache)                     | BlueOak-1.0.0    | In-memory cache for profile requests                                            |
 | [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                 | ISC              | Interface icons                                                                 |
 
+## Game review method
+
+Game review (`src/shared/review.ts`) follows the method Lichess publishes in
+[lichess-org/lila](https://github.com/lichess-org/lila) (AGPL-3.0-or-later): its winning-chance
+curve, the thresholds for inaccuracies, mistakes and blunders (including its forced-mate rules),
+and its accuracy formula. The formulas are reimplemented here; no lila code is copied. Analysis
+fetched from Lichess for a game comes from the Lichess API.
+
 ## Voice model preparation
 
 `fflate` (MIT) and `tar` (ISC) verify and repackage the downloaded speech model in the

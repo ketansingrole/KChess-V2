@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { LichessAccount, MicrophoneStatus, NotificationSkip } from '../../src/shared/types'
+import type {
+  EngineLevel,
+  LichessAccount,
+  MicrophoneStatus,
+  NotificationSkip,
+} from '../../src/shared/types'
+import { DEFAULT_ENGINE_LEVELS, ENGINE_LADDER } from '../../src/shared/engineLevels'
 import { LAUNCHER_PERMISSION_HINT, useMicrophoneAccess } from '../utils/microphone'
 import { describeMicError } from '../utils/voiceCapture'
 import { formatBytes, formatCount } from '../utils/format'
 import { pieceSets, pieceVars } from '../utils/pieces'
 import { previewColors } from '../utils/themes'
 import { SETTINGS_SECTIONS } from '../stores/kchess'
+import { useReviewStore } from '../stores/review'
 
 const store = useKChessStore()
 const usage = useUsageStore()
@@ -103,6 +110,26 @@ const category = computed(
 )
 onMounted(() => void usage.refresh())
 
+const reviewAutoItems = [
+  { label: 'Off', value: 'off' },
+  { label: 'Last 30 days', value: 'recent' },
+  { label: 'All', value: 'all' },
+]
+const { status: reviewQueue } = storeToRefs(useReviewStore())
+const reviewStatusText = computed(() => {
+  const { current, waiting, paused } = reviewQueue.value
+  if (current)
+    return `Reviewing a game: ${current.done} of ${current.total} positions${
+      waiting ? ` · ${waiting} more waiting` : ''
+    }.`
+  if (paused === 'battery') return 'Paused while on battery power.'
+  if (paused === 'engine') return 'Paused while the engine is in use.'
+  if (paused === 'online') return 'Paused during your online game.'
+  if (paused === 'off' || settings.value?.reviewAuto === 'off')
+    return 'Games are reviewed when you ask for it.'
+  return waiting ? `${waiting} games waiting.` : 'All caught up.'
+})
+
 const confirmDeleteEngine = ref(false)
 /** Which Stockfish is in use: the bundled one (no path), the one KChess downloaded, or a chosen file. */
 const engineSource = computed<'bundled' | 'downloaded' | 'custom'>(() => {
@@ -133,6 +160,19 @@ const promotionItems = [
   { label: 'Always queen', value: 'queen' },
   { label: 'Queen when premoving', value: 'premove' },
 ] as const
+/** Turn one computer level on or off, keeping ladder order and at least one level. */
+function toggleEngineLevel(id: EngineLevel, on: boolean): void {
+  if (!settings.value) return
+  const current = settings.value.engineLevels
+  const next = on ? [...current, id] : current.filter((level) => level !== id)
+  if (!next.length) return
+  settings.value.engineLevels = ENGINE_LADDER.map((entry) => entry.id).filter((level) =>
+    next.includes(level),
+  )
+}
+const engineLevelsAreDefault = computed(
+  () => settings.value?.engineLevels.join() === DEFAULT_ENGINE_LEVELS.join(),
+)
 const coordinateItems = [
   { label: 'Inside', value: 'inside' },
   { label: 'Outside', value: 'outside' },
@@ -585,6 +625,39 @@ function removePending(): void {
             :ui="{ trigger: 'grow' }"
           />
         </div>
+        <div class="setting-row stacked">
+          <div class="setting-info">
+            <span id="engine-levels-label" class="setting-title">Computer levels</span>
+            <span class="setting-hint"
+              >Which strengths Play with Computer offers. Titles are earned at these ratings; the
+              numbers are approximate engine ratings, not FIDE or Lichess ones.</span
+            >
+          </div>
+          <div class="engine-levels" role="group" aria-labelledby="engine-levels-label">
+            <UCheckbox
+              v-for="entry in ENGINE_LADDER"
+              :key="entry.id"
+              :model-value="settings.engineLevels.includes(entry.id)"
+              :disabled="
+                settings.engineLevels.length === 1 && settings.engineLevels[0] === entry.id
+              "
+              :label="entry.label"
+              :description="entry.elo ? `~${entry.elo}` : 'Full strength'"
+              @update:model-value="toggleEngineLevel(entry.id, $event === true)"
+            />
+          </div>
+          <div>
+            <UButton
+              size="sm"
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-rotate-ccw"
+              :disabled="engineLevelsAreDefault"
+              @click="settings.engineLevels = [...DEFAULT_ENGINE_LEVELS]"
+              >Reset to default</UButton
+            >
+          </div>
+        </div>
       </section>
 
       <section
@@ -941,6 +1014,56 @@ function removePending(): void {
       </section>
 
       <section
+        v-if="category.id === 'engine' && settings"
+        id="settings-review"
+        class="card"
+        aria-labelledby="review-title"
+      >
+        <div class="card-header">
+          <div>
+            <h2 id="review-title" class="section-title">Game review</h2>
+            <p class="section-hint" aria-live="polite">{{ reviewStatusText }}</p>
+          </div>
+        </div>
+        <div class="settings-list">
+          <div class="setting-row">
+            <div class="setting-info">
+              <span id="review-auto-label" class="setting-title"
+                >Review my games automatically</span
+              >
+              <span class="setting-hint"
+                >Your synced Lichess games get labelled inaccuracies, mistakes and blunders in the
+                background. Lichess's own analysis is used when a game has it.</span
+              >
+            </div>
+            <UTabs
+              v-model="settings.reviewAuto"
+              :items="reviewAutoItems"
+              aria-labelledby="review-auto-label"
+              :content="false"
+              variant="pill"
+              class="setting-control"
+              :ui="{ trigger: 'grow' }"
+            />
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span id="review-battery-label" class="setting-title">Also on battery power</span>
+              <span class="setting-hint"
+                >Automatic reviews keep Stockfish busy; by default they wait for a charger.</span
+              >
+            </div>
+            <USwitch
+              v-model="settings.reviewOnBattery"
+              aria-labelledby="review-battery-label"
+              :disabled="settings.reviewAuto === 'off'"
+              class="setting-switch"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section
         v-if="category.id === 'accounts'"
         id="settings-accounts"
         class="card"
@@ -1157,6 +1280,11 @@ function removePending(): void {
 </template>
 
 <style scoped>
+.engine-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 12px 24px;
+}
 .mic-meter {
   display: block;
   width: min(12rem, 100%);

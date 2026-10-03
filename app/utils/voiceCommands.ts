@@ -129,7 +129,13 @@ function tokens(text: string): string[] {
   const result: string[] = []
   for (let i = 0; i < words.length; i++) {
     const word = words[i]!
-    const file = fileWords[word]
+    // The letter “a” said “ay” is often heard as “eight”: “bishop a three” → “bishop eight three”.
+    // Rank-then-rank is never a square, so read it as file a — unless a square follows, as in
+    // “rook eight to a three” (the “to” heard as “two”), where the eight is a source rank.
+    const file =
+      word === 'eight' && rankWords[words[i + 1]!] && !fileWords[words[i + 2]!]
+        ? 'a'
+        : fileWords[word]
     const rank =
       rankWords[words[i + 1]!] ?? (/^[1-8]$/.test(words[i + 1] ?? '') ? words[i + 1] : undefined)
     if (file && rank) {
@@ -250,4 +256,112 @@ function matchingMoves(
     }
   }
   return choices
+}
+
+/* ── Board editor ─────────────────────────────────────────────────────── */
+
+export type PieceColor = 'white' | 'black'
+export type EditorVoiceAction =
+  | { kind: 'place'; square: Square; color: PieceColor; role: Role }
+  | { kind: 'remove'; square: Square }
+  | { kind: 'clear' }
+  | { kind: 'start' }
+  | { kind: 'turn'; color: PieceColor }
+  | { kind: 'flip' }
+  | { kind: 'analyze' }
+
+const REMOVE_WORDS = ['remove', 'clear', 'delete', 'empty']
+const EDITOR_PHRASES: Record<string, EditorVoiceAction> = {
+  'clear board': { kind: 'clear' },
+  'empty board': { kind: 'clear' },
+  'clear the board': { kind: 'clear' },
+  'starting position': { kind: 'start' },
+  'start position': { kind: 'start' },
+  'reset board': { kind: 'start' },
+  'reset the board': { kind: 'start' },
+  'white to move': { kind: 'turn', color: 'white' },
+  'white to play': { kind: 'turn', color: 'white' },
+  'black to move': { kind: 'turn', color: 'black' },
+  'black to play': { kind: 'turn', color: 'black' },
+  'flip board': { kind: 'flip' },
+  'flip the board': { kind: 'flip' },
+  analyze: { kind: 'analyze' },
+  analysis: { kind: 'analyze' },
+}
+
+export const EDITOR_GRAMMAR = [
+  ...COORDINATE_GRAMMAR,
+  ...Object.keys(roles).filter((word) => word !== 'night' && word !== 'pawns'),
+  'white',
+  'black',
+  'on',
+  'to',
+  ...REMOVE_WORDS,
+  ...Object.keys(EDITOR_PHRASES),
+]
+
+/**
+ * “White knight F three”, “black king on E eight”, “remove E four”, “clear board”,
+ * “starting position”, “black to move”. A piece without a colour takes `color`, the last one used.
+ */
+export function spokenEdit(
+  text: string,
+  color: PieceColor = 'white',
+): EditorVoiceAction | undefined {
+  const phrase = text
+    .toLowerCase()
+    .replace(/[.,!?]/g, '')
+    .split(/\s+/)
+    .filter((word) => word && word !== '[unk]')
+    .join(' ')
+  const fixed = EDITOR_PHRASES[phrase]
+  if (fixed) return fixed
+  const words = tokens(text).filter((word) => !['on', 'to', 'at', 'the'].includes(word))
+  const square = words.at(-1)
+  if (!square || !/^[a-h][1-8]$/.test(square)) return undefined
+  const rest = words.slice(0, -1)
+  if (rest.length === 1 && REMOVE_WORDS.includes(rest[0]!))
+    return { kind: 'remove', square: square as Square }
+  let spokenColor: PieceColor | undefined
+  if (rest[0] === 'white' || rest[0] === 'black') spokenColor = rest.shift() as PieceColor
+  const role = rest.length === 1 ? roles[rest[0]!] : undefined
+  return role
+    ? { kind: 'place', square: square as Square, color: spokenColor ?? color, role }
+    : undefined
+}
+
+/* ── Analysis board ───────────────────────────────────────────────────── */
+
+export type AnalysisCommand = 'back' | 'forward' | 'start' | 'end' | 'best' | 'flip' | 'engine'
+const ANALYSIS_COMMANDS: Record<string, AnalysisCommand> = {
+  back: 'back',
+  'go back': 'back',
+  previous: 'back',
+  undo: 'back',
+  'take back': 'back',
+  forward: 'forward',
+  next: 'forward',
+  'go forward': 'forward',
+  'first move': 'start',
+  'go to start': 'start',
+  'last move': 'end',
+  'go to end': 'end',
+  'best move': 'best',
+  'play best move': 'best',
+  'flip board': 'flip',
+  'toggle engine': 'engine',
+  'engine on': 'engine',
+  'engine off': 'engine',
+}
+/** Moves, plus stepping through the tree and engine controls. */
+export const ANALYSIS_GRAMMAR = [...MOVE_GRAMMAR, ...Object.keys(ANALYSIS_COMMANDS)]
+
+export function spokenAnalysisCommand(text: string): AnalysisCommand | undefined {
+  const phrase = text
+    .toLowerCase()
+    .replace(/[.,!?]/g, '')
+    .split(/\s+/)
+    .filter((word) => word && word !== '[unk]')
+    .join(' ')
+  return ANALYSIS_COMMANDS[phrase === 'takeback' ? 'take back' : phrase]
 }

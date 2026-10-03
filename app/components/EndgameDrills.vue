@@ -81,7 +81,7 @@ async function engine(): Promise<void> {
   const mine = epoch
   thinking.value = true
   try {
-    const reply = await window.kchess.bestMove([...moves.value], 'high', {
+    const reply = await window.kchess.bestMove([...moves.value], 'max', {
       fen: drill.value.fen,
       movetime: 350,
     })
@@ -144,7 +144,7 @@ async function showHint(): Promise<void> {
   if (!yourTurn.value || thinking.value) return
   const mine = epoch
   try {
-    const best = await window.kchess.bestMove([...moves.value], 'high', {
+    const best = await window.kchess.bestMove([...moves.value], 'max', {
       fen: drill.value.fen,
       movetime: 600,
     })

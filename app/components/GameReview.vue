@@ -96,6 +96,8 @@ function keydown(event: KeyboardEvent): void {
   }
 }
 onMounted(() => window.addEventListener('keydown', keydown))
+/** The move being looked at, so “Analyse” can open the game there. */
+defineExpose({ ply })
 onUnmounted(() => window.removeEventListener('keydown', keydown))
 </script>
 

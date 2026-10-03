@@ -10,9 +10,12 @@ import {
   PIECE_ANIMATIONS,
   PROMOTION_MODES,
   PUZZLE_DIFFICULTIES,
+  REVIEW_AUTO,
   RUN_KINDS,
   VOICE_OUTCOMES,
   VOICE_SOURCES,
+  type AnalysisRequest,
+  type ReviewRequest,
   type BestMoveOptions,
   type VoiceAttemptInput,
   type VoiceAttemptUpdate,
@@ -128,6 +131,13 @@ const settingsSchema = v.object(
     updateAutoCheck: v.boolean('Invalid update setting.'),
     updateAutoDownload: v.boolean('Invalid update setting.'),
     updateInstallOnQuit: v.boolean('Invalid update setting.'),
+    engineLevels: v.pipe(
+      v.array(levelSchema, 'Invalid computer levels.'),
+      v.minLength(1, 'Keep at least one computer level.'),
+      v.transform((levels) => ENGINE_LEVELS.filter((level) => levels.includes(level))),
+    ),
+    reviewAuto: v.picklist(REVIEW_AUTO, 'Invalid review setting.'),
+    reviewOnBattery: v.boolean('Invalid review setting.'),
   },
   'Invalid settings.',
 )
@@ -291,6 +301,25 @@ const bestMoveOptionsSchema = v.optional(
   {},
 )
 
+const analysisRequestSchema = v.object(
+  {
+    fen: v.pipe(v.string('Invalid position.'), v.maxLength(100), v.regex(FEN, 'Invalid position.')),
+    lines: intInRange(1, 5, 'Invalid number of engine lines.'),
+    infinite: v.optional(v.boolean('Invalid engine options.')),
+  },
+  'Invalid engine options.',
+)
+
+const reviewRequestSchema = v.object(
+  {
+    fen: v.pipe(v.string('Invalid position.'), v.maxLength(100), v.regex(FEN, 'Invalid position.')),
+    moves: movesSchema,
+    gameId: v.optional(gameIdSchema),
+    account: v.optional(usernameSchema),
+  },
+  'Invalid review request.',
+)
+
 /** Parse `value` or throw an Error carrying the schema's UI-safe message. */
 function parse<const S extends v.GenericSchema>(schema: S, value: unknown): v.InferOutput<S> {
   const result = v.safeParse(schema, value)
@@ -325,6 +354,12 @@ export const assertRunKind = (value: unknown): RunKind => parse(runKindSchema, v
 export const assertRunInput = (value: unknown): RunInput => parse(runInputSchema, value)
 export const assertBestMoveOptions = (value: unknown): BestMoveOptions =>
   parse(bestMoveOptionsSchema, value)
+export const assertAnalysisRequest = (value: unknown): AnalysisRequest =>
+  parse(analysisRequestSchema, value)
+export const assertReviewRequest = (value: unknown): ReviewRequest =>
+  parse(reviewRequestSchema, value)
+export const assertReviewKey = (value: unknown): string =>
+  parse(v.pipe(v.string('Invalid review.'), v.regex(/^[0-9a-f]{16}$/, 'Invalid review.')), value)
 export const assertVoiceAttempt = (value: unknown): VoiceAttemptInput =>
   parse(voiceAttemptSchema, value)
 export const assertVoiceUpdate = (value: unknown): VoiceAttemptUpdate =>

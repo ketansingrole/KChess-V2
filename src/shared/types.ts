@@ -4,7 +4,20 @@ export const APPEARANCES = ['system', 'light', 'dark'] as const
 export type Appearance = (typeof APPEARANCES)[number]
 export const COORDINATE_MODES = ['none', 'inside', 'outside'] as const
 export type CoordinateMode = (typeof COORDINATE_MODES)[number]
-export const ENGINE_LEVELS = ['low', 'medium', 'high'] as const
+export const ENGINE_LEVELS = [
+  'beginner',
+  'novice',
+  'casual',
+  'club',
+  'strong-club',
+  'expert',
+  'cm',
+  'fm',
+  'im',
+  'gm',
+  'super-gm',
+  'max',
+] as const
 export type EngineLevel = (typeof ENGINE_LEVELS)[number]
 export const PROMOTION_MODES = ['ask', 'queen', 'premove'] as const
 /** How a pawn reaching the last rank is promoted: always ask, always to a queen, or a queen only when premoving. */
@@ -40,7 +53,7 @@ export const RUN_KINDS = [
 ] as const
 export type RunKind = (typeof RUN_KINDS)[number]
 /** Where a spoken phrase was said. */
-export const VOICE_SOURCES = ['computer', 'coordinates'] as const
+export const VOICE_SOURCES = ['computer', 'coordinates', 'analysis', 'editor'] as const
 export type VoiceSource = (typeof VOICE_SOURCES)[number]
 /**
  * What became of a spoken phrase. Moves: `played` at once, `pending` a choice that then was
@@ -151,6 +164,12 @@ export interface Settings {
   updateAutoDownload: boolean
   /** Apply a downloaded update when the user quits; never restart during play. */
   updateInstallOnQuit: boolean
+  /** Computer levels offered in Play with Computer, in ladder order; never empty. */
+  engineLevels: EngineLevel[]
+  /** Review your games in the background: none, the last 30 days', or all of them. */
+  reviewAuto: ReviewAuto
+  /** Keep reviewing in the background on battery power. */
+  reviewOnBattery: boolean
 }
 
 export interface AppUpdateStatus {
@@ -559,6 +578,130 @@ export interface BestMoveOptions {
   movetime?: number
 }
 
+/** Ask the analysis engine to study one position until stopped or a limit is reached. */
+export interface AnalysisRequest {
+  fen: string
+  /** How many of the best lines to report (MultiPV). */
+  lines: number
+  /** Keep searching until stopped instead of stopping at a sensible depth. */
+  infinite?: boolean
+}
+
+/** One engine line. Scores are from White's point of view, like Lichess shows them. */
+export interface EngineLine {
+  /** 1 for the best line, 2 for the next best… */
+  rank: number
+  depth: number
+  /** Centipawns, when there is no forced mate. */
+  cp?: number
+  /** Moves to mate: positive when White mates, negative when Black does. */
+  mate?: number
+  /** Principal variation as UCI moves. */
+  pv: string[]
+}
+
+export interface AnalysisUpdate {
+  /** The request this belongs to; the renderer drops updates of superseded ones. */
+  id: number
+  fen: string
+  depth: number
+  /** Nodes per second, for the engine's status line. */
+  nps?: number
+  lines: EngineLine[]
+  /** The search finished (limit reached, or stopped) and no more updates follow. */
+  done: boolean
+  error?: string
+}
+
+/* ── Game review ───────────────────────────────────────────────────── */
+
+export const JUDGMENTS = ['inaccuracy', 'mistake', 'blunder'] as const
+export type Judgment = (typeof JUDGMENTS)[number]
+
+/**
+ * One position of a reviewed game: its score from White's side and the engine's choice there.
+ * A checkmated position is `mate: 0` (the side to move has lost).
+ */
+export interface ReviewEval {
+  cp?: number
+  mate?: number
+  /** The engine's move in this position (UCI), and the line it expects after it. */
+  best?: string
+  pv?: string[]
+  depth?: number
+}
+
+export type ReviewSource = 'lichess' | 'local'
+
+/** A game's review as stored: the raw scores; labels and accuracy are worked out from them. */
+export interface StoredReview {
+  /** `reviewKey(fen, moves)`: the same moves from the same start share one review. */
+  key: string
+  fen: string
+  /** UCI, from `fen`. */
+  moves: string[]
+  source: ReviewSource
+  /** Index 0 is the starting position, index i the position after move i; null until analysed. */
+  evals: (ReviewEval | null)[]
+  /** Lichess's own label for each move (index i is move i+1), when Lichess did the analysis. */
+  judgments?: (Judgment | null)[]
+  /** Lichess's own accuracy figures, when Lichess did the analysis. */
+  accuracy?: { white?: number; black?: number }
+  /** Depth the local analysis aims for; 0 for Lichess's analysis. */
+  depth: number
+  complete: boolean
+  updatedAt: number
+  /** The Lichess game it belongs to, if any. */
+  gameId?: string
+}
+
+/** One player's side of a review. */
+export interface ReviewSide {
+  accuracy?: number
+  /** Average centipawn loss. */
+  acpl?: number
+  inaccuracy: number
+  mistake: number
+  blunder: number
+}
+
+/** What the game list shows for a reviewed game. */
+export interface ReviewSummary {
+  key: string
+  source: ReviewSource
+  complete: boolean
+  white: ReviewSide
+  black: ReviewSide
+}
+
+export const REVIEW_AUTO = ['off', 'recent', 'all'] as const
+export type ReviewAuto = (typeof REVIEW_AUTO)[number]
+
+export interface ReviewRequest {
+  fen: string
+  moves: string[]
+  /** A Lichess game: its own analysis is fetched first when it has one. */
+  gameId?: string
+  account?: string
+}
+
+/** Progress of the review queue, sent whenever it changes. */
+export interface ReviewStatus {
+  /** The review being worked on, with how many positions are done. */
+  current?: { key: string; gameId?: string; done: number; total: number; background: boolean }
+  /** Reviews waiting, asked for and automatic. */
+  waiting: number
+  /** Why automatic reviews are on hold, when they are. */
+  paused?: 'battery' | 'engine' | 'online' | 'off'
+  /** The last review asked for that could not be done, and why. */
+  failed?: { key: string; message: string }
+}
+
+export interface ReviewUpdate {
+  review: StoredReview
+  summary: ReviewSummary
+}
+
 export interface DesktopApi {
   /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
   exportDiagnostics(): Promise<boolean>
@@ -602,6 +745,23 @@ export interface DesktopApi {
   /** Delete the downloaded engine; the bundled and chosen ones are never touched. */
   deleteEngine(): Promise<void>
   bestMove(moves: string[], level: EngineLevel, options?: BestMoveOptions): Promise<string>
+  /** Start analysing a position (replacing any running analysis); updates arrive on `onAnalysis`. */
+  startAnalysis(request: AnalysisRequest): Promise<number>
+  stopAnalysis(): Promise<void>
+  onAnalysis(callback: (update: AnalysisUpdate) => void): () => void
+  /** The stored review of these moves from this position, if any. */
+  reviewGet(fen: string, moves: string[]): Promise<StoredReview | null>
+  /**
+   * Review a game now, ahead of automatic reviews (a Lichess game is looked up on Lichess first).
+   * Returns what is stored so far; the rest arrives on `onReviewUpdate`.
+   */
+  reviewRequest(request: ReviewRequest): Promise<StoredReview | null>
+  reviewCancel(key: string): Promise<void>
+  reviewStatus(): Promise<ReviewStatus>
+  /** Summaries of reviewed Lichess games, by game id. */
+  reviewSummaries(): Promise<Record<string, ReviewSummary>>
+  onReviewUpdate(callback: (update: ReviewUpdate) => void): () => void
+  onReviewStatus(callback: (status: ReviewStatus) => void): () => void
   startOnline(options: OnlineOptions): Promise<{ id?: string; url?: string; seeking?: boolean }>
   /** Reattach to a game in progress on any connected account. */
   resumeOnline(): Promise<{ id: string; account: string } | null>

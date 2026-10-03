@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS } from '../shared/defaultSettings'
+import { normalizeEngineLevels } from '../shared/engineLevels'
 import { registerDiagnosticSecret } from './diagnosticLog'
 import { app, safeStorage } from 'electron'
 import { readFile, rename } from 'node:fs/promises'
@@ -6,7 +7,13 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { getDb } from './db'
-import { PIECE_ANIMATIONS, type AppData, type LichessGame, type Settings } from '../shared/types'
+import {
+  PIECE_ANIMATIONS,
+  REVIEW_AUTO,
+  type AppData,
+  type LichessGame,
+  type Settings,
+} from '../shared/types'
 import { assertUsername } from '../shared/validate'
 
 const defaults = DEFAULT_SETTINGS
@@ -51,19 +58,24 @@ const SETTINGS_KEYS = [
   'updateAutoCheck',
   'updateAutoDownload',
   'updateInstallOnQuit',
+  'engineLevels',
+  'reviewAuto',
+  'reviewOnBattery',
 ] as const satisfies readonly (keyof Settings)[]
 
 const placeholders = (count: number): string => Array(count).fill('?').join(', ')
 const SETTINGS_SELECT = `SELECT ${SETTINGS_KEYS.join(', ')} FROM settings WHERE id = 1`
 const SETTINGS_UPSERT = `INSERT OR REPLACE INTO settings (id, ${SETTINGS_KEYS.join(', ')}) VALUES (1, ${placeholders(SETTINGS_KEYS.length)})`
 
-/** SQLite has neither booleans nor undefined: store 1/0 and NULL. */
+/** SQLite has neither booleans, lists nor undefined: store 1/0, comma-separated text and NULL. */
 const toSql = (value: unknown): string | number | null =>
   value === undefined || value === null
     ? null
     : typeof value === 'boolean'
       ? +value
-      : (value as string | number)
+      : Array.isArray(value)
+        ? value.join(',')
+        : (value as string | number)
 
 type SettingsRow = Record<(typeof SETTINGS_KEYS)[number], string | number>
 
@@ -106,6 +118,10 @@ function normalizeSettings(stored: Partial<Settings> & { boardPreset?: string })
     pieceAnimation: PIECE_ANIMATIONS.includes(rest.pieceAnimation as never)
       ? (rest.pieceAnimation as Settings['pieceAnimation'])
       : defaults.pieceAnimation,
+    engineLevels: normalizeEngineLevels(rest.engineLevels ?? defaults.engineLevels),
+    reviewAuto: REVIEW_AUTO.includes(rest.reviewAuto as never)
+      ? (rest.reviewAuto as Settings['reviewAuto'])
+      : defaults.reviewAuto,
   }
   if (settings.soundVolume > 1) settings.soundVolume = Math.min(1, settings.soundVolume / 100)
   return settings
@@ -140,6 +156,9 @@ function rowToSettings(row: SettingsRow): Settings {
     updateAutoCheck: row.updateAutoCheck !== 0,
     updateAutoDownload: row.updateAutoDownload !== 0,
     updateInstallOnQuit: row.updateInstallOnQuit !== 0,
+    engineLevels: String(row.engineLevels ?? '').split(',') as Settings['engineLevels'],
+    reviewAuto: row.reviewAuto as Settings['reviewAuto'],
+    reviewOnBattery: row.reviewOnBattery === 1,
   })
 }
 

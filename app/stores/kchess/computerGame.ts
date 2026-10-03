@@ -24,7 +24,7 @@ export function useComputerGame(options: {
   const { engineReady, fail, recheckEngine, notifyDesktop } = options
   const localMoves = ref<string[]>([])
   const localPly = ref(0)
-  const level = ref<EngineLevel>('medium')
+  const level = ref<EngineLevel>('club')
   const userColor = ref<'white' | 'black'>('white')
   const thinking = ref(false)
   const gameEpoch = ref(0)

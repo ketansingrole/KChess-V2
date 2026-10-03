@@ -1,9 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AnalysisUpdate,
   AppUpdateStatus,
   DesktopApi,
   OnlineEvent,
   PuzzleDbProgress,
+  ReviewStatus,
+  ReviewUpdate,
   VoiceModelProgress,
 } from '../shared/types'
 
@@ -55,6 +58,28 @@ const api: DesktopApi = {
   installEngine: () => invoke('installEngine'),
   deleteEngine: () => invoke('deleteEngine'),
   bestMove: (moves, level, options) => invoke('bestMove', moves, level, options),
+  startAnalysis: (request) => invoke('startAnalysis', request),
+  stopAnalysis: () => invoke('stopAnalysis'),
+  onAnalysis: (callback) => {
+    const listener = (_: unknown, update: AnalysisUpdate): void => callback(update)
+    ipcRenderer.on(IPC_EVENTS.analysis, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.analysis, listener)
+  },
+  reviewGet: (fen, moves) => invoke('reviewGet', fen, moves),
+  reviewRequest: (request) => invoke('reviewRequest', request),
+  reviewCancel: (key) => invoke('reviewCancel', key),
+  reviewStatus: () => invoke('reviewStatus'),
+  reviewSummaries: () => invoke('reviewSummaries'),
+  onReviewUpdate: (callback) => {
+    const listener = (_: unknown, update: ReviewUpdate): void => callback(update)
+    ipcRenderer.on(IPC_EVENTS.reviewUpdate, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.reviewUpdate, listener)
+  },
+  onReviewStatus: (callback) => {
+    const listener = (_: unknown, status: ReviewStatus): void => callback(status)
+    ipcRenderer.on(IPC_EVENTS.reviewStatus, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.reviewStatus, listener)
+  },
   startOnline: (options) => invoke('startOnline', options),
   resumeOnline: () => invoke('resumeOnline'),
   cancelOnline: () => invoke('cancelOnline'),

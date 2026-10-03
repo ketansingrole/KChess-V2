@@ -1,13 +1,15 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess, type ChildProcessByStdio } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 import { cpus } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
+import type { Readable, Writable } from 'node:stream'
 import { app } from 'electron'
 import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/validate'
 import type { BestMoveOptions, EngineStatus } from '../shared/types'
 import { MANAGED_PATH, managedEngine } from './managedEngine'
+import { engineLevelInfo } from '../shared/engineLevels'
 
 /**
  * Stockfish ships with the app as the `stockfish` npm package's lite
@@ -53,15 +55,29 @@ export async function engineStatus(configured = ''): Promise<EngineStatus> {
   }
 }
 
-const PROFILES: Record<EngineLevel, { elo: number; time: number }> = {
-  low: { elo: 1350, time: 700 },
-  medium: { elo: 1800, time: 1400 },
-  high: { elo: 0, time: 2500 },
+/** Start the engine `engineStatus` found: the bundled WASM build under Electron's Node, or a native one. */
+export function spawnEngine(
+  status: EngineStatus,
+): ChildProcessByStdio<Writable, Readable, Readable> {
+  return status.bundled
+    ? spawn(process.execPath, [bundledEnginePath()], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      })
+    : spawn(status.path, [], { stdio: ['pipe', 'pipe', 'pipe'] })
 }
+
+/** Threads for a search: leave one core for the app itself. */
+export const engineThreads = (): number => Math.max(1, Math.min(4, cpus().length - 1))
 
 export const SUPERSEDED = 'Engine search superseded.'
 
 let active: { child: ChildProcess; cancel: (reason: Error) => void } | null = null
+let lastMoveAt = 0
+
+/** The computer is playing (or played a moment ago): background work should keep out of its way. */
+export const computerPlaying = (withinMs: number): boolean =>
+  active !== null || Date.now() - lastMoveAt < withinMs
 
 /** Kill any running search (new game, takeback, app quit). */
 export function stopEngine(): void {
@@ -81,17 +97,16 @@ export async function bestMove(
     throw new Error(
       'Stockfish could not be found. Reinstall KChess or choose an engine in Settings.',
     )
-  const profile = PROFILES[level]
+  const profile = engineLevelInfo(level)
+  // The weakest levels sometimes play any legal move: Stockfish alone cannot play that badly.
+  const random = Math.random() < (profile.randomMove ?? 0)
   // A newer request makes any in-flight search stale; the renderer drops stale results.
   stopEngine()
+  lastMoveAt = Date.now()
   return new Promise((resolve, reject) => {
-    const child = status.bundled
-      ? spawn(process.execPath, [bundledEnginePath()], {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        })
-      : spawn(status.path, [], { stdio: ['pipe', 'pipe', 'pipe'] })
-    let phase: 'uci' | 'ready' | 'search' = 'uci'
+    const child = spawnEngine(status)
+    let phase: 'uci' | 'ready' | 'search' | 'perft' = 'uci'
+    const legal: string[] = []
     let settled = false
     const finish = (error?: Error, move?: string): void => {
       if (settled) return
@@ -114,22 +129,37 @@ export async function bestMove(
     createInterface({ input: child.stdout }).on('line', (raw) => {
       const line = raw.trim()
       if (phase === 'uci' && line === 'uciok') {
-        child.stdin.write(
-          `setoption name Threads value ${Math.max(1, Math.min(4, cpus().length - 1))}\n`,
-        )
+        child.stdin.write(`setoption name Threads value ${engineThreads()}\n`)
         child.stdin.write('setoption name Hash value 64\n')
-        if (profile.elo) {
+        if (profile.uciElo) {
           child.stdin.write('setoption name UCI_LimitStrength value true\n')
-          child.stdin.write(`setoption name UCI_Elo value ${profile.elo}\n`)
-        } else child.stdin.write('setoption name UCI_LimitStrength value false\n')
+          child.stdin.write(`setoption name UCI_Elo value ${profile.uciElo}\n`)
+        } else {
+          child.stdin.write('setoption name UCI_LimitStrength value false\n')
+          child.stdin.write(`setoption name Skill Level value ${profile.skill ?? 20}\n`)
+        }
         child.stdin.write('isready\n')
         phase = 'ready'
       } else if (phase === 'ready' && line === 'readyok') {
         child.stdin.write(
           `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}\n`,
         )
-        child.stdin.write(`go movetime ${movetime ?? profile.time}\n`)
-        phase = 'search'
+        if (random) {
+          child.stdin.write('go perft 1\n')
+          phase = 'perft'
+        } else {
+          child.stdin.write(`go movetime ${movetime ?? profile.time}\n`)
+          phase = 'search'
+        }
+      } else if (phase === 'perft') {
+        // `go perft 1` lists every legal move as "e2e4: 1", then "Nodes searched: N".
+        const found = /^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/.exec(line)
+        if (found) legal.push(found[1]!)
+        else if (line.startsWith('Nodes searched')) {
+          const move = legal[Math.floor(Math.random() * legal.length)]
+          if (!move) finish(new Error('Stockfish found no legal move.'))
+          else finish(undefined, move)
+        }
       } else if (phase === 'search' && line.startsWith('bestmove ')) {
         const move = line.split(/\s+/)[1]
         if (!move || move === '(none)') finish(new Error('Stockfish found no legal move.'))

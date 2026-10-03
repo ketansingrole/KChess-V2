@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  powerMonitor,
+  shell,
+} from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
 import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
@@ -9,16 +18,36 @@ import { mkdirSync } from 'node:fs'
 import { setupAppUpdates, APP_RELEASES_URL } from './setupAppUpdates'
 import type { AppUpdates } from './appUpdates'
 import { setupDiagnostics, exportDiagnostics } from './diagnostics'
-import { bestMove, engineStatus, isTrustedEnginePath, stopEngine, trustEnginePath } from './engine'
+import {
+  bestMove,
+  computerPlaying,
+  engineStatus,
+  isTrustedEnginePath,
+  stopEngine,
+  trustEnginePath,
+} from './engine'
 import { closeDb } from './db'
 import { notify } from './notify'
 import { loadCustomThemes, themesDir } from './themes'
 import { flushUsage, resetUsage, usageReport } from './usage'
 import { deleteManagedEngine, installManagedEngine } from './managedEngine'
+import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
+import {
+  cancelReview,
+  getReview,
+  requestReview,
+  restartReviewEngine,
+  reviewStatus,
+  reviewsChanged,
+  setupReviews,
+  stopReviews,
+} from './review'
+import { reviewSummaries } from './reviewStore'
 import {
   OnlineSession,
   cachedProfile,
   connectLichess,
+  fetchLichessReviews,
   followedUsers,
   forgetProfile,
   primeProfiles,
@@ -74,6 +103,8 @@ import {
   assertOnlineOptions,
   assertPuzzleRequest,
   assertPuzzleSolve,
+  assertReviewKey,
+  assertReviewRequest,
   assertRunInput,
   assertRunKind,
   assertUsernames,
@@ -316,13 +347,16 @@ void app
       }
       const saved = await saveSettings(settings)
       appUpdates!.applyPreferences(saved)
+      reviewsChanged()
       return saved
     })
     handle('addAccount', (_event, username: unknown) => addAccount(assertUsername(username)))
     handle('removeAccount', (_event, username: unknown) => removeAccount(assertUsername(username)))
-    handle('syncGames', (_event, username?: unknown) =>
-      syncGames(username === undefined ? undefined : assertUsername(username)),
-    )
+    handle('syncGames', async (_event, username?: unknown) => {
+      const data = await syncGames(username === undefined ? undefined : assertUsername(username))
+      reviewsChanged()
+      return data
+    })
     handle('gamePgn', (_event, account: unknown, id: unknown) => {
       return gamePgn(assertUsername(account), assertGameId(id))
     })
@@ -348,6 +382,8 @@ void app
     })
     handle('deleteEngine', async () => {
       stopEngine()
+      stopAnalysis(true)
+      restartReviewEngine()
       await deleteManagedEngine()
     })
     handle('bestMove', async (_event, moves: unknown, level: unknown, options?: unknown) =>
@@ -358,6 +394,42 @@ void app
         assertBestMoveOptions(options),
       ),
     )
+    handle('startAnalysis', async (_event, request: unknown) =>
+      startAnalysis(request, (await getSettings()).enginePath, (update) =>
+        send(IPC_EVENTS.analysis, update),
+      ),
+    )
+    handle('stopAnalysis', () => stopAnalysis())
+    handle('reviewGet', (_event, fen: unknown, moves: unknown) => {
+      const request = assertReviewRequest({ fen, moves })
+      return getReview(request.fen, request.moves)
+    })
+    handle('reviewRequest', (_event, request: unknown) =>
+      requestReview(assertReviewRequest(request)),
+    )
+    handle('reviewCancel', (_event, key: unknown) => cancelReview(assertReviewKey(key)))
+    handle('reviewStatus', () => reviewStatus())
+    handle('reviewSummaries', () => reviewSummaries())
+    setupReviews({
+      settings: getSettings,
+      accounts: async () => {
+        const { accounts } = await loadData()
+        // Your own accounts: the connected ones, or the first one added when none is.
+        const own = accounts.filter((account) => account.connected)
+        return (own.length ? own : accounts.slice(0, 1)).map((account) => account.username)
+      },
+      onBattery: () => powerMonitor.isOnBatteryPower(),
+      // The computer opponent counts as busy for a minute after its move: the game goes on.
+      busy: () =>
+        online.playing
+          ? 'online'
+          : analysisRunning() || computerPlaying(60_000)
+            ? 'engine'
+            : undefined,
+      fetchLichess: fetchLichessReviews,
+      update: (update) => send(IPC_EVENTS.reviewUpdate, update),
+      status: (status) => send(IPC_EVENTS.reviewStatus, status),
+    })
     handle('startOnline', (_event, options: unknown) => online.start(assertOnlineOptions(options)))
     handle('resumeOnline', () => online.resume())
     handle('cancelOnline', () => online.cancel())
@@ -454,6 +526,7 @@ app.on('window-all-closed', () => {
   cancelPuzzleDb()
   online.cancel()
   stopEngine()
+  stopAnalysis(true)
   if (process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', (event) => {
@@ -472,6 +545,8 @@ app.on('will-quit', () => {
   appUpdates?.stop()
   online.cancel()
   stopEngine()
+  stopAnalysis(true)
+  stopReviews()
   flushUsage()
   closeDb()
 })

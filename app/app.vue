@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useKChessStore } from './stores/kchess'
 import { useAppUpdatesStore } from './stores/appUpdates'
+import { useReviewStore } from './stores/review'
 
 useHead({
   title: 'KChess',
@@ -30,6 +31,7 @@ function trackMainOffset(): void {
 onMounted(() => {
   void store.init()
   void updates.init()
+  useReviewStore().listen()
   if (mainEl.value) {
     resizeObserver = new ResizeObserver(trackMainOffset)
     resizeObserver.observe(mainEl.value)

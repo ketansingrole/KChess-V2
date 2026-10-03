@@ -9,10 +9,12 @@ import {
   type GameCommand,
   type VoiceMoveChoice,
 } from '../utils/voiceCommands'
-import { positionAfter } from '../utils/chess'
+import { pgnFromUci, positionAfter } from '../utils/chess'
+import { useAnalysisStore } from '../stores/analysis'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
 import type { VoiceOutcome } from '../../src/shared/types'
+import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '../../src/shared/engineLevels'
 
 const store = useKChessStore()
 const {
@@ -40,11 +42,13 @@ const { newGame, takeback, resign, makeMove, selectPage, fen, recheckEngine } = 
 // The engine can be removed or replaced while the app is open; look again whenever this page opens.
 onMounted(() => void recheckEngine())
 
-const levels = [
-  { label: 'Low · 1350', value: 'low' },
-  { label: 'Medium · 1800', value: 'medium' },
-  { label: 'High · Max', value: 'high' },
-] as const
+/** Only the levels the player keeps in Settings → Gameplay. */
+const levels = computed(() =>
+  (settings.value?.engineLevels ?? DEFAULT_ENGINE_LEVELS).map((id) => ({
+    label: engineLevelLabel(id),
+    value: id,
+  })),
+)
 const otherColor = computed(() => (userColor.value === 'white' ? 'black' : 'white'))
 
 /** A game with moves that has not finished: leaving it needs a confirmation. */
@@ -276,6 +280,20 @@ function hearMove(result: VoiceResult): void {
           : `Say “confirm” to play ${parsed.choices[0]!.san}, or “cancel”.`
   }
 }
+const analysis = useAnalysisStore()
+/** Review the game on the analysis board, opened at the move being looked at. */
+function reviewGame(): void {
+  if (!analysis.loadPgn(pgnFromUci(localMoves.value), localPly.value)) return
+  analysis.orientation = userColor.value
+  const computer = `Stockfish (${engineLevelLabel(level.value)})`
+  analysis.origin = {
+    white: userColor.value === 'white' ? 'You' : computer,
+    black: userColor.value === 'black' ? 'You' : computer,
+  }
+  void analysis.requestReview()
+  selectPage('analysis')
+}
+
 /** Whoever sits at the bottom of the board is you, so flipping it switches sides. */
 const orientation = computed(() => userColor.value)
 const confirmColor = computed({
@@ -399,12 +417,16 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
           <span class="player-name">Stockfish</span>
           <USelect
             v-model="level"
-            :items="[...levels]"
+            :items="levels"
             aria-label="Difficulty"
             size="xs"
             variant="soft"
             icon="i-lucide-gauge"
             class="level-select"
+            :ui="{
+              content:
+                'w-max min-w-(--reka-select-trigger-width) max-h-[min(28rem,var(--reka-select-content-available-height,28rem))]',
+            }"
           />
         </template>
         <template #bottom-aside>
@@ -465,7 +487,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
               class="status-icon"
               :class="{ 'animate-spin': banner.spin }"
             />
-            <div>
+            <div class="banner-text">
               <strong>{{ banner.title }}</strong>
               <span v-if="banner.detail" class="detail">{{ banner.detail }}</span>
               <UButton
@@ -497,6 +519,16 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
                 >
               </div>
             </div>
+            <UButton
+              v-if="localResult && localMoves.length"
+              class="banner-action"
+              size="sm"
+              variant="soft"
+              color="neutral"
+              icon="i-lucide-sparkles"
+              @click="reviewGame"
+              >Review game</UButton
+            >
           </div>
         </template>
         <template #bottom>
@@ -563,6 +595,6 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
   --board-chrome: 244px;
 }
 .level-select {
-  min-width: 9.5rem;
+  min-width: 13rem;
 }
 </style>

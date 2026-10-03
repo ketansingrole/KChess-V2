@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatGameDate, gameResult } from '../utils/games'
-import type { LichessGame } from '../../src/shared/types'
+import { judgmentCounts } from '../utils/review'
+import type { LichessGame, ReviewSummary } from '../../src/shared/types'
 
-const props = defineProps<{ game: LichessGame; detailed?: boolean }>()
+const props = defineProps<{ game: LichessGame; detailed?: boolean; review?: ReviewSummary }>()
 const emit = defineEmits<{ select: [] }>()
 const result = computed(() => gameResult(props.game))
 const badge = computed(
@@ -15,6 +16,10 @@ const badge = computed(
     })[result.value] as { label: string; color: 'success' | 'error' | 'neutral' },
 )
 const diff = computed(() => props.game.ratingDiff)
+/** The player's side of the game's review. */
+const side = computed(() => props.review?.[props.game.color])
+/** The player's worst kind of move in the game, counted (“2 blunders”). */
+const worst = computed(() => (side.value ? judgmentCounts(side.value)[0] : undefined))
 </script>
 
 <template>
@@ -42,6 +47,12 @@ const diff = computed(() => props.game.ratingDiff)
     </span>
     <span v-if="detailed" class="rating-diff" :class="diff ? (diff > 0 ? 'up' : 'down') : 'muted'">
       {{ diff ? (diff > 0 ? `+${diff}` : diff) : '—' }}
+    </span>
+    <span v-if="detailed" class="opponent tabular">
+      <span :class="{ muted: !side }">{{
+        side?.accuracy !== undefined ? `${side.accuracy}%` : side ? 'Reviewed' : '—'
+      }}</span>
+      <span v-if="worst" class="sub" :class="worst.judgment">{{ worst.text }}</span>
     </span>
     <span class="muted">{{ formatGameDate(game.createdAt) }}</span>
   </button>

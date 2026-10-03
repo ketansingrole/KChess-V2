@@ -16,6 +16,8 @@ import {
   assertMoves,
   assertNotification,
   assertOnlineOptions,
+  assertReviewKey,
+  assertReviewRequest,
   assertSettings,
   assertTheme,
   assertUci,
@@ -97,7 +99,7 @@ throws('moves reject injection in list', () => assertMoves(['e2e4', 'go infinite
 throws('moves reject non-array', () => assertMoves('e2e4'))
 assert('game id', assertGameId('AbCd1234'), 'AbCd1234')
 throws('game id rejects slashes', () => assertGameId('abc/../../x'))
-assert('level', assertLevel('high'), 'high')
+assert('level', assertLevel('max'), 'max')
 throws('level rejects unknown', () => assertLevel('insane'))
 throws('action rejects unknown', () => assertAction('nuke'))
 assert(
@@ -148,12 +150,33 @@ const settings = {
   updateAutoCheck: true,
   updateAutoDownload: true,
   updateInstallOnQuit: true,
+  engineLevels: ['max', 'beginner'],
+  reviewAuto: 'recent',
+  reviewOnBattery: false,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
+throws('settings reject bad review mode', () =>
+  assertSettings({ ...settings, reviewAuto: 'sometimes' }),
+)
+const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+assert(
+  'review request accepted',
+  assertReviewRequest({ fen: startFen, moves: ['e2e4'], gameId: 'abcdefgh' }).moves,
+  ['e2e4'],
+)
+throws('review request rejects injected moves', () =>
+  assertReviewRequest({ fen: startFen, moves: ['e2e4\nquit'] }),
+)
+throws('review request rejects injected FEN', () =>
+  assertReviewRequest({ fen: `${startFen}\ngo infinite`, moves: [] }),
+)
+throws('review key must be a hash', () => assertReviewKey('../../etc'))
 throws('settings reject non-boolean update preference', () =>
   assertSettings({ ...settings, updateAutoCheck: 'yes' }),
 )
 throws('settings reject NaN volume', () => assertSettings({ ...settings, soundVolume: NaN }))
+assert('settings order levels', assertSettings(settings).engineLevels, ['beginner', 'max'])
+throws('settings keep a level', () => assertSettings({ ...settings, engineLevels: [] }))
 throws('settings reject bad promotion', () => assertSettings({ ...settings, promotion: 'rook' }))
 throws('settings reject bad theme id', () => assertSettings({ ...settings, darkTheme: 'No Way!' }))
 assert(

@@ -1,8 +1,11 @@
 import type {
+  AnalysisUpdate,
   AppUpdateStatus,
   DesktopApi,
   OnlineEvent,
   PuzzleDbProgress,
+  ReviewStatus,
+  ReviewUpdate,
   VoiceModelProgress,
 } from './types'
 
@@ -14,6 +17,9 @@ export interface IpcEvents {
   'app:update': AppUpdateStatus
   'voice:model-progress': VoiceModelProgress
   'window:maximized-changed': { maximized: boolean }
+  'engine:analysis': AnalysisUpdate
+  'review:update': ReviewUpdate
+  'review:status': ReviewStatus
 }
 export const IPC_EVENTS = {
   online: 'online:event',
@@ -23,6 +29,9 @@ export const IPC_EVENTS = {
   appUpdate: 'app:update',
   voiceModelProgress: 'voice:model-progress',
   windowMaximized: 'window:maximized-changed',
+  analysis: 'engine:analysis',
+  reviewUpdate: 'review:update',
+  reviewStatus: 'review:status',
 } as const satisfies Record<string, keyof IpcEvents>
 
 type Subscription =
@@ -33,6 +42,9 @@ type Subscription =
   | 'onPuzzleDbProgress'
   | 'onVoiceModelProgress'
   | 'onWindowMaximized'
+  | 'onAnalysis'
+  | 'onReviewUpdate'
+  | 'onReviewStatus'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
@@ -57,6 +69,13 @@ export const IPC_CHANNELS = {
   installEngine: 'engine:install',
   deleteEngine: 'engine:delete',
   bestMove: 'engine:bestmove',
+  startAnalysis: 'engine:analysis-start',
+  stopAnalysis: 'engine:analysis-stop',
+  reviewGet: 'review:get',
+  reviewRequest: 'review:request',
+  reviewCancel: 'review:cancel',
+  reviewStatus: 'review:status-get',
+  reviewSummaries: 'review:summaries',
   startOnline: 'online:start',
   resumeOnline: 'online:resume',
   cancelOnline: 'online:cancel',
