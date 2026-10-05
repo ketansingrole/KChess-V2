@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, ref, watch } from 'vue'
 import type { PlayerInfo } from '../components/PlayerLine.vue'
 import {
@@ -17,6 +18,7 @@ import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
 import type { VoiceOutcome } from '../../src/shared/types'
 import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '../../src/shared/engineLevels'
 
+const archive = useGameArchiveStore()
 const store = useKChessStore()
 const {
   localMoves,
@@ -408,6 +410,9 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 
 <template>
   <div>
+    <p v-if="archive.error" role="alert" class="p-3 text-error">
+      History saving: {{ archive.error }}
+    </p>
     <p v-if="store.localSaveError" role="alert" class="p-3 text-error">
       Automatic saving: {{ store.localSaveError }}
     </p>

@@ -13,6 +13,7 @@ import {
   turnColor,
 } from '../../utils/chess'
 import { readSession, persistSession } from '../../utils/sessionPersistence'
+import { useGameArchive } from '../gameArchive'
 import { ENGINE_LEVELS } from '../../../src/shared/types'
 import { UCI_MOVE } from '../../../src/shared/patterns'
 import { engineLevelInfo } from '../../../src/shared/engineLevels'
@@ -221,6 +222,43 @@ export function useComputerGame(options: {
     times: times.value ? { white: remaining('white'), black: remaining('black') } : null,
     flagged: flagged.value,
   }))
+  const archive = useGameArchive(
+    () => {
+      const outcome = localGame.value.outcome()
+      const winner = resigned.value
+        ? userColor.value === 'white'
+          ? 'black'
+          : 'white'
+        : flagged.value
+          ? localGame.value.hasInsufficientMaterial(flagged.value === 'white' ? 'black' : 'white')
+            ? undefined
+            : flagged.value === 'white'
+              ? 'black'
+              : 'white'
+          : outcome?.winner
+      const engine = `Stockfish (${engineLevelInfo(level.value).label})`
+      return {
+        source: 'computer',
+        setup: localSetup.value,
+        moves: [...localMoves.value],
+        white: userColor.value === 'white' ? 'You' : engine,
+        black: userColor.value === 'black' ? 'You' : engine,
+        result: localOver.value
+          ? winner === 'white'
+            ? '1-0'
+            : winner === 'black'
+              ? '0-1'
+              : '1/2-1/2'
+          : '*',
+        reason: localResult.value?.detail ?? 'In progress',
+        timeControl: localClock.value
+          ? `${localClock.value.minutes * 60}+${localClock.value.increment}`
+          : '-',
+      }
+    },
+    () => localMoves.value.length > 0,
+  )
+
   /** Charge the side that just moved for its thinking and give it its increment. */
   function settleClock(mover: 'white' | 'black'): void {
     const current = times.value
@@ -341,6 +379,7 @@ export function useComputerGame(options: {
   function newGame(setup?: GameSetup, clock?: ComputerClock | null): void {
     // Called from templates too, where the first argument may be an event.
     if (setup && !isVariant((setup as Partial<GameSetup>).variant)) setup = undefined
+    archive.reset()
     gameEpoch.value++
     void window.kchess.stopEngine().catch(() => {})
     thinking.value = false

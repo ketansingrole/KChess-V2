@@ -72,7 +72,6 @@ defineEmits<{ sync: []; remove: []; activate: [] }>()
         variant="ghost"
         color="error"
         :icon="account.connected ? 'i-lucide-unlink' : 'i-lucide-user-minus'"
-        :disabled="busy"
         @click="$emit('remove')"
         >{{ account.connected ? 'Disconnect' : 'Stop tracking' }}</UButton
       >

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useOnline } from '@vueuse/core'
 import { themeItems } from '../utils/puzzleThemes'
 import type PuzzleBoard from './PuzzleBoard.vue'
 
+const online = useOnline()
 const kchess = useKChessStore()
 const puzzles = usePuzzleStore()
 const {
@@ -27,9 +29,9 @@ const board = ref<InstanceType<typeof PuzzleBoard> | null>(null)
 const flipped = ref(false)
 
 const modes = [
-  { label: 'Rated', value: 'rated', icon: 'i-lucide-cloud-upload' },
   { label: 'Practice', value: 'practice', icon: 'i-lucide-dumbbell' },
-  { label: 'Offline', value: 'offline', icon: 'i-lucide-hard-drive' },
+  { label: 'Downloaded', value: 'offline', icon: 'i-lucide-hard-drive' },
+  { label: 'Rated', value: 'rated', icon: 'i-lucide-cloud-upload' },
 ] as const
 const difficulties = [
   { label: 'Easiest', value: 'easiest' },
@@ -88,14 +90,19 @@ function onOutcome(win: boolean): void {
           variant="naked"
           icon="i-lucide-user-round-plus"
           title="Connect a Lichess account for rated puzzles"
-          description="Rated puzzles change your Lichess puzzle rating, so they need a connected account. Practice and Offline work without one."
+          description="Rated puzzles change your Lichess puzzle rating, so they need a connected account. Practice and Downloaded work without one."
           :actions="[
-            { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => kchess.connect() },
             {
-              label: 'Practice instead',
+              label: 'Connect Lichess',
+              icon: 'i-lucide-log-in',
+              disabled: !online || kchess.busy,
+              onClick: () => kchess.connect(),
+            },
+            {
+              label: online ? 'Practice instead' : 'Use downloaded puzzles',
               variant: 'outline',
               color: 'neutral',
-              onClick: () => (mode = 'practice'),
+              onClick: () => (mode = online ? 'practice' : 'offline'),
             },
           ]"
         />
@@ -106,12 +113,17 @@ function onOutcome(win: boolean): void {
           title="Lichess needs your permission for puzzles"
           :description="`@${account} was connected before puzzles were added, or its login expired. Connect it again to allow KChess to read and report puzzles. Sign in to the same account on lichess.org first.`"
           :actions="[
-            { label: 'Reconnect', icon: 'i-lucide-log-in', onClick: () => puzzles.reconnect() },
             {
-              label: 'Practice instead',
+              label: 'Reconnect',
+              icon: 'i-lucide-log-in',
+              disabled: !online || kchess.busy,
+              onClick: () => puzzles.reconnect(),
+            },
+            {
+              label: online ? 'Practice instead' : 'Use downloaded puzzles',
               variant: 'outline',
               color: 'neutral',
-              onClick: () => (mode = 'practice'),
+              onClick: () => (mode = online ? 'practice' : 'offline'),
             },
           ]"
         />
@@ -126,6 +138,16 @@ function onOutcome(win: boolean): void {
           :description="trainError"
           :actions="[
             { label: 'Try again', icon: 'i-lucide-rotate-cw', onClick: () => puzzles.loadNext() },
+            ...(mode !== 'offline'
+              ? [
+                  {
+                    label: 'Use downloaded puzzles',
+                    variant: 'outline' as const,
+                    color: 'neutral' as const,
+                    onClick: () => (mode = 'offline'),
+                  },
+                ]
+              : []),
           ]"
         />
         <div v-else class="puzzle-loading" role="status">
@@ -149,6 +171,15 @@ function onOutcome(win: boolean): void {
             :ui="{ trigger: 'grow' }"
           />
         </div>
+        <p class="section-hint" role="status">
+          {{
+            mode === 'rated'
+              ? 'Requires internet and a connected Lichess account. Results affect your Lichess rating.'
+              : mode === 'offline'
+                ? 'Works offline after downloading puzzles. No account needed.'
+                : 'Requires internet. No account needed, and results stay on this device.'
+          }}
+        </p>
         <SourceBadge v-if="isRetry" kind="local" label="Local only · retry" />
         <SourceBadge
           v-else-if="mode === 'rated'"
@@ -156,7 +187,7 @@ function onOutcome(win: boolean): void {
           :label="account ? `Synced to Lichess · @${account}` : 'Synced to Lichess'"
         />
         <SourceBadge v-else kind="local" label="Local only · nothing is sent" />
-        <div v-if="mode !== 'offline' && accounts.length > 1" class="field">
+        <div v-if="mode === 'rated' && accounts.length > 1" class="field">
           <span id="train-account-label" class="field-label">Account</span>
           <USelect
             :model-value="account"

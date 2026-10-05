@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+import { useLocalStorage, useOnline } from '@vueuse/core'
 import type {
   Crosstable,
   LichessUser,
@@ -12,6 +12,7 @@ import { PERF_TYPES } from '../../src/shared/types'
 import { USERNAME } from '../../src/shared/patterns'
 import { useWatchStore } from '../stores/watch'
 
+const online = useOnline()
 const store = useKChessStore()
 const { activeOnlineAccount, connectedAccounts, data } = storeToRefs(store)
 const route = useRoute()
@@ -57,6 +58,10 @@ const perfs = computed(() => {
 })
 
 async function lookup(name = query.value.trim()): Promise<void> {
+  if (!online.value) {
+    error.value = 'Reconnect to the internet to look up a player. No account is needed.'
+    return
+  }
   if (!USERNAME.test(name)) {
     error.value = 'Enter a Lichess username.'
     return
@@ -151,6 +156,9 @@ async function watchGame(): Promise<void> {
 <template>
   <div>
     <PageHeader title="Players" />
+    <PublicOnlineNotice
+      offline-message="Reconnect to look up players. Your followed players and saved games are available in Following."
+    />
     <form class="card flex flex-wrap items-center gap-2 mb-5" @submit.prevent="lookup()">
       <UInput
         v-model="query"
@@ -160,7 +168,7 @@ async function watchGame(): Promise<void> {
         aria-label="Lichess username"
         class="flex-1 min-w-48"
       />
-      <UButton type="submit" :loading="loading">Look up</UButton>
+      <UButton type="submit" :loading="loading" :disabled="!online">Look up</UButton>
       <div v-if="recent.length" class="flex flex-wrap gap-1 w-full">
         <UButton
           v-for="name in recent"
@@ -200,8 +208,9 @@ async function watchGame(): Promise<void> {
               variant="outline"
               color="neutral"
               icon="i-lucide-user-plus"
+              :disabled="!online"
               @click="store.importFriends([profile.username])"
-              >Add friend</UButton
+              >Follow player</UButton
             >
             <UButton
               v-if="
@@ -210,6 +219,7 @@ async function watchGame(): Promise<void> {
               "
               size="sm"
               icon="i-lucide-swords"
+              :disabled="!online"
               @click="store.challengeFriend(profile.username)"
               >Challenge</UButton
             >
@@ -219,6 +229,7 @@ async function watchGame(): Promise<void> {
               variant="outline"
               color="neutral"
               icon="i-lucide-tv"
+              :disabled="!online"
               @click="watchGame"
               >Watch</UButton
             >

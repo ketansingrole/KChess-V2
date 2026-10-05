@@ -23,6 +23,42 @@ afterEach(async () => {
 })
 
 describe('voice model cache', () => {
+  it('checks installation without downloading and rejects a damaged local cache', async () => {
+    const fetchModel = download()
+    const cache = new VoiceModelCache(directory, fetchModel, source)
+    expect(await cache.status()).toEqual({ installed: false, bytes: 0, busy: false })
+    expect(fetchModel).not.toHaveBeenCalled()
+    await cache.ensure()
+    const archive = await readFile(cache.path)
+    expect(await cache.status()).toEqual({ installed: true, bytes: archive.length, busy: false })
+    expect(fetchModel).toHaveBeenCalledOnce()
+    archive[archive.length - 1] ^= 1
+    await writeFile(cache.path, archive)
+    expect(await cache.status()).toEqual({ installed: false, bytes: 0, busy: false })
+    expect(fetchModel).toHaveBeenCalledOnce()
+  })
+
+  it('reports shared preparation while a download is in flight', async () => {
+    let respond!: (response: Response) => void
+    const fetchModel = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          respond = resolve
+        }),
+    )
+    const cache = new VoiceModelCache(directory, fetchModel, source)
+    const pending = cache.ensure()
+    await vi.waitFor(() => expect(fetchModel).toHaveBeenCalledOnce())
+    expect(await cache.status()).toMatchObject({
+      busy: true,
+      installed: false,
+      progress: { phase: 'downloading' },
+    })
+    respond(new Response(Buffer.from(zip)))
+    await pending
+    expect(await cache.status()).toMatchObject({ busy: false, installed: true })
+  })
+
   it('shares concurrent downloads and reuses a verified cache offline in a new instance', async () => {
     const fetchModel = download()
     const cache = new VoiceModelCache(directory, fetchModel, source)

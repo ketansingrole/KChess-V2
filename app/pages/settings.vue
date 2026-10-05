@@ -376,6 +376,7 @@ function removePending(): void {
 
     <div class="settings-page">
       <AppUpdateSettings v-if="category.id === 'updates'" />
+      <OfflineDownloads v-if="category.id === 'offline'" />
       <section
         v-if="category.id === 'appearance'"
         id="settings-appearance"
@@ -1113,7 +1114,18 @@ function removePending(): void {
             >Clear local scores</UButton
           >
         </div>
-        <PuzzleDbCard compact />
+        <p class="section-hint">
+          Manage your puzzle download in Offline downloads. Your practice scores are stored on this
+          device.
+        </p>
+        <UButton
+          class="mt-3"
+          variant="outline"
+          color="neutral"
+          icon="i-lucide-download"
+          @click="store.jumpToSection('offline')"
+          >Offline downloads</UButton
+        >
       </section>
       <section
         v-if="category.id === 'data'"

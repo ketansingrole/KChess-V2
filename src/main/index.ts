@@ -35,12 +35,13 @@ import {
 import { closeDb } from './db'
 import { notify } from './notify'
 import { loadCustomThemes, themesDir } from './themes'
-import { flushUsage, resetUsage, usageReport } from './usage'
+import { flushUsage, forgetUsage, resetUsage, usageReport } from './usage'
 import { deleteManagedEngine, installManagedEngine } from './managedEngine'
 import { withEngineMaintenance } from './uci'
 import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
 import {
   cancelReview,
+  discardAccountReviews,
   getReview,
   requestReview,
   restartReviewEngine,
@@ -50,10 +51,13 @@ import {
   stopReviews,
 } from './review'
 import { reviewSummaries } from './reviewStore'
+import { oauthLook } from './oauthPage'
 import {
   OnlineSession,
   cachedProfile,
   connectLichess,
+  invalidateLogin,
+  cancelAccountSyncs,
   crosstable,
   exportGame,
   playerPerf,
@@ -99,6 +103,7 @@ import {
   getSettings,
   loadData,
   removeAccount,
+  logoutAccounts,
   saveSettings,
 } from './store'
 import type { ChallengeInfo, OnlineEvent } from '../shared/types'
@@ -374,6 +379,7 @@ void app
   .then(async () => {
     const voiceModel = new VoiceModelCache(join(app.getPath('userData'), 'voice'))
     handleAppProtocol(voiceModel.path)
+    handle('voiceModelStatus', () => voiceModel.status())
     handle('ensureVoiceModel', async (event) => {
       await voiceModel.ensure((progress) => {
         if (!event.sender.isDestroyed()) event.sender.send(IPC_EVENTS.voiceModelProgress, progress)
@@ -458,10 +464,42 @@ void app
       return saved
     })
     handle('addAccount', (_event, username: unknown) => addAccount(assertUsername(username)))
+    /** Ends everything a signed-in account has running: login, syncs, live play, reviews, usage. */
+    async function endSessions(username?: string): Promise<string[]> {
+      const accounts = (await loadData()).accounts
+        .filter(
+          (a) => a.connected && (!username || a.username.toLowerCase() === username.toLowerCase()),
+        )
+        .map((a) => a.username)
+      invalidateLogin(accounts)
+      online.logout(username === undefined ? undefined : accounts)
+      discardAccountReviews(accounts)
+      flushUsage()
+      forgetUsage(accounts)
+      for (const name of accounts) challengeInbox.forget(name)
+      return accounts
+    }
+    async function logout(username?: string) {
+      await endSessions(username)
+      const data = await logoutAccounts(username)
+      reviewsChanged()
+      return data
+    }
+    handle('logout', (_event, username: unknown) => logout(assertUsername(username)))
+    handle('logoutAll', () => logout())
     handle('removeAccount', async (_event, username: unknown) => {
       const name = assertUsername(username)
+      // A followed player has no login, but its sync and reviews must still stop before rows go.
+      if (!(await endSessions(name)).length) {
+        cancelAccountSyncs([name])
+        discardAccountReviews([name])
+        flushUsage()
+        forgetUsage([name])
+      }
       challengeInbox.forget(name)
-      return removeAccount(name)
+      const data = await removeAccount(name)
+      reviewsChanged()
+      return data
     })
     handle('syncGames', async (_event, username?: unknown) => {
       const data = await syncGames(username === undefined ? undefined : assertUsername(username))
@@ -495,7 +533,19 @@ void app
     handle('cachedProfile', (_event, username: unknown) => cachedProfile(assertUsername(username)))
     handle('profile', (_event, username: unknown) => profile(assertUsername(username)))
     handle('ratingHistory', (_event, username: unknown) => ratingHistory(assertUsername(username)))
-    handle('connectLichess', () => connectLichess())
+    handle('connectLichess', async (_event, look: unknown) => {
+      const bringToFront = (): void => {
+        if (!window || window.isDestroyed()) return
+        if (window.isMinimized()) window.restore()
+        window.show()
+        // macOS keeps the browser active unless the app explicitly takes focus.
+        app.focus({ steal: true })
+        window.focus()
+      }
+      const connected = await connectLichess(oauthLook(look), bringToFront)
+      bringToFront()
+      return connected
+    })
     handle('engineStatus', async () => {
       const status = await engineStatus((await getSettings()).enginePath)
       return { ...status, identity: status.ready ? await engineIdentity(status) : undefined }
@@ -708,8 +758,12 @@ void app
     )
     handle('clearAccountData', async (_event, username: unknown) => {
       const name = assertUsername(username)
+      // Stop a running sync and review first, or they would write back into the cleared library.
+      cancelAccountSyncs([name])
+      discardAccountReviews([name])
       const data = await clearAccountData(name)
       forgetProfile(name)
+      reviewsChanged()
       return data
     })
     handle('following', () => followedUsers())

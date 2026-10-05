@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch as watchValue } from 'vue'
-import { useIntervalFn, useLocalStorage } from '@vueuse/core'
+import { useIntervalFn, useLocalStorage, useOnline } from '@vueuse/core'
 import type { Key } from '@lichess-org/chessground/types'
 import type { BroadcastGame, WatchPlayer } from '../../src/shared/types'
 import { formatClock } from '../utils/clock'
@@ -9,6 +9,7 @@ import { useWatchStore } from '../stores/watch'
 import { useFriendsStore } from '../stores/friends'
 import { useAnalysisStore } from '../stores/analysis'
 
+const online = useOnline()
 const store = useKChessStore()
 const watcher = useWatchStore()
 const friends = useFriendsStore()
@@ -21,9 +22,11 @@ const playingOwnGame = computed(() =>
 
 onMounted(() => {
   watcher.listen()
-  void watcher.loadChannels()
-  void friends.refreshStatus()
-  void watcher.loadBroadcasts()
+  if (online.value) {
+    void watcher.loadChannels()
+    void friends.refreshStatus()
+    void watcher.loadBroadcasts()
+  }
 })
 onUnmounted(() => {
   // Leaving the page stops the stream: nothing downloads for a board no one sees.
@@ -31,6 +34,13 @@ onUnmounted(() => {
   watcher.unlisten()
 })
 watchValue(tab, () => void watcher.stop())
+watchValue(online, (connected) => {
+  if (connected) {
+    void watcher.loadChannels()
+    void friends.refreshStatus()
+    void watcher.loadBroadcasts()
+  } else void watcher.stop()
+})
 
 const now = ref(performance.now())
 useIntervalFn(() => (now.value = performance.now()), 500)
@@ -173,7 +183,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
         v-model="tab"
         :items="[
           { label: 'TV', value: 'tv', icon: 'i-lucide-tv' },
-          { label: 'Friends', value: 'friends', icon: 'i-lucide-users' },
+          { label: 'Following', value: 'friends', icon: 'i-lucide-users' },
           { label: 'Broadcasts', value: 'broadcasts', icon: 'i-lucide-radio' },
         ]"
         :content="false"
@@ -182,6 +192,9 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       />
     </PageHeader>
 
+    <PublicOnlineNotice
+      offline-message="Live games need an internet connection. Reconnect to watch; local play and saved studies are available offline."
+    />
     <UAlert
       v-if="playingOwnGame"
       class="mb-4"
@@ -198,6 +211,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
         ['error', 'ended'].includes(watcher.connection.phase)
       "
       size="xs"
+      :disabled="!online"
       @click="watcher.watch(watcher.target)"
       >Retry feed</UButton
     >
@@ -250,7 +264,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             :description="
               tab === 'tv'
                 ? 'Choose a channel: the board follows its featured game and moves on to the next.'
-                : 'Friends who are playing right now are listed; watch any of their games live.'
+                : 'Followed players who are playing right now are listed; watch any of their games live.'
             "
           />
         </div>
@@ -264,6 +278,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             color="neutral"
             icon="i-lucide-refresh-cw"
             aria-label="Refresh channels"
+            :disabled="!online"
             @click="watcher.loadChannels()"
           />
         </div>
@@ -279,7 +294,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
                 'channel' in watcher.target &&
                 watcher.target.channel === channel.key,
             }"
-            :disabled="playingOwnGame"
+            :disabled="playingOwnGame || !online"
             @click="watcher.watch({ channel: channel.key })"
           >
             <div class="row-main">
@@ -292,12 +307,12 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       <section v-else class="card">
         <div class="card-header">
           <div>
-            <h2 class="section-title">Friends playing now</h2>
+            <h2 class="section-title">Followed players playing now</h2>
             <p class="section-hint">
               {{
                 friends.friends.length
                   ? `${friends.onlineCount} of ${friends.friends.length} online`
-                  : 'Add friends on the Friends page.'
+                  : 'Follow players on the Following page.'
               }}
             </p>
           </div>
@@ -306,11 +321,14 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             variant="ghost"
             color="neutral"
             icon="i-lucide-refresh-cw"
-            aria-label="Refresh friends"
+            aria-label="Refresh followed players"
+            :disabled="!online"
             @click="friends.refreshStatus()"
           />
         </div>
-        <p v-if="!playingFriends.length" class="muted text-sm">No friend is playing right now.</p>
+        <p v-if="!playingFriends.length" class="muted text-sm">
+          No followed player is playing right now.
+        </p>
         <div class="list-rows">
           <div v-for="entry in playingFriends" :key="entry.friend.username" class="list-row">
             <UIcon name="i-lucide-swords" />
@@ -320,7 +338,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             </div>
             <UButton
               size="xs"
-              :disabled="!entry.status?.playingId || playingOwnGame"
+              :disabled="!online || !entry.status?.playingId || playingOwnGame"
               @click="entry.status?.playingId && watcher.watch({ gameId: entry.status.playingId })"
               >Watch</UButton
             >
@@ -341,7 +359,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
               :key="item.tourId"
               type="button"
               class="list-row text-left"
-              :disabled="playingOwnGame"
+              :disabled="playingOwnGame || !online"
               @click="watcher.openTour(item.tourId)"
             >
               <img v-if="item.image" :src="item.image" alt="" class="w-16 rounded" />

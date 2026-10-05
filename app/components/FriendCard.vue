@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useOnline } from '@vueuse/core'
 import { computed } from 'vue'
 import type {
   AccountStorage,
@@ -10,6 +11,8 @@ import type {
 import { formatBytes, formatCount, timeAgo } from '../utils/format'
 import { useWatchStore } from '../stores/watch'
 
+const online = useOnline()
+const app = useKChessStore()
 const props = defineProps<{
   account: LichessAccount
   profile?: LichessUser | null
@@ -40,6 +43,8 @@ const perfs = computed(() => [
   { label: 'Classical', value: props.profile?.perfs?.classical?.rating },
 ])
 const state = computed(() => {
+  if (!online.value)
+    return { label: 'Saved profile · live status unavailable', className: 'unknown' }
   if (!props.presence) return { label: 'Status unknown', className: 'unknown' }
   if (props.presence.playing) return { label: 'Playing now', className: 'online' }
   return props.presence.online
@@ -74,7 +79,11 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         </div>
         <div class="friend-state" :class="state.className">
           <span class="presence-dot" /> {{ state.label }}
-          <span v-if="presence?.online && presence.signal" class="signal" title="Connection signal">
+          <span
+            v-if="online && presence?.online && presence.signal"
+            class="signal"
+            title="Connection signal"
+          >
             <i v-for="bar in 4" :key="bar" :class="{ on: bar <= (presence.signal ?? 0) }" />
           </span>
           <span v-if="!presence?.online && lastSeen" class="muted"
@@ -160,6 +169,8 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         variant="outline"
         color="neutral"
         icon="i-lucide-swords"
+        :disabled="!online || !app.activeOnlineAccount"
+        :title="!app.activeOnlineAccount ? 'Connect Lichess to challenge a player' : undefined"
         @click="$emit('challenge')"
         >Challenge</UButton
       >
@@ -168,6 +179,7 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         variant="outline"
         color="neutral"
         icon="i-lucide-chart-column"
+        :disabled="!online"
         @click="navigateTo({ path: '/players', query: { name: account.username } })"
         >Stats</UButton
       >
@@ -177,6 +189,7 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         variant="outline"
         color="neutral"
         icon="i-lucide-tv"
+        :disabled="!online"
         @click="watchGame"
         >Watch</UButton
       >
@@ -185,7 +198,7 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         variant="outline"
         color="neutral"
         icon="i-lucide-refresh-cw"
-        :disabled="busy"
+        :disabled="busy || !online"
         @click="$emit('sync')"
         >Sync</UButton
       >
@@ -194,8 +207,8 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         variant="outline"
         color="neutral"
         icon="i-lucide-eraser"
-        :disabled="busy || (!storage.games && !storage.cacheBytes)"
-        :title="`Delete the ${formatBytes(storage.bytes + storage.cacheBytes)} downloaded for this friend`"
+        :disabled="!storage.games && !storage.cacheBytes"
+        :title="`Delete the ${formatBytes(storage.bytes + storage.cacheBytes)} downloaded for this player`"
         @click="$emit('clear')"
         >Clear data</UButton
       >
@@ -205,7 +218,6 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         color="error"
         icon="i-lucide-user-minus"
         class="ml-auto"
-        :disabled="busy"
         @click="$emit('remove')"
         >Remove</UButton
       >

@@ -1,6 +1,6 @@
 {
   "name": "kchess-electron",
-  "version": "2026.10.3",
+  "version": "2026.10.4",
   "description": "A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.",
   "license": "GPL-3.0-or-later",
   "author": "Ketan Singrole",

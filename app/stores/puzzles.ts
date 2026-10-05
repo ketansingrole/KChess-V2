@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+import { useLocalStorage, useOnline } from '@vueuse/core'
 import { pickConnectedAccount } from '../../src/shared/accounts'
 import type {
   LichessRatingHistory,
@@ -49,7 +49,12 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const angle = useLocalStorage('kchess:puzzle-angle', 'mix')
   const difficulty = useLocalStorage<PuzzleDifficulty>('kchess:puzzle-difficulty', 'normal')
   const color = useLocalStorage<'random' | 'white' | 'black'>('kchess:puzzle-color', 'random')
-  const mode = useLocalStorage<TrainMode>('kchess:puzzle-mode', 'rated')
+  const online = useOnline()
+  // Remember explicit choices; new users start with account-free training.
+  const mode = useLocalStorage<TrainMode>(
+    'kchess:puzzle-mode',
+    online.value ? 'practice' : 'offline',
+  )
   const accountPreference = useLocalStorage('kchess:puzzle-account', '')
 
   const account = computed(
@@ -106,6 +111,10 @@ export const usePuzzleStore = defineStore('puzzles', () => {
         phase.value = 'noaccount'
         return
       }
+      if (!online.value)
+        throw new Error(
+          'You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.',
+        )
       const draw = await window.kchess.puzzleNext({
         account: account.value,
         angle: angle.value,

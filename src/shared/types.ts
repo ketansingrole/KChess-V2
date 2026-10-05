@@ -142,6 +142,22 @@ export interface AppTheme {
   custom?: boolean
 }
 
+/** Resolved CSS colors the browser's Lichess sign-in page uses to match the app. */
+export interface OAuthPageColors {
+  bg: string
+  elevated: string
+  text: string
+  textMuted: string
+  primary: string
+  border: string
+}
+
+export interface OAuthPageLook {
+  appearance: Appearance
+  light: OAuthPageColors
+  dark: OAuthPageColors
+}
+
 export interface CustomThemeReport {
   themes: AppTheme[]
   /** The folder custom theme files are read from. */
@@ -982,6 +998,13 @@ export interface VoiceWord {
   conf: number
 }
 
+export interface VoiceModelStatus {
+  installed: boolean
+  bytes: number
+  busy: boolean
+  progress?: VoiceModelProgress
+}
+
 export interface VoiceModelProgress {
   phase: 'checking' | 'downloading' | 'preparing'
   received: number
@@ -1298,6 +1321,8 @@ export interface DesktopApi {
   loadData(): Promise<AppData>
   saveSettings(settings: Settings): Promise<Settings>
   addAccount(username: string): Promise<AppData>
+  logout(username: string): Promise<AppData>
+  logoutAll(): Promise<AppData>
   removeAccount(username: string): Promise<AppData>
   syncGames(username?: string): Promise<AppData>
   /** Filtered, bounded library rows; full PGN is fetched separately. */
@@ -1317,7 +1342,7 @@ export interface DesktopApi {
   profile(username: string): Promise<LichessUser>
   ratingHistory(username: string): Promise<LichessRatingHistory>
   /** Sign in through the browser. `username` is the account Lichess authorised. */
-  connectLichess(): Promise<{ data: AppData; username: string }>
+  connectLichess(look?: OAuthPageLook): Promise<{ data: AppData; username: string }>
   engineStatus(): Promise<EngineStatus>
   chooseEngine(): Promise<string | null>
   /**
@@ -1424,6 +1449,8 @@ export interface DesktopApi {
   microphoneAccess(request: boolean): Promise<MicrophoneAccess>
   /** Downloads the verified English model on first use, then reuses the local cache. */
   ensureVoiceModel(): Promise<string>
+  /** Checks the verified local voice model without downloading or requesting microphone access. */
+  voiceModelStatus(): Promise<VoiceModelStatus>
   onVoiceModelProgress(callback: (progress: VoiceModelProgress) => void): () => void
   /** Open the operating system's microphone privacy settings; false where unsupported. */
   openMicrophoneSettings(): Promise<boolean>

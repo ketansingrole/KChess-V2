@@ -1,4 +1,10 @@
-import type { AppTheme, ThemePalette } from '../../src/shared/types'
+import type {
+  AppTheme,
+  Appearance,
+  OAuthPageColors,
+  OAuthPageLook,
+  ThemePalette,
+} from '../../src/shared/types'
 import { presetThemes } from './themePresets'
 
 export const DEFAULT_THEME_ID = 'kchess'
@@ -93,6 +99,26 @@ export function previewColors(
     primary: vars['--ui-primary']!,
     border: vars['--ui-border']!,
   }
+}
+
+/** The app's current colors for the browser's Lichess sign-in page, in both modes. */
+export function oauthPageLook(
+  appearance: Appearance,
+  lightTheme: AppTheme,
+  darkTheme: AppTheme,
+): OAuthPageLook {
+  const colors = (theme: AppTheme, dark: boolean): OAuthPageColors => {
+    const vars = themeVars(paletteFor(theme, dark) ?? defaultPreview[dark ? 'dark' : 'light'], dark)
+    return {
+      bg: vars['--ui-bg']!,
+      elevated: vars['--ui-bg-elevated']!,
+      text: vars['--ui-text']!,
+      textMuted: vars['--ui-text-muted']!,
+      primary: vars['--ui-primary']!,
+      border: vars['--ui-border']!,
+    }
+  }
+  return { appearance, light: colors(lightTheme, false), dark: colors(darkTheme, true) }
 }
 
 const VAR_NAMES = Object.keys(themeVars({ bg: '#000', text: '#fff', primary: '#888' }, true))

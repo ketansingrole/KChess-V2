@@ -17,12 +17,22 @@ import {
   MAX_GAMES,
   pendingGameIds,
   removeAccount,
+  logoutAccounts,
   RESULT_SQL,
   saveGames,
   saveGamesPage,
+  saveLogin,
+  writeApiCache,
 } from '../../src/main/store'
-import { syncGames } from '../../src/main/lichess'
-import { reviewSummaries } from '../../src/main/reviewStore'
+import {
+  cancelAccountSyncs,
+  fetchLichessReviews,
+  followedUsers,
+  invalidateLogin,
+  primeProfiles,
+  syncGames,
+} from '../../src/main/lichess'
+import { hasAccount, reviewSummaries } from '../../src/main/reviewStore'
 import { safeStorage } from 'electron'
 
 const state = vi.hoisted(() => ({ db: null as DatabaseSync | null, fetch: vi.fn() }))
@@ -107,6 +117,47 @@ beforeEach(async () => {
 afterEach(() => state.db?.close())
 
 describe('SQLite game library', () => {
+  it('logs out every connected account and erases their data while preserving public following', async () => {
+    const db = state.db!
+    db.exec(
+      "INSERT INTO accounts (username, connected) VALUES ('Carol', 1); INSERT INTO tokens VALUES ('Alice', 'secret'), ('Carol', 'secret'); INSERT INTO api_cache VALUES ('alice:profile', '{}', 0), ('carol:rating', '[]', 0), ('bob:profile', '{}', 0); INSERT INTO usage VALUES ('alice', 'games', 2, 200, 0), ('bob', 'games', 3, 300, 0)",
+    )
+    await saveGames('Alice', [game('Private1')])
+    await saveGames('Carol', [game('Private2', { account: 'Carol' })])
+    await saveGames('Bob', [game('Public01', { account: 'Bob' })])
+    await saveGamesPage('Alice', [game('Pending1', { status: 'started' })])
+    db.exec(
+      "INSERT INTO lichess_review_checks VALUES ('Private1', 0), ('Public01', 0); INSERT INTO reviews VALUES ('private', 'Private1', 'local', 0, 0, '{}', '{}', 0), ('shared', 'Private2', 'local', 0, 0, '{}', '{}', 0); INSERT INTO game_reviews VALUES ('Private1', 'private'), ('Private2', 'shared'), ('Public01', 'shared')",
+    )
+    const result = await logoutAccounts()
+    expect(result.accounts).toMatchObject([{ username: 'Bob', connected: false }])
+    expect(result.gameCount).toBe(1)
+    expect(db.prepare('SELECT key FROM reviews').all()).toEqual([{ key: 'shared' }])
+    expect(db.prepare('SELECT id FROM lichess_review_checks').all()).toEqual([{ id: 'Public01' }])
+    expect(db.prepare('SELECT * FROM tokens').all()).toEqual([])
+    expect(db.prepare('SELECT * FROM pending_game_sync').all()).toEqual([])
+    expect(db.prepare('SELECT key FROM api_cache').all()).toEqual([{ key: 'bob:profile' }])
+    expect(db.prepare('SELECT account FROM usage').all()).toEqual([{ account: 'bob' }])
+    expect((await gamePage({ offset: 0, limit: 20 })).games[0]?.id).toBe('Public01')
+    expect((await logoutAccounts()).accounts).toMatchObject([{ username: 'Bob', connected: false }])
+  })
+  it('logs out one account without deleting another connected account or a followed player', async () => {
+    const db = state.db!
+    db.exec(
+      "INSERT INTO accounts VALUES ('Carol', 1, NULL); INSERT INTO tokens VALUES ('Alice', 'secret-a'), ('Carol', 'secret-c'); INSERT INTO api_cache VALUES ('alice:profile', '{}', 0), ('carol:profile', '{}', 0)",
+    )
+    await saveGames('Alice', [game('Private1')])
+    await saveGames('Carol', [game('Private2', { account: 'Carol' })])
+    await saveGames('Bob', [game('Public01', { account: 'Bob' })])
+    const result = await logoutAccounts('aLiCe')
+    expect(result.accounts.map((a) => a.username).sort()).toEqual(['Bob', 'Carol'])
+    expect(result.accounts.find((a) => a.username === 'Carol')?.connected).toBe(true)
+    expect(result.gameCount).toBe(2)
+    expect(db.prepare('SELECT username FROM tokens').all()).toEqual([{ username: 'Carol' }])
+    expect(db.prepare('SELECT key FROM api_cache').all()).toEqual([{ key: 'carol:profile' }])
+    await logoutAccounts('Bob')
+    expect((await loadData()).accounts).toHaveLength(2)
+  })
   it('transfers bounded pages, applies combined filters and reads PGN on demand', async () => {
     const games = Array.from({ length: 240 }, (_, i) =>
       game(`G${i.toString().padStart(7, '0')}`, {
@@ -328,6 +379,72 @@ describe('Lichess analysis saved during sync', () => {
   })
 })
 
+describe('Sync cancelled by logout, removal or clearing', () => {
+  const checked = () =>
+    state
+      .db!.prepare('SELECT id FROM lichess_review_checks')
+      .all()
+      .map((row) => row.id)
+
+  it('stops the sync without saving the page it was downloading', async () => {
+    state.fetch.mockImplementation(async () => {
+      invalidateLogin(['Alice'])
+      return response([analysed()])
+    })
+    await expect(syncGames('Alice')).rejects.toThrow('Sync was cancelled')
+    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(0)
+    expect(checked()).toEqual([])
+  })
+  it('stops a sync for an account removed while its games download', async () => {
+    let started!: () => void
+    const downloading = new Promise<void>((resolve) => (started = resolve))
+    let release!: (value: Response) => void
+    state.fetch.mockImplementation(() => {
+      started()
+      return new Promise<Response>((resolve) => (release = resolve))
+    })
+    const sync = syncGames('Alice')
+    await downloading
+    cancelAccountSyncs(['Alice'])
+    await removeAccount('Alice')
+    release(response([analysed()]))
+    await expect(sync).rejects.toThrow('Sync was cancelled')
+    expect(state.db!.prepare('SELECT id FROM games').all()).toEqual([])
+    expect(checked()).toEqual([])
+  })
+  it('stops a sync for an account whose data is cleared while its games download', async () => {
+    let started!: () => void
+    const downloading = new Promise<void>((resolve) => (started = resolve))
+    let release!: (value: Response) => void
+    state.fetch.mockImplementation(() => {
+      started()
+      return new Promise<Response>((resolve) => (release = resolve))
+    })
+    const sync = syncGames('Alice')
+    await downloading
+    cancelAccountSyncs(['Alice'])
+    await clearAccountData('Alice')
+    release(response([analysed()]))
+    await expect(sync).rejects.toThrow('Sync was cancelled')
+    expect(state.db!.prepare('SELECT id FROM games').all()).toEqual([])
+    // The account stays, with its sync cursor reset so the next sync starts over.
+    const alice = (await loadData()).accounts.find((a) => a.username === 'Alice')
+    expect(alice).toBeDefined()
+    expect(alice?.lastSyncedAt).toBeUndefined()
+  })
+  it('re-checks the login after the last await before writing a page', async () => {
+    let current = true
+    const saving = saveGamesPage('Alice', [game('Late0001')], [], () => current)
+    // Logout lands while the save is waiting, after the caller's own check passed.
+    current = false
+    await expect(saving).rejects.toThrow('Sync was cancelled')
+    await expect(saveGames('Alice', [game('Late0002')], 2, () => current)).rejects.toThrow(
+      'Sync was cancelled',
+    )
+    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(0)
+  })
+})
+
 describe('Lichess export authentication', () => {
   beforeEach(() => {
     Object.assign(safeStorage, {
@@ -365,5 +482,111 @@ describe('Lichess export authentication', () => {
     await syncGames('Alice')
     expect(auths).toEqual(['Bearer lip_alice', null])
     expect((await loadData()).accounts[0]!.lastSyncedAt).toBeGreaterThan(1)
+  })
+})
+
+describe('No account data comes back after logout, removal or clearing', () => {
+  const rows = (sql: string) => state.db!.prepare(sql).all()
+  /** Alice and Bob both played Shared01; Private1 is Alice's alone. */
+  async function seed(): Promise<void> {
+    await saveGames('Alice', [game('Private1'), game('Shared01')])
+    await saveGames('Bob', [game('Shared01', { account: 'Bob' })])
+    state.db!.exec(`
+      INSERT INTO reviews VALUES ('rp', 'Private1', 'local', 1, 0, '{}', '{}', 0),
+        ('rs', 'Shared01', 'local', 1, 0, '{}', '{}', 0);
+      INSERT INTO game_reviews VALUES ('Private1', 'rp'), ('Shared01', 'rs');
+      INSERT INTO lichess_review_checks VALUES ('Private1', 0), ('Shared01', 0);
+      INSERT INTO usage VALUES ('alice', 'games', 1, 10, 0), ('bob', 'games', 1, 10, 0);
+      INSERT INTO api_cache VALUES ('alice:profile', '{}', 0), ('bob:profile', '{}', 0);
+      INSERT INTO position_lookups VALUES
+        ('player:{"player":"ALICE","color":"white"}:fen', '{}', 0),
+        ('player:{"player":"Bob","color":"white"}:fen', '{}', 0),
+        ('opening:fen', '{}', 0);`)
+  }
+  const kept = () => ({
+    reviews: rows('SELECT key FROM reviews ORDER BY key'),
+    checks: rows('SELECT id FROM lichess_review_checks ORDER BY id'),
+    cache: rows('SELECT key FROM api_cache ORDER BY key'),
+    lookups: rows('SELECT key FROM position_lookups ORDER BY key'),
+  })
+  const others = {
+    reviews: [{ key: 'rs' }],
+    checks: [{ id: 'Shared01' }],
+    cache: [{ key: 'bob:profile' }],
+    lookups: [{ key: 'opening:fen' }, { key: 'player:{"player":"Bob","color":"white"}:fen' }],
+  }
+
+  it('removing an account deletes its reviews, checks, lookups and usage, sparing shared games', async () => {
+    await seed()
+    await removeAccount('alice')
+    expect(kept()).toEqual(others)
+    expect(rows('SELECT account FROM usage')).toEqual([{ account: 'bob' }])
+    expect(hasAccount('Alice')).toBe(false)
+  })
+  it('logging out deletes the same data', async () => {
+    await seed()
+    await logoutAccounts('Alice')
+    expect(kept()).toEqual(others)
+  })
+  it('clearing data deletes it too but keeps the account and its usage history', async () => {
+    await seed()
+    await clearAccountData('Alice')
+    expect(kept()).toEqual(others)
+    expect(rows("SELECT account FROM usage WHERE account = 'alice'")).toHaveLength(1)
+    expect(hasAccount('Alice')).toBe(true)
+  })
+  it('writes no Lichess analysis downloaded across a logout', async () => {
+    state.fetch.mockImplementation(async () => {
+      invalidateLogin(['Alice'])
+      return response([analysed()])
+    })
+    await expect(fetchLichessReviews('Alice', ['Pending1'])).rejects.toThrow('Sync was cancelled')
+    expect(rows('SELECT key FROM reviews')).toEqual([])
+    expect(rows('SELECT id FROM lichess_review_checks')).toEqual([])
+  })
+  it('caches no profile data once its login has ended', async () => {
+    await writeApiCache('alice:profile', { username: 'Alice' }, () => false)
+    expect(rows('SELECT key FROM api_cache')).toEqual([])
+  })
+
+  describe('with OS encryption', () => {
+    beforeEach(() => {
+      Object.assign(safeStorage, {
+        isEncryptionAvailable: () => true,
+        getSelectedStorageBackend: () => 'keychain',
+        encryptString: (text: string) => Buffer.from(text),
+        decryptString: (buffer: Buffer) => buffer.toString(),
+      })
+    })
+    afterEach(() => {
+      for (const key of [
+        'isEncryptionAvailable',
+        'getSelectedStorageBackend',
+        'encryptString',
+        'decryptString',
+      ])
+        delete (safeStorage as unknown as Record<string, unknown>)[key]
+    })
+
+    it('stores a login and its account together, or neither after a logout', async () => {
+      await expect(saveLogin('Carol', 'lip_carol', () => false)).rejects.toThrow('cancelled')
+      expect(rows("SELECT username FROM tokens WHERE username = 'Carol'")).toEqual([])
+      expect(hasAccount('Carol')).toBe(false)
+      const data = await saveLogin('Carol', 'lip_carol', () => true)
+      expect(data.accounts.find((a) => a.username === 'Carol')?.connected).toBe(true)
+      expect(rows("SELECT username FROM tokens WHERE username = 'Carol'")).toHaveLength(1)
+    })
+    it('forgets who an account follows when it logs out during the download', async () => {
+      state.db!.exec(
+        `INSERT INTO tokens (username, encrypted) VALUES ('Alice', '${Buffer.from('lip_alice').toString('base64')}')`,
+      )
+      state.fetch.mockImplementation(async () => {
+        invalidateLogin(['Alice'])
+        return response([{ id: 'carol', username: 'Carol' }])
+      })
+      await expect(followedUsers()).rejects.toThrow('cancelled by logout')
+      await primeProfiles(['Carol'])
+      expect(rows("SELECT key FROM api_cache WHERE key LIKE 'carol:%'")).toEqual([])
+    })
   })
 })

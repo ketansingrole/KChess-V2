@@ -62,6 +62,8 @@ const api: DesktopApi = {
   loadData: () => invoke('loadData'),
   saveSettings: (settings) => invoke('saveSettings', settings),
   addAccount: (username) => invoke('addAccount', username),
+  logout: (username) => invoke('logout', username),
+  logoutAll: () => invoke('logoutAll'),
   removeAccount: (username) => invoke('removeAccount', username),
   syncGames: (username) => invoke('syncGames', username),
   gamePgn: (account, id) => invoke('gamePgn', account, id),
@@ -72,7 +74,7 @@ const api: DesktopApi = {
   cachedProfile: (username) => invoke('cachedProfile', username),
   profile: (username) => invoke('profile', username),
   ratingHistory: (username) => invoke('ratingHistory', username),
-  connectLichess: () => invoke('connectLichess'),
+  connectLichess: (look) => invoke('connectLichess', look),
   engineStatus: () => invoke('engineStatus'),
   chooseEngine: () => invoke('chooseEngine'),
   installEngine: () => invoke('installEngine'),
@@ -169,6 +171,7 @@ const api: DesktopApi = {
   openNotificationSettings: () => invoke('openNotificationSettings'),
   microphoneAccess: (request) => invoke('microphoneAccess', request),
   ensureVoiceModel: () => invoke('ensureVoiceModel'),
+  voiceModelStatus: () => invoke('voiceModelStatus'),
   onVoiceModelProgress: (callback) => {
     const listener = (_: unknown, progress: VoiceModelProgress): void => callback(progress)
     ipcRenderer.on(IPC_EVENTS.voiceModelProgress, listener)

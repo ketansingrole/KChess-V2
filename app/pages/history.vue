@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useOnline } from '@vueuse/core'
 import { gameResult } from '../utils/games'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import { judgmentCounts } from '../utils/review'
 
+const source = ref(useRoute().query.source === 'lichess' ? 'lichess' : 'computer')
+const sourceItems = [
+  { label: 'Computer', value: 'computer' },
+  { label: 'Over the board', value: 'board' },
+  { label: 'Lichess', value: 'lichess' },
+]
+const online = useOnline()
 const store = useKChessStore()
 const {
   busy,
@@ -107,9 +115,11 @@ const reviewColor = computed(() =>
 
 <template>
   <div>
-    <PageHeader title="History">
+    <PageHeader title="Game history">
       <UButton
+        v-if="source === 'lichess' && data.accounts.length"
         icon="i-lucide-refresh-cw"
+        :disabled="!online"
         variant="outline"
         color="neutral"
         :loading="busy"
@@ -118,165 +128,199 @@ const reviewColor = computed(() =>
       >
     </PageHeader>
 
-    <template v-if="reviewGame">
-      <div class="toolbar-row mb-4">
-        <UButton
-          icon="i-lucide-arrow-left"
-          variant="ghost"
-          color="neutral"
-          size="sm"
-          @click="reviewGame = null"
-          >All games</UButton
-        >
-        <USeparator orientation="vertical" class="h-5" />
-        <UBadge :color="reviewColor" variant="soft" size="sm">{{ reviewResult }}</UBadge>
-        <span class="text-sm"
-          ><strong>{{ reviewGame.account }}</strong> vs
-          <strong>{{ reviewGame.opponent }}</strong></span
-        >
-        <span class="muted text-sm">
-          · {{ date(reviewGame.createdAt) }}
-          <template v-if="reviewGame.opening"> · {{ reviewGame.opening }}</template>
-        </span>
-        <span class="ms-auto" />
-        <span v-if="reviewSide" class="review-line text-sm">
-          <template v-if="reviewSide.accuracy !== undefined"
-            >{{ reviewSide.accuracy }}% accuracy</template
+    <UTabs
+      v-model="source"
+      :items="sourceItems"
+      :content="false"
+      aria-label="Game source"
+      class="mb-4"
+    />
+    <LocalGameHistory
+      v-if="source !== 'lichess'"
+      :source="source === 'computer' ? 'computer' : 'board'"
+    />
+    <section v-else class="lichess-history">
+      <p class="section-hint mb-4">Lichess games saved on this device.</p>
+      <p v-if="!online" class="section-hint mb-4" role="status">
+        You're offline. Saved games and local reviews are available; reconnect to sync new games.
+      </p>
+      <template v-if="reviewGame">
+        <div class="toolbar-row mb-4">
+          <UButton
+            icon="i-lucide-arrow-left"
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            @click="reviewGame = null"
+            >All games</UButton
           >
-          <template v-for="count in judgmentCounts(reviewSide)" :key="count.judgment">
-            · <span :class="count.judgment">{{ count.text }}</span>
-          </template>
-        </span>
-        <UButton
-          icon="i-lucide-sparkles"
-          variant="soft"
-          color="neutral"
-          size="sm"
-          @click="openGameReview"
-          >Review</UButton
-        >
-      </div>
-      <GameReview
-        ref="reviewer"
-        :pgn="reviewPgn"
-        :orientation="reviewGame.color"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
-        :player-name="reviewGame.account"
-        :opponent-name="reviewGame.opponent"
-      />
-    </template>
-
-    <template v-else>
-      <div v-if="!gameCount" class="card">
-        <UEmpty
-          variant="naked"
-          icon="i-lucide-history"
-          title="No games yet"
-          :description="
-            data.accounts.length
-              ? 'Sync your accounts to pull in your Lichess games.'
-              : 'Add a Lichess account in Settings, then sync to see your games here.'
-          "
-          :actions="
-            data.accounts.length
-              ? [{ label: 'Sync games', icon: 'i-lucide-refresh-cw', onClick: () => sync() }]
-              : [
-                  {
-                    label: 'Open Settings',
-                    icon: 'i-lucide-settings-2',
-                    onClick: () => selectPage('settings'),
-                  },
-                ]
-          "
+          <USeparator orientation="vertical" class="h-5" />
+          <UBadge :color="reviewColor" variant="soft" size="sm">{{ reviewResult }}</UBadge>
+          <span class="text-sm"
+            ><strong>{{ reviewGame.account }}</strong> vs
+            <strong>{{ reviewGame.opponent }}</strong></span
+          >
+          <span class="muted text-sm">
+            · {{ date(reviewGame.createdAt) }}
+            <template v-if="reviewGame.opening"> · {{ reviewGame.opening }}</template>
+          </span>
+          <span class="ms-auto" />
+          <span v-if="reviewSide" class="review-line text-sm">
+            <template v-if="reviewSide.accuracy !== undefined"
+              >{{ reviewSide.accuracy }}% accuracy</template
+            >
+            <template v-for="count in judgmentCounts(reviewSide)" :key="count.judgment">
+              · <span :class="count.judgment">{{ count.text }}</span>
+            </template>
+          </span>
+          <UButton
+            icon="i-lucide-sparkles"
+            variant="soft"
+            color="neutral"
+            size="sm"
+            @click="openGameReview"
+            >Review</UButton
+          >
+        </div>
+        <GameReview
+          ref="reviewer"
+          :pgn="reviewPgn"
+          :orientation="reviewGame.color"
+          :theme="settings.boardTheme"
+          :coordinates="settings.coordinates"
+          :piece-set="settings.pieceSet"
+          :animation="settings.pieceAnimation"
+          :player-name="reviewGame.account"
+          :opponent-name="reviewGame.opponent"
         />
-      </div>
+      </template>
 
       <template v-else>
-        <div class="toolbar-row mb-4">
-          <USelect
-            v-if="data.accounts.length > 1"
-            v-model="historyAccount"
-            :items="accountItems"
-            icon="i-lucide-user"
-            aria-label="Filter by account"
+        <div v-if="!gameCount" class="card">
+          <UEmpty
+            variant="naked"
+            icon="i-lucide-history"
+            title="No saved Lichess games"
+            :description="
+              data.accounts.length
+                ? 'Sync your accounts to pull in your Lichess games.'
+                : 'Follow a player by username to download their public games without signing in, or connect your own Lichess account.'
+            "
+            :actions="
+              data.accounts.length
+                ? [
+                    {
+                      label: 'Sync games',
+                      disabled: !online,
+                      icon: 'i-lucide-refresh-cw',
+                      onClick: () => sync(),
+                    },
+                  ]
+                : [
+                    {
+                      label: 'Follow a player',
+                      icon: 'i-lucide-user-plus',
+                      onClick: () => selectPage('friends'),
+                    },
+                    {
+                      label: 'Analyze a PGN',
+                      variant: 'outline',
+                      color: 'neutral',
+                      onClick: () => selectPage('analysis'),
+                    },
+                  ]
+            "
           />
-          <UTabs
-            v-model="historyResult"
-            :items="resultItems"
-            aria-label="Filter by result"
-            :content="false"
-            variant="pill"
-          />
-          <USelect v-model="historyRated" :items="ratedItems" aria-label="Filter by rating type" />
-          <UButton
-            v-if="filtered"
-            size="md"
-            variant="link"
-            color="neutral"
-            icon="i-lucide-x"
-            @click="clearFilters"
-            >Clear filters</UButton
-          >
         </div>
 
-        <div class="card">
-          <p v-if="historyLoading" class="p-6 text-muted" role="status">Loading games…</p>
-          <p v-else-if="historyError" class="p-6 text-error" role="alert">{{ historyError }}</p>
-          <UEmpty
-            v-else-if="!visibleGames.length"
-            variant="naked"
-            size="sm"
-            icon="i-lucide-search-x"
-            title="No games match these filters"
-            :actions="[
-              {
-                label: 'Clear filters',
-                variant: 'outline',
-                color: 'neutral',
-                onClick: clearFilters,
-              },
-            ]"
-          />
-          <div v-else class="game-list">
-            <div class="game-head" aria-hidden="true">
-              <span>Result</span><span>Opponent</span><span>Mode</span><span>Rating</span
-              ><span>Accuracy</span><span>Date</span>
-            </div>
-            <GameRow
-              v-for="game in visibleGames"
-              :key="`${game.account}-${game.id}`"
-              :game="game"
-              :review="summaries[game.id]"
-              detailed
-              @select="openReview(game)"
-            />
-          </div>
-          <div class="pager">
-            <span class="muted text-xs tabular">{{ rangeText }}</span>
-            <span class="flex-1" />
+        <template v-else>
+          <div class="toolbar-row mb-4">
             <USelect
-              v-model="historyPageSize"
-              :items="pageSizeItems"
-              size="sm"
-              aria-label="Games per page"
+              v-if="data.accounts.length > 1"
+              v-model="historyAccount"
+              :items="accountItems"
+              icon="i-lucide-user"
+              aria-label="Filter by account"
             />
-            <UPagination
-              v-model:page="pageNumber"
-              :total="historyTotal"
-              :items-per-page="historyPageSize"
-              :sibling-count="1"
-              size="sm"
-              variant="outline"
+            <UTabs
+              v-model="historyResult"
+              :items="resultItems"
+              aria-label="Filter by result"
+              :content="false"
+              variant="pill"
+            />
+            <USelect
+              v-model="historyRated"
+              :items="ratedItems"
+              aria-label="Filter by rating type"
+            />
+            <UButton
+              v-if="filtered"
+              size="md"
+              variant="link"
               color="neutral"
-              active-variant="subtle"
-              active-color="primary"
-            />
+              icon="i-lucide-x"
+              @click="clearFilters"
+              >Clear filters</UButton
+            >
           </div>
-        </div>
+
+          <div class="card">
+            <p v-if="historyLoading" class="p-6 text-muted" role="status">Loading games…</p>
+            <p v-else-if="historyError" class="p-6 text-error" role="alert">{{ historyError }}</p>
+            <UEmpty
+              v-else-if="!visibleGames.length"
+              variant="naked"
+              size="sm"
+              icon="i-lucide-search-x"
+              title="No games match these filters"
+              :actions="[
+                {
+                  label: 'Clear filters',
+                  variant: 'outline',
+                  color: 'neutral',
+                  onClick: clearFilters,
+                },
+              ]"
+            />
+            <div v-else class="game-list">
+              <div class="game-head" aria-hidden="true">
+                <span>Result</span><span>Opponent</span><span>Mode</span><span>Rating</span
+                ><span>Accuracy</span><span>Date</span>
+              </div>
+              <GameRow
+                v-for="game in visibleGames"
+                :key="`${game.account}-${game.id}`"
+                :game="game"
+                :review="summaries[game.id]"
+                detailed
+                @select="openReview(game)"
+              />
+            </div>
+            <div class="pager">
+              <span class="muted text-xs tabular">{{ rangeText }}</span>
+              <span class="flex-1" />
+              <USelect
+                v-model="historyPageSize"
+                :items="pageSizeItems"
+                size="sm"
+                aria-label="Games per page"
+              />
+              <UPagination
+                v-model:page="pageNumber"
+                :total="historyTotal"
+                :items-per-page="historyPageSize"
+                :sibling-count="1"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                active-variant="subtle"
+                active-color="primary"
+              />
+            </div>
+          </div>
+        </template>
       </template>
-    </template>
+    </section>
   </div>
 </template>

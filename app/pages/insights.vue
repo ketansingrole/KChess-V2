@@ -97,7 +97,7 @@ const best = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="Insights">
+    <PageHeader title="Lichess insights">
       <USelect
         v-if="accounts.length > 1"
         v-model="account"
@@ -111,12 +111,29 @@ const best = computed(() => {
       <USelect v-model="rated" :items="RATED" size="sm" aria-label="Rated or casual" />
     </PageHeader>
 
+    <p class="section-hint mb-4">
+      Insights from your saved Lichess games. Available offline after syncing; computer games are
+      separate.
+    </p>
     <div v-if="!accounts.length" class="card">
       <UEmpty
         variant="naked"
         icon="i-lucide-chart-pie"
-        title="No games yet"
-        description="Add a Lichess account and sync its games to see insights."
+        title="No saved Lichess games to explore"
+        description="Follow a player by username to explore their public games without signing in, or connect your own Lichess account."
+        :actions="[
+          {
+            label: 'Follow a player',
+            icon: 'i-lucide-user-plus',
+            onClick: () => store.selectPage('friends'),
+          },
+          {
+            label: 'Analyze a PGN',
+            variant: 'outline',
+            color: 'neutral',
+            onClick: () => store.selectPage('analysis'),
+          },
+        ]"
       />
     </div>
     <p v-else-if="error" class="text-error text-sm" role="alert">{{ error }}</p>
@@ -125,7 +142,10 @@ const best = computed(() => {
         variant="naked"
         icon="i-lucide-chart-pie"
         title="No finished games match"
-        description="Sync your games from the History page, or widen the filters."
+        description="Sync games from Lichess history, or widen the filters."
+        :actions="[
+          { label: 'Open Lichess history', onClick: () => navigateTo('/history?source=lichess') },
+        ]"
       />
     </div>
     <div v-else-if="report" class="flex flex-col gap-5" :aria-busy="loading">

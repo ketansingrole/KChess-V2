@@ -19,7 +19,9 @@ import type {
 async function puzzleStore(overrides: Parameters<typeof desktop>[0] = {}) {
   const bridge = desktop(overrides)
   await useKChessStore().init()
-  return { store: usePuzzleStore(), ...bridge }
+  const store = usePuzzleStore()
+  store.mode = 'rated'
+  return { store, ...bridge }
 }
 
 describe('puzzle lifecycle', () => {

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useMistakeStore } from '../stores/mistakes'
 import type { Puzzle } from '../../src/shared/types'
+const app = useKChessStore()
 const practice = useMistakeStore()
 const current = ref<Puzzle | null>(null)
 const now = ref(Date.now())
@@ -29,7 +30,24 @@ function next(all = false): void {
         game review. These are engine practice lines, not rated puzzles.
       </p>
       <p v-if="practice.error" role="alert">{{ practice.error }}</p>
-      <div class="mt-3 flex gap-2">
+      <UEmpty
+        v-if="!practice.items.length"
+        variant="naked"
+        icon="i-lucide-book-open"
+        title="Build your mistake practice"
+        description="Import a PGN on the analysis board, review the game, then save mistakes to practice. Works offline with the local engine; no account needed."
+        :actions="[
+          {
+            label: 'Analyze a game',
+            icon: 'i-lucide-microscope',
+            onClick: () => app.selectPage('analysis'),
+          },
+        ]"
+      />
+      <p v-else-if="!due.length && !current" class="section-hint mt-3" role="status">
+        You're caught up. Review a saved position early, or come back when your next revisit is due.
+      </p>
+      <div v-if="practice.items.length" class="mt-3 flex gap-2">
         <UButton :disabled="!due.length" @click="next()">{{
           current ? 'Next due position' : 'Start practice'
         }}</UButton>

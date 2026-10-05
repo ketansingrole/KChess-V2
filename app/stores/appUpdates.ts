@@ -8,7 +8,12 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
   let offUpdate: (() => void) | undefined
   let revision = 0
   const busy = computed(() => ['checking', 'downloading'].includes(status.value?.phase ?? ''))
-  const attention = computed(() => ['available', 'downloaded'].includes(status.value?.phase ?? ''))
+  /** A newer release is known: offered, downloading, ready, or a retryable failed download. */
+  const attention = computed(() => {
+    const phase = status.value?.phase ?? ''
+    if (['available', 'downloading', 'downloaded'].includes(phase)) return true
+    return phase === 'error' && Boolean(status.value?.version)
+  })
   const title = computed(() => {
     switch (status.value?.phase) {
       case 'checking':

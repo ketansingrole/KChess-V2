@@ -195,3 +195,47 @@ it('keeps startup protection when any account is unverified or the response is m
   expect(session.assistanceBlocked).toBe(true)
   session.close()
 })
+
+it('forgets account and game recovery on explicit logout and rejects a late stream', async () => {
+  const state = vi.fn()
+  mocks.GET.mockImplementation((path: string) =>
+    path === '/api/account/playing'
+      ? Promise.resolve({ data: { nowPlaying: [{ gameId: 'AbCd1234' }] } })
+      : Promise.reject(new LichessError(401, path)),
+  )
+  const session = new OnlineSession(vi.fn(), vi.fn(), state)
+  await session.resume()
+  await flushPromises()
+  session.logout()
+  expect(session.playing).toBe(false)
+  expect(session.assistanceBlocked).toBe(false)
+  expect(state).toHaveBeenLastCalledWith(
+    expect.objectContaining({ account: '', gameId: '', phase: 'idle' }),
+  )
+  mocks.accounts = []
+  await session.resume()
+  expect(session.assistanceBlocked).toBe(false)
+  session.close()
+})
+
+it('preserves another account’s playing session when logging out an unrelated account', async () => {
+  const state = vi.fn()
+  mocks.GET.mockImplementation((path: string) =>
+    path === '/api/account/playing'
+      ? Promise.resolve({ data: { nowPlaying: [{ gameId: 'AbCd1234' }] } })
+      : Promise.reject(new LichessError(401, path)),
+  )
+  const session = new OnlineSession(vi.fn(), vi.fn(), state)
+  await session.resume()
+  await flushPromises()
+  const count = state.mock.calls.length
+  session.logout(['Bob'])
+  expect(session.playing).toBe(true)
+  expect(session.assistanceBlocked).toBe(true)
+  expect(state).toHaveBeenCalledTimes(count)
+  session.logout(['Alice'])
+  expect(session.playing).toBe(false)
+  expect(state).toHaveBeenLastCalledWith(
+    expect.objectContaining({ account: '', gameId: '', phase: 'idle' }),
+  )
+})

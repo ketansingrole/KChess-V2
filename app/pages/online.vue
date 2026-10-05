@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useIntervalFn, useOnline } from '@vueuse/core'
 import { formatBytes } from '../utils/format'
 import {
   canDirectChallenge,
@@ -15,6 +15,7 @@ import { useChallengeStore } from '../stores/challenges'
 import { useAnalysisStore } from '../stores/analysis'
 import { useTournamentStore } from '../stores/tournaments'
 
+const online = useOnline()
 const store = useKChessStore()
 const challenges = useChallengeStore()
 const {
@@ -275,19 +276,30 @@ function backToTournament(): void {
 
 <template>
   <div>
-    <PageHeader title="Play Online" />
+    <PageHeader title="Play on Lichess" />
+    <p v-if="!online" class="section-hint mb-4" role="status">
+      You're offline. Reconnect to play on Lichess. You can still play the computer or over the
+      board.
+    </p>
 
     <div v-if="!data.accounts.some((a) => a.connected)" class="card">
       <UEmpty
         variant="naked"
         icon="i-lucide-globe"
         title="Connect Lichess to play"
-        description="Online play uses Lichess OAuth and the Board API. Connect your account in Settings to get started."
+        description="Connect your Lichess account to find opponents and play online. You can play the computer or over the board without an account."
         :actions="[
           {
-            label: 'Open Settings',
-            icon: 'i-lucide-settings-2',
-            onClick: () => selectPage('settings'),
+            label: 'Connect Lichess',
+            disabled: !online || store.busy,
+            icon: 'i-lucide-log-in',
+            onClick: () => store.connect(),
+          },
+          {
+            label: 'Play the computer',
+            variant: 'outline',
+            color: 'neutral',
+            onClick: () => selectPage('computer'),
           },
         ]"
       />

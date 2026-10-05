@@ -1,3 +1,4 @@
+import { oauthPage } from '../../src/main/oauthPage'
 import {
   test as base,
   expect,
@@ -85,6 +86,12 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
     if (testInfo.title.includes('unverified startup'))
       db.prepare('INSERT INTO accounts (username, connected) VALUES (?, 1)').run('tester')
     if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)
+    if (testInfo.title.includes('quick logout')) {
+      seedReviewedGame(db)
+      db.exec(
+        "UPDATE accounts SET connected = 1; INSERT INTO accounts (username, connected) VALUES ('second', 1); INSERT INTO tokens VALUES ('tester', 'invalid'), ('second', 'invalid'); INSERT INTO api_cache VALUES ('tester:profile', '{}', 0)",
+      )
+    }
     if (testInfo.title.includes('paged history')) {
       db.exec("INSERT INTO accounts (username, connected) VALUES ('tester', 0)")
       const insert =
@@ -137,7 +144,7 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       })
       page.on('pageerror', (error) => console.error(`[renderer] ${error.message}`))
       await page.waitForSelector('.main-area')
-      await expect(page.locator('aside').getByText('Dashboard', { exact: true })).toBeAttached()
+      await expect(page.locator('aside').getByText('Home', { exact: true })).toBeAttached()
       await use({ app, page, profile })
     } finally {
       if (app) {
@@ -164,6 +171,123 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
   },
 })
 
+test('starts without an account and keeps settings and downloaded puzzles accessible offline', async ({
+  desktop: { page },
+}) => {
+  await expect(page.getByRole('heading', { name: "Let's play chess" })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Play the computer', exact: true })).toBeVisible()
+  const sidebar = page.locator('aside')
+  const settings = sidebar.getByRole('button', { name: 'Settings', exact: true })
+  const connect = sidebar.getByRole('button', { name: 'Connect Lichess', exact: true })
+  await expect(settings).toBeVisible()
+  await expect(connect).toBeVisible()
+  const settingsBox = await settings.boundingBox()
+  const connectBox = await connect.boundingBox()
+  expect(settingsBox!.y).toBeLessThan(connectBox!.y)
+  await page.screenshot({ path: '/private/tmp/kchess-account-free-home.png' })
+  await settings.click()
+  await expect(sidebar.getByText('Appearance', { exact: true })).toBeVisible()
+  await sidebar.getByText('Back', { exact: true }).click()
+  await expect(page.getByRole('heading', { name: "Let's play chess" })).toBeVisible()
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
+    window.dispatchEvent(new Event('offline'))
+  })
+  await expect(connect).toBeDisabled()
+  await page.getByRole('button', { name: 'Practice puzzles', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Downloaded', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(page.locator('.cg-wrap')).toBeVisible()
+  await expect(
+    page.getByText('Works offline after downloading puzzles. No account needed.', { exact: true }),
+  ).toBeVisible()
+  await page.screenshot({ path: '/private/tmp/kchess-account-free-puzzles.png' })
+})
+
+test('browses public tournaments anonymously and asks to connect only when joining', async ({
+  desktop: { app, page },
+}) => {
+  await app.evaluate(() => {
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      if (request.method !== 'GET' || request.headers.has('authorization'))
+        throw new Error('Public browsing must be anonymous and read-only')
+      const path = new URL(request.url).pathname
+      const common = {
+        id: 'Public01',
+        fullName: 'Public rapid arena',
+        status: 20,
+        variant: 'standard',
+        rated: true,
+        clock: { limit: 600, increment: 0 },
+        minutes: 60,
+        nbPlayers: 12,
+        startsAt: Date.now(),
+      }
+      if (path === '/api/tournament') return Response.json({ started: [common], created: [] })
+      if (path === '/api/tournament/Public01')
+        return Response.json({
+          ...common,
+          secondsToFinish: 1200,
+          standing: { players: [{ rank: 1, name: 'TestPlayer', rating: 1800, score: 4 }] },
+        })
+      throw new Error('Unexpected request: ' + path)
+    }
+  })
+  await navigate(page, 'Tournaments')
+  await page.getByRole('button', { name: /Public rapid arena/ }).click()
+  await expect(
+    page.locator('ol').getByRole('listitem').filter({ hasText: 'TestPlayer' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Join', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Connect Lichess to join' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Keep browsing', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(
+    page.locator('ol').getByRole('listitem').filter({ hasText: 'TestPlayer' }),
+  ).toBeVisible()
+})
+
+test('explains account-free empty states and manages offline downloads without signing in', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
+  await expect(page.getByText('No saved Lichess games', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Follow a player', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Follow player', exact: true })).toBeVisible()
+  await expect(
+    page.getByText('Internet required · No account needed to browse.', { exact: true }),
+  ).toBeVisible()
+  await navigate(page, 'Lichess insights')
+  await expect(page.getByText('No saved Lichess games to explore', { exact: true })).toBeVisible()
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
+  await page.getByRole('button', { name: 'Analyze a game', exact: true }).click()
+  await expect(page.locator('cg-board')).toBeVisible()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await navigate(page, 'Offline downloads')
+  await expect(page.getByText('Included with KChess', { exact: true })).toBeVisible()
+  await expect(page.getByText('Download needed', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Download voice model', exact: true }),
+  ).toBeEnabled()
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
+    window.dispatchEvent(new Event('offline'))
+  })
+  await expect(
+    page.getByRole('button', { name: 'Download voice model', exact: true }),
+  ).toBeDisabled()
+  await expect(
+    page.getByRole('button', { name: 'Download a fresh sample', exact: true }),
+  ).toBeDisabled()
+  await page.screenshot({ path: '/private/tmp/kchess-offline-downloads.png' })
+})
+
 test('loads cached voice recognition offline and releases the microphone after a training run @packaged', async ({
   desktop: { app, page },
 }) => {
@@ -171,6 +295,13 @@ test('loads cached voice recognition offline and releases the microphone after a
     globalThis.fetch = () =>
       Promise.reject(new Error('Offline voice test: network is unavailable.'))
   })
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await navigate(page, 'Offline downloads')
+  await expect(page.getByText(/^Installed ·/)).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Voice input settings', exact: true }),
+  ).toBeVisible()
+  await navigate(page, 'Back')
   await navigate(page, 'Practice')
   await page.getByRole('tab', { name: 'Say the square' }).click()
   await page.getByRole('switch', { name: 'Voice input', exact: true }).click()
@@ -193,6 +324,7 @@ test('loads cached voice recognition offline and releases the microphone after a
 
 async function navigate(page: Page, label: string) {
   const link = page.locator('aside').getByText(label, { exact: true })
+  await expect(link).toBeAttached()
   if (await link.isVisible()) return link.click()
   // Below 1024px (e.g. the 1024×768 Windows CI screen) the sidebar is a slide-over menu instead.
   const menu = page.getByRole('dialog')
@@ -297,7 +429,8 @@ test('plays keyboard moves and restores an annotated saved study after reload @p
 test('turns a reviewed game mistake into a scheduled practice position @packaged', async ({
   desktop: { page },
 }) => {
-  await navigate(page, 'History')
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
   await page.getByRole('button', { name: /against rival/ }).click()
   await page.getByRole('button', { name: 'Review', exact: true }).click()
   await page.getByRole('button', { name: "Practice Black's mistakes", exact: true }).click()
@@ -338,20 +471,28 @@ test('plays a move through the board and keeps the game when navigating', async 
   await move(page, 'e2', 'e4')
   await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
   await expect(page.getByText('Your move', { exact: true })).toBeVisible()
-  await navigate(page, 'History')
-  await navigate(page, 'Play with Computer')
+  await navigate(page, 'Home')
+  await expect(page.getByRole('button', { name: 'Continue your game', exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Continue your game', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Continue your game', exact: true }).click()
   await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+  await navigate(page, 'Game history')
+  await expect(page.locator('.local-history-row')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Replay', exact: true }).click()
+  await expect(page.locator('cg-board')).toBeVisible()
 })
 
 test('keeps a failed offline puzzle verdict on remount and opens the promotion picker @packaged', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Puzzles')
-  await page.getByRole('tab', { name: 'Offline', exact: true }).click()
+  await page.getByRole('tab', { name: 'Downloaded', exact: true }).click()
   await expect(page.locator('cg-board')).toBeVisible()
   await move(page, 'f2', 'f3')
   await expect(page.getByText('That’s not the move — try again', { exact: true })).toBeVisible()
-  await navigate(page, 'History')
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
   await navigate(page, 'Puzzles')
   await expect(page.locator('cg-board')).toBeVisible()
   await move(page, 'a7', 'a8')
@@ -565,7 +706,8 @@ test('reviews a game on the analysis board, labelling the blunder and the better
 test('shows a reviewed game’s accuracy in History and opens its review', async ({
   desktop: { page },
 }) => {
-  await navigate(page, 'History')
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
   const row = page.getByRole('button', { name: /against rival/ })
   await expect(row).toContainText('%')
   await row.click()
@@ -580,6 +722,13 @@ test('shows a reviewed game’s accuracy in History and opens its review', async
 test('browses paged history through validated IPC with filters and on-demand PGN', async ({
   desktop: { page },
 }) => {
+  // Publicly followed players are stored, but their games aren't the signed-in user's activity.
+  await expect(
+    page.getByRole('heading', { name: 'Your Lichess activity', exact: true }),
+  ).toBeHidden()
+  await expect(page.locator('.stats-grid')).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: 'Account', exact: true })).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Sync games', exact: true })).toBeHidden()
   const metadata = await page.evaluate(() => window.kchess.loadData())
   expect(metadata.gameCount).toBe(41)
   expect(metadata).not.toHaveProperty('games')
@@ -598,7 +747,8 @@ test('browses paged history through validated IPC with filters and on-demand PGN
       }
     }),
   ).toBe(true)
-  await navigate(page, 'History')
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
   await expect(page.locator('.game-row')).toHaveCount(20)
   await expect(page.locator('.pager')).toContainText('1–20 of 41 games')
   await page.getByRole('button', { name: 'Next page' }).click()
@@ -639,6 +789,24 @@ test('plays two players on one board, exports the game as a GIF and runs the che
   await page.getByRole('button', { name: /^Player 1 clock/ }).click()
   await page.getByRole('button', { name: /^Player 2 clock/ }).click()
   await expect(page.getByText('1 moves', { exact: true })).toBeVisible()
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Over the board', exact: true }).click()
+  await expect(page.locator('.local-history-row').filter({ hasText: 'Checkmate' })).toBeVisible()
+  await page.reload()
+  await page.getByRole('tab', { name: 'Over the board', exact: true }).click()
+  await expect(page.locator('.local-history-row').filter({ hasText: 'Checkmate' })).toBeVisible()
+  await page.screenshot({
+    path: '/private/tmp/kchess-local-game-history.png',
+    animations: 'disabled',
+  })
+  await page
+    .locator('.local-history-row')
+    .filter({ hasText: 'Checkmate' })
+    .getByRole('button', { name: 'Replay', exact: true })
+    .click()
+  await expect(page.locator('cg-board')).toBeVisible()
+  await page.getByRole('button', { name: 'Open analysis', exact: true }).click()
+  await expect(page.locator('.analysis-panel')).toBeVisible()
 })
 
 test('cancels a long GIF export and keeps the renderer responsive while encoding', async ({
@@ -698,7 +866,7 @@ test('starts a Chess960 game against Stockfish with a clock', async ({ desktop: 
 })
 
 test('summarises a reviewed game on the Insights page', async ({ desktop: { page } }) => {
-  await navigate(page, 'Insights')
+  await navigate(page, 'Lichess insights')
   await expect(page.getByText('Games', { exact: true })).toBeVisible()
   await expect(page.getByTitle(/^Checkmate: 1 games/)).toBeVisible()
   await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
@@ -780,4 +948,89 @@ test('prepares a voice archive with the production worker @packaged', async ({
   const prepared = await readFile(result.prepared)
   expect(prepared.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]))
   expect(prepared.length).toBe(result.marker.size)
+})
+
+test('renders the Lichess authorization confirmation page clearly', async ({
+  desktop: { page },
+}) => {
+  await page.setContent(oauthPage(true))
+  await expect(page.getByRole('heading', { name: 'Signed in to Lichess' })).toBeVisible()
+  await expect(
+    page.getByText('You can close this browser tab and continue in KChess.'),
+  ).toBeVisible()
+  await page.screenshot({ path: '/private/tmp/kchess-lichess-confirmation.png' })
+})
+
+test('quick logout removes only the selected account and returns to account-free Home after the last', async ({
+  desktop: { page },
+}) => {
+  const before = await page.evaluate(() => window.kchess.loadData())
+  expect(before.accounts.filter((a) => a.connected)).toHaveLength(2)
+  const heading = page.getByRole('heading', { name: 'Your Lichess activity', exact: true })
+  await expect(heading).toBeVisible()
+  const titleBox = await heading.boundingBox()
+  const cardsBox = await page.locator('.stats-grid').boundingBox()
+  expect(cardsBox!.y - titleBox!.y - titleBox!.height).toBeGreaterThanOrEqual(16)
+  await page.screenshot({ path: '/private/tmp/kchess-home-activity-spacing.png' })
+  await navigate(page, 'Over the board')
+  await page.getByRole('tab', { name: 'Shared board', exact: true }).click()
+  const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  await input.fill('e4')
+  await input.press('Enter')
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await page.getByRole('menuitemcheckbox', { name: '@tester', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await expect(
+    page.getByRole('menuitem', { name: 'Log out all accounts', exact: true }),
+  ).toBeVisible()
+  const logout = page.getByRole('menuitem', { name: 'Log out @tester', exact: true })
+  await expect(logout).toBeVisible()
+  await Promise.all([page.waitForEvent('load'), logout.click()])
+  await expect(page.getByRole('heading', { name: "Let's play chess" })).toBeVisible()
+  const remaining = await page.evaluate(() => window.kchess.loadData())
+  expect(remaining.accounts).toMatchObject([{ username: 'second', connected: true }])
+  await expect(page.getByRole('button', { name: 'Account menu', exact: true })).toContainText(
+    '@second',
+  )
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await expect(
+    page.getByRole('menuitem', { name: 'Log out all accounts', exact: true }),
+  ).toBeHidden()
+  await Promise.all([
+    page.waitForEvent('load'),
+    page.getByRole('menuitem', { name: 'Log out', exact: true }).click(),
+  ])
+  await expect(
+    page.locator('aside').getByRole('button', { name: 'Connect Lichess', exact: true }),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Account menu', exact: true })).toBeHidden()
+  const after = await page.evaluate(() => window.kchess.loadData())
+  expect(after.accounts).toEqual([])
+  expect(after.gameCount).toBe(0)
+  expect(after.settings).toEqual(before.settings)
+  await navigate(page, 'Game history')
+  await page.getByRole('tab', { name: 'Over the board', exact: true }).click()
+  await expect(page.locator('.local-history-row')).toHaveCount(1)
+  await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
+  await expect(page.getByText('No saved Lichess games', { exact: true })).toBeVisible()
+  await navigate(page, 'Puzzles')
+  await expect(page.getByRole('tab', { name: 'Practice', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await page.reload()
+  expect((await page.evaluate(() => window.kchess.loadData())).accounts).toEqual([])
+})
+
+test('quick logout all accounts is a separate explicit action', async ({ desktop: { page } }) => {
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await Promise.all([
+    page.waitForEvent('load'),
+    page.getByRole('menuitem', { name: 'Log out all accounts', exact: true }).click(),
+  ])
+  await expect(
+    page.locator('aside').getByRole('button', { name: 'Connect Lichess', exact: true }),
+  ).toBeVisible()
+  expect((await page.evaluate(() => window.kchess.loadData())).accounts).toEqual([])
 })

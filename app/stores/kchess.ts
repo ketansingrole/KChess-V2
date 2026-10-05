@@ -10,7 +10,7 @@ import {
 } from '../../src/shared/engineLevels'
 import { canPlayOnline, perfFor } from '../../src/shared/timeControl'
 import { boardThemes } from '../utils/boards'
-import { allThemes, applyTheme, findTheme } from '../utils/themes'
+import { allThemes, applyTheme, findTheme, oauthPageLook } from '../utils/themes'
 import { fen, navigatePly } from '../utils/chess'
 import { configure } from '../utils/sound'
 import { formatGameDate } from '../utils/games'
@@ -61,28 +61,29 @@ export const SETTINGS_SECTIONS = [
   { id: 'voice', label: 'Voice input', icon: 'i-lucide-mic' },
   { id: 'engine', label: 'Chess engine', icon: 'i-lucide-cpu' },
   { id: 'accounts', label: 'My accounts', icon: 'i-lucide-user-round' },
+  { id: 'offline', label: 'Offline downloads', icon: 'i-lucide-download' },
   { id: 'data', label: 'Data & storage', icon: 'i-lucide-database' },
   { id: 'updates', label: 'Updates', icon: 'i-lucide-download' },
 ] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['id']
 
 export const useKChessStore = defineStore('kchess', () => {
-  /** Pages in the sidebar. Settings is reached from the account menu instead. */
+  /** Keep activities that work without an account at the front of the sidebar. */
   const nav: { id: Page; label: string; icon: string }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: 'i-lucide-layout-dashboard' },
-    { id: 'online', label: 'Play Online', icon: 'i-lucide-globe-2' },
-    { id: 'tournaments', label: 'Tournaments', icon: 'i-lucide-trophy' },
+    { id: 'dashboard', label: 'Home', icon: 'i-lucide-house' },
     { id: 'computer', label: 'Play with Computer', icon: 'i-lucide-monitor' },
     { id: 'local', label: 'Over the board', icon: 'i-lucide-users-round' },
-    { id: 'watch', label: 'Watch', icon: 'i-lucide-tv' },
-    { id: 'analysis', label: 'Analysis board', icon: 'i-lucide-microscope' },
-    { id: 'studies', label: 'Studies', icon: 'i-lucide-library-big' },
-    { id: 'editor', label: 'Board editor', icon: 'i-lucide-pencil-ruler' },
     { id: 'puzzles', label: 'Puzzles', icon: 'i-lucide-puzzle' },
     { id: 'practice', label: 'Practice', icon: 'i-lucide-graduation-cap' },
-    { id: 'history', label: 'History', icon: 'i-lucide-history' },
-    { id: 'insights', label: 'Insights', icon: 'i-lucide-chart-pie' },
-    { id: 'friends', label: 'Friends', icon: 'i-lucide-users' },
+    { id: 'analysis', label: 'Analysis board', icon: 'i-lucide-microscope' },
+    { id: 'history', label: 'Game history', icon: 'i-lucide-history' },
+    { id: 'studies', label: 'Studies', icon: 'i-lucide-library-big' },
+    { id: 'editor', label: 'Board editor', icon: 'i-lucide-pencil-ruler' },
+    { id: 'online', label: 'Play on Lichess', icon: 'i-lucide-globe-2' },
+    { id: 'tournaments', label: 'Tournaments', icon: 'i-lucide-trophy' },
+    { id: 'watch', label: 'Watch', icon: 'i-lucide-tv' },
+    { id: 'insights', label: 'Lichess insights', icon: 'i-lucide-chart-pie' },
+    { id: 'friends', label: 'Following', icon: 'i-lucide-users' },
     { id: 'players', label: 'Players', icon: 'i-lucide-user-search' },
   ]
   const route = useRoute()
@@ -279,7 +280,10 @@ export const useKChessStore = defineStore('kchess', () => {
     toast.add({ title: text, icon: 'i-lucide-circle-check', color: 'success', duration: 3500 })
   }
   function fail(cause: unknown): void {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    const text = cause instanceof Error ? cause.message : String(cause)
+    // Logout, removal and clearing data stop syncs on purpose; that is not a failure to report.
+    if (text.includes('Sync was cancelled') || text.includes('cancelled by logout')) return
+    error.value = text
     message.value = ''
     toast.add({
       title: 'Something went wrong',
@@ -551,10 +555,10 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   // Sidebar identifies only accounts the user owns (connected via OAuth), never tracked ones.
   const sidebarUserLabel = computed(() =>
-    activeOnlineAccount.value ? `@${activeOnlineAccount.value}` : 'Not connected',
+    activeOnlineAccount.value ? `@${activeOnlineAccount.value}` : 'Connect Lichess',
   )
   function defaultAccount(accounts: { username: string; connected: boolean }[]): string {
-    return (accounts.find((a) => a.connected) ?? accounts[0])?.username ?? ''
+    return accounts.find((a) => a.connected)?.username ?? ''
   }
   const userMenuItems = computed<DropdownMenuItem[][]>(() => [
     [
@@ -587,6 +591,22 @@ export const useKChessStore = defineStore('kchess', () => {
         kbds: ['meta', ','],
         onSelect: () => choosePage('settings'),
       },
+      {
+        label:
+          connectedAccounts.value.length > 1 ? `Log out @${activeOnlineAccount.value}` : 'Log out',
+        icon: 'i-lucide-log-out',
+        // Logout cancels a running sync in main, so it never waits for one to finish.
+        onSelect: () => void logout(),
+      },
+      ...(connectedAccounts.value.length > 1
+        ? [
+            {
+              label: 'Log out all accounts',
+              icon: 'i-lucide-log-out',
+              onSelect: () => void logout(true),
+            },
+          ]
+        : []),
     ],
   ])
   function toggleSearch(): void {
@@ -613,7 +633,7 @@ export const useKChessStore = defineStore('kchess', () => {
     data.value = result
     if (reviewGame.value?.account.toLowerCase() === username.toLowerCase()) reviewGame.value = null
     void usage.refresh()
-    info(`Cleared @${username}'s synced data. They are still your friend; sync to download again.`)
+    info(`Cleared @${username}'s synced data. You still follow them; sync to download again.`)
   }
   /** Add followed players as friends. Their games are not downloaded; each friend is synced on request. */
   async function importFriends(usernames: string[]): Promise<boolean> {
@@ -624,13 +644,58 @@ export const useKChessStore = defineStore('kchess', () => {
     data.value = result
     void usage.refresh()
     info(
-      `Added ${usernames.length} ${usernames.length === 1 ? 'friend' : 'friends'}. Their games aren't downloaded until you sync them.`,
+      `Added ${usernames.length} ${usernames.length === 1 ? 'player' : 'players'} to Following. Their games aren't downloaded until you sync them.`,
     )
     return true
   }
+  async function logout(all = false): Promise<void> {
+    const account = activeOnlineAccount.value
+    if (!all && !account) return
+    const result = await run(() =>
+      all ? window.kchess.logoutAll() : window.kchess.logout(account),
+    )
+    if (result) await signedOut(result, all ? undefined : account)
+  }
+  /** Drops renderer state for a signed-out account (all when `account` is omitted) and reloads. */
+  async function signedOut(result: AppData, account?: string): Promise<void> {
+    data.value = result
+    onlineAccountPreference.value = result.accounts.find((a) => a.connected)?.username ?? ''
+    selectedAccount.value = onlineAccountPreference.value
+    reviewGame.value = null
+    const puzzleAccount = localStorage
+      .getItem('kchess:puzzle-account')
+      ?.replaceAll('"', '')
+      .toLowerCase()
+    if (!account || puzzleAccount === account.toLowerCase())
+      localStorage.removeItem('kchess:puzzle-account')
+    // Tournaments joined as a signed-out account would otherwise reopen its event streams.
+    try {
+      const joined = JSON.parse(localStorage.getItem('kchess:tournaments-joined') ?? '[]') as {
+        account?: string
+      }[]
+      const kept = joined.filter(
+        (entry) => account && entry.account?.toLowerCase() !== account.toLowerCase(),
+      )
+      localStorage.setItem('kchess:tournaments-joined', JSON.stringify(kept))
+    } catch {
+      localStorage.removeItem('kchess:tournaments-joined')
+    }
+    if (!result.accounts.some((a) => a.connected)) {
+      localStorage.removeItem('kchess:puzzle-mode')
+      localStorage.removeItem('kchess:puzzle-tab')
+    }
+    // Recreate renderer stores so account-only caches and pending requests cannot survive logout.
+    await navigateTo('/')
+    window.location.reload()
+  }
   async function removeAccount(username: string): Promise<void> {
+    const wasConnected = connectedAccounts.value.some(
+      (a) => a.username.toLowerCase() === username.toLowerCase(),
+    )
     const result = await run(() => window.kchess.removeAccount(username))
-    if (result) {
+    // Disconnecting one's own account signs it out, so it resets the window just like logout.
+    if (result && wasConnected) await signedOut(result, username)
+    else if (result) {
       data.value = result
       selectedAccount.value = defaultAccount(result.accounts)
       if (historyAccount.value.toLowerCase() === username.toLowerCase())
@@ -644,7 +709,15 @@ export const useKChessStore = defineStore('kchess', () => {
     const knownBefore = new Set(
       connectedAccounts.value.map((account) => account.username.toLowerCase()),
     )
-    const result = await run(() => window.kchess.connectLichess())
+    const current = settings.value
+    const look = current
+      ? oauthPageLook(
+          current.appearance,
+          findTheme(current.lightTheme, customThemes.value),
+          findTheme(current.darkTheme, customThemes.value),
+        )
+      : undefined
+    const result = await run(() => window.kchess.connectLichess(look))
     if (!result) return
     data.value = result.data
     selectedAccount.value = result.username
@@ -892,8 +965,11 @@ export const useKChessStore = defineStore('kchess', () => {
     chartFromGames,
     sync,
     selectPage,
+    choosePage,
+    jumpToSection,
     openReview,
     localMoves,
+    localOver,
     localSaveError,
     localGameEpoch,
     localPly,
@@ -955,6 +1031,7 @@ export const useKChessStore = defineStore('kchess', () => {
     usernameInput,
     addAccount,
     connect,
+    logout,
     removeAccount,
     data: computed(() => data.value!),
     settings: computed(() => settings.value!),

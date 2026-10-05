@@ -632,18 +632,17 @@ export async function readApiCache<T>(
   }
 }
 
-export async function writeApiCache(key: string, value: unknown): Promise<void> {
+export async function writeApiCache(
+  key: string,
+  value: unknown,
+  stillCurrent: () => boolean = () => true,
+): Promise<void> {
   await ensureMigrated()
+  // Checked after the last await, so a logout that ran meanwhile cannot have its data written back.
+  if (!stillCurrent()) return
   getDb()
     .prepare('INSERT OR REPLACE INTO api_cache (key, value, fetchedAt) VALUES (?, ?, ?)')
     .run(key, JSON.stringify(value), Date.now())
-}
-
-export async function deleteApiCache(prefix: string): Promise<void> {
-  await ensureMigrated()
-  getDb()
-    .prepare("DELETE FROM api_cache WHERE key LIKE ? ESCAPE '\\'")
-    .run(`${prefix.replace(/[\\%_]/g, '\\$&')}%`)
 }
 
 export async function saveSettings(settings: Settings): Promise<Settings> {
@@ -713,6 +712,73 @@ export async function dismissedFriends(): Promise<Set<string>> {
   return new Set(rows.map((row) => row.username.toLowerCase()))
 }
 
+/** Disconnect one owned account, or all owned accounts when explicitly requested. */
+/**
+ * Delete everything stored for one account's games inside the caller's transaction: games, pending
+ * syncs, cached profile data, its own-games explorer lookups, and any review or analysis check left
+ * without a game. A game another tracked account also played keeps its reviews.
+ */
+function purgeAccountData(db: DatabaseSync, account: string, options: { usage: boolean }): void {
+  const games = db
+    .prepare('SELECT id FROM games WHERE account = ? COLLATE NOCASE')
+    .all(account) as unknown as { id: string }[]
+  const reviewKeys = new Set<string>()
+  for (const { id } of games) {
+    const keys = db
+      .prepare('SELECT reviewKey FROM game_reviews WHERE gameId = ?')
+      .all(id) as unknown as { reviewKey: string }[]
+    for (const { reviewKey } of keys) reviewKeys.add(reviewKey)
+  }
+  db.prepare('DELETE FROM games WHERE account = ? COLLATE NOCASE').run(account)
+  db.prepare('DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE').run(account)
+  db.prepare('DELETE FROM api_cache WHERE substr(key, 1, ?) = ? COLLATE NOCASE').run(
+    account.length + 1,
+    `${account}:`,
+  )
+  // Explorer keys hold the options as JSON; ASCII LIKE ignores case, `_` in names is escaped.
+  db.prepare(`DELETE FROM position_lookups WHERE key LIKE ? ESCAPE '\\'`).run(
+    `player:%"player":"${account.replace(/[\\%_]/g, '\\$&')}"%`,
+  )
+  if (options.usage) db.prepare('DELETE FROM usage WHERE account = ? COLLATE NOCASE').run(account)
+  for (const { id } of games) {
+    db.prepare(
+      'DELETE FROM lichess_review_checks WHERE id = ? AND NOT EXISTS (SELECT 1 FROM games WHERE id = ?)',
+    ).run(id, id)
+    db.prepare(
+      'DELETE FROM game_reviews WHERE gameId = ? AND NOT EXISTS (SELECT 1 FROM games WHERE id = ?)',
+    ).run(id, id)
+  }
+  for (const key of reviewKeys)
+    db.prepare(
+      'DELETE FROM reviews WHERE key = ? AND NOT EXISTS (SELECT 1 FROM game_reviews WHERE reviewKey = ?)',
+    ).run(key, key)
+}
+
+export async function logoutAccounts(username?: string): Promise<AppData> {
+  await ensureMigrated()
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const accounts = db
+      .prepare(
+        'SELECT username FROM accounts WHERE connected = 1 AND (? IS NULL OR username = ? COLLATE NOCASE)',
+      )
+      .all(username ?? null, username ?? null) as unknown as { username: string }[]
+    for (const { username: account } of accounts) {
+      purgeAccountData(db, account, { usage: true })
+      db.prepare('DELETE FROM tokens WHERE username = ? COLLATE NOCASE').run(account)
+      db.prepare('DELETE FROM accounts WHERE username = ? COLLATE NOCASE').run(account)
+    }
+    if (username === undefined) db.exec('DELETE FROM tokens')
+    db.exec('COMMIT')
+  } catch (cause) {
+    rollback(db)
+    throw cause
+  }
+  invalidate()
+  return loadData()
+}
+
 export async function removeAccount(username: string): Promise<AppData> {
   await ensureMigrated()
   const database = getDb()
@@ -726,8 +792,7 @@ export async function removeAccount(username: string): Promise<AppData> {
       database
         .prepare('INSERT OR REPLACE INTO dismissed_friends (username, dismissedAt) VALUES (?, ?)')
         .run(username, Date.now())
-    database.prepare('DELETE FROM games WHERE account = ? COLLATE NOCASE').run(username)
-    database.prepare('DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE').run(username)
+    purgeAccountData(database, username, { usage: true })
     database.prepare('DELETE FROM tokens WHERE username = ? COLLATE NOCASE').run(username)
     database.prepare('DELETE FROM accounts WHERE username = ? COLLATE NOCASE').run(username)
     database.exec('COMMIT')
@@ -736,7 +801,6 @@ export async function removeAccount(username: string): Promise<AppData> {
     throw cause
   }
   invalidate()
-  await deleteApiCache(`${username.toLowerCase()}:`)
   return loadData()
 }
 
@@ -749,8 +813,8 @@ export async function clearAccountData(username: string): Promise<AppData> {
   const database = getDb()
   database.exec('BEGIN IMMEDIATE')
   try {
-    database.prepare('DELETE FROM games WHERE account = ? COLLATE NOCASE').run(username)
-    database.prepare('DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE').run(username)
+    // The account and its data-usage history stay; only what was downloaded goes.
+    purgeAccountData(database, username, { usage: false })
     database
       .prepare('UPDATE accounts SET lastSyncedAt = NULL WHERE username = ? COLLATE NOCASE')
       .run(username)
@@ -760,7 +824,6 @@ export async function clearAccountData(username: string): Promise<AppData> {
     throw cause
   }
   invalidate()
-  await deleteApiCache(`${username.toLowerCase()}:`)
   return loadData()
 }
 
@@ -830,8 +893,11 @@ export async function saveGamesPage(
   username: string,
   games: LichessGame[],
   reviews: readonly StoredReview[] = [],
+  stillCurrent: () => boolean = () => true,
 ): Promise<void> {
   await ensureMigrated()
+  // Checked after the last await: a logout may have run while migrations were awaited.
+  if (!stillCurrent()) throw new Error('Sync was cancelled.')
   upsertGames(username, games, undefined, reviews)
 }
 
@@ -839,20 +905,45 @@ export async function saveGames(
   username: string,
   games: LichessGame[],
   syncedAt = Date.now(),
+  stillCurrent: () => boolean = () => true,
 ): Promise<AppData> {
   await ensureMigrated()
+  if (!stillCurrent()) throw new Error('Sync was cancelled.')
   upsertGames(username, games, syncedAt)
   return loadData()
 }
 
-export async function saveToken(username: string, token: string): Promise<void> {
+/** Stores a new login's token and connected account together, unless a logout has run since. */
+export async function saveLogin(
+  username: string,
+  token: string,
+  stillCurrent: () => boolean,
+): Promise<AppData> {
   registerDiagnosticSecret(token)
   if (!encryptionAvailable()) throw new Error('OS credential encryption is unavailable.')
+  const name = assertUsername(username.trim())
   await ensureMigrated()
+  if (!stillCurrent()) throw new Error('Login was cancelled by logout.')
   const encrypted = safeStorage.encryptString(token).toString('base64')
-  getDb()
-    .prepare('INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)')
-    .run(username.trim(), encrypted)
+  const database = getDb()
+  database.exec('BEGIN IMMEDIATE')
+  try {
+    database
+      .prepare('INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)')
+      .run(name, encrypted)
+    const updated = database
+      .prepare('UPDATE accounts SET connected = 1 WHERE username = ? COLLATE NOCASE')
+      .run(name)
+    if (!updated.changes)
+      database.prepare('INSERT INTO accounts (username, connected) VALUES (?, 1)').run(name)
+    database.prepare('DELETE FROM dismissed_friends WHERE username = ? COLLATE NOCASE').run(name)
+    database.exec('COMMIT')
+  } catch (cause) {
+    rollback(database)
+    throw cause
+  }
+  invalidate()
+  return loadData()
 }
 
 export async function getToken(username: string): Promise<string | null> {

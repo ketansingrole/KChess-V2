@@ -22,6 +22,12 @@ onMounted(() => void puzzles.loadDaily())
           :description="dailyError"
           :actions="[
             {
+              label: 'Use downloaded puzzles',
+              variant: 'outline',
+              color: 'neutral',
+              onClick: () => puzzles.startTheme('mix', 'offline'),
+            },
+            {
               label: 'Try again',
               icon: 'i-lucide-rotate-cw',
               onClick: () => puzzles.loadDaily(true),

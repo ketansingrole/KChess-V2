@@ -8,8 +8,8 @@ const tabs = [
   { label: 'Train', value: 'train', icon: 'i-lucide-puzzle' },
   { label: 'Daily', value: 'daily', icon: 'i-lucide-calendar-days' },
   { label: 'Storm · Streak · Rush', value: 'rush', icon: 'i-lucide-zap' },
-  { label: 'Stats', value: 'stats', icon: 'i-lucide-chart-column' },
-  { label: 'History', value: 'history', icon: 'i-lucide-history' },
+  { label: 'Lichess stats', value: 'stats', icon: 'i-lucide-chart-column' },
+  { label: 'Lichess history', value: 'history', icon: 'i-lucide-history' },
 ]
 </script>
 

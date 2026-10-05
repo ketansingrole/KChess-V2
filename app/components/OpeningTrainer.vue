@@ -145,7 +145,7 @@ const accuracy = computed(() => {
       variant="naked"
       icon="i-lucide-book-marked"
       title="Save a repertoire first"
-      description="Build your lines on the analysis board (variations are kept) and save them as a study. Each saved study can be drilled here as White or Black."
+      description="Build your lines on the analysis board (variations are kept) and save them as a study. Each saved study can be drilled here as White or Black. Works offline; no account needed."
       :actions="[{ label: 'Open the analysis board', onClick: () => store.selectPage('analysis') }]"
     />
   </div>

@@ -1,24 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useIntervalFn, useOnline } from '@vueuse/core'
 import type { TournamentSummary } from '../../src/shared/types'
 import { useTournamentStore } from '../stores/tournaments'
 
+const online = useOnline()
+const connectOpen = ref(false)
 const store = useKChessStore()
 const tournaments = useTournamentStore()
 const { connectedAccounts, activeOnlineAccount, busy } = storeToRefs(store)
-const filter = ref<'playable' | 'all'>('playable')
+const filter = ref<'playable' | 'all'>(activeOnlineAccount.value ? 'playable' : 'all')
 const password = ref('')
 
 onMounted(() => {
-  void tournaments.refresh()
-  if (tournaments.selected)
+  if (online.value) void tournaments.refresh()
+  if (online.value && tournaments.selected)
     void tournaments.open(tournaments.selected.system, tournaments.selected.id)
+})
+watch(online, (connected) => {
+  if (connected) void tournaments.refresh()
 })
 // Standings move quickly while a tournament runs.
 const ticker = useIntervalFn(() => {
   const selected = tournaments.selected
-  if (selected && tournaments.detail?.status !== 'finished')
+  if (online.value && selected && tournaments.detail?.status !== 'finished')
     void tournaments.open(selected.system, selected.id)
 }, 15_000)
 onUnmounted(() => ticker.pause())
@@ -54,7 +59,11 @@ const joined = computed(() =>
     : false,
 )
 async function join(): Promise<void> {
-  if (!detail.value) return
+  if (!detail.value || !online.value) return
+  if (!activeOnlineAccount.value) {
+    connectOpen.value = true
+    return
+  }
   if (await tournaments.join(detail.value, password.value)) password.value = ''
 }
 </script>
@@ -78,21 +87,20 @@ async function join(): Promise<void> {
         color="neutral"
         icon="i-lucide-refresh-cw"
         :loading="tournaments.loading"
+        :disabled="!online"
         @click="tournaments.refresh()"
         >Refresh</UButton
       >
     </PageHeader>
 
-    <div v-if="!connectedAccounts.length" class="card">
-      <UEmpty
-        variant="naked"
-        icon="i-lucide-trophy"
-        title="Connect Lichess to play tournaments"
-        description="Joining needs a connected account with the tournament permission."
-        :actions="[{ label: 'Open Settings', onClick: () => store.selectPage('settings') }]"
-      />
-    </div>
-    <div v-else class="online-columns">
+    <PublicOnlineNotice
+      offline-message="Reconnect to browse tournaments or join an event. Any previously loaded standings may be out of date."
+    />
+    <p class="section-hint mb-4">
+      Browse public arenas and standings without an account. Joining requires a connected Lichess
+      account.
+    </p>
+    <div class="online-columns">
       <div class="flex flex-col gap-5">
         <UAlert
           v-if="tournaments.needsReconnect"
@@ -124,6 +132,7 @@ async function join(): Promise<void> {
               :key="t.id"
               type="button"
               class="list-row text-left"
+              :disabled="!online"
               :class="{ 'ring-1 ring-primary': tournaments.selected?.id === t.id }"
               @click="tournaments.open('arena', t.id)"
             >
@@ -143,7 +152,7 @@ async function join(): Promise<void> {
             </button>
           </div>
         </section>
-        <section class="card">
+        <section v-if="connectedAccounts.length" class="card">
           <h2 class="section-title">Swiss events of your teams</h2>
           <p
             v-for="problem in tournaments.list?.problems ?? []"
@@ -161,6 +170,7 @@ async function join(): Promise<void> {
               :key="t.id"
               type="button"
               class="list-row text-left"
+              :disabled="!online"
               :class="{ 'ring-1 ring-primary': tournaments.selected?.id === t.id }"
               @click="tournaments.open('swiss', t.id)"
             >
@@ -232,6 +242,7 @@ async function join(): Promise<void> {
           <div v-if="detail.status !== 'finished'" class="flex flex-wrap items-center gap-2 mb-4">
             <template v-if="!joined">
               <UInput
+                v-if="activeOnlineAccount"
                 v-model="password"
                 type="password"
                 size="sm"
@@ -243,7 +254,7 @@ async function join(): Promise<void> {
                 icon="i-lucide-log-in"
                 size="sm"
                 :loading="busy"
-                :disabled="!detail.playable || detail.verdicts?.accepted === false"
+                :disabled="!online || !detail.playable || detail.verdicts?.accepted === false"
                 @click="join"
                 >Join</UButton
               >
@@ -262,6 +273,7 @@ async function join(): Promise<void> {
                 size="sm"
                 variant="outline"
                 color="neutral"
+                :disabled="!online || busy"
                 @click="tournaments.leave(detail)"
                 >{{ detail.system === 'arena' ? 'Pause / withdraw' : 'Withdraw' }}</UButton
               >
@@ -293,9 +305,33 @@ async function join(): Promise<void> {
           variant="naked"
           icon="i-lucide-mouse-pointer-click"
           title="Pick a tournament"
-          description="Its rules, standings and a Join button appear here."
+          description="Explore its rules and standings. Connect Lichess when you want to join."
         />
       </section>
     </div>
+    <UModal
+      v-model:open="connectOpen"
+      title="Connect Lichess to join"
+      description="Browsing tournaments is account-free. Connect your Lichess account to enter this event; KChess will keep your selected tournament open."
+    >
+      <template #body>
+        <div class="flex flex-wrap gap-2">
+          <UButton
+            icon="i-lucide-log-in"
+            :disabled="!online"
+            :loading="busy"
+            @click="
+              store.connect().then(() => {
+                if (store.activeOnlineAccount) connectOpen = false
+              })
+            "
+            >Connect Lichess</UButton
+          >
+          <UButton variant="outline" color="neutral" @click="connectOpen = false"
+            >Keep browsing</UButton
+          >
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

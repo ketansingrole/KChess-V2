@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { VoiceModelProgress } from '../shared/types'
+import type { VoiceModelProgress, VoiceModelStatus } from '../shared/types'
 
 export const VOICE_MODEL = {
   name: 'vosk-model-small-en-us-0.15',
@@ -78,6 +78,18 @@ export class VoiceModelCache {
       this.progress = undefined
     })
     return this.pending.finally(() => this.listeners.delete(listener))
+  }
+
+  async status(): Promise<VoiceModelStatus> {
+    if (this.pending) return { installed: false, bytes: 0, busy: true, progress: this.progress }
+    const installed = await this.cached()
+    // Preparation may start while the cache checksum is being checked.
+    if (this.pending) return { installed: false, bytes: 0, busy: true, progress: this.progress }
+    if (!installed) return { installed: false, bytes: 0, busy: false }
+    const bytes = await stat(this.path)
+      .then((file) => file.size)
+      .catch(() => 0)
+    return { installed: bytes > 0, bytes, busy: false }
   }
 
   private report(progress: VoiceModelProgress): void {

@@ -67,7 +67,7 @@ async function add(): Promise<void> {
 <template>
   <UModal
     v-model:open="open"
-    title="Add friends from Lichess"
+    title="Import followed players from Lichess"
     description="Players your connected accounts follow on Lichess."
     :ui="{ content: 'max-w-xl' }"
   >
@@ -159,7 +159,7 @@ async function add(): Promise<void> {
             :title="users.length ? 'Nobody new to add' : 'No followed players found'"
             :description="
               users.length
-                ? 'Everyone they follow is already a friend.'
+                ? 'Everyone they follow is already in Following.'
                 : 'Follow players on lichess.org and they will show up here.'
             "
           />
@@ -172,7 +172,7 @@ async function add(): Promise<void> {
               </button>
               .
             </template>
-            Adding friends does not download their games; sync each friend when you want them.
+            Adding players does not download their games; sync each player when you want them.
           </p>
         </template>
       </div>
@@ -184,7 +184,7 @@ async function add(): Promise<void> {
           <UButton color="neutral" variant="outline" @click="open = false">Cancel</UButton>
           <UButton icon="i-lucide-user-plus" :disabled="!selected.length || busy" @click="add"
             >Add {{ selected.length || '' }}
-            {{ selected.length === 1 ? 'friend' : 'friends' }}</UButton
+            {{ selected.length === 1 ? 'player' : 'players' }}</UButton
           >
         </div>
       </div>

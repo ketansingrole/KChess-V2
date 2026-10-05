@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useIntervalFn, useOnline } from '@vueuse/core'
 import type { LichessAccount } from '../../src/shared/types'
 import { formatBytes, formatCount, timeAgo } from '../utils/format'
 
+const online = useOnline()
 const store = useKChessStore()
 const usage = useUsageStore()
 const friendsStore = useFriendsStore()
@@ -45,6 +46,13 @@ async function add(): Promise<void> {
   void friendsStore.loadProfiles()
   void friendsStore.refreshStatus()
 }
+
+watch(online, (connected) => {
+  if (connected) {
+    void friendsStore.loadProfiles()
+    void friendsStore.refreshStatus()
+  }
+})
 
 const importOpen = ref(false)
 
@@ -91,45 +99,53 @@ watch(
 
 <template>
   <div>
-    <PageHeader title="Friends">
+    <PageHeader title="Following">
       <UButton
         v-if="trackedAccounts.length"
         variant="outline"
         color="neutral"
         icon="i-lucide-refresh-cw"
         :loading="busy"
+        :disabled="!online"
         @click="sync()"
         >Sync all</UButton
       >
     </PageHeader>
 
+    <PublicOnlineNotice
+      offline-message="Showing saved players. Reconnect to follow someone new, refresh profiles or check who is playing."
+    />
     <div class="card friends-add">
       <form class="toolbar-row flex-nowrap" @submit.prevent="add">
         <UInput
           v-model="usernameInput"
           icon="i-lucide-user-plus"
           placeholder="Lichess username"
-          aria-label="Lichess username to add as a friend"
+          aria-label="Lichess username to follow"
           autocomplete="off"
           class="flex-1 max-w-sm"
         />
-        <UButton type="submit" :disabled="!usernameInput.trim() || busy" icon="i-lucide-plus"
-          >Add friend</UButton
+        <UButton
+          type="submit"
+          :disabled="!online || !usernameInput.trim() || busy"
+          icon="i-lucide-plus"
+          >Follow player</UButton
         >
         <UButton
           variant="outline"
           color="neutral"
           icon="i-lucide-download"
-          :disabled="!connectedAccounts.length"
+          :disabled="!online || !connectedAccounts.length"
           :title="connectedAccounts.length ? undefined : 'Connect a Lichess account first'"
           @click="importOpen = true"
           >Import from Lichess</UButton
         >
       </form>
       <p class="section-hint">
-        Adding a friend by name downloads their public games (up to 5,000) so you can browse them
+        Following a player by name downloads their public games (up to 5,000) so you can browse them
         offline; importing from Lichess adds them without games until you sync each one. Every
-        download is counted below. Friends are remembered on this device until you remove them.
+        download is counted below. Following here is saved on this device and does not change who
+        you follow on Lichess.
       </p>
     </div>
 
@@ -139,15 +155,15 @@ watch(
         <strong class="tabular">{{ trackedAccounts.length }}</strong>
       </div>
       <div>
-        <span class="stat-label">Online now</span>
+        <span class="stat-label">{{ online ? 'Online now' : 'Last known online' }}</span>
         <strong class="tabular">{{ onlineCount }}</strong>
       </div>
       <div>
-        <span class="stat-label">Stored for friends</span>
+        <span class="stat-label">Stored for followed players</span>
         <strong class="tabular">{{ formatBytes(friendsStored) }}</strong>
       </div>
       <div>
-        <span class="stat-label">Downloaded for friends</span>
+        <span class="stat-label">Downloaded for followed players</span>
         <strong class="tabular">{{ formatBytes(friendsDownloaded) }}</strong>
       </div>
       <span v-if="loading" class="muted text-xs friends-loading"
@@ -159,8 +175,8 @@ watch(
       <UEmpty
         variant="naked"
         icon="i-lucide-users"
-        title="No friends yet"
-        description="Add a Lichess username above to follow their ratings and games. They stay here until you remove them."
+        title="Follow your first player"
+        description="Enter a Lichess username above to follow their public ratings and games. No sign-in is required. They stay here until you remove them."
       />
     </div>
     <div v-else class="friends-grid">
@@ -185,7 +201,7 @@ watch(
     </div>
 
     <p v-if="status && trackedAccounts.length" class="muted text-xs mt-3">
-      Online status refreshes every 20 seconds. Last checked
+      When online, status refreshes every 20 seconds. Last checked
       {{ timeAgo(friendsStore.statusAt) }}. {{ formatCount(usage.totalRequests) }} requests made to
       Lichess in total; see Settings → Data &amp; storage.
     </p>
@@ -194,8 +210,8 @@ watch(
 
     <ConfirmDialog
       v-model:open="confirmClear"
-      title="Clear this friend's synced data?"
-      :description="`Deletes @${pendingClear?.username}'s ${formatCount(usage.storageOf(pendingClear?.username ?? '').games)} stored games and cached profile (${formatBytes(stored(pendingClear?.username ?? ''))}) from this device. They stay in your friends list, and syncing again downloads everything afresh.`"
+      title="Clear this player's synced data?"
+      :description="`Deletes @${pendingClear?.username}'s ${formatCount(usage.storageOf(pendingClear?.username ?? '').games)} stored games and cached profile (${formatBytes(stored(pendingClear?.username ?? ''))}) from this device. They stay in Following, and syncing again downloads everything afresh.`"
       confirm-label="Clear data"
       color="error"
       @confirm="clearPending"
@@ -203,7 +219,7 @@ watch(
 
     <ConfirmDialog
       v-model:open="confirmRemove"
-      title="Remove this friend?"
+      title="Stop following this player?"
       :description="`@${pendingRemoval?.username} and their ${formatCount(usage.storageOf(pendingRemoval?.username ?? '').games)} stored games (${formatBytes(stored(pendingRemoval?.username ?? ''))}) will be deleted from this device. They stay removed until you add them again. Nothing changes on Lichess.`"
       confirm-label="Remove"
       color="error"

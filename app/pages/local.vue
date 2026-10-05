@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { INITIAL_FEN } from 'chessops/fen'
@@ -27,6 +28,7 @@ import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
 import type { VoiceOutcome } from '../../src/shared/types'
 
+const archive = useGameArchiveStore()
 const store = useKChessStore()
 const game = useLocalGameStore()
 const analysis = useAnalysisStore()
@@ -328,6 +330,9 @@ function otbText(side: 'top' | 'bottom'): string {
         variant="pill"
       />
     </PageHeader>
+    <p v-if="archive.error" role="alert" class="p-3 text-error">
+      History saving: {{ archive.error }}
+    </p>
     <p v-if="game.saveError" role="alert" class="p-3 text-error">
       Automatic saving: {{ game.saveError }}
     </p>

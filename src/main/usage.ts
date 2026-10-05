@@ -11,14 +11,19 @@ import type { UsageCell, UsageKind, UsageReport } from '../shared/types'
 interface Context {
   account: string
   kind: UsageKind
+  epoch?: number
 }
 
+const accountEpochs = new Map<string, number>()
 const context = new AsyncLocalStorage<Context>()
 const UNATTRIBUTED: Context = { account: '', kind: 'other' }
 
 /** Run `work` so every Lichess request it makes is counted against `account`. */
 export function withUsage<T>(account: string, kind: UsageKind, work: () => T): T {
-  return context.run({ account: account.toLowerCase(), kind }, work)
+  return context.run(
+    { account: account.toLowerCase(), kind, epoch: accountEpochs.get(account.toLowerCase()) ?? 0 },
+    work,
+  )
 }
 
 /**
@@ -26,13 +31,18 @@ export function withUsage<T>(account: string, kind: UsageKind, work: () => T): T
  * For long-lived sessions where the account is only known midway through a call.
  */
 export function attributeTo(account: string, kind: UsageKind): void {
-  context.enterWith({ account: account.toLowerCase(), kind })
+  context.enterWith({
+    account: account.toLowerCase(),
+    kind,
+    epoch: accountEpochs.get(account.toLowerCase()) ?? 0,
+  })
 }
 
 const pending = new Map<string, UsageCell & { account: string; kind: UsageKind }>()
 let flushTimer: NodeJS.Timeout | undefined
 
 function record(ctx: Context, requests: number, bytesIn: number): void {
+  if ((ctx.epoch ?? 0) !== (accountEpochs.get(ctx.account) ?? 0)) return
   const key = `${ctx.account}|${ctx.kind}`
   const cell = pending.get(key) ?? { account: ctx.account, kind: ctx.kind, requests: 0, bytesIn: 0 }
   cell.requests += requests
@@ -52,7 +62,11 @@ export function recordUsage(
   requests: number,
   bytesIn: number,
 ): void {
-  record({ account, kind }, requests, bytesIn)
+  record(
+    { account: account.toLowerCase(), kind, epoch: accountEpochs.get(account.toLowerCase()) ?? 0 },
+    requests,
+    bytesIn,
+  )
 }
 
 /** `fetch` that counts requests and the (decompressed) bytes of every response body. */
@@ -99,6 +113,15 @@ export function flushUsage(): void {
     }
   } catch {
     // Accounting must never break the app; the counts of this batch are simply lost.
+  }
+}
+
+/** Ignore traffic still arriving from requests started before logout. */
+export function forgetUsage(accounts: string[]): void {
+  for (const name of accounts) {
+    const account = name.toLowerCase()
+    accountEpochs.set(account, (accountEpochs.get(account) ?? 0) + 1)
+    for (const [key, cell] of pending) if (cell.account === account) pending.delete(key)
   }
 }
 

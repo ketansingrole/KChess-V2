@@ -19,7 +19,7 @@ import { parseInfo } from '../shared/uciInfo'
 import { UciController, SearchCancelled } from './uci'
 import { acquireEngine, searchThreads } from './engineScheduler'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
-import { gamesToReview, markChecked, readReview, writeReview } from './reviewStore'
+import { gamesToReview, hasAccount, markChecked, readReview, writeReview } from './reviewStore'
 
 /**
  * Game review: Stockfish scores every position of a game, one after another, in its own process
@@ -66,10 +66,12 @@ interface Job {
   account?: string
   background: boolean
   cancelled?: boolean
+  discarded?: boolean
 }
 
 let host: ReviewHost | null = null
 const asked: Job[] = []
+let reviewEpoch = 0
 let running: Job | null = null
 let progress: ReviewStatus['current']
 let paused: ReviewStatus['paused']
@@ -221,6 +223,8 @@ export function getReview(fen: string, moves: string[]): StoredReview | null {
 export function requestReview(request: ReviewRequest): StoredReview | null {
   const job = jobFor(request, false)
   if (!job) return null
+  // A request sent just before its account was logged out or removed must not store anything.
+  if (job.account && !hasAccount(job.account)) return null
   const cached = readReview(job.key)
   // Link the requesting game even when cached output is returned or its search is already queued.
   const stored = job.gameId
@@ -248,6 +252,20 @@ export function cancelReview(key: string): void {
   if (queued >= 0) asked.splice(queued, 1)
   if (running?.key === key) {
     running.cancelled = true
+    searchController?.abort()
+  }
+  sendStatus()
+}
+
+/** Logout must prevent an interrupted review from restoring deleted account data. */
+export function discardAccountReviews(accounts: string[]): void {
+  reviewEpoch++
+  const names = new Set(accounts.map((a) => a.toLowerCase()))
+  for (let i = asked.length - 1; i >= 0; i--)
+    if (names.has(asked[i]!.account?.toLowerCase() ?? '')) asked.splice(i, 1)
+  if (running && names.has(running.account?.toLowerCase() ?? '')) {
+    running.cancelled = true
+    running.discarded = true
     searchController?.abort()
   }
   sendStatus()
@@ -291,9 +309,11 @@ async function backgroundBlock(): Promise<ReviewStatus['paused']> {
 
 /** The next synced game to review automatically, looking it up on Lichess first. */
 async function nextBackgroundJob(): Promise<Job | null> {
+  const epoch = reviewEpoch
   if (!host) return null
   const settings = await host.settings()
   const accounts = await host.accounts()
+  if (epoch !== reviewEpoch) return null
   const since = settings.reviewAuto === 'recent' ? Date.now() - RECENT_MS : 0
   const games = gamesToReview(accounts, since).filter(
     (game) => !skipped.has(game.id) && isReviewablePerf(game.perf),
@@ -306,8 +326,10 @@ async function nextBackgroundJob(): Promise<Job | null> {
     const ids = unchecked.filter((game) => game.account === account).map((game) => game.id)
     try {
       const found = await host.fetchLichess(account, ids)
+      if (epoch !== reviewEpoch) return null
       for (const review of found) host.update(updateOf(review))
     } catch {
+      if (epoch !== reviewEpoch) return null
       // Offline or rate limited: review locally rather than wait.
       markChecked(ids)
     }
@@ -384,6 +406,9 @@ async function shouldYield(job: Job): Promise<boolean> {
 
 async function run(job: Job): Promise<void> {
   if (!host) return
+  const publish = (value: StoredReview): void => {
+    if (!job.discarded) host?.update(updateOf(value))
+  }
   running = job
   const total = job.positions.length
   let review = readReview(job.key) ?? emptyReview(job)
@@ -397,7 +422,7 @@ async function run(job: Job): Promise<void> {
       const found = await host.fetchLichess(job.account, [job.gameId]).catch(() => [])
       const match = found.find((r) => r.key === job.key)
       if (match) {
-        host.update(updateOf(match))
+        publish(match)
         return
       }
     }
@@ -429,7 +454,7 @@ async function run(job: Job): Promise<void> {
         if (position.end) review.evals[i] = endEval(position.end)
         else if (!known || !hasScore(known) || (known.depth ?? 0) < pass.depth) {
           if (await shouldYield(job)) {
-            host.update(updateOf(review))
+            publish(review)
             if (!job.cancelled && !job.background) asked.push(job)
             return
           }
@@ -442,13 +467,13 @@ async function run(job: Job): Promise<void> {
         sendStatus()
         // The quick pass shows as it goes; the deep one replaces it a few positions at a time.
         if (pass.depth === QUICK_DEPTH || sinceSave >= SAVE_EVERY) {
-          host.update(updateOf(review))
+          publish(review)
           sinceSave = 0
         }
       }
     }
     review.complete = review.evals.every((score) => score && hasScore(score))
-    host.update(updateOf(review))
+    publish(review)
     if (!review.complete) skipped.add(job.gameId ?? job.key)
   } catch (cause) {
     if (
@@ -456,7 +481,7 @@ async function run(job: Job): Promise<void> {
       cause instanceof SearchCancelled ||
       (searchController?.signal.aborted && !engine?.uci.failed)
     ) {
-      if (review.evals.some(Boolean)) host?.update(updateOf(review))
+      if (review.evals.some(Boolean)) publish(review)
       if (!job.cancelled && !job.background && host) asked.push(job)
       return
     }
@@ -468,7 +493,7 @@ async function run(job: Job): Promise<void> {
         message: cause instanceof Error ? cause.message : 'Stockfish could not review this game.',
       }
     closeEngine()
-    if (review.evals.some(Boolean)) host?.update(updateOf(review))
+    if (review.evals.some(Boolean)) publish(review)
   } finally {
     running = null
   }

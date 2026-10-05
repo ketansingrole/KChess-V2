@@ -1,3 +1,4 @@
+import { DEFAULT_OAUTH_LOOK, oauthPage } from './oauthPage'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -26,6 +27,7 @@ import type {
   FollowingReport,
   OnlineOptions,
   Crosstable,
+  OAuthPageLook,
   PerfStats,
   PerfType,
   PresenceReport,
@@ -55,7 +57,6 @@ import { canBoardSeek, canDirectChallenge, perfFor } from '../shared/timeControl
 import { GAME_ID } from '../shared/patterns'
 import {
   MAX_GAMES,
-  addAccount,
   dismissedFriends,
   getToken,
   loadData,
@@ -63,7 +64,7 @@ import {
   readApiCache,
   saveGames,
   saveGamesPage,
-  saveToken,
+  saveLogin,
   writeApiCache,
 } from './store'
 
@@ -100,6 +101,24 @@ export const urlencoded = (body: unknown): URLSearchParams => {
 }
 
 /** Profile data changes slowly; a few minutes of reuse saves a round trip per page visit. */
+let loginEpoch = 0
+const accountEpochs = new Map<string, number>()
+const accountEpoch = (name: string): number => accountEpochs.get(name.toLowerCase()) ?? 0
+export function invalidateLogin(accounts: string[]): void {
+  loginEpoch++
+  // Who the signed-in accounts follow is theirs; it must not outlive the login.
+  lastFollowing.clear()
+  cancelAccountSyncs(accounts)
+}
+/** Stops running syncs for these accounts before they save anything else, without ending a login. */
+export function cancelAccountSyncs(accounts: string[]): void {
+  for (const name of accounts) {
+    accountEpochs.set(name.toLowerCase(), accountEpoch(name) + 1)
+    forgetProfile(name)
+    syncs.delete(name.toLowerCase())
+  }
+}
+
 const PROFILE_TTL_MS = 5 * 60_000
 
 const profileKey = (username: string, kind: 'profile' | 'rating'): string =>
@@ -110,8 +129,12 @@ const profileCache = new LRUCache<string, object, () => Promise<unknown>>({
   max: 100,
   ttl: PROFILE_TTL_MS,
   fetchMethod: async (key, _stale, { context: load }) => {
+    const account = key.split(':')[0]!
+    const epoch = accountEpoch(account)
     const value = (await load()) as object
-    await writeApiCache(key, value).catch(() => undefined)
+    const current = (): boolean => epoch === accountEpoch(account)
+    if (!current()) throw new Error('Account was logged out.')
+    await writeApiCache(key, value, current).catch(() => undefined)
     return value
   },
 })
@@ -168,7 +191,8 @@ export async function followedUsers(): Promise<FollowingReport> {
   const dismissed = await dismissedFriends()
   const byName = new Map<string, FollowedUser>()
   const problems: FollowingProblem[] = []
-  lastFollowing.clear()
+  const epoch = loginEpoch
+  const following = new Map<string, LichessUser>()
   for (const account of data.accounts.filter((entry) => entry.connected)) {
     try {
       const token = await getToken(account.username)
@@ -191,7 +215,7 @@ export async function followedUsers(): Promise<FollowingReport> {
       await readLines(stream, (line) => {
         const user = JSON.parse(line) as LichessUser
         const key = user.username.toLowerCase()
-        lastFollowing.set(key, user)
+        following.set(key, user)
         const entry = byName.get(key) ?? {
           username: user.username,
           title: user.title ?? undefined,
@@ -219,6 +243,10 @@ export async function followedUsers(): Promise<FollowingReport> {
       })
     }
   }
+  // A logout during the download: this list belonged to an account that is gone.
+  if (epoch !== loginEpoch) throw new Error('Login was cancelled by logout.')
+  lastFollowing.clear()
+  for (const [key, user] of following) lastFollowing.set(key, user)
   const users = [...byName.values()]
     .sort((a, b) => a.username.localeCompare(b.username))
     .slice(0, 1000)
@@ -513,7 +541,8 @@ export async function fetchLichessReviews(
   ids: readonly string[],
 ): Promise<StoredReview[]> {
   if (!ids.length) return []
-  const found: StoredReview[] = []
+  const epoch = accountEpoch(account)
+  const parsed: StoredReview[] = []
   await withUsage(account, 'games', async () => {
     const stream = await asOwner(account, (auth) =>
       unwrap(
@@ -528,15 +557,19 @@ export async function fetchLichessReviews(
     )
     await readLines(stream, (line) => {
       const review = reviewFromLichess(JSON.parse(line) as components['schemas']['GameJson'])
-      if (review) found.push(writeReview(review).review)
+      if (review) parsed.push(review)
     })
   })
+  // Nothing is written until the download is over: a logout meanwhile keeps it all off disk.
+  if (epoch !== accountEpoch(account)) throw new Error('Sync was cancelled.')
+  const found = parsed.map((review) => writeReview(review).review)
   markChecked(ids.slice(0, 300))
   return found
 }
 
 /** Re-fetch unfinished games by ID, even when their creation predates the next sync window. */
 async function refreshPendingGames(account: string): Promise<void> {
+  const epoch = accountEpoch(account)
   const ids = await pendingGameIds(account)
   for (let offset = 0; offset < ids.length; offset += 300) {
     const stream = await asOwner(account, (auth) =>
@@ -570,7 +603,7 @@ async function refreshPendingGames(account: string): Promise<void> {
       if (review) reviews.push(review)
     })
     // Missing IDs remain pending; a failed request never advances the sync cursor.
-    await saveGamesPage(account, games, reviews)
+    await saveGamesPage(account, games, reviews, () => epoch === accountEpoch(account))
   }
 }
 
@@ -578,6 +611,7 @@ const syncs = new Map<string, Promise<void>>()
 
 /** One sync per account at a time: a second request joins the running one. */
 function syncAccount(account: LichessAccount): Promise<void> {
+  const epoch = accountEpoch(account.username)
   const key = account.username.toLowerCase()
   const running = syncs.get(key)
   if (running) return running
@@ -595,7 +629,10 @@ function syncAccount(account: LichessAccount): Promise<void> {
       const { games, reviews, settled } = await fetchGamesPage(account.username, since, until)
       // Save as we go: an interrupted sync keeps its pages (the cursor only moves once all are in).
       // Reviews go in the page's transaction; games are marked checked only once they are saved.
-      if (games.length) await saveGamesPage(account.username, games, reviews)
+      const current = (): boolean => epoch === accountEpoch(account.username)
+      if (!current()) throw new Error('Sync was cancelled.')
+      if (games.length) await saveGamesPage(account.username, games, reviews, current)
+      if (!current()) throw new Error('Sync was cancelled.')
       markChecked(settled)
       fetched += games.length
       if (games.length < SYNC_PAGE) break
@@ -603,9 +640,11 @@ function syncAccount(account: LichessAccount): Promise<void> {
       if (until !== undefined && oldest >= until) break
       until = oldest
     }
-    await saveGames(account.username, [], startedAt)
+    await saveGames(account.username, [], startedAt, () => epoch === accountEpoch(account.username))
     forgetProfile(account.username)
-  }).finally(() => syncs.delete(key))
+  }).finally(() => {
+    if (syncs.get(key) === run) syncs.delete(key)
+  })
   syncs.set(key, run)
   return run
 }
@@ -629,7 +668,12 @@ export async function syncGames(username?: string): Promise<AppData> {
   return loadData()
 }
 
-export async function connectLichess(): Promise<{ data: AppData; username: string }> {
+/** `onReturn` runs as soon as the browser hands the login back, before the token exchange. */
+export async function connectLichess(
+  look: OAuthPageLook = DEFAULT_OAUTH_LOOK,
+  onReturn?: () => void,
+): Promise<{ data: AppData; username: string }> {
+  const epoch = loginEpoch
   const verifier = randomBytes(32).toString('base64url')
   const challenge = createHash('sha256').update(verifier).digest('base64url')
   const state = randomBytes(24).toString('base64url')
@@ -656,16 +700,18 @@ export async function connectLichess(): Promise<{ data: AppData; username: strin
       const authorizationCode = callback.searchParams.get('code')
       response.writeHead(authorizationCode ? 200 : 400, {
         'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy':
+          "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+        'X-Content-Type-Options': 'nosniff',
         Connection: 'close',
       })
-      response.end(
+      onReturn?.()
+      response.end(oauthPage(Boolean(authorizationCode), look), () =>
         authorizationCode
-          ? '<h2>KChess connected to Lichess</h2><p>You can return to the app.</p>'
-          : '<h2>Lichess login was not completed</h2><p>You can close this tab and try again in KChess.</p>',
-        () =>
-          authorizationCode
-            ? finish(undefined, { code: authorizationCode, redirect })
-            : finish(new Error('Lichess login was not completed.')),
+          ? finish(undefined, { code: authorizationCode, redirect })
+          : finish(new Error('Lichess login was not completed.')),
       )
     })
     const timeout = setTimeout(() => finish(new Error('Lichess login timed out.')), 300_000)
@@ -710,8 +756,8 @@ export async function connectLichess(): Promise<{ data: AppData; username: strin
   const account = await unwrap(
     client.GET('/api/account', { headers: authorize(token.access_token) }),
   )
-  await saveToken(account.username, token.access_token)
-  return { data: await addAccount(account.username, true), username: account.username }
+  const data = await saveLogin(account.username, token.access_token, () => epoch === loginEpoch)
+  return { data, username: account.username }
 }
 
 /**
@@ -1720,6 +1766,27 @@ export class OnlineSession {
     // Whatever replaces this session (start, attach) claims the event stream first; otherwise
     // the idle stream resumes so challenges keep arriving.
     queueMicrotask(() => this.startLobby())
+  }
+
+  /** Forget the session after explicit logout, including recovery and game identity. */
+  logout(accounts?: string[]): void {
+    if (accounts) {
+      const names = new Set(accounts.map((name) => name.toLowerCase()))
+      if (
+        !names.has(this.currentAccount.toLowerCase()) &&
+        !names.has(this.protectedAccount.toLowerCase()) &&
+        !(this.recoveryUnverified && !this.currentAccount && !this.protectedAccount)
+      ) {
+        if (names.has(this.lobbyAccount.toLowerCase())) this.stayConnected('')
+        return
+      }
+    }
+    this.close()
+    this.protectedGame = ''
+    this.protectedAccount = ''
+    this.currentAccount = ''
+    this.recoveryUnverified = false
+    this.state({ session: this.epoch, account: '', gameId: '', lane: 'game', phase: 'idle' })
   }
 
   /** Stop everything for good (the app is quitting). */

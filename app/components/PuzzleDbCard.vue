@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useOnline } from '@vueuse/core'
 import { formatBytes, formatCount } from '../utils/format'
 
 /** Download, see and delete the local puzzle database that Storm, Streak, Rush and offline puzzles play from. */
 defineProps<{ compact?: boolean }>()
 
+const online = useOnline()
 const puzzles = usePuzzleStore()
 const { db, dbProgress, dbError, dbBusy } = storeToRefs(puzzles)
 onMounted(() => void puzzles.refreshDb())
@@ -28,7 +30,9 @@ const phaseText = computed(() => {
   <div class="db-card" :class="{ compact }">
     <div v-if="!compact" class="db-head">
       <h3 class="section-title">Puzzle database</h3>
-      <p class="section-hint">Needed for Storm, Streak, Rush and offline puzzles.</p>
+      <p class="section-hint">
+        Download once to play puzzles, Storm, Streak and Rush offline. No account needed.
+      </p>
     </div>
 
     <template v-if="dbBusy">
@@ -64,6 +68,7 @@ const phaseText = computed(() => {
           color="neutral"
           variant="outline"
           icon="i-lucide-refresh-cw"
+          :disabled="!online"
           @click="puzzles.installDb()"
           >Download a fresh sample</UButton
         >
@@ -81,10 +86,21 @@ const phaseText = computed(() => {
       <p class="section-hint">
         About 300 MB download; only around 100,000 puzzles (a few tens of MB) are kept.
       </p>
-      <UButton class="mt-2" icon="i-lucide-download" @click="puzzles.installDb()"
+      <UButton
+        class="mt-2"
+        icon="i-lucide-download"
+        :disabled="!online"
+        @click="puzzles.installDb()"
         >Download puzzle database</UButton
       >
     </template>
+    <p v-if="!online" class="section-hint" role="status">
+      {{
+        db?.installed
+          ? 'Your downloaded puzzles are ready to play. Reconnect to refresh them.'
+          : 'Connect to the internet once to download puzzles. You can play the computer and practice chess skills while offline.'
+      }}
+    </p>
     <p v-if="dbError" class="db-error" role="alert">{{ dbError }}</p>
 
     <ConfirmDialog

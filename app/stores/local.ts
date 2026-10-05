@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { INITIAL_FEN } from 'chessops/fen'
 import { readSession, persistSession } from '../utils/sessionPersistence'
@@ -20,6 +20,8 @@ import {
   type Variant,
 } from '../../src/shared/variant'
 import { play, playMoveSound } from '../utils/sound'
+
+import { useGameArchive } from './gameArchive'
 
 type Color = 'white' | 'black'
 /** Each side's clock: minutes and seconds added after every move (sides may differ, for odds). */
@@ -133,6 +135,28 @@ export const useLocalGameStore = defineStore('local', () => {
     autoFlip.value && !over.value ? position.value.turn : fixedOrientation.value,
   )
 
+  const archive = useGameArchive(
+    () => ({
+      source: 'board',
+      setup: setup.value,
+      moves: [...moves.value],
+      white: 'White',
+      black: 'Black',
+      result: result.value
+        ? result.value.winner === 'white'
+          ? '1-0'
+          : result.value.winner === 'black'
+            ? '0-1'
+            : '1/2-1/2'
+        : '*',
+      reason: result.value?.reason ?? 'In progress',
+      timeControl: clock.value
+        ? `${clock.value.white.minutes * 60}+${clock.value.white.increment} / ${clock.value.black.minutes * 60}+${clock.value.black.increment}`
+        : '-',
+    }),
+    () => moves.value.length > 0 || Boolean(result.value),
+  )
+
   /* ── Clock ───────────────────────────────────────────────────────── */
   const running = computed(
     () => Boolean(times.value) && !over.value && !paused.value && moves.value.length > 0,
@@ -204,6 +228,7 @@ export const useLocalGameStore = defineStore('local', () => {
     turnStarted = performance.now()
   }
   function start(next: GameSetup = setup.value, nextClock: LocalClock | null = clock.value): void {
+    archive.reset()
     setup.value = next
     clock.value = nextClock
     moves.value = []
@@ -252,6 +277,26 @@ export const useLocalGameStore = defineStore('local', () => {
   const otbFlagged = ref<'top' | 'bottom' | null>(null)
   const otbMoves = ref({ top: 0, bottom: 0 })
   let otbStarted = performance.now()
+  const clockArchive = useGameArchive(
+    () => ({
+      source: 'clock',
+      setup: STANDARD_SETUP,
+      moves: [],
+      white: 'Bottom player',
+      black: 'Top player',
+      result: '*',
+      reason: otbFlagged.value
+        ? `${otbFlagged.value === 'top' ? 'Top' : 'Bottom'} player ran out of time`
+        : 'Clock session',
+      timeControl: `${otbConfig.value.bottomMinutes * 60}+${otbConfig.value.increment} / ${otbConfig.value.minutes * 60}+${otbConfig.value.increment}`,
+      clockSummary: `Bottom: ${otbMoves.value.bottom} moves · ${Math.ceil(otb.value.bottom / 1000)}s left; Top: ${otbMoves.value.top} moves · ${Math.ceil(otb.value.top / 1000)}s left`,
+    }),
+    () => otbMoves.value.top + otbMoves.value.bottom > 0 || Boolean(otbFlagged.value),
+    false,
+  )
+  watch(otbFlagged, (flag) => {
+    if (flag) clockArchive.save(true)
+  })
   function otbLeft(side: 'top' | 'bottom'): number {
     void now.value
     if (otbRunning.value !== side) return otb.value[side]
@@ -291,7 +336,17 @@ export const useLocalGameStore = defineStore('local', () => {
     otb.value = { ...otb.value, [side]: otbLeft(side) }
     otbRunning.value = null
   }
+  function saveClockSession(): void {
+    otbPause()
+    clockArchive.save(true)
+  }
+  window.addEventListener('beforeunload', saveClockSession)
+  onScopeDispose(() => {
+    saveClockSession()
+    window.removeEventListener('beforeunload', saveClockSession)
+  })
   function otbReset(): void {
+    clockArchive.reset()
     otbRunning.value = null
     otbFlagged.value = null
     otbMoves.value = { top: 0, bottom: 0 }

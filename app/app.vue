@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useOnline } from '@vueuse/core'
 import { useKChessStore } from './stores/kchess'
 import { useAppUpdatesStore } from './stores/appUpdates'
 import { useReviewStore } from './stores/review'
@@ -12,12 +13,9 @@ useHead({
   link: [{ rel: 'icon', type: 'image/png', href: './icon.png' }],
 })
 
+const online = useOnline()
 const store = useKChessStore()
 const updates = useAppUpdatesStore()
-function showUpdates(): void {
-  store.settingsSection = 'updates'
-  void navigateTo('/settings')
-}
 
 // The search box should sit in the middle of the window, but the top bar only spans the area
 // right of the sidebar. Tell the CSS how far that area starts from the window's left edge so it
@@ -155,24 +153,57 @@ function toggleMaximize(event?: MouseEvent): void {
           />
         </template>
         <template #footer="{ state }">
-          <UDropdownMenu
-            :items="userMenuItems"
-            :content="{ align: 'center', side: 'top', sideOffset: 8, collisionPadding: 12 }"
-            :ui="{ content: 'w-(--reka-dropdown-menu-trigger-width) min-w-48' }"
-          >
-            <UButton
-              icon="i-lucide-user"
-              :label="state === 'expanded' ? sidebarUserLabel : undefined"
-              aria-label="Account menu"
-              color="neutral"
-              variant="ghost"
-              :trailing-icon="state === 'expanded' ? 'i-lucide-chevrons-up-down' : undefined"
-              square
-              block
-              class="data-[state=open]:bg-elevated overflow-hidden"
-              :ui="{ trailingIcon: 'text-dimmed ms-auto' }"
-            />
-          </UDropdownMenu>
+          <div class="flex w-full min-w-0 flex-col gap-1">
+            <UTooltip text="Settings" :disabled="state === 'expanded'">
+              <UButton
+                icon="i-lucide-settings-2"
+                :label="state === 'expanded' ? 'Settings' : undefined"
+                aria-label="Settings"
+                color="neutral"
+                variant="ghost"
+                :active="store.page === 'settings'"
+                block
+                class="justify-start overflow-hidden"
+                @click="store.choosePage('settings')"
+              />
+            </UTooltip>
+            <UTooltip
+              v-if="!store.activeOnlineAccount"
+              text="Connect Lichess"
+              :disabled="state === 'expanded'"
+            >
+              <UButton
+                icon="i-lucide-log-in"
+                :label="state === 'expanded' ? 'Connect Lichess' : undefined"
+                aria-label="Connect Lichess"
+                color="neutral"
+                variant="ghost"
+                :disabled="!online || busy"
+                block
+                class="justify-start overflow-hidden"
+                @click="store.connect()"
+              />
+            </UTooltip>
+            <UDropdownMenu
+              v-else
+              :items="userMenuItems"
+              :content="{ align: 'center', side: 'top', sideOffset: 8, collisionPadding: 12 }"
+              :ui="{ content: 'w-(--reka-dropdown-menu-trigger-width) min-w-48' }"
+            >
+              <UButton
+                icon="i-lucide-user"
+                :label="state === 'expanded' ? sidebarUserLabel : undefined"
+                aria-label="Account menu"
+                color="neutral"
+                variant="ghost"
+                :trailing-icon="state === 'expanded' ? 'i-lucide-chevrons-up-down' : undefined"
+                square
+                block
+                class="data-[state=open]:bg-elevated overflow-hidden"
+                :ui="{ trailingIcon: 'text-dimmed ms-auto' }"
+              />
+            </UDropdownMenu>
+          </div>
         </template>
       </USidebar>
       <main ref="mainEl" class="main-area">
@@ -213,14 +244,15 @@ function toggleMaximize(event?: MouseEvent): void {
             </UButton>
           </div>
           <div class="topbar-right">
-            <UButton
-              v-if="updates.attention"
-              size="sm"
-              variant="soft"
-              icon="i-lucide-download"
-              :label="updates.status?.phase === 'downloaded' ? 'Update ready' : 'Update available'"
-              @click="showUpdates"
-            />
+            <UTooltip
+              v-if="!online"
+              text="Local play, analysis and downloaded content are available."
+            >
+              <span class="flex items-center gap-1 text-sm text-muted" role="status">
+                <UIcon name="i-lucide-wifi-off" /> Offline
+              </span>
+            </UTooltip>
+            <AppUpdateButton />
             <span v-if="busy" class="working" role="status">
               <UIcon name="i-lucide-loader-circle" class="animate-spin" /> Working…
             </span>

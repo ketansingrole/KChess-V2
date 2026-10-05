@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { useOnline } from '@vueuse/core'
 import { computed, ref } from 'vue'
 import type { FollowingReport, LichessUser, UserPresence } from '../../src/shared/types'
 import { useKChessStore } from './kchess'
@@ -8,6 +9,7 @@ const PRESENCE_CHUNK = 50
 
 /** Live details of the players being followed: their Lichess profile and whether they are online. */
 export const useFriendsStore = defineStore('friends', () => {
+  const online = useOnline()
   const kchess = useKChessStore()
   const usage = useUsageStore()
 
@@ -35,7 +37,7 @@ export const useFriendsStore = defineStore('friends', () => {
         }
       }
       for (const friend of friends.value) {
-        if (fresh.has(friend.username.toLowerCase())) continue
+        if (!online.value || fresh.has(friend.username.toLowerCase())) continue
         try {
           profiles.value[friend.username.toLowerCase()] = await window.kchess.profile(
             friend.username,
@@ -51,6 +53,7 @@ export const useFriendsStore = defineStore('friends', () => {
   }
 
   async function refreshStatus(): Promise<void> {
+    if (!online.value) return
     const names = friends.value.map((friend) => friend.username)
     for (let start = 0; start < names.length; start += PRESENCE_CHUNK) {
       try {

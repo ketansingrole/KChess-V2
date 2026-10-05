@@ -102,6 +102,13 @@ export function reviewSummaries(ids: readonly string[]): Record<string, ReviewSu
   return result
 }
 
+/** Whether this account is still on this device (it may have been logged out or removed). */
+export function hasAccount(username: string): boolean {
+  return Boolean(
+    getDb().prepare('SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE').get(username),
+  )
+}
+
 /** Remember that Lichess was asked for these games' analysis. */
 export function markChecked(ids: readonly string[], at = Date.now()): void {
   if (!ids.length) return
