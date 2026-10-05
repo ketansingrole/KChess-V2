@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  BroadcastUpdate,
+  WatchFrame,
+  ChallengeInfo,
+  LobbyState,
   AnalysisUpdate,
   AppUpdateStatus,
   DesktopApi,
@@ -25,7 +29,15 @@ function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): Ip
 
 const api: DesktopApi = {
   recordPerformance: (name, milliseconds) => invoke('recordPerformance', name, milliseconds),
-  positionLookup: (kind, fen) => invoke('positionLookup', kind, fen),
+  positionLookup: (kind, fen, options) => invoke('positionLookup', kind, fen, options),
+  mastersGame: (id) => invoke('mastersGame', id),
+  exportGame: (id) => invoke('exportGame', id),
+  saveExport: (request) => invoke('saveExport', request),
+  lichessStudies: (account) => invoke('lichessStudies', account),
+  lichessStudyChapters: (account, id) => invoke('lichessStudyChapters', account, id),
+  exportToLichessStudy: (account, studyId, name, pgn) =>
+    invoke('exportToLichessStudy', account, studyId, name, pgn),
+  cloudEval: (fen, lines) => invoke('cloudEval', fen, lines),
   appUpdateStatus: () => invoke('appUpdateStatus'),
   checkAppUpdate: () => invoke('checkAppUpdate'),
   downloadAppUpdate: () => invoke('downloadAppUpdate'),
@@ -54,6 +66,7 @@ const api: DesktopApi = {
   gamePgn: (account, id) => invoke('gamePgn', account, id),
   gamePage: (query) => invoke('gamePage', query),
   gameLibraryOverview: () => invoke('gameLibraryOverview'),
+  insights: (query) => invoke('insights', query),
   gameRatingHistory: (account) => invoke('gameRatingHistory', account),
   cachedProfile: (username) => invoke('cachedProfile', username),
   profile: (username) => invoke('profile', username),
@@ -92,6 +105,53 @@ const api: DesktopApi = {
   cancelOnline: () => invoke('cancelOnline'),
   playOnline: (id, move) => invoke('playOnline', id, move),
   onlineAction: (id, action) => invoke('onlineAction', id, action),
+  onlineChat: (id) => invoke('onlineChat', id),
+  sendChat: (id, room, text) => invoke('sendChat', id, room, text),
+  stayConnected: (account) => invoke('stayConnected', account),
+  challenges: () => invoke('challenges'),
+  onChallenges: (callback) => {
+    const listener = (_: unknown, list: ChallengeInfo[]): void => callback(list)
+    ipcRenderer.on(IPC_EVENTS.challenges, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.challenges, listener)
+  },
+  acceptChallenge: (id) => invoke('acceptChallenge', id),
+  declineChallenge: (id, reason) => invoke('declineChallenge', id, reason),
+  cancelChallenge: (id) => invoke('cancelChallenge', id),
+  ongoingGames: () => invoke('ongoingGames'),
+  openGame: (account, id) => invoke('openGame', account, id),
+  tournaments: (account) => invoke('tournaments', account),
+  tournament: (system, id, account) => invoke('tournament', system, id, account),
+  joinTournament: (system, id, account, password) =>
+    invoke('joinTournament', system, id, account, password),
+  leaveTournament: (system, id, account) => invoke('leaveTournament', system, id, account),
+  tvChannels: () => invoke('tvChannels'),
+  playerPerf: (username, perf) => invoke('playerPerf', username, perf),
+  crosstable: (a, b) => invoke('crosstable', a, b),
+  watch: (target) => invoke('watch', target),
+  watchBroadcast: (roundId) => invoke('watchBroadcast', roundId),
+  stopWatching: () => invoke('stopWatching'),
+  broadcasts: () => invoke('broadcasts'),
+  broadcastTour: (id) => invoke('broadcastTour', id),
+  onWatch: (callback) => {
+    const listener = (_: unknown, frame: WatchFrame): void => callback(frame)
+    ipcRenderer.on(IPC_EVENTS.watch, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.watch, listener)
+  },
+  onBroadcast: (callback) => {
+    const listener = (_: unknown, update: BroadcastUpdate): void => callback(update)
+    ipcRenderer.on(IPC_EVENTS.broadcast, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.broadcast, listener)
+  },
+  onLobbyState: (callback) => {
+    const listener = (_: unknown, state: LobbyState): void => callback(state)
+    ipcRenderer.on(IPC_EVENTS.lobby, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.lobby, listener)
+  },
+  onOngoingChanged: (callback) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(IPC_EVENTS.ongoingChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.ongoingChanged, listener)
+  },
   clearAccountData: (username) => invoke('clearAccountData', username),
   following: () => invoke('following'),
   addFriends: (usernames) => invoke('addFriends', usernames),

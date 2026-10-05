@@ -8,6 +8,7 @@ import type {
   UserPresence,
 } from '../../src/shared/types'
 import { formatBytes, formatCount, timeAgo } from '../utils/format'
+import { useWatchStore } from '../stores/watch'
 
 const props = defineProps<{
   account: LichessAccount
@@ -24,6 +25,13 @@ const props = defineProps<{
   busy?: boolean
 }>()
 defineEmits<{ sync: []; remove: []; clear: []; games: []; challenge: [] }>()
+async function watchGame(): Promise<void> {
+  const id = props.presence?.playingId
+  if (!id) return
+  localStorage.setItem('kchess:watch-tab', 'friends')
+  await useWatchStore().watch({ gameId: id })
+  void navigateTo('/watch')
+}
 
 const perfs = computed(() => [
   { label: 'Bullet', value: props.profile?.perfs?.bullet?.rating },
@@ -154,6 +162,23 @@ const formatRecord = (r: { win: number; loss: number; draw: number }): string =>
         icon="i-lucide-swords"
         @click="$emit('challenge')"
         >Challenge</UButton
+      >
+      <UButton
+        size="sm"
+        variant="outline"
+        color="neutral"
+        icon="i-lucide-chart-column"
+        @click="navigateTo({ path: '/players', query: { name: account.username } })"
+        >Stats</UButton
+      >
+      <UButton
+        v-if="presence?.playingId"
+        size="sm"
+        variant="outline"
+        color="neutral"
+        icon="i-lucide-tv"
+        @click="watchGame"
+        >Watch</UButton
       >
       <UButton
         size="sm"

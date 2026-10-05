@@ -22,6 +22,7 @@ import { useSettingsPersistence } from './kchess/settingsPersistence'
 import { useAccountProfile } from './kchess/accountProfile'
 import { formatBytes } from '../utils/format'
 import { useUsageStore } from './usage'
+import type { GameSetup } from '../../src/shared/variant'
 import type {
   AppData,
   EngineLevel,
@@ -33,13 +34,18 @@ import type {
 export type Page =
   | 'dashboard'
   | 'online'
+  | 'tournaments'
+  | 'watch'
+  | 'local'
   | 'computer'
   | 'analysis'
   | 'editor'
   | 'puzzles'
   | 'practice'
   | 'history'
+  | 'insights'
   | 'friends'
+  | 'players'
   | 'settings'
 
 /** Sections of the Settings page; while it is open they replace the sidebar's pages. */
@@ -47,6 +53,8 @@ export const SETTINGS_SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: 'i-lucide-palette' },
   { id: 'themes', label: 'App theme', icon: 'i-lucide-swatch-book' },
   { id: 'gameplay', label: 'Gameplay', icon: 'i-lucide-gamepad-2' },
+  { id: 'online', label: 'Online play', icon: 'i-lucide-globe-2' },
+  { id: 'analysis', label: 'Analysis', icon: 'i-lucide-microscope' },
   { id: 'sound', label: 'Sound', icon: 'i-lucide-volume-2' },
   { id: 'notifications', label: 'Notifications', icon: 'i-lucide-bell' },
   { id: 'voice', label: 'Voice input', icon: 'i-lucide-mic' },
@@ -62,26 +70,36 @@ export const useKChessStore = defineStore('kchess', () => {
   const nav: { id: Page; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: 'i-lucide-layout-dashboard' },
     { id: 'online', label: 'Play Online', icon: 'i-lucide-globe-2' },
+    { id: 'tournaments', label: 'Tournaments', icon: 'i-lucide-trophy' },
     { id: 'computer', label: 'Play with Computer', icon: 'i-lucide-monitor' },
+    { id: 'local', label: 'Over the board', icon: 'i-lucide-users-round' },
+    { id: 'watch', label: 'Watch', icon: 'i-lucide-tv' },
     { id: 'analysis', label: 'Analysis board', icon: 'i-lucide-microscope' },
     { id: 'editor', label: 'Board editor', icon: 'i-lucide-pencil-ruler' },
     { id: 'puzzles', label: 'Puzzles', icon: 'i-lucide-puzzle' },
     { id: 'practice', label: 'Practice', icon: 'i-lucide-graduation-cap' },
     { id: 'history', label: 'History', icon: 'i-lucide-history' },
+    { id: 'insights', label: 'Insights', icon: 'i-lucide-chart-pie' },
     { id: 'friends', label: 'Friends', icon: 'i-lucide-users' },
+    { id: 'players', label: 'Players', icon: 'i-lucide-user-search' },
   ]
   const route = useRoute()
   const page = computed<Page>(() => {
     const section = route.path.slice(1)
     return [
       'online',
+      'tournaments',
+      'watch',
+      'local',
       'computer',
       'analysis',
       'editor',
       'puzzles',
       'practice',
       'history',
+      'insights',
       'friends',
+      'players',
       'settings',
     ].includes(section)
       ? (section as Page)
@@ -182,6 +200,10 @@ export const useKChessStore = defineStore('kchess', () => {
     localInteractive,
     localCanPlay,
     localResult,
+    localGame,
+    localSetup,
+    localClock,
+    computerClockText,
     newGame,
     takeback,
     resign,
@@ -201,56 +223,39 @@ export const useKChessStore = defineStore('kchess', () => {
     },
     { immediate: true },
   )
+  const onlineGame = useOnlineGame({
+    activeAccount: () => activeOnlineAccount.value,
+    run,
+    fail,
+    info,
+    notifyDesktop,
+    chatEnabled: () => settings.value?.onlineChat ?? true,
+  })
   const {
     onlinePhase,
     onlineAccount,
-    onlineConnection,
     readOnlineState,
-    reconnectOnline,
     onlineId,
     onlineMoves,
-    onlineColor,
-    onlineOpponent,
-    onlineStatus,
     onlineMinutes,
     onlineIncrement,
     onlineTarget,
     onlineChoice,
     onlineRated,
-    onlineGameRated,
-    onlineFlipped,
-    presence,
-    moveAckMs,
     ticker,
     presenceTicker,
-    onlinePosition,
-    onlineHistory,
     onlinePly,
-    onlineDisplay,
-    onlineLast,
-    onlineDests,
-    onlineTurn,
-    onlineDisplayTurn,
-    onlineCheck,
-    onlineCanPlay,
-    onlineInteractive,
     viewOnlinePly,
-    onlineOrientation,
-    onlinePresence,
-    pingStats,
     PRESENCE_INTERVAL_MS,
     startOnline,
-    stopOnline,
     readOnlineEvent,
-    onlineMove,
-    onlineAction,
-    clockText,
-  } = useOnlineGame({
-    activeAccount: () => activeOnlineAccount.value,
-    run,
-    fail,
-    notifyDesktop,
-  })
+  } = onlineGame
+  /** A challenge was accepted: the game about to open belongs to this account. */
+  function prepareForGame(account: string, id: string): void {
+    onlineAccount.value = account
+    onlineId.value = id
+    onlineGame.onlineStatus.value = 'Starting the game…'
+  }
   /** Ask the main process for a desktop notification; it applies the Settings and window-state rules. */
   function notifyDesktop(kind: NotificationKind, title: string, body: string): void {
     void window.kchess.notify({ kind, title, body }).catch(() => undefined)
@@ -338,6 +343,22 @@ export const useKChessStore = defineStore('kchess', () => {
       level.value = chosenLevel
       userColor.value = color
       newGame()
+      selectPage('computer')
+    }
+    if (localMoves.value.length && !localOver.value)
+      ask({
+        title: 'Start a new game?',
+        description: 'Your computer game is still in progress and will be lost.',
+        label: 'New game',
+        run: begin,
+      })
+    else begin()
+  }
+  /** Play the computer from a position (the editor's, the analysis board's) or a variant start. */
+  function startComputerFrom(setup: GameSetup, color?: 'white' | 'black'): void {
+    const begin = (): void => {
+      if (color) userColor.value = color
+      newGame(setup)
       selectPage('computer')
     }
     if (localMoves.value.length && !localOver.value)
@@ -687,6 +708,14 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   watch([settings, customThemes], applyCurrentSettings, { deep: true, immediate: true })
 
+  /** Flip a yes/no setting from a quick toggle; it saves itself like the Settings page. */
+  function toggleSetting(key: 'zenMode' | 'blindfold' | 'cloudEval' | 'showOpeningName'): void {
+    if (settings.value) settings.value = { ...settings.value, [key]: !settings.value[key] }
+  }
+  /** Zen mode applies on the pages where games are played. */
+  const zenActive = computed(
+    () => Boolean(settings.value?.zenMode) && ['online', 'computer', 'local'].includes(page.value),
+  )
   function keydown(event: KeyboardEvent): void {
     if ((event.metaKey || event.ctrlKey) && event.key === ',') {
       event.preventDefault()
@@ -708,6 +737,18 @@ export const useKChessStore = defineStore('kchess', () => {
       event.target instanceof HTMLTextAreaElement
     )
       return
+    // Z toggles zen mode on game pages, as on Lichess.
+    if (
+      event.key === 'z' &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      ['online', 'computer', 'local'].includes(page.value)
+    ) {
+      event.preventDefault()
+      toggleSetting('zenMode')
+      return
+    }
     if (page.value === 'computer') {
       const ply = navigatePly(event.key, localPly.value, localMoves.value.length)
       if (ply !== undefined) {
@@ -740,7 +781,16 @@ export const useKChessStore = defineStore('kchess', () => {
     }
     systemDark.addEventListener('change', applyCurrentSettings)
     window.addEventListener('beforeunload', flushSettings)
-    offOnline = window.kchess.onOnlineEvent(readOnlineEvent)
+    offOnline = window.kchess.onOnlineEvent((event) => {
+      readOnlineEvent(event)
+      // A pairing or an accepted challenge takes you to the board, as Lichess does.
+      if (
+        event.type === 'gameStart' &&
+        event.game.speed !== 'correspondence' &&
+        page.value !== 'online'
+      )
+        selectPage('online')
+    })
     offOnlineError = window.kchess.onOnlineError(fail)
     offOnlineState = window.kchess.onOnlineState(readOnlineState)
     offNotification = window.kchess.onNotification(({ title, body }) =>
@@ -781,6 +831,13 @@ export const useKChessStore = defineStore('kchess', () => {
   const ready = computed(() => data.value !== null && settings.value !== null)
 
   return {
+    ...onlineGame,
+    prepareForGame,
+    toggleSetting,
+    zenActive,
+    page,
+    runAction: run,
+    notifyInfo: info,
     ready,
     sidebarOpen,
     navItems,
@@ -839,51 +896,18 @@ export const useKChessStore = defineStore('kchess', () => {
     localInteractive,
     localCanPlay,
     localResult,
+    localGame,
+    localSetup,
+    localClock,
+    computerClockText,
+    startComputerFrom,
     newGame,
     takeback,
     resign,
     localStatus,
     makeMove,
     fen,
-    onlinePhase,
-    onlineAccount,
-    onlineConnection,
-    readOnlineState,
-    reconnectOnline,
-    onlineMinutes,
-    onlineIncrement,
-    onlineChoice,
-    onlineRated,
-    onlineGameRated,
-    onlineTarget,
-    startOnline,
-    stopOnline,
-    onlineStatus,
-    onlineOpponent,
-    onlineColor,
-    onlinePosition,
-    onlineHistory,
-    onlineLast,
-    onlineDests,
-    onlineTurn,
-    onlineCheck,
-    onlineInteractive,
-    onlineCanPlay,
-    onlinePly,
-    onlineDisplay,
-    onlineDisplayTurn,
-    onlineOrientation,
-    onlineFlipped,
-    onlinePresence,
-    pingStats,
-    moveAckMs,
     presenceIntervalSeconds: PRESENCE_INTERVAL_MS / 1000,
-    presence,
-    viewOnlinePly,
-    clockText,
-    onlineId,
-    onlineAction,
-    onlineMove,
     reviewGame,
     date,
     reviewPgn,

@@ -4,6 +4,7 @@ import type { Color, Key } from '@lichess-org/chessground/types'
 import type { Dests } from '../utils/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
 import type { PlayerInfo } from './PlayerLine.vue'
+import type { Variant } from '../../src/shared/variant'
 
 const props = withDefaults(
   defineProps<{
@@ -31,6 +32,10 @@ const props = withDefaults(
     bottom: PlayerInfo
     /** Highlight the side to move; turn off once the game is over. */
     live?: boolean
+    blindfold?: boolean
+    variant?: Variant
+    /** Change it to put the pieces back after a move the app rejected. */
+    resetKey?: number
   }>(),
   { live: true, interactive: true, premove: false, showDests: true, promotion: 'ask' },
 )
@@ -63,6 +68,9 @@ const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' 
         :last-move="lastMove"
         :check="check"
         :turn-color="turnColor"
+        :blindfold="blindfold"
+        :variant="variant"
+        :reset-key="resetKey"
         @move="emit('move', $event)"
       />
     </div>

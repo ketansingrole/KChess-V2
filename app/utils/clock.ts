@@ -51,7 +51,15 @@ export class Clock {
   }
 }
 
+/** m:ss, h:mm:ss past an hour, and days plus hours for correspondence clocks. */
 export function formatClock(millis: number): string {
   const seconds = Math.max(0, Math.floor(millis / 1000))
+  if (seconds >= 86_400) {
+    const days = Math.floor(seconds / 86_400)
+    const hours = Math.floor((seconds % 86_400) / 3600)
+    return `${days}d ${hours}h`
+  }
+  if (seconds >= 3600)
+    return `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }

@@ -1,4 +1,7 @@
 import type { components, paths } from '@lichess-org/types'
+import type { Variant } from './variant'
+
+export type { Variant }
 
 export const APPEARANCES = ['system', 'light', 'dark'] as const
 export type Appearance = (typeof APPEARANCES)[number]
@@ -30,12 +33,42 @@ export const NOTIFICATION_KINDS = [
   'lowTime',
   'gameEvents',
   'computerMove',
+  'challenge',
   'test',
 ] as const
 /** What a desktop notification is about; each kind (except `test`) has its own switch in Settings. */
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number]
-export const ONLINE_ACTIONS = ['resign', 'abort', 'takeback', 'declineTakeback'] as const
+export const ONLINE_ACTIONS = [
+  'resign',
+  'abort',
+  'takeback',
+  'declineTakeback',
+  'offerDraw',
+  'acceptDraw',
+  'declineDraw',
+  'claimVictory',
+  'claimDraw',
+  'berserk',
+] as const
 export type OnlineAction = (typeof ONLINE_ACTIONS)[number]
+/** Days per move Lichess allows for correspondence games. */
+export const CORRESPONDENCE_DAYS = [1, 2, 3, 5, 7, 10, 14] as const
+export type CorrespondenceDays = (typeof CORRESPONDENCE_DAYS)[number]
+/** Reasons Lichess accepts when declining a challenge (it translates them for the challenger). */
+export const DECLINE_REASONS = [
+  'generic',
+  'later',
+  'tooFast',
+  'tooSlow',
+  'timeControl',
+  'rated',
+  'casual',
+  'standard',
+  'variant',
+] as const
+export type DeclineReason = (typeof DECLINE_REASONS)[number]
+export const CHAT_ROOMS = ['player', 'spectator'] as const
+export type ChatRoom = (typeof CHAT_ROOMS)[number]
 export const CHALLENGE_COLORS = ['random', 'white', 'black'] as const
 export type ChallengeColor = (typeof CHALLENGE_COLORS)[number]
 export const PUZZLE_DIFFICULTIES = ['easiest', 'easier', 'normal', 'harder', 'hardest'] as const
@@ -170,6 +203,22 @@ export interface Settings {
   reviewAuto: ReviewAuto
   /** Keep reviewing in the background on battery power. */
   reviewOnBattery: boolean
+  /** Keep the Lichess event stream open while idle, so challenges (and tournament pairings) arrive. */
+  receiveChallenges: boolean
+  /** Alert when someone challenges you. */
+  notifyChallenges: boolean
+  /** Show the player chat in online games. */
+  onlineChat: boolean
+  /** Minutes between checks of correspondence games for your turn; 0 turns checking off. */
+  correspondencePoll: number
+  /** Hide everything but the board, clocks and essential controls while playing. */
+  zenMode: boolean
+  /** Hide the pieces in games you play (the move list and clocks stay). */
+  blindfold: boolean
+  /** Ask Lichess's cloud for a cached evaluation of analysis positions (sends the position). */
+  cloudEval: boolean
+  /** Name the opening of the position in games and analysis. */
+  showOpeningName: boolean
 }
 
 export interface AppUpdateStatus {
@@ -274,6 +323,41 @@ export interface GameRecord {
   draw: number
 }
 
+export interface InsightsQuery {
+  account: string
+  speed?: string
+  rated?: boolean
+  /** Only games from the last this-many days. */
+  days?: number
+}
+
+/** Patterns in one account's synced games (worked out locally). */
+export interface InsightsReport {
+  account: string
+  total: number
+  record: GameRecord
+  byColor: { white: GameRecord; black: GameRecord }
+  bySpeed: { speed: string; record: GameRecord }[]
+  /** Opening families, most played first. */
+  byOpening: { name: string; record: GameRecord; asWhite: number }[]
+  /** Sunday first, in this computer's time zone. */
+  byWeekday: GameRecord[]
+  byHour: GameRecord[]
+  /** By the opponent's rating minus yours. */
+  byOpponent: { label: string; record: GameRecord }[]
+  byLength: { label: string; record: GameRecord }[]
+  /** How games ended (`mate`, `resign`, `outoftime`, `draw`…). */
+  endings: { status: string; record: GameRecord }[]
+  streaks: { longestWin: number; longestLoss: number; current: number }
+  /** From reviewed games only. */
+  accuracy?: {
+    games: number
+    average?: number
+    acpl?: number
+    perGame: { inaccuracy: number; mistake: number; blunder: number }
+  }
+}
+
 export interface GameLibraryOverview {
   byAccount: Record<string, GameRecord>
   versus: Record<string, GameRecord>
@@ -313,6 +397,298 @@ export interface OnlineConnection {
   message?: string
 }
 
+/** A player as a challenge or ongoing game names them. */
+export interface PlayerRef {
+  name: string
+  rating?: number
+  title?: string
+  provisional?: boolean
+  online?: boolean
+}
+
+export type ChallengeTimeControl =
+  | { type: 'clock'; limit: number; increment: number }
+  | { type: 'correspondence'; days: number }
+  | { type: 'unlimited' }
+
+/** A pending challenge to or from one of the connected accounts. */
+export interface ChallengeInfo {
+  id: string
+  /** The connected account it was sent to (incoming) or from (outgoing). */
+  account: string
+  direction: 'in' | 'out'
+  /** The other player. */
+  opponent: PlayerRef
+  /** Lichess variant key (`standard`, `chess960`, `crazyhouse`…). */
+  variant: string
+  variantName: string
+  rated: boolean
+  speed: string
+  timeControl: ChallengeTimeControl
+  /** The colour the challenger asked for. */
+  color: ChallengeColor
+  /** A rematch offer for this game. */
+  rematchOf?: string
+  initialFen?: string
+  /** Lichess says KChess (a Board API client) can play this game, and KChess knows its variant. */
+  playable: boolean
+  /** Why it cannot be accepted here, when it cannot. */
+  problem?: string
+  receivedAt: number
+}
+
+/** Health of the idle event stream that waits for challenges and pairings. */
+export interface LobbyState {
+  account: string
+  phase: OnlineConnection['phase']
+  message?: string
+}
+
+export interface ChatLine {
+  user: string
+  text: string
+  room: ChatRoom
+}
+
+/** A game a connected account is playing, real-time or correspondence. */
+export interface OngoingGame {
+  gameId: string
+  account: string
+  opponent: PlayerRef
+  color: 'white' | 'black'
+  fen: string
+  lastMove?: string
+  isMyTurn: boolean
+  /** Seconds left on your clock (or for your correspondence move), when Lichess says. */
+  secondsLeft?: number
+  variant: string
+  speed: string
+  rated: boolean
+  tournamentId?: string
+}
+
+export type TournamentSystem = 'arena' | 'swiss'
+
+/** An arena or Swiss tournament in a list. */
+export interface TournamentSummary {
+  id: string
+  system: TournamentSystem
+  name: string
+  status: 'created' | 'started' | 'finished'
+  variant: string
+  variantName: string
+  rated: boolean
+  /** Seconds and seconds per move. */
+  clock: { limit: number; increment: number }
+  /** Length of an arena in minutes; Swiss events have rounds instead. */
+  minutes?: number
+  round?: number
+  nbRounds?: number
+  nbPlayers: number
+  startsAt: number
+  finishesAt?: number
+  /** The team a Swiss event belongs to. */
+  team?: { id: string; name: string }
+  /** The Board API can play its games and KChess knows its variant. */
+  playable: boolean
+  problem?: string
+}
+
+export interface TournamentStanding {
+  rank: number
+  name: string
+  title?: string
+  rating?: number
+  score?: number
+  /** Arena score sheet: one digit per game, newest last. */
+  sheet?: string
+  fire?: boolean
+}
+
+export interface TournamentDetail extends TournamentSummary {
+  description?: string
+  secondsToStart?: number
+  secondsToFinish?: number
+  berserkable?: boolean
+  standing: TournamentStanding[]
+  /** You, when the account you asked as has joined. */
+  me?: { rank?: number; withdraw?: boolean; gameId?: string }
+  /** Entry conditions and whether the account meets them. */
+  verdicts?: { accepted: boolean; list: { condition: string; verdict: string }[] }
+  /** Swiss: when the next round starts. */
+  nextRoundIn?: number
+}
+
+export interface TournamentList {
+  arenas: TournamentSummary[]
+  swiss: TournamentSummary[]
+  /** Teams of the account whose Swiss events could not be read, and other notes. */
+  problems: string[]
+}
+
+/* ── Players ──────────────────────────────────────────────────────────── */
+
+export const PERF_TYPES = [
+  'ultraBullet',
+  'bullet',
+  'blitz',
+  'rapid',
+  'classical',
+  'correspondence',
+  'chess960',
+  'kingOfTheHill',
+  'threeCheck',
+  'antichess',
+  'atomic',
+  'horde',
+  'racingKings',
+  'crazyhouse',
+] as const
+export type PerfType = (typeof PERF_TYPES)[number]
+
+export interface PerfResult {
+  opponent: string
+  opponentRating: number
+  at: string
+  gameId: string
+}
+
+/** One player's record in one rating category, as Lichess's perf page shows it. */
+export interface PerfStats {
+  perf: PerfType
+  rating?: number
+  deviation?: number
+  provisional?: boolean
+  /** Position on the leaderboard, when ranked. */
+  rank?: number
+  /** Better than this share of players. */
+  percentile?: number
+  progress?: number
+  count: {
+    all: number
+    rated: number
+    win: number
+    loss: number
+    draw: number
+    tour: number
+    berserk: number
+    opAvg: number
+    seconds: number
+    disconnects: number
+  }
+  highest?: { rating: number; at: string; gameId: string }
+  lowest?: { rating: number; at: string; gameId: string }
+  bestWins: PerfResult[]
+  worstLosses: PerfResult[]
+  winStreak: { current: number; best: number }
+  lossStreak: { current: number; best: number }
+}
+
+/** Two players' lifetime score against each other (and in their current match, if any). */
+export interface Crosstable {
+  /** Lower-cased username → points (wins plus half-points for draws). */
+  users: Record<string, number>
+  nbGames: number
+  matchup?: { users: Record<string, number>; nbGames: number }
+}
+
+/* ── Watching games ─────────────────────────────────────────────────── */
+
+export interface WatchPlayer {
+  name: string
+  title?: string
+  rating?: number
+}
+
+/** One position of a game being watched (TV or a game by id). */
+export interface WatchFrame {
+  /** Which `watch` call it belongs to; frames of an earlier one are stale. */
+  session: number
+  source: 'tv' | 'game'
+  channel?: string
+  gameId: string
+  white: WatchPlayer
+  black: WatchPlayer
+  orientation: 'white' | 'black'
+  /** Board placement plus side to move (pockets of Crazyhouse are dropped). */
+  fen: string
+  lastMove?: string
+  /** Clocks in seconds when the frame was sent. */
+  whiteClock?: number
+  blackClock?: number
+  variant: string
+  speed?: string
+  status?: string
+  winner?: 'white' | 'black'
+  finished: boolean
+}
+
+export interface TvChannel {
+  key: string
+  label: string
+  gameId?: string
+  player?: WatchPlayer
+}
+
+export interface BroadcastSummary {
+  tourId: string
+  tourName: string
+  description?: string
+  image?: string
+  roundId?: string
+  roundName?: string
+  ongoing: boolean
+  startsAt?: number
+  section: 'active' | 'upcoming' | 'past'
+}
+
+export interface BroadcastRoundRef {
+  id: string
+  name: string
+  ongoing: boolean
+  finished: boolean
+  startsAt?: number
+}
+
+export interface BroadcastTourDetail {
+  id: string
+  name: string
+  description?: string
+  rounds: BroadcastRoundRef[]
+  defaultRoundId?: string
+}
+
+/** One board of a broadcast round, as the live PGN feed last described it. */
+export interface BroadcastGame {
+  /** The study chapter id. */
+  id: string
+  name: string
+  white: WatchPlayer
+  black: WatchPlayer
+  result: string
+  startFen: string
+  /** UCI moves of the main line. */
+  moves: string[]
+  fen: string
+  lastMove?: string
+  /** Clocks in seconds, from the last comments of each side. */
+  whiteClock?: number
+  blackClock?: number
+  ongoing: boolean
+  /** The game as PGN, for the analysis board. */
+  pgn: string
+}
+
+export interface BroadcastUpdate {
+  session: number
+  roundId: string
+  /** Games that changed (all of them at first). */
+  games: BroadcastGame[]
+  /** The feed ended (the round is over or the connection dropped). */
+  ended?: boolean
+  error?: string
+}
+
 export interface EngineStatus {
   /** Identity of the executable currently selected, including native file changes. */
   identity?: string
@@ -327,8 +703,15 @@ export interface EngineStatus {
 }
 
 export interface OnlineOptions {
+  /** Ignored for correspondence games (`days`). */
   minutes: number
   increment: number
+  /** Correspondence: days per move instead of a clock. */
+  days?: CorrespondenceDays
+  /** Lichess variant; standard when omitted. */
+  variant?: Variant
+  /** Start a direct challenge from this position (standard or Chess960 rules). */
+  fen?: string
   color: ChallengeColor
   /** Rated games change the Lichess rating; casual ones do not. */
   rated: boolean
@@ -363,7 +746,18 @@ export interface FollowingReport {
 }
 
 /** What a request to Lichess was for; usage is broken down by it. */
-export type UsageKind = 'games' | 'profile' | 'play' | 'presence' | 'puzzles' | 'database' | 'other'
+export type UsageKind =
+  | 'games'
+  | 'profile'
+  | 'play'
+  | 'presence'
+  | 'puzzles'
+  | 'database'
+  | 'watch'
+  | 'tournament'
+  | 'analysis'
+  | 'study'
+  | 'other'
 
 export interface UsageCell {
   requests: number
@@ -400,6 +794,8 @@ export interface UserPresence {
   online: boolean
   playing: boolean
   signal?: number
+  /** The game they are playing, when Lichess says (watchable from the Watch page). */
+  playingId?: string
 }
 
 export interface PresenceReport {
@@ -612,6 +1008,8 @@ export interface BestMoveOptions {
   fen?: string
   /** Think for this many milliseconds instead of the level's default. */
   movetime?: number
+  /** Chess960 rules: castling is king-takes-rook in UCI. */
+  chess960?: boolean
 }
 
 /** Ask the analysis engine to study one position until stopped or a limit is reached. */
@@ -748,10 +1146,52 @@ export interface ReviewUpdate {
   summary: ReviewSummary
 }
 
-export type PositionLookupKind = 'opening' | 'tablebase'
+export const POSITION_LOOKUP_KINDS = ['opening', 'masters', 'player', 'tablebase'] as const
+/** `opening` is the Lichess games database, `masters` over-the-board master games, `player` one player's games. */
+export type PositionLookupKind = (typeof POSITION_LOOKUP_KINDS)[number]
+export const EXPLORER_SPEEDS = [
+  'ultraBullet',
+  'bullet',
+  'blitz',
+  'rapid',
+  'classical',
+  'correspondence',
+] as const
+export type ExplorerSpeed = (typeof EXPLORER_SPEEDS)[number]
+export const EXPLORER_RATINGS = [400, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500] as const
+/** Filters of the opening explorer; each database uses the ones it understands. */
+export interface LookupOptions {
+  /** Lichess and player databases. */
+  speeds?: ExplorerSpeed[]
+  /** Lichess database: rating groups (each is the lower bound of its band). */
+  ratings?: number[]
+  /** Player database: whose games, and with which colour. */
+  player?: string
+  color?: 'white' | 'black'
+  /** Player database: rated, casual or both. */
+  modes?: ('rated' | 'casual')[]
+  /** Games since this month (`YYYY-MM`; masters use a year). */
+  since?: string
+}
+/** A game the explorer lists as notable for the position. */
+export interface ExplorerGame {
+  id: string
+  white: string
+  black: string
+  whiteRating?: number
+  blackRating?: number
+  winner?: 'white' | 'black'
+  year?: number
+  month?: string
+  /** The move played from this position, as SAN. */
+  san?: string
+}
 export interface PositionLookup {
   kind: PositionLookupKind
   fen: string
+  /** Games in the database reaching this position (opening databases). */
+  total?: number
+  games?: ExplorerGame[]
   fetchedAt: number
   cached: boolean
   stale: boolean
@@ -770,12 +1210,62 @@ export interface PositionLookup {
   }[]
 }
 
+export interface LichessStudy {
+  id: string
+  name: string
+  updatedAt: number
+}
+export interface LichessStudyChapter {
+  name: string
+  pgn: string
+}
+
+export interface ExportRequest {
+  /** File name without extension. */
+  name: string
+  kind: 'gif' | 'png' | 'pgn'
+  data: Uint8Array | string
+}
+
+/** A cloud evaluation: lines from White's point of view, like the local engine's. */
+export interface CloudEval {
+  fen: string
+  depth: number
+  knodes: number
+  lines: EngineLine[]
+}
+
 export interface DesktopApi {
   recordPerformance(
     name: 'app.ready' | 'board.frame' | 'voice.activation',
     milliseconds: number,
   ): Promise<void>
-  positionLookup(kind: PositionLookupKind, fen: string): Promise<PositionLookup>
+  positionLookup(
+    kind: PositionLookupKind,
+    fen: string,
+    options?: LookupOptions,
+  ): Promise<PositionLookup>
+  /**
+   * Save an exported game (an animated GIF, a PNG of a position, or PGN text) where the native
+   * dialog says; false when cancelled.
+   */
+  saveExport(request: ExportRequest): Promise<boolean>
+  /** Studies an account owns or belongs to on Lichess. */
+  lichessStudies(account: string): Promise<LichessStudy[] | NeedsReconnect>
+  lichessStudyChapters(account: string, id: string): Promise<LichessStudyChapter[] | NeedsReconnect>
+  /** Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty). */
+  exportToLichessStudy(
+    account: string,
+    studyId: string,
+    name: string,
+    pgn: string,
+  ): Promise<{ id: string } | NeedsReconnect>
+  /** A finished Lichess game's PGN, for the analysis board. */
+  exportGame(id: string): Promise<string>
+  /** A master game's PGN from the masters database, for the analysis board. */
+  mastersGame(id: string): Promise<string>
+  /** Lichess's cached cloud evaluation of a position, or null when it has none. */
+  cloudEval(fen: string, lines: number): Promise<CloudEval | null>
   /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
   exportDiagnostics(): Promise<boolean>
   /** Frameless-chrome window controls (Windows/Linux); no-ops where the OS draws its own chrome. */
@@ -799,6 +1289,8 @@ export interface DesktopApi {
   /** Filtered, bounded library rows; full PGN is fetched separately. */
   gamePage(query: GamePageQuery): Promise<GamePage>
   gameLibraryOverview(): Promise<GameLibraryOverview>
+  /** Patterns in an account's synced games, worked out on this computer. */
+  insights(query: InsightsQuery): Promise<InsightsReport>
   gameRatingHistory(account: string): Promise<LichessRatingHistory>
   /** Full PGN of one game; list rows omit it to keep the payload small. */
   gamePgn(account: string, id: string): Promise<string | null>
@@ -846,6 +1338,55 @@ export interface DesktopApi {
   cancelOnline(): Promise<void>
   playOnline(id: string, move: string): Promise<void>
   onlineAction(id: string, action: OnlineAction): Promise<void>
+  /** The private player chat of the game being played (needs the setting on). */
+  onlineChat(id: string): Promise<ChatLine[]>
+  sendChat(id: string, room: ChatRoom, text: string): Promise<void>
+  /**
+   * Keep this connected account's Lichess event stream open while no game is being played, so
+   * challenges and tournament pairings arrive; empty closes it.
+   */
+  stayConnected(account: string): Promise<void>
+  /** Pending challenges to and from the connected accounts. */
+  challenges(): Promise<ChallengeInfo[]>
+  onChallenges(callback: (challenges: ChallengeInfo[]) => void): () => void
+  acceptChallenge(id: string): Promise<void>
+  declineChallenge(id: string, reason: DeclineReason): Promise<void>
+  /** Withdraw a challenge you sent. */
+  cancelChallenge(id: string): Promise<void>
+  /** Games the connected accounts are playing, most urgent first. */
+  ongoingGames(): Promise<OngoingGame[]>
+  /** Open one of those games on the online board (a correspondence game, or a live one). */
+  openGame(account: string, id: string): Promise<void>
+  onLobbyState(callback: (state: LobbyState) => void): () => void
+  playerPerf(username: string, perf: PerfType): Promise<PerfStats>
+  crosstable(a: string, b: string): Promise<Crosstable>
+  /** Lichess TV channels and who is on each. */
+  tvChannels(): Promise<TvChannel[]>
+  /** Watch a TV channel or any game by id (replacing what was watched); frames on `onWatch`. */
+  watch(target: { channel: string } | { gameId: string }): Promise<number>
+  /** Follow a broadcast round's live PGN; updates on `onBroadcast`. */
+  watchBroadcast(roundId: string): Promise<number>
+  stopWatching(): Promise<void>
+  onWatch(callback: (frame: WatchFrame) => void): () => void
+  onBroadcast(callback: (update: BroadcastUpdate) => void): () => void
+  broadcasts(): Promise<BroadcastSummary[]>
+  broadcastTour(id: string): Promise<BroadcastTourDetail>
+  /** Current arenas, and the Swiss events of the account's teams. */
+  tournaments(account: string): Promise<TournamentList>
+  tournament(system: TournamentSystem, id: string, account: string): Promise<TournamentDetail>
+  joinTournament(
+    system: TournamentSystem,
+    id: string,
+    account: string,
+    password?: string,
+  ): Promise<true | NeedsReconnect>
+  leaveTournament(
+    system: TournamentSystem,
+    id: string,
+    account: string,
+  ): Promise<true | NeedsReconnect>
+  /** A game started or ended that the board does not show (refresh `ongoingGames`). */
+  onOngoingChanged(callback: () => void): () => void
   /** Delete the games and cached profile downloaded for one account, keeping the account. */
   clearAccountData(username: string): Promise<AppData>
   /** Players the connected accounts follow on Lichess (needs the follow permission). */

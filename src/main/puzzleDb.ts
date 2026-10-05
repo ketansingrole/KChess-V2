@@ -22,7 +22,7 @@ let cancellation: Int32Array | undefined
 function service(): Worker {
   if (worker) return worker
   getDb() // Ensure legacy schema/migrations are ready before the worker reads it.
-  const self = new Worker(join(__dirname, 'puzzleWorker.js'), {
+  const self = new Worker(join(import.meta.dirname, 'puzzleWorker.js'), {
     workerData: { path: join(app.getPath('userData'), 'puzzles.db'), legacyPath: dbPath() },
   })
   worker = self

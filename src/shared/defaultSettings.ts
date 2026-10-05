@@ -32,4 +32,12 @@ export const DEFAULT_SETTINGS: Settings = {
   engineLevels: [...DEFAULT_ENGINE_LEVELS],
   reviewAuto: 'recent',
   reviewOnBattery: false,
+  receiveChallenges: true,
+  notifyChallenges: true,
+  onlineChat: true,
+  correspondencePoll: 5,
+  zenMode: false,
+  blindfold: false,
+  cloudEval: false,
+  showOpeningName: true,
 }

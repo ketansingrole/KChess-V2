@@ -74,6 +74,16 @@ function toggleCastling(key: (typeof castlingRights)[number]['key'], value: bool
   editor.value = { ...editor.value, castling: { ...editor.value.castling, [key]: value } }
 }
 
+/** Play this position: against Stockfish, or over the board with a friend. */
+function playComputer(): void {
+  if (problem.value) return
+  const turn = fen.value.split(' ')[1] === 'b' ? 'black' : 'white'
+  useKChessStore().startComputerFrom({ variant: 'standard', fen: fen.value }, turn)
+}
+function playLocal(): void {
+  if (problem.value) return
+  void navigateTo({ path: '/local', query: { fen: fen.value } })
+}
 function analyse(): void {
   if (problem.value) return
   analysis.analyseSetup(fen.value)
@@ -296,6 +306,24 @@ function missed(result: VoiceResult): void {
             @click="analyse"
             >Analyse this position</UButton
           >
+          <div class="mt-2 grid grid-cols-2 gap-2">
+            <UButton
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-cpu"
+              :disabled="!!problem"
+              @click="playComputer"
+              >Play Stockfish</UButton
+            >
+            <UButton
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-users-round"
+              :disabled="!!problem"
+              @click="playLocal"
+              >Play a friend here</UButton
+            >
+          </div>
         </div>
       </div>
     </div>

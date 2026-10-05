@@ -181,6 +181,11 @@ Mocked tests and local unsigned builds cannot verify signing or the published fe
 - Data transparency: every request to Lichess is counted per account and purpose, and Settings → Data & storage shows what was downloaded and what is kept on disk.
 - Board niceties: premoves, optional auto-queen, optional legal-move dots, drawing arrows with right-click drag, and arrow-key move navigation in every game.
 - `Cmd+K` (or `Ctrl+K`) for the command palette: navigate, sync, or start a game (against Stockfish, or an online game, or challenge a friend). `Cmd+,` opens Settings.
+- Online extras: draw offers, chat, incoming challenges with accept/decline, rematch, claim victory, berserk, correspondence games, variants (Chess960, King of the Hill, Three-check, Antichess, Atomic, Horde, Racing Kings) and tournaments (arenas and your teams' Swiss events).
+- Watch Lichess TV, friends' live games and broadcasts; look up any player's ratings, records and your score against them.
+- Analysis extras: Masters and Player explorer databases with filters, opt-in Lichess cloud evaluation, opening names, Lichess study import and export, and GIF/PNG/PGN export.
+- Computer games from Chess960 or any position, with clocks; two players at one computer, a chess clock for real boards, blindfold and zen mode; an opening trainer; and Insights from your synced games.
+- What KChess cannot do that Lichess does, and why, is in [`docs/lichess-parity.md`](docs/lichess-parity.md).
 
 ### What is synced with Lichess and what is not
 

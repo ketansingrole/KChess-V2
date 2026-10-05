@@ -8,8 +8,9 @@ import type { Config } from '@lichess-org/chessground/config'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { positionFromFen, isPromotionMove, type Dests } from '../utils/chess'
+import { isPromotionMove, type Dests } from '../utils/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
+import { setupStart, type Variant } from '../../src/shared/variant'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
 
 const props = defineProps<{
@@ -37,6 +38,10 @@ const props = defineProps<{
   shapes?: DrawShape[]
   /** Change it to put the pieces back where `fen` says (after a move the app rejected). */
   resetKey?: number
+  /** Hide the pieces (blindfold play); highlights, arrows and the move input stay. */
+  blindfold?: boolean
+  /** Rules for typed moves; standard when omitted. */
+  variant?: Variant
 }>()
 
 const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
@@ -57,7 +62,7 @@ function submitMove(uci: string): void {
   })
 }
 function keyboardMove(): void {
-  const pos = positionFromFen(props.fen)
+  const pos = setupStart({ variant: props.variant ?? 'standard', fen: props.fen })
   const text = moveInput.value.trim()
   const move = pos && (parseUci(text) ?? parseSan(pos, text))
   if (
@@ -219,7 +224,11 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="cg-host"
-    :class="[`board-theme-${theme ?? 'brown'}`, `coords-${coordinates ?? 'inside'}`]"
+    :class="[
+      `board-theme-${theme ?? 'brown'}`,
+      `coords-${coordinates ?? 'inside'}`,
+      { blindfold: blindfold },
+    ]"
     :style="pieceStyle"
     @mousedown.capture="clearShapes"
   >

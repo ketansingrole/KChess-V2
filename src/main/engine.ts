@@ -102,7 +102,7 @@ export async function bestMove(
   options: BestMoveOptions = {},
 ): Promise<string> {
   const moves = assertMoves(moveList)
-  const { fen, movetime } = assertBestMoveOptions(options)
+  const { fen, movetime, chess960 } = assertBestMoveOptions(options)
   if (replay(fen ?? INITIAL_FEN, moves).length !== moves.length + 1)
     throw new Error('Invalid computer position or move history.')
   stopEngine()
@@ -140,6 +140,8 @@ export async function bestMove(
         target.write('ucinewgame')
         target.write(`setoption name Threads value ${searchThreads()}`)
         target.write('setoption name Hash value 64')
+        // Set every time: the warm engine may have played a Chess960 game before.
+        target.write(`setoption name UCI_Chess960 value ${Boolean(chess960)}`)
         target.write(`setoption name UCI_LimitStrength value ${Boolean(profile.uciElo)}`)
         if (profile.uciElo) target.write(`setoption name UCI_Elo value ${profile.uciElo}`)
         else target.write(`setoption name Skill Level value ${profile.skill ?? 20}`)

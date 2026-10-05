@@ -153,6 +153,14 @@ const settings = {
   engineLevels: ['max', 'beginner'],
   reviewAuto: 'recent',
   reviewOnBattery: false,
+  receiveChallenges: true,
+  notifyChallenges: true,
+  onlineChat: true,
+  correspondencePoll: 5,
+  zenMode: false,
+  blindfold: false,
+  cloudEval: false,
+  showOpeningName: true,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
 throws('settings reject bad review mode', () =>

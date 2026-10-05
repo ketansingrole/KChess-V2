@@ -114,8 +114,8 @@ export const lichessFetch: typeof fetch = async (input, init) => {
 
 async function admitted(original: Request): Promise<Response> {
   const foreground =
-    /\/api\/board\/game\/.*\/(move|resign|abort|takeback)\//.test(original.url) ||
-    /\/api\/board\/game\/.*\/(resign|abort)$/.test(original.url)
+    /\/api\/board\/game\/.*\/(move|resign|abort|takeback|draw)\//.test(original.url) ||
+    /\/api\/board\/game\/.*\/(resign|abort|claim-victory|claim-draw|berserk)$/.test(original.url)
   if (waiting.length >= 500)
     throw new Error('Too many Lichess requests are pending. Retry shortly.')
   await new Promise<void>((resolve, reject) => {
@@ -159,7 +159,7 @@ async function admitted(original: Request): Promise<Response> {
     // Stream heartbeats own their lifetime deadline; a header deadline must not kill a live game.
     if (
       /ndjson/.test(response.headers.get('content-type') ?? '') ||
-      /\/api\/(stream\/event|board\/(game\/stream|seek)|games\/user|puzzle\/activity)/.test(
+      /\/api\/(stream\/|board\/(game\/stream|seek)|games\/user|puzzle\/activity|tv\/[^/]+\/feed)/.test(
         original.url,
       )
     )

@@ -16,6 +16,7 @@ import { isAppUrl } from './appOrigin'
 import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { setupAppUpdates, APP_RELEASES_URL } from './setupAppUpdates'
 import type { AppUpdates } from './appUpdates'
 import { setupDiagnostics, exportDiagnostics } from './diagnostics'
@@ -52,6 +53,9 @@ import {
   OnlineSession,
   cachedProfile,
   connectLichess,
+  crosstable,
+  exportGame,
+  playerPerf,
   fetchLichessReviews,
   followedUsers,
   forgetProfile,
@@ -96,9 +100,28 @@ import {
   removeAccount,
   saveSettings,
 } from './store'
-import type { OnlineEvent } from '../shared/types'
+import type { ChallengeInfo, OnlineEvent } from '../shared/types'
+import { ChallengeInbox } from './challenges'
+import { joinTournament, leaveTournament, tournament, tournaments } from './tournaments'
+import { Spectator, TV_CHANNEL_KEYS, broadcastTour, broadcasts, tvChannels } from './spectate'
+import { cloudEval } from './cloudEval'
+import { insights } from './insights'
+import { exportToLichessStudy, lichessStudies, lichessStudyChapters } from './studies'
 import {
   assertAction,
+  assertAnalysisRequest,
+  assertChatRoom,
+  assertChatText,
+  assertDeclineReason,
+  assertOptionalAccount,
+  assertTournamentId,
+  assertLichessId,
+  assertPerfType,
+  assertExport,
+  assertInsightsQuery,
+  assertWatchTarget,
+  assertTournamentPassword,
+  assertTournamentSystem,
   assertActivityMax,
   assertBestMoveOptions,
   assertDays,
@@ -144,6 +167,13 @@ if (process.env.KCHESS_USER_DATA_DIR) {
 function send<K extends keyof IpcEvents>(channel: K, payload: IpcEvents[K]): void {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
 }
+const challengeInbox = new ChallengeInbox((list) => send(IPC_EVENTS.challenges, list))
+let ongoingTimer: ReturnType<typeof setTimeout> | undefined
+/** Several games start and end together when a stream (re)connects; tell the window once. */
+function ongoingChanged(): void {
+  clearTimeout(ongoingTimer)
+  ongoingTimer = setTimeout(() => send(IPC_EVENTS.ongoingChanged, null), 750)
+}
 const online = new OnlineSession(
   (event: OnlineEvent) => send(IPC_EVENTS.online, event),
   (message: string) => send(IPC_EVENTS.error, message),
@@ -152,10 +182,46 @@ const online = new OnlineSession(
       stopEngine()
       stopAnalysis()
       restartReviewEngine()
+      // Your own game needs the connection more than someone else's.
+      spectator.stop()
     }
     send(IPC_EVENTS.onlineState, state)
   },
+  {
+    challenge: (account, event) => {
+      const fresh = challengeInbox.ingest(account, event)
+      if (!fresh) return
+      const control =
+        fresh.timeControl.type === 'clock'
+          ? `${fresh.timeControl.limit / 60}+${fresh.timeControl.increment}`
+          : fresh.timeControl.type === 'correspondence'
+            ? `${fresh.timeControl.days} days per move`
+            : 'no clock'
+      void notify(
+        window,
+        {
+          kind: 'challenge',
+          title: fresh.rematchOf
+            ? `${fresh.opponent.name} wants a rematch`
+            : `${fresh.opponent.name} challenges you`,
+          body: `${fresh.variantName} · ${control} · ${fresh.rated ? 'Rated' : 'Casual'} (@${fresh.account})`,
+        },
+        (alert) => send(IPC_EVENTS.notification, alert),
+      ).catch(() => undefined)
+    },
+    ongoingChanged,
+    lobbyState: (state) => send(IPC_EVENTS.lobby, state),
+  },
 )
+const spectator = new Spectator(
+  (frame) => send(IPC_EVENTS.watch, frame),
+  (update) => send(IPC_EVENTS.broadcast, update),
+)
+function knownChallenge(id: unknown): ChallengeInfo {
+  const challenge = challengeInbox.get(assertGameId(id))
+  if (!challenge) throw new Error('That challenge is no longer open.')
+  return challenge
+}
 
 function appIconPath(): string | undefined {
   // Dev: load from project build dir.
@@ -229,7 +295,9 @@ function createWindow(): void {
     // Frameless windows draw their own controls; never show the overlay ones.
     titleBarOverlay: frameless ? false : undefined,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
+      // `import.meta.dirname`, not `__dirname`: electron-vite's CommonJS shim is placed after the
+      // last `import` it finds, which can be an example inside a bundled library's doc comment.
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -388,7 +456,11 @@ void app
       return saved
     })
     handle('addAccount', (_event, username: unknown) => addAccount(assertUsername(username)))
-    handle('removeAccount', (_event, username: unknown) => removeAccount(assertUsername(username)))
+    handle('removeAccount', async (_event, username: unknown) => {
+      const name = assertUsername(username)
+      challengeInbox.forget(name)
+      return removeAccount(name)
+    })
     handle('syncGames', async (_event, username?: unknown) => {
       const data = await syncGames(username === undefined ? undefined : assertUsername(username))
       reviewsChanged()
@@ -396,6 +468,22 @@ void app
     })
     handle('gamePage', (_event, query: unknown) => gamePage(assertGamePageQuery(query)))
     handle('gameLibraryOverview', () => gameLibraryOverview())
+    handle('insights', (_event, query: unknown) => insights(assertInsightsQuery(query)))
+    handle('lichessStudies', (_event, account: unknown) => lichessStudies(assertUsername(account)))
+    handle('lichessStudyChapters', (_event, account: unknown, id: unknown) =>
+      lichessStudyChapters(assertUsername(account), assertLichessId(id)),
+    )
+    handle(
+      'exportToLichessStudy',
+      (_event, account: unknown, studyId: unknown, name: unknown, pgn: unknown) => {
+        const id = studyId === '' ? '' : assertLichessId(studyId)
+        if (typeof name !== 'string' || !name.trim() || name.length > 100)
+          throw new Error('Name the chapter (up to 100 characters).')
+        if (typeof pgn !== 'string' || !pgn.trim() || pgn.length > 500_000)
+          throw new Error('Nothing to export, or the game is too large.')
+        return exportToLichessStudy(assertUsername(account), id, name.trim(), pgn)
+      },
+    )
     handle('gameRatingHistory', (_event, account: unknown) =>
       gameRatingHistory(assertUsername(account)),
     )
@@ -446,10 +534,44 @@ void app
         send(IPC_EVENTS.analysis, update),
       )
     })
-    handle('positionLookup', async (_event, kind: unknown, fen: unknown) => {
+    handle('positionLookup', async (_event, kind: unknown, fen: unknown, options?: unknown) => {
       if (online.playing)
         throw new Error('Position lookups are unavailable during a live Lichess game.')
-      return positionLookups.lookup(kind, fen)
+      return positionLookups.lookup(kind, fen, options)
+    })
+    handle('exportGame', (_event, id: unknown) => exportGame(assertGameId(id)))
+    handle('saveExport', async (_event, raw: unknown) => {
+      const request = assertExport(raw)
+      const filters = {
+        gif: { name: 'Animated GIF', extensions: ['gif'] },
+        png: { name: 'PNG image', extensions: ['png'] },
+        pgn: { name: 'PGN game', extensions: ['pgn'] },
+      }
+      const options = {
+        title: 'Save game',
+        defaultPath: join(app.getPath('downloads'), `${request.name}.${request.kind}`),
+        filters: [filters[request.kind]],
+      }
+      const result =
+        window && !window.isDestroyed()
+          ? await dialog.showSaveDialog(window, options)
+          : await dialog.showSaveDialog(options)
+      if (result.canceled || !result.filePath) return false
+      await writeFile(result.filePath, request.data)
+      return true
+    })
+    handle('mastersGame', (_event, id: unknown) => {
+      if (online.playing)
+        throw new Error('Position lookups are unavailable during a live Lichess game.')
+      return positionLookups.mastersGame(id)
+    })
+    handle('cloudEval', async (_event, fen: unknown, lines: unknown) => {
+      if (online.playing) throw new Error('Analysis is unavailable during a live Lichess game.')
+      // Each request sends the position to Lichess, so it needs the setting turned on.
+      if (!(await getSettings()).cloudEval)
+        throw new Error('Turn on cloud evaluation in Settings → Analysis first.')
+      const request = assertAnalysisRequest({ fen, lines })
+      return cloudEval(request.fen, request.lines)
     })
     handle('stopAnalysis', () => stopAnalysis())
     handle('reviewGet', (_event, fen: unknown, moves: unknown) => {
@@ -493,6 +615,89 @@ void app
       online.action(assertGameId(id), assertAction(action)),
     )
     handle('presence', (_event, usernames: unknown) => online.presence(assertUsernames(usernames)))
+    handle('onlineChat', (_event, id: unknown) => online.chat(assertGameId(id)))
+    handle('sendChat', (_event, id: unknown, room: unknown, text: unknown) =>
+      online.sendChat(assertGameId(id), assertChatRoom(room), assertChatText(text)),
+    )
+    handle('stayConnected', async (_event, account: unknown) => {
+      const name = assertOptionalAccount(account)
+      const connected = (await loadData()).accounts.some(
+        (entry) => entry.connected && entry.username.toLowerCase() === name.toLowerCase(),
+      )
+      online.stayConnected(connected ? name : '')
+    })
+    handle('challenges', () => challengeInbox.list())
+    handle('acceptChallenge', async (_event, id: unknown) => {
+      const challenge = knownChallenge(id)
+      if (challenge.direction !== 'in' || !challenge.playable)
+        throw new Error(challenge.problem ?? 'Only challenges sent to you can be accepted.')
+      await online.acceptChallenge(challenge)
+      challengeInbox.remove(challenge.id)
+    })
+    handle('declineChallenge', async (_event, id: unknown, reason: unknown) => {
+      const challenge = knownChallenge(id)
+      if (challenge.direction !== 'in') throw new Error('Withdraw your own challenge instead.')
+      await online.declineChallenge(challenge, assertDeclineReason(reason))
+      challengeInbox.remove(challenge.id)
+    })
+    handle('cancelChallenge', async (_event, id: unknown) => {
+      const challenge = knownChallenge(id)
+      if (challenge.direction !== 'out') throw new Error('Decline a challenge sent to you instead.')
+      await online.withdrawChallenge(challenge)
+      challengeInbox.remove(challenge.id)
+    })
+    handle('ongoingGames', () => online.ongoing())
+    handle('tournaments', (_event, account: unknown) => tournaments(assertOptionalAccount(account)))
+    handle('tvChannels', () => tvChannels())
+    handle('playerPerf', (_event, username: unknown, perf: unknown) =>
+      playerPerf(assertUsername(username), assertPerfType(perf)),
+    )
+    handle('crosstable', (_event, a: unknown, b: unknown) =>
+      crosstable(assertUsername(a), assertUsername(b)),
+    )
+    handle('watch', (_event, target: unknown) => {
+      if (online.playing) throw new Error('Finish your game before watching another.')
+      return spectator.watch(assertWatchTarget(target, TV_CHANNEL_KEYS))
+    })
+    handle('watchBroadcast', (_event, roundId: unknown) => {
+      if (online.playing) throw new Error('Finish your game before watching another.')
+      return spectator.watchRound(assertLichessId(roundId))
+    })
+    handle('stopWatching', () => spectator.stop())
+    handle('broadcasts', () => broadcasts())
+    handle('broadcastTour', (_event, id: unknown) => broadcastTour(assertLichessId(id)))
+    handle('tournament', (_event, system: unknown, id: unknown, account: unknown) =>
+      tournament(
+        assertTournamentSystem(system),
+        assertTournamentId(id),
+        assertOptionalAccount(account),
+      ),
+    )
+    handle(
+      'joinTournament',
+      async (_event, system: unknown, id: unknown, account: unknown, password: unknown) => {
+        const name = assertUsername(account)
+        const result = await joinTournament(
+          assertTournamentSystem(system),
+          assertTournamentId(id),
+          name,
+          assertTournamentPassword(password),
+        )
+        // Pairings arrive on the event stream: keep it open while in the tournament.
+        if (result === true) online.stayConnected(name)
+        return result
+      },
+    )
+    handle('leaveTournament', (_event, system: unknown, id: unknown, account: unknown) =>
+      leaveTournament(
+        assertTournamentSystem(system),
+        assertTournamentId(id),
+        assertUsername(account),
+      ),
+    )
+    handle('openGame', (_event, account: unknown, id: unknown) =>
+      online.open(assertUsername(account), assertGameId(id)),
+    )
     handle('clearAccountData', async (_event, username: unknown) => {
       const name = assertUsername(username)
       const data = await clearAccountData(name)
@@ -577,7 +782,9 @@ void app
 
 app.on('window-all-closed', () => {
   cancelPuzzleDb()
-  online.cancel()
+  spectator.stop()
+  // Nothing can answer a challenge without a window; a new window asks to stay connected again.
+  online.close()
   stopEngine(true)
   stopAnalysis(true)
   if (process.platform !== 'darwin') app.quit()
@@ -596,7 +803,7 @@ app.on('before-quit', (event) => {
 })
 app.on('will-quit', () => {
   appUpdates?.stop()
-  online.cancel()
+  online.close()
   stopEngine(true)
   stopAnalysis(true)
   stopReviews()

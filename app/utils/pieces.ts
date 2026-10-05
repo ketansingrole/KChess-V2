@@ -50,3 +50,9 @@ export const animationMs: Record<PieceAnimation, number> = {
   normal: 180,
   slow: 350,
 }
+
+/** The image of one piece of a set (`color` w/b, `role` P N B R Q K), for drawing on a canvas. */
+export function pieceUrl(id: string, color: 'w' | 'b', role: (typeof ROLES)[number]): string {
+  const set = pieceSets.some((s) => s.id === id) ? id : DEFAULT_PIECE_SET
+  return urls[`../assets/pieces/${set}/${color}${role}.svg`]!
+}

@@ -308,10 +308,10 @@ test('recovers a saved position lookup offline and rejects unsupported tablebase
   })
   await navigate(page, 'Analysis board')
   await page.getByText('Opening explorer and tablebases', { exact: true }).click()
-  await page.getByRole('button', { name: 'Opening games', exact: true }).click()
+  await page.getByRole('button', { name: 'Look up this position', exact: true }).click()
   await expect(page.getByText(/Could not refresh. Showing the saved lookup/)).toBeVisible()
-  await expect(page.getByText('White 100 · Draw 20 · Black 50', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Endgame tablebase', exact: true }).click()
+  await expect(page.getByTitle('White 100 · Draw 20 · Black 50', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Tablebase', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('seven pieces')
 })
 
@@ -590,4 +590,48 @@ test('browses paged history through validated IPC with filters and on-demand PGN
   await expect(page.locator('.game-row').first()).toContainText('rival40')
   await page.locator('.game-row').first().click()
   await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible()
+})
+
+test('plays two players on one board, exports the game as a GIF and runs the chess clock', async ({
+  desktop: { app, page, profile },
+}) => {
+  const destination = join(profile, 'game.gif')
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath })
+  }, destination)
+  await navigate(page, 'Over the board')
+  await page.getByRole('tab', { name: 'Shared board', exact: true }).click()
+  const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  for (const move of ['e4', 'e5', 'Qh5', 'Nc6', 'Bc4', 'Nf6', 'Qxf7#']) {
+    await input.fill(move)
+    await input.press('Enter')
+  }
+  await expect(page.getByText('White wins', { exact: true })).toBeVisible()
+  await expect(page.getByText('Checkmate', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Export', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Animated GIF of the game' }).click()
+  await expect(page.getByText('Saved the GIF', { exact: true })).toBeVisible()
+  const gif = await readFile(destination)
+  expect(gif.subarray(0, 6).toString('latin1')).toBe('GIF89a')
+  await page.getByRole('tab', { name: 'Chess clock', exact: true }).click()
+  await page.getByRole('button', { name: /^Opponent's clock/ }).click()
+  await page.getByRole('button', { name: /^Your clock/ }).click()
+  await expect(page.getByText('1 moves', { exact: true })).toBeVisible()
+})
+
+test('starts a Chess960 game against Stockfish with a clock', async ({ desktop: { page } }) => {
+  await navigate(page, 'Play with Computer')
+  await page.getByRole('button', { name: 'Game options', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('tab', { name: 'Chess960', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Start game', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByText('Chess960', { exact: true })).toBeVisible()
+})
+
+test('summarises a reviewed game on the Insights page', async ({ desktop: { page } }) => {
+  await navigate(page, 'Insights')
+  await expect(page.getByText('Games', { exact: true })).toBeVisible()
+  await expect(page.getByTitle(/^Checkmate: 1 games/)).toBeVisible()
+  await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
 })

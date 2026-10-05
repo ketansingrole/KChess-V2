@@ -14,6 +14,7 @@ const CATEGORY: Record<Exclude<NotificationKind, 'test'>, keyof Settings> = {
   lowTime: 'notifyLowTime',
   gameEvents: 'notifyGameEvents',
   computerMove: 'notifyComputerMove',
+  challenge: 'notifyChallenges',
 }
 
 /** Electron drops a notification (and its click handler) if it is garbage collected while shown. */

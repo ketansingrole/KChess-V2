@@ -69,6 +69,14 @@ const SETTINGS_KEYS = [
   'engineLevels',
   'reviewAuto',
   'reviewOnBattery',
+  'receiveChallenges',
+  'notifyChallenges',
+  'onlineChat',
+  'correspondencePoll',
+  'zenMode',
+  'blindfold',
+  'cloudEval',
+  'showOpeningName',
 ] as const satisfies readonly (keyof Settings)[]
 
 const placeholders = (count: number): string => Array(count).fill('?').join(', ')
@@ -167,6 +175,14 @@ function rowToSettings(row: SettingsRow): Settings {
     engineLevels: String(row.engineLevels ?? '').split(',') as Settings['engineLevels'],
     reviewAuto: row.reviewAuto as Settings['reviewAuto'],
     reviewOnBattery: row.reviewOnBattery === 1,
+    receiveChallenges: row.receiveChallenges !== 0,
+    notifyChallenges: row.notifyChallenges !== 0,
+    onlineChat: row.onlineChat !== 0,
+    correspondencePoll: Math.max(0, Math.min(120, Number(row.correspondencePoll ?? 5) || 0)),
+    zenMode: row.zenMode === 1,
+    blindfold: row.blindfold === 1,
+    cloudEval: row.cloudEval === 1,
+    showOpeningName: row.showOpeningName !== 0,
   })
 }
 

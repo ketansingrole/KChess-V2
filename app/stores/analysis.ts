@@ -3,7 +3,7 @@ import { computed, effectScope, ref, shallowReactive, watch, type EffectScope } 
 import { readSession, persistSession } from '../utils/sessionPersistence'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
-import type { AnalysisUpdate, Judgment } from '../../src/shared/types'
+import type { AnalysisUpdate, CloudEval, Judgment } from '../../src/shared/types'
 import { analysisContext } from '../../src/shared/analysisContext'
 import { analyseReview, reviewKey, type GameAnalysis } from '../../src/shared/review'
 import { useKChessStore } from './kchess'
@@ -274,12 +274,54 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
+  /* ── Lichess cloud evaluation ────────────────────────────────────── */
+
+  /** Lichess's stored evaluation of the position, when cloud evaluation is on and it has one. */
+  const cloud = ref<CloudEval | null>(null)
+  const cloudBusy = ref(false)
+  const cloudError = ref('')
+  let cloudRequest = 0
+  let cloudTimer: ReturnType<typeof setTimeout> | undefined
+  function askCloud(): void {
+    clearTimeout(cloudTimer)
+    const fen = node.value.fen
+    const request = ++cloudRequest
+    if (cloud.value?.fen !== fen) cloud.value = null
+    cloudError.value = ''
+    if (!app.settings?.cloudEval || !assistanceAllowed.value || gameOver.value) {
+      cloudBusy.value = false
+      return
+    }
+    // Stepping quickly through a game should not send every position on the way.
+    cloudTimer = setTimeout(async () => {
+      cloudBusy.value = true
+      try {
+        const result = await window.kchess.cloudEval(
+          fen,
+          Math.max(1, Math.min(5, engineLines.value)),
+        )
+        if (request === cloudRequest) cloud.value = result
+      } catch (cause) {
+        if (request === cloudRequest)
+          cloudError.value = cause instanceof Error ? cause.message : String(cause)
+      } finally {
+        if (request === cloudRequest) cloudBusy.value = false
+      }
+    }, 300)
+  }
+
   /** Start following the board with the engine (the analysis page is open). */
   function attach(): void {
     if (scope) return
     off = window.kchess.onAnalysis(receive)
     scope = effectScope()
     scope.run(() => {
+      watch(
+        () =>
+          [node.value.fen, app.settings?.cloudEval, engineLines.value, app.onlinePhase] as const,
+        () => askCloud(),
+        { immediate: true },
+      )
       watch(
         () =>
           [
@@ -299,6 +341,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     })
   }
   function detach(): void {
+    clearTimeout(cloudTimer)
+    cloudRequest++
     scope?.stop()
     scope = undefined
     off?.()
@@ -424,6 +468,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     node,
     position,
     evaluation,
+    cloud,
+    cloudBusy,
+    cloudError,
     assistanceAllowed,
     engineError,
     engineBusy,

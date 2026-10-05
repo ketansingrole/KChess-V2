@@ -1,4 +1,4 @@
-import { Chess, type Position } from 'chessops/chess'
+import { Chess, normalizeMove, type Position } from 'chessops/chess'
 import { chessgroundDests } from 'chessops/compat'
 import { makeFen, parseFen } from 'chessops/fen'
 import { extend, defaultGame, makePgn, type PgnNodeData } from 'chessops/pgn'
@@ -6,6 +6,13 @@ import { makeSanAndPlay } from 'chessops/san'
 import { makeSquare, parseSquare, parseUci } from 'chessops/util'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import { UCI_MOVE } from '../../src/shared/patterns.ts'
+import {
+  isChess960,
+  replaySetup,
+  setupStart,
+  STANDARD_SETUP,
+  type GameSetup,
+} from '../../src/shared/variant.ts'
 
 export type Dests = Map<Key, Key[]>
 
@@ -163,5 +170,69 @@ export function pgnFromUci(moves: readonly string[]): string {
     game.moves,
     sanHistory(moves).map((san) => ({ san })),
   ) // mutates the root's children
+  return makePgn(game)
+}
+
+/* ── Any variant, from any start ─────────────────────────────────────── */
+
+/** The position after `moves` from `setup` (illegal moves end the replay). */
+export function setupPositionAfter(setup: GameSetup, moves: readonly string[]): Position {
+  return replaySetup(setup, moves)?.position ?? setupStart(STANDARD_SETUP)!
+}
+
+/** SAN of each move from `setup`. */
+export function setupSanHistory(setup: GameSetup, moves: readonly string[]): string[] {
+  return replaySetup(setup, moves)?.played.map((move) => move.san) ?? []
+}
+
+/** Chessground destinations under the setup's rules (Chess960 castles king onto rook). */
+export function setupDests(setup: GameSetup, pos: Position): Dests {
+  return chessgroundDests(pos, { chess960: isChess960(setup.variant) }) as Dests
+}
+
+/** Draws by repetition and the fifty-move rule, counted from the setup's start. */
+export function setupDrawReason(
+  setup: GameSetup,
+  moves: readonly string[],
+): DrawReason | undefined {
+  const replayed = replaySetup(setup, moves)
+  if (!replayed) return undefined
+  // Antichess, horde and racing kings have no repetition rule worth claiming here.
+  if (!['standard', 'chess960', 'kingOfTheHill', 'threeCheck', 'atomic'].includes(setup.variant))
+    return undefined
+  const pos = replayed.start.clone()
+  const key = (p: Position): string => fen(p).split(' ').slice(0, 4).join(' ')
+  const seen = new Map<string, number>([[key(pos), 1]])
+  for (const move of replayed.played) {
+    const parsed = parseUci(move.uci)
+    if (!parsed) break
+    pos.play(normalizeMove(pos, parsed))
+    const k = key(pos)
+    const count = (seen.get(k) ?? 0) + 1
+    seen.set(k, count)
+    if (count >= 3) return 'Threefold repetition'
+  }
+  if (!pos.isEnd() && pos.halfmoves >= 100) return 'Fifty-move rule'
+  return undefined
+}
+
+/** A PGN of moves from a setup, with the headers another program needs to replay it. */
+export function setupPgn(
+  setup: GameSetup,
+  moves: readonly string[],
+  headers: Record<string, string> = {},
+): string {
+  const game = defaultGame<PgnNodeData>()
+  for (const [key, value] of Object.entries(headers)) game.headers.set(key, value)
+  if (setup.variant !== 'standard')
+    game.headers.set('Variant', setup.variant === 'chess960' ? 'Chess960' : setup.variant)
+  if (setup.fen !== STANDARD_SETUP.fen || setup.variant === 'chess960') {
+    game.headers.set('SetUp', '1')
+    game.headers.set('FEN', setup.fen)
+  }
+  extend(
+    game.moves,
+    setupSanHistory(setup, moves).map((san) => ({ san })),
+  )
   return makePgn(game)
 }

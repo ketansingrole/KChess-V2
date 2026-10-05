@@ -168,7 +168,59 @@ const notifyCategories = [
     title: 'Computer moves',
     hint: 'Stockfish has replied in a game against the computer.',
   },
+  {
+    key: 'notifyChallenges',
+    title: 'Challenges',
+    hint: 'Someone challenges you, or offers a rematch, on Lichess.',
+  },
 ] as const
+const pollItems = [
+  { label: 'Off', value: 0 },
+  { label: '2 min', value: 2 },
+  { label: '5 min', value: 5 },
+  { label: '15 min', value: 15 },
+  { label: '30 min', value: 30 },
+  { label: '1 hour', value: 60 },
+]
+/** Simple yes/no rows of the Gameplay, Online play and Analysis sections. */
+const switchRows = {
+  gameplay: [
+    {
+      key: 'showOpeningName',
+      title: 'Show opening names',
+      hint: 'Name the opening (from Lichess’s open opening list, stored in the app) in games and analysis.',
+    },
+    {
+      key: 'blindfold',
+      title: 'Blindfold',
+      hint: 'Hide the pieces in games you play; the move list, clocks and typed or spoken moves still work.',
+    },
+    {
+      key: 'zenMode',
+      title: 'Zen mode',
+      hint: 'While playing, hide the sidebar and everything but the board, clocks and game controls. Z toggles it.',
+    },
+  ],
+  online: [
+    {
+      key: 'receiveChallenges',
+      title: 'Receive challenges',
+      hint: 'Keep a connection to Lichess open while you are not playing, so challenges and rematch offers reach you here.',
+    },
+    {
+      key: 'onlineChat',
+      title: 'Game chat',
+      hint: 'Show the chat with your opponent in online games.',
+    },
+  ],
+  analysis: [
+    {
+      key: 'cloudEval',
+      title: 'Lichess cloud evaluation',
+      hint: 'Ask Lichess for its stored deep evaluation of each position you analyse. Each position is sent to Lichess; it is off during your own games.',
+    },
+  ],
+} as const
 
 const testNote = ref('')
 const skipReasons: Record<NotificationSkip, string> = {
@@ -609,6 +661,56 @@ function removePending(): void {
             >
           </div>
         </div>
+        <div v-for="item in switchRows.gameplay" :key="item.key" class="setting-row">
+          <div class="setting-info">
+            <span :id="`${item.key}-label`" class="setting-title">{{ item.title }}</span>
+            <span class="setting-hint">{{ item.hint }}</span>
+          </div>
+          <USwitch
+            v-model="settings[item.key]"
+            :aria-labelledby="`${item.key}-label`"
+            class="setting-switch"
+          />
+        </div>
+      </section>
+
+      <section
+        v-if="category.id === 'online' || category.id === 'analysis'"
+        :id="`settings-${category.id}`"
+        class="card settings-list"
+      >
+        <h2 class="sr-only">{{ category.label }}</h2>
+        <div v-for="item in switchRows[category.id]" :key="item.key" class="setting-row">
+          <div class="setting-info">
+            <span :id="`${item.key}-label`" class="setting-title">{{ item.title }}</span>
+            <span class="setting-hint">{{ item.hint }}</span>
+          </div>
+          <USwitch
+            v-model="settings[item.key]"
+            :aria-labelledby="`${item.key}-label`"
+            class="setting-switch"
+          />
+        </div>
+        <div v-if="category.id === 'online'" class="setting-row">
+          <div class="setting-info">
+            <span id="corr-label" class="setting-title">Check correspondence games</span>
+            <span class="setting-hint"
+              >How often KChess asks Lichess whether it is your move in a correspondence game while
+              the app is open. Lichess cannot alert a closed app.</span
+            >
+          </div>
+          <USelect
+            v-model="settings.correspondencePoll"
+            :items="pollItems"
+            aria-labelledby="corr-label"
+            class="setting-control"
+          />
+        </div>
+        <p v-if="category.id === 'analysis'" class="text-xs muted p-4">
+          The opening explorer (Lichess, Masters and Player databases) and tablebases are on the
+          analysis board; they look a position up only when you ask, or follow the board when you
+          turn that on there.
+        </p>
       </section>
 
       <section

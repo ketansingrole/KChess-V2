@@ -37,6 +37,9 @@ const {
   engineError,
   saveError,
   gameOver,
+  cloud,
+  cloudBusy,
+  cloudError,
 } = storeToRefs(analysis)
 const toast = useToast()
 
@@ -65,11 +68,21 @@ function flip(): void {
   orientation.value = orientation.value === 'white' ? 'black' : 'white'
 }
 
-const lines = computed<EngineLine[]>(() => evaluation.value?.lines ?? [])
+/** Lichess's cloud lines for this position, when it has some. */
+const cloudLines = computed<EngineLine[]>(() =>
+  cloud.value && cloud.value.fen === node.value.fen ? cloud.value.lines : [],
+)
+/** Without the local engine, the cloud's lines drive the bar, arrows and line list. */
+const usingCloud = computed(
+  () => (!engineOn.value || !engineReady.value) && cloudLines.value.length > 0,
+)
+const lines = computed<EngineLine[]>(() =>
+  usingCloud.value ? cloudLines.value : (evaluation.value?.lines ?? []),
+)
 const best = computed(() => lines.value[0])
 /** Arrows for the engine's choices: the best one bold, the others thinner. */
 const shapes = computed<DrawShape[]>(() => {
-  if (!engineOn.value || !showArrows.value || gameOver.value) return []
+  if ((!engineOn.value && !usingCloud.value) || !showArrows.value || gameOver.value) return []
   return lines.value.flatMap((line, index) => {
     const uci = line.pv[0]
     if (!uci) return []
@@ -106,6 +119,8 @@ function wheel(event: WheelEvent): void {
 /* ── Engine panel ──────────────────────────────────────────────────── */
 
 const engineStatus = computed(() => {
+  if (usingCloud.value && cloud.value)
+    return `Lichess cloud · depth ${cloud.value.depth} · ${Math.round(cloud.value.knodes / 1000)}M nodes`
   if (!engineReady.value) return 'Stockfish not found'
   if (engineError.value) return engineError.value
   if (!engineOn.value) return 'Engine off'
@@ -260,6 +275,22 @@ const menu = computed<DropdownMenuItem[][]>(() => [
   ],
   [
     { label: 'Edit this position', icon: 'i-lucide-pencil-ruler', onSelect: editPosition },
+    {
+      label: 'Play Stockfish from here',
+      icon: 'i-lucide-cpu',
+      disabled: Boolean(gameOver.value),
+      onSelect: () =>
+        store.startComputerFrom(
+          { variant: 'standard', fen: node.value.fen },
+          position.value?.turn ?? 'white',
+        ),
+    },
+    {
+      label: 'Play a friend from here',
+      icon: 'i-lucide-users-round',
+      disabled: Boolean(gameOver.value),
+      onSelect: () => void navigateTo({ path: '/local', query: { fen: node.value.fen } }),
+    },
     { label: 'New analysis', icon: 'i-lucide-rotate-ccw', onSelect: newAnalysis },
   ],
 ])
@@ -372,7 +403,7 @@ function missed(result: VoiceResult): void {
       <div class="board-stack">
         <div class="analysis-board">
           <EvalBar
-            v-if="engineOn"
+            v-if="engineOn || usingCloud"
             class="analysis-eval"
             :line="best"
             :orientation="orientation"
@@ -437,8 +468,8 @@ function missed(result: VoiceResult): void {
               aria-label="Engine analysis"
               :disabled="!engineReady || !assistanceAllowed"
             />
-            <strong class="ceval-score" :class="{ dim: !engineOn }">{{
-              !engineOn ? '—' : result || formatEval(best)
+            <strong class="ceval-score" :class="{ dim: !engineOn && !usingCloud }">{{
+              !engineOn && !usingCloud ? '—' : result || formatEval(best)
             }}</strong>
             <div class="ceval-info">
               <span class="ceval-name">Stockfish</span>
@@ -484,10 +515,49 @@ function missed(result: VoiceResult): void {
               variant="soft"
               aria-label="Engine lines"
               class="w-24"
-              :disabled="!engineOn"
+              :disabled="!engineOn && !settings?.cloudEval"
             />
+            <UTooltip
+              :text="
+                settings?.cloudEval
+                  ? 'Lichess cloud evaluation is on (sends positions to Lichess)'
+                  : 'Use Lichess cloud evaluation (sends positions to Lichess)'
+              "
+            >
+              <UButton
+                size="xs"
+                :variant="settings?.cloudEval ? 'soft' : 'ghost'"
+                :color="settings?.cloudEval ? 'primary' : 'neutral'"
+                icon="i-lucide-cloud"
+                aria-label="Lichess cloud evaluation"
+                :aria-pressed="settings?.cloudEval"
+                :disabled="!assistanceAllowed"
+                @click="store.toggleSetting('cloudEval')"
+              />
+            </UTooltip>
           </div>
-          <div v-if="!engineReady" class="text-xs muted">
+          <p
+            v-if="settings?.cloudEval && assistanceAllowed && !usingCloud && !gameOver"
+            class="text-xs muted"
+          >
+            <UIcon name="i-lucide-cloud" />
+            <template v-if="cloudLines.length">
+              Lichess cloud: {{ formatEval(cloudLines[0]) }} at depth {{ cloud?.depth }} ·
+              <button
+                type="button"
+                class="underline"
+                @click="cloudLines[0] && playLine(cloudLines[0].pv)"
+              >
+                play {{ pvSan(node.fen, cloudLines[0]!.pv)[0]?.san }}
+              </button>
+            </template>
+            <template v-else>{{
+              cloudBusy
+                ? 'Asking Lichess cloud…'
+                : cloudError || 'Lichess cloud has no evaluation of this position.'
+            }}</template>
+          </p>
+          <div v-if="!engineReady && !usingCloud" class="text-xs muted">
             <UButton
               size="xs"
               variant="link"
@@ -498,7 +568,7 @@ function missed(result: VoiceResult): void {
             >
             to see evaluations.
           </div>
-          <ol v-else-if="engineOn && !gameOver" class="pv-list">
+          <ol v-else-if="(engineOn || usingCloud) && !gameOver" class="pv-list">
             <li v-for="(entry, index) in pvMoves" :key="index" class="pv-row">
               <button
                 type="button"
@@ -525,7 +595,7 @@ function missed(result: VoiceResult): void {
               </span>
             </li>
             <li
-              v-for="index in Math.max(0, engineLines - pvMoves.length)"
+              v-for="index in usingCloud ? 0 : Math.max(0, engineLines - pvMoves.length)"
               :key="`wait-${index}`"
               class="pv-row pending"
             >
@@ -625,6 +695,14 @@ function missed(result: VoiceResult): void {
               @click="flip"
             />
           </UTooltip>
+          <ExportGame
+            :setup="{ variant: 'standard', fen: root.fen }"
+            :moves="analysis.mainline"
+            :orientation="orientation"
+            :white="root.headers?.White || analysis.origin?.white || 'White'"
+            :black="root.headers?.Black || analysis.origin?.black || 'Black'"
+            :ply="Math.min(path ? path.split(' ').length : 0, analysis.mainline.length)"
+          />
           <UDropdownMenu :items="menu">
             <UButton
               size="sm"

@@ -9,7 +9,8 @@ import {
   type GameCommand,
   type VoiceMoveChoice,
 } from '../utils/voiceCommands'
-import { pgnFromUci, positionAfter } from '../utils/chess'
+import { setupPgn } from '../utils/chess'
+import { VARIANT_LABELS } from '../../src/shared/variant'
 import { useAnalysisStore } from '../stores/analysis'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
@@ -35,6 +36,9 @@ const {
   localInteractive,
   localCanPlay,
   localResult,
+  localGame,
+  localSetup,
+  zenActive,
   settings,
 } = storeToRefs(store)
 const { newGame, takeback, resign, makeMove, selectPage, fen, recheckEngine } = store
@@ -94,7 +98,7 @@ function record(
       ...heardFields(result),
       outcome,
       parsed,
-      fen: fen(positionAfter(localMoves.value)),
+      fen: fen(localGame.value),
       retryOf: (await retryOf) ?? undefined,
     }))()
   if (!track) return entry
@@ -187,7 +191,7 @@ function runCommand(command: GameCommand, result: VoiceResult): void {
 }
 /** Answer the open yes/no question. */
 function answerDialog(result: VoiceResult): void {
-  const answer = spokenMove(result.text, positionAfter(localMoves.value)).kind
+  const answer = spokenMove(result.text, localGame.value).kind
   if (answer !== 'confirm' && answer !== 'cancel') {
     void record(result, 'invalid', 'expected confirm or cancel', false)
     voiceFeedback.value = 'Say “confirm” or “cancel”.'
@@ -234,7 +238,7 @@ function hearMove(result: VoiceResult): void {
     else voiceFeedback.value = 'Choose one of the numbered moves.'
     return
   }
-  const parsed = spokenMove(result.text, positionAfter(localMoves.value))
+  const parsed = spokenMove(result.text, localGame.value)
   if (parsed.kind === 'cancel') {
     void record(result, 'command', 'cancel')
     cancelVoice()
@@ -283,7 +287,8 @@ function hearMove(result: VoiceResult): void {
 const analysis = useAnalysisStore()
 /** Review the game on the analysis board, opened at the move being looked at. */
 function reviewGame(): void {
-  if (!analysis.loadPgn(pgnFromUci(localMoves.value), localPly.value)) return
+  if (!canReview.value) return
+  if (!analysis.loadPgn(setupPgn(localSetup.value, localMoves.value), localPly.value)) return
   analysis.orientation = userColor.value
   const computer = `Stockfish (${engineLevelLabel(level.value)})`
   analysis.origin = {
@@ -294,6 +299,16 @@ function reviewGame(): void {
   selectPage('analysis')
 }
 
+/** The analysis board and reviews play standard rules (from any position). */
+const canReview = computed(() => localSetup.value.variant === 'standard')
+const setupLabel = computed(() =>
+  localSetup.value.variant !== 'standard'
+    ? VARIANT_LABELS[localSetup.value.variant]
+    : localSetup.value.fen.startsWith('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq')
+      ? ''
+      : 'From position',
+)
+const optionsOpen = ref(false)
 /** Whoever sits at the bottom of the board is you, so flipping it switches sides. */
 const orientation = computed(() => userColor.value)
 const confirmColor = computed({
@@ -382,7 +397,12 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
         ? { state: 'online', label: 'Live' }
         : { state: 'unavailable', label: 'Unavailable' },
   }
-  return { top: computerPlayer, bottom: { name: 'You', icon: 'i-lucide-user' } }
+  const other = userColor.value === 'white' ? 'black' : 'white'
+  computerPlayer.clock = store.computerClockText(other)
+  return {
+    top: computerPlayer,
+    bottom: { name: 'You', icon: 'i-lucide-user', clock: store.computerClockText(userColor.value) },
+  }
 })
 </script>
 
@@ -415,6 +435,8 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
         :live="!localResult"
         :top="players.top"
         :bottom="players.bottom"
+        :blindfold="settings.blindfold && !localResult"
+        :variant="localSetup.variant"
         @move="makeMove"
       >
         <template #top-name>
@@ -485,6 +507,49 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
         @flip="switchSides"
       >
         <template #top>
+          <div class="flex flex-wrap items-center gap-2 text-xs muted">
+            <span v-if="setupLabel" class="font-semibold">{{ setupLabel }}</span>
+            <span v-if="store.localClock"
+              >{{ store.localClock.minutes }}+{{ store.localClock.increment }}</span
+            >
+            <span class="flex-1" />
+            <UButton
+              size="xs"
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-settings-2"
+              @click="optionsOpen = true"
+              >Game options</UButton
+            >
+            <UTooltip text="Blindfold: hide the pieces">
+              <UButton
+                size="xs"
+                :variant="settings.blindfold ? 'soft' : 'ghost'"
+                :color="settings.blindfold ? 'primary' : 'neutral'"
+                icon="i-lucide-eye-off"
+                aria-label="Blindfold"
+                :aria-pressed="settings.blindfold"
+                @click="store.toggleSetting('blindfold')"
+              />
+            </UTooltip>
+            <UTooltip text="Zen mode (Z)">
+              <UButton
+                size="xs"
+                :variant="zenActive ? 'soft' : 'ghost'"
+                :color="zenActive ? 'primary' : 'neutral'"
+                icon="i-lucide-maximize"
+                aria-label="Zen mode"
+                :aria-pressed="settings.zenMode"
+                @click="store.toggleSetting('zenMode')"
+              />
+            </UTooltip>
+          </div>
+          <OpeningName
+            v-if="localSetup.variant === 'standard'"
+            :setup="localSetup"
+            :moves="localMoves"
+            :ply="localPly"
+          />
           <div class="status-banner" :class="banner.kind" :role="localResult ? 'alert' : 'status'">
             <UIcon
               :name="banner.icon"
@@ -524,7 +589,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
               </div>
             </div>
             <UButton
-              v-if="localResult && localMoves.length"
+              v-if="localResult && localMoves.length && canReview"
               class="banner-action"
               size="sm"
               variant="soft"
@@ -561,6 +626,16 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
               >New game</UButton
             >
           </div>
+          <div class="panel-actions zen-hide">
+            <ExportGame
+              :setup="localSetup"
+              :moves="localMoves"
+              :orientation="userColor"
+              :white="userColor === 'white' ? 'You' : 'Stockfish'"
+              :black="userColor === 'black' ? 'You' : 'Stockfish'"
+              :ply="localPly"
+            />
+          </div>
         </template>
       </MovePanel>
     </div>
@@ -570,8 +645,9 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
       title="Start a new game?"
       description="Your current game is still in progress and will be lost."
       confirm-label="New game"
-      @confirm="newGame"
+      @confirm="newGame()"
     />
+    <ComputerGameOptions v-model:open="optionsOpen" />
     <ConfirmDialog
       v-model:open="confirmResign"
       title="Resign this game?"

@@ -8,6 +8,11 @@ import { INITIAL_FEN } from 'chessops/fen'
 import type { components, paths } from '@lichess-org/types'
 import type {
   AppData,
+  ChallengeInfo,
+  ChatLine,
+  ChatRoom,
+  DeclineReason,
+  OngoingGame,
   LichessAccount,
   LichessGame,
   LichessRatingHistory,
@@ -20,6 +25,9 @@ import type {
   FollowingProblem,
   FollowingReport,
   OnlineOptions,
+  Crosstable,
+  PerfStats,
+  PerfType,
   PresenceReport,
   Puzzle,
   PuzzleActivityEntry,
@@ -29,6 +37,7 @@ import type {
   PuzzleSolveRequest,
   PuzzleSolveResult,
   StormDashboard,
+  UsageKind,
   Judgment,
   ReviewEval,
   StoredReview,
@@ -43,6 +52,7 @@ import { validateOnlineEvent } from '../shared/onlineEvent'
 import { readLines } from './ndjson'
 import { attributeTo, withUsage } from './usage'
 import { canBoardSeek, canDirectChallenge, perfFor } from '../shared/timeControl'
+import { GAME_ID } from '../shared/patterns'
 import {
   MAX_GAMES,
   addAccount,
@@ -58,14 +68,16 @@ import {
 } from './store'
 
 const BASE = 'https://lichess.org'
-const client = createClient<paths>({ baseUrl: BASE, fetch: lichessFetch })
+export const client = createClient<paths>({ baseUrl: BASE, fetch: lichessFetch })
 client.use(throwLichessErrors)
 const OAUTH_CLIENT_ID = 'kchess-desktop'
 
-type StreamCall = { data?: ReadableStream<Uint8Array> | null; response: Response }
+export type StreamCall = { data?: ReadableStream<Uint8Array> | null; response: Response }
 
 /** Failed responses already threw in the middleware; this guards against an empty success body. */
-async function unwrap<T>(call: Promise<{ data?: T | null; response: Response }>): Promise<T> {
+export async function unwrap<T>(
+  call: Promise<{ data?: T | null; response: Response }>,
+): Promise<T> {
   const { data, response } = await call
   if (data === undefined || data === null)
     throw new LichessError(response.status, new URL(response.url).pathname, 'empty response')
@@ -75,9 +87,11 @@ async function unwrap<T>(call: Promise<{ data?: T | null; response: Response }>)
 const asError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause))
 
-const authorize = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` })
+export const authorize = (token: string): Record<string, string> => ({
+  Authorization: `Bearer ${token}`,
+})
 
-const urlencoded = (body: unknown): URLSearchParams => {
+export const urlencoded = (body: unknown): URLSearchParams => {
   const params = new URLSearchParams()
   if (body)
     for (const [key, value] of Object.entries(body as Record<string, unknown>))
@@ -236,6 +250,84 @@ export async function profile(username: string): Promise<LichessUser> {
       ),
     ),
   )
+}
+
+/** One player's record in one rating category (public; no login needed). */
+export async function playerPerf(username: string, perf: PerfType): Promise<PerfStats> {
+  const raw = await withUsage('', 'profile', () =>
+    unwrap(
+      client.GET('/api/user/{username}/perf/{perf}', { params: { path: { username, perf } } }),
+    ).catch(noSuchUser(username)),
+  )
+  const stat = raw.stat
+  const results = (
+    list: { opRating: number; opId: { name: string }; at: string; gameId: string }[] = [],
+  ) =>
+    list.slice(0, 5).map((entry) => ({
+      opponent: entry.opId?.name ?? '?',
+      opponentRating: entry.opRating,
+      at: entry.at,
+      gameId: entry.gameId,
+    }))
+  const point = (value?: { int: number; at: string; gameId: string }) =>
+    value ? { rating: value.int, at: value.at, gameId: value.gameId } : undefined
+  return {
+    perf,
+    rating: raw.perf.glicko?.rating,
+    deviation: raw.perf.glicko?.deviation,
+    provisional: raw.perf.glicko?.provisional,
+    rank: raw.rank ?? undefined,
+    percentile: raw.percentile,
+    progress: raw.perf.progress,
+    count: stat.count,
+    highest: point(stat.highest),
+    lowest: point(stat.lowest),
+    bestWins: results(stat.bestWins?.results),
+    worstLosses: results(stat.worstLosses?.results),
+    winStreak: {
+      current: stat.resultStreak?.win.cur.v ?? 0,
+      best: stat.resultStreak?.win.max.v ?? 0,
+    },
+    lossStreak: {
+      current: stat.resultStreak?.loss.cur.v ?? 0,
+      best: stat.resultStreak?.loss.max.v ?? 0,
+    },
+  }
+}
+
+/** Any finished Lichess game as PGN (with clocks), for the analysis board. */
+export async function exportGame(id: string): Promise<string> {
+  const pgn = await withUsage('', 'games', () =>
+    unwrap(
+      client.GET('/game/export/{gameId}', {
+        params: { path: { gameId: id }, query: { clocks: true, evals: false, opening: true } },
+        headers: { Accept: 'application/x-chess-pgn' },
+        parseAs: 'text',
+      }) as Promise<{ data?: string | null; response: Response }>,
+    ),
+  )
+  if (pgn.length > 200_000) throw new Error('That game is too long to open.')
+  return pgn
+}
+
+/** Lifetime score between two players, and their current matchup when they are playing. */
+export async function crosstable(a: string, b: string): Promise<Crosstable> {
+  const raw = (await withUsage('', 'profile', () =>
+    unwrap(
+      client.GET('/api/crosstable/{user1}/{user2}', {
+        params: { path: { user1: a, user2: b }, query: { matchup: true } },
+      }),
+    ),
+  )) as { users: Record<string, number>; nbGames: number; matchup?: Crosstable['matchup'] }
+  const lower = (users: Record<string, number> = {}) =>
+    Object.fromEntries(Object.entries(users).map(([name, score]) => [name.toLowerCase(), score]))
+  return {
+    users: lower(raw.users),
+    nbGames: raw.nbGames ?? 0,
+    matchup: raw.matchup
+      ? { users: lower(raw.matchup.users), nbGames: raw.matchup.nbGames ?? 0 }
+      : undefined,
+  }
 }
 
 export async function ratingHistory(username: string): Promise<LichessRatingHistory> {
@@ -590,7 +682,10 @@ export async function connectLichess(): Promise<{ data: AppData; username: strin
         response_type: 'code',
         client_id: OAUTH_CLIENT_ID,
         redirect_uri: redirect,
-        scope: 'board:play challenge:write follow:read puzzle:read puzzle:write',
+        // Studies, tournaments and team Swiss events need their own permissions; accounts connected
+        // earlier are asked to reconnect the first time one of those is used.
+        scope:
+          'board:play challenge:read challenge:write follow:read puzzle:read puzzle:write study:read study:write tournament:write team:read',
         code_challenge_method: 'S256',
         code_challenge: challenge,
         state,
@@ -623,14 +718,15 @@ export async function connectLichess(): Promise<{ data: AppData; username: strin
  * Run a puzzle request as `account`. A missing login, or one Lichess refuses (it was connected
  * before puzzles were requested, or was revoked), answers "reconnect" instead of failing.
  */
-async function asAccount<T>(
+export async function asAccount<T>(
   account: string,
   work: (token: string) => Promise<T>,
+  kind: UsageKind = 'puzzles',
 ): Promise<T | NeedsReconnect> {
   const token = await getToken(account)
   if (!token) return { needsReconnect: true }
   try {
-    return await withUsage(account, 'puzzles', () => work(token))
+    return await withUsage(account, kind, () => work(token))
   } catch (cause) {
     if (cause instanceof LichessError && (cause.status === 401 || cause.status === 403))
       return { needsReconnect: true }
@@ -746,6 +842,39 @@ interface ListenOptions {
   reconnect?: boolean
   /** Checked after a clean end of stream; true stops reconnecting (the game is over). */
   finished?: () => boolean
+  /** Report the stream's health here instead of as the game connection (the idle event stream). */
+  quiet?: (phase: OnlineConnection['phase'], message?: string) => void
+}
+
+/** Hooks for what the event stream carries besides the game being played. */
+export interface OnlineHooks {
+  /** A challenge event for `account` (from whichever event stream is open). */
+  challenge?: (account: string, event: OnlineEvent) => void
+  /** A game started or finished that is not shown on the board (correspondence, other account). */
+  ongoingChanged?: () => void
+  /** Health of the idle event stream that waits for challenges and pairings. */
+  lobbyState?: (state: {
+    account: string
+    phase: OnlineConnection['phase']
+    message?: string
+  }) => void
+}
+
+type ChallengeEventType = 'challenge' | 'challengeCanceled' | 'challengeDeclined'
+const isChallengeEvent = (event: OnlineEvent): boolean =>
+  (['challenge', 'challengeCanceled', 'challengeDeclined'] as ChallengeEventType[]).includes(
+    event.type as ChallengeEventType,
+  )
+
+/** Board API body for a seek or challenge. */
+function gameBody(options: OnlineOptions): Record<string, unknown> {
+  const variant = options.fen && options.variant !== 'chess960' ? 'fromPosition' : options.variant
+  return {
+    rated: options.rated,
+    color: options.color,
+    variant: variant && variant !== 'standard' ? variant : undefined,
+    fen: options.fen,
+  }
 }
 
 export class OnlineSession {
@@ -753,16 +882,24 @@ export class OnlineSession {
   private gameController: AbortController | null = null
   /** The game whose stream is open, while it lasts. */
   private liveGame = ''
+  /** Whether the open game is a correspondence game (another may replace it). */
+  private liveCorrespondence = false
   private protectedGame = ''
   private currentAccount = ''
   private pendingId = ''
   private epoch = 0
   private resumeAttempt = 0
+  /** Games whose start has been announced to the window, so a reconnect does not repeat it. */
+  private announced = new Set<string>()
   private presenceCache = new LRUCache<string, Promise<PresenceReport>>({ max: 100, ttl: 4000 })
+  /** The account whose event stream should stay open while no game is being played. */
+  private lobbyAccount = ''
+  private lobby: { account: string; controller: AbortController } | null = null
   constructor(
     private emit: (event: OnlineEvent) => void,
     private error: (error: string) => void,
     private state: (state: OnlineConnection) => void = () => {},
+    private hooks: OnlineHooks = {},
   ) {}
 
   private report(cause: unknown): void {
@@ -788,7 +925,9 @@ export class OnlineSession {
     const account = this.currentAccount
     const gameId = options.lane === 'game' ? this.liveGame : ''
     const state = (phase: OnlineConnection['phase'], message?: string): void => {
-      if (!signal.aborted && session === this.epoch)
+      if (signal.aborted) return
+      if (options.quiet) options.quiet(phase, message)
+      else if (session === this.epoch)
         this.state({ session, account, gameId, lane: options.lane ?? 'events', phase, message })
     }
     state('connecting')
@@ -797,6 +936,8 @@ export class OnlineSession {
       try {
         const stream = await unwrap(open())
         signal.throwIfAborted()
+        // The idle stream may stay silent for hours; an open connection is a healthy one.
+        if (options.quiet) state('connected')
         await readLines(
           stream,
           (line) => {
@@ -821,7 +962,7 @@ export class OnlineSession {
               : 'disconnected',
             asError(cause).message,
           )
-          this.report(cause)
+          if (!options.quiet) this.report(cause)
           return
         }
       }
@@ -833,7 +974,8 @@ export class OnlineSession {
       failures = received ? 1 : failures + 1
       if (failures > MAX_RECONNECTS) {
         state('disconnected', 'Lost connection to Lichess. Reconnect to recover the game.')
-        this.error('Lost connection to Lichess. Check your network and reopen the game.')
+        if (!options.quiet)
+          this.error('Lost connection to Lichess. Check your network and reopen the game.')
         return
       }
       state('reconnecting', 'Connection interrupted. Reconnecting…')
@@ -844,21 +986,125 @@ export class OnlineSession {
     }
   }
 
-  private eventStream(
-    token: string,
-    signal: AbortSignal,
-    emit: (event: OnlineEvent) => void,
-  ): Promise<void> {
-    return this.listen(
-      () =>
-        client.GET('/api/stream/event', { headers: authorize(token), parseAs: 'stream', signal }),
-      signal,
-      emit,
-      { reconnect: true, lane: 'events' },
-    )
+  private openEvents(token: string, signal: AbortSignal, options: ListenOptions = {}) {
+    return (emit: (event: OnlineEvent) => void): Promise<void> =>
+      this.listen(
+        () =>
+          client.GET('/api/stream/event', { headers: authorize(token), parseAs: 'stream', signal }),
+        signal,
+        emit,
+        { reconnect: true, lane: 'events', ...options },
+      )
   }
 
-  /** Reattach to a game in progress on any connected account. */
+  /**
+   * The event stream of the account being played: challenges go to the inbox, a real-time game
+   * starting opens it on the board (a seek, an accepted challenge or rematch, a tournament pairing).
+   */
+  private eventStream(token: string, signal: AbortSignal): Promise<void> {
+    const account = this.currentAccount
+    return this.openEvents(
+      token,
+      signal,
+    )((event) => {
+      if (signal.aborted) return
+      if (isChallengeEvent(event)) {
+        this.hooks.challenge?.(account, event)
+        return
+      }
+      if (event.type === 'gameStart') {
+        const game = event.game
+        const correspondence = game.speed === 'correspondence'
+        if (game.gameId !== this.liveGame) {
+          // Another game is on the board; correspondence games open only when asked for.
+          if (correspondence || (this.liveGame && !this.liveCorrespondence)) {
+            this.hooks.ongoingChanged?.()
+            return
+          }
+          this.pendingId = ''
+          void this.openGame(game.gameId, token)
+        }
+        this.announce(event)
+        return
+      }
+      if (event.type === 'gameFinish') {
+        this.hooks.ongoingChanged?.()
+        if (event.game.gameId !== this.liveGame && event.game.gameId !== this.protectedGame) return
+      }
+      this.emit(event)
+    })
+  }
+
+  private announce(event: OnlineEvent & { type: 'gameStart' }): void {
+    if (this.announced.has(event.game.gameId)) return
+    this.announced.add(event.game.gameId)
+    if (this.announced.size > 200) this.announced.delete(this.announced.values().next().value!)
+    this.emit(event)
+  }
+
+  /* ── The idle event stream ─────────────────────────────────────────── */
+
+  /** Keep `account`'s event stream open while nothing else is (empty: stop). */
+  stayConnected(account: string): void {
+    this.lobbyAccount = account
+    if (!account) this.stopLobby()
+    else this.startLobby()
+  }
+
+  private stopLobby(): void {
+    this.lobby?.controller.abort()
+    this.lobby = null
+  }
+
+  private startLobby(): void {
+    const account = this.lobbyAccount
+    if (!account || this.controller) return
+    if (this.lobby && this.lobby.account === account && !this.lobby.controller.signal.aborted)
+      return
+    this.stopLobby()
+    const controller = new AbortController()
+    this.lobby = { account, controller }
+    const quiet = (phase: OnlineConnection['phase'], message?: string): void =>
+      this.hooks.lobbyState?.({ account, phase, message })
+    void (async () => {
+      const token = await getToken(account).catch(() => null)
+      if (controller.signal.aborted) return
+      if (!token) {
+        quiet('auth-required', 'Its Lichess login is unavailable. Reconnect it in Settings.')
+        return
+      }
+      await withUsage(account, 'play', () =>
+        this.openEvents(token, controller.signal, { quiet })((event) => {
+          if (controller.signal.aborted) return
+          if (isChallengeEvent(event)) this.hooks.challenge?.(account, event)
+          else if (event.type === 'gameStart' && event.game.speed !== 'correspondence')
+            void this.attach(account, event.game.gameId).catch((cause) => this.report(cause))
+          else if (event.type === 'gameStart' || event.type === 'gameFinish')
+            this.hooks.ongoingChanged?.()
+        }),
+      )
+    })()
+  }
+
+  /* ── Sessions ─────────────────────────────────────────────────────── */
+
+  /** Open a known game of `account` on the board: its event stream, then its game stream. */
+  async attach(account: string, id: string): Promise<void> {
+    if (this.liveGame === id) return
+    const token = await getToken(account)
+    if (!token)
+      throw new Error(`@${account}'s Lichess login is unavailable. Reconnect it in Settings.`)
+    // Two callers (an accept and the event it causes) may race here.
+    if (this.liveGame === id) return
+    this.cancel()
+    this.currentAccount = account
+    attributeTo(account, 'play')
+    this.controller = new AbortController()
+    void this.eventStream(token, this.controller.signal)
+    void this.openGame(id, token)
+  }
+
+  /** Reattach to a real-time game in progress on any connected account. */
   async resume(): Promise<{ id: string; account: string } | null> {
     const attempt = ++this.resumeAttempt
     const accounts = (await loadData()).accounts.filter((a) => a.connected)
@@ -870,14 +1116,15 @@ export class OnlineSession {
         const playing = await withUsage(account.username, 'play', () =>
           unwrap(client.GET('/api/account/playing', { headers: authorize(token) })),
         )
-        const id = playing.nowPlaying?.[0]?.gameId
+        // Correspondence games last for days: they open only when the player picks one.
+        const id = playing.nowPlaying?.find((game) => game.speed !== 'correspondence')?.gameId
         if (attempt !== this.resumeAttempt) return null
         if (!id) continue
         this.cancel()
         this.currentAccount = account.username
         attributeTo(account.username, 'play')
         this.controller = new AbortController()
-        void this.eventStream(token, this.controller.signal, (event) => this.emit(event))
+        void this.eventStream(token, this.controller.signal)
         void this.openGame(id, token)
         return { id, account: account.username }
       } catch (cause) {
@@ -894,21 +1141,86 @@ export class OnlineSession {
       lane: 'game',
       phase: 'idle',
     })
+    this.startLobby()
     return null
   }
 
-  async start(options: OnlineOptions): Promise<{ id?: string; url?: string; seeking?: boolean }> {
-    if (this.playing) throw new Error('Reconnect to your current game before finding another.')
+  /** Every game the connected accounts are playing, most urgent first. */
+  async ongoing(): Promise<OngoingGame[]> {
+    const accounts = (await loadData()).accounts.filter((a) => a.connected)
+    const games: OngoingGame[] = []
+    let firstError: unknown
+    for (const account of accounts) {
+      try {
+        const token = await getToken(account.username)
+        if (!token) continue
+        const playing = await withUsage(account.username, 'play', () =>
+          unwrap(
+            client.GET('/api/account/playing', {
+              params: { query: { nb: 50 } },
+              headers: authorize(token),
+            }),
+          ),
+        )
+        for (const game of playing.nowPlaying ?? []) {
+          const opponent = game.opponent as
+            { username?: string; rating?: number; ai?: number } | undefined
+          games.push({
+            gameId: game.gameId,
+            account: account.username,
+            opponent: {
+              name: opponent?.ai
+                ? `Stockfish level ${opponent.ai}`
+                : (opponent?.username ?? 'Opponent'),
+              rating: opponent?.rating,
+            },
+            color: game.color,
+            fen: game.fen,
+            lastMove: game.lastMove || undefined,
+            isMyTurn: Boolean(game.isMyTurn),
+            secondsLeft: typeof game.secondsLeft === 'number' ? game.secondsLeft : undefined,
+            variant: game.variant?.key ?? 'standard',
+            speed: game.speed,
+            rated: game.rated,
+            tournamentId: (game as { tournamentId?: string }).tournamentId,
+          })
+        }
+      } catch (cause) {
+        firstError ??= cause
+      }
+    }
+    if (!games.length && firstError) throw firstError
+    return games.sort((a, b) => Number(b.isMyTurn) - Number(a.isMyTurn))
+  }
+
+  /** Open one of `ongoing()`'s games; a live real-time game on the board is never replaced. */
+  async open(account: string, id: string): Promise<void> {
+    if (this.liveGame === id) return
+    if (this.liveGame && !this.liveCorrespondence)
+      throw new Error('Finish the live game on the board before opening another.')
+    await this.attach(account, id)
+  }
+
+  async start(
+    options: OnlineOptions,
+  ): Promise<{ id?: string; url?: string; seeking?: boolean; correspondence?: boolean }> {
+    if (this.liveGame && !this.liveCorrespondence)
+      throw new Error('Reconnect to your current game before finding another.')
+    if (this.protectedGame && !this.liveCorrespondence)
+      throw new Error('Reconnect to your current game before finding another.')
     this.cancel()
     const target = options.target?.trim()
+    const correspondence = options.days !== undefined
     const perf = perfFor(options.minutes, options.increment)
     const label = `${options.minutes}+${options.increment}`
     // Validate before opening any stream so a rejected request leaves nothing running.
-    if (target && !canDirectChallenge(options.minutes, options.increment))
+    if (options.fen && (!target || options.rated))
+      throw new Error('A game from a set-up position must be a casual challenge to a player.')
+    if (!correspondence && target && !canDirectChallenge(options.minutes, options.increment))
       throw new Error(
         `Lichess blocks ${perf} (${label}) even for direct challenges. The Board API allows Blitz and slower — pick at least 3 minutes of estimated play (time + 40 × increment).`,
       )
-    if (!target && !canBoardSeek(options.minutes, options.increment))
+    if (!correspondence && !target && !canBoardSeek(options.minutes, options.increment))
       throw new Error(
         `Lichess blocks ${perf} (${label}) for public seeks. The Board API allows Rapid and slower for matchmaking — add a username to challenge directly (Blitz allowed) or pick a longer control.`,
       )
@@ -928,16 +1240,15 @@ export class OnlineSession {
       const token = await getToken(account.username)
       controller.signal.throwIfAborted()
       if (!token) throw new Error('Your Lichess login is unavailable. Reconnect in Settings.')
-      let gameStarted = false
-      void this.eventStream(token, controller.signal, (event) => {
-        if (controller.signal.aborted) return
-        if (event.type === 'gameStart') {
-          gameStarted = true
-          this.pendingId = ''
-          void this.openGame(event.game.gameId, token)
-        }
-        this.emit(event)
-      })
+      if (correspondence) {
+        // Correspondence games run for days: nothing waits here; the idle stream reports acceptance.
+        const created = await this.createCorrespondence(options, token, controller.signal, target)
+        controller.abort()
+        if (this.controller === controller) this.controller = null
+        this.startLobby()
+        return { ...created, correspondence: true }
+      }
+      void this.eventStream(token, controller.signal)
       if (target) {
         try {
           const challenge = await unwrap(
@@ -946,8 +1257,7 @@ export class OnlineSession {
               body: {
                 'clock.limit': options.minutes * 60,
                 'clock.increment': options.increment,
-                rated: options.rated,
-                color: options.color,
+                ...gameBody(options),
               },
               bodySerializer: urlencoded,
               headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -959,12 +1269,12 @@ export class OnlineSession {
             await this.cancelChallenge(challenge.id, token)
             controller.signal.throwIfAborted()
           }
-          if (!gameStarted) this.pendingId = challenge.id
+          if (!this.liveGame) this.pendingId = challenge.id
           return { id: challenge.id, url: challenge.url }
         } catch (cause) {
           if (cause instanceof LichessError && cause.status === 400)
             throw new Error(
-              `Lichess rejected this ${perf} (${label}) challenge. The Board API allows Blitz and slower for direct challenges — pick a longer control.`,
+              `Lichess rejected this ${perf} (${label}) challenge: ${cause.message}. The Board API allows Blitz and slower for direct challenges.`,
               { cause },
             )
           throw cause
@@ -978,8 +1288,7 @@ export class OnlineSession {
             body: {
               time: options.minutes,
               increment: options.increment,
-              color: options.color,
-              rated: options.rated,
+              ...gameBody(options),
             },
             bodySerializer: urlencoded,
             headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -994,9 +1303,42 @@ export class OnlineSession {
     } catch (cause) {
       // Don't leave the event stream running for a game the UI never started.
       controller.abort()
-      if (this.controller === controller) this.controller = null
+      if (this.controller === controller) {
+        this.controller = null
+        this.startLobby()
+      }
       throw cause
     }
+  }
+
+  private async createCorrespondence(
+    options: OnlineOptions,
+    token: string,
+    signal: AbortSignal,
+    target?: string,
+  ): Promise<{ id?: string; url?: string }> {
+    const headers = { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' }
+    if (target) {
+      const challenge = await unwrap(
+        client.POST('/api/challenge/{username}', {
+          params: { path: { username: target } },
+          body: { days: options.days, ...gameBody(options) } as never,
+          bodySerializer: urlencoded,
+          headers,
+          signal,
+        }),
+      )
+      return { id: challenge.id, url: challenge.url }
+    }
+    const seek = await unwrap(
+      client.POST('/api/board/seek', {
+        body: { days: options.days, ...gameBody(options) } as never,
+        bodySerializer: urlencoded,
+        headers,
+        signal,
+      }) as Promise<{ data?: { id?: string } | null; response: Response }>,
+    )
+    return { id: seek.id }
   }
 
   private async cancelChallenge(id: string, token: string): Promise<void> {
@@ -1008,12 +1350,72 @@ export class OnlineSession {
     ).catch(() => undefined)
   }
 
+  /** Accept an incoming challenge as the account it was sent to; a real-time game opens at once. */
+  async acceptChallenge(challenge: ChallengeInfo): Promise<void> {
+    const live = challenge.timeControl.type === 'clock'
+    if (live && this.liveGame && !this.liveCorrespondence)
+      throw new Error('Finish the game on the board before accepting another.')
+    const token = await getToken(challenge.account)
+    if (!token)
+      throw new Error(
+        `@${challenge.account}'s Lichess login is unavailable. Reconnect in Settings.`,
+      )
+    await withUsage(challenge.account, 'play', () =>
+      unwrap(
+        client.POST('/api/challenge/{challengeId}/accept', {
+          params: { path: { challengeId: challenge.id } },
+          headers: authorize(token),
+        }),
+      ),
+    )
+    // The game has the challenge's id. Open it now rather than wait for the event stream,
+    // which may belong to another connected account.
+    if (live) await this.attach(challenge.account, challenge.id)
+    else this.hooks.ongoingChanged?.()
+  }
+
+  async declineChallenge(challenge: ChallengeInfo, reason: DeclineReason): Promise<void> {
+    const token = await getToken(challenge.account)
+    if (!token)
+      throw new Error(
+        `@${challenge.account}'s Lichess login is unavailable. Reconnect in Settings.`,
+      )
+    await withUsage(challenge.account, 'play', () =>
+      unwrap(
+        client.POST('/api/challenge/{challengeId}/decline', {
+          params: { path: { challengeId: challenge.id } },
+          body: { reason } as never,
+          bodySerializer: urlencoded,
+          headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
+        }),
+      ),
+    )
+  }
+
+  async withdrawChallenge(challenge: ChallengeInfo): Promise<void> {
+    const token = await getToken(challenge.account)
+    if (!token)
+      throw new Error(
+        `@${challenge.account}'s Lichess login is unavailable. Reconnect in Settings.`,
+      )
+    if (this.pendingId === challenge.id) this.pendingId = ''
+    await withUsage(challenge.account, 'play', () =>
+      unwrap(
+        client.POST('/api/challenge/{challengeId}/cancel', {
+          params: { path: { challengeId: challenge.id } },
+          headers: authorize(token),
+        }),
+      ),
+    )
+  }
+
   private async openGame(id: string, token: string): Promise<void> {
     this.gameController?.abort()
     const controller = new AbortController()
     this.gameController = controller
     let finished = false
     this.liveGame = id
+    this.liveCorrespondence = false
     this.protectedGame = id
     await this.listen(
       () =>
@@ -1026,7 +1428,13 @@ export class OnlineSession {
       controller.signal,
       (event) => {
         // Lichess closes the game stream when the game ends; don't reconnect then.
-        const raw = event as { type: string; status?: string; state?: { status?: string } }
+        const raw = event as {
+          type: string
+          status?: string
+          speed?: string
+          state?: { status?: string }
+        }
+        if (raw.type === 'gameFull') this.liveCorrespondence = raw.speed === 'correspondence'
         const status =
           raw.type === 'gameFull'
             ? raw.state?.status
@@ -1051,15 +1459,55 @@ export class OnlineSession {
     return this.liveGame !== '' || this.protectedGame !== ''
   }
 
-  async move(id: string, uci: string): Promise<void> {
-    if (id !== this.liveGame) throw new Error('Reconnect to this game before sending a move.')
+  private async liveToken(id: string, what: string): Promise<string> {
+    if (id !== this.liveGame) throw new Error(`Reconnect to this game before ${what}.`)
     const token = await getToken(this.currentAccount)
     if (!token) throw new Error('Lichess login unavailable.')
+    return token
+  }
+
+  async move(id: string, uci: string): Promise<void> {
+    const token = await this.liveToken(id, 'sending a move')
     await withUsage(this.currentAccount, 'play', () =>
       unwrap(
         client.POST('/api/board/game/{gameId}/move/{move}', {
           params: { path: { gameId: id, move: uci } },
           headers: authorize(token),
+        }),
+      ),
+    )
+  }
+
+  /** The private chat between the two players so far. */
+  async chat(id: string): Promise<ChatLine[]> {
+    const token = await this.liveToken(id, 'reading the chat')
+    const lines = await withUsage(this.currentAccount, 'play', () =>
+      unwrap(
+        client.GET('/api/board/game/{gameId}/chat', {
+          params: { path: { gameId: id } },
+          headers: authorize(token),
+        }),
+      ),
+    )
+    return (Array.isArray(lines) ? lines : [])
+      .slice(-200)
+      .filter((line) => typeof line?.text === 'string' && typeof line.user === 'string')
+      .map((line) => ({
+        user: line.user.slice(0, 40),
+        text: line.text.slice(0, 400),
+        room: 'player' as const,
+      }))
+  }
+
+  async sendChat(id: string, room: ChatRoom, text: string): Promise<void> {
+    const token = await this.liveToken(id, 'chatting')
+    await withUsage(this.currentAccount, 'play', () =>
+      unwrap(
+        client.POST('/api/board/game/{gameId}/chat', {
+          params: { path: { gameId: id } },
+          body: { room, text },
+          bodySerializer: urlencoded,
+          headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
         }),
       ),
     )
@@ -1086,7 +1534,7 @@ export class OnlineSession {
     const rows = await withUsage(account, 'presence', () =>
       unwrap(
         client.GET('/api/users/status', {
-          params: { query: { ids: usernames.join(','), withSignal: true } },
+          params: { query: { ids: usernames.join(','), withSignal: true, withGameIds: true } },
           headers: token ? authorize(token) : {},
         }),
       ),
@@ -1094,11 +1542,15 @@ export class OnlineSession {
     const latencyMs = Math.round(performance.now() - started)
     const users: PresenceReport['users'] = {}
     // The generated type predates `withSignal`, so `signal` is read off the raw row.
-    for (const row of rows as ((typeof rows)[number] & { signal?: number })[])
+    for (const row of rows as ((typeof rows)[number] & { signal?: number; playingId?: string })[])
       users[row.id.toLowerCase()] = {
         online: Boolean(row.online),
         playing: Boolean(row.playing),
         signal: row.signal,
+        playingId:
+          typeof row.playingId === 'string' && GAME_ID.test(row.playingId)
+            ? row.playingId
+            : undefined,
       }
     return { users, latencyMs }
   }
@@ -1110,24 +1562,57 @@ export class OnlineSession {
     if (!token) throw new Error('Lichess login unavailable.')
     const headers = authorize(token)
     const path = { gameId: id }
-    if (action === 'resign')
-      await unwrap(client.POST('/api/board/game/{gameId}/resign', { params: { path }, headers }))
-    else if (action === 'abort')
-      await unwrap(client.POST('/api/board/game/{gameId}/abort', { params: { path }, headers }))
-    else
-      await unwrap(
-        client.POST('/api/board/game/{gameId}/takeback/{accept}', {
-          params: { path: { ...path, accept: action === 'takeback' ? 'yes' : false } },
-          headers,
-        }),
-      )
+    switch (action) {
+      case 'resign':
+        await unwrap(client.POST('/api/board/game/{gameId}/resign', { params: { path }, headers }))
+        return
+      case 'abort':
+        await unwrap(client.POST('/api/board/game/{gameId}/abort', { params: { path }, headers }))
+        return
+      case 'offerDraw':
+      case 'acceptDraw':
+      case 'declineDraw':
+        await unwrap(
+          client.POST('/api/board/game/{gameId}/draw/{accept}', {
+            params: { path: { ...path, accept: action === 'declineDraw' ? false : 'yes' } },
+            headers,
+          }),
+        )
+        return
+      case 'claimVictory':
+        await unwrap(
+          client.POST('/api/board/game/{gameId}/claim-victory', { params: { path }, headers }),
+        )
+        return
+      case 'claimDraw':
+        await unwrap(
+          client.POST('/api/board/game/{gameId}/claim-draw', { params: { path }, headers }),
+        )
+        return
+      case 'berserk':
+        await unwrap(client.POST('/api/board/game/{gameId}/berserk', { params: { path }, headers }))
+        return
+      default:
+        await unwrap(
+          client.POST('/api/board/game/{gameId}/takeback/{accept}', {
+            params: { path: { ...path, accept: action === 'takeback' ? 'yes' : false } },
+            headers,
+          }),
+        )
+    }
   }
 
   cancel(): void {
+    // A correspondence game has no clock to protect: closing it frees the board at once.
+    const leavingCorrespondence =
+      this.liveCorrespondence && this.liveGame !== '' && this.protectedGame === this.liveGame
+    if (leavingCorrespondence) this.protectedGame = ''
     this.resumeAttempt++
     this.presenceCache.clear()
     this.epoch++
     this.liveGame = ''
+    this.liveCorrespondence = false
+    this.stopLobby()
     this.controller?.abort()
     this.gameController?.abort()
     this.controller = null
@@ -1141,6 +1626,14 @@ export class OnlineSession {
         phase: 'disconnected',
         message: 'Reconnect to verify the current game before using engine assistance.',
       })
+    else if (leavingCorrespondence)
+      this.state({
+        session: this.epoch,
+        account: this.currentAccount,
+        gameId: '',
+        lane: 'game',
+        phase: 'idle',
+      })
     if (this.pendingId) {
       const id = this.pendingId
       this.pendingId = ''
@@ -1151,5 +1644,15 @@ export class OnlineSession {
         })
         .catch(() => undefined)
     }
+    // Whatever replaces this session (start, attach) claims the event stream first; otherwise
+    // the idle stream resumes so challenges keep arriving.
+    queueMicrotask(() => this.startLobby())
+  }
+
+  /** Stop everything for good (the app is quitting). */
+  close(): void {
+    this.lobbyAccount = ''
+    this.cancel()
+    this.stopLobby()
   }
 }

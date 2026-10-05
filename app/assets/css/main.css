@@ -1967,3 +1967,108 @@ button.move-cell:hover {
     display: none;
   }
 }
+
+/* ── Blindfold and zen mode ────────────────────────────────────────────── */
+/* Blindfold hides the pieces only; squares, highlights and arrows still show. */
+.cg-host.blindfold piece {
+  visibility: hidden;
+}
+/* Zen mode: the board, clocks and the controls that matter, nothing else. */
+.app-shell.zen aside,
+.app-shell.zen .topbar-center,
+.app-shell.zen .page-header,
+.app-shell.zen .zen-hide {
+  display: none !important;
+}
+.zen-exit {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+}
+
+/* ── Online extras: offers, chat, challenges ───────────────────────────── */
+.offer-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--ui-border-accented);
+  background: var(--ui-bg-accented);
+  font-size: 14px;
+}
+.offer-banner .offer-text {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 13px;
+  padding: 6px 0;
+}
+.chat-line .chat-user {
+  font-weight: 600;
+  margin-right: 6px;
+}
+.chat-line.spectator {
+  color: var(--ui-text-muted);
+}
+.chat-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.online-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 400px);
+  gap: 20px;
+  align-items: start;
+}
+@container page (max-width: 900px) {
+  .online-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-bg);
+}
+.list-row .row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.list-row .row-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-row .row-sub {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+.list-row .row-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.mini-board {
+  width: 64px;
+  flex: none;
+}

@@ -2,15 +2,27 @@ import * as v from 'valibot'
 import type { OnlineEvent } from './types'
 import { GAME_ID, UCI_MOVE } from './patterns'
 
+/** Crazyhouse drops (`P@e4`): not playable here, but they must not break the stream. */
+const DROP = /^[PNBRQ]@[a-h][1-8]$/
+
 const id = v.pipe(v.string(), v.regex(GAME_ID))
 const clock = v.pipe(v.number(), v.finite(), v.minValue(0))
-const state = v.looseObject({
-  type: v.literal('gameState'),
+const flag = v.optional(v.boolean())
+const stateFields = {
   moves: v.pipe(v.string(), v.maxLength(10_000)),
   status: v.string(),
   wtime: v.optional(clock),
   btime: v.optional(clock),
-})
+  winc: v.optional(clock),
+  binc: v.optional(clock),
+  winner: v.optional(v.picklist(['white', 'black'])),
+  wdraw: flag,
+  bdraw: flag,
+  wtakeback: flag,
+  btakeback: flag,
+  expiration: v.optional(v.looseObject({ idleMillis: clock, millisToMove: clock })),
+}
+const state = v.looseObject({ type: v.literal('gameState'), ...stateFields })
 const game = v.looseObject({
   gameId: id,
   color: v.optional(v.picklist(['white', 'black'])),
@@ -18,17 +30,27 @@ const game = v.looseObject({
     v.looseObject({ username: v.optional(v.string()), id: v.optional(v.string()) }),
   ),
 })
+const player = v.looseObject({
+  id: v.optional(v.string()),
+  name: v.optional(v.string()),
+  rating: v.optional(v.pipe(v.number(), v.finite())),
+  title: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(8)))),
+  aiLevel: v.optional(v.pipe(v.number(), v.finite())),
+})
 const full = v.looseObject({
   type: v.literal('gameFull'),
   id,
-  white: v.looseObject({ id: v.optional(v.string()), name: v.optional(v.string()) }),
-  black: v.looseObject({ id: v.optional(v.string()), name: v.optional(v.string()) }),
-  state: v.looseObject({
-    moves: v.pipe(v.string(), v.maxLength(10_000)),
-    status: v.string(),
-    wtime: v.optional(clock),
-    btime: v.optional(clock),
-  }),
+  white: player,
+  black: player,
+  variant: v.optional(v.looseObject({ key: v.pipe(v.string(), v.maxLength(30)) })),
+  speed: v.optional(v.pipe(v.string(), v.maxLength(20))),
+  initialFen: v.optional(v.pipe(v.string(), v.maxLength(120))),
+  clock: v.optional(
+    v.nullable(v.looseObject({ initial: v.optional(clock), increment: v.optional(clock) })),
+  ),
+  daysPerTurn: v.optional(clock),
+  tournamentId: v.optional(v.pipe(v.string(), v.maxLength(20))),
+  state: v.looseObject(stateFields),
 })
 const schema = v.variant('type', [
   state,
@@ -42,8 +64,8 @@ const schema = v.variant('type', [
   }),
   v.looseObject({
     type: v.literal('chatLine'),
-    username: v.string(),
-    text: v.string(),
+    username: v.pipe(v.string(), v.maxLength(40)),
+    text: v.pipe(v.string(), v.maxLength(400)),
     room: v.string(),
   }),
   v.looseObject({ type: v.literal('challenge'), challenge: v.looseObject({ id }) }),
@@ -80,7 +102,7 @@ export function validateOnlineEvent(raw: unknown): OnlineEvent | undefined {
     !moves
       .trim()
       .split(/\s+/)
-      .every((move) => UCI_MOVE.test(move))
+      .every((move) => UCI_MOVE.test(move) || DROP.test(move))
   )
     throw new Error('Lichess sent an invalid move list.')
   return event as OnlineEvent

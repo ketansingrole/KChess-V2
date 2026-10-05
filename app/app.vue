@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useKChessStore } from './stores/kchess'
 import { useAppUpdatesStore } from './stores/appUpdates'
 import { useReviewStore } from './stores/review'
+import { useChallengeStore } from './stores/challenges'
 
 useHead({
   title: 'KChess',
@@ -29,9 +30,11 @@ function trackMainOffset(): void {
 }
 
 onMounted(() => {
-  void store
-    .init()
-    .then(() => window.kchess.recordPerformance?.('app.ready', performance.now()).catch(() => {}))
+  const challenges = useChallengeStore()
+  void store.init().then(() => {
+    if (store.ready) challenges.start()
+    return window.kchess.recordPerformance?.('app.ready', performance.now()).catch(() => {})
+  })
   void updates.init()
   useReviewStore().listen()
   if (mainEl.value) {
@@ -42,6 +45,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   resizeObserver?.disconnect()
+  useChallengeStore().stop()
   store.dispose()
   updates.dispose()
 })
@@ -56,6 +60,7 @@ const {
   searchOpen,
   searchGroups,
   confirmation,
+  zenActive,
 } = storeToRefs(store)
 const { toggleSearch } = store
 
@@ -111,7 +116,10 @@ function toggleMaximize(event?: MouseEvent): void {
 
 <template>
   <UApp>
-    <div class="app-shell" :class="{ 'is-mac': isMac, 'is-frameless': isFrameless }">
+    <div
+      class="app-shell"
+      :class="{ 'is-mac': isMac, 'is-frameless': isFrameless, zen: zenActive }"
+    >
       <USidebar
         v-model:open="sidebarOpen"
         collapsible="icon"
@@ -237,6 +245,16 @@ function toggleMaximize(event?: MouseEvent): void {
           </div>
         </div>
       </main>
+      <UButton
+        v-if="zenActive"
+        class="zen-exit"
+        size="sm"
+        variant="soft"
+        color="neutral"
+        icon="i-lucide-minimize"
+        @click="store.toggleSetting('zenMode')"
+        >Leave zen mode</UButton
+      >
       <UModal
         v-model:open="searchOpen"
         title="Search"

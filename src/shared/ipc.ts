@@ -1,4 +1,8 @@
 import type {
+  BroadcastUpdate,
+  WatchFrame,
+  ChallengeInfo,
+  LobbyState,
   AnalysisUpdate,
   AppUpdateStatus,
   DesktopApi,
@@ -22,6 +26,11 @@ export interface IpcEvents {
   'engine:analysis': AnalysisUpdate
   'review:update': ReviewUpdate
   'review:status': ReviewStatus
+  'challenges:update': ChallengeInfo[]
+  'online:lobby': LobbyState
+  'online:ongoing-changed': null
+  'watch:frame': WatchFrame
+  'watch:broadcast': BroadcastUpdate
 }
 export const IPC_EVENTS = {
   onlineState: 'online:state',
@@ -35,6 +44,11 @@ export const IPC_EVENTS = {
   analysis: 'engine:analysis',
   reviewUpdate: 'review:update',
   reviewStatus: 'review:status',
+  challenges: 'challenges:update',
+  lobby: 'online:lobby',
+  ongoingChanged: 'online:ongoing-changed',
+  watch: 'watch:frame',
+  broadcast: 'watch:broadcast',
 } as const satisfies Record<string, keyof IpcEvents>
 
 type Subscription =
@@ -49,12 +63,24 @@ type Subscription =
   | 'onAnalysis'
   | 'onReviewUpdate'
   | 'onReviewStatus'
+  | 'onChallenges'
+  | 'onLobbyState'
+  | 'onOngoingChanged'
+  | 'onWatch'
+  | 'onBroadcast'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
 export const IPC_CHANNELS = {
   recordPerformance: 'diagnostics:performance',
   positionLookup: 'analysis:position-lookup',
+  mastersGame: 'analysis:masters-game',
+  exportGame: 'games:export',
+  saveExport: 'games:save-export',
+  lichessStudies: 'studies:list',
+  lichessStudyChapters: 'studies:chapters',
+  exportToLichessStudy: 'studies:export',
+  cloudEval: 'analysis:cloud-eval',
   appUpdateStatus: 'app-update:status',
   checkAppUpdate: 'app-update:check',
   downloadAppUpdate: 'app-update:download',
@@ -68,6 +94,7 @@ export const IPC_CHANNELS = {
   gamePgn: 'games:pgn',
   gamePage: 'games:page',
   gameLibraryOverview: 'games:overview',
+  insights: 'games:insights',
   gameRatingHistory: 'games:ratings',
   cachedProfile: 'lichess:cached-profile',
   profile: 'lichess:profile',
@@ -91,6 +118,27 @@ export const IPC_CHANNELS = {
   cancelOnline: 'online:cancel',
   playOnline: 'online:move',
   onlineAction: 'online:action',
+  onlineChat: 'online:chat',
+  sendChat: 'online:chat-send',
+  stayConnected: 'online:stay-connected',
+  challenges: 'challenges:list',
+  acceptChallenge: 'challenges:accept',
+  declineChallenge: 'challenges:decline',
+  cancelChallenge: 'challenges:cancel',
+  ongoingGames: 'online:ongoing',
+  openGame: 'online:open',
+  tournaments: 'tournaments:list',
+  tournament: 'tournaments:get',
+  joinTournament: 'tournaments:join',
+  leaveTournament: 'tournaments:leave',
+  tvChannels: 'watch:tv-channels',
+  playerPerf: 'players:perf',
+  crosstable: 'players:crosstable',
+  watch: 'watch:start',
+  watchBroadcast: 'watch:broadcast-start',
+  stopWatching: 'watch:stop',
+  broadcasts: 'watch:broadcasts',
+  broadcastTour: 'watch:broadcast-tour',
   clearAccountData: 'account:clear-data',
   following: 'friends:following',
   addFriends: 'friends:add-many',

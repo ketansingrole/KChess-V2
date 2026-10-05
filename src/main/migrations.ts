@@ -211,6 +211,15 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX idx_games_account_result_page ON games (account COLLATE NOCASE,
     (CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END),
     createdAt DESC, id);`,
+  // Challenges, chat, correspondence, zen mode, blindfold, cloud evaluation and opening names.
+  `ALTER TABLE settings ADD COLUMN receiveChallenges INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN notifyChallenges INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN onlineChat INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN correspondencePoll INTEGER NOT NULL DEFAULT 5;
+  ALTER TABLE settings ADD COLUMN zenMode INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE settings ADD COLUMN blindfold INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE settings ADD COLUMN cloudEval INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE settings ADD COLUMN showOpeningName INTEGER NOT NULL DEFAULT 1;`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

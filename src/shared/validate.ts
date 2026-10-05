@@ -3,6 +3,11 @@ import * as v from 'valibot'
 import {
   APPEARANCES,
   CHALLENGE_COLORS,
+  CHAT_ROOMS,
+  CORRESPONDENCE_DAYS,
+  DECLINE_REASONS,
+  PERF_TYPES,
+  type PerfType,
   COORDINATE_MODES,
   ENGINE_LEVELS,
   NOTIFICATION_KINDS,
@@ -32,7 +37,12 @@ import {
   type OnlineAction,
   type OnlineOptions,
   type Settings,
+  type ChatRoom,
+  type ExportRequest,
+  type InsightsQuery,
+  type DeclineReason,
 } from './types.ts'
+import { VARIANTS } from './variant.ts'
 import { replay } from './review.ts'
 import { FEN, GAME_ID, PUZZLE_ANGLE, PUZZLE_ID, UCI_MOVE, USERNAME } from './patterns.ts'
 
@@ -71,6 +81,9 @@ const friendListSchema = v.pipe(
 )
 const actionSchema = v.picklist(ONLINE_ACTIONS, 'Invalid game action.')
 
+const intInRange = (min: number, max: number, message: string) =>
+  v.pipe(v.number(message), v.integer(message), v.minValue(min, message), v.maxValue(max, message))
+
 const clockField = (min: number, message: string) =>
   v.pipe(v.number(message), v.integer(message), v.minValue(min, message), v.maxValue(180, message))
 
@@ -80,6 +93,11 @@ const onlineOptionsSchema = v.object(
     increment: clockField(0, 'Invalid increment.'),
     color: v.picklist(CHALLENGE_COLORS, 'Invalid color.'),
     rated: v.boolean('Invalid rated option.'),
+    days: v.optional(v.picklist(CORRESPONDENCE_DAYS, 'Invalid days per move.')),
+    variant: v.optional(v.picklist(VARIANTS, 'Invalid variant.')),
+    fen: v.optional(
+      v.pipe(v.string('Invalid position.'), v.maxLength(100), v.regex(FEN, 'Invalid position.')),
+    ),
     account: v.optional(usernameSchema),
     target: v.optional(
       v.pipe(
@@ -145,6 +163,14 @@ const settingsSchema = v.object(
     ),
     reviewAuto: v.picklist(REVIEW_AUTO, 'Invalid review setting.'),
     reviewOnBattery: v.boolean('Invalid review setting.'),
+    receiveChallenges: v.boolean('Invalid challenge setting.'),
+    notifyChallenges: v.boolean('Invalid notification setting.'),
+    onlineChat: v.boolean('Invalid chat setting.'),
+    correspondencePoll: intInRange(0, 120, 'Invalid correspondence check interval.'),
+    zenMode: v.boolean('Invalid zen mode setting.'),
+    blindfold: v.boolean('Invalid blindfold setting.'),
+    cloudEval: v.boolean('Invalid cloud evaluation setting.'),
+    showOpeningName: v.boolean('Invalid opening name setting.'),
   },
   'Invalid settings.',
 )
@@ -203,8 +229,6 @@ const angleSchema = v.pipe(
   v.string('Invalid puzzle theme.'),
   v.regex(PUZZLE_ANGLE, 'Invalid puzzle theme.'),
 )
-const intInRange = (min: number, max: number, message: string) =>
-  v.pipe(v.number(message), v.integer(message), v.minValue(min, message), v.maxValue(max, message))
 
 const puzzleRequestSchema = v.object(
   {
@@ -302,6 +326,7 @@ const bestMoveOptionsSchema = v.optional(
         v.pipe(v.string('Invalid position.'), v.maxLength(100), v.regex(FEN, 'Invalid position.')),
       ),
       movetime: v.optional(intInRange(50, 5000, 'Invalid think time.')),
+      chess960: v.optional(v.boolean('Invalid engine options.')),
     },
     'Invalid engine options.',
   ),
@@ -346,6 +371,99 @@ export const assertLevel = (value: unknown): EngineLevel => parse(levelSchema, v
 export const assertUsernames = (value: unknown): string[] => parse(usernamesSchema, value)
 export const assertFriendList = (value: unknown): string[] => parse(friendListSchema, value)
 export const assertAction = (value: unknown): OnlineAction => parse(actionSchema, value)
+export const assertChatRoom = (value: unknown): ChatRoom =>
+  parse(v.picklist(CHAT_ROOMS, 'Invalid chat room.'), value)
+export const assertChatText = (value: unknown): string =>
+  parse(
+    v.pipe(
+      v.string('Invalid message.'),
+      v.trim(),
+      v.minLength(1, 'Type a message first.'),
+      v.maxLength(140, 'Chat messages are limited to 140 characters.'),
+    ),
+    value,
+  )
+export const assertDeclineReason = (value: unknown): DeclineReason =>
+  parse(v.picklist(DECLINE_REASONS, 'Invalid reason.'), value)
+export const assertTournamentSystem = (value: unknown): 'arena' | 'swiss' =>
+  parse(v.picklist(['arena', 'swiss'] as const, 'Invalid tournament.'), value)
+export const assertTournamentId = (value: unknown): string =>
+  parse(
+    v.pipe(v.string('Invalid tournament.'), v.regex(/^[a-zA-Z0-9]{8}$/, 'Invalid tournament.')),
+    value,
+  )
+export const assertTournamentPassword = (value: unknown): string | undefined =>
+  value === undefined || value === ''
+    ? undefined
+    : parse(v.pipe(v.string('Invalid password.'), v.maxLength(100, 'Invalid password.')), value)
+const EXPORT_MAX = 40 * 1024 * 1024
+/** An export to save: the bytes must really be the kind of file they claim to be. */
+export function assertExport(value: unknown): ExportRequest {
+  const request = parse(
+    v.object({
+      name: v.pipe(v.string(), v.regex(/^[\w .()+-]{1,80}$/, 'Invalid file name.')),
+      kind: v.picklist(['gif', 'png', 'pgn'] as const, 'Invalid export.'),
+      data: v.union([v.instance(Uint8Array), v.pipe(v.string(), v.maxLength(2_000_000))]),
+    }),
+    value,
+  )
+  const bytes = request.data
+  if (request.kind === 'pgn') {
+    if (typeof bytes !== 'string') throw new Error('Invalid export.')
+  } else {
+    if (!(bytes instanceof Uint8Array) || bytes.length > EXPORT_MAX)
+      throw new Error('Invalid export.')
+    const magic = Array.from(bytes.slice(0, 4))
+    const ok =
+      request.kind === 'gif'
+        ? String.fromCharCode(...magic) === 'GIF8'
+        : magic.join(',') === '137,80,78,71'
+    if (!ok) throw new Error('Invalid export.')
+  }
+  return request
+}
+export const assertInsightsQuery = (value: unknown): InsightsQuery =>
+  parse(
+    v.object(
+      {
+        account: usernameSchema,
+        speed: v.optional(
+          v.picklist([
+            'ultraBullet',
+            'bullet',
+            'blitz',
+            'rapid',
+            'classical',
+            'correspondence',
+          ] as const),
+        ),
+        rated: v.optional(v.boolean()),
+        days: v.optional(intInRange(1, 3650, 'Invalid period.')),
+      },
+      'Invalid insights filter.',
+    ),
+    value,
+  )
+export const assertPerfType = (value: unknown): PerfType =>
+  parse(v.picklist(PERF_TYPES, 'Invalid rating category.'), value)
+const lichessIdSchema = v.pipe(v.string('Invalid id.'), v.regex(/^[a-zA-Z0-9]{8}$/, 'Invalid id.'))
+export const assertLichessId = (value: unknown): string => parse(lichessIdSchema, value)
+export const assertWatchTarget = (
+  value: unknown,
+  channels: readonly string[],
+): { channel: string } | { gameId: string } =>
+  parse(
+    v.union(
+      [
+        v.object({ channel: v.picklist(channels as [string, ...string[]]) }),
+        v.object({ gameId: gameIdSchema }),
+      ],
+      'Invalid game to watch.',
+    ),
+    value,
+  )
+/** A connected account, or empty for "none". */
+export const assertOptionalAccount = (value: unknown): string => parse(optionalAccountSchema, value)
 export const assertOnlineOptions = (value: unknown): OnlineOptions =>
   parse(onlineOptionsSchema, value)
 export const assertTheme = (value: unknown): AppTheme => parse(themeSchema, value)

@@ -5,6 +5,7 @@ const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
 
 const tabs = [
   { label: 'Your mistakes', value: 'mistakes', icon: 'i-lucide-book-open' },
+  { label: 'Openings', value: 'openings', icon: 'i-lucide-book-marked' },
   { label: 'Coordinates', value: 'coordinates', icon: 'i-lucide-grid-3x3' },
   { label: 'Square colours', value: 'colors', icon: 'i-lucide-contrast' },
   { label: 'Knight paths', value: 'knight', icon: 'i-lucide-crown' },
@@ -28,6 +29,7 @@ const tabs = [
       @update:model-value="practiceTab = $event as string"
     />
     <MistakeTrainer v-if="practiceTab === 'mistakes'" />
+    <OpeningTrainer v-else-if="practiceTab === 'openings'" />
     <CoordinatesTrainer v-else-if="practiceTab === 'coordinates'" />
     <SquareColorTrainer v-else-if="practiceTab === 'colors'" />
     <KnightPath v-else-if="practiceTab === 'knight'" />

@@ -14,7 +14,7 @@ export function isAppUrl(value: string, developmentUrl = process.env.KCHESS_NUXT
   }
 }
 export const APP_CSP =
-  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://lichess.org; font-src 'self'; connect-src 'self' kchess://app data:; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'"
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://lichess.org https://image.lichess1.org; font-src 'self'; connect-src 'self' kchess://app data:; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'"
 
 // Vosk's Emscripten bindings generate JS functions. This exception applies only to its
 // build-extracted worker, which has no DOM or preload bridge, never to renderer documents.
