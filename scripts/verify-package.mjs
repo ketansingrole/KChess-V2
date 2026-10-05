@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getRawHeader } from '@electron/asar'
 
+import { PERFORMANCE_BUDGETS } from './performance-budgets.mjs'
+
 const MiB = 1024 * 1024
 const forbidden =
   /(?:^|\/)(?:[^/]*\.(?:app|framework|asar|dmg|exe|AppImage|deb|zip|blockmap)|\.temp[^/]*|mac(?:-arm64|-x64)?|linux-unpacked|win-unpacked)(?:\/|$)/i
@@ -22,11 +24,20 @@ export function verifyEntries(entries, label = 'package') {
       )
         throw new Error(`${label} contains an unused Stockfish build: ${path}`)
     }
-    if (size > 16 * MiB) throw new Error(`${label} contains an unexpectedly large file: ${path}`)
+    if (size > PERFORMANCE_BUDGETS.individualFileBytes)
+      throw new Error(`${label} contains an unexpectedly large file: ${path}`)
     total += size
   }
-  if (total > 32 * MiB) throw new Error(`${label} payload exceeds the 32 MiB budget.`)
+  if (total > PERFORMANCE_BUDGETS.packageBytes)
+    throw new Error(`${label} payload exceeds the 32 MiB budget.`)
   return total
+}
+
+export function verifyRendererEntries(entries) {
+  const bytes = verifyEntries(entries, 'Renderer')
+  if (bytes > PERFORMANCE_BUDGETS.rendererBytes)
+    throw new Error('Renderer exceeds the 12 MiB budget.')
+  return bytes
 }
 
 export async function verifyRenderer(root) {
@@ -41,7 +52,7 @@ export async function verifyRenderer(root) {
     }
   }
   await walk(root)
-  const bytes = verifyEntries(entries, 'Renderer')
+  const bytes = verifyRendererEntries(entries)
   console.info(`[kchess] Renderer verified: ${(bytes / MiB).toFixed(1)} MiB.`)
 }
 

@@ -8,7 +8,7 @@ import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/
 import type { BestMoveOptions, EngineStatus } from '../shared/types'
 import { MANAGED_PATH, managedEngine } from './managedEngine'
 import { UciController, SearchCancelled, assertEngineAvailable } from './uci'
-import { acquireEngine, searchThreads } from './engineScheduler'
+import { withEngineLease, searchThreads } from './engineScheduler'
 import { replay } from '../shared/review'
 import { INITIAL_FEN } from 'chessops/fen'
 import { engineLevelInfo } from '../shared/engineLevels'
@@ -121,7 +121,6 @@ export async function bestMove(
   serial = serial
     .catch(() => {})
     .then(async () => {
-      let release: (() => void) | undefined
       try {
         controller.signal.throwIfAborted()
         const status = await engineStatus(configured)
@@ -134,40 +133,46 @@ export async function bestMove(
           warm = { key, uci: new UciController(spawnEngine(status)) }
         }
         const target = warm.uci
-        release = await acquireEngine(3, () => controller.abort(), controller.signal)
-        await target.ready
-        controller.signal.throwIfAborted()
-        const profile = engineLevelInfo(level)
-        target.write('ucinewgame')
-        target.write(`setoption name Threads value ${searchThreads()}`)
-        target.write('setoption name Hash value 64')
-        // Set every time: the warm engine may have played a Chess960 game before.
-        target.write(`setoption name UCI_Chess960 value ${Boolean(chess960)}`)
-        target.write(`setoption name UCI_LimitStrength value ${Boolean(profile.uciElo)}`)
-        if (profile.uciElo) target.write(`setoption name UCI_Elo value ${profile.uciElo}`)
-        else target.write(`setoption name Skill Level value ${profile.skill ?? 20}`)
-        await target.sync()
-        controller.signal.throwIfAborted()
-        target.write(
-          `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}`,
-        )
-        const random = Math.random() < (profile.randomMove ?? 0)
-        const legal: string[] = []
-        const response = await target.search(
-          random ? 'go perft 1' : `go movetime ${movetime ?? profile.time}`,
-          (line) => {
-            const found = /^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/.exec(line)
-            if (found) legal.push(found[1]!)
-          },
-          Math.max(15_000, (movetime ?? profile.time) + 10_000),
+        await withEngineLease(
+          3,
+          () => controller.abort(),
           controller.signal,
+          async () => {
+            await target.ready
+            controller.signal.throwIfAborted()
+            const profile = engineLevelInfo(level)
+            target.write('ucinewgame')
+            target.write(`setoption name Threads value ${searchThreads()}`)
+            target.write('setoption name Hash value 64')
+            // Set every time: the warm engine may have played a Chess960 game before.
+            target.write(`setoption name UCI_Chess960 value ${Boolean(chess960)}`)
+            target.write(`setoption name UCI_LimitStrength value ${Boolean(profile.uciElo)}`)
+            if (profile.uciElo) target.write(`setoption name UCI_Elo value ${profile.uciElo}`)
+            else target.write(`setoption name Skill Level value ${profile.skill ?? 20}`)
+            await target.sync()
+            controller.signal.throwIfAborted()
+            target.write(
+              `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}`,
+            )
+            const random = Math.random() < (profile.randomMove ?? 0)
+            const legal: string[] = []
+            const response = await target.search(
+              random ? 'go perft 1' : `go movetime ${movetime ?? profile.time}`,
+              (line) => {
+                const found = /^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/.exec(line)
+                if (found) legal.push(found[1]!)
+              },
+              Math.max(15_000, (movetime ?? profile.time) + 10_000),
+              controller.signal,
+            )
+            const move = random
+              ? legal[Math.floor(Math.random() * legal.length)]
+              : response.split(/\s+/)[1]
+            if (!move || move === '(none)' || move === '0000')
+              throw new Error('Stockfish found no legal move.')
+            resolveResult(move)
+          },
         )
-        const move = random
-          ? legal[Math.floor(Math.random() * legal.length)]
-          : response.split(/\s+/)[1]
-        if (!move || move === '(none)' || move === '0000')
-          throw new Error('Stockfish found no legal move.')
-        resolveResult(move)
       } catch (cause) {
         rejectResult(
           controller.signal.aborted || cause instanceof SearchCancelled
@@ -177,7 +182,6 @@ export async function bestMove(
               : new Error(String(cause)),
         )
       } finally {
-        release?.()
         if (active === controller) {
           active = undefined
           idle = setTimeout(() => {

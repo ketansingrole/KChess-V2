@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { PERFORMANCE_BUDGETS, assertLibraryBudget } from './performance-budgets.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import { migrate } from '../src/main/migrations.ts'
 
@@ -9,6 +11,7 @@ const insert = db.prepare(`INSERT INTO games
   VALUES (?, ?, ?, ?, 1, 'blitz', 'blitz', 'mate', 'white', 'rival', 'e4 e5 Nf3 Nc6 Bb5 a6')`)
 const query =
   'SELECT account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, opponentRating, playerRating, ratingDiff, opening, moves FROM games ORDER BY createdAt DESC'
+const samples = []
 let installed = 0
 for (const count of [1000, 5000, 50_000]) {
   db.exec('BEGIN')
@@ -28,18 +31,25 @@ for (const count of [1000, 5000, 50_000]) {
   structuredClone(rows)
   const cloned = performance.now()
   const pageStart = performance.now()
-  const page = db.prepare(query + ' LIMIT 100').all()
+  const page = db.prepare(query + ' LIMIT ?').all(PERFORMANCE_BUDGETS.libraryPageRows)
   const pageQueryMs = +(performance.now() - pageStart).toFixed(2)
-  console.info(
-    JSON.stringify({
-      count,
-      queryMs: +(queried - start).toFixed(2),
-      cloneMs: +(cloned - queried).toFixed(2),
-      serializedBytes: Buffer.byteLength(JSON.stringify(rows)),
-      pageRows: page.length,
-      pageSerializedBytes: Buffer.byteLength(JSON.stringify(page)),
-      pageQueryMs,
-    }),
-  )
+  const sample = {
+    count,
+    queryMs: +(queried - start).toFixed(2),
+    cloneMs: +(cloned - queried).toFixed(2),
+    serializedBytes: Buffer.byteLength(JSON.stringify(rows)),
+    pageRows: page.length,
+    pageSerializedBytes: Buffer.byteLength(JSON.stringify(page)),
+    pageQueryMs,
+  }
+  if (process.argv.includes('--check')) assertLibraryBudget(sample)
+  samples.push(sample)
+  console.info(JSON.stringify(sample))
 }
 db.close()
+
+mkdirSync('test-results/guardrails', { recursive: true })
+writeFileSync(
+  'test-results/guardrails/library.json',
+  JSON.stringify({ budgets: PERFORMANCE_BUDGETS, samples }, null, 2) + '\n',
+)

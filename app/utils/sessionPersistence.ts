@@ -18,13 +18,14 @@ export function persistSession<T>(
   key: string,
   source: () => T,
   changes: () => unknown = source,
+  options: { serialize?: (value: T) => string; flush?: 'pre' | 'sync' } = {},
 ): Ref<string> & { flush: () => void } {
   const error = ref('')
   let timer: ReturnType<typeof setTimeout> | undefined
   const save = (): void => {
     clearTimeout(timer)
     try {
-      const value = JSON.stringify(source())
+      const value = (options.serialize ?? JSON.stringify)(source())
       if (value.length > 2_000_000)
         throw new Error('This study is too large to save automatically. Export a PGN copy.')
       localStorage.setItem(key, value)
@@ -40,7 +41,7 @@ export function persistSession<T>(
       clearTimeout(timer)
       timer = setTimeout(save, 150)
     },
-    { deep: true },
+    { deep: true, flush: options.flush ?? 'pre' },
   )
   window.addEventListener('beforeunload', save)
   onScopeDispose(() => {

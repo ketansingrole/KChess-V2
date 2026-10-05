@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { parse } from 'yaml'
 
 const VERSION = /^(20[0-9]{2})\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$/
 
@@ -32,10 +33,20 @@ export function nextReleaseVersion(tags, now = new Date()) {
 
 export function validateReleaseVersion(pkg, lock, tag) {
   parseReleaseVersion(pkg.version)
-  if (lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version)
-    throw new Error(
-      'package.json and both package-lock.json version fields must match. Use npm run release:version.',
+  const importer = lock.importers?.['.']
+  if (!importer || String(lock.lockfileVersion) !== '9.0')
+    throw new Error('Expected a pnpm lockfile with a root importer.')
+  for (const group of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const declared = pkg[group] ?? {}
+    const locked = importer[group] ?? {}
+    if (
+      Object.keys(declared).length !== Object.keys(locked).length ||
+      Object.entries(declared).some(
+        ([name, specifier]) => locked[name]?.specifier !== specifier || !locked[name]?.version,
+      )
     )
+      throw new Error('package.json dependencies and pnpm-lock.yaml must match. Run pnpm install.')
+  }
   if (tag !== undefined && tag !== `v${pkg.version}`)
     throw new Error(`Tag ${tag} must be exactly v${pkg.version}.`)
   for (const target of pkg.build.mac.target)
@@ -47,7 +58,7 @@ export function validateReleaseVersion(pkg, lock, tag) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = new URL('..', import.meta.url)
   const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
-  const lock = JSON.parse(readFileSync(new URL('package-lock.json', root), 'utf8'))
+  const lock = parse(readFileSync(new URL('pnpm-lock.yaml', root), 'utf8'))
   const tag = process.env.GITHUB_REF?.startsWith('refs/tags/')
     ? process.env.GITHUB_REF_NAME
     : undefined

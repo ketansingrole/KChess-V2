@@ -4,7 +4,8 @@
 
 ## How I checked it
 
-- [ ] `npm run format:check`, `npm run typecheck` and `npm test` pass
+- [ ] `pnpm run check` passes
+- [ ] Bug fixes include a regression for the failure sequence
 - [ ] I tried it in the running app (screenshots for UI changes)
 
 ## Licensing

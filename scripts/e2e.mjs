@@ -13,9 +13,9 @@ const candidates =
       ? ['dist/win-unpacked/KChess.exe']
       : ['dist/linux-unpacked/kchess', 'dist/linux-unpacked/kchess-electron']
 const executable = candidates.map((file) => join(root, file)).find(existsSync)
-if (packaged && !executable) throw new Error('Packaged app missing. Run npm run pack first.')
+if (packaged && !executable) throw new Error('Packaged app missing. Run pnpm run pack first.')
 if (!packaged && !existsSync(join(root, 'out/main/index.js')))
-  throw new Error('Built app missing. Run npm run build first.')
+  throw new Error('Built app missing. Run pnpm run build first.')
 await prepareVoiceModel()
 
 const env = {

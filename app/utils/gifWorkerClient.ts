@@ -26,7 +26,11 @@ export class GifWorkerClient {
     if (signal?.aborted) this.abort()
   }
   private fail(error: Error): void {
-    this.failure ??= error
+    if (this.failure) return
+    this.failure = error
+    this.signal?.removeEventListener('abort', this.abort)
+    this.worker.onmessage = null
+    this.worker.onerror = null
     this.pending?.reject(error)
     this.pending = undefined
     this.worker.terminate()

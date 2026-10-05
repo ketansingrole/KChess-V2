@@ -165,7 +165,7 @@ if (command === 'electron-vite') {
 // to resolve .cmd shims. (Avoid shell:true on POSIX: node concatenates args
 // without escaping, which would split quoted groups like concurrently's.)
 // Ensure project-local binaries (electron, concurrently, electron-vite, …)
-// resolve even when invoked outside of `npm run` (which sets this up itself).
+// resolve even when invoked outside of `pnpm run` (which sets this up itself).
 const localBin = path.join(root, 'node_modules', '.bin')
 if (!process.env.PATH?.split(path.delimiter).includes(localBin)) {
   process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH ?? ''}`

@@ -180,7 +180,11 @@ describe('SQLite game library', () => {
       true,
     )
     expect(await gamePgn('ALICE', first.games[0]!.id)).toBe('1. e4 e5 *')
-    expect((await gamePage({ offset: 0, limit: 100 })).games).toHaveLength(100)
+    const fullPage = await gamePage({ offset: 0, limit: 100 })
+    expect(fullPage.games).toHaveLength(100)
+    expect(fullPage.games.every((entry) => entry.pgn === undefined)).toBe(true)
+    // The actual API must retain the representative 64 KiB transfer budget.
+    expect(Buffer.byteLength(JSON.stringify(fullPage))).toBeLessThanOrEqual(64 * 1024)
     for (const invalid of [
       { limit: 101, offset: 0 },
       { limit: 10, offset: -1 },

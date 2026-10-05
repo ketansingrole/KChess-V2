@@ -125,7 +125,7 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       const executablePath = process.env.ELECTRON_EXEC_PATH
       if (!executablePath)
         throw new Error(
-          'Use npm run test:e2e or npm run test:packaged to launch through the branded wrapper.',
+          'Use pnpm run test:e2e or pnpm run test:packaged to launch through the branded wrapper.',
         )
       app = await _electron.launch({
         executablePath,
@@ -470,10 +470,10 @@ test('plays a move through the board and keeps the game when navigating', async 
   await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
   await expect(page.getByText('Your move', { exact: true })).toBeVisible()
   await navigate(page, 'Home')
-  await expect(page.getByRole('button', { name: 'Continue your game', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Continue your game\b/ })).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Continue your game', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Continue your game', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^Continue your game\b/ })).toBeVisible()
+  await page.getByRole('button', { name: /^Continue your game\b/ }).click()
   await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
   await navigate(page, 'Game history')
   await expect(page.locator('.local-history-row')).toHaveCount(1)

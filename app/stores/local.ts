@@ -174,20 +174,23 @@ export const useLocalGameStore = defineStore('local', () => {
     if (!running.value || position.value.turn !== color) return left
     return Math.max(0, left - (now - turnStarted))
   }
+  function expireClock(at = performance.now()): boolean {
+    if (!running.value) return false
+    const turn = position.value.turn
+    if (remaining(turn, at) > 0) return false
+    times.value = { ...times.value!, [turn]: 0 }
+    const winner = turn === 'white' ? 'black' : 'white'
+    declared.value = position.value.hasInsufficientMaterial(winner)
+      ? { reason: 'Time out, but mate was impossible' }
+      : { winner, reason: 'Time out' }
+    void play('lowTime')
+    return true
+  }
   const now = ref(performance.now())
   const ticker = useIntervalFn(
     () => {
       now.value = performance.now()
-      if (!running.value) return
-      const turn = position.value.turn
-      if (remaining(turn) <= 0) {
-        times.value = { ...times.value!, [turn]: 0 }
-        const winner = turn === 'white' ? 'black' : 'white'
-        declared.value = position.value.hasInsufficientMaterial(winner)
-          ? { reason: 'Time out, but mate was impossible' }
-          : { winner, reason: 'Time out' }
-        void play('lowTime')
-      }
+      expireClock(now.value)
     },
     100,
     { immediate: false },
@@ -208,11 +211,12 @@ export const useLocalGameStore = defineStore('local', () => {
 
   function move(uci: string): boolean {
     if (over.value || !atLive.value) return false
+    const nowMs = performance.now()
+    if (expireClock(nowMs)) return false
     const replayed = replaySetup(setup.value, [...moves.value, uci])
     if (replayed?.played.length !== moves.value.length + 1) return false
     const mover = position.value.turn
     if (times.value) {
-      const nowMs = performance.now()
       const spent = running.value ? nowMs - turnStarted : 0
       const increment = (clock.value?.[mover].increment ?? 0) * 1000
       times.value = {
@@ -260,14 +264,15 @@ export const useLocalGameStore = defineStore('local', () => {
     if (!over.value) declared.value = { reason: 'Draw agreed' }
   }
   function togglePause(): void {
-    if (!times.value || over.value) return
+    const at = performance.now()
+    if (!times.value || over.value || expireClock(at)) return
     if (!paused.value) {
       // Freeze the side to move's time where it is.
       const turn = position.value.turn
-      times.value = { ...times.value, [turn]: remaining(turn) }
+      times.value = { ...times.value, [turn]: remaining(turn, at) }
     }
     paused.value = !paused.value
-    turnStarted = performance.now()
+    turnStarted = at
   }
   /** Flipping by hand always turns the board, so it also stops the automatic turning. */
   function flip(): void {
@@ -321,21 +326,24 @@ export const useLocalGameStore = defineStore('local', () => {
       }
     },
   )
-  function otbLeft(side: 'top' | 'bottom'): number {
+  function otbLeft(side: 'top' | 'bottom', at = performance.now()): number {
     void now.value
     if (otbRunning.value !== side) return otb.value[side]
-    return Math.max(0, otb.value[side] - (performance.now() - otbStarted))
+    return Math.max(0, otb.value[side] - (at - otbStarted))
+  }
+  function expireOtb(at = performance.now()): boolean {
+    const side = otbRunning.value
+    if (!side || otbLeft(side, at) > 0) return false
+    otb.value = { ...otb.value, [side]: 0 }
+    otbFlagged.value = side
+    otbRunning.value = null
+    void play('lowTime')
+    return true
   }
   const otbTicker = useIntervalFn(
     () => {
       now.value = performance.now()
-      const side = otbRunning.value
-      if (side && otbLeft(side) <= 0) {
-        otb.value = { ...otb.value, [side]: 0 }
-        otbFlagged.value = side
-        otbRunning.value = null
-        void play('lowTime')
-      }
+      expireOtb(now.value)
     },
     100,
     { immediate: false },
@@ -343,21 +351,24 @@ export const useLocalGameStore = defineStore('local', () => {
   watch(otbRunning, (side) => (side ? otbTicker.resume() : otbTicker.pause()))
   /** A player pressed their clock: theirs stops (plus increment), the other side's starts. */
   function otbPress(side: 'top' | 'bottom'): void {
-    if (otbFlagged.value) return
+    const at = performance.now()
+    if (otbFlagged.value || expireOtb(at)) return
     if (otbRunning.value && otbRunning.value !== side) return
     const other = side === 'top' ? 'bottom' : 'top'
     if (otbRunning.value === side) {
-      const left = otbLeft(side) + otbConfig.value.increment * 1000
+      const left = otbLeft(side, at) + otbConfig.value.increment * 1000
       otb.value = { ...otb.value, [side]: left }
       otbMoves.value = { ...otbMoves.value, [side]: otbMoves.value[side] + 1 }
     }
-    otbStarted = performance.now()
+    otbStarted = at
     otbRunning.value = other
   }
   function otbPause(): void {
+    const at = performance.now()
+    if (expireOtb(at)) return
     const side = otbRunning.value
     if (!side) return
-    otb.value = { ...otb.value, [side]: otbLeft(side) }
+    otb.value = { ...otb.value, [side]: otbLeft(side, at) }
     otbRunning.value = null
   }
   function saveClockSession(): void {

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
+import { RequestScope, SubscriptionScope } from '../../src/shared/requestScope'
 import type {
   BroadcastGame,
   BroadcastUpdate,
@@ -19,7 +20,7 @@ export const useWatchStore = defineStore('watch', () => {
   const target = ref<{ channel: string } | { gameId: string } | null>(null)
   const error = ref('')
   let session = -1
-  let generation = 0
+  const requests = new RequestScope()
   const connection = ref<WatchState | null>(null)
 
   const broadcastList = ref<BroadcastSummary[] | null>(null)
@@ -91,20 +92,18 @@ export const useWatchStore = defineStore('watch', () => {
       else receiveFrame(update)
     }
   }
-  let offs: (() => void)[] = []
+  const subscriptions = new SubscriptionScope()
   function listen(): void {
-    if (offs.length) return
-    offs = [
-      window.kchess.onWatchState(state),
-      window.kchess.onWatch(receiveFrame),
-      window.kchess.onBroadcast(receiveRound),
-    ]
+    subscriptions.attach([
+      () => window.kchess.onWatchState(state),
+      () => window.kchess.onWatch(receiveFrame),
+      () => window.kchess.onBroadcast(receiveRound),
+    ])
   }
   function unlisten(): void {
-    generation++
+    requests.invalidate()
     clearPending()
-    for (const off of offs) off()
-    offs = []
+    subscriptions.detach()
   }
 
   async function loadChannels(): Promise<void> {
@@ -115,7 +114,7 @@ export const useWatchStore = defineStore('watch', () => {
     }
   }
   async function watch(next: { channel: string } | { gameId: string }): Promise<void> {
-    const request = ++generation
+    const request = requests.next()
     clearPending()
     session = -1
     roundSession = -1
@@ -127,19 +126,19 @@ export const useWatchStore = defineStore('watch', () => {
     pendingKind = 'watch'
     try {
       const id = await window.kchess.watch(next)
-      if (request === generation) {
+      if (request.current()) {
         session = id
         replayEarly()
       }
     } catch (cause) {
-      if (request !== generation) return
+      if (!request.current()) return
       clearPending()
       error.value = cause instanceof Error ? cause.message : String(cause)
       target.value = null
     }
   }
   async function stop(): Promise<void> {
-    generation++
+    requests.invalidate()
     clearPending()
     connection.value = null
     session = -1
@@ -158,13 +157,13 @@ export const useWatchStore = defineStore('watch', () => {
   }
   async function openTour(id: string): Promise<void> {
     const stopping = stop()
-    const request = generation
+    const request = requests.capture()
     await stopping
-    if (request !== generation) return
+    if (!request.current()) return
     error.value = ''
     try {
       const found = await window.kchess.broadcastTour(id)
-      if (request !== generation) return
+      if (!request.current()) return
       tour.value = found
       const round =
         tour.value.rounds.find((r) => r.id === tour.value?.defaultRoundId) ??
@@ -172,14 +171,14 @@ export const useWatchStore = defineStore('watch', () => {
         tour.value.rounds.at(-1)
       if (round) await openRound(round.id)
     } catch (cause) {
-      if (request !== generation) return
+      if (!request.current()) return
       clearPending()
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
   /** Opens a round's live feed; `game` keeps that board selected once its feed arrives. */
   async function openRound(id: string, game = ''): Promise<void> {
-    const request = ++generation
+    const request = requests.next()
     clearPending()
     session = -1
     roundSession = -1
@@ -195,12 +194,12 @@ export const useWatchStore = defineStore('watch', () => {
     pendingKind = 'round'
     try {
       const next = await window.kchess.watchBroadcast(id)
-      if (request === generation) {
+      if (request.current()) {
         roundSession = next
         replayEarly()
       }
     } catch (cause) {
-      if (request !== generation) return
+      if (!request.current()) return
       clearPending()
       error.value = cause instanceof Error ? cause.message : String(cause)
     }

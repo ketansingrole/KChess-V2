@@ -7,6 +7,8 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.{ts,mjs}'],
     environment: 'happy-dom',
     setupFiles: ['tests/unit/setup.ts'],
+    reporters: process.env.CI ? ['default', 'junit'] : ['default'],
+    outputFile: { junit: 'test-results/unit.xml' },
     restoreMocks: true,
     clearMocks: true,
   },

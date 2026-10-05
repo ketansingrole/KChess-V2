@@ -1,0 +1,11 @@
+# Keep dependency boundaries isolated, including Electron packaging.
+nodeLinker: isolated
+strictDepBuilds: true
+verifyDepsBeforeRun: error
+allowBuilds:
+  esbuild: true
+  stockfish: true
+  vue-demi: true
+  unrs-resolver: true
+  electron-winstaller: true
+  fsevents: true

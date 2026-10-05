@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   nextReleaseVersion,
@@ -5,10 +8,11 @@ import {
   validateReleaseVersion,
 } from '../../scripts/release-rules.mjs'
 import { attachDraftRelease } from '../../scripts/attach-draft-release.mjs'
-import { prepareNextVersion } from '../../scripts/next-version.mjs'
+import { prepareNextVersion, writeVersion } from '../../scripts/next-version.mjs'
 
 const pkg = {
   version: '2026.10.1',
+  dependencies: { stockfish: '^19.0.0' },
   build: {
     mac: {
       target: [
@@ -18,9 +22,28 @@ const pkg = {
     },
   },
 }
-const lock = { version: pkg.version, packages: { '': { version: pkg.version } } }
+const lock = {
+  lockfileVersion: '9.0',
+  importers: { '.': { dependencies: { stockfish: { specifier: '^19.0.0', version: '19.0.0' } } } },
+}
 
 describe('release rules', () => {
+  it('changes only the root version and preserves the dependency lockfile', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'kchess-version-'))
+    try {
+      writeFileSync(join(directory, 'package.json'), JSON.stringify(pkg))
+      const lockfile = 'lockfileVersion: 9.0\n'
+      writeFileSync(join(directory, 'pnpm-lock.yaml'), lockfile)
+      writeVersion('2026.10.2', directory)
+      expect(JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))).toEqual({
+        ...pkg,
+        version: '2026.10.2',
+      })
+      expect(readFileSync(join(directory, 'pnpm-lock.yaml'), 'utf8')).toBe(lockfile)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
   it('leaves package versions untouched when refreshing tags fails', () => {
     const git = vi.fn(() => {
       throw new Error('cannot reach origin')
@@ -70,15 +93,23 @@ describe('release rules', () => {
       'ahead',
     )
   })
-  it('requires matching tag, package version, and both lockfile fields', () => {
+  it('requires matching tag and locked dependency specifiers', () => {
     expect(validateReleaseVersion(pkg, lock, 'v2026.10.1')).toBe('v2026.10.1')
     expect(() => validateReleaseVersion(pkg, lock, 'v2026.10.0')).toThrow('exactly')
-    expect(() => validateReleaseVersion(pkg, { ...lock, version: '2026.10.0' })).toThrow(
-      'must match',
-    )
-    expect(() =>
-      validateReleaseVersion(pkg, { ...lock, packages: { '': { version: '2026.10.0' } } }),
-    ).toThrow('must match')
+    expect(() => validateReleaseVersion(pkg, { lockfileVersion: '9.0' })).toThrow('root importer')
+    for (const dependencies of [
+      {},
+      { stockfish: { specifier: '^18.0.0', version: '18.0.0' } },
+      { stockfish: { specifier: '^19.0.0' } },
+      { ...lock.importers['.'].dependencies, extra: { specifier: '1.0.0', version: '1.0.0' } },
+    ]) {
+      expect(() =>
+        validateReleaseVersion(pkg, {
+          ...lock,
+          importers: { '.': { dependencies } },
+        }),
+      ).toThrow('must match')
+    }
     expect(() =>
       validateReleaseVersion(
         { ...pkg, build: { mac: { target: [{ arch: ['arm64', 'x64'] }] } } },

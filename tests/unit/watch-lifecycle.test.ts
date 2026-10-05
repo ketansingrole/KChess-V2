@@ -139,3 +139,40 @@ it('rejects late session acknowledgments after stop or a newer selection', async
   b.frame({ ...frame, session: 2, gameId: 'Game0002' })
   expect(store.frame?.gameId).toBe('Game0002')
 })
+
+it('keeps only the newest selection across generated reply and cancellation orders', async () => {
+  const fc = await import('fast-check')
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(fc.boolean(), { minLength: 1, maxLength: 12 }),
+      fc.boolean(),
+      async (order, cancelled) => {
+        const b = bridge()
+        const replies = order.map(() => deferred<number>())
+        let index = 0
+        b.api.watch = () => replies[index++]!.promise
+        const store = useWatchStore()
+        const work = replies.map((_, i) =>
+          store.watch({ gameId: 'Game' + String(i).padStart(4, '0') }),
+        )
+        if (cancelled) await store.stop()
+        // Resolve from either end to exercise replies overtaking newer requests.
+        const pending = replies.map((_, i) => i)
+        for (const fromStart of order) {
+          const i = fromStart ? pending.shift()! : pending.pop()!
+          replies[i]!.resolve(i + 1)
+          await work[i]
+          b.frame({ ...frame, session: i + 1, gameId: 'Game' + String(i).padStart(4, '0') })
+        }
+        if (cancelled) expect(store.frame).toBeNull()
+        else {
+          b.frame({ ...frame, session: replies.length, gameId: 'Newest' })
+          expect(store.frame?.gameId).toBe('Newest')
+        }
+        await store.stop()
+        store.unlisten()
+      },
+    ),
+    { numRuns: 30 },
+  )
+})

@@ -7,22 +7,23 @@ KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, a
 
 ## Run
 
-Requires Node.js **24.21.0** (Node 24 LTS) and npm 11. The runtime is pinned in `.nvmrc` and `.node-version`; use `nvm install && nvm use` if you use nvm.
+Requires Node.js **24.21.0** (Node 24 LTS) and pnpm 11.19.0. The runtime is pinned in `.nvmrc` and `.node-version`; use `nvm install && nvm use` if you use nvm.
 
 ```bash
-npm ci
-npm run dev
+npm install --global pnpm@11.19.0
+pnpm install --frozen-lockfile
+pnpm run dev
 ```
 
-`npm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error.
+`pnpm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error.
 
-`npm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. Renderer assets and every packaged app are checked for nested apps/installers, redundant renderer dependencies, unused engine builds, and a 32 MiB app-payload budget (excluding Electron). `npm start` opens the latest build; `npm run app` builds first.
+`pnpm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. Renderer assets and every packaged app are checked for nested apps/installers, redundant renderer dependencies, unused engine builds, and a 32 MiB app-payload budget (excluding Electron). `pnpm start` opens the latest build; `pnpm run app` builds first.
 
 Voice input downloads the 40 MB Apache-2.0 English Vosk model from `alphacephei.com`
 on first use, verifies its pinned SHA-256 digest, and caches it in the app's user-data
 folder. Subsequent use works offline. Download progress and retry errors appear in the
 voice control. Dev/build no longer downloads or bundles the model.
-`npm run prepare:voice` prepares a verified test fixture in `.data/voice/cache/`;
+`pnpm run prepare:voice` prepares a verified test fixture in `.data/voice/cache/`;
 voice e2e tests copy this fixture into their isolated profile to run offline.
 These generated files are ignored by Git.
 
@@ -59,29 +60,29 @@ and the outcome. It lists the least certain words and the most common “heard �
 and can be exported as JSON or cleared. On macOS, KChess asks the system for
 microphone access the first time voice starts (Electron doesn't do this on its own). If access is
 blocked, the voice panel offers **Open privacy settings** and resumes automatically once you allow
-it. In a dev build started from a terminal (`npm run dev`), macOS attributes the microphone to the
+it. In a dev build started from a terminal (`pnpm run dev`), macOS attributes the microphone to the
 app that launched KChess (your terminal or editor), so allow _that_ app under
 Privacy & Security → Microphone.
 
-| Command                                 | Purpose                                                                              |
-| --------------------------------------- | ------------------------------------------------------------------------------------ |
-| `npm run check`                         | Formatting, ESLint, all type checks, smoke and unit tests                            |
-| `npm test`                              | Chess, puzzle/database and main-process smoke tests, plus Vitest                     |
-| `npm run test:unit`                     | Mounted Vue components, real Pinia stores, lifecycle and diagnostic regression tests |
-| `npm run test:watch`                    | Vitest watch mode                                                                    |
-| `npm run lint:fix` / `npm run format`   | Apply lint fixes / formatting                                                        |
-| `npm run build && npm run test:e2e`     | Playwright against the built Electron app                                            |
-| `npm run pack && npm run test:packaged` | Package for this platform and verify the packaged app                                |
+| Command                                   | Purpose                                                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `pnpm run check`                          | Formatting, ESLint, all type checks, smoke and unit tests                            |
+| `pnpm test`                               | Chess, puzzle/database and main-process smoke tests, plus Vitest                     |
+| `pnpm run test:unit`                      | Mounted Vue components, real Pinia stores, lifecycle and diagnostic regression tests |
+| `pnpm run test:watch`                     | Vitest watch mode                                                                    |
+| `pnpm run lint:fix` / `pnpm run format`   | Apply lint fixes / formatting                                                        |
+| `pnpm run build && pnpm run test:e2e`     | Playwright against the built Electron app                                            |
+| `pnpm run pack && pnpm run test:packaged` | Package for this platform and verify the packaged app                                |
 
 UI tests launch through the branded wrapper, use a separate `.dev/automation` copy on macOS and a temporary profile, and never import legacy accounts or use your saved tokens. They cover SQLite and preload startup, bundled Stockfish, board moves, navigation, puzzle remounting, promotion and settings persistence. On headless Linux, run Electron checks through `xvfb-run --auto-servernum`. Failure traces and screenshots are written to `test-results/`.
 
-CI runs `npm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
+CI runs `pnpm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
 
 Settings → Data & storage → **Export diagnostics** saves a JSON report containing app/runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
 
 On macOS, dev and local runs launch through `scripts/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `build/icon.icns` changes; quit any running dev session first.
 
-On macOS, `npm run pack:mac` creates an unsigned local Apple Silicon `.app` in `dist/mac-arm64/`.
+On macOS, `pnpm run pack:mac` creates an unsigned local Apple Silicon `.app` in `dist/mac-arm64/`.
 
 ### Releasing
 
@@ -92,11 +93,11 @@ the version valid semver. Follow the release checklist in [AGENTS.md](AGENTS.md)
 Merge the intended changes with green CI first, then prepare the version change:
 
 ```bash
-npm run release:version   # fetches origin's tags; updates package.json and package-lock.json
-npm run release:verify
-npm run check
-git diff -- package.json package-lock.json
-git add package.json package-lock.json
+pnpm run release:version   # fetches origin's tags; updates package.json; dependencies stay locked
+pnpm run release:verify
+pnpm run check
+git diff -- package.json pnpm-lock.yaml
+git add package.json pnpm-lock.yaml
 git commit -m "Release $(node -p "require('./package.json').version")"
 ```
 
@@ -107,7 +108,7 @@ stops if it cannot refresh remote tags; it does not guess using a stale local li
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, plus `SHA256SUMS.txt`,
 and updater manifests/blockmaps to a **draft** GitHub Release; review it and press _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER`
-or doesn't match `package.json` and both lockfile version fields fails validation, as does
+or doesn't match `package.json` fails validation, as does
 a release commit outside `main` or failing repository checks. Reruns can replace assets
 on an existing draft, but refuse to overwrite a published release. Creating a release
 prepares a draft; publishing it is a separate action.

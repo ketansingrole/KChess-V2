@@ -4,19 +4,19 @@ Thanks for helping! Bug reports, fixes, and ideas are all welcome.
 
 ## Getting started
 
-Requires Node.js 24.21.0 (pinned in `.nvmrc`) and npm 11 (see the [README](README.md#run) for details).
+Requires Node.js 24.21.0 (pinned in `.nvmrc`) and pnpm 11.19.0 (see the [README](README.md#run) for details).
 
 ```bash
-npm ci
-npm run dev        # Nuxt + Electron together, with hot reload
+pnpm install --frozen-lockfile
+pnpm run dev        # Nuxt + Electron together, with hot reload
 ```
 
 Before opening a pull request, run the same checks CI runs:
 
 ```bash
-npm run check
-npm run build
-npm run test:e2e
+pnpm run check
+pnpm run build
+pnpm run test:e2e
 ```
 
 ## Guidelines

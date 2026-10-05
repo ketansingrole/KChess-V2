@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch, toRef, type Ref } from 'vue'
+import { ref, shallowRef, watch, toRef, type Ref } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { readSession, persistSession } from '../utils/sessionPersistence'
 import { isVariant, replaySetup, type GameSetup } from '../../src/shared/variant'
@@ -62,23 +62,53 @@ export function decodeArchive(raw: unknown): ArchivedGame[] | undefined {
 }
 
 export const useGameArchiveStore = defineStore('gameArchive', () => {
-  const games = ref(readSession('kchess:game-history:v1', decodeArchive) ?? [])
-  const error = persistSession('kchess:game-history:v1', () => ({ version: 1, games: games.value }))
+  const games = shallowRef(readSession('kchess:game-history:v1', decodeArchive) ?? [])
+  // Entries are replaced, never edited in place. Serialize only the changed game;
+  // reuse earlier entries for the exact size limit and the debounced disk write.
+  const encoded = new WeakMap<ArchivedGame, string>()
+  const encode = (game: ArchivedGame): string => {
+    let text = encoded.get(game)
+    if (text === undefined) {
+      text = JSON.stringify(game)
+      encoded.set(game, text)
+    }
+    return text
+  }
+  const revision = ref(0)
+  const error = persistSession(
+    'kchess:game-history:v1',
+    () => games.value,
+    () => revision.value,
+    {
+      serialize: (items) => `{"version":1,"games":[${items.map(encode).join(',')}]}`,
+      flush: 'sync',
+    },
+  )
+  const overhead = JSON.stringify({ version: 1, games: [] }).length
   function save(game: ArchivedGame): void {
-    const next = [game, ...games.value.filter((g) => g.id !== game.id)]
+    const candidate = { ...game, setup: { ...game.setup }, moves: [...game.moves] }
+    const next = [candidate, ...games.value.filter((g) => g.id !== candidate.id)]
+    const size =
+      overhead +
+      next.reduce((sum, item) => sum + encode(item).length, 0) +
+      Math.max(0, next.length - 1)
     // Never silently discard older games to make room for a new one.
-    if (next.length > 500 || JSON.stringify({ version: 1, games: next }).length > 2_000_000) {
+    if (next.length > 500 || size > 2_000_000) {
       error.value = 'Game history is full. Export saved games before making room for new games.'
       return
     }
     games.value = next
-    error.flush()
+    revision.value++
+    if (candidate.finished) error.flush()
   }
   function remove(id: string): void {
-    games.value = games.value.filter((g) => g.id !== id)
+    const next = games.value.filter((g) => g.id !== id)
+    if (next.length === games.value.length) return
+    games.value = next
+    revision.value++
     error.flush()
   }
-  return { games, error, save, remove }
+  return { games, error, save, remove, flush: () => error.flush() }
 })
 
 /** One stable identity per session: reloads and takebacks update the same history entry. */

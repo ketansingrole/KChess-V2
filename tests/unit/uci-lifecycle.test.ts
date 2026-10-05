@@ -150,3 +150,28 @@ it('retains the executable when an engine will not exit before the maintenance d
   child.emit('exit', 0)
   vi.useRealTimers()
 })
+
+it.each(['success', 'failure', 'cancel'] as const)(
+  'releases the shared engine lease after %s',
+  async (outcome) => {
+    const { withEngineLease } = await import('../../src/main/engineScheduler')
+    const controller = new AbortController()
+    const work = withEngineLease(
+      1,
+      () => controller.abort(),
+      controller.signal,
+      async () => {
+        if (outcome === 'failure') throw new Error('search failed')
+        if (outcome === 'cancel') {
+          controller.abort()
+          controller.signal.throwIfAborted()
+        }
+        return 'bestmove'
+      },
+    )
+    if (outcome === 'success') await expect(work).resolves.toBe('bestmove')
+    else await expect(work).rejects.toThrow()
+    const release = await acquireEngine(1, vi.fn())
+    release()
+  },
+)

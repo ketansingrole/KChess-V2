@@ -63,3 +63,19 @@ export function acquireEngine(
   })
 }
 export const searchThreads = (): number => (onBattery() ? Math.min(2, budget) : budget)
+
+/** Configure and search only inside this lease; all exits release the shared scheduler. */
+export async function withEngineLease<T>(
+  priority: number,
+  stop: () => void,
+  signal: AbortSignal,
+  work: () => Promise<T>,
+): Promise<T> {
+  const release = await acquireEngine(priority, stop, signal)
+  try {
+    signal.throwIfAborted()
+    return await work()
+  } finally {
+    release()
+  }
+}

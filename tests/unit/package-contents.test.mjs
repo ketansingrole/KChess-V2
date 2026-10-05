@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { verifyEntries } from '../../scripts/verify-package.mjs'
+import { verifyEntries, verifyRendererEntries } from '../../scripts/verify-package.mjs'
 
 describe('release payload checks', () => {
   it('accepts frontend assets, runtime dependencies, and the lite engine', () => {
@@ -39,4 +39,10 @@ describe('release payload checks', () => {
       ),
     ).toThrow('32 MiB budget')
   })
+})
+
+it('enforces the renderer budget separately from the larger packaged runtime budget', () => {
+  const entries = [{ path: '_nuxt/app.js', size: 13 * 1024 * 1024 }]
+  expect(() => verifyEntries(entries)).not.toThrow()
+  expect(() => verifyRendererEntries(entries)).toThrow('12 MiB')
 })

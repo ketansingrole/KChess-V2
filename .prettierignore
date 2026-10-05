@@ -1,4 +1,5 @@
 node_modules/
+.pnpm-store/
 .dev/
 out/
 dist/
@@ -9,7 +10,7 @@ public/voice/model.tar.gz*
 playwright-report/
 test-results/
 coverage/
-package-lock.json
+pnpm-lock.yaml
 src/renderer/auto-imports.d.ts
 src/renderer/components.d.ts
 app/assets/openings.json

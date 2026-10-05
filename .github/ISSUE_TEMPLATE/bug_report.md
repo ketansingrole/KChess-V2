@@ -13,6 +13,12 @@ labels: bug
 1.
 2.
 
+**Regression information**
+
+- Did this work in a previous released version? Yes / No / Unknown
+- Last working version:
+- Trigger: reconnect / cancellation / restore / import / normal use / other
+
 **Environment**
 
 - KChess version / commit:

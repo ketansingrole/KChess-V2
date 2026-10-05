@@ -4,7 +4,7 @@ import type { AnalysisRequest, AnalysisUpdate, EngineLine } from '../shared/type
 import { parseInfo } from '../shared/uciInfo'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { UciController, SearchCancelled } from './uci'
-import { acquireEngine, searchThreads } from './engineScheduler'
+import { withEngineLease, searchThreads } from './engineScheduler'
 
 const DEPTH_LIMIT = 26
 const TIME_LIMIT_MS = 60_000
@@ -33,7 +33,6 @@ export async function startAnalysis(
       let nps: number | undefined
       let key = ''
       let lastEmit = 0
-      let release: (() => void) | undefined
       const emit = (reason?: AnalysisUpdate['reason'], error?: string): void =>
         send({
           id,
@@ -61,38 +60,45 @@ export async function startAnalysis(
           engine = { key, uci: new UciController(spawnEngine(status)) }
         }
         const target = engine.uci
-        release = await acquireEngine(2, () => controller.abort(), controller.signal)
-        await target.ready
-        controller.signal.throwIfAborted()
-        target.write(`setoption name Threads value ${searchThreads()}`)
-        target.write('setoption name Hash value 128')
-        target.write(`setoption name MultiPV value ${request.lines}`)
-        await target.sync()
-        controller.signal.throwIfAborted()
-        target.write(
-          `position fen ${request.rootFen ?? request.fen}${request.moves?.length ? ` moves ${request.moves.join(' ')}` : ''}`,
-        )
-        await target.search(
-          request.infinite ? 'go infinite' : `go depth ${DEPTH_LIMIT} movetime ${TIME_LIMIT_MS}`,
-          (line) => {
-            const parsed = parseInfo(line, request.fen.split(' ')[1] === 'w')
-            if (!parsed || parsed.line.rank > request.lines || controller.signal.aborted) return
-            lines.set(parsed.line.rank, parsed.line)
-            nps = parsed.nps ?? nps
-            if (Date.now() - lastEmit >= 120) {
-              lastEmit = Date.now()
-              emit()
-            }
-          },
-          request.infinite ? 0 : TIME_LIMIT_MS + 10_000,
+        await withEngineLease(
+          2,
+          () => controller.abort(),
           controller.signal,
+          async () => {
+            await target.ready
+            controller.signal.throwIfAborted()
+            target.write(`setoption name Threads value ${searchThreads()}`)
+            target.write('setoption name Hash value 128')
+            target.write(`setoption name MultiPV value ${request.lines}`)
+            await target.sync()
+            controller.signal.throwIfAborted()
+            target.write(
+              `position fen ${request.rootFen ?? request.fen}${request.moves?.length ? ` moves ${request.moves.join(' ')}` : ''}`,
+            )
+            await target.search(
+              request.infinite
+                ? 'go infinite'
+                : `go depth ${DEPTH_LIMIT} movetime ${TIME_LIMIT_MS}`,
+              (line) => {
+                const parsed = parseInfo(line, request.fen.split(' ')[1] === 'w')
+                if (!parsed || parsed.line.rank > request.lines || controller.signal.aborted) return
+                lines.set(parsed.line.rank, parsed.line)
+                nps = parsed.nps ?? nps
+                if (Date.now() - lastEmit >= 120) {
+                  lastEmit = Date.now()
+                  emit()
+                }
+              },
+              request.infinite ? 0 : TIME_LIMIT_MS + 10_000,
+              controller.signal,
+            )
+            emit('completed')
+          },
         )
-        emit('completed')
       } catch (cause) {
         if (controller.signal.aborted || cause instanceof SearchCancelled) emit('interrupted')
         else emit('failed', cause instanceof Error ? cause.message : String(cause))
       } finally {
-        release?.()
         if (current === controller) {
           current = undefined
           idleTimer = setTimeout(() => stopAnalysis(true), IDLE_MS)

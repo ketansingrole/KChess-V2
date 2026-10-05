@@ -50,3 +50,24 @@ it('propagates worker errors instead of leaving an export pending', async () => 
   await rejection
   client.close()
 })
+
+it('bounds transferred frame ownership throughout a long export and terminates only once', async () => {
+  const { target, client } = worker()
+  for (let i = 0; i < 600; i++) {
+    const rgba = new Uint8ClampedArray(256)
+    const work = client.add({ rgba, delay: 40 })
+    expect(rgba.byteLength).toBe(0)
+    // No second frame can be retained while this acknowledgment is outstanding.
+    await expect(client.add({ rgba: new Uint8ClampedArray(256), delay: 40 })).rejects.toThrow(
+      'already being encoded',
+    )
+    target.onmessage?.({ data: { ready: true } } as MessageEvent)
+    await work
+    target.postMessage.mockClear()
+  }
+  client.close()
+  client.close()
+  expect(target.terminate).toHaveBeenCalledTimes(1)
+  expect(target.onmessage).toBeNull()
+  expect(target.onerror).toBeNull()
+})

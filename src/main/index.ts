@@ -11,7 +11,7 @@ import {
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
 import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
-import { handle, setIpcOwner } from './ipc'
+import { handle, setIpcOwner, assertIpcComplete } from './ipc'
 import { isAppUrl } from './appOrigin'
 import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
 import { join } from 'node:path'
@@ -831,6 +831,7 @@ void app
     handle('exportVoiceHistory', () => exportVoiceHistory())
     handle('usage', () => usageReport())
     handle('resetUsage', () => resetUsage())
+    assertIpcComplete()
     createWindow()
     appUpdates.start()
     app.on('activate', () => {

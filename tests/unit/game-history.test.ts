@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { nextTick, effectScope, ref } from 'vue'
 import { createPinia, setActivePinia, disposePinia, getActivePinia } from 'pinia'
 import { useLocalGameStore } from '../../app/stores/local'
@@ -7,6 +7,7 @@ import {
   useGameArchive,
   decodeArchive,
   type GameSnapshot,
+  type ArchivedGame,
 } from '../../app/stores/gameArchive'
 import { STANDARD_SETUP } from '../../src/shared/variant'
 import { setupPgn } from '../../app/utils/chess'
@@ -149,4 +150,100 @@ describe('OAuth callback presentation', () => {
     expect(oauthLook({ appearance: 'neon', light: colors, dark: colors })).toBe(DEFAULT_OAUTH_LOOK)
     expect(oauthLook(undefined)).toBe(DEFAULT_OAUTH_LOOK)
   })
+})
+
+const archived = (id: string): ArchivedGame => ({
+  id,
+  source: 'board',
+  startedAt: 0,
+  updatedAt: 0,
+  white: 'White',
+  black: 'Black',
+  result: '*',
+  reason: 'In progress',
+  finished: false,
+  setup: STANDARD_SETUP,
+  moves: ['e2e4'],
+  timeControl: '-',
+})
+
+it('batches history writes and only serializes changed games', async () => {
+  vi.useFakeTimers()
+  const history = useGameArchiveStore()
+  for (let n = 0; n < 100; n++) history.save(archived(String(n)))
+  history.flush()
+  const stringify = vi.spyOn(JSON, 'stringify')
+  const write = vi.spyOn(localStorage, 'setItem')
+  history.save({ ...archived('0'), moves: ['e2e4', 'e7e5'] })
+  history.save({ ...archived('0'), moves: ['e2e4', 'e7e5', 'g1f3'] })
+  expect(stringify).toHaveBeenCalledTimes(2)
+  expect(write).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(150)
+  expect(stringify).toHaveBeenCalledTimes(2)
+  expect(write).toHaveBeenCalledTimes(1)
+  const saved = JSON.parse(localStorage.getItem('kchess:game-history:v1')!)
+  expect(saved.games).toHaveLength(100)
+  expect(saved.games[0].moves).toEqual(['e2e4', 'e7e5', 'g1f3'])
+  await vi.advanceTimersByTimeAsync(300)
+  expect(write).toHaveBeenCalledTimes(1)
+})
+
+it('flushes pending history on window unload and persists removals immediately', () => {
+  vi.useFakeTimers()
+  const history = useGameArchiveStore()
+  history.save(archived('first'))
+  expect(localStorage.getItem('kchess:game-history:v1')).toBeNull()
+  window.dispatchEvent(new Event('beforeunload'))
+  expect(decodeArchive(JSON.parse(localStorage.getItem('kchess:game-history:v1')!))).toHaveLength(1)
+  history.remove('first')
+  expect(decodeArchive(JSON.parse(localStorage.getItem('kchess:game-history:v1')!))).toEqual([])
+})
+
+it('enforces the exact encoded history limit without dropping the previous archive', () => {
+  vi.useFakeTimers()
+  const history = useGameArchiveStore()
+  const game = archived('boundary')
+  // Synthetic large metadata exercises encoded length including escaped characters.
+  const base = JSON.stringify({ version: 1, games: [game] }).length
+  game.reason = 'x'.repeat(2_000_000 - base + game.reason.length)
+  history.save(game)
+  history.flush()
+  const saved = localStorage.getItem('kchess:game-history:v1')!
+  expect(saved).toHaveLength(2_000_000)
+  history.save({ ...game, reason: game.reason + '\n' })
+  expect(history.error).toContain('full')
+  expect(localStorage.getItem('kchess:game-history:v1')).toBe(saved)
+  expect(history.games[0]?.reason).toBe(game.reason)
+})
+
+it('retains history on storage failure and retries the latest game', async () => {
+  vi.useFakeTimers()
+  const history = useGameArchiveStore()
+  const write = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+    throw new Error('Storage full')
+  })
+  history.save(archived('first'))
+  await vi.advanceTimersByTimeAsync(150)
+  expect(history.error).toBe('Storage full')
+  expect(history.games).toHaveLength(1)
+  history.save({ ...archived('first'), result: '1-0', finished: true })
+  expect(history.error).toBe('')
+  expect(JSON.parse(localStorage.getItem('kchess:game-history:v1')!).games[0].result).toBe('1-0')
+  expect(write).toHaveBeenCalledTimes(2)
+})
+
+it('keeps all 500 games when the archive is full and permits replacing an existing game', async () => {
+  vi.useFakeTimers()
+  const history = useGameArchiveStore()
+  for (let n = 0; n < 500; n++) history.save(archived(String(n)))
+  history.save(archived('overflow'))
+  expect(history.error).toContain('full')
+  expect(history.games).toHaveLength(500)
+  history.save({ ...archived('0'), result: '1-0', finished: true })
+  expect(history.error).toBe('')
+  expect(history.games).toHaveLength(500)
+  const write = vi.spyOn(localStorage, 'setItem')
+  await vi.advanceTimersByTimeAsync(300)
+  expect(write).not.toHaveBeenCalled()
+  expect(JSON.parse(localStorage.getItem('kchess:game-history:v1')!).games[0].result).toBe('1-0')
 })

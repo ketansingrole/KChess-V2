@@ -239,3 +239,113 @@ it('preserves another account’s playing session when logging out an unrelated 
     expect.objectContaining({ account: '', gameId: '', phase: 'idle' }),
   )
 })
+
+it('retains protection through generated credential and network failures until authoritative recovery', async () => {
+  const fc = await import('fast-check')
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(fc.constantFrom('cancel', 'credentials', 'network'), {
+        minLength: 1,
+        maxLength: 10,
+      }),
+      async (actions) => {
+        mocks.accounts = [{ username: 'Alice', connected: true }]
+        mocks.getToken.mockResolvedValue('Alice-token')
+        mocks.GET.mockImplementation((path: string) =>
+          path === '/api/account/playing'
+            ? Promise.resolve({ data: { nowPlaying: [{ gameId: 'AbCd1234' }] } })
+            : Promise.reject(new Error('offline')),
+        )
+        const session = new OnlineSession(vi.fn(), vi.fn())
+        try {
+          await session.resume()
+          await flushPromises()
+          for (const action of actions) {
+            session.cancel()
+            if (action !== 'cancel') {
+              mocks.getToken.mockResolvedValue(action === 'credentials' ? null : 'Alice-token')
+              mocks.GET.mockRejectedValue(new Error('offline'))
+              await expect(session.resume()).rejects.toThrow()
+            }
+            expect(session.playing).toBe(true)
+            expect(session.assistanceBlocked).toBe(true)
+          }
+          mocks.getToken.mockResolvedValue('Alice-token')
+          mocks.GET.mockResolvedValue({ data: { nowPlaying: [] } })
+          await session.resume()
+          expect(session.playing).toBe(false)
+          expect(session.assistanceBlocked).toBe(false)
+        } finally {
+          session.close()
+        }
+      },
+    ),
+    { numRuns: 25 },
+  )
+})
+
+it.each(['cancel', 'close', 'logout'] as const)(
+  'rejects an attachment whose credentials arrive after %s',
+  async (action) => {
+    const token = deferred<string>()
+    mocks.getToken.mockReturnValue(token.promise)
+    const session = new OnlineSession(vi.fn(), vi.fn())
+    const pending = session.attach('Alice', 'AbCd1234')
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    if (action === 'logout') session.logout(['Alice'])
+    else session[action]()
+    token.resolve('Alice-token')
+    await rejected
+    expect(mocks.GET).not.toHaveBeenCalled()
+    expect(session.playing).toBe(false)
+    session.close()
+  },
+)
+
+it('keeps the newer attachment when an older account login arrives late', async () => {
+  const alice = deferred<string>()
+  mocks.getToken.mockImplementation((account?: string) =>
+    account === 'Alice' ? alice.promise : Promise.resolve('Bob-token'),
+  )
+  const session = new OnlineSession(vi.fn(), vi.fn())
+  const older = session.attach('Alice', 'AbCd1234')
+  const rejected = expect(older).rejects.toMatchObject({ name: 'AbortError' })
+  await session.attach('Bob', 'Other123')
+  const game = mocks.GET.mock.calls.find(([path]) => path === '/api/board/game/stream/{gameId}')
+  expect(game?.[1].headers).toEqual({ Authorization: 'Bearer Bob-token' })
+  alice.resolve('Alice-token')
+  await rejected
+  expect(
+    mocks.GET.mock.calls.filter(([path]) => path === '/api/board/game/stream/{gameId}'),
+  ).toHaveLength(1)
+  expect(game?.[1].signal.aborted).toBe(false)
+  session.close()
+})
+
+it('supersedes a pending attachment with authoritative recovery', async () => {
+  const token = deferred<string>()
+  mocks.getToken.mockReturnValueOnce(token.promise).mockResolvedValue('Alice-token')
+  mocks.GET.mockResolvedValue({ data: { nowPlaying: [] } })
+  const session = new OnlineSession(vi.fn(), vi.fn())
+  const pending = session.attach('Alice', 'AbCd1234')
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  await session.resume()
+  token.resolve('Alice-token')
+  await rejected
+  expect(mocks.GET).toHaveBeenCalledTimes(1)
+  expect(session.playing).toBe(false)
+  session.close()
+})
+
+it('treats a late credential failure for a cancelled attachment as cancellation', async () => {
+  const token = deferred<string>()
+  mocks.getToken.mockReturnValue(token.promise)
+  const session = new OnlineSession(vi.fn(), vi.fn())
+  const pending = session.attach('Alice', 'AbCd1234')
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  session.cancel()
+  token.reject(new Error('Old login failure'))
+  await rejected
+  expect(mocks.GET).not.toHaveBeenCalled()
+  session.close()
+})

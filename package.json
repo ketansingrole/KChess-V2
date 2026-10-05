@@ -17,7 +17,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "app": "npm run build && node scripts/with-branded-electron.mjs electron .",
+    "app": "pnpm run build && node scripts/with-branded-electron.mjs electron .",
     "build": "node scripts/build.mjs",
     "typecheck": "nuxt typecheck && tsc --noEmit -p tsconfig.electron.json && vue-tsc --noEmit -p tsconfig.tests.json",
     "prepare:voice": "node scripts/prepare-voice-model.mjs",
@@ -28,22 +28,25 @@
     "test:puzzle-worker": "node scripts/puzzle-worker-smoke.mjs",
     "benchmark:library": "node scripts/library-benchmark.mjs",
     "test:lifecycle": "vitest run tests/unit/lifecycle.test.ts tests/unit/online-session.test.ts",
-    "test": "npm run test:smoke && npm run test:unit",
+    "test": "pnpm run test:smoke && pnpm run test:unit",
     "start": "node scripts/with-branded-electron.mjs electron .",
-    "pack:mac": "npm run build && electron-builder --mac dir --arm64",
+    "pack:mac": "pnpm run build && electron-builder --mac dir --arm64",
     "postinstall": "install-electron && nuxt prepare",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:smoke": "npm run test:chess && npm run test:puzzles && node --experimental-strip-types scripts/main-smoke.ts",
+    "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types scripts/main-smoke.ts",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
+    "check": "node scripts/run-checks.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:packaged": "node scripts/e2e.mjs --packaged",
-    "pack": "npm run build && electron-builder --dir",
+    "pack": "pnpm run build && electron-builder --dir",
     "release:version": "node scripts/next-version.mjs",
     "release:verify": "node scripts/release-rules.mjs",
-    "verify:package": "node scripts/verify-package.mjs"
+    "verify:package": "node scripts/verify-package.mjs",
+    "check:fast": "node scripts/check-fast.mjs",
+    "check:performance": "node scripts/library-benchmark.mjs --check",
+    "check:report": "node scripts/guardrail-report.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -87,12 +90,13 @@
     "vosk-browser": "0.0.8",
     "vue": "^3.5.0",
     "vue-router": "^5.3.1",
-    "vue-tsc": "^3.3.12"
+    "vue-tsc": "^3.3.12",
+    "yaml": "2.9.1"
   },
   "build": {
     "appId": "com.kchess.electron",
     "productName": "KChess",
-    "copyright": "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
+    "copyright": "Copyright \u00a9 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -183,15 +187,7 @@
   },
   "engines": {
     "node": ">=24.21.0 <25",
-    "npm": ">=11 <12"
+    "pnpm": ">=11.19.0 <12"
   },
-  "packageManager": "npm@11.19.1",
-  "allowScripts": {
-    "esbuild": true,
-    "stockfish": true,
-    "vue-demi": true,
-    "unrs-resolver": true,
-    "electron-winstaller": true,
-    "fsevents": true
-  }
+  "packageManager": "pnpm@11.19.0"
 }

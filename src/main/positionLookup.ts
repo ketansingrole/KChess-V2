@@ -81,6 +81,8 @@ const optionsSchema = v.optional(
   {},
 )
 
+export const assertLookupOptions = (value: unknown): LookupOptions => v.parse(optionsSchema, value)
+
 type Cached = Omit<PositionLookup, 'cached' | 'stale' | 'message'>
 const cachedGame = v.object({
   id: v.pipe(v.string(), v.regex(/^[a-zA-Z0-9]{8}$/)),
@@ -185,7 +187,7 @@ export class PositionLookupService {
   async lookup(rawKind: unknown, rawFen: unknown, rawOptions?: unknown): Promise<PositionLookup> {
     const kind = v.parse(v.picklist(POSITION_LOOKUP_KINDS), rawKind)
     const fen = assertAnalysisRequest({ fen: rawFen, lines: 1 }).fen
-    const options = normalizeOptions(kind, v.parse(optionsSchema, rawOptions))
+    const options = normalizeOptions(kind, assertLookupOptions(rawOptions))
     const position = Chess.fromSetup(parseFen(fen).unwrap()).unwrap()
     if (
       kind === 'tablebase' &&

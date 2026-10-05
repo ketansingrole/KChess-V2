@@ -17,7 +17,7 @@ import type {
 } from '../shared/types'
 import { parseInfo } from '../shared/uciInfo'
 import { UciController, SearchCancelled } from './uci'
-import { acquireEngine, searchThreads } from './engineScheduler'
+import { withEngineLease, searchThreads } from './engineScheduler'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { gamesToReview, hasAccount, markChecked, readReview, writeReview } from './reviewStore'
 
@@ -120,40 +120,44 @@ async function search(
 ): Promise<ReviewEval> {
   const controller = new AbortController()
   searchController = controller
-  let release: (() => void) | undefined
   let score: ReviewEval = {}
   try {
-    release = await acquireEngine(1, () => controller.abort(), controller.signal)
-    if (job.cancelled || !host || host.busy() === 'online') throw new SearchCancelled()
-    write(target, `setoption name Threads value ${job.background ? 1 : searchThreads()}`)
-    await target.uci.sync()
-    controller.signal.throwIfAborted()
-    write(
-      target,
-      `position fen ${job.fen}${index ? ` moves ${job.moves.slice(0, index).join(' ')}` : ''}`,
-    )
-    await target.uci.search(
-      `go depth ${depth} movetime ${ms}`,
-      (line) => {
-        const parsed = parseInfo(line, job.positions[index]!.turn === 'white')
-        if (!parsed || parsed.line.rank !== 1) return
-        const { cp, mate, pv, depth } = parsed.line
-        score = {
-          ...(mate !== undefined ? { mate } : { cp }),
-          best: pv[0],
-          pv: pv.slice(0, PV_LENGTH),
-          depth,
-        }
-      },
-      ms + 10_000,
+    return await withEngineLease(
+      1,
+      () => controller.abort(),
       controller.signal,
+      async () => {
+        if (job.cancelled || !host || host.busy() === 'online') throw new SearchCancelled()
+        write(target, `setoption name Threads value ${job.background ? 1 : searchThreads()}`)
+        await target.uci.sync()
+        controller.signal.throwIfAborted()
+        write(
+          target,
+          `position fen ${job.fen}${index ? ` moves ${job.moves.slice(0, index).join(' ')}` : ''}`,
+        )
+        await target.uci.search(
+          `go depth ${depth} movetime ${ms}`,
+          (line) => {
+            const parsed = parseInfo(line, job.positions[index]!.turn === 'white')
+            if (!parsed || parsed.line.rank !== 1) return
+            const { cp, mate, pv, depth } = parsed.line
+            score = {
+              ...(mate !== undefined ? { mate } : { cp }),
+              best: pv[0],
+              pv: pv.slice(0, PV_LENGTH),
+              depth,
+            }
+          },
+          ms + 10_000,
+          controller.signal,
+        )
+        return score
+      },
     )
-    return score
   } catch (error) {
     if (controller.signal.aborted) throw new SearchCancelled()
     throw error
   } finally {
-    release?.()
     if (searchController === controller) searchController = undefined
   }
 }

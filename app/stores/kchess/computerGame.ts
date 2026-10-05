@@ -259,11 +259,23 @@ export function useComputerGame(options: {
     () => localMoves.value.length > 0,
   )
 
+  /** Settle timeout at the action deadline, independently of display timer ticks. */
+  function expireClock(at = performance.now()): boolean {
+    if (!clockRunning.value) return false
+    const turn = localGame.value.turn
+    if (remaining(turn, at) > 0) return false
+    times.value = { ...times.value!, [turn]: 0 }
+    flagged.value = turn
+    gameEpoch.value++
+    void window.kchess.stopEngine().catch(() => {})
+    thinking.value = false
+    void play('lowTime')
+    return true
+  }
   /** Charge the side that just moved for its thinking and give it its increment. */
-  function settleClock(mover: 'white' | 'black'): void {
+  function settleClock(mover: 'white' | 'black', now: number): void {
     const current = times.value
     if (!current) return
-    const now = performance.now()
     const spent = clockRunning.value ? now - turnStarted : 0
     const increment = (localClock.value?.increment ?? 0) * 1000
     times.value = {
@@ -276,16 +288,7 @@ export function useComputerGame(options: {
   const ticker = useIntervalFn(
     () => {
       now.value = performance.now()
-      if (!clockRunning.value) return
-      const turn = localGame.value.turn
-      if (remaining(turn) <= 0) {
-        times.value = { ...times.value!, [turn]: 0 }
-        flagged.value = turn
-        gameEpoch.value++
-        void window.kchess.stopEngine().catch(() => {})
-        thinking.value = false
-        void play('lowTime')
-      }
+      expireClock(now.value)
     },
     200,
     { immediate: false },
@@ -306,12 +309,14 @@ export function useComputerGame(options: {
 
   function makeMove(uci: string): void {
     if (localPly.value !== localMoves.value.length || localOver.value || thinking.value) return
+    const at = performance.now()
+    if (expireClock(at)) return
     const mover = localGame.value.turn
     const san = playUci(localGame.value.clone(), uci)
     const replayed = san ? null : replaySetup(localSetup.value, [...localMoves.value, uci])
     // Castling may arrive king-two-squares on a Chess960 board; the replay normalises it.
     if (!san && replayed?.played.length !== localMoves.value.length + 1) return
-    settleClock(mover)
+    settleClock(mover, at)
     localMoves.value = [...localMoves.value, uci]
     localPly.value = localMoves.value.length
     playMoveSound(san || replayed?.played.at(-1)?.san)
@@ -347,10 +352,12 @@ export function useComputerGame(options: {
       })
       if (epoch !== gameEpoch.value || moveCount !== localMoves.value.length || localOver.value)
         return
+      const at = performance.now()
+      if (expireClock(at)) return
       const replayed = replaySetup(setup, [...localMoves.value, move])
       if (replayed?.played.length !== localMoves.value.length + 1) return
       const san = replayed.played.at(-1)!.san
-      settleClock(localGame.value.turn)
+      settleClock(localGame.value.turn, at)
       localMoves.value = [...localMoves.value, move]
       localPly.value = localMoves.value.length
       playMoveSound(san)

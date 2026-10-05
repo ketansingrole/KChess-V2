@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,12 +17,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run check
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - name: Report guardrail measurements
+        if: always()
+        run: pnpm run check:report
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: check-measurements
+          path: |
+            test-results/guardrails/
+            test-results/unit.xml
+          if-no-files-found: ignore
+          retention-days: 30
 
   desktop:
     strategy:
@@ -33,13 +49,14 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:puzzle-worker
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run test:puzzle-worker
       # Windows Server runners deny microphone access in privacy settings, which the app
       # (correctly) reports as "denied". Allow it so the voice e2e test can run.
       - name: Allow microphone access (Windows)
@@ -55,16 +72,30 @@ jobs:
             New-Item -Path $p -Force | Out-Null
             Set-ItemProperty -Path $p -Name Value -Value Allow
           }
-      - run: npm run test:e2e
+      - run: pnpm run test:e2e
         if: runner.os != 'Linux'
-      - run: xvfb-run --auto-servernum npm run test:e2e
+      - run: xvfb-run --auto-servernum pnpm run test:e2e
         if: runner.os == 'Linux'
       - name: Package and verify contents
-        run: npx electron-builder --dir --publish never
-      - run: npm run test:packaged
+        run: pnpm exec electron-builder --dir --publish never
+      - run: pnpm run test:packaged
         if: runner.os != 'Linux'
-      - run: xvfb-run --auto-servernum npm run test:packaged
+      - run: xvfb-run --auto-servernum pnpm run test:packaged
         if: runner.os == 'Linux'
+      - name: Report guardrail measurements
+        if: always()
+        run: pnpm run check:report
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-measurements-${{ matrix.os }}
+          path: |
+            test-results/guardrails/
+            test-results/desktop*.json
+          if-no-files-found: ignore
+          retention-days: 30
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

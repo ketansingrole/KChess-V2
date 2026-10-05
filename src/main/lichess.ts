@@ -52,6 +52,7 @@ import { isGameInProgress } from '../shared/gameStatus'
 import { lichessFetch } from './requestPolicy'
 import { validateOnlineEvent } from '../shared/onlineEvent'
 import { readLines } from './ndjson'
+import { RequestScope } from '../shared/requestScope'
 import { attributeTo, withUsage } from './usage'
 import { canBoardSeek, canDirectChallenge, perfFor } from '../shared/timeControl'
 import { GAME_ID } from '../shared/patterns'
@@ -937,6 +938,8 @@ export class OnlineSession {
   private pendingId = ''
   private epoch = 0
   private resumeAttempt = 0
+  private readonly attachments = new RequestScope()
+  private attachingAccount = ''
   /** Games whose start has been announced to the window, so a reconnect does not repeat it. */
   private announced = new Set<string>()
   private presenceCache = new LRUCache<string, Promise<PresenceReport>>({ max: 100, ttl: 4000 })
@@ -951,6 +954,7 @@ export class OnlineSession {
   ) {}
 
   private report(cause: unknown): void {
+    if (cause instanceof DOMException && cause.name === 'AbortError') return
     if (
       cause instanceof LichessError &&
       cause.status === 400 &&
@@ -1139,21 +1143,33 @@ export class OnlineSession {
   /** Open a known game of `account` on the board: its event stream, then its game stream. */
   async attach(account: string, id: string): Promise<void> {
     if (this.liveGame === id) return
-    const token = await getToken(account)
-    if (!token)
-      throw new Error(`@${account}'s Lichess login is unavailable. Reconnect it in Settings.`)
-    // Two callers (an accept and the event it causes) may race here.
-    if (this.liveGame === id) return
-    this.cancel()
-    this.currentAccount = account
-    attributeTo(account, 'play')
-    this.controller = new AbortController()
-    void this.eventStream(token, this.controller.signal)
-    void this.openGame(id, token)
+    const request = this.attachments.next()
+    this.attachingAccount = account
+    try {
+      const token = await getToken(account)
+      if (!request.current()) throw new DOMException('Attachment cancelled.', 'AbortError')
+      if (!token)
+        throw new Error(`@${account}'s Lichess login is unavailable. Reconnect it in Settings.`)
+      // Another caller may have attached this game while credentials were loading.
+      if (this.liveGame === id) return
+      this.cancel()
+      this.currentAccount = account
+      attributeTo(account, 'play')
+      this.controller = new AbortController()
+      void this.eventStream(token, this.controller.signal)
+      void this.openGame(id, token)
+    } catch (cause) {
+      if (!request.current()) throw new DOMException('Attachment cancelled.', 'AbortError')
+      throw cause
+    } finally {
+      if (request.current()) this.attachingAccount = ''
+    }
   }
 
   /** Reattach to a real-time game in progress on any connected account. */
   async resume(): Promise<{ id: string; account: string } | null> {
+    this.attachments.invalidate()
+    this.attachingAccount = ''
     const attempt = ++this.resumeAttempt
     this.recoveryUnverified = true
     let authRequired = false
@@ -1722,6 +1738,8 @@ export class OnlineSession {
   }
 
   cancel(): void {
+    this.attachments.invalidate()
+    this.attachingAccount = ''
     // A correspondence game has no clock to protect: closing it frees the board at once.
     const leavingCorrespondence =
       this.liveCorrespondence && this.liveGame !== '' && this.protectedGame === this.liveGame
@@ -1773,6 +1791,7 @@ export class OnlineSession {
     if (accounts) {
       const names = new Set(accounts.map((name) => name.toLowerCase()))
       if (
+        !names.has(this.attachingAccount.toLowerCase()) &&
         !names.has(this.currentAccount.toLowerCase()) &&
         !names.has(this.protectedAccount.toLowerCase()) &&
         !(this.recoveryUnverified && !this.currentAccount && !this.protectedAccount)
