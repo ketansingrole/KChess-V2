@@ -14,7 +14,11 @@ export function readSession<T>(
     return undefined
   }
 }
-export function persistSession<T>(key: string, source: () => T): Ref<string> {
+export function persistSession<T>(
+  key: string,
+  source: () => T,
+  changes: () => unknown = source,
+): Ref<string> & { flush: () => void } {
   const error = ref('')
   let timer: ReturnType<typeof setTimeout> | undefined
   const save = (): void => {
@@ -31,7 +35,7 @@ export function persistSession<T>(key: string, source: () => T): Ref<string> {
     }
   }
   const off = watch(
-    source,
+    changes,
     () => {
       clearTimeout(timer)
       timer = setTimeout(save, 150)
@@ -44,5 +48,5 @@ export function persistSession<T>(key: string, source: () => T): Ref<string> {
     off()
     window.removeEventListener('beforeunload', save)
   })
-  return error
+  return Object.assign(error, { flush: save })
 }

@@ -1,5 +1,5 @@
 /**
- * A small animated-GIF encoder (GIF89a, LZW, one global palette), so exporting a game needs no
+ * Small animated-GIF encoders (GIF89a and LZW), so exporting a game needs no
  * dependency. Frames are RGBA pixel arrays of the same size.
  */
 
@@ -195,4 +195,58 @@ export function encodeGif(width: number, height: number, frames: readonly GifFra
   }
   writer.byte(0x3b)
   return writer.result()
+}
+
+/** Local palettes allow each frame to be encoded and released without retaining earlier pixels. */
+export class StreamingGifEncoder {
+  private writer = new ByteWriter()
+  private frames = 0
+  private finished = false
+  constructor(
+    private width: number,
+    private height: number,
+  ) {
+    if (
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      width < 1 ||
+      height < 1 ||
+      width * height > 1_000_000
+    )
+      throw new Error('Invalid GIF dimensions.')
+    const writer = this.writer
+    writer.text('GIF89a')
+    writer.short(width)
+    writer.short(height)
+    writer.bytes([0x70, 0, 0]) // Local tables only; no global palette.
+    writer.bytes([0x21, 0xff, 0x0b])
+    writer.text('NETSCAPE2.0')
+    writer.bytes([3, 1, 0, 0, 0])
+  }
+  add(frame: GifFrame): void {
+    if (this.finished || this.frames >= 600 || frame.rgba.length !== this.width * this.height * 4)
+      throw new Error('Invalid GIF frame.')
+    const { palette, lookup } = buildPalette([frame])
+    const writer = this.writer
+    writer.bytes([0x21, 0xf9, 4, 0])
+    writer.short(Math.max(2, Math.round(frame.delay)))
+    writer.bytes([0, 0, 0x2c])
+    writer.short(0)
+    writer.short(0)
+    writer.short(this.width)
+    writer.short(this.height)
+    writer.byte(0x87)
+    writer.bytes(palette)
+    const indices = new Uint8Array(this.width * this.height)
+    for (let p = 0, i = 0; p < indices.length; p++, i += 4)
+      indices[p] = lookup[key(frame.rgba[i]!, frame.rgba[i + 1]!, frame.rgba[i + 2]!)]!
+    lzw(writer, indices)
+    this.frames++
+  }
+  finish(): Uint8Array {
+    if (!this.frames || this.finished) throw new Error('Nothing to export.')
+    this.finished = true
+    this.writer.byte(0x3b)
+    return this.writer.result()
+  }
 }

@@ -185,6 +185,14 @@ export const useKChessStore = defineStore('kchess', () => {
     label: string
     run: () => void
   } | null>(null)
+  const onlineGame = useOnlineGame({
+    activeAccount: () => activeOnlineAccount.value,
+    run,
+    fail,
+    info,
+    notifyDesktop,
+    chatEnabled: () => settings.value?.onlineChat ?? true,
+  })
   const {
     localMoves,
     localSaveError,
@@ -214,6 +222,8 @@ export const useKChessStore = defineStore('kchess', () => {
     makeMove,
   } = useComputerGame({
     engineReady,
+    assistanceAllowed: () =>
+      !['playing', 'seeking', 'disconnected'].includes(onlineGame.onlinePhase.value),
     fail,
     recheckEngine,
     notifyDesktop,
@@ -226,16 +236,10 @@ export const useKChessStore = defineStore('kchess', () => {
     },
     { immediate: true },
   )
-  const onlineGame = useOnlineGame({
-    activeAccount: () => activeOnlineAccount.value,
-    run,
-    fail,
-    info,
-    notifyDesktop,
-    chatEnabled: () => settings.value?.onlineChat ?? true,
-  })
+
   const {
     onlinePhase,
+    onlineStatus,
     onlineAccount,
     readOnlineState,
     onlineId,
@@ -769,6 +773,7 @@ export const useKChessStore = defineStore('kchess', () => {
   async function init(): Promise<void> {
     if (initialized) return
     initialized = true
+    onlineGame.checkingOnline()
     try {
       data.value = await window.kchess.loadData()
       settings.value = { ...data.value.settings }
@@ -808,9 +813,19 @@ export const useKChessStore = defineStore('kchess', () => {
           onlineAccount.value = resumed.account
           onlineId.value = resumed.id
           if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
+        } else {
+          onlinePhase.value = 'idle'
         }
       })
-      .catch(() => undefined)
+      .catch((cause) => {
+        if (onlineGame.onlineConnection.value?.phase === 'checking')
+          onlineGame.onlineConnection.value = {
+            ...onlineGame.onlineConnection.value,
+            phase: 'disconnected',
+          }
+        onlineStatus.value =
+          cause instanceof Error ? cause.message : 'Reconnect to verify your game status.'
+      })
     ticker.resume()
     window.addEventListener('keydown', keydown)
     void loadProfile()

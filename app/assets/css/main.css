@@ -1530,10 +1530,12 @@ button.move-cell:hover {
   align-items: center;
   gap: 10px 40px;
   padding: 18px 4px;
-  border-top: 1px solid var(--ui-border);
-}
-.setting-row:first-child {
   border-top: 0;
+}
+/* Hidden headings still count as children. Draw dividers only between rows,
+   so the first visible row never duplicates the card's top border. */
+.setting-row ~ .setting-row {
+  border-top: 1px solid var(--ui-border);
 }
 /* A control that needs the full width (the board-theme picker) goes under its title. */
 .setting-row.stacked {

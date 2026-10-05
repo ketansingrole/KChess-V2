@@ -393,7 +393,14 @@ export interface OnlineConnection {
   account: string
   gameId: string
   lane: 'events' | 'game' | 'seek'
-  phase: 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'auth-required' | 'idle'
+  phase:
+    | 'checking'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'disconnected'
+    | 'auth-required'
+    | 'idle'
   message?: string
 }
 
@@ -598,6 +605,13 @@ export interface WatchPlayer {
   name: string
   title?: string
   rating?: number
+}
+
+/** Connection health of the TV/game feed, scoped to its watch session. */
+export interface WatchState {
+  session: number
+  phase: 'connecting' | 'connected' | 'ended' | 'error'
+  message?: string
 }
 
 /** One position of a game being watched (TV or a game by id). */
@@ -1367,6 +1381,7 @@ export interface DesktopApi {
   /** Follow a broadcast round's live PGN; updates on `onBroadcast`. */
   watchBroadcast(roundId: string): Promise<number>
   stopWatching(): Promise<void>
+  onWatchState(callback: (state: WatchState) => void): () => void
   onWatch(callback: (frame: WatchFrame) => void): () => void
   onBroadcast(callback: (update: BroadcastUpdate) => void): () => void
   broadcasts(): Promise<BroadcastSummary[]>

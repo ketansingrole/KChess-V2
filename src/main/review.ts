@@ -221,7 +221,11 @@ export function getReview(fen: string, moves: string[]): StoredReview | null {
 export function requestReview(request: ReviewRequest): StoredReview | null {
   const job = jobFor(request, false)
   if (!job) return null
-  const stored = readReview(job.key)
+  const cached = readReview(job.key)
+  // Link the requesting game even when cached output is returned or its search is already queued.
+  const stored = job.gameId
+    ? writeReview({ ...(cached ?? emptyReview(job)), gameId: job.gameId }).review
+    : cached
   if (stored?.complete && stored.source === 'lichess') return stored
   if (running?.key === job.key) {
     running.background = false

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   BroadcastUpdate,
   WatchFrame,
+  WatchState,
   ChallengeInfo,
   LobbyState,
   AnalysisUpdate,
@@ -132,6 +133,11 @@ const api: DesktopApi = {
   stopWatching: () => invoke('stopWatching'),
   broadcasts: () => invoke('broadcasts'),
   broadcastTour: (id) => invoke('broadcastTour', id),
+  onWatchState: (callback) => {
+    const listener = (_: unknown, state: WatchState): void => callback(state)
+    ipcRenderer.on(IPC_EVENTS.watchState, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.watchState, listener)
+  },
   onWatch: (callback) => {
     const listener = (_: unknown, frame: WatchFrame): void => callback(frame)
     ipcRenderer.on(IPC_EVENTS.watch, listener)

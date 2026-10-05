@@ -10,6 +10,42 @@ export class SearchCancelled extends Error {
   }
 }
 
+const controllers = new Set<UciController>()
+let maintenance = false
+export function assertEngineAvailable(): void {
+  if (maintenance) throw new Error('Stockfish is being updated. Retry shortly.')
+}
+/** Prevent new processes while all owners release the executable being replaced. */
+export async function withEngineMaintenance<T>(
+  action: () => Promise<T>,
+  stopOwners: () => void = () => {},
+): Promise<T> {
+  assertEngineAvailable()
+  maintenance = true
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    stopOwners()
+    await Promise.race([
+      Promise.all(
+        [...controllers].map((controller) => {
+          controller.close()
+          return controller.closed
+        }),
+      ),
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error('Stockfish did not exit. The previous engine was retained.')),
+          4000,
+        )
+      }),
+    ])
+    return await action()
+  } finally {
+    clearTimeout(deadline)
+    maintenance = false
+  }
+}
+
 /** Owns pipes, deadlines and termination. Consumers own positions and interpretation of info. */
 export class UciController {
   private listeners = new Set<(line: string) => void>()
@@ -19,11 +55,21 @@ export class UciController {
   private stopSearch?: () => void
   private termination?: ReturnType<typeof setTimeout>
   readonly ready: Promise<void>
+  readonly closed: Promise<void>
 
   constructor(
     private child: ChildProcessByStdio<Writable, Readable, Readable>,
     private deadline = 10_000,
   ) {
+    controllers.add(this)
+    this.closed = new Promise((resolve) => {
+      const ended = (): void => {
+        controllers.delete(this)
+        resolve()
+      }
+      child.once('exit', ended)
+      child.once('error', ended)
+    })
     const lines = createInterface({ input: child.stdout })
     lines.on('line', (raw) => {
       for (const listener of [...this.listeners]) listener(raw.trim())

@@ -7,7 +7,7 @@ import { app } from 'electron'
 import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/validate'
 import type { BestMoveOptions, EngineStatus } from '../shared/types'
 import { MANAGED_PATH, managedEngine } from './managedEngine'
-import { UciController, SearchCancelled } from './uci'
+import { UciController, SearchCancelled, assertEngineAvailable } from './uci'
 import { acquireEngine, searchThreads } from './engineScheduler'
 import { replay } from '../shared/review'
 import { INITIAL_FEN } from 'chessops/fen'
@@ -63,6 +63,7 @@ export async function engineStatus(configured = ''): Promise<EngineStatus> {
 export function spawnEngine(
   status: EngineStatus,
 ): ChildProcessByStdio<Writable, Readable, Readable> {
+  assertEngineAvailable()
   return status.bundled
     ? spawn(process.execPath, [bundledEnginePath()], {
         stdio: ['pipe', 'pipe', 'pipe'],

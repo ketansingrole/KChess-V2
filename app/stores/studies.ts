@@ -71,5 +71,15 @@ export const useStudyStore = defineStore('studies', () => {
       if (!taken.has(name)) return name
     }
   }
-  return { items, error, save, remove, restore, rename, duplicate, freshName }
+  return {
+    items,
+    error,
+    flush: () => error.flush(),
+    save,
+    remove,
+    restore,
+    rename,
+    duplicate,
+    freshName,
+  }
 })

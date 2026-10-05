@@ -1,6 +1,7 @@
 import type {
   BroadcastUpdate,
   WatchFrame,
+  WatchState,
   ChallengeInfo,
   LobbyState,
   AnalysisUpdate,
@@ -29,6 +30,7 @@ export interface IpcEvents {
   'challenges:update': ChallengeInfo[]
   'online:lobby': LobbyState
   'online:ongoing-changed': null
+  'watch:state': WatchState
   'watch:frame': WatchFrame
   'watch:broadcast': BroadcastUpdate
 }
@@ -47,6 +49,7 @@ export const IPC_EVENTS = {
   challenges: 'challenges:update',
   lobby: 'online:lobby',
   ongoingChanged: 'online:ongoing-changed',
+  watchState: 'watch:state',
   watch: 'watch:frame',
   broadcast: 'watch:broadcast',
 } as const satisfies Record<string, keyof IpcEvents>
@@ -66,6 +69,7 @@ type Subscription =
   | 'onChallenges'
   | 'onLobbyState'
   | 'onOngoingChanged'
+  | 'onWatchState'
   | 'onWatch'
   | 'onBroadcast'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>

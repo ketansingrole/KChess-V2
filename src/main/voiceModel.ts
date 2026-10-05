@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
-import { unzipSync } from 'fflate'
-import { create } from 'tar'
+import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import type { VoiceModelProgress } from '../shared/types'
 
 export const VOICE_MODEL = {
@@ -12,12 +13,44 @@ export const VOICE_MODEL = {
   sha256: '30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498',
 }
 const MAX_DOWNLOAD = 50 * 1024 * 1024
-const MAX_EXTRACTED = 200 * 1024 * 1024
 
 async function checksum(path: string): Promise<string> {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(path)) hash.update(chunk)
   return hash.digest('hex')
+}
+
+interface PreparedArchive {
+  prepared: string
+  marker: { source: string; sha256: string; size: number }
+}
+async function prepareArchive(
+  archive: string,
+  directory: string,
+  model: typeof VOICE_MODEL,
+): Promise<PreparedArchive> {
+  const worker = new Worker(
+    new URL(
+      import.meta.url.endsWith('.ts') ? './voiceModelWorker.ts' : './voiceModelWorker.js',
+      import.meta.url,
+    ),
+    { workerData: { archive, directory, model } },
+  )
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await new Promise<PreparedArchive>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Voice model preparation timed out.')), 120_000)
+      worker.once('message', (message: PreparedArchive & { error?: string }) => {
+        if (message.error) reject(new Error(message.error))
+        else resolve(message)
+      })
+      worker.once('error', reject)
+      worker.once('exit', () => reject(new Error('Voice model preparation stopped unexpectedly.')))
+    })
+  } finally {
+    clearTimeout(timer)
+    await worker.terminate()
+  }
 }
 
 /** One verified, persistent model per profile. Concurrent voice controls share preparation. */
@@ -84,60 +117,23 @@ export class VoiceModelCache {
         throw new Error(`Voice model download failed: HTTP ${response.status}.`)
       const total = Number(response.headers.get('content-length')) || undefined
       if (total && total > MAX_DOWNLOAD) throw new Error('Voice model download is too large.')
-      const chunks: Uint8Array[] = []
+      const archive = join(staging, 'model.zip')
       let received = 0
-      const reader = response.body.getReader()
-      try {
-        for (;;) {
-          const { value, done } = await reader.read()
-          if (done) break
-          received += value.byteLength
-          if (received > MAX_DOWNLOAD) throw new Error('Voice model download is too large.')
-          chunks.push(value)
-          this.report({ phase: 'downloading', received, total })
-        }
-      } finally {
-        await reader.cancel().catch(() => {})
-        reader.releaseLock()
-      }
-      const zip = Buffer.concat(chunks)
-      if (createHash('sha256').update(zip).digest('hex') !== this.model.sha256)
-        throw new Error('Voice model checksum mismatch. Try downloading it again.')
+      await pipeline(
+        Readable.fromWeb(response.body as never),
+        new Transform({
+          transform: (chunk: Buffer, _encoding, done) => {
+            received += chunk.byteLength
+            if (received > MAX_DOWNLOAD)
+              return done(new Error('Voice model download is too large.'))
+            this.report({ phase: 'downloading', received, total })
+            done(null, chunk)
+          },
+        }),
+        createWriteStream(archive),
+      )
       this.report({ phase: 'preparing', received })
-      const extracted = join(staging, 'unpacked')
-      let bytes = 0
-      const files = unzipSync(zip, {
-        filter: (entry) => {
-          bytes += entry.originalSize
-          const path = resolve(extracted, entry.name)
-          if (
-            bytes > MAX_EXTRACTED ||
-            !entry.name.startsWith(`${this.model.name}/`) ||
-            !path.startsWith(`${resolve(extracted, this.model.name)}${sep}`) ||
-            entry.name.includes('\\')
-          ) {
-            // ZIPs contain a directory entry for the model's root.
-            if (entry.name === `${this.model.name}/` && !entry.originalSize) return false
-            throw new Error('Invalid voice model archive.')
-          }
-          return !entry.name.endsWith('/')
-        },
-      })
-      if (!Object.keys(files).length) throw new Error('Voice model archive is empty.')
-      for (const [path, data] of Object.entries(files)) {
-        const target = resolve(extracted, path)
-        await mkdir(dirname(target), { recursive: true })
-        await writeFile(target, data)
-      }
-      const prepared = join(staging, 'model.tar.gz')
-      await create({ cwd: extracted, file: prepared, gzip: true, portable: true }, [
-        this.model.name,
-      ])
-      const marker = {
-        source: this.model.sha256,
-        sha256: await checksum(prepared),
-        size: (await stat(prepared)).size,
-      }
+      const { marker, prepared } = await prepareArchive(archive, staging, this.model)
       // Only publish a fully prepared archive; a missing marker makes interrupted installs retry.
       await rm(`${this.path}.json`, { force: true })
       await rm(this.path, { force: true })

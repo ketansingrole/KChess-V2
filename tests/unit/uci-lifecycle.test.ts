@@ -3,7 +3,12 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcessByStdio } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
-import { UciController, SearchCancelled } from '../../src/main/uci'
+import {
+  UciController,
+  SearchCancelled,
+  withEngineMaintenance,
+  assertEngineAvailable,
+} from '../../src/main/uci'
 import { acquireEngine } from '../../src/main/engineScheduler'
 function fake(reply: (command: string) => string | undefined) {
   const child = Object.assign(new EventEmitter(), {
@@ -96,4 +101,52 @@ describe('shared engine budget', () => {
     await rejected
     release()
   })
+})
+
+it('waits for process exit before replacement and blocks new engines until it finishes', async () => {
+  const child = fake(handshake)
+  child.kill = vi.fn(() => true)
+  const engine = new UciController(child, 20)
+  await engine.ready
+  let replaced = false
+  let release!: () => void
+  const operation = withEngineMaintenance(async () => {
+    replaced = true
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await Promise.resolve()
+  expect(child.kill).toHaveBeenCalled()
+  expect(replaced).toBe(false)
+  expect(() => assertEngineAvailable()).toThrow('being updated')
+  child.emit('exit', 0)
+  await vi.waitFor(() => expect(replaced).toBe(true))
+  expect(() => assertEngineAvailable()).toThrow('being updated')
+  release()
+  await operation
+  expect(() => assertEngineAvailable()).not.toThrow()
+  await expect(
+    withEngineMaintenance(async () => {
+      throw new Error('replacement failed')
+    }),
+  ).rejects.toThrow('replacement failed')
+  expect(() => assertEngineAvailable()).not.toThrow()
+})
+
+it('retains the executable when an engine will not exit before the maintenance deadline', async () => {
+  vi.useFakeTimers()
+  const child = fake(handshake)
+  child.kill = vi.fn(() => true)
+  const engine = new UciController(child, 20)
+  await engine.ready
+  const replace = vi.fn(async () => {})
+  const operation = withEngineMaintenance(replace)
+  const rejected = expect(operation).rejects.toThrow('previous engine was retained')
+  await vi.advanceTimersByTimeAsync(4000)
+  await rejected
+  expect(replace).not.toHaveBeenCalled()
+  expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+  child.emit('exit', 0)
+  vi.useRealTimers()
 })

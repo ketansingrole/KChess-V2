@@ -44,6 +44,7 @@ const {
   engineBusy,
   engineError,
   saveError,
+  studySaveError,
   gameOver,
   cloud,
   cloudBusy,
@@ -78,7 +79,9 @@ function flip(): void {
 
 /** Lichess's cloud lines for this position, when it has some. */
 const cloudLines = computed<EngineLine[]>(() =>
-  cloud.value && cloud.value.fen === node.value.fen ? cloud.value.lines : [],
+  assistanceAllowed.value && cloud.value && cloud.value.fen === node.value.fen
+    ? cloud.value.lines
+    : [],
 )
 /** Without the local engine, the cloud's lines drive the bar, arrows and line list. */
 const usingCloud = computed(
@@ -133,8 +136,10 @@ const engineStatus = computed(() => {
   if (engineError.value) return engineError.value
   if (!engineOn.value) return 'Engine off'
   if (gameOver.value) return gameOver.value
-  if (['playing', 'seeking', 'disconnected'].includes(store.onlinePhase))
-    return 'Analysis paused during online play'
+  if (!assistanceAllowed.value)
+    return store.onlineConnection?.phase === 'checking'
+      ? 'Checking Lichess game status…'
+      : 'Analysis paused until Lichess game status is verified'
   const update = evaluation.value
   if (!update) return 'Starting…'
   const depth = `Depth ${update.depth}${infinite.value ? '' : '/26'}`
@@ -487,6 +492,7 @@ function missed(result: VoiceResult): void {
 
 <template>
   <div>
+    <p v-if="studySaveError" role="alert" class="p-3 text-error">{{ studySaveError }}</p>
     <p v-if="saveError" role="alert" class="p-3 text-error">Automatic saving: {{ saveError }}</p>
 
     <PageHeader title="Analysis board" />
@@ -496,7 +502,7 @@ function missed(result: VoiceResult): void {
       <div class="board-stack">
         <div class="analysis-board">
           <EvalBar
-            v-if="engineOn || usingCloud"
+            v-if="assistanceAllowed && (engineOn || usingCloud)"
             class="analysis-eval"
             :line="best"
             :orientation="orientation"
@@ -657,7 +663,10 @@ function missed(result: VoiceResult): void {
             >
             to see evaluations.
           </div>
-          <ol v-else-if="(engineOn || usingCloud) && !gameOver" class="pv-list">
+          <ol
+            v-else-if="assistanceAllowed && (engineOn || usingCloud) && !gameOver"
+            class="pv-list"
+          >
             <li v-for="(entry, index) in pvMoves" :key="index" class="pv-row">
               <button
                 type="button"
@@ -746,14 +755,14 @@ function missed(result: VoiceResult): void {
         <div v-if="tool === 'review'" class="tool-body tool-scroll" role="tabpanel">
           <AnalysisReview v-if="assistanceAllowed && hasMoves" />
           <p v-else-if="!assistanceAllowed" class="tool-empty">
-            Engine assistance is paused during your live Lichess game.
+            Engine assistance is paused until Lichess game status is verified.
           </p>
           <p v-else class="tool-empty">Make some moves or import a game to review it.</p>
         </div>
         <div v-if="tool === 'explorer'" class="tool-body tool-scroll" role="tabpanel">
           <PositionExplorer v-if="assistanceAllowed" />
           <p v-else class="tool-empty">
-            Engine assistance is paused during your live Lichess game.
+            Engine assistance is paused until Lichess game status is verified.
           </p>
         </div>
 

@@ -5,9 +5,11 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test'
-import { cp, mkdtemp, rm, readFile } from 'node:fs/promises'
+import { cp, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
 import { migrate } from '../../src/main/migrations'
 import { storeSample } from '../../src/main/puzzleQueries'
@@ -56,6 +58,10 @@ function seedReviewedGame(db: DatabaseSync): void {
     `INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
      VALUES (?, ?, 'local', 1, 18, ?, ?, 0)`,
   ).run(review.key, 'scholar1', JSON.stringify(review), JSON.stringify(summarize(review)))
+  db.prepare('INSERT INTO game_reviews (gameId, reviewKey) VALUES (?, ?)').run(
+    'scholar1',
+    review.key,
+  )
 }
 
 const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; profile: string } }>({
@@ -76,6 +82,8 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
         themes: 'promotion',
       },
     ])
+    if (testInfo.title.includes('unverified startup'))
+      db.prepare('INSERT INTO accounts (username, connected) VALUES (?, 1)').run('tester')
     if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)
     if (testInfo.title.includes('paged history')) {
       db.exec("INSERT INTO accounts (username, connected) VALUES ('tester', 0)")
@@ -628,9 +636,55 @@ test('plays two players on one board, exports the game as a GIF and runs the che
   const gif = await readFile(destination)
   expect(gif.subarray(0, 6).toString('latin1')).toBe('GIF89a')
   await page.getByRole('tab', { name: 'Chess clock', exact: true }).click()
-  await page.getByRole('button', { name: /^Opponent's clock/ }).click()
-  await page.getByRole('button', { name: /^Your clock/ }).click()
+  await page.getByRole('button', { name: /^Player 1 clock/ }).click()
+  await page.getByRole('button', { name: /^Player 2 clock/ }).click()
   await expect(page.getByText('1 moves', { exact: true })).toBeVisible()
+})
+
+test('cancels a long GIF export and keeps the renderer responsive while encoding', async ({
+  desktop: { app, page, profile },
+}) => {
+  const destination = join(profile, 'long-game.gif')
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath })
+  }, destination)
+  await navigate(page, 'Analysis board')
+  await page.locator('.analysis-panel').getByRole('button', { name: 'Import', exact: true }).click()
+  const pgn =
+    Array.from({ length: 100 }, (_, n) => `${2 * n + 1}. Nf3 Nf6 ${2 * n + 2}. Ng1 Ng8`).join(' ') +
+    ' *'
+  await page.getByRole('textbox', { name: 'FEN or PGN' }).fill(pgn)
+  await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+  const start = async () => {
+    await page.getByRole('button', { name: 'Export', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Animated GIF of the game' }).click()
+  }
+  await start()
+  await expect(page.getByRole('status').filter({ hasText: /\d+\/401/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel export', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Cancel export', exact: true })).toBeHidden()
+  await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.dataset.exportMeasure = 'running'
+    root.dataset.exportTicks = '0'
+    const tick = () => {
+      if (root.dataset.exportMeasure !== 'running') return
+      root.dataset.exportTicks = String(Number(root.dataset.exportTicks) + 1)
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await start()
+  await expect(page.getByText('Saved the GIF', { exact: true })).toBeVisible({ timeout: 30_000 })
+  const ticks = await page.evaluate(() => {
+    document.documentElement.dataset.exportMeasure = 'done'
+    return Number(document.documentElement.dataset.exportTicks)
+  })
+  expect(ticks).toBeGreaterThan(3)
+  const gif = await readFile(destination)
+  expect(gif.subarray(0, 6).toString('latin1')).toBe('GIF89a')
+  expect(gif.at(-1)).toBe(0x3b)
 })
 
 test('starts a Chess960 game against Stockfish with a clock', async ({ desktop: { page } }) => {
@@ -648,4 +702,82 @@ test('summarises a reviewed game on the Insights page', async ({ desktop: { page
   await expect(page.getByText('Games', { exact: true })).toBeVisible()
   await expect(page.getByTitle(/^Checkmate: 1 games/)).toBeVisible()
   await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
+})
+
+test('blocks assistance after unverified startup until account status is confirmed @packaged', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Analysis board')
+  await expect(
+    page.getByText('Analysis paused until Lichess game status is verified', { exact: true }),
+  ).toBeVisible()
+  await expect(page.locator('.pv-eval')).toHaveCount(0)
+  const errors = await page.evaluate(async (fen) => {
+    const blocked = async (request: Promise<unknown>) =>
+      request.then(
+        () => 'allowed',
+        (cause: Error) => cause.message,
+      )
+    return Promise.all([
+      blocked(window.kchess.startAnalysis({ fen, lines: 1 })),
+      blocked(window.kchess.bestMove([], 'club')),
+      blocked(window.kchess.positionLookup('opening', fen)),
+      blocked(window.kchess.cloudEval(fen, 1)),
+      blocked(window.kchess.reviewRequest({ fen, moves: ['e2e4'] })),
+    ])
+  }, START_FEN)
+  expect(errors).toHaveLength(5)
+  expect(errors.every((message) => message.includes('unavailable'))).toBe(true)
+  await page.evaluate(async () => {
+    await window.kchess.removeAccount('tester')
+    await window.kchess.resumeOnline()
+  })
+  await expect(
+    page.getByText('Analysis paused until Lichess game status is verified', { exact: true }),
+  ).toHaveCount(0)
+  await expect(page.locator('.pv-eval').first()).toBeVisible({ timeout: 20_000 })
+})
+
+test('prepares a voice archive with the production worker @packaged', async ({
+  desktop: { app, profile },
+}) => {
+  const archive = join(profile, 'test-model.zip')
+  const zip = zipSync({
+    'test-model/am/final.mdl': new TextEncoder().encode('production worker fixture'),
+  })
+  await writeFile(archive, zip)
+  const sha256 = createHash('sha256').update(zip).digest('hex')
+  const result = await app.evaluate(
+    async ({ app }, options) => {
+      const { Worker } = process.getBuiltinModule(
+        'node:worker_threads',
+      ) as typeof import('node:worker_threads')
+      const { join } = process.getBuiltinModule('node:path') as typeof import('node:path')
+      const worker = new Worker(join(app.getAppPath(), 'out/main/voiceModelWorker.js'), {
+        workerData: {
+          archive: options.archive,
+          directory: options.directory,
+          model: { name: 'test-model', sha256: options.sha256 },
+        },
+      })
+      try {
+        return await new Promise<{ prepared: string; marker: { source: string; size: number } }>(
+          (resolve, reject) => {
+            worker.once('message', (message) =>
+              message.error ? reject(new Error(message.error)) : resolve(message),
+            )
+            worker.once('error', reject)
+            worker.once('exit', () => reject(new Error('Worker exited without a prepared archive')))
+          },
+        )
+      } finally {
+        await worker.terminate()
+      }
+    },
+    { archive, directory: profile, sha256 },
+  )
+  expect(result.marker.source).toBe(sha256)
+  const prepared = await readFile(result.prepared)
+  expect(prepared.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]))
+  expect(prepared.length).toBe(result.marker.size)
 })

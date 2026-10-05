@@ -495,17 +495,52 @@ const again = await installManagedEngine({ dir: engineDir, releaseUrl })
 assert('already on latest: reports up to date', [again.updated, again.version], [false, 'sf_test'])
 assert('already on latest: downloads nothing', assetDownloads, 1)
 releaseTag = 'sf_next'
-const upgraded = await installManagedEngine({ dir: engineDir, releaseUrl })
+let replacements = 0
+const location = {
+  dir: engineDir,
+  releaseUrl,
+  replace: async (commit: () => Promise<void>): Promise<void> => {
+    replacements++
+    assert(
+      'replacement sees the previous engine until publication',
+      (await managedEngine(engineDir)).version,
+      'sf_test',
+    )
+    await commit()
+  },
+}
+const [upgraded, simultaneous] = await Promise.all([
+  installManagedEngine(location),
+  installManagedEngine(location),
+])
 assert(
-  'newer release is downloaded',
-  [upgraded.updated, upgraded.version, assetDownloads],
-  [true, 'sf_next', 2],
+  'concurrent update downloads and replaces once',
+  [upgraded.updated, simultaneous.updated, replacements, assetDownloads],
+  [true, false, 1, 2],
 )
 assert('newer release is recorded', (await managedEngine(engineDir)).version, 'sf_next')
+releaseTag = 'sf_failed'
+const retained = await installManagedEngine({
+  dir: engineDir,
+  releaseUrl,
+  replace: async () => {
+    throw new Error('Engine owners did not exit')
+  },
+}).then(
+  () => 'installed',
+  (cause: Error) => cause.message,
+)
+assert('failed handoff reports the failure', retained, 'Engine owners did not exit')
+assert(
+  'failed handoff retains the working version',
+  (await managedEngine(engineDir)).version,
+  'sf_next',
+)
+releaseTag = 'sf_next'
 // An install from before versions were recorded has no VERSION file and must update once.
 unlinkSync(join(engineDir, 'VERSION'))
 const legacy = await installManagedEngine({ dir: engineDir, releaseUrl })
-assert('unversioned install is refreshed', [legacy.updated, assetDownloads], [true, 3])
+assert('unversioned install is refreshed', [legacy.updated, assetDownloads], [true, 4])
 assert(
   'installed engine is executable',
   (statSync(join(engineDir, 'stockfish')).mode & 0o111) !== 0,

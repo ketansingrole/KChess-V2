@@ -35,11 +35,13 @@ export interface ComputerClock {
 /** Computer-game state lives for the store's lifetime, including across route changes. */
 export function useComputerGame(options: {
   engineReady: Ref<boolean>
+  assistanceAllowed?: () => boolean
   fail: (cause: unknown) => void
   recheckEngine: () => Promise<void>
   notifyDesktop: (kind: NotificationKind, title: string, body: string) => void
 }) {
   const { engineReady, fail, recheckEngine, notifyDesktop } = options
+  const allowed = () => options.assistanceAllowed?.() ?? true
   const saved = readSession('kchess:computer:v1', (raw) => {
     if (!raw || typeof raw !== 'object') return undefined
     const value = raw as {
@@ -122,20 +124,20 @@ export function useComputerGame(options: {
   const gameEpoch = ref(0)
   /** The player gave up; the game is over whatever the position. */
   const resigned = ref(saved?.resigned ?? false)
-  const localSaveError = persistSession('kchess:computer:v1', () => ({
-    version: 2,
-    moves: localMoves.value,
-    ply: localPly.value,
-    level: level.value,
-    color: userColor.value,
-    resigned: resigned.value,
-    setup: localSetup.value,
-    clock: localClock.value,
-    times: times.value ? { white: remaining('white'), black: remaining('black') } : null,
-    flagged: flagged.value,
-  }))
-  watch(engineReady, (ready) => {
-    if (ready && saved) void computerTurn()
+  watch([engineReady, allowed], ([ready, permitted], [, wasPermitted]) => {
+    const now = performance.now()
+    if (
+      !permitted &&
+      wasPermitted &&
+      times.value &&
+      !localOver.value &&
+      localMoves.value.length >= 2
+    ) {
+      const turn = localGame.value.turn
+      times.value = { ...times.value, [turn]: Math.max(0, times.value[turn] - (now - turnStarted)) }
+    }
+    if (permitted !== wasPermitted) turnStarted = now
+    if (ready && permitted && saved) void computerTurn()
   })
   const localGame = computed(() => setupPositionAfter(localSetup.value, localMoves.value))
   const localDraw = computed(() => setupDrawReason(localSetup.value, localMoves.value))
@@ -188,7 +190,11 @@ export function useComputerGame(options: {
   })
   /** The player may touch pieces: it is their move, or they may queue one. */
   const localCanPlay = computed(
-    () => engineReady.value && !localOver.value && localPly.value === localMoves.value.length,
+    () =>
+      allowed() &&
+      engineReady.value &&
+      !localOver.value &&
+      localPly.value === localMoves.value.length,
   )
   const localInteractive = computed(() => localCanPlay.value && localTurn.value === userColor.value)
 
@@ -196,13 +202,25 @@ export function useComputerGame(options: {
 
   /** The clock runs once both sides have moved, as on Lichess. */
   const clockRunning = computed(
-    () => Boolean(times.value) && !localOver.value && localMoves.value.length >= 2,
+    () => allowed() && Boolean(times.value) && !localOver.value && localMoves.value.length >= 2,
   )
   function remaining(color: 'white' | 'black', now = performance.now()): number {
     const left = times.value?.[color] ?? 0
     if (!clockRunning.value || localGame.value.turn !== color) return left
     return Math.max(0, left - (now - turnStarted))
   }
+  const localSaveError = persistSession('kchess:computer:v1', () => ({
+    version: 2,
+    moves: localMoves.value,
+    ply: localPly.value,
+    level: level.value,
+    color: userColor.value,
+    resigned: resigned.value,
+    setup: localSetup.value,
+    clock: localClock.value,
+    times: times.value ? { white: remaining('white'), black: remaining('black') } : null,
+    flagged: flagged.value,
+  }))
   /** Charge the side that just moved for its thinking and give it its increment. */
   function settleClock(mover: 'white' | 'black'): void {
     const current = times.value
@@ -235,7 +253,7 @@ export function useComputerGame(options: {
     { immediate: false },
   )
   watch(
-    () => Boolean(times.value) && !localOver.value,
+    () => allowed() && Boolean(times.value) && !localOver.value,
     (running) => (running ? ticker.resume() : ticker.pause()),
     { immediate: true },
   )
@@ -274,7 +292,8 @@ export function useComputerGame(options: {
       thinking.value ||
       localGame.value.turn === userColor.value ||
       localOver.value ||
-      !engineReady.value
+      !engineReady.value ||
+      !allowed()
     )
       return
     const epoch = gameEpoch.value,

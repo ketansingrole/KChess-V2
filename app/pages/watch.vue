@@ -43,7 +43,11 @@ function clockOf(color: 'white' | 'black'): string | undefined {
   const base = color === 'white' ? current.whiteClock : current.blackClock
   if (base === undefined) return undefined
   const turn = current.fen.split(' ')[1] === 'b' ? 'black' : 'white'
-  const running = !current.finished && turn === color && current.lastMove !== undefined
+  const running =
+    watcher.connection?.phase === 'connected' &&
+    !current.finished &&
+    turn === color &&
+    current.lastMove !== undefined
   const elapsed = running ? (now.value - watcher.frameAt) / 1000 : 0
   return formatClock(Math.max(0, base - elapsed) * 1000)
 }
@@ -187,6 +191,16 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       title="You are in a game"
       description="Watching is paused while you play, so your own game has the connection."
     />
+    <UButton
+      v-if="
+        watcher.target &&
+        watcher.connection &&
+        ['error', 'ended'].includes(watcher.connection.phase)
+      "
+      size="xs"
+      @click="watcher.watch(watcher.target)"
+      >Retry feed</UButton
+    >
     <p v-if="watcher.error" class="text-error text-sm mb-3" role="alert">{{ watcher.error }}</p>
 
     <!-- TV and friends share one board. -->

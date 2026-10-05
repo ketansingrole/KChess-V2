@@ -13,13 +13,14 @@ build/icon-{light,dark}.png, and copies in public/ and app/assets/.
 
 from __future__ import annotations
 
+import math
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 ROOT = Path(__file__).resolve().parent.parent
 DESIGN = 1024  # the coordinate space the shapes below are drawn in
@@ -54,7 +55,30 @@ THEMES = {
     },
 }
 
-CORNER = 0.2237  # macOS-style corner radius as a share of the tile
+CORNER = 0.30  # continuous corners extend farther along each tile edge
+CORNER_POWER = 2.6  # a superellipse makes the transition into straight edges smooth
+MACOS_INSET = 100 / 1024  # match the reference icon's 824px tile on a 1024px canvas
+
+
+def tile_outline(size: int) -> list[tuple[float, float]]:
+    """Original continuous-corner outline shared by the raster and SVG assets."""
+    end = size - 1
+    radius = end * CORNER
+    points = []
+    for cx, cy, start in (
+        (end - radius, radius, -90),
+        (end - radius, end - radius, 0),
+        (radius, end - radius, 90),
+        (radius, radius, 180),
+    ):
+        for step in range(65):
+            angle = math.radians(start + step * 90 / 64)
+            x, y = math.cos(angle), math.sin(angle)
+            points.append((
+                cx + radius * math.copysign(abs(x) ** (2 / CORNER_POWER), x),
+                cy + radius * math.copysign(abs(y) ** (2 / CORNER_POWER), y),
+            ))
+    return points
 
 
 def place(x: float, y: float) -> tuple[float, float]:
@@ -94,9 +118,7 @@ def render_tile(theme: str, size: int) -> Image.Image:
     colors = THEMES[theme]
     big = size * SUPERSAMPLE
     tile_mask = Image.new("L", (big, big), 0)
-    ImageDraw.Draw(tile_mask).rounded_rectangle(
-        (0, 0, big - 1, big - 1), radius=int(big * CORNER), fill=255
-    )
+    ImageDraw.Draw(tile_mask).polygon(tile_outline(big), fill=255)
     tile = vertical_gradient(big, *colors["tile"])
     tile.putalpha(tile_mask)
 
@@ -112,10 +134,12 @@ def render_tile(theme: str, size: int) -> Image.Image:
     tile.paste(fill, (0, 0), mask=rook)
 
     # A thin darker edge keeps the tile readable on light backgrounds.
-    edge = Image.new("L", (big, big), 0)
-    ImageDraw.Draw(edge).rounded_rectangle(
-        (0, 0, big - 1, big - 1), radius=int(big * CORNER), outline=255, width=max(2, big // 256)
+    width = max(2, big // 256)
+    padded = ImageOps.expand(tile_mask, border=width, fill=0)
+    inner_mask = padded.filter(ImageFilter.MinFilter(width * 2 + 1)).crop(
+        (width, width, big + width, big + width)
     )
+    edge = ImageChops.subtract(tile_mask, inner_mask)
     edge_layer = Image.new("RGBA", (big, big), colors["edge"])
     edge_layer.putalpha(edge.point(lambda v: int(v * 0.55)))
     tile = Image.alpha_composite(tile, edge_layer)
@@ -127,7 +151,7 @@ def framed(theme: str, size: int, inset: float) -> Image.Image:
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     inner = round(size * (1 - 2 * inset))
     tile = render_tile(theme, inner)
-    canvas.paste(tile, (round(size * inset), round(size * inset)), tile)
+    canvas.alpha_composite(tile, (round(size * inset), round(size * inset)))
     return canvas
 
 
@@ -146,6 +170,7 @@ def svg() -> str:
                 f'rx="{radius * ROOK_SCALE:.1f}"/>'
             )
     body = "\n".join(shapes)
+    outline = " ".join(f"{x:.2f},{y:.2f}" for x, y in tile_outline(DESIGN))
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {DESIGN} {DESIGN}" width="512" height="512">
   <title>KChess</title>
   <defs>
@@ -161,7 +186,7 @@ def svg() -> str:
       <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#140a00" flood-opacity="0.38"/>
     </filter>
   </defs>
-  <rect width="{DESIGN}" height="{DESIGN}" rx="{DESIGN * CORNER:.0f}" fill="url(#tile)"/>
+  <polygon points="{outline}" fill="url(#tile)"/>
   <g fill="url(#rook)" filter="url(#shadow)">
 {body}
   </g>
@@ -192,8 +217,8 @@ def main() -> None:
     (build / "icon.svg").write_text(svg())
 
     full = framed("light", 512, 0.0)  # edge to edge: window icon, splash, Linux
-    inset_light = framed("light", 512, 0.07)  # macOS Dock look, with the usual margin
-    inset_dark = framed("dark", 512, 0.07)
+    inset_light = framed("light", 512, MACOS_INSET)
+    inset_dark = framed("dark", 512, MACOS_INSET)
     for folder in (build, public):
         full.save(folder / "icon.png")
         inset_light.save(folder / "icon-light.png")
@@ -203,7 +228,7 @@ def main() -> None:
     framed("light", 256, 0.0).save(
         build / "icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)]
     )
-    write_icns(framed("light", 1024, 0.07), build / "icon.icns")
+    write_icns(framed("light", 1024, MACOS_INSET), build / "icon.icns")
     print("icons written")
 
 

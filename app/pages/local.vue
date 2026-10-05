@@ -33,6 +33,19 @@ const analysis = useAnalysisStore()
 const { settings, zenActive } = storeToRefs(store)
 const route = useRoute()
 const mode = useLocalStorage<'board' | 'clock'>('kchess:local-mode', 'board')
+const clockLayout = useLocalStorage<'horizontal' | 'vertical'>('kchess:clock-layout', 'horizontal')
+const clockRotation = useLocalStorage('kchess:clock-rotation', { top: 0, bottom: 0 })
+const clockSides = ['top', 'bottom'] as const
+const clockLayoutItems = [
+  { label: 'Side by side', value: 'horizontal' },
+  { label: 'Stacked', value: 'vertical' },
+]
+function rotateClock(side: 'top' | 'bottom'): void {
+  clockRotation.value = {
+    ...clockRotation.value,
+    [side]: (clockRotation.value[side] + 90) % 360,
+  }
+}
 
 /* ── New game form ─────────────────────────────────────────────────── */
 const formOpen = ref(false)
@@ -261,6 +274,12 @@ async function copyPgn(): Promise<void> {
   }
 }
 function keydown(event: KeyboardEvent): void {
+  if (
+    event.target instanceof HTMLElement &&
+    (event.target.closest('input, textarea, select, [contenteditable="true"]') ||
+      event.target.closest('[role="dialog"], [role="listbox"]'))
+  )
+    return
   if (mode.value === 'clock') {
     // Space presses the running clock, like the button on a real clock; P pauses.
     if (event.key === ' ' && event.target === document.body) {
@@ -498,16 +517,63 @@ function otbText(side: 'top' | 'bottom'): string {
     </div>
 
     <div v-else class="otb-clock">
-      <button
-        type="button"
-        class="otb-side top"
-        :class="{ active: game.otbRunning === 'top', flagged: game.otbFlagged === 'top' }"
-        :aria-label="`Opponent's clock, ${otbText('top')}. Press after your move.`"
-        @click="game.otbPress('top')"
-      >
-        <span class="otb-time tabular">{{ otbText('top') }}</span>
-        <span class="otb-moves">{{ game.otbMoves.top }} moves</span>
-      </button>
+      <div class="otb-display-controls">
+        <label class="otb-layout-picker">
+          <span class="muted text-sm">Layout</span>
+          <USelect
+            v-model="clockLayout"
+            :items="clockLayoutItems"
+            aria-label="Clock layout"
+            class="w-36"
+            size="sm"
+          />
+        </label>
+        <div class="otb-rotation-controls">
+          <UButton
+            v-for="(side, index) in clockSides"
+            :key="side"
+            size="sm"
+            variant="outline"
+            color="neutral"
+            icon="i-lucide-rotate-cw"
+            :aria-label="`Rotate Player ${index + 1} clock, currently ${clockRotation[side]} degrees`"
+            @click="rotateClock(side)"
+            >Player {{ index + 1 }} · {{ clockRotation[side] }}°</UButton
+          >
+        </div>
+      </div>
+      <div class="otb-faces" :class="{ stacked: clockLayout === 'vertical' }">
+        <button
+          v-for="(side, index) in clockSides"
+          :key="side"
+          type="button"
+          class="otb-side"
+          :class="{
+            active: game.otbRunning === side,
+            flagged: game.otbFlagged === side,
+            sideways: clockRotation[side] === 90 || clockRotation[side] === 270,
+          }"
+          :aria-label="`Player ${index + 1} clock, ${otbText(side)}. Press after your move.`"
+          @click="game.otbPress(side)"
+        >
+          <span class="otb-face" :style="{ transform: `rotate(${clockRotation[side]}deg)` }">
+            <span class="otb-player">Player {{ index + 1 }}</span>
+            <span class="otb-time tabular">{{ otbText(side) }}</span>
+            <span class="otb-moves">{{ game.otbMoves[side] }} moves</span>
+            <span class="otb-state">
+              {{
+                game.otbFlagged === side
+                  ? 'Time up'
+                  : game.otbRunning === side
+                    ? 'Your turn'
+                    : game.otbRunning
+                      ? 'Waiting'
+                      : 'Ready'
+              }}
+            </span>
+          </span>
+        </button>
+      </div>
       <div class="otb-controls">
         <UButton
           size="sm"
@@ -533,7 +599,7 @@ function otbText(side: 'top' | 'bottom'): string {
             :max="180"
             size="xs"
             class="w-16"
-            aria-label="Minutes (top)"
+            aria-label="Player 1 minutes"
           />
           <span class="muted">/</span>
           <UInput
@@ -543,7 +609,7 @@ function otbText(side: 'top' | 'bottom'): string {
             :max="180"
             size="xs"
             class="w-16"
-            aria-label="Minutes (bottom)"
+            aria-label="Player 2 minutes"
           />
           min +
           <UInput
@@ -557,18 +623,8 @@ function otbText(side: 'top' | 'bottom'): string {
           />
           s
         </label>
-        <span class="muted text-xs">Space presses the running clock · P pauses</span>
+        <span class="otb-shortcuts muted text-xs">Space switches turns · P pauses</span>
       </div>
-      <button
-        type="button"
-        class="otb-side"
-        :class="{ active: game.otbRunning === 'bottom', flagged: game.otbFlagged === 'bottom' }"
-        :aria-label="`Your clock, ${otbText('bottom')}. Press after your move.`"
-        @click="game.otbPress('bottom')"
-      >
-        <span class="otb-time tabular">{{ otbText('bottom') }}</span>
-        <span class="otb-moves">{{ game.otbMoves.bottom }} moves</span>
-      </button>
     </div>
 
     <UModal v-model:open="formOpen" title="New game over the board">
@@ -636,24 +692,59 @@ function otbText(side: 'top' | 'bottom'): string {
 .otb-clock {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  height: calc(100dvh - 180px);
-  min-height: 420px;
+  gap: 16px;
+  min-height: 460px;
+  height: calc(100dvh - 190px);
+}
+.otb-display-controls,
+.otb-layout-picker,
+.otb-rotation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.otb-display-controls {
+  justify-content: space-between;
+}
+.otb-faces {
+  flex: 1;
+  min-height: 300px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.otb-faces.stacked {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  min-height: 480px;
 }
 .otb-side {
-  flex: 1;
+  container-type: size;
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border-radius: 18px;
   border: 1px solid var(--ui-border);
   background: var(--ui-bg-elevated);
   transition: background 0.15s;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
 }
-.otb-side.top {
-  /* The player across the table reads it the right way up. */
-  transform: rotate(180deg);
+.otb-side:focus-visible {
+  outline: 3px solid var(--ui-primary);
+  outline-offset: 3px;
+}
+.otb-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
 }
 .otb-side.active {
   background: var(--ui-primary);
@@ -663,14 +754,27 @@ function otbText(side: 'top' | 'bottom'): string {
   background: var(--ui-error);
   color: var(--ui-bg);
 }
+.otb-player {
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.75;
+}
 .otb-time {
-  font-size: clamp(48px, 14vw, 160px);
+  font-size: clamp(32px, min(22cqw, 36cqh), 140px);
   font-weight: 700;
   line-height: 1;
+  letter-spacing: -0.04em;
+}
+.otb-side.sideways .otb-time {
+  font-size: clamp(32px, 20cqmin, 140px);
 }
 .otb-moves {
-  margin-top: 8px;
+  font-size: 14px;
   opacity: 0.75;
+}
+.otb-state {
+  font-size: 12px;
+  font-weight: 600;
 }
 .otb-controls {
   display: flex;
@@ -678,5 +782,21 @@ function otbText(side: 'top' | 'bottom'): string {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+.otb-shortcuts {
+  flex-basis: 100%;
+  text-align: center;
+}
+@media (max-width: 640px) {
+  .otb-clock {
+    height: auto;
+    min-height: calc(100dvh - 190px);
+  }
+  .otb-faces {
+    min-height: 320px;
+  }
+  .otb-faces.stacked {
+    min-height: 480px;
+  }
 }
 </style>

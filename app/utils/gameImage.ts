@@ -1,7 +1,7 @@
 import { parseUci } from 'chessops/util'
 import { normalizeMove, type Position } from 'chessops/chess'
 import { replaySetup, type GameSetup } from '../../src/shared/variant'
-import { encodeGif, type GifFrame } from './gif'
+import { GifWorkerClient } from './gifWorkerClient'
 import { pieceUrl } from './pieces'
 
 const boards = import.meta.glob<string>('../assets/boards/*.{png,jpg}', {
@@ -138,18 +138,35 @@ export async function positionPng(options: ImageOptions, ply: number): Promise<U
 }
 
 /** An animated GIF of the whole game; `delay` is the time per move in hundredths of a second. */
-export async function gameGif(options: ImageOptions, delay = 80): Promise<Uint8Array> {
+export async function gameGif(
+  options: ImageOptions,
+  delay = 80,
+  controls: { signal?: AbortSignal; progress?: (done: number, total: number) => void } = {},
+): Promise<Uint8Array> {
+  controls.signal?.throwIfAborted()
   const paint = await painter(options)
-  const frames: GifFrame[] = []
+  controls.signal?.throwIfAborted()
   const list = positions(options)
   if (list.length > 600) throw new Error('That game is too long for a GIF (300 moves at most).')
-  list.forEach((entry, index) => {
-    paint.draw(entry.pos, entry.move)
-    frames.push({
-      rgba: paint.context.getImageData(0, 0, paint.canvas.width, paint.canvas.height).data,
-      // Linger on the start and on the final position.
-      delay: index === 0 ? delay * 2 : index === list.length - 1 ? 300 : delay,
-    })
-  })
-  return encodeGif(paint.canvas.width, paint.canvas.height, frames)
+  const worker = new Worker(new URL('./gifWorker.ts', import.meta.url), { type: 'module' })
+  const encoder = new GifWorkerClient(
+    worker,
+    paint.canvas.width,
+    paint.canvas.height,
+    controls.signal,
+  )
+  try {
+    for (const [index, entry] of list.entries()) {
+      controls.signal?.throwIfAborted()
+      paint.draw(entry.pos, entry.move)
+      await encoder.add({
+        rgba: paint.context.getImageData(0, 0, paint.canvas.width, paint.canvas.height).data,
+        delay: index === 0 ? delay * 2 : index === list.length - 1 ? 300 : delay,
+      })
+      controls.progress?.(index + 1, list.length)
+    }
+    return await encoder.finish()
+  } finally {
+    encoder.close()
+  }
 }

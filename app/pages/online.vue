@@ -507,7 +507,11 @@ function backToTournament(): void {
       <div v-if="onlinePhase === 'disconnected'" class="card col-span-full" role="status">
         <h2 class="section-title">
           {{
-            onlineConnection?.phase === 'auth-required' ? 'Sign in again' : 'Connection interrupted'
+            onlineConnection?.phase === 'checking'
+              ? 'Checking game status'
+              : onlineConnection?.phase === 'auth-required'
+                ? 'Sign in again'
+                : 'Connection interrupted'
           }}
         </h2>
         <p class="section-hint">

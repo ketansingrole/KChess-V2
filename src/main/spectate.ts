@@ -10,6 +10,7 @@ import type {
   BroadcastUpdate,
   TvChannel,
   WatchFrame,
+  WatchState,
   WatchPlayer,
 } from '../shared/types'
 import { client, unwrap } from './lichess'
@@ -90,6 +91,7 @@ export class Spectator {
   constructor(
     private frame: (frame: WatchFrame) => void,
     private broadcast: (update: BroadcastUpdate) => void,
+    private state: (state: WatchState) => void = () => {},
   ) {}
 
   stop(): void {
@@ -105,12 +107,20 @@ export class Spectator {
     const controller = new AbortController()
     this.controller = controller
     const signal = controller.signal
+    const report = (phase: WatchState['phase'], message?: string): void => {
+      if (!signal.aborted && session === this.session) this.state({ session, phase, message })
+    }
+    queueMicrotask(() => report('connecting'))
     void withUsage('', 'watch', async () => {
       try {
         if ('channel' in target) await this.followTv(target.channel, session, signal)
         else await this.followGame(target.gameId, session, signal)
-      } catch {
-        // A dropped feed just stops; the window offers to watch again.
+        report('ended', 'The feed ended. Retry to reconnect.')
+      } catch (cause) {
+        report(
+          'error',
+          cause instanceof Error ? cause.message : 'The feed disconnected. Retry to reconnect.',
+        )
       }
     })
     return session
@@ -152,6 +162,7 @@ export class Spectator {
             variant: channel,
             finished: false,
           }
+          this.state({ session, phase: 'connected' })
           this.frame(current)
         } else if (message.t === 'fen' && current) {
           const fen = displayFen(String(data.fen ?? ''))
@@ -163,6 +174,7 @@ export class Spectator {
             whiteClock: typeof data.wc === 'number' ? data.wc : current.whiteClock,
             blackClock: typeof data.bc === 'number' ? data.bc : current.blackClock,
           }
+          this.state({ session, phase: 'connected' })
           this.frame(current)
         }
       },
@@ -211,7 +223,10 @@ export class Spectator {
             whiteClock: typeof data.wc === 'number' ? data.wc : current.whiteClock,
             blackClock: typeof data.bc === 'number' ? data.bc : current.blackClock,
           }
-        if (current) this.frame(current)
+        if (current) {
+          this.state({ session, phase: 'connected' })
+          this.frame(current)
+        }
       },
       { signal },
     )

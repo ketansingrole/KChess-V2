@@ -48,6 +48,7 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
       return vi.fn()
     },
     stopEngine: async () => {},
+    onWatchState: () => vi.fn(),
     onOnlineState: () => vi.fn(),
     onOnlineError: () => vi.fn(),
     onNotification: () => vi.fn(),

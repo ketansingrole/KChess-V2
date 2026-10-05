@@ -99,3 +99,28 @@ describe('voice model cache', () => {
     expect(await readdir(directory)).toEqual([])
   })
 })
+
+it('keeps the main event loop responsive while preparing a large model', async () => {
+  const large = zipSync({ 'test-model/am/final.mdl': new Uint8Array(32 * 1024 * 1024).fill(42) })
+  const cache = new VoiceModelCache(
+    directory,
+    vi.fn(async () => new Response(Buffer.from(large))),
+    {
+      ...source,
+      sha256: createHash('sha256').update(large).digest('hex'),
+    },
+  )
+  let preparing = false,
+    ticks = 0
+  const timer = setInterval(() => {
+    if (preparing) ticks++
+  }, 5)
+  try {
+    await cache.ensure((progress) => {
+      preparing = progress.phase === 'preparing'
+    })
+    expect(ticks).toBeGreaterThan(2)
+  } finally {
+    clearInterval(timer)
+  }
+})

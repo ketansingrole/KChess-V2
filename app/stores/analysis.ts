@@ -1,5 +1,13 @@
 import { defineStore } from 'pinia'
-import { computed, effectScope, ref, shallowReactive, watch, type EffectScope } from 'vue'
+import {
+  computed,
+  effectScope,
+  onScopeDispose,
+  ref,
+  shallowReactive,
+  watch,
+  type EffectScope,
+} from 'vue'
 import { readSession, persistSession } from '../utils/sessionPersistence'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
@@ -79,18 +87,31 @@ export const useAnalysisStore = defineStore('analysis', () => {
       study: typeof value.study === 'string' ? value.study : '',
     }
   })
+  const studies = useStudyStore()
+  // A mismatched session remains an unsaved recovery document, never overwrites the library.
+  const linked = studies.items.find((item) => item.id === saved?.study)
+  const conflict = Boolean(
+    linked && saved && treeToPgn(saved.root) !== treeToPgn(treeFromPgn(linked.pgn)!),
+  )
   const root = ref<TreeNode>(saved?.root ?? newTree())
+  const documentPgn = computed(() => treeToPgn(root.value))
+  const documentRevision = ref(0)
+  watch(root, () => documentRevision.value++, { deep: true })
   const path = ref(saved?.path ?? '')
   const orientation = ref<Color>(saved?.orientation ?? 'white')
   /** The saved study the board is showing; its edits are saved back to it as they happen. */
-  const studyId = ref(saved?.study ?? '')
-  const saveError = persistSession('kchess:analysis:v1', () => ({
-    version: 1,
-    pgn: treeToPgn(root.value),
-    path: path.value,
-    orientation: orientation.value,
-    study: studyId.value,
-  }))
+  const studyId = ref(conflict ? '' : (saved?.study ?? ''))
+  const saveError = persistSession(
+    'kchess:analysis:v1',
+    () => ({
+      version: 1,
+      pgn: documentPgn.value,
+      path: path.value,
+      orientation: orientation.value,
+      study: studyId.value,
+    }),
+    () => [documentRevision.value, path.value, orientation.value, studyId.value],
+  )
   /** The board editor's position, kept while you visit other pages. */
   const editor = ref<EditorSetup>(structuredClone(START_SETUP))
   const editorOrientation = ref<Color>('white')
@@ -109,6 +130,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /* ── Navigation and editing the tree ──────────────────────────────── */
 
   function load(fen?: string): void {
+    saveStudy()
     root.value = newTree(fen)
     path.value = ''
     evaluations.clear()
@@ -119,6 +141,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   function loadPgn(text: string, ply = 0): boolean {
     const tree = treeFromPgn(text)
     if (!tree) return false
+    saveStudy()
     root.value = tree
     path.value = pathOf(movesOf(lineEnd(tree, '')).slice(0, Math.max(0, ply)))
     evaluations.clear()
@@ -162,48 +185,67 @@ export const useAnalysisStore = defineStore('analysis', () => {
     promoteToMainline(root.value, at)
   }
   function pgn(): string {
-    return treeToPgn(root.value)
+    return documentPgn.value
   }
 
   /* ── Studies ─────────────────────────────────────────────────────── */
 
-  const studies = useStudyStore()
   const study = computed(() => studies.items.find((item) => item.id === studyId.value))
   /** The PGN last written to the open study, so opening one does not count as an edit. */
   let studyPgn = study.value?.pgn ?? ''
-  const studySaveError = ref('')
+  const studySaveError = ref(
+    conflict
+      ? 'Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.'
+      : '',
+  )
   function openStudy(id: string): boolean {
     const found = studies.items.find((item) => item.id === id)
     if (!found || !loadPgn(found.pgn)) return false
     studyId.value = id
     studyPgn = pgn()
+    studySaveError.value = ''
     return true
   }
   /** Keep the board as a study (named), and save its edits to it from now on. */
   function saveAsStudy(name: string): string {
+    saveStudy()
     const text = pgn()
     studyId.value = studies.save(name, text)
     studyPgn = text
+    studySaveError.value = ''
     return studyId.value
   }
   /** Stop saving edits to the open study; the board keeps its moves. */
   function closeStudy(): void {
+    saveStudy()
     studyId.value = ''
   }
-  watch(
-    () => (studyId.value ? pgn() : ''),
-    (text) => {
-      const open = study.value
-      if (!open || !text || text === studyPgn) return
-      try {
-        studies.save(open.name, text, open.id)
-        studyPgn = text
-        studySaveError.value = ''
-      } catch (cause) {
-        studySaveError.value = cause instanceof Error ? cause.message : String(cause)
-      }
-    },
-  )
+  let studyTimer: ReturnType<typeof setTimeout> | undefined
+  function saveStudy(): void {
+    clearTimeout(studyTimer)
+    const open = study.value
+    if (!open) return
+    const text = pgn()
+    if (text === studyPgn) return
+    try {
+      studies.save(open.name, text, open.id)
+      studies.flush()
+      studyPgn = text
+      studySaveError.value = studies.error
+    } catch (cause) {
+      studySaveError.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+  watch([documentRevision, studyId], () => {
+    clearTimeout(studyTimer)
+    if (studyId.value) studyTimer = setTimeout(saveStudy, 150)
+  })
+  // Flush the previous study before handing the board to another document.
+  window.addEventListener('beforeunload', saveStudy, { capture: true })
+  onScopeDispose(() => {
+    saveStudy()
+    window.removeEventListener('beforeunload', saveStudy, { capture: true })
+  })
   // A study removed from the library (here or on the Studies page) no longer receives edits.
   watch(study, (open) => {
     if (!open && studyId.value) studyId.value = ''
@@ -341,6 +383,19 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const cloudError = ref('')
   let cloudRequest = 0
   let cloudTimer: ReturnType<typeof setTimeout> | undefined
+  watch(
+    assistanceAllowed,
+    (allowed) => {
+      if (!allowed) {
+        clearTimeout(cloudTimer)
+        cloudRequest++
+        cloud.value = null
+        cloudBusy.value = false
+        cloudError.value = ''
+      }
+    },
+    { flush: 'sync' },
+  )
   function askCloud(): void {
     clearTimeout(cloudTimer)
     const fen = node.value.fen
@@ -348,6 +403,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     if (cloud.value?.fen !== fen) cloud.value = null
     cloudError.value = ''
     if (!app.settings?.cloudEval || !assistanceAllowed.value || gameOver.value) {
+      cloud.value = null
       cloudBusy.value = false
       return
     }

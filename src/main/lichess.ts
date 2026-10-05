@@ -885,6 +885,8 @@ export class OnlineSession {
   /** Whether the open game is a correspondence game (another may replace it). */
   private liveCorrespondence = false
   private protectedGame = ''
+  private protectedAccount = ''
+  private recoveryUnverified = true
   private currentAccount = ''
   private pendingId = ''
   private epoch = 0
@@ -1107,42 +1109,107 @@ export class OnlineSession {
   /** Reattach to a real-time game in progress on any connected account. */
   async resume(): Promise<{ id: string; account: string } | null> {
     const attempt = ++this.resumeAttempt
-    const accounts = (await loadData()).accounts.filter((a) => a.connected)
-    let firstError: unknown
-    for (const account of accounts) {
-      try {
-        const token = await getToken(account.username)
-        if (!token) continue
-        const playing = await withUsage(account.username, 'play', () =>
-          unwrap(client.GET('/api/account/playing', { headers: authorize(token) })),
-        )
-        // Correspondence games last for days: they open only when the player picks one.
-        const id = playing.nowPlaying?.find((game) => game.speed !== 'correspondence')?.gameId
-        if (attempt !== this.resumeAttempt) return null
-        if (!id) continue
-        this.cancel()
-        this.currentAccount = account.username
-        attributeTo(account.username, 'play')
-        this.controller = new AbortController()
-        void this.eventStream(token, this.controller.signal)
-        void this.openGame(id, token)
-        return { id, account: account.username }
-      } catch (cause) {
-        // One account with a revoked login must not hide a game on another.
-        firstError ??= cause
-      }
-    }
-    if (firstError) throw firstError
-    this.protectedGame = ''
+    this.recoveryUnverified = true
+    let authRequired = false
+    let checkingAccount = this.currentAccount
     this.state({
       session: this.epoch,
       account: this.currentAccount,
-      gameId: '',
+      gameId: this.protectedGame,
       lane: 'game',
-      phase: 'idle',
+      phase: 'checking',
+      message: 'Checking Lichess for an ongoing game…',
     })
-    this.startLobby()
-    return null
+    try {
+      const accounts = (await loadData()).accounts.filter((a) => a.connected)
+      if (attempt !== this.resumeAttempt)
+        throw new DOMException('Recovery cancelled.', 'AbortError')
+      const protectedAccount = this.protectedGame ? this.protectedAccount : ''
+      if (protectedAccount) {
+        const at = accounts.findIndex(
+          (a) => a.username.toLowerCase() === protectedAccount.toLowerCase(),
+        )
+        if (at >= 0) accounts.splice(at, 1)
+        accounts.unshift({ username: protectedAccount, connected: true })
+      }
+      let firstError: unknown
+      for (const account of accounts) {
+        checkingAccount = account.username
+        try {
+          const token = await getToken(account.username)
+          if (attempt !== this.resumeAttempt)
+            throw new DOMException('Recovery cancelled.', 'AbortError')
+          if (!token) {
+            authRequired = true
+            this.state({
+              session: this.epoch,
+              account: account.username,
+              gameId: this.protectedGame,
+              lane: 'game',
+              phase: 'auth-required',
+              message: 'Lichess login is unavailable. Reconnect in Settings.',
+            })
+            throw new Error(
+              `@${account.username}'s Lichess login is unavailable. Reconnect in Settings.`,
+            )
+          }
+          const playing = await withUsage(account.username, 'play', () =>
+            unwrap(client.GET('/api/account/playing', { headers: authorize(token) })),
+          )
+          if (!Array.isArray(playing.nowPlaying))
+            throw new Error('Lichess returned an invalid ongoing-game response.')
+          // Correspondence games last for days: they open only when the player picks one.
+          const id = playing.nowPlaying?.find((game) => game.speed !== 'correspondence')?.gameId
+          if (attempt !== this.resumeAttempt)
+            throw new DOMException('Recovery cancelled.', 'AbortError')
+          if (!id) continue
+          this.recoveryUnverified = false
+          this.cancel()
+          this.currentAccount = account.username
+          attributeTo(account.username, 'play')
+          this.controller = new AbortController()
+          void this.eventStream(token, this.controller.signal)
+          void this.openGame(id, token)
+          return { id, account: account.username }
+        } catch (cause) {
+          // One account with a revoked login must not hide a game on another.
+          if (attempt !== this.resumeAttempt)
+            throw new DOMException('Recovery cancelled.', 'AbortError')
+          if (protectedAccount && account.username.toLowerCase() === protectedAccount.toLowerCase())
+            throw cause
+          firstError ??= cause
+        }
+      }
+      if (attempt !== this.resumeAttempt)
+        throw new DOMException('Recovery cancelled.', 'AbortError')
+      if (firstError) throw firstError
+      this.recoveryUnverified = false
+      this.cancel()
+      this.protectedGame = ''
+      this.state({
+        session: this.epoch,
+        account: this.currentAccount,
+        gameId: '',
+        lane: 'game',
+        phase: 'idle',
+      })
+      this.startLobby()
+      return null
+    } catch (cause) {
+      if (attempt === this.resumeAttempt)
+        this.state({
+          session: this.epoch,
+          account: this.protectedAccount || checkingAccount,
+          gameId: this.protectedGame,
+          lane: 'game',
+          phase:
+            authRequired || (cause instanceof LichessError && [401, 403].includes(cause.status))
+              ? 'auth-required'
+              : 'disconnected',
+          message: asError(cause).message,
+        })
+      throw cause
+    }
   }
 
   /** Every game the connected accounts are playing, most urgent first. */
@@ -1417,6 +1484,7 @@ export class OnlineSession {
     this.liveGame = id
     this.liveCorrespondence = false
     this.protectedGame = id
+    this.protectedAccount = this.currentAccount
     await this.listen(
       () =>
         client.GET('/api/board/game/stream/{gameId}', {
@@ -1457,6 +1525,11 @@ export class OnlineSession {
   /** An online game is being played: background work should keep out of its way. */
   get playing(): boolean {
     return this.liveGame !== '' || this.protectedGame !== ''
+  }
+
+  /** Unknown startup/recovery state also blocks assistance, even before a game ID is known. */
+  get assistanceBlocked(): boolean {
+    return this.recoveryUnverified || this.playing
   }
 
   private async liveToken(id: string, what: string): Promise<string> {
@@ -1617,7 +1690,7 @@ export class OnlineSession {
     this.gameController?.abort()
     this.controller = null
     this.gameController = null
-    if (this.protectedGame)
+    if (this.protectedGame || this.recoveryUnverified)
       this.state({
         session: this.epoch,
         account: this.currentAccount,

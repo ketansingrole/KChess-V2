@@ -43,6 +43,8 @@ export interface ManagedLocation {
   dir?: string
   /** GitHub "latest release" endpoint. Tests point this at a local server. */
   releaseUrl?: string
+  /** Suspend engine owners only while publishing the verified replacement. */
+  replace?: (commit: () => Promise<void>) => Promise<void>
 }
 
 export async function managedEngine(dir = MANAGED_DIR): Promise<ManagedEngine> {
@@ -59,9 +61,27 @@ export async function managedEngine(dir = MANAGED_DIR): Promise<ManagedEngine> {
   return { installed: true, path, version }
 }
 
+const mutations = new Map<string, Promise<unknown>>()
+function mutate<T>(dir: string, action: () => Promise<T>): Promise<T> {
+  const result = (mutations.get(dir) ?? Promise.resolve()).catch(() => {}).then(action)
+  mutations.set(dir, result)
+  void result
+    .finally(() => {
+      if (mutations.get(dir) === result) mutations.delete(dir)
+    })
+    .catch(() => {})
+  return result
+}
+
 /** Remove the downloaded engine. Bundled and user-picked engines are never touched. */
-export async function deleteManagedEngine(dir = MANAGED_DIR): Promise<void> {
-  await rm(dir, { recursive: true, force: true })
+export async function deleteManagedEngine(
+  dir = MANAGED_DIR,
+  replace?: ManagedLocation['replace'],
+): Promise<void> {
+  await mutate(dir, () => {
+    const commit = () => rm(dir, { recursive: true, force: true })
+    return replace ? replace(commit) : commit()
+  })
 }
 
 async function findBinary(root: string): Promise<string | null> {
@@ -91,7 +111,10 @@ export interface InstallResult extends ManagedEngine {
  * publishes. Checks the latest release first and downloads nothing when the
  * installed engine is already that version.
  */
-export async function installManagedEngine(location: ManagedLocation = {}): Promise<InstallResult> {
+export function installManagedEngine(location: ManagedLocation = {}): Promise<InstallResult> {
+  return mutate(location.dir ?? MANAGED_DIR, () => install(location))
+}
+async function install(location: ManagedLocation): Promise<InstallResult> {
   const dir = location.dir ?? MANAGED_DIR
   const releaseResponse = await fetch(location.releaseUrl ?? RELEASE_URL, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'KChess-Electron' },
@@ -165,32 +188,52 @@ export async function installManagedEngine(location: ManagedLocation = {}): Prom
     await copyFile(source, pending)
     await chmod(pending, 0o755)
     // Verify UCI before replacing the working engine; this catches wrong architecture and broken downloads.
-    const probe = execFile(pending, [], { timeout: 15_000, maxBuffer: 1_000_000 }, () => {})
+    const probe = execFile(
+      pending,
+      [],
+      { timeout: 15_000, maxBuffer: 1_000_000, killSignal: 'SIGKILL' },
+      () => {},
+    )
     await new Promise<void>((resolve, reject) => {
       let output = ''
       let settled = false
+      let verified = false
+      let probeError: Error | undefined
       const finish = (error?: Error): void => {
         if (settled) return
         settled = true
-        probe.kill()
         if (error) reject(error)
         else resolve()
       }
       probe.on('error', (error) => finish(error))
       probe.on('exit', () =>
         finish(
-          new Error('The downloaded Stockfish could not start. The previous engine was retained.'),
+          probeError ??
+            (verified
+              ? undefined
+              : new Error(
+                  'The downloaded Stockfish could not start. The previous engine was retained.',
+                )),
         ),
       )
       probe.stdout?.on('data', (chunk: Buffer) => {
         output += chunk.toString()
-        if (/^uciok\s*$/m.test(output)) finish()
-        else if (output.length > 1_000_000) finish(new Error('Invalid Stockfish output.'))
+        if (/^uciok\s*$/m.test(output)) {
+          verified = true
+          probe.kill()
+        } else if (output.length > 1_000_000) {
+          probeError = new Error('Invalid Stockfish output.')
+          probe.kill()
+        }
       })
       probe.stdin?.end('uci\n')
     })
-    await rename(pending, path)
-    await writeFile(join(dir, VERSION_FILE), `${release.tag_name}\n`)
+    const commit = async (): Promise<void> => {
+      await rename(pending, path)
+      await writeFile(join(dir, VERSION_FILE), `${release.tag_name}\n`)
+    }
+    if (location.replace) await location.replace(commit)
+    else await commit()
     return { installed: true, path, version: release.tag_name, updated: true }
   } finally {
     await rm(staging, { recursive: true, force: true })

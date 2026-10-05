@@ -220,6 +220,14 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE settings ADD COLUMN blindfold INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE settings ADD COLUMN cloudEval INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE settings ADD COLUMN showOpeningName INTEGER NOT NULL DEFAULT 1;`,
+  // A shared evaluation may belong to several different games with the same moves.
+  `CREATE TABLE game_reviews (
+    gameId TEXT NOT NULL,
+    reviewKey TEXT NOT NULL REFERENCES reviews(key) ON DELETE CASCADE,
+    PRIMARY KEY (gameId, reviewKey)
+  );
+  CREATE INDEX idx_game_reviews_key ON game_reviews(reviewKey);
+  INSERT INTO game_reviews SELECT gameId, key FROM reviews WHERE gameId IS NOT NULL;`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

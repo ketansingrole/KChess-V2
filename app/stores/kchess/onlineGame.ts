@@ -362,8 +362,10 @@ export function useOnlineGame(options: {
   }
   async function stopOnline(): Promise<void> {
     ++onlineRequest
-    onlinePhase.value = 'idle'
-    onlineStatus.value = ''
+    if (onlinePhase.value !== 'disconnected' && onlinePhase.value !== 'playing') {
+      onlinePhase.value = 'idle'
+      onlineStatus.value = ''
+    }
     onlineViewPly.value = null
     await window.kchess.cancelOnline().catch(fail)
   }
@@ -402,14 +404,28 @@ export function useOnlineGame(options: {
       onlineStatus.value = 'No game in progress.'
       clock.pause()
     }
-    if (['reconnecting', 'disconnected', 'auth-required'].includes(state.phase)) {
+    if (['checking', 'reconnecting', 'disconnected', 'auth-required'].includes(state.phase)) {
       onlinePhase.value = 'disconnected'
       onlineStatus.value =
         state.message ?? 'Connection interrupted. Reconnect to recover your game.'
       clock.pause()
     }
   }
+  function checkingOnline(): void {
+    onlinePhase.value = 'disconnected'
+    onlineStatus.value = 'Checking Lichess for an ongoing game…'
+    onlineConnection.value = {
+      session: stateEpoch,
+      account: onlineAccount.value,
+      gameId: onlineId.value,
+      lane: 'game',
+      phase: 'checking',
+      message: onlineStatus.value,
+    }
+    clock.pause()
+  }
   async function reconnectOnline(): Promise<void> {
+    checkingOnline()
     const resumed = await run(() => window.kchess.resumeOnline())
     if (resumed) {
       onlineAccount.value = resumed.account
@@ -674,6 +690,7 @@ export function useOnlineGame(options: {
     onlineConnection,
     readOnlineState,
     reconnectOnline,
+    checkingOnline,
     openOngoing,
     onlineId,
     onlineMoves,

@@ -141,7 +141,9 @@ export function insights(query: InsightsQuery): InsightsReport {
   // Accuracy of the games that have been reviewed (by Lichess or locally), newest first.
   const reviewed = db
     .prepare(
-      `SELECT g.color AS color, r.summary AS summary FROM games g JOIN reviews r ON r.gameId = g.id
+      `SELECT g.color AS color, r.summary AS summary FROM games g JOIN reviews r ON r.key = (
+         SELECT r2.key FROM game_reviews gr JOIN reviews r2 ON r2.key = gr.reviewKey
+         WHERE gr.gameId = g.id AND r2.complete = 1 ORDER BY r2.updatedAt DESC LIMIT 1)
        WHERE ${where.replace(/\b(account|speed|rated|createdAt|status)\b/g, 'g.$1')} AND r.complete = 1
        ORDER BY g.createdAt DESC LIMIT 2000`,
     )

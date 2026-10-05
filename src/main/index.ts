@@ -37,6 +37,7 @@ import { notify } from './notify'
 import { loadCustomThemes, themesDir } from './themes'
 import { flushUsage, resetUsage, usageReport } from './usage'
 import { deleteManagedEngine, installManagedEngine } from './managedEngine'
+import { withEngineMaintenance } from './uci'
 import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
 import {
   cancelReview,
@@ -178,7 +179,7 @@ const online = new OnlineSession(
   (event: OnlineEvent) => send(IPC_EVENTS.online, event),
   (message: string) => send(IPC_EVENTS.error, message),
   (state) => {
-    if (state.gameId && state.phase !== 'idle') {
+    if (state.phase === 'checking' || (state.gameId && state.phase !== 'idle')) {
       stopEngine()
       stopAnalysis()
       restartReviewEngine()
@@ -216,6 +217,7 @@ const online = new OnlineSession(
 const spectator = new Spectator(
   (frame) => send(IPC_EVENTS.watch, frame),
   (update) => send(IPC_EVENTS.broadcast, update),
+  (state) => send(IPC_EVENTS.watchState, state),
 )
 function knownChallenge(id: unknown): ChallengeInfo {
   const challenge = challengeInbox.get(assertGameId(id))
@@ -324,8 +326,8 @@ function createWindow(): void {
   window.webContents.on('preload-error', (_event, _path, error) => {
     console.error('Preload failed:', error)
   })
-  window.webContents.on('console-message', (_event, level, message) => {
-    if (level >= 2) console.error('Renderer:', message)
+  window.webContents.on('console-message', ({ level, message }) => {
+    if (level === 'warning' || level === 'error') console.error('Renderer:', message)
   })
   window.webContents.on('did-fail-load', (_event, code, description, url) =>
     console.error('Renderer load failed:', code, description, url),
@@ -507,19 +509,20 @@ void app
       if (path) trustEnginePath(path)
       return path
     })
+    const replaceEngineFile = (commit: () => Promise<void>): Promise<void> =>
+      withEngineMaintenance(commit, () => {
+        stopEngine(true)
+        stopAnalysis(true)
+        restartReviewEngine()
+      })
     handle('installEngine', async () => {
-      const { path, version, updated } = await installManagedEngine()
+      const { path, version, updated } = await installManagedEngine({ replace: replaceEngineFile })
       return { path, version, updated }
     })
-    handle('deleteEngine', async () => {
-      stopEngine(true)
-      stopAnalysis(true)
-      restartReviewEngine()
-      await deleteManagedEngine()
-    })
+    handle('deleteEngine', () => deleteManagedEngine(undefined, replaceEngineFile))
     handle('stopEngine', () => stopEngine())
     handle('bestMove', async (_event, moves: unknown, level: unknown, options?: unknown) => {
-      if (online.playing)
+      if (online.assistanceBlocked)
         throw new Error('Engine assistance is unavailable during a live Lichess game.')
       return bestMove(
         assertMoves(moves),
@@ -529,13 +532,14 @@ void app
       )
     })
     handle('startAnalysis', async (_event, request: unknown) => {
-      if (online.playing) throw new Error('Analysis is unavailable during a live Lichess game.')
+      if (online.assistanceBlocked)
+        throw new Error('Analysis is unavailable during a live Lichess game.')
       return startAnalysis(request, (await getSettings()).enginePath, (update) =>
         send(IPC_EVENTS.analysis, update),
       )
     })
     handle('positionLookup', async (_event, kind: unknown, fen: unknown, options?: unknown) => {
-      if (online.playing)
+      if (online.assistanceBlocked)
         throw new Error('Position lookups are unavailable during a live Lichess game.')
       return positionLookups.lookup(kind, fen, options)
     })
@@ -561,12 +565,13 @@ void app
       return true
     })
     handle('mastersGame', (_event, id: unknown) => {
-      if (online.playing)
+      if (online.assistanceBlocked)
         throw new Error('Position lookups are unavailable during a live Lichess game.')
       return positionLookups.mastersGame(id)
     })
     handle('cloudEval', async (_event, fen: unknown, lines: unknown) => {
-      if (online.playing) throw new Error('Analysis is unavailable during a live Lichess game.')
+      if (online.assistanceBlocked)
+        throw new Error('Analysis is unavailable during a live Lichess game.')
       // Each request sends the position to Lichess, so it needs the setting turned on.
       if (!(await getSettings()).cloudEval)
         throw new Error('Turn on cloud evaluation in Settings → Analysis first.')
@@ -575,11 +580,14 @@ void app
     })
     handle('stopAnalysis', () => stopAnalysis())
     handle('reviewGet', (_event, fen: unknown, moves: unknown) => {
+      if (online.assistanceBlocked)
+        throw new Error('Review is unavailable until your Lichess game status is verified.')
       const request = assertReviewRequest({ fen, moves })
       return getReview(request.fen, request.moves)
     })
     handle('reviewRequest', (_event, request: unknown) => {
-      if (online.playing) throw new Error('Review is unavailable during a live Lichess game.')
+      if (online.assistanceBlocked)
+        throw new Error('Review is unavailable during a live Lichess game.')
       return requestReview(assertReviewRequest(request))
     })
     handle('reviewCancel', (_event, key: unknown) => cancelReview(assertReviewKey(key)))
@@ -596,7 +604,7 @@ void app
       onBattery: () => powerMonitor.isOnBatteryPower(),
       // The computer opponent counts as busy for a minute after its move: the game goes on.
       busy: () =>
-        online.playing
+        online.assistanceBlocked
           ? 'online'
           : analysisRunning() || computerPlaying(60_000)
             ? 'engine'

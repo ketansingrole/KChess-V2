@@ -4,7 +4,11 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
-        input: { index: 'src/main/index.ts', puzzleWorker: 'src/main/puzzleWorker.ts' },
+        input: {
+          index: 'src/main/index.ts',
+          puzzleWorker: 'src/main/puzzleWorker.ts',
+          voiceModelWorker: 'src/main/voiceModelWorker.ts',
+        },
       },
     },
   },

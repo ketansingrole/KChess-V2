@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encodeGif } from '../../app/utils/gif'
+import { encodeGif, StreamingGifEncoder } from '../../app/utils/gif'
 
 /** A minimal GIF decoder (global palette, full frames) to check the encoder round-trips. */
 function decode(bytes: Uint8Array): {
@@ -14,7 +14,7 @@ function decode(bytes: Uint8Array): {
     height = short()
   const flags = bytes[at++]!
   at += 2
-  const palette = bytes.slice(at, at + 3 * (1 << ((flags & 7) + 1)))
+  let palette = flags & 0x80 ? bytes.slice(at, at + 3 * (1 << ((flags & 7) + 1))) : new Uint8Array()
   at += palette.length
   const frames: number[][] = []
   const delays: number[] = []
@@ -29,7 +29,13 @@ function decode(bytes: Uint8Array): {
       continue
     }
     expect(block).toBe(0x2c)
-    at += 9
+    at += 8
+    const local = bytes[at++]!
+    if (local & 0x80) {
+      const length = 3 * (1 << ((local & 7) + 1))
+      palette = bytes.slice(at, at + length)
+      at += length
+    }
     const minCode = bytes[at++]!
     const data: number[] = []
     while (bytes[at]) {
@@ -102,4 +108,20 @@ describe('GIF export', () => {
   it('refuses to make an empty GIF', () => {
     expect(() => encodeGif(8, 8, [])).toThrow()
   })
+})
+
+it('streams frames with independent palettes, including colors appearing only later', () => {
+  const encoder = new StreamingGifEncoder(120, 90)
+  const shades = [12, 244, 68]
+  for (const shade of shades) {
+    const rgba = new Uint8ClampedArray(120 * 90 * 4)
+    for (let i = 0; i < rgba.length; i += 4) rgba.set([shade, shade, shade, 255], i)
+    encoder.add({ rgba, delay: 30 })
+  }
+  const decoded = decode(encoder.finish())
+  expect(decoded.delays).toEqual([30, 30, 30])
+  decoded.frames.forEach((frame, index) =>
+    expect(frame.every((red) => Math.abs(red - shades[index]!) <= 4)).toBe(true),
+  )
+  expect(() => encoder.finish()).toThrow()
 })

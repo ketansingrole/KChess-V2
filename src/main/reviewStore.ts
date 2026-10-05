@@ -38,9 +38,21 @@ export function writeReview(review: StoredReview): {
   review: StoredReview
   summary: ReviewSummary
 } {
+  const database = getDb()
+  const link = (): void => {
+    if (review.gameId)
+      database
+        .prepare('INSERT OR IGNORE INTO game_reviews (gameId, reviewKey) VALUES (?, ?)')
+        .run(review.gameId, review.key)
+  }
   const existing = readReview(review.key)
-  if (existing && rank(existing) > rank(review))
-    return { review: existing, summary: summarize(existing) }
+  if (existing && rank(existing) > rank(review)) {
+    link()
+    return {
+      review: { ...existing, gameId: review.gameId ?? existing.gameId },
+      summary: summarize(existing),
+    }
+  }
   const merged: StoredReview = {
     ...review,
     // A local review of a game opened from the list keeps the game it belongs to.
@@ -50,8 +62,11 @@ export function writeReview(review: StoredReview): {
   const summary = summarize(merged)
   getDb()
     .prepare(
-      `INSERT OR REPLACE INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET gameId=excluded.gameId, source=excluded.source,
+         complete=excluded.complete, depth=excluded.depth, data=excluded.data,
+         summary=excluded.summary, updatedAt=excluded.updatedAt`,
     )
     .run(
       merged.key,
@@ -63,6 +78,7 @@ export function writeReview(review: StoredReview): {
       JSON.stringify(summary),
       merged.updatedAt,
     )
+  link()
   return { review: merged, summary }
 }
 
@@ -74,8 +90,8 @@ export function reviewSummaries(ids: readonly string[]): Record<string, ReviewSu
   if (!ids.length) return {}
   const rows = getDb()
     .prepare(
-      `SELECT gameId, summary FROM reviews WHERE gameId IN (${ids.map(() => '?').join(', ')})
-       ORDER BY complete, updatedAt`,
+      `SELECT gr.gameId, r.summary FROM game_reviews gr JOIN reviews r ON r.key=gr.reviewKey WHERE gr.gameId IN (${ids.map(() => '?').join(', ')})
+       ORDER BY r.complete, r.updatedAt`,
     )
     .all(...ids) as unknown as { gameId: string; summary: string }[]
   const result: Record<string, ReviewSummary> = {}
@@ -125,9 +141,10 @@ export function gamesToReview(accounts: readonly string[], since = 0, limit = 30
     .prepare(
       `SELECT g.id, g.account, g.moves, g.pgn, g.perf, g.createdAt, c.id IS NOT NULL AS checked
        FROM games g
-       LEFT JOIN reviews r ON r.gameId = g.id AND r.complete = 1
        LEFT JOIN lichess_review_checks c ON c.id = g.id
-       WHERE g.account COLLATE NOCASE IN (${marks}) AND g.createdAt >= ? AND r.key IS NULL
+       WHERE g.account COLLATE NOCASE IN (${marks}) AND g.createdAt >= ? AND NOT EXISTS (
+         SELECT 1 FROM game_reviews gr JOIN reviews r ON r.key=gr.reviewKey
+         WHERE gr.gameId=g.id AND r.complete=1)
          AND g.moves != '' AND g.status NOT IN ('created', 'started')
        GROUP BY g.id
        ORDER BY g.createdAt DESC
