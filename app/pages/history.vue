@@ -140,9 +140,8 @@ const reviewColor = computed(() =>
       :source="source === 'computer' ? 'computer' : 'board'"
     />
     <section v-else class="lichess-history">
-      <p class="section-hint mb-4">Lichess games saved on this device.</p>
       <p v-if="!online" class="section-hint mb-4" role="status">
-        You're offline. Saved games and local reviews are available; reconnect to sync new games.
+        Offline · reconnect to sync new games.
       </p>
       <template v-if="reviewGame">
         <div class="toolbar-row mb-4">
@@ -203,8 +202,8 @@ const reviewColor = computed(() =>
             title="No saved Lichess games"
             :description="
               data.accounts.length
-                ? 'Sync your accounts to pull in your Lichess games.'
-                : 'Follow a player by username to download their public games without signing in, or connect your own Lichess account.'
+                ? 'Sync games to get started.'
+                : 'Follow a player or connect Lichess.'
             "
             :actions="
               data.accounts.length

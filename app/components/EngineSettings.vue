@@ -36,12 +36,10 @@ const downloadedDescription = computed(() => {
   if (managed?.installed) return managed.version ? `Version ${managed.version}` : 'Installed'
   return engineInfo.value?.canDownload === false
     ? 'No official download is available for this platform.'
-    : 'Native build from the official Stockfish release, verified by checksum.'
+    : 'Official native build'
 })
 const customDescription = computed(() =>
-  engineSource.value === 'custom'
-    ? settings.value!.enginePath
-    : 'Pick a Stockfish executable already on this computer.',
+  engineSource.value === 'custom' ? settings.value!.enginePath : 'Stockfish executable',
 )
 </script>
 <template>
@@ -52,9 +50,7 @@ const customDescription = computed(() =>
         <div class="setting-info">
           <span class="setting-title">Status</span>
           <span class="setting-hint">{{
-            engineReady && engineName
-              ? `Computer games are played by ${engineName}. Choose another below.`
-              : 'No working Stockfish yet. Use the bundled one, download one, or pick a file.'
+            engineReady && engineName ? engineName : 'Choose an available engine below.'
           }}</span>
         </div>
         <div>
@@ -69,7 +65,7 @@ const customDescription = computed(() =>
       <div class="engine-options">
         <EngineOption
           title="Bundled Stockfish 19 lite"
-          description="Included with KChess. Works offline on every platform."
+          description="Included"
           :active="engineSource === 'bundled'"
         >
           <UButton
@@ -146,10 +142,7 @@ const customDescription = computed(() =>
         <div class="setting-row">
           <div class="setting-info">
             <span id="review-auto-label" class="setting-title">Review my games automatically</span>
-            <span class="setting-hint"
-              >Your synced Lichess games get labelled inaccuracies, mistakes and blunders in the
-              background. Lichess's own analysis is used when a game has it.</span
-            >
+            <span class="setting-hint">Runs in the background after syncing.</span>
           </div>
           <UTabs
             v-model="settings.reviewAuto"
@@ -164,9 +157,7 @@ const customDescription = computed(() =>
         <div class="setting-row">
           <div class="setting-info">
             <span id="review-battery-label" class="setting-title">Also on battery power</span>
-            <span class="setting-hint"
-              >Automatic reviews keep Stockfish busy; by default they wait for a charger.</span
-            >
+            <span class="setting-hint">Uses more power; reviews otherwise wait for a charger.</span>
           </div>
           <USwitch
             v-model="settings.reviewOnBattery"

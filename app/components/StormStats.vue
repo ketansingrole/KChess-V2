@@ -34,11 +34,7 @@ const days = computed(() =>
       <div>
         <h2 class="section-title">Your results on Lichess</h2>
       </div>
-      <SourceBadge kind="readonly" />
     </div>
-    <p class="section-hint mode-note-inline">
-      Runs played in KChess are local and never appear here.
-    </p>
 
     <UEmpty
       v-if="!account"
@@ -46,7 +42,6 @@ const days = computed(() =>
       size="sm"
       icon="i-lucide-user-round-plus"
       title="No Lichess account connected"
-      description="Connect one to see your Storm and Streak results here."
       :actions="[
         { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => kchess.connect() },
       ]"
@@ -122,8 +117,5 @@ const days = computed(() =>
 }
 .storm-highs strong {
   font-size: 20px;
-}
-.mode-note-inline {
-  margin: 0 0 4px;
 }
 </style>

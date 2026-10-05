@@ -90,7 +90,7 @@ function onOutcome(win: boolean): void {
           variant="naked"
           icon="i-lucide-user-round-plus"
           title="Connect a Lichess account for rated puzzles"
-          description="Rated puzzles change your Lichess puzzle rating, so they need a connected account. Practice and Downloaded work without one."
+          description="Connect Lichess or switch to Practice."
           :actions="[
             {
               label: 'Connect Lichess',
@@ -111,7 +111,7 @@ function onOutcome(win: boolean): void {
           variant="naked"
           icon="i-lucide-key-round"
           title="Lichess needs your permission for puzzles"
-          :description="`@${account} was connected before puzzles were added, or its login expired. Connect it again to allow KChess to read and report puzzles. Sign in to the same account on lichess.org first.`"
+          :description="`Sign in to @${account} on lichess.org, then reconnect to enable rated puzzles.`"
           :actions="[
             {
               label: 'Reconnect',
@@ -171,22 +171,15 @@ function onOutcome(win: boolean): void {
             :ui="{ trigger: 'grow' }"
           />
         </div>
-        <p class="section-hint" role="status">
-          {{
-            mode === 'rated'
-              ? 'Requires internet and a connected Lichess account. Results affect your Lichess rating.'
-              : mode === 'offline'
-                ? 'Works offline after downloading puzzles. No account needed.'
-                : 'Requires internet. No account needed, and results stay on this device.'
-          }}
+        <p v-if="mode === 'rated' && !isRetry" class="section-hint">
+          Results affect your Lichess rating.
         </p>
-        <SourceBadge v-if="isRetry" kind="local" label="Local only · retry" />
+        <SourceBadge v-if="isRetry" kind="local" label="Retry · unrated" />
         <SourceBadge
           v-else-if="mode === 'rated'"
           kind="synced"
-          :label="account ? `Synced to Lichess · @${account}` : 'Synced to Lichess'"
+          :label="account ? `Rated · @${account}` : 'Rated'"
         />
-        <SourceBadge v-else kind="local" label="Local only · nothing is sent" />
         <div v-if="mode === 'rated' && accounts.length > 1" class="field">
           <span id="train-account-label" class="field-label">Account</span>
           <USelect

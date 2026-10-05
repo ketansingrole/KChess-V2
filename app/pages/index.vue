@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useOnline } from '@vueuse/core'
 import { engineLevelLabel } from '../../src/shared/engineLevels'
+import { useGameArchiveStore } from '../stores/gameArchive'
 
 const online = useOnline()
 
@@ -18,15 +19,24 @@ const {
   chartSeries,
   chartFromGames,
   chartValues,
-  data,
 } = storeToRefs(store)
 const { sync, selectPage, openReview } = store
+const archive = useGameArchiveStore()
+const localGames = computed(() =>
+  archive.games
+    .filter((game) => game.source !== 'clock')
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, 6),
+)
+function localResult(result: string): string {
+  return result === '1/2-1/2' ? '½–½' : result === '*' ? 'Unfinished' : result.replace('-', '–')
+}
 
 const continueComputer = computed(() => store.localMoves.length > 0 && !store.localOver)
 const computerDescription = computed(() =>
   continueComputer.value
-    ? `Move ${Math.floor(store.localMoves.length / 2) + 1} · Playing as ${store.userColor === 'white' ? 'White' : 'Black'} · ${engineLevelLabel(store.level)}. Your game is saved on this device.`
-    : 'Choose your level and play at your own pace. Works offline.',
+    ? `Move ${Math.floor(store.localMoves.length / 2) + 1} · ${store.userColor === 'white' ? 'White' : 'Black'} · ${engineLevelLabel(store.level)}`
+    : '',
 )
 
 function openComputer(): void {
@@ -71,61 +81,30 @@ const hasConnectedAccount = computed(() =>
       >
     </PageHeader>
 
-    <section class="home-start" aria-labelledby="home-title">
-      <div>
-        <h2 id="home-title" class="text-2xl font-semibold">Let's play chess</h2>
-        <p class="section-hint">Play, learn and explore. No account needed to get started.</p>
-      </div>
+    <section class="home-start" aria-label="Start">
       <div class="home-activities">
-        <div class="card home-activity home-primary">
-          <UIcon name="i-lucide-monitor" class="text-2xl text-primary" />
-          <h3 class="section-title">
-            {{ continueComputer ? 'Your computer game' : 'Play the computer' }}
-          </h3>
-          <p class="section-hint">{{ computerDescription }}</p>
-          <UButton trailing-icon="i-lucide-arrow-right" @click="openComputer">
-            {{ continueComputer ? 'Continue your game' : 'Play the computer' }}
-          </UButton>
-        </div>
-        <div class="card home-activity">
-          <UIcon name="i-lucide-puzzle" class="text-2xl text-primary" />
-          <h3 class="section-title">Practice puzzles</h3>
-          <p class="section-hint">
-            Train without an account. Download puzzles to keep playing offline.
-          </p>
-          <UButton variant="outline" color="neutral" @click="selectPage('puzzles')">
-            Practice puzzles
-          </UButton>
-        </div>
-        <div class="card home-activity">
-          <UIcon name="i-lucide-microscope" class="text-2xl text-primary" />
-          <h3 class="section-title">Analyze a game</h3>
-          <p class="section-hint">Explore a position or import a PGN with local engine analysis.</p>
-          <UButton variant="outline" color="neutral" @click="selectPage('analysis')">
-            Open analysis
-          </UButton>
-        </div>
-        <div class="card home-activity">
-          <UIcon name="i-lucide-globe-2" class="text-2xl text-primary" />
-          <h3 class="section-title">Play on Lichess</h3>
-          <p class="section-hint">
-            {{
-              store.activeOnlineAccount
-                ? `Play as @${store.activeOnlineAccount}.`
-                : 'Connect Lichess when you want to play online.'
-            }}
-            {{
-              online
-                ? store.activeOnlineAccount
-                  ? 'Internet required.'
-                  : 'Sign in required.'
-                : 'Available when you reconnect to the internet.'
-            }}
-          </p>
-          <UButton variant="outline" color="neutral" @click="selectPage('online')">
-            {{ store.activeOnlineAccount ? 'Play on Lichess' : 'Explore online play' }}
-          </UButton>
-        </div>
+        <button type="button" class="home-tile home-primary" @click="openComputer">
+          <UIcon name="i-lucide-monitor" class="home-tile-icon" />
+          <span class="home-tile-text">
+            <span class="home-tile-label">{{
+              continueComputer ? 'Continue your game' : 'Play the computer'
+            }}</span>
+            <span v-if="continueComputer" class="home-tile-sub">{{ computerDescription }}</span>
+          </span>
+          <UIcon name="i-lucide-arrow-right" class="home-tile-arrow" />
+        </button>
+        <button type="button" class="home-tile" @click="selectPage('puzzles')">
+          <UIcon name="i-lucide-puzzle" class="home-tile-icon" />
+          <span class="home-tile-label">Practice puzzles</span>
+        </button>
+        <button type="button" class="home-tile" @click="selectPage('analysis')">
+          <UIcon name="i-lucide-microscope" class="home-tile-icon" />
+          <span class="home-tile-label">Open analysis</span>
+        </button>
+        <button type="button" class="home-tile" @click="selectPage('online')">
+          <UIcon name="i-lucide-globe-2" class="home-tile-icon" />
+          <span class="home-tile-label">Play on Lichess</span>
+        </button>
       </div>
       <div class="toolbar-row">
         <UButton
@@ -157,21 +136,65 @@ const hasConnectedAccount = computed(() =>
           >Your studies</UButton
         >
       </div>
-      <p v-if="!store.connectedAccounts.length && data.accounts.length" class="section-hint">
-        No Lichess account connected. Public games from players you follow are still available in
-        Following and Game history.
-      </p>
-      <p v-if="!online" class="section-hint" role="status">
-        You're offline. Local play, analysis, saved studies and downloaded puzzles are available.
-        <template v-if="store.activeOnlineAccount">Your Lichess account is remembered.</template>
-      </p>
+    </section>
+
+    <section v-if="!hasConnectedAccount" class="two-columns home-local">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="section-title">Recent games</h2>
+          <UButton
+            v-if="localGames.length"
+            size="xs"
+            variant="link"
+            color="neutral"
+            trailing-icon="i-lucide-arrow-right"
+            @click="selectPage('history')"
+            >View all</UButton
+          >
+        </div>
+        <UEmpty
+          v-if="!localGames.length"
+          variant="naked"
+          size="sm"
+          icon="i-lucide-history"
+          title="No saved games yet"
+        />
+        <ul v-else class="home-local-games">
+          <li v-for="game in localGames" :key="game.id">
+            <button type="button" class="home-local-game" @click="selectPage('history')">
+              <UIcon
+                :name="game.source === 'computer' ? 'i-lucide-monitor' : 'i-lucide-users-round'"
+                class="home-local-source"
+              />
+              <span class="home-local-players">{{ game.white }} vs {{ game.black }}</span>
+              <span class="home-local-result tabular">{{ localResult(game.result) }}</span>
+              <span class="home-local-date">{{
+                new Date(game.startedAt).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                })
+              }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2 class="section-title">Lichess</h2>
+        <UEmpty
+          variant="naked"
+          size="sm"
+          icon="i-lucide-chart-line"
+          title="Ratings, games and puzzle progress"
+          :actions="[
+            { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => store.connect() },
+          ]"
+        />
+      </div>
     </section>
 
     <section v-if="hasConnectedAccount" class="home-lichess">
       <h2 class="section-title">Your Lichess activity</h2>
-      <p v-if="!online" class="section-hint">
-        Showing saved activity. Reconnect to sync the latest games and ratings.
-      </p>
+      <p v-if="!online" class="section-hint">Offline · showing saved activity.</p>
       <div class="stats-grid">
         <div class="card stat-card">
           <div class="stat-label">Games</div>
@@ -234,7 +257,11 @@ const hasConnectedAccount = computed(() =>
               />
             </div>
           </div>
-          <RatingChart v-if="chartSeries.length >= 2" :points="chartSeries" :label="chartMode" />
+          <LazyRatingChart
+            v-if="chartSeries.length >= 2"
+            :points="chartSeries"
+            :label="chartMode"
+          />
           <p v-if="chartSeries.length >= 2 && chartFromGames" class="section-hint">
             Built from your synced rated games. Lichess has no rating history for this account.
           </p>
@@ -244,7 +271,7 @@ const hasConnectedAccount = computed(() =>
             size="sm"
             icon="i-lucide-chart-line"
             title="No rating points"
-            description="Nothing recorded for this mode and range. Try another mode or 'All'."
+            description="Try another mode or date range."
           />
         </div>
 
@@ -267,7 +294,6 @@ const hasConnectedAccount = computed(() =>
             size="sm"
             icon="i-lucide-history"
             title="No synced games yet"
-            description="Sync your account to pull in your latest games."
             :actions="[
               {
                 label: 'Sync games',
@@ -304,28 +330,132 @@ const hasConnectedAccount = computed(() =>
 }
 .home-start {
   display: grid;
-  gap: 20px;
+  gap: 12px;
   margin-bottom: 32px;
+}
+.home-start .toolbar-row {
+  margin-left: -10px;
 }
 .home-activities {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-.home-activity {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
-.home-activity .section-hint {
-  margin: 0;
+.home-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-highlighted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+.home-tile:hover {
+  border-color: var(--ui-border-accented);
+  background: var(--ui-bg-accented);
+}
+.home-tile:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+}
+.home-tile-icon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  color: var(--ui-primary);
+}
+.home-tile-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
   flex: 1;
+}
+.home-tile-label {
+  font-weight: 600;
+}
+.home-tile-sub {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-tile-arrow {
+  flex: none;
+  width: 18px;
+  height: 18px;
 }
 .home-primary {
   border-color: var(--ui-primary);
+  background: var(--ui-primary);
+  color: var(--ui-bg);
 }
-@media (max-width: 640px) {
+.home-primary:hover {
+  border-color: var(--ui-primary);
+  background: color-mix(in oklab, var(--ui-primary) 88%, var(--ui-bg));
+}
+.home-primary .home-tile-icon,
+.home-primary .home-tile-sub {
+  color: inherit;
+}
+.home-primary .home-tile-sub {
+  opacity: 0.8;
+}
+.home-local {
+  margin-top: 0;
+}
+.home-local-games {
+  display: grid;
+  margin: 0 -8px;
+}
+.home-local-game {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 64px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 8px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.home-local-game:hover {
+  background: var(--ui-bg-accented);
+}
+.home-local-game:focus-visible {
+  outline: 2px solid var(--ui-primary);
+}
+.home-local-source {
+  width: 16px;
+  height: 16px;
+  color: var(--ui-text-muted);
+}
+.home-local-players {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-local-result {
+  font-weight: 600;
+}
+.home-local-date {
+  color: var(--ui-text-muted);
+  font-size: 0.8125rem;
+  text-align: right;
+}
+@media (max-width: 1100px) {
+  .home-activities {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
   .home-activities {
     grid-template-columns: 1fr;
   }

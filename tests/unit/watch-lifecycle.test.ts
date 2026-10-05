@@ -56,6 +56,31 @@ it('does not reopen a delayed tour after leaving or closing Watch', async () => 
   expect(store.tour).toBeNull()
   expect(store.roundId).toBe('')
 })
+it('keeps the chosen round and board when the feed stops, and resumes them', async () => {
+  const b = bridge(),
+    start = vi.fn(async () => 2)
+  b.api.broadcastTour = async () =>
+    ({
+      name: 'Tour',
+      rounds: [
+        { id: 'Round001', ongoing: false },
+        { id: 'Round002', ongoing: true },
+      ],
+    }) as BroadcastTourDetail
+  b.api.watchBroadcast = start
+  const store = useWatchStore()
+  await store.openTour('Tour0001')
+  store.selectedGame = 'Chapter1'
+  await store.stop()
+  expect(store.roundId).toBe('Round002')
+  await store.resumeTour()
+  expect(start).toHaveBeenLastCalledWith('Round002')
+  expect(store.selectedGame).toBe('Chapter1')
+  await store.resumeTour()
+  expect(start).toHaveBeenCalledTimes(2)
+  store.closeTour()
+  expect(store.roundId).toBe('')
+})
 it('ignores an older tour response when a newer tour is selected', async () => {
   const b = bridge(),
     old = deferred<BroadcastTourDetail>(),

@@ -5,8 +5,5 @@ const online = useOnline()
 </script>
 
 <template>
-  <p class="section-hint mb-4" role="status">
-    <template v-if="online">Internet required · No account needed to browse.</template>
-    <template v-else>{{ offlineMessage }}</template>
-  </p>
+  <p v-if="!online" class="section-hint mb-4" role="status">{{ offlineMessage }}</p>
 </template>

@@ -32,9 +32,7 @@ async function restart(): Promise<void> {
     <div class="setting-row">
       <div class="setting-info">
         <h2 id="update-status-title" class="setting-title">{{ title }}</h2>
-        <p class="setting-hint">
-          Installed version {{ status?.currentVersion ?? '…' }} · Stable releases
-        </p>
+        <p class="setting-hint">Version {{ status?.currentVersion ?? '…' }}</p>
         <p class="setting-hint">Last checked: {{ checkedAt }}</p>
       </div>
       <UButton
@@ -103,7 +101,6 @@ async function restart(): Promise<void> {
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-title">Release notes</span>
-        <span class="setting-hint">See what changed in published KChess releases.</span>
       </div>
       <UButton
         color="neutral"
@@ -119,10 +116,7 @@ async function restart(): Promise<void> {
     <div class="setting-row">
       <div class="setting-info">
         <span id="update-check-label" class="setting-title">Automatically check for updates</span>
-        <span class="setting-hint"
-          >Check on startup and every six hours while KChess is open. You can always check
-          manually.</span
-        >
+        <span class="setting-hint">On startup and every six hours.</span>
       </div>
       <USwitch
         v-model="settings.updateAutoCheck"
@@ -137,10 +131,7 @@ async function restart(): Promise<void> {
         <span id="update-download-label" class="setting-title"
           >Download updates in the background</span
         >
-        <span class="setting-hint"
-          >Download when a check finds an update. Turn off to choose when to use bandwidth. An
-          ongoing download will finish.</span
-        >
+        <span class="setting-hint">Turning this off does not cancel an ongoing download.</span>
       </div>
       <USwitch
         v-model="settings.updateAutoDownload"
@@ -153,11 +144,7 @@ async function restart(): Promise<void> {
     <div class="setting-row">
       <div class="setting-info">
         <span id="update-install-label" class="setting-title">Install updates when I quit</span>
-        <span class="setting-hint"
-          >Apply downloaded updates when you quit KChess. The app never quits or restarts
-          automatically during a game. Your accounts, settings and saved history stay on this
-          device.</span
-        >
+        <span class="setting-hint">KChess will not quit or restart automatically.</span>
       </div>
       <USwitch
         v-model="settings.updateInstallOnQuit"

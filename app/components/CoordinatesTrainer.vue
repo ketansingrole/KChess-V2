@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSaved, RunSummary, VoiceOutcome } from '../../src/shared/types'
+import { INITIAL_FEN } from 'chessops/fen'
 import { EMPTY_FEN, FILES, RANKS, randomSquare, type Square } from '../utils/coordinates'
 import { useCountdown } from '../utils/countdown'
 import { play } from '../utils/sound'
@@ -58,6 +59,12 @@ const boardCoordinates = computed(() =>
       : settings.value.coordinates
     : 'none',
 )
+// Between runs the board already shows the chosen side; Random picks one when the run starts.
+watch(side, (value) => {
+  if (stage.value !== 'running' && value !== 'random') orientation.value = value
+})
+// An empty board looks the same from both sides, so between runs the pieces show which side is chosen.
+const boardFen = computed(() => (stage.value === 'running' ? EMPTY_FEN : INITIAL_FEN))
 const shapes = computed<DrawShape[]>(() => {
   const list: DrawShape[] = []
   if (stage.value === 'running' && mode.value !== 'find')
@@ -203,11 +210,11 @@ async function finish(): Promise<void> {
           <strong class="coord-target">{{ pendingFile || '?' }}?</strong>
           <span class="muted">Name the marked square</span>
         </template>
-        <span v-else class="muted">Press Start to begin a 30-second run.</span>
+        <span v-else class="muted">30-second run</span>
       </div>
       <div class="board-shell">
         <ChessBoard
-          :fen="EMPTY_FEN"
+          :fen="boardFen"
           :orientation="orientation"
           :theme="settings.boardTheme"
           :coordinates="boardCoordinates"
@@ -241,15 +248,6 @@ async function finish(): Promise<void> {
             :ui="{ trigger: 'grow' }"
             :disabled="stage === 'running' || starting"
           />
-          <span class="field-hint">
-            {{
-              mode === 'find'
-                ? 'A square is named above the board: click it.'
-                : mode === 'voice'
-                  ? 'A square is marked on the board: say its file and rank.'
-                  : 'A square is marked on the board: type its file and rank (or use the buttons).'
-            }}
-          </span>
         </div>
         <div class="field">
           <span id="coord-side" class="field-label">Board from the side of</span>

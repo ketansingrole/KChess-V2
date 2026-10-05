@@ -186,10 +186,12 @@ function runImport(): void {
 <template>
   <div>
     <PageHeader title="Studies">
-      <UButton variant="outline" color="neutral" icon="i-lucide-import" @click="startImport"
-        >Import PGN</UButton
-      >
-      <UButton icon="i-lucide-plus" @click="create">New study</UButton>
+      <template v-if="library.items.length || tab === 'lichess'">
+        <UButton variant="outline" color="neutral" icon="i-lucide-import" @click="startImport"
+          >Import PGN</UButton
+        >
+        <UButton icon="i-lucide-plus" @click="create">New study</UButton>
+      </template>
     </PageHeader>
 
     <UTabs

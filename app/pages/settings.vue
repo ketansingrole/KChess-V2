@@ -135,10 +135,9 @@ const themePickers = [
   {
     key: 'lightTheme',
     label: 'Light mode theme',
-    hint: 'Used when the app is light.',
     dark: false,
   },
-  { key: 'darkTheme', label: 'Dark mode theme', hint: 'Used when the app is dark.', dark: true },
+  { key: 'darkTheme', label: 'Dark mode theme', dark: true },
 ] as const
 
 const animationItems = [
@@ -151,27 +150,22 @@ const notifyCategories = [
   {
     key: 'notifyOpponentMove',
     title: 'Opponent moves',
-    hint: 'Your Lichess opponent has moved and it is your turn.',
   },
   {
     key: 'notifyLowTime',
     title: 'Low on time',
-    hint: 'Your clock is running low in an online game.',
   },
   {
     key: 'notifyGameEvents',
     title: 'Game start and result',
-    hint: 'An online game begins, or ends with a win, loss or draw.',
   },
   {
     key: 'notifyComputerMove',
     title: 'Computer moves',
-    hint: 'Stockfish has replied in a game against the computer.',
   },
   {
     key: 'notifyChallenges',
     title: 'Challenges',
-    hint: 'Someone challenges you, or offers a rematch, on Lichess.',
   },
 ] as const
 const pollItems = [
@@ -188,36 +182,33 @@ const switchRows = {
     {
       key: 'showOpeningName',
       title: 'Show opening names',
-      hint: 'Name the opening (from Lichess’s open opening list, stored in the app) in games and analysis.',
     },
     {
       key: 'blindfold',
       title: 'Blindfold',
-      hint: 'Hide the pieces in games you play; the move list, clocks and typed or spoken moves still work.',
+      hint: 'Hide pieces while playing.',
     },
     {
       key: 'zenMode',
       title: 'Zen mode',
-      hint: 'While playing, hide the sidebar and everything but the board, clocks and game controls. Z toggles it.',
+      hint: 'Board and game controls only · Z to toggle.',
     },
   ],
   online: [
     {
       key: 'receiveChallenges',
       title: 'Receive challenges',
-      hint: 'Keep a connection to Lichess open while you are not playing, so challenges and rematch offers reach you here.',
     },
     {
       key: 'onlineChat',
       title: 'Game chat',
-      hint: 'Show the chat with your opponent in online games.',
     },
   ],
   analysis: [
     {
       key: 'cloudEval',
       title: 'Lichess cloud evaluation',
-      hint: 'Ask Lichess for its stored deep evaluation of each position you analyse. Each position is sent to Lichess; it is off during your own games.',
+      hint: 'Sends analyzed positions to Lichess. Paused during your online games.',
     },
   ],
 } as const
@@ -375,8 +366,8 @@ function removePending(): void {
     <PageHeader :title="category.label" />
 
     <div class="settings-page">
-      <AppUpdateSettings v-if="category.id === 'updates'" />
-      <OfflineDownloads v-if="category.id === 'offline'" />
+      <LazyAppUpdateSettings v-if="category.id === 'updates'" />
+      <LazyOfflineDownloads v-if="category.id === 'offline'" />
       <section
         v-if="category.id === 'appearance'"
         id="settings-appearance"
@@ -387,7 +378,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="theme-label" class="setting-title">Theme</span>
-            <span class="setting-hint">Light, dark, or follow your system.</span>
           </div>
           <UTabs
             v-model="settings.appearance"
@@ -402,7 +392,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="coords-label" class="setting-title">Board coordinates</span>
-            <span class="setting-hint">Where the a–h and 1–8 labels appear.</span>
           </div>
           <UTabs
             v-model="settings.coordinates"
@@ -417,7 +406,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="animation-label" class="setting-title">Piece animation</span>
-            <span class="setting-hint">How quickly pieces slide to their squares.</span>
           </div>
           <UTabs
             v-model="settings.pieceAnimation"
@@ -432,7 +420,6 @@ function removePending(): void {
         <div class="setting-row stacked">
           <div class="setting-info">
             <span id="piece-set-label" class="setting-title">Piece set</span>
-            <span class="setting-hint">The look of the pieces, from Lichess's open sets.</span>
           </div>
           <div
             class="theme-grid setting-control"
@@ -460,7 +447,6 @@ function removePending(): void {
         <div class="setting-row stacked">
           <div class="setting-info">
             <span id="board-theme-label" class="setting-title">Board theme</span>
-            <span class="setting-hint">The colors or texture of the board squares.</span>
           </div>
           <div
             class="theme-grid setting-control"
@@ -494,9 +480,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="mode-label" class="setting-title">Appearance</span>
-            <span class="setting-hint"
-              >Light, dark, or follow your system. Each has its own theme below.</span
-            >
           </div>
           <UTabs
             v-model="settings.appearance"
@@ -511,7 +494,6 @@ function removePending(): void {
         <div v-for="picker in themePickers" :key="picker.key" class="setting-row stacked">
           <div class="setting-info">
             <span :id="`${picker.key}-label`" class="setting-title">{{ picker.label }}</span>
-            <span class="setting-hint">{{ picker.hint }}</span>
           </div>
           <div
             class="theme-grid app-theme-grid setting-control"
@@ -551,13 +533,13 @@ function removePending(): void {
         <div class="setting-row stacked">
           <div class="setting-info">
             <span class="setting-title">Your own themes</span>
-            <span class="setting-hint"
-              >Drop a JSON file in the themes folder to add one. Open it, copy
-              <code>_template.json</code>, change the colors, then choose Reload. Only
-              <code>bg</code>, <code>text</code> and <code>primary</code> are required; the rest are
-              worked out from them. A theme with one palette is used in both modes.</span
-            >
-            <span v-if="themesDir" class="setting-hint tabular">{{ themesDir }}</span>
+            <details class="setting-hint">
+              <summary>How to add a theme</summary>
+              <p>
+                Copy <code>_template.json</code> in the themes folder, edit its colors, then reload.
+              </p>
+              <p v-if="themesDir" class="tabular">{{ themesDir }}</p>
+            </details>
           </div>
           <div class="friend-actions">
             <UButton
@@ -591,9 +573,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="legal-label" class="setting-title">Show possible moves</span>
-            <span class="setting-hint"
-              >Dot the squares a piece can move to when you select it.</span
-            >
           </div>
           <USwitch
             v-model="settings.showLegalMoves"
@@ -604,9 +583,7 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="premove-label" class="setting-title">Premoves</span>
-            <span class="setting-hint"
-              >Queue a move while it is your opponent's turn; it plays automatically if legal.</span
-            >
+            <span class="setting-hint">Plays your queued move automatically when legal.</span>
           </div>
           <USwitch
             v-model="settings.premove"
@@ -617,7 +594,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="promotion-label" class="setting-title">Pawn promotion</span>
-            <span class="setting-hint">Which piece a pawn becomes on the last rank.</span>
           </div>
           <UTabs
             v-model="settings.promotion"
@@ -632,10 +608,7 @@ function removePending(): void {
         <div class="setting-row stacked">
           <div class="setting-info">
             <span id="engine-levels-label" class="setting-title">Computer levels</span>
-            <span class="setting-hint"
-              >Which strengths Play with Computer offers. Titles are earned at these ratings; the
-              numbers are approximate engine ratings, not FIDE or Lichess ones.</span
-            >
+            <span class="setting-hint">Approximate engine ratings.</span>
           </div>
           <div class="engine-levels" role="group" aria-labelledby="engine-levels-label">
             <UCheckbox
@@ -665,7 +638,7 @@ function removePending(): void {
         <div v-for="item in switchRows.gameplay" :key="item.key" class="setting-row">
           <div class="setting-info">
             <span :id="`${item.key}-label`" class="setting-title">{{ item.title }}</span>
-            <span class="setting-hint">{{ item.hint }}</span>
+            <span v-if="'hint' in item" class="setting-hint">{{ item.hint }}</span>
           </div>
           <USwitch
             v-model="settings[item.key]"
@@ -684,7 +657,7 @@ function removePending(): void {
         <div v-for="item in switchRows[category.id]" :key="item.key" class="setting-row">
           <div class="setting-info">
             <span :id="`${item.key}-label`" class="setting-title">{{ item.title }}</span>
-            <span class="setting-hint">{{ item.hint }}</span>
+            <span v-if="'hint' in item" class="setting-hint">{{ item.hint }}</span>
           </div>
           <USwitch
             v-model="settings[item.key]"
@@ -695,10 +668,7 @@ function removePending(): void {
         <div v-if="category.id === 'online'" class="setting-row">
           <div class="setting-info">
             <span id="corr-label" class="setting-title">Check correspondence games</span>
-            <span class="setting-hint"
-              >How often KChess asks Lichess whether it is your move in a correspondence game while
-              the app is open. Lichess cannot alert a closed app.</span
-            >
+            <span class="setting-hint">Only while KChess is open.</span>
           </div>
           <USelect
             v-model="settings.correspondencePoll"
@@ -719,7 +689,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="sounds-label" class="setting-title">Game sounds</span>
-            <span class="setting-hint">Moves, captures and low-time warnings.</span>
           </div>
           <USwitch
             v-model="settings.soundEnabled"
@@ -754,9 +723,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="notify-label" class="setting-title">Desktop notifications</span>
-            <span class="setting-hint"
-              >Get an alert from your system when something happens in a game.</span
-            >
           </div>
           <USwitch
             v-model="settings.notificationsEnabled"
@@ -767,9 +733,6 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="notify-active-label" class="setting-title">While I'm using KChess</span>
-            <span class="setting-hint"
-              >An alert appears inside the window, for example when you are on another page.</span
-            >
           </div>
           <USwitch
             v-model="settings.notifyActive"
@@ -783,10 +746,6 @@ function removePending(): void {
             <span id="notify-background-label" class="setting-title"
               >While KChess is in the background</span
             >
-            <span class="setting-hint"
-              >A system notification when another app is in front or KChess is minimized or hidden.
-              Click it to come back.</span
-            >
           </div>
           <USwitch
             v-model="settings.notifyBackground"
@@ -798,7 +757,6 @@ function removePending(): void {
         <div v-for="item in notifyCategories" :key="item.key" class="setting-row">
           <div class="setting-info">
             <span :id="`${item.key}-label`" class="setting-title">{{ item.title }}</span>
-            <span class="setting-hint">{{ item.hint }}</span>
           </div>
           <USwitch
             v-model="settings[item.key]"
@@ -810,10 +768,7 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="notify-sound-label" class="setting-title">System sound</span>
-            <span class="setting-hint"
-              >Let your system play its notification sound. KChess's own game sounds are under
-              Sound.</span
-            >
+            <span class="setting-hint">For system notifications.</span>
           </div>
           <USwitch
             v-model="settings.notifySound"
@@ -826,8 +781,7 @@ function removePending(): void {
           <div class="setting-info">
             <span class="setting-title">Try it</span>
             <span class="setting-hint" role="status">{{
-              testNote ||
-              'Sends a sample in 5 seconds. Stay here to see the in-app alert, or switch to another app for the system one.'
+              testNote || 'Sends a sample in 5 seconds.'
             }}</span>
           </div>
           <div class="friend-actions">
@@ -865,7 +819,9 @@ function removePending(): void {
                 micBadge.label
               }}</UBadge></span
             >
-            <span class="setting-hint">{{ micHint }}</span>
+            <span v-if="mic.access.value?.status !== 'granted'" class="setting-hint">{{
+              micHint
+            }}</span>
             <span
               v-if="mic.access.value?.launchedFromTerminal && mic.access.value.status !== 'granted'"
               class="setting-hint"
@@ -894,11 +850,8 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-title">Test your microphone</span>
-            <span class="setting-hint" role="status">{{
-              micTestError ||
-              (micTest
-                ? `Speak now — the bar should move.${micDevice ? ` Using ${micDevice}.` : ''}`
-                : 'Check that KChess can hear you before a game or training run.')
+            <span v-if="micTest || micTestError" class="setting-hint" role="status">{{
+              micTestError || (micTest ? `Speak now${micDevice ? ` · ${micDevice}` : ''}` : '')
             }}</span>
             <span v-if="micTest" class="mic-meter" aria-hidden="true">
               <span :style="{ transform: `scaleX(${Math.max(0.02, micLevel)})` }" />
@@ -917,9 +870,7 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="voice-confirm-label" class="setting-title">Confirm spoken moves</span>
-            <span class="setting-hint"
-              >Against the computer, say “confirm” or pick the move before it’s played.</span
-            >
+            <span class="setting-hint">Say “confirm” before playing the move.</span>
           </div>
           <USwitch
             v-model="settings.voiceConfirmMoves"
@@ -930,10 +881,7 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <span id="voice-ptt-label" class="setting-title">Hold to speak</span>
-            <span class="setting-hint"
-              >Listen only while Space or the on-screen button is held, instead of all the time
-              during your turn.</span
-            >
+            <span class="setting-hint">Hold Space or the on-screen button.</span>
           </div>
           <USwitch
             v-model="settings.voicePushToTalk"
@@ -943,21 +891,8 @@ function removePending(): void {
         </div>
         <div class="setting-row">
           <div class="setting-info">
-            <span class="setting-title">Where it works</span>
-            <span class="setting-hint"
-              >Turn on Voice input in Play with Computer (“E two to E four”, “Knight F three”, and
-              “take back”, “new game”, “resign”, “switch sides”) or in Practice › Coordinates › Say
-              the square. Speech is recognized offline, on this device.</span
-            >
-          </div>
-        </div>
-        <div class="setting-row">
-          <div class="setting-info">
             <span id="voice-history-label" class="setting-title">Keep voice history</span>
-            <span class="setting-hint"
-              >Log what was heard, how it was read and what you meant, to see which words get
-              misheard. Only the text is kept (never audio), on this computer.</span
-            >
+            <span class="setting-hint">Saves recognized text on this device; no audio.</span>
           </div>
           <USwitch
             v-model="settings.voiceHistory"
@@ -966,9 +901,9 @@ function removePending(): void {
           />
         </div>
       </section>
-      <VoiceHistory v-if="category.id === 'voice'" />
+      <LazyVoiceHistory v-if="category.id === 'voice'" />
 
-      <EngineSettings v-if="category.id === 'engine'" />
+      <LazyEngineSettings v-if="category.id === 'engine'" />
 
       <section
         v-if="category.id === 'accounts'"
@@ -992,8 +927,7 @@ function removePending(): void {
           >
         </div>
         <p v-if="connectedAccounts.length" class="section-hint">
-          Lichess connects whichever account is signed in to your browser. To add another account,
-          sign in to it on lichess.org first, then choose Connect another account.
+          To add another account, sign in to it on lichess.org first.
         </p>
         <UEmpty
           v-if="!connectedAccounts.length"
@@ -1001,7 +935,6 @@ function removePending(): void {
           size="sm"
           icon="i-lucide-user-x"
           title="No account connected"
-          description="You'll be sent to Lichess to approve access."
         />
         <AccountRow
           v-for="account in connectedAccounts"
@@ -1050,12 +983,10 @@ function removePending(): void {
           <div>
             <span class="stat-label">Stored games &amp; profiles</span>
             <strong class="tabular">{{ formatBytes(usage.totalStored) }}</strong>
-            <span class="muted text-xs">Estimated size of the data itself</span>
           </div>
           <div>
             <span class="stat-label">Database file</span>
             <strong class="tabular">{{ formatBytes(usage.report?.dbBytes ?? 0) }}</strong>
-            <span class="muted text-xs">Everything KChess keeps on disk</span>
           </div>
         </div>
         <div v-if="dataRows.length" class="table-scroll">
@@ -1093,7 +1024,6 @@ function removePending(): void {
           size="sm"
           icon="i-lucide-database"
           title="Nothing counted yet"
-          description="Downloads from Lichess are counted from now on and listed here per account."
         />
       </section>
       <section
@@ -1114,10 +1044,6 @@ function removePending(): void {
             >Clear local scores</UButton
           >
         </div>
-        <p class="section-hint">
-          Manage your puzzle download in Offline downloads. Your practice scores are stored on this
-          device.
-        </p>
         <UButton
           class="mt-3"
           variant="outline"
@@ -1135,10 +1061,7 @@ function removePending(): void {
         <div class="setting-row">
           <div class="setting-info">
             <h2 id="diagnostics-title" class="setting-title">Diagnostics</h2>
-            <p class="setting-hint">
-              Export recent app logs to help investigate a problem. Tokens are redacted; games and
-              account databases are excluded.
-            </p>
+            <p class="setting-hint">Exports logs without tokens, games or account databases.</p>
           </div>
           <UButton
             variant="outline"

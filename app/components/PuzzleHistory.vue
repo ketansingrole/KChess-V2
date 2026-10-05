@@ -28,10 +28,8 @@ const rows = computed(() =>
     <div class="card-header">
       <div>
         <h2 class="sr-only">Puzzle history</h2>
-        <p class="section-hint">Trying one again here is local only.</p>
       </div>
       <div class="toolbar-row">
-        <SourceBadge kind="readonly" />
         <UButton
           v-if="account"
           size="sm"
@@ -49,7 +47,6 @@ const rows = computed(() =>
       variant="naked"
       icon="i-lucide-user-round-plus"
       title="Connect a Lichess account"
-      description="Your puzzle history is read from your Lichess account."
       :actions="[
         { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => kchess.connect() },
       ]"
@@ -59,7 +56,7 @@ const rows = computed(() =>
       variant="naked"
       icon="i-lucide-key-round"
       title="Lichess needs your permission"
-      description="This account was connected before puzzles were added. Connect it again to read its puzzle history."
+      description="Reconnect this account to load puzzle history."
       :actions="[
         { label: 'Reconnect', icon: 'i-lucide-log-in', onClick: () => puzzles.reconnect() },
       ]"
@@ -75,7 +72,6 @@ const rows = computed(() =>
       variant="naked"
       icon="i-lucide-puzzle"
       title="No puzzles yet"
-      description="Rated puzzles you play here and on Lichess show up in this list."
     />
     <div v-else class="game-list">
       <div class="game-head puzzle-cols" aria-hidden="true">

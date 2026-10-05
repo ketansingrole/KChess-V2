@@ -174,7 +174,7 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
 test('starts without an account and keeps settings and downloaded puzzles accessible offline', async ({
   desktop: { page },
 }) => {
-  await expect(page.getByRole('heading', { name: "Let's play chess" })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Start', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Play the computer', exact: true })).toBeVisible()
   const sidebar = page.locator('aside')
   const settings = sidebar.getByRole('button', { name: 'Settings', exact: true })
@@ -188,7 +188,7 @@ test('starts without an account and keeps settings and downloaded puzzles access
   await settings.click()
   await expect(sidebar.getByText('Appearance', { exact: true })).toBeVisible()
   await sidebar.getByText('Back', { exact: true }).click()
-  await expect(page.getByRole('heading', { name: "Let's play chess" })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Start', exact: true })).toBeVisible()
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
     window.dispatchEvent(new Event('offline'))
@@ -200,9 +200,7 @@ test('starts without an account and keeps settings and downloaded puzzles access
     'true',
   )
   await expect(page.locator('.cg-wrap')).toBeVisible()
-  await expect(
-    page.getByText('Works offline after downloading puzzles. No account needed.', { exact: true }),
-  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeEnabled()
   await page.screenshot({ path: test.info().outputPath('kchess-account-free-puzzles.png') })
 })
 
@@ -251,7 +249,7 @@ test('browses public tournaments anonymously and asks to connect only when joini
   ).toBeVisible()
 })
 
-test('explains account-free empty states and manages offline downloads without signing in', async ({
+test('offers account-free actions and manages offline downloads without signing in', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Game history')
@@ -260,7 +258,7 @@ test('explains account-free empty states and manages offline downloads without s
   await page.getByRole('button', { name: 'Follow a player', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Follow player', exact: true })).toBeVisible()
   await expect(
-    page.getByText('Internet required · No account needed to browse.', { exact: true }),
+    page.getByRole('textbox', { name: 'Lichess username to follow', exact: true }),
   ).toBeVisible()
   await navigate(page, 'Lichess insights')
   await expect(page.getByText('No saved Lichess games to explore', { exact: true })).toBeVisible()
@@ -396,10 +394,10 @@ test('plays keyboard moves and restores an annotated saved study after reload @p
   const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
   await input.fill('e4')
   await input.press('Enter')
-  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+  await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
   await input.fill('e7e5')
   await input.press('Enter')
-  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e5')
+  await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e5')
   await page.getByRole('button', { name: 'Study actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Game details…' }).click()
   await page.getByLabel('White', { exact: true }).fill('Alice')
@@ -415,7 +413,7 @@ test('plays keyboard moves and restores an annotated saved study after reload @p
     .poll(() => page.evaluate(() => localStorage.getItem('kchess:studies:v1')))
     .toContain('Keep this annotation.')
   await page.reload()
-  const moves = page.getByRole('list', { name: 'Moves', exact: true })
+  const moves = page.getByRole('group', { name: 'Moves', exact: true })
   await expect(moves).toContainText('e5?')
   await expect(moves).toContainText('Keep this annotation.')
   await expect(page.getByLabel('Study name', { exact: true })).toHaveValue('Opening study')
@@ -469,14 +467,14 @@ test('plays a move through the board and keeps the game when navigating', async 
   await navigate(page, 'Play with Computer')
   await expect(page.getByText('Your move', { exact: true })).toBeVisible()
   await move(page, 'e2', 'e4')
-  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+  await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
   await expect(page.getByText('Your move', { exact: true })).toBeVisible()
   await navigate(page, 'Home')
   await expect(page.getByRole('button', { name: 'Continue your game', exact: true })).toBeVisible()
   await page.reload()
   await expect(page.getByRole('button', { name: 'Continue your game', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Continue your game', exact: true }).click()
-  await expect(page.getByRole('list', { name: 'Moves', exact: true })).toContainText('e4')
+  await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
   await navigate(page, 'Game history')
   await expect(page.locator('.local-history-row')).toHaveCount(1)
   await page.getByRole('button', { name: 'Replay', exact: true }).click()
@@ -540,9 +538,7 @@ test('shows update capabilities and persists update preferences @packaged', asyn
   ).toBeVisible()
   await navigate(page, 'Updates')
   await expect(page.getByRole('heading', { name: 'Updates', level: 1 })).toBeVisible()
-  await expect(
-    page.getByText(`Installed version ${status.currentVersion} · Stable releases`),
-  ).toBeVisible()
+  await expect(page.getByText(`Version ${status.currentVersion}`)).toBeVisible()
   const check = page.getByRole('button', { name: 'Check for updates', exact: true })
   const download = page.getByRole('switch', {
     name: 'Download updates in the background',
@@ -651,7 +647,7 @@ test('keeps variations on the analysis board and steps through them', async ({
     .getByRole('textbox', { name: 'FEN or PGN' })
     .fill('1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *')
   await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
-  const moves = page.getByRole('list', { name: 'Moves', exact: true })
+  const moves = page.getByRole('group', { name: 'Moves', exact: true })
   await expect(moves).toContainText('Nc6')
   await moves.getByRole('button', { name: /c5$/ }).click()
   await expect(moves.locator('.tree-move.active')).toHaveText(/c5/)
@@ -675,7 +671,7 @@ test('reviews a game on the analysis board, labelling the blunder and the better
   const review = page.getByRole('region', { name: 'Game review' })
   await review.getByRole('button', { name: 'Review game', exact: true }).click()
   await page.getByRole('tab', { name: /^Moves/ }).click()
-  const moves = page.getByRole('list', { name: 'Moves', exact: true })
+  const moves = page.getByRole('group', { name: 'Moves', exact: true })
   // The quick pass labels the blunder within seconds; the deep pass then finishes the review.
   await expect(moves.locator('.tree-glyph.blunder')).toHaveText('??', { timeout: 30_000 })
   await expect(moves.getByRole('button', { name: /Nf6\?\?$/ })).toBeVisible()
@@ -979,23 +975,21 @@ test('quick logout removes only the selected account and returns to account-free
   const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
   await input.fill('e4')
   await input.press('Enter')
-  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await page.getByRole('button', { name: /account menu/i }).click()
   await page.getByRole('menuitemcheckbox', { name: '@tester', exact: true }).click()
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await page.getByRole('button', { name: /account menu/i }).click()
   await expect(
     page.getByRole('menuitem', { name: 'Log out all accounts', exact: true }),
   ).toBeVisible()
   const logout = page.getByRole('menuitem', { name: 'Log out @tester', exact: true })
   await expect(logout).toBeVisible()
   await Promise.all([page.waitForEvent('load'), logout.click()])
-  await expect(page.getByRole('heading', { name: "Let's play chess" })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Start', exact: true })).toBeVisible()
   const remaining = await page.evaluate(() => window.kchess.loadData())
   expect(remaining.accounts).toMatchObject([{ username: 'second', connected: true }])
-  await expect(page.getByRole('button', { name: 'Account menu', exact: true })).toContainText(
-    '@second',
-  )
-  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await expect(page.getByRole('button', { name: /account menu/i })).toContainText('@second')
+  await page.getByRole('button', { name: /account menu/i }).click()
   await expect(
     page.getByRole('menuitem', { name: 'Log out all accounts', exact: true }),
   ).toBeHidden()
@@ -1006,7 +1000,7 @@ test('quick logout removes only the selected account and returns to account-free
   await expect(
     page.locator('aside').getByRole('button', { name: 'Connect Lichess', exact: true }),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Account menu', exact: true })).toBeHidden()
+  await expect(page.getByRole('button', { name: /account menu/i })).toBeHidden()
   const after = await page.evaluate(() => window.kchess.loadData())
   expect(after.accounts).toEqual([])
   expect(after.gameCount).toBe(0)
@@ -1026,7 +1020,7 @@ test('quick logout removes only the selected account and returns to account-free
 })
 
 test('quick logout all accounts is a separate explicit action', async ({ desktop: { page } }) => {
-  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await page.getByRole('button', { name: /account menu/i }).click()
   await Promise.all([
     page.waitForEvent('load'),
     page.getByRole('menuitem', { name: 'Log out all accounts', exact: true }).click(),
@@ -1035,4 +1029,26 @@ test('quick logout all accounts is a separate explicit action', async ({ desktop
     page.locator('aside').getByRole('button', { name: 'Connect Lichess', exact: true }),
   ).toBeVisible()
   expect((await page.evaluate(() => window.kchess.loadData())).accounts).toEqual([])
+})
+
+test('labels search results and keeps error notifications keyboard accessible', async ({
+  desktop: { page },
+}) => {
+  await page.getByRole('button', { name: /Search/ }).click()
+  await expect(page.getByRole('listbox', { name: 'Search results', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await navigate(page, 'Following')
+  await page.getByRole('textbox', { name: 'Lichess username to follow' }).fill('!')
+  await page.getByRole('button', { name: 'Follow player', exact: true }).click()
+  const notifications = page.locator('.kchess-toasts')
+  await expect(notifications.getByText('Something went wrong', { exact: true })).toBeVisible()
+  await expect(page.locator('span[aria-hidden="true"][tabindex="0"]')).toHaveCount(0)
+  // The library's F8 shortcut enters the notification area; dismissal remains reachable.
+  await page.keyboard.press('F8')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
+  const close = notifications.getByRole('button', { name: 'Close', exact: true })
+  await expect(close).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(notifications.getByText('Something went wrong', { exact: true })).toBeHidden()
 })

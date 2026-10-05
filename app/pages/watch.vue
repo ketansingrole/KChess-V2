@@ -20,12 +20,17 @@ const playingOwnGame = computed(() =>
   ['playing', 'seeking', 'disconnected'].includes(onlinePhase.value),
 )
 
+/** Reopens the chosen broadcast round's feed, which stopping the stream left idle. */
+function resumeBroadcast(): void {
+  if (tab.value === 'broadcasts' && online.value && !playingOwnGame.value) void watcher.resumeTour()
+}
 onMounted(() => {
   watcher.listen()
   if (online.value) {
     void watcher.loadChannels()
     void friends.refreshStatus()
     void watcher.loadBroadcasts()
+    resumeBroadcast()
   }
 })
 onUnmounted(() => {
@@ -33,12 +38,16 @@ onUnmounted(() => {
   void watcher.stop()
   watcher.unlisten()
 })
-watchValue(tab, () => void watcher.stop())
+watchValue(tab, async () => {
+  await watcher.stop()
+  resumeBroadcast()
+})
 watchValue(online, (connected) => {
   if (connected) {
     void watcher.loadChannels()
     void friends.refreshStatus()
     void watcher.loadBroadcasts()
+    resumeBroadcast()
   } else void watcher.stop()
 })
 
@@ -147,6 +156,13 @@ function boardPlayers(entry: BroadcastGame) {
     ? { top: black, bottom: white }
     : { top: white, bottom: black }
 }
+function resultText(entry: BroadcastGame): string {
+  if (entry.ongoing) return 'Live'
+  if (entry.result === '1-0') return 'White won · 1–0'
+  if (entry.result === '0-1') return 'Black won · 0–1'
+  if (entry.result === '1/2-1/2') return 'Draw · ½–½'
+  return entry.result
+}
 function analyse(entry: BroadcastGame): void {
   if (!analysis.loadPgn(entry.pgn, shownPly.value)) return
   analysis.orientation = gameOrientation.value
@@ -177,7 +193,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 </script>
 
 <template>
-  <div>
+  <div :class="{ 'broadcast-page': tab === 'broadcasts' && watcher.tour && game }">
     <PageHeader title="Watch">
       <UTabs
         v-model="tab"
@@ -192,9 +208,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       />
     </PageHeader>
 
-    <PublicOnlineNotice
-      offline-message="Live games need an internet connection. Reconnect to watch; local play and saved studies are available offline."
-    />
+    <PublicOnlineNotice v-if="!online" offline-message="Offline · reconnect to watch live games." />
     <UAlert
       v-if="playingOwnGame"
       class="mb-4"
@@ -261,11 +275,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             variant="naked"
             icon="i-lucide-tv"
             :title="watcher.target ? 'Connecting…' : 'Pick something to watch'"
-            :description="
-              tab === 'tv'
-                ? 'Choose a channel: the board follows its featured game and moves on to the next.'
-                : 'Followed players who are playing right now are listed; watch any of their games live.'
-            "
           />
         </div>
       </div>
@@ -376,29 +385,30 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
           </div>
         </section>
       </div>
-      <div v-else class="flex flex-col gap-4">
-        <div class="flex flex-wrap items-center gap-2">
+      <div v-else :class="game ? 'play-layout broadcast-layout' : 'flex flex-col gap-4'">
+        <div class="broadcast-toolbar">
           <UButton
-            size="sm"
             variant="ghost"
             color="neutral"
             icon="i-lucide-arrow-left"
+            aria-label="All broadcasts"
+            class="-ms-2"
             @click="watcher.closeTour()"
-            >All broadcasts</UButton
-          >
-          <h2 class="section-title flex-1">{{ watcher.tour.name }}</h2>
+          />
+          <h2 class="section-title flex-1 truncate">{{ watcher.tour.name }}</h2>
           <USelect
             v-model="selectedRound"
             :items="roundItems"
-            size="sm"
+            :placeholder="roundItems.length ? 'Choose a round' : 'No rounds yet'"
+            :disabled="!roundItems.length"
             aria-label="Round"
-            class="min-w-48"
+            class="w-44"
           />
         </div>
         <p v-if="watcher.roundEnded && !watcher.roundGames.length" class="muted text-sm">
           No games in this round yet.
         </p>
-        <div v-if="game" class="play-layout">
+        <template v-if="game">
           <div class="board-stack">
             <PlayerLine
               :player="boardPlayers(game).top"
@@ -417,7 +427,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             <PlayerLine :player="boardPlayers(game).bottom" :color="gameOrientation" />
           </div>
           <MovePanel
-            :title="`${game.white.name} – ${game.black.name}`"
             :moves="gameSan"
             :ply="shownPly"
             empty-text="No moves yet."
@@ -430,12 +439,16 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
                   :name="game.ongoing ? 'i-lucide-radio' : 'i-lucide-flag'"
                   class="status-icon"
                 />
-                <div>
-                  <strong>{{ game.ongoing ? 'Live' : game.result }}</strong>
-                  <span class="detail">{{ game.name }}</span>
+                <div class="banner-text">
+                  <strong>{{ resultText(game) }}</strong>
+                  <OpeningName
+                    class="detail"
+                    :setup="gameSetup"
+                    :moves="game.moves"
+                    :ply="shownPly"
+                  />
                 </div>
               </div>
-              <OpeningName :setup="gameSetup" :moves="game.moves" :ply="shownPly" />
             </template>
             <template #bottom>
               <div class="panel-actions panel-divider pt-3.5">
@@ -456,7 +469,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
               </div>
             </template>
           </MovePanel>
-        </div>
+        </template>
         <div v-else class="broadcast-grid">
           <button
             v-for="entry in watcher.roundGames"
@@ -488,6 +501,26 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 <style scoped>
 .watch-board {
   max-width: min(100%, calc(100dvh - 260px));
+}
+/* While a broadcast game is open the whole page, header tabs included, is as wide as the
+   board and panel below it, so every right-hand control shares one edge. */
+.broadcast-page {
+  --board-chrome: 352px;
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 760px);
+  max-width: calc(var(--board-size) + 464px);
+  margin-inline: auto;
+}
+.broadcast-layout {
+  /* The tour toolbar sits above the board and shares the grid's outer edges. */
+  --board-chrome: 352px;
+  row-gap: 16px;
+}
+.broadcast-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .broadcast-grid {
   display: grid;

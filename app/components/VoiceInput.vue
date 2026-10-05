@@ -295,7 +295,7 @@ onBeforeUnmount(() => {
     <USwitch
       v-model="enabled"
       label="Voice input"
-      description="English · first use downloads about 40 MB, then works offline. Nothing is uploaded."
+      description="First use downloads a 40 MB English model. Speech stays on this device."
       :disabled="disabled"
     />
     <template v-if="enabled">

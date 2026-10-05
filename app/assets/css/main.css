@@ -9,8 +9,8 @@
     -apple-system,
     sans-serif;
   color-scheme: light dark;
-  --ui-primary: #718d4d;
-  --ui-win: #4f9f66;
+  --ui-primary: #4b6231;
+  --ui-win: #246b37;
   --ui-loss: #d05f5f;
   --topbar-height: 52px;
   /* Game review labels, in Lichess's colors: ?! inaccuracy, ? mistake, ?? blunder. */
@@ -18,8 +18,17 @@
   --judgment-mistake: #d48a00;
   --judgment-blunder: #d14848;
 }
+:root:not(.dark) {
+  --ui-text-muted: #52637b;
+  --ui-success: #246b37;
+  --ui-error: #b4232c;
+  --ui-warning: #805500;
+  --ui-info: #1d5b91;
+}
 .dark {
   --ui-primary: #91af6a;
+  --ui-success: #62b57a;
+  --ui-error: #e07979;
   --ui-win: #62b57a;
   --ui-loss: #e07979;
   --judgment-inaccuracy: #56b4e9;
@@ -1093,7 +1102,7 @@ coords .coord-dark {
   display: block;
 }
 .status-banner .detail {
-  color: var(--ui-text-muted);
+  color: var(--ui-text-toned);
   font-size: 12px;
 }
 .status-banner .banner-action {
@@ -1144,7 +1153,7 @@ coords .coord-dark {
   background: transparent;
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 .move-num {
@@ -1232,6 +1241,7 @@ button.move-cell:hover {
 .theme-option:hover {
   border-color: var(--ui-border-accented);
   background: var(--ui-bg-accented);
+  color: var(--ui-text-toned);
 }
 .theme-option[aria-checked='true'] {
   border-color: var(--ui-primary);
@@ -1328,6 +1338,15 @@ button.move-cell:hover {
   display: grid;
   gap: 8px;
   margin-bottom: 16px;
+}
+.friends-empty {
+  justify-items: center;
+  gap: 4px;
+  padding-block: 28px 32px;
+}
+.friends-empty form {
+  justify-content: center;
+  width: min(100%, 560px);
 }
 .friends-summary {
   display: flex;

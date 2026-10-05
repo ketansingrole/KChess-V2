@@ -68,14 +68,12 @@ const themeRows = computed(() => {
       class="card"
       icon="i-lucide-user-round-plus"
       title="Connect a Lichess account"
-      description="Your puzzle rating, dashboard and strengths are read from your Lichess account."
       :actions="[
         { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => kchess.connect() },
       ]"
     />
     <template v-else>
       <div class="stats-bar">
-        <SourceBadge kind="readonly" />
         <div class="toolbar-row stats-bar-controls">
           <USelect
             v-if="accounts.length > 1"
@@ -139,14 +137,13 @@ const themeRows = computed(() => {
           <div class="card-header">
             <h2 class="section-title">Puzzle rating history</h2>
           </div>
-          <RatingChart v-if="points.length >= 2" :points="points" label="Puzzle" />
+          <LazyRatingChart v-if="points.length >= 2" :points="points" label="Puzzle" />
           <UEmpty
             v-else
             variant="naked"
             size="sm"
             icon="i-lucide-chart-line"
             title="No rating history yet"
-            description="Play rated puzzles and your progress shows up here."
           />
         </div>
 
@@ -166,7 +163,7 @@ const themeRows = computed(() => {
             size="sm"
             icon="i-lucide-key-round"
             title="Lichess needs your permission"
-            description="This account was connected before puzzles were added. Connect it again to read its dashboard."
+            description="Reconnect this account to load puzzle statistics."
             :actions="[
               { label: 'Reconnect', icon: 'i-lucide-log-in', onClick: () => puzzles.reconnect() },
             ]"

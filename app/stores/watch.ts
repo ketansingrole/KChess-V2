@@ -124,7 +124,6 @@ export const useWatchStore = defineStore('watch', () => {
     error.value = ''
     frame.value = null
     target.value = next
-    roundId.value = ''
     pendingKind = 'watch'
     try {
       const id = await window.kchess.watch(next)
@@ -147,7 +146,6 @@ export const useWatchStore = defineStore('watch', () => {
     roundSession = -1
     target.value = null
     frame.value = null
-    roundId.value = ''
     await window.kchess.stopWatching().catch(() => undefined)
   }
 
@@ -179,7 +177,8 @@ export const useWatchStore = defineStore('watch', () => {
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
-  async function openRound(id: string): Promise<void> {
+  /** Opens a round's live feed; `game` keeps that board selected once its feed arrives. */
+  async function openRound(id: string, game = ''): Promise<void> {
     const request = ++generation
     clearPending()
     session = -1
@@ -191,7 +190,7 @@ export const useWatchStore = defineStore('watch', () => {
     frame.value = null
     roundId.value = id
     games.value = new Map()
-    selectedGame.value = ''
+    selectedGame.value = game
     roundEnded.value = false
     pendingKind = 'round'
     try {
@@ -206,8 +205,14 @@ export const useWatchStore = defineStore('watch', () => {
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
+  /** Restarts the open tour's round feed after a tab switch, page return or reconnect. */
+  async function resumeTour(): Promise<void> {
+    if (!tour.value || !roundId.value || roundSession !== -1 || pendingKind === 'round') return
+    await openRound(roundId.value, selectedGame.value)
+  }
   function closeTour(): void {
     tour.value = null
+    roundId.value = ''
     void stop()
   }
   const roundGames = computed(() => [...games.value.values()])
@@ -234,6 +239,7 @@ export const useWatchStore = defineStore('watch', () => {
     openTour,
     openRound,
     closeTour,
+    resumeTour,
     listen,
     unlisten,
   }

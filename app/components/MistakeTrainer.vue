@@ -25,17 +25,14 @@ function next(all = false): void {
   <div>
     <div class="card mb-4">
       <h2 class="section-title">Practice your mistakes</h2>
-      <p class="section-hint">
-        {{ due.length }} due · {{ practice.items.length }} saved. Add positions from a completed
-        game review. These are engine practice lines, not rated puzzles.
-      </p>
+      <p class="section-hint">{{ due.length }} due · {{ practice.items.length }} saved</p>
       <p v-if="practice.error" role="alert">{{ practice.error }}</p>
       <UEmpty
         v-if="!practice.items.length"
         variant="naked"
         icon="i-lucide-book-open"
         title="Build your mistake practice"
-        description="Import a PGN on the analysis board, review the game, then save mistakes to practice. Works offline with the local engine; no account needed."
+        description="Save positions from a game review to practice them here."
         :actions="[
           {
             label: 'Analyze a game',
@@ -45,7 +42,7 @@ function next(all = false): void {
         ]"
       />
       <p v-else-if="!due.length && !current" class="section-hint mt-3" role="status">
-        You're caught up. Review a saved position early, or come back when your next revisit is due.
+        You're caught up.
       </p>
       <div v-if="practice.items.length" class="mt-3 flex gap-2">
         <UButton :disabled="!due.length" @click="next()">{{

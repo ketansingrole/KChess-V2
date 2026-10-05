@@ -60,7 +60,7 @@ const controlButtons = [
       </span>
     </div>
     <div class="moves-wrap">
-      <div ref="list" class="moves-list" role="list" :aria-label="title">
+      <div ref="list" class="moves-list" role="group" :aria-label="title">
         <template v-for="(san, index) in props.moves" :key="index">
           <div v-if="index % 2 === 0" class="move-num" aria-hidden="true">{{ index / 2 + 1 }}</div>
           <button

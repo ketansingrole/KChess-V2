@@ -735,7 +735,7 @@ function missed(result: VoiceResult): void {
         <div v-show="tool === 'moves'" class="tool-body moves-tool" role="tabpanel">
           <UContextMenu :items="moveMenu">
             <div class="moves-wrap" @contextmenu.capture="moveContext">
-              <div ref="treeList" class="tree-list" role="list" aria-label="Moves">
+              <div ref="treeList" class="tree-list" role="group" aria-label="Moves">
                 <AnalysisLine
                   v-if="hasMoves"
                   :parent="root"
@@ -943,7 +943,7 @@ function missed(result: VoiceResult): void {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-toned);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -1066,6 +1066,8 @@ function missed(result: VoiceResult): void {
   text-overflow: ellipsis;
 }
 .pv-move {
+  min-width: 24px;
+  min-height: 24px;
   padding: 1px 2px;
   border: 0;
   border-radius: 4px;

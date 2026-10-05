@@ -30,9 +30,7 @@ const phaseText = computed(() => {
   <div class="db-card" :class="{ compact }">
     <div v-if="!compact" class="db-head">
       <h3 class="section-title">Puzzle database</h3>
-      <p class="section-hint">
-        Download once to play puzzles, Storm, Streak and Rush offline. No account needed.
-      </p>
+      <p class="section-hint">For offline puzzles, Storm, Streak and Rush.</p>
     </div>
 
     <template v-if="dbBusy">
@@ -83,9 +81,7 @@ const phaseText = computed(() => {
       </div>
     </template>
     <template v-else>
-      <p class="section-hint">
-        About 300 MB download; only around 100,000 puzzles (a few tens of MB) are kept.
-      </p>
+      <p class="section-hint">About 300 MB download · keeps 100,000 puzzles.</p>
       <UButton
         class="mt-2"
         icon="i-lucide-download"
@@ -97,8 +93,8 @@ const phaseText = computed(() => {
     <p v-if="!online" class="section-hint" role="status">
       {{
         db?.installed
-          ? 'Your downloaded puzzles are ready to play. Reconnect to refresh them.'
-          : 'Connect to the internet once to download puzzles. You can play the computer and practice chess skills while offline.'
+          ? 'Offline · reconnect to refresh puzzles.'
+          : 'Offline · reconnect to download puzzles.'
       }}
     </p>
     <p v-if="dbError" class="db-error" role="alert">{{ dbError }}</p>

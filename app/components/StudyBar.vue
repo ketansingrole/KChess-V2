@@ -163,9 +163,6 @@ const menu = computed<DropdownMenuItem[][]>(() => [
             <UFormField label="Study name">
               <UInput v-model="newName" autofocus :maxlength="120" class="w-full" />
             </UFormField>
-            <p class="text-xs muted">
-              Moves, variations and comments are saved on this device as you work.
-            </p>
             <p v-if="saveError || library.error" class="text-xs text-error">
               {{ saveError || library.error }}
             </p>

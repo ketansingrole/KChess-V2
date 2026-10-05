@@ -33,14 +33,6 @@ async function open(game: OngoingGame): Promise<void> {
     <div class="card-header">
       <div>
         <h2 id="ongoing-title" class="section-title">Your games</h2>
-        <p class="section-hint">
-          Correspondence games are checked
-          {{
-            settings.correspondencePoll
-              ? `every ${settings.correspondencePoll} min`
-              : 'only when you refresh'
-          }}; engine help is off only while one is open on the board.
-        </p>
       </div>
       <UButton
         size="xs"

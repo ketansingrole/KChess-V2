@@ -85,14 +85,6 @@ async function exportGame(game: ArchivedGame): Promise<void> {
 
 <template>
   <section class="local-history">
-    <p class="section-hint">
-      Saved automatically on this device. No account or internet needed. Games stay here when you
-      start another game.
-    </p>
-    <p v-if="source === 'board'" class="section-hint">
-      Board games include the moves entered in KChess. Clock-only sessions save a summary; enter
-      moves on the board to replay a physical game.
-    </p>
     <p v-if="exportMessage" role="status" class="section-hint">{{ exportMessage }}</p>
     <p v-if="archive.error" role="alert" class="text-error">{{ archive.error }}</p>
     <template v-if="selected">
@@ -122,7 +114,6 @@ async function exportGame(game: ArchivedGame): Promise<void> {
       class="card"
       icon="i-lucide-history"
       title="No saved games yet"
-      description="Play a game and it will appear here automatically."
       :actions="[
         {
           label: source === 'computer' ? 'Play the computer' : 'Play over the board',

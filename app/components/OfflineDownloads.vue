@@ -72,25 +72,14 @@ function openSection(section: 'engine' | 'voice'): void {
 
 <template>
   <div class="space-y-4">
-    <section class="card">
-      <h2 class="section-title">Ready for offline use</h2>
-      <p class="section-hint">
-        Computer play, over-the-board play, board editing and chess skill practice are included.
-        Saved studies and local analysis work without an account or internet.
-      </p>
-      <p v-if="!online" class="section-hint mt-3" role="status">
-        You're offline. Installed content remains available; reconnect to download more.
-      </p>
-    </section>
+    <p v-if="!online" class="section-hint" role="status">
+      Offline · reconnect to download content.
+    </p>
     <section class="card" aria-labelledby="offline-engine-title">
       <div class="card-header">
         <h2 id="offline-engine-title" class="section-title">Chess engine</h2>
         <UBadge variant="soft" color="success">Included with KChess</UBadge>
       </div>
-      <p class="section-hint">
-        Bundled Stockfish powers computer games, analysis and endgame practice offline. No download
-        needed.
-      </p>
       <p v-if="app.engineReady && app.engineName" class="section-hint">
         Selected engine: {{ app.engineName }}.
       </p>
@@ -100,8 +89,7 @@ function openSection(section: 'engine' | 'voice'): void {
         }}.
       </p>
       <p v-if="!app.engineReady" class="section-hint">
-        Your selected engine is unavailable or still being checked. Choose the bundled engine in
-        Chess engine settings.
+        Selected engine unavailable. Choose another in Chess engine settings.
       </p>
       <UButton
         class="mt-3"
@@ -114,7 +102,7 @@ function openSection(section: 'engine' | 'voice'): void {
     </section>
     <section class="card" aria-labelledby="offline-puzzles-title">
       <h2 id="offline-puzzles-title" class="section-title mb-3">Downloaded puzzles</h2>
-      <PuzzleDbCard />
+      <PuzzleDbCard compact />
     </section>
     <section class="card" aria-labelledby="offline-voice-title">
       <div class="card-header">
@@ -126,9 +114,8 @@ function openSection(section: 'engine' | 'voice'): void {
           >Download needed</UBadge
         >
       </div>
-      <p class="section-hint">
-        Download the English speech model once (up to 50 MB) to speak moves and practice coordinates
-        offline. No account or microphone access is needed to download it.
+      <p v-if="voice && !voice.installed" class="section-hint">
+        English speech model · up to 50 MB
       </p>
       <template v-if="voice?.busy || downloading">
         <UProgress class="mt-3" :model-value="percent" />
@@ -158,10 +145,6 @@ function openSection(section: 'engine' | 'voice'): void {
     </section>
     <section class="card">
       <h2 class="section-title">Saved games and studies</h2>
-      <p class="section-hint">
-        Studies on this device are ready offline. Follow a player or sync your Lichess games while
-        online to keep their games and reviews available here.
-      </p>
       <div class="toolbar-row mt-3">
         <UButton variant="outline" color="neutral" @click="app.selectPage('studies')"
           >Your studies</UButton

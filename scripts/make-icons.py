@@ -234,6 +234,8 @@ def main() -> None:
         inset_light.save(folder / "icon-light.png")
         inset_dark.save(folder / "icon-dark.png")
     full.save(assets / "icon.png")
+    # The splash displays at 72 CSS pixels; include its 2x raster separately.
+    framed("light", 144, 0.0).save(assets / "icon-splash.png")
 
     framed("light", 256, 0.0).save(
         build / "icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)]

@@ -232,7 +232,6 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
           <div>
             <h2 class="section-title">Play a run</h2>
           </div>
-          <SourceBadge kind="local" label="Local only · never sent to Lichess" />
         </div>
         <div class="rush-choices" role="radiogroup" aria-label="Kind of run">
           <button
@@ -401,7 +400,7 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
               <dd class="tabular">{{ formatRunClock(elapsedMs) }}</dd>
             </div>
           </dl>
-          <SourceBadge kind="local" label="Local only · not sent to Lichess" />
+
           <div class="panel-actions">
             <UButton icon="i-lucide-rotate-ccw" @click="start">Play again</UButton>
             <UButton variant="outline" color="neutral" @click="stage = 'menu'">Back</UButton>

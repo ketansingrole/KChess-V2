@@ -9,7 +9,7 @@ export const DEFAULT_OAUTH_LOOK: OAuthPageLook = {
     elevated: '#f1f5f9',
     text: '#0f172a',
     textMuted: '#64748b',
-    primary: '#718d4d',
+    primary: '#4b6231',
     border: '#e2e8f0',
   },
   dark: {

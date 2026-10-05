@@ -140,10 +140,6 @@ function begin(): void {
         <UFormField label="Stockfish strength">
           <USelect v-model="chosenLevel" :items="levels" class="w-full" />
         </UFormField>
-        <p class="text-xs muted">
-          Chess960 uses Stockfish's Chess960 mode. Other variants (King of the Hill, Atomic…) need
-          an engine KChess does not ship; play them online or over the board.
-        </p>
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" @click="open = false">Cancel</UButton>
           <UButton type="submit" :disabled="Boolean(fenProblem)">Start game</UButton>

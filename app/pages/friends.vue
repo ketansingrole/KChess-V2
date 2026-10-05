@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
 import type { LichessAccount } from '../../src/shared/types'
-import { formatBytes, formatCount, timeAgo } from '../utils/format'
+import { formatBytes, formatCount } from '../utils/format'
 
 const online = useOnline()
 const store = useKChessStore()
@@ -112,10 +112,15 @@ watch(
       >
     </PageHeader>
 
-    <PublicOnlineNotice
-      offline-message="Showing saved players. Reconnect to follow someone new, refresh profiles or check who is playing."
-    />
-    <div class="card friends-add">
+    <PublicOnlineNotice offline-message="Offline · showing saved players." />
+    <div class="card friends-add" :class="{ 'friends-empty': !trackedAccounts.length }">
+      <UEmpty
+        v-if="!trackedAccounts.length"
+        variant="naked"
+        size="sm"
+        icon="i-lucide-users"
+        title="Follow your first player"
+      />
       <form class="toolbar-row flex-nowrap" @submit.prevent="add">
         <UInput
           v-model="usernameInput"
@@ -127,26 +132,22 @@ watch(
         />
         <UButton
           type="submit"
+          title="Follows in KChess and downloads public games; does not change Lichess following."
           :disabled="!online || !usernameInput.trim() || busy"
           icon="i-lucide-plus"
           >Follow player</UButton
         >
         <UButton
+          v-if="connectedAccounts.length"
           variant="outline"
           color="neutral"
           icon="i-lucide-download"
-          :disabled="!online || !connectedAccounts.length"
-          :title="connectedAccounts.length ? undefined : 'Connect a Lichess account first'"
+          :disabled="!online"
+          title="Adds players without downloading their games"
           @click="importOpen = true"
           >Import from Lichess</UButton
         >
       </form>
-      <p class="section-hint">
-        Following a player by name downloads their public games (up to 5,000) so you can browse them
-        offline; importing from Lichess adds them without games until you sync each one. Every
-        download is counted below. Following here is saved on this device and does not change who
-        you follow on Lichess.
-      </p>
     </div>
 
     <div v-if="trackedAccounts.length" class="friends-summary" role="status">
@@ -171,15 +172,7 @@ watch(
       >
     </div>
 
-    <div v-if="!trackedAccounts.length" class="card">
-      <UEmpty
-        variant="naked"
-        icon="i-lucide-users"
-        title="Follow your first player"
-        description="Enter a Lichess username above to follow their public ratings and games. No sign-in is required. They stay here until you remove them."
-      />
-    </div>
-    <div v-else class="friends-grid">
+    <div v-if="trackedAccounts.length" class="friends-grid">
       <FriendCard
         v-for="friend in trackedAccounts"
         :key="friend.username"
@@ -199,12 +192,6 @@ watch(
         @challenge="challengeFriend(friend.username)"
       />
     </div>
-
-    <p v-if="status && trackedAccounts.length" class="muted text-xs mt-3">
-      When online, status refreshes every 20 seconds. Last checked
-      {{ timeAgo(friendsStore.statusAt) }}. {{ formatCount(usage.totalRequests) }} requests made to
-      Lichess in total; see Settings → Data &amp; storage.
-    </p>
 
     <FriendImportDialog v-model:open="importOpen" />
 

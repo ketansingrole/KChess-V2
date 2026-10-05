@@ -416,7 +416,7 @@ function otbText(side: 'top' | 'bottom'): string {
               ></span
             >
             <span class="flex-1" />
-            <USwitch v-model="game.autoFlip" size="xs" label="Turn the board" />
+            <USwitch v-model="game.autoFlip" size="xs" label="Flip after each move" />
             <UTooltip text="Blindfold: hide the pieces">
               <UButton
                 size="xs"

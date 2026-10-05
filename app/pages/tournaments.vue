@@ -34,10 +34,6 @@ const arenas = computed(() =>
 const swiss = computed(() =>
   (tournaments.list?.swiss ?? []).filter((t) => filter.value === 'all' || t.playable),
 )
-const hiddenCount = computed(() => {
-  const all = [...(tournaments.list?.arenas ?? []), ...(tournaments.list?.swiss ?? [])]
-  return all.filter((t) => !t.playable).length
-})
 function control(t: Pick<TournamentSummary, 'clock'>): string {
   const minutes = t.clock.limit / 60
   return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)}+${t.clock.increment}`
@@ -93,13 +89,7 @@ async function join(): Promise<void> {
       >
     </PageHeader>
 
-    <PublicOnlineNotice
-      offline-message="Reconnect to browse tournaments or join an event. Any previously loaded standings may be out of date."
-    />
-    <p class="section-hint mb-4">
-      Browse public arenas and standings without an account. Joining requires a connected Lichess
-      account.
-    </p>
+    <PublicOnlineNotice offline-message="Offline · standings may be out of date." />
     <div class="online-columns">
       <div class="flex flex-col gap-5">
         <UAlert
@@ -115,14 +105,6 @@ async function join(): Promise<void> {
         </p>
         <section class="card">
           <h2 class="section-title">Arenas</h2>
-          <p class="section-hint">
-            Lichess lets third-party apps play only Rapid and Classical games, so most Bullet and
-            Blitz arenas cannot be joined from KChess<span
-              v-if="hiddenCount && filter === 'playable'"
-            >
-              ({{ hiddenCount }} hidden)</span
-            >.
-          </p>
           <p v-if="tournaments.list && !arenas.length" class="muted text-sm mt-3">
             No arenas to show right now.
           </p>
@@ -305,14 +287,13 @@ async function join(): Promise<void> {
           variant="naked"
           icon="i-lucide-mouse-pointer-click"
           title="Pick a tournament"
-          description="Explore its rules and standings. Connect Lichess when you want to join."
         />
       </section>
     </div>
     <UModal
       v-model:open="connectOpen"
       title="Connect Lichess to join"
-      description="Browsing tournaments is account-free. Connect your Lichess account to enter this event; KChess will keep your selected tournament open."
+      description="Connect your Lichess account to join this tournament."
     >
       <template #body>
         <div class="flex flex-wrap gap-2">

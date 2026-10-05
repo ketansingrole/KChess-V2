@@ -278,8 +278,7 @@ function backToTournament(): void {
   <div>
     <PageHeader title="Play on Lichess" />
     <p v-if="!online" class="section-hint mb-4" role="status">
-      You're offline. Reconnect to play on Lichess. You can still play the computer or over the
-      board.
+      Offline · reconnect to play on Lichess.
     </p>
 
     <div v-if="!data.accounts.some((a) => a.connected)" class="card">
@@ -287,7 +286,6 @@ function backToTournament(): void {
         variant="naked"
         icon="i-lucide-globe"
         title="Connect Lichess to play"
-        description="Connect your Lichess account to find opponents and play online. You can play the computer or over the board without an account."
         :actions="[
           {
             label: 'Connect Lichess',
@@ -309,11 +307,6 @@ function backToTournament(): void {
       <form class="card online-form form-stack" @submit.prevent="startOnline()">
         <div>
           <h2 class="section-title">Find a game</h2>
-          <p class="section-hint">
-            Lichess limits third-party clients: public seeks allow Rapid and slower, direct
-            challenges allow Blitz and slower, and Bullet is always blocked. Correspondence works
-            either way.
-          </p>
         </div>
 
         <div v-if="connectedAccounts.length > 1" class="field">
@@ -414,12 +407,7 @@ function backToTournament(): void {
         </div>
 
         <div class="field">
-          <span class="field-label">
-            Game type
-            <span class="field-hint"
-              >— {{ onlineRated ? 'changes your Lichess rating' : 'no rating change' }}</span
-            >
-          </span>
+          <span class="field-label"> Game type </span>
           <UTabs
             v-model="ratedMode"
             :items="ratedChoices"
@@ -507,7 +495,7 @@ function backToTournament(): void {
         <UIcon name="i-lucide-loader-circle" class="animate-spin spinner" />
         <h2 class="section-title">{{ onlineStatus || 'Looking for an opponent…' }}</h2>
         <p class="section-hint">
-          {{ summary }}. The game starts automatically when someone accepts.
+          {{ summary }}
         </p>
         <UButton variant="outline" color="neutral" icon="i-lucide-x" @click="stopOnline"
           >Cancel</UButton

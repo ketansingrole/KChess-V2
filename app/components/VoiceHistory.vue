@@ -213,10 +213,7 @@ async function clearLog(): Promise<void> {
         </div>
         <div>
           <h3 class="voice-subtitle">Heard → meant</h3>
-          <p v-if="!mishearings.length" class="muted text-xs">
-            When a phrase misses and you then play the move by hand or say it again, it shows up
-            here.
-          </p>
+          <p v-if="!mishearings.length" class="muted text-xs">No corrections yet.</p>
           <ul class="voice-pairs">
             <li v-for="pair in mishearings" :key="`${pair.heard}→${pair.meant}`">
               <span class="voice-quote">“{{ pair.heard }}”</span>

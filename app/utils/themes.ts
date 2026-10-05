@@ -39,8 +39,8 @@ export function themeVars(p: ThemePalette, dark: boolean): Record<string, string
   const accented = p.accented ?? mix(p.bg, 84, p.text)
   const border = p.border ?? mix(p.bg, 82, p.text)
   const textMuted = p.textMuted ?? mix(p.text, 62, p.bg)
-  const success = p.success ?? (dark ? '#62b57a' : '#3f8f58')
-  const error = p.error ?? (dark ? '#e07979' : '#c74e4e')
+  const success = p.success ?? (dark ? '#62b57a' : '#246b37')
+  const error = p.error ?? (dark ? '#e07979' : '#b4232c')
   return {
     '--ui-bg': p.bg,
     '--ui-bg-muted': muted,
@@ -73,7 +73,7 @@ const defaultPreview: Record<'light' | 'dark', ThemePalette> = {
     bg: '#ffffff',
     elevated: '#f1f5f9',
     text: '#0f172a',
-    primary: '#718d4d',
+    primary: '#4b6231',
     border: '#e2e8f0',
   },
   dark: {

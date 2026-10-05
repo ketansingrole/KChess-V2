@@ -111,16 +111,11 @@ const best = computed(() => {
       <USelect v-model="rated" :items="RATED" size="sm" aria-label="Rated or casual" />
     </PageHeader>
 
-    <p class="section-hint mb-4">
-      Insights from your saved Lichess games. Available offline after syncing; computer games are
-      separate.
-    </p>
     <div v-if="!accounts.length" class="card">
       <UEmpty
         variant="naked"
         icon="i-lucide-chart-pie"
         title="No saved Lichess games to explore"
-        description="Follow a player by username to explore their public games without signing in, or connect your own Lichess account."
         :actions="[
           {
             label: 'Follow a player',

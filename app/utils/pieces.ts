@@ -23,7 +23,8 @@ export const DEFAULT_PIECE_SET: PieceSet = 'cburnett'
 
 const urls = import.meta.glob<string>('../assets/pieces/*/*.svg', {
   eager: true,
-  query: '?url',
+  // Keep all 132 piece images out of the JavaScript bundle; load only displayed sets.
+  query: '?url&no-inline',
   import: 'default',
 })
 const ROLES = ['P', 'N', 'B', 'R', 'Q', 'K'] as const

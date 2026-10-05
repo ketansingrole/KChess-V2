@@ -90,6 +90,26 @@ pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOW
   (`tell application "System Events" to get short name of ...`) and reserve
   screenshots for visual layout verification only.
 
+## UI copy and information density
+
+- Keep the interface quiet: show only text needed to identify an action, make a decision,
+  understand the current state, or recover from a problem. Apply this across every page,
+  panel, dialog, empty state, and settings section when creating or changing UI.
+- Do not add permanent boilerplate such as “Internet required”, “No account needed”,
+  “Works offline”, “Nothing is sent”, or explanations of obvious buttons and settings.
+  Show connection or account guidance only when it actually blocks the current action.
+- Use one clear label per action. Avoid repeating a heading in a description and again
+  in the button. Prefer useful empty-state actions over paragraphs of onboarding copy.
+- Keep real state and consequences: game status, scores, progress, errors, unsaved work,
+  destructive-action warnings, rated-result effects, privacy choices, and download sizes.
+  Explain non-obvious behavior briefly where the user makes that choice; put optional
+  instructions in tooltips or expandable help instead of permanent body text.
+- Settings labels and choices should stand on their own. Remove hints that merely
+  paraphrase them; retain concise hints for non-obvious effects or tradeoffs.
+- Remove unnecessary copy from the source, not by hiding it with CSS. Preserve accessible
+  names, semantic headings, labels, and live status/error announcements. Update affected
+  UI tests to verify actions and state rather than require discarded explanatory copy.
+
 ## Architecture and regression ownership
 
 - Renderer stores own view state; main owns credentials, networking, privileged files and engine processes. Every new desktop method belongs in `DesktopApi`, the shared IPC channel map and preload. IPC must authenticate the owned top-level frame as well as validate input.

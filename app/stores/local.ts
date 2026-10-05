@@ -88,7 +88,15 @@ export const useLocalGameStore = defineStore('local', () => {
   const declared = ref<{ winner?: Color; reason: string } | null>(saved?.result ?? null)
   const paused = ref(true)
   /** Turn the board towards whoever is to move. */
-  const autoFlip = useLocalStorage('kchess:local-autoflip', false)
+  const autoFlipOn = useLocalStorage('kchess:local-autoflip', false)
+  const autoFlip = computed({
+    get: () => autoFlipOn.value,
+    // Switching the automatic turning off leaves the board facing the way it is now.
+    set: (on: boolean) => {
+      if (!on && autoFlipOn.value && !over.value) fixedOrientation.value = position.value.turn
+      autoFlipOn.value = on
+    },
+  })
   const fixedOrientation = ref<Color>('white')
   let turnStarted = performance.now()
   const saveError = persistSession('kchess:local:v1', () => ({
@@ -261,8 +269,11 @@ export const useLocalGameStore = defineStore('local', () => {
     paused.value = !paused.value
     turnStarted = performance.now()
   }
+  /** Flipping by hand always turns the board, so it also stops the automatic turning. */
   function flip(): void {
-    fixedOrientation.value = fixedOrientation.value === 'white' ? 'black' : 'white'
+    const shown = orientation.value
+    autoFlipOn.value = false
+    fixedOrientation.value = shown === 'white' ? 'black' : 'white'
   }
   function view(next: number): void {
     const clamped = Math.max(0, Math.min(next, moves.value.length))
@@ -297,6 +308,19 @@ export const useLocalGameStore = defineStore('local', () => {
   watch(otbFlagged, (flag) => {
     if (flag) clockArchive.save(true)
   })
+  // A clock nobody has started yet shows the times as they are typed; a started one keeps its time.
+  const otbShownStart = { top: otb.value.top, bottom: otb.value.bottom }
+  watch(
+    () => ({ top: otbConfig.value.minutes, bottom: otbConfig.value.bottomMinutes }),
+    (minutes) => {
+      if (otbRunning.value || otbFlagged.value) return
+      for (const side of ['top', 'bottom'] as const) {
+        const value = Number(minutes[side])
+        const untouched = otbMoves.value[side] === 0 && otb.value[side] === otbShownStart[side]
+        if (value > 0 && untouched) otb.value[side] = otbShownStart[side] = value * 60_000
+      }
+    },
+  )
   function otbLeft(side: 'top' | 'bottom'): number {
     void now.value
     if (otbRunning.value !== side) return otb.value[side]
@@ -354,6 +378,7 @@ export const useLocalGameStore = defineStore('local', () => {
       top: otbConfig.value.minutes * 60_000,
       bottom: otbConfig.value.bottomMinutes * 60_000,
     }
+    Object.assign(otbShownStart, otb.value)
   }
 
   return {

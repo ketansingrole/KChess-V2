@@ -149,7 +149,7 @@ async function finish(): Promise<void> {
 
     <div class="card side-panel puzzle-panel">
       <h2 class="sr-only">Knight paths</h2>
-      <p class="section-hint">Reach the green square in the fewest jumps to score.</p>
+      <p class="section-hint">Reach the green square in the fewest moves.</p>
       <div class="field">
         <span id="knight-level" class="field-label">Difficulty</span>
         <USelect

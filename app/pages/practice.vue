@@ -16,9 +16,7 @@ const tabs = [
 
 <template>
   <div>
-    <PageHeader title="Practice">
-      <SourceBadge kind="local" label="Local only · nothing here is sent to Lichess" />
-    </PageHeader>
+    <PageHeader title="Practice" />
     <UTabs
       :model-value="practiceTab"
       :items="tabs"
@@ -28,12 +26,12 @@ const tabs = [
       class="mb-5"
       @update:model-value="practiceTab = $event as string"
     />
-    <MistakeTrainer v-if="practiceTab === 'mistakes'" />
-    <OpeningTrainer v-else-if="practiceTab === 'openings'" />
+    <LazyMistakeTrainer v-if="practiceTab === 'mistakes'" />
+    <LazyOpeningTrainer v-else-if="practiceTab === 'openings'" />
     <CoordinatesTrainer v-else-if="practiceTab === 'coordinates'" />
-    <SquareColorTrainer v-else-if="practiceTab === 'colors'" />
-    <KnightPath v-else-if="practiceTab === 'knight'" />
-    <EndgameDrills v-else-if="practiceTab === 'endgames'" />
-    <PuzzleThemeTiles v-else />
+    <LazySquareColorTrainer v-else-if="practiceTab === 'colors'" />
+    <LazyKnightPath v-else-if="practiceTab === 'knight'" />
+    <LazyEndgameDrills v-else-if="practiceTab === 'endgames'" />
+    <LazyPuzzleThemeTiles v-else />
   </div>
 </template>

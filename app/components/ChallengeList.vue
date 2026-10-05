@@ -66,9 +66,7 @@ function colorText(challenge: ChallengeInfo): string {
         </p>
       </div>
     </div>
-    <p v-if="!challenges.list.length" class="muted text-sm">
-      No open challenges. Friends can challenge you on Lichess and it appears here.
-    </p>
+    <p v-if="!challenges.list.length" class="muted text-sm">No open challenges.</p>
     <div class="list-rows">
       <div v-for="challenge in challenges.incoming" :key="challenge.id" class="list-row">
         <UIcon

@@ -266,6 +266,7 @@ function missed(result: VoiceResult): void {
               spellcheck="false"
               :color="fenError ? 'error' : undefined"
               @blur="applyFen"
+              @keydown.enter.prevent="applyFen"
             />
             <UTooltip text="Copy FEN">
               <UButton

@@ -6,10 +6,18 @@ import { useKChessStore } from './stores/kchess'
 import { useAppUpdatesStore } from './stores/appUpdates'
 import { useReviewStore } from './stores/review'
 import { useChallengeStore } from './stores/challenges'
+import { exposeToastFocusGuards, labelSearchResults } from './utils/uiAccessibility'
 
 useHead({
   title: 'KChess',
   htmlAttrs: { lang: 'en' },
+  meta: [
+    {
+      name: 'description',
+      content:
+        'Play chess against Stockfish or on Lichess, practice puzzles, and analyze your games with KChess.',
+    },
+  ],
   link: [{ rel: 'icon', type: 'image/png', href: './icon.png' }],
 })
 
@@ -22,12 +30,19 @@ const updates = useAppUpdatesStore()
 // can shift the box back by half; the observer also follows the sidebar's open/close animation.
 const mainEl = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | undefined
+let uiObserver: MutationObserver | undefined
 function trackMainOffset(): void {
   const main = mainEl.value
   if (main) main.style.setProperty('--main-left', `${main.getBoundingClientRect().left}px`)
 }
 
 onMounted(() => {
+  uiObserver = new MutationObserver(() => {
+    exposeToastFocusGuards(document.body)
+    labelSearchResults(document.body)
+  })
+  uiObserver.observe(document.body, { childList: true, subtree: true })
+  exposeToastFocusGuards(document.body)
   const challenges = useChallengeStore()
   void store.init().then(() => {
     if (store.ready) challenges.start()
@@ -43,6 +58,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   resizeObserver?.disconnect()
+  uiObserver?.disconnect()
   useChallengeStore().stop()
   store.dispose()
   updates.dispose()
@@ -113,7 +129,7 @@ function toggleMaximize(event?: MouseEvent): void {
 </script>
 
 <template>
-  <UApp>
+  <UApp :toaster="{ ui: { viewport: 'kchess-toasts' } }">
     <div
       class="app-shell"
       :class="{ 'is-mac': isMac, 'is-frameless': isFrameless, zen: zenActive }"
@@ -193,7 +209,9 @@ function toggleMaximize(event?: MouseEvent): void {
               <UButton
                 icon="i-lucide-user"
                 :label="state === 'expanded' ? sidebarUserLabel : undefined"
-                aria-label="Account menu"
+                :aria-label="
+                  state === 'expanded' ? `${sidebarUserLabel} account menu` : 'Account menu'
+                "
                 color="neutral"
                 variant="ghost"
                 :trailing-icon="state === 'expanded' ? 'i-lucide-chevrons-up-down' : undefined"
@@ -234,11 +252,12 @@ function toggleMaximize(event?: MouseEvent): void {
               color="neutral"
               size="sm"
               class="search-trigger"
-              aria-label="Search pages and actions"
+              aria-description="Search pages and actions"
+              aria-keyshortcuts="Meta+K Control+K"
               @click="toggleSearch"
             >
               <span class="search-trigger-label">Search…</span>
-              <span class="search-trigger-keys" aria-hidden="true">
+              <span class="search-trigger-keys">
                 <UKbd value="meta" size="sm" /><UKbd value="K" size="sm" />
               </span>
             </UButton>
@@ -261,7 +280,7 @@ function toggleMaximize(event?: MouseEvent): void {
         </header>
         <div class="main-content">
           <div v-if="!ready" class="splash">
-            <img src="./assets/icon.png" alt="" class="splash-logo" />
+            <img src="./assets/icon-splash.png" alt="" width="72" height="72" class="splash-logo" />
             <template v-if="error">
               <h1 class="splash-title">KChess couldn't start</h1>
               <p class="splash-text" role="alert">{{ error }}</p>
@@ -287,19 +306,14 @@ function toggleMaximize(event?: MouseEvent): void {
         @click="store.toggleSetting('zenMode')"
         >Leave zen mode</UButton
       >
-      <UModal
-        v-model:open="searchOpen"
-        title="Search"
-        description="Jump to a page or run an action"
-        :ui="{ content: 'max-w-lg' }"
-      >
+      <UModal v-model:open="searchOpen" title="Search" :ui="{ content: 'max-w-lg' }">
         <template #content>
-          <UCommandPalette
+          <LazyUCommandPalette
             :groups="searchGroups"
             :fuse="{ fuseOptions: { useExtendedSearch: true } }"
             placeholder="Search pages and actions…"
             :close="true"
-            class="h-80"
+            class="h-80 kchess-search-palette"
             @update:open="searchOpen = $event"
           />
         </template>

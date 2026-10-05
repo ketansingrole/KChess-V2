@@ -14,12 +14,24 @@ import { useWatchStore } from '../stores/watch'
 
 const online = useOnline()
 const store = useKChessStore()
-const { activeOnlineAccount, connectedAccounts, data } = storeToRefs(store)
+const { activeOnlineAccount, connectedAccounts, data, trackedAccounts } = storeToRefs(store)
 const route = useRoute()
 const watcher = useWatchStore()
 
 const query = ref(typeof route.query.name === 'string' ? route.query.name : '')
 const recent = useLocalStorage<string[]>('kchess:players-recent', [])
+/** Recent lookups first, then followed players, for one-click lookups. */
+const suggestions = computed(() => {
+  const seen = new Set<string>()
+  return [...recent.value, ...trackedAccounts.value.map((a) => a.username)]
+    .filter((name) => {
+      const key = name.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 12)
+})
 const profile = ref<LichessUser | null>(null)
 const status = ref<UserPresence | null>(null)
 const perf = ref<PerfType>('blitz')
@@ -59,7 +71,7 @@ const perfs = computed(() => {
 
 async function lookup(name = query.value.trim()): Promise<void> {
   if (!online.value) {
-    error.value = 'Reconnect to the internet to look up a player. No account is needed.'
+    error.value = 'Reconnect to look up a player.'
     return
   }
   if (!USERNAME.test(name)) {
@@ -156,22 +168,33 @@ async function watchGame(): Promise<void> {
 <template>
   <div>
     <PageHeader title="Players" />
-    <PublicOnlineNotice
-      offline-message="Reconnect to look up players. Your followed players and saved games are available in Following."
-    />
-    <form class="card flex flex-wrap items-center gap-2 mb-5" @submit.prevent="lookup()">
+    <PublicOnlineNotice offline-message="Offline · reconnect to look up players." />
+    <form
+      class="card player-search flex flex-wrap items-center gap-2 mb-5"
+      :class="{ 'player-search-empty': !profile }"
+      @submit.prevent="lookup()"
+    >
+      <UEmpty
+        v-if="!profile"
+        variant="naked"
+        size="sm"
+        icon="i-lucide-user-search"
+        title="Look up a player"
+        class="w-full"
+      />
       <UInput
         v-model="query"
         icon="i-lucide-user-search"
         placeholder="Lichess username"
         autocomplete="off"
         aria-label="Lichess username"
-        class="flex-1 min-w-48"
+        class="min-w-48"
+        :class="profile ? 'flex-1' : 'player-search-input'"
       />
       <UButton type="submit" :loading="loading" :disabled="!online">Look up</UButton>
-      <div v-if="recent.length" class="flex flex-wrap gap-1 w-full">
+      <div v-if="suggestions.length" class="player-suggestions flex flex-wrap gap-1 w-full">
         <UButton
-          v-for="name in recent"
+          v-for="name in suggestions"
           :key="name"
           size="xs"
           variant="soft"
@@ -343,6 +366,17 @@ async function watchGame(): Promise<void> {
 </template>
 
 <style scoped>
+.player-search-empty {
+  justify-content: center;
+  padding-block: 28px 32px;
+}
+.player-search-input {
+  flex: 0 1 420px;
+}
+.player-search-empty .player-suggestions {
+  justify-content: center;
+  margin-top: 4px;
+}
 .stats-grid {
   display: grid;
   grid-template-columns: max-content 1fr;

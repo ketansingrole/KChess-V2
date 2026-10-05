@@ -6,7 +6,7 @@ export default defineNuxtConfig({
   // Ignore model files left by older builds; voice models now live in the user's cache.
   nitro: { ignore: ['**/voice/model.tar.gz*'] },
   modules: ['@pinia/nuxt', '@nuxt/ui', '@nuxt/eslint'],
-  ui: { fonts: false },
+  ui: { fonts: false, experimental: { componentDetection: true } },
   router: { options: { hashMode: true } },
   css: [
     '@lichess-org/chessground/assets/chessground.base.css',

@@ -84,7 +84,7 @@ async function finish(): Promise<void> {
 <template>
   <div class="card drill-card">
     <h2 class="sr-only">Square colours</h2>
-    <p class="section-hint">Light or dark? Answer as many as you can in 30 seconds.</p>
+    <p class="section-hint">Name each square’s color · 30 seconds</p>
 
     <div class="drill-stage" :class="flash" role="status" aria-live="polite">
       <template v-if="stage === 'running'">

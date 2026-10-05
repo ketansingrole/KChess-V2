@@ -42,7 +42,7 @@ onMounted(() => void puzzles.loadDaily())
     </div>
     <div class="card side-panel puzzle-panel">
       <h2 class="sr-only">Daily puzzle</h2>
-      <SourceBadge kind="local" label="Local only · result is not sent" />
+
       <template v-if="daily">
         <PuzzleStatusPanel
           :puzzle="daily"

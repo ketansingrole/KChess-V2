@@ -26,9 +26,9 @@ const tabs = [
       @update:model-value="tab = $event as PuzzleTab"
     />
     <PuzzleTrain v-if="tab === 'train'" />
-    <PuzzleDaily v-else-if="tab === 'daily'" />
-    <PuzzleRush v-else-if="tab === 'rush'" />
-    <PuzzleStats v-else-if="tab === 'stats'" />
-    <PuzzleHistory v-else />
+    <LazyPuzzleDaily v-else-if="tab === 'daily'" />
+    <LazyPuzzleRush v-else-if="tab === 'rush'" />
+    <LazyPuzzleStats v-else-if="tab === 'stats'" />
+    <LazyPuzzleHistory v-else />
   </div>
 </template>

@@ -180,8 +180,11 @@ function configuration(): Config {
   }
 }
 
+/** Chessground draws coordinate labels only when it rebuilds the board, not on `set`. */
+let shownCoordinates = false
 onMounted(() => {
   shownReset = props.resetKey
+  shownCoordinates = props.coordinates !== 'none'
   if (el.value) ground = Chessground(el.value, configuration())
 })
 
@@ -194,6 +197,10 @@ watch(
       shownFen = undefined
     }
     ground.set(configuration())
+    if ((props.coordinates !== 'none') !== shownCoordinates) {
+      shownCoordinates = props.coordinates !== 'none'
+      ground.redrawAll()
+    }
     // A queued premove plays as soon as it is our turn; if nothing can be queued any more, drop it.
     if ((props.interactive ?? true) && props.movable) ground.playPremove()
     else if (!ground.state.premovable.enabled) ground.cancelPremove()
@@ -237,7 +244,7 @@ onBeforeUnmount(() => {
     :style="pieceStyle"
     @mousedown.capture="clearShapes"
   >
-    <div ref="el" :inert="pending ? true : undefined" aria-label="Chess board" />
+    <div ref="el" :inert="pending ? true : undefined" role="group" aria-label="Chess board" />
     <!-- The move box, and any controls the page adds (voice), share one row under the board. -->
     <Teleport v-if="typing || $slots.controls" defer :to="inputTo" :disabled="!inputTo">
       <div class="board-input-row" :class="{ inline: inputTo }">
