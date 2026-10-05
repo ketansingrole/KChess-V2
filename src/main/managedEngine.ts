@@ -226,6 +226,9 @@ async function install(location: ManagedLocation): Promise<InstallResult> {
           probe.kill()
         }
       })
+      // A broken or wrong-architecture build can exit before reading: that write then fails with
+      // EPIPE, which must fail the probe (the exit handler reports it) rather than crash KChess.
+      probe.stdin?.on('error', () => {})
       probe.stdin?.end('uci\n')
     })
     const commit = async (): Promise<void> => {
