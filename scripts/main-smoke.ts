@@ -450,12 +450,21 @@ server.close()
 
 // Downloaded engine: install, verify, report, delete — against a fake GitHub release on a temp dir.
 const work = mkdtempSync(join(tmpdir(), 'kchess-managed-test-'))
-mkdirSync(join(work, 'pkg/stockfish-macos-universal'), { recursive: true })
-writeFileSync(
-  join(work, 'pkg/stockfish-macos-universal/stockfish-macos-universal'),
-  '#!/bin/sh\necho uciok\n',
-)
-execFileSync('tar', ['-cf', join(work, 'asset.tar'), '-C', join(work, 'pkg'), '.'])
+// Name the fake build for this host, as the installer only accepts this platform's official asset.
+const hostBuild =
+  process.platform === 'darwin'
+    ? 'stockfish-macos-universal'
+    : `stockfish-linux-${process.arch === 'arm64' ? 'arm64' : 'x86-64'}-universal`
+const hostAsset = `${hostBuild}${process.platform === 'darwin' ? '.tar' : '.tar.gz'}`
+mkdirSync(join(work, `pkg/${hostBuild}`), { recursive: true })
+writeFileSync(join(work, `pkg/${hostBuild}/${hostBuild}`), '#!/bin/sh\necho uciok\n')
+execFileSync('tar', [
+  process.platform === 'darwin' ? '-cf' : '-czf',
+  join(work, 'asset.tar'),
+  '-C',
+  join(work, 'pkg'),
+  '.',
+])
 const tarball = readFileSync(join(work, 'asset.tar'))
 const digest = (bytes: Buffer): string =>
   `sha256:${createHash('sha256').update(bytes).digest('hex')}`
@@ -470,7 +479,7 @@ const engineServer = createServer((request, response) => {
         tag_name: releaseTag,
         assets: [
           {
-            name: 'stockfish-macos-universal.tar',
+            name: hostAsset,
             browser_download_url: `${base}/asset.tar`,
             size: tarball.length,
             digest: releaseDigest,

@@ -184,7 +184,7 @@ test('starts without an account and keeps settings and downloaded puzzles access
   const settingsBox = await settings.boundingBox()
   const connectBox = await connect.boundingBox()
   expect(settingsBox!.y).toBeLessThan(connectBox!.y)
-  await page.screenshot({ path: '/private/tmp/kchess-account-free-home.png' })
+  await page.screenshot({ path: test.info().outputPath('kchess-account-free-home.png') })
   await settings.click()
   await expect(sidebar.getByText('Appearance', { exact: true })).toBeVisible()
   await sidebar.getByText('Back', { exact: true }).click()
@@ -203,7 +203,7 @@ test('starts without an account and keeps settings and downloaded puzzles access
   await expect(
     page.getByText('Works offline after downloading puzzles. No account needed.', { exact: true }),
   ).toBeVisible()
-  await page.screenshot({ path: '/private/tmp/kchess-account-free-puzzles.png' })
+  await page.screenshot({ path: test.info().outputPath('kchess-account-free-puzzles.png') })
 })
 
 test('browses public tournaments anonymously and asks to connect only when joining', async ({
@@ -285,7 +285,7 @@ test('explains account-free empty states and manages offline downloads without s
   await expect(
     page.getByRole('button', { name: 'Download a fresh sample', exact: true }),
   ).toBeDisabled()
-  await page.screenshot({ path: '/private/tmp/kchess-offline-downloads.png' })
+  await page.screenshot({ path: test.info().outputPath('kchess-offline-downloads.png') })
 })
 
 test('loads cached voice recognition offline and releases the microphone after a training run @packaged', async ({
@@ -796,7 +796,7 @@ test('plays two players on one board, exports the game as a GIF and runs the che
   await page.getByRole('tab', { name: 'Over the board', exact: true }).click()
   await expect(page.locator('.local-history-row').filter({ hasText: 'Checkmate' })).toBeVisible()
   await page.screenshot({
-    path: '/private/tmp/kchess-local-game-history.png',
+    path: test.info().outputPath('kchess-local-game-history.png'),
     animations: 'disabled',
   })
   await page
@@ -816,6 +816,8 @@ test('cancels a long GIF export and keeps the renderer responsive while encoding
   await app.evaluate(({ dialog }, filePath) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath })
   }, destination)
+  // CI screens are small (macOS runners are 1024×768): a long game's moves must stay in their panel.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 740))
   await navigate(page, 'Analysis board')
   await page.locator('.analysis-panel').getByRole('button', { name: 'Import', exact: true }).click()
   const pgn =
@@ -958,7 +960,7 @@ test('renders the Lichess authorization confirmation page clearly', async ({
   await expect(
     page.getByText('You can close this browser tab and continue in KChess.'),
   ).toBeVisible()
-  await page.screenshot({ path: '/private/tmp/kchess-lichess-confirmation.png' })
+  await page.screenshot({ path: test.info().outputPath('kchess-lichess-confirmation.png') })
 })
 
 test('quick logout removes only the selected account and returns to account-free Home after the last', async ({
@@ -971,7 +973,7 @@ test('quick logout removes only the selected account and returns to account-free
   const titleBox = await heading.boundingBox()
   const cardsBox = await page.locator('.stats-grid').boundingBox()
   expect(cardsBox!.y - titleBox!.y - titleBox!.height).toBeGreaterThanOrEqual(16)
-  await page.screenshot({ path: '/private/tmp/kchess-home-activity-spacing.png' })
+  await page.screenshot({ path: test.info().outputPath('kchess-home-activity-spacing.png') })
   await navigate(page, 'Over the board')
   await page.getByRole('tab', { name: 'Shared board', exact: true }).click()
   const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })

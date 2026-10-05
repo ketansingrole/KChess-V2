@@ -919,6 +919,8 @@ function missed(result: VoiceResult): void {
 .analysis-panel {
   contain: size;
   gap: 12px;
+  /* A short window: scroll the panel rather than let the move list cover the controls. */
+  overflow-y: auto;
 }
 .analysis-panel > * + * {
   margin-top: 0;
@@ -978,8 +980,13 @@ function missed(result: VoiceResult): void {
   font-size: 13px;
   text-align: center;
 }
+/* The list takes the room left in the panel, but never less than a few lines. */
+.tool-body.moves-tool {
+  min-height: auto;
+}
 .moves-tool .moves-wrap {
-  min-height: 140px;
+  flex: 1 1 0;
+  min-height: 96px;
 }
 .ceval-score {
   min-width: 3.4em;
