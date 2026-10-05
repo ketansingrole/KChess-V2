@@ -372,7 +372,7 @@ function removePending(): void {
 
 <template>
   <div>
-    <PageHeader :title="category.label" subtitle="Changes save automatically" />
+    <PageHeader :title="category.label" />
 
     <div class="settings-page">
       <AppUpdateSettings v-if="category.id === 'updates'" />
@@ -706,11 +706,6 @@ function removePending(): void {
             class="setting-control"
           />
         </div>
-        <p v-if="category.id === 'analysis'" class="text-xs muted p-4">
-          The opening explorer (Lichess, Masters and Player databases) and tablebases are on the
-          analysis board; they look a position up only when you ask, or follow the board when you
-          turn that on there.
-        </p>
       </section>
 
       <section
@@ -983,9 +978,6 @@ function removePending(): void {
         <div class="card-header">
           <div>
             <h2 id="own-title" class="sr-only">My Lichess accounts</h2>
-            <p class="section-hint">
-              Accounts you own. Connect each one you want to play online games with from KChess.
-            </p>
           </div>
           <UButton
             :variant="connectedAccounts.length ? 'outline' : 'solid'"
@@ -1032,11 +1024,6 @@ function removePending(): void {
         <div class="card-header">
           <div>
             <h2 id="data-title" class="sr-only">Data &amp; storage</h2>
-            <p class="section-hint">
-              What KChess has downloaded from Lichess for each account, and how much space it takes
-              on this computer. Sizes are after decompression. Followed players live on the
-              <NuxtLink to="/friends" class="link">Friends</NuxtLink> page.
-            </p>
           </div>
           <UButton
             variant="outline"
@@ -1117,9 +1104,6 @@ function removePending(): void {
         <div class="card-header">
           <div>
             <h2 id="local-puzzles-title" class="section-title">Puzzles &amp; practice</h2>
-            <p class="section-hint">
-              Storm, Streak, Rush, offline puzzles and drills. Local only, never sent to Lichess.
-            </p>
           </div>
           <UButton
             variant="outline"

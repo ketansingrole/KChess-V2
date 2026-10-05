@@ -43,7 +43,6 @@ const label = computed(() => props.result || formatEval(props.line))
   overflow: hidden;
   border-radius: 4px;
   background: #403d39;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 20%);
 }
 .eval-bar.flipped {
   flex-direction: column;

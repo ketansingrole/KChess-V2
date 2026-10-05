@@ -29,7 +29,7 @@ const accountItems = computed(() => data.value.accounts.map((account) => account
 
 <template>
   <div>
-    <PageHeader title="Dashboard" subtitle="Your Lichess activity at a glance">
+    <PageHeader title="Dashboard">
       <USelect
         v-if="data.accounts.length > 1"
         v-model="selectedAccount"

@@ -91,10 +91,7 @@ watch(
 
 <template>
   <div>
-    <PageHeader
-      title="Friends"
-      subtitle="Players you follow: their ratings, games and what tracking them costs"
-    >
+    <PageHeader title="Friends">
       <UButton
         v-if="trackedAccounts.length"
         variant="outline"

@@ -135,9 +135,6 @@ async function clearLog(): Promise<void> {
     <div class="card-header">
       <div>
         <h2 id="voice-history-title" class="section-title">Voice history</h2>
-        <p class="section-hint">
-          What voice input heard, how KChess read it, and the move or square you meant.
-        </p>
       </div>
       <div class="friend-actions">
         <UButton

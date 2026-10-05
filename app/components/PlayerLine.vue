@@ -74,6 +74,7 @@ function presenceTitle(presence: PlayerPresence): string {
         {{ player.status }}
       </span>
     </div>
+    <div v-if="$slots.middle" class="player-middle"><slot name="middle" /></div>
     <span v-if="player.clock" class="player-clock" :aria-label="`${color} clock`">{{
       player.clock
     }}</span>

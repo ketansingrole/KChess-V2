@@ -117,7 +117,7 @@ async function add(): Promise<void> {
             <UButton
               variant="outline"
               color="neutral"
-              size="sm"
+              size="md"
               :disabled="!candidates.length"
               @click="toggleAll"
               >{{ allSelected ? 'Clear' : 'Select all' }}</UButton

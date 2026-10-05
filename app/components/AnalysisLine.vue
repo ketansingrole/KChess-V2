@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { moveNumber, pathOf, movesOf, type TreeNode } from '../utils/analysisTree'
+import { moveGlyph, moveNumber, pathOf, movesOf, type TreeNode } from '../utils/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
 import type { Judgment } from '../../src/shared/types'
 
@@ -63,21 +63,38 @@ const items = computed<Item[]>(() => {
 
 <template>
   <template v-for="item in items" :key="item.kind === 'move' ? item.path : `${item.parentPath}|v`">
-    <button
-      v-if="item.kind === 'move'"
-      type="button"
-      class="tree-move"
-      :class="{ active: item.path === current, main: depth === 0 }"
-      :data-path="item.path"
-      :aria-current="item.path === current ? 'step' : undefined"
-      @click="emit('select', item.path)"
-    >
-      <span v-if="item.number" class="tree-number">{{ item.number }}</span>
-      {{ item.node.san
-      }}<span v-if="item.judgment" :class="['tree-glyph', item.judgment]" :title="item.judgment">{{
-        GLYPHS[item.judgment]
-      }}</span>
-    </button>
+    <template v-if="item.kind === 'move'">
+      <button
+        type="button"
+        class="tree-move"
+        :class="{ active: item.path === current, main: depth === 0 }"
+        :data-path="item.path"
+        :aria-current="item.path === current ? 'step' : undefined"
+        @click="emit('select', item.path)"
+      >
+        <span v-if="item.number" class="tree-number">{{ item.number }}</span>
+        {{ item.node.san
+        }}<span
+          v-if="moveGlyph(item.node)"
+          class="tree-glyph"
+          :title="moveGlyph(item.node)!.label"
+          >{{ moveGlyph(item.node)!.glyph }}</span
+        ><span
+          v-else-if="item.judgment"
+          :class="['tree-glyph', item.judgment]"
+          :title="item.judgment"
+          >{{ GLYPHS[item.judgment] }}</span
+        >
+      </button>
+      <span
+        v-if="item.node.comments?.length"
+        class="tree-comment"
+        :data-path="item.path"
+        :class="{ block: depth === 0 }"
+        @click="emit('select', item.path)"
+        >{{ item.node.comments.join(' ') }}</span
+      >
+    </template>
     <component
       :is="depth === 0 ? 'div' : 'span'"
       v-else

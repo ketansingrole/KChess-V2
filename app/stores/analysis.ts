@@ -8,6 +8,7 @@ import { analysisContext } from '../../src/shared/analysisContext'
 import { analyseReview, reviewKey, type GameAnalysis } from '../../src/shared/review'
 import { useKChessStore } from './kchess'
 import { useReviewStore } from './review'
+import { useStudyStore } from './studies'
 import {
   addMove,
   deleteAt,
@@ -53,7 +54,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const app = useKChessStore()
   const saved = readSession('kchess:analysis:v1', (raw) => {
     if (!raw || typeof raw !== 'object') return undefined
-    const value = raw as { version?: unknown; pgn?: unknown; path?: unknown; orientation?: unknown }
+    const value = raw as {
+      version?: unknown
+      pgn?: unknown
+      path?: unknown
+      orientation?: unknown
+      study?: unknown
+    }
     if (value.version !== 1 || typeof value.pgn !== 'string') return undefined
     const root = treeFromPgn(value.pgn)
     if (!root) return undefined
@@ -69,16 +76,20 @@ export const useAnalysisStore = defineStore('analysis', () => {
       root,
       path,
       orientation: value.orientation === 'black' ? ('black' as const) : ('white' as const),
+      study: typeof value.study === 'string' ? value.study : '',
     }
   })
   const root = ref<TreeNode>(saved?.root ?? newTree())
   const path = ref(saved?.path ?? '')
   const orientation = ref<Color>(saved?.orientation ?? 'white')
+  /** The saved study the board is showing; its edits are saved back to it as they happen. */
+  const studyId = ref(saved?.study ?? '')
   const saveError = persistSession('kchess:analysis:v1', () => ({
     version: 1,
     pgn: treeToPgn(root.value),
     path: path.value,
     orientation: orientation.value,
+    study: studyId.value,
   }))
   /** The board editor's position, kept while you visit other pages. */
   const editor = ref<EditorSetup>(structuredClone(START_SETUP))
@@ -88,6 +99,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const engineLines = useLocalStorage('kchess:analysis-lines', 3)
   const infinite = useLocalStorage('kchess:analysis-infinite', false)
   const showArrows = useLocalStorage('kchess:analysis-arrows', true)
+  /** The tool shown under the engine lines. */
+  const tool = useLocalStorage<'moves' | 'review' | 'explorer'>('kchess:analysis-tool', 'moves')
 
   const nodes = computed(() => nodesAlong(root.value, path.value))
   const node = computed(() => nodes.value.at(-1)!)
@@ -100,6 +113,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     path.value = ''
     evaluations.clear()
     origin.value = null
+    studyId.value = ''
   }
   /** Load a game; `ply` opens it at that many moves into the main line (default: the start). */
   function loadPgn(text: string, ply = 0): boolean {
@@ -109,6 +123,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     path.value = pathOf(movesOf(lineEnd(tree, '')).slice(0, Math.max(0, ply)))
     evaluations.clear()
     origin.value = null
+    studyId.value = ''
     return true
   }
   function play(uci: string): boolean {
@@ -149,6 +164,50 @@ export const useAnalysisStore = defineStore('analysis', () => {
   function pgn(): string {
     return treeToPgn(root.value)
   }
+
+  /* ── Studies ─────────────────────────────────────────────────────── */
+
+  const studies = useStudyStore()
+  const study = computed(() => studies.items.find((item) => item.id === studyId.value))
+  /** The PGN last written to the open study, so opening one does not count as an edit. */
+  let studyPgn = study.value?.pgn ?? ''
+  const studySaveError = ref('')
+  function openStudy(id: string): boolean {
+    const found = studies.items.find((item) => item.id === id)
+    if (!found || !loadPgn(found.pgn)) return false
+    studyId.value = id
+    studyPgn = pgn()
+    return true
+  }
+  /** Keep the board as a study (named), and save its edits to it from now on. */
+  function saveAsStudy(name: string): string {
+    const text = pgn()
+    studyId.value = studies.save(name, text)
+    studyPgn = text
+    return studyId.value
+  }
+  /** Stop saving edits to the open study; the board keeps its moves. */
+  function closeStudy(): void {
+    studyId.value = ''
+  }
+  watch(
+    () => (studyId.value ? pgn() : ''),
+    (text) => {
+      const open = study.value
+      if (!open || !text || text === studyPgn) return
+      try {
+        studies.save(open.name, text, open.id)
+        studyPgn = text
+        studySaveError.value = ''
+      } catch (cause) {
+        studySaveError.value = cause instanceof Error ? cause.message : String(cause)
+      }
+    },
+  )
+  // A study removed from the library (here or on the Studies page) no longer receives edits.
+  watch(study, (open) => {
+    if (!open && studyId.value) studyId.value = ''
+  })
 
   /* ── Engine ──────────────────────────────────────────────────────── */
 
@@ -427,6 +486,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return current && current.key === mainlineKey.value ? current : null
   })
   async function requestReview(): Promise<void> {
+    tool.value = 'review'
     if (!mainline.value.length) return
     wanted = ''
     await window.kchess.stopAnalysis()
@@ -464,6 +524,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     engineLines,
     infinite,
     showArrows,
+    tool,
     nodes,
     node,
     position,
@@ -491,6 +552,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     analyseSetup,
     editPosition,
     origin,
+    studyId,
+    study,
+    studySaveError,
+    openStudy,
+    saveAsStudy,
+    closeStudy,
     mainline,
     mainlineKey,
     review,

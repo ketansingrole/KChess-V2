@@ -39,6 +39,7 @@ export type Page =
   | 'local'
   | 'computer'
   | 'analysis'
+  | 'studies'
   | 'editor'
   | 'puzzles'
   | 'practice'
@@ -75,6 +76,7 @@ export const useKChessStore = defineStore('kchess', () => {
     { id: 'local', label: 'Over the board', icon: 'i-lucide-users-round' },
     { id: 'watch', label: 'Watch', icon: 'i-lucide-tv' },
     { id: 'analysis', label: 'Analysis board', icon: 'i-lucide-microscope' },
+    { id: 'studies', label: 'Studies', icon: 'i-lucide-library-big' },
     { id: 'editor', label: 'Board editor', icon: 'i-lucide-pencil-ruler' },
     { id: 'puzzles', label: 'Puzzles', icon: 'i-lucide-puzzle' },
     { id: 'practice', label: 'Practice', icon: 'i-lucide-graduation-cap' },
@@ -93,6 +95,7 @@ export const useKChessStore = defineStore('kchess', () => {
       'local',
       'computer',
       'analysis',
+      'studies',
       'editor',
       'puzzles',
       'practice',

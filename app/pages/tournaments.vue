@@ -61,10 +61,7 @@ async function join(): Promise<void> {
 
 <template>
   <div>
-    <PageHeader
-      title="Tournaments"
-      subtitle="Join Lichess arenas and your teams' Swiss events; paired games open on the board"
-    >
+    <PageHeader title="Tournaments">
       <UTabs
         v-model="filter"
         :items="[
@@ -72,7 +69,7 @@ async function join(): Promise<void> {
           { label: 'All', value: 'all' },
         ]"
         :content="false"
-        size="xs"
+        size="sm"
         variant="pill"
       />
       <UButton
@@ -148,10 +145,6 @@ async function join(): Promise<void> {
         </section>
         <section class="card">
           <h2 class="section-title">Swiss events of your teams</h2>
-          <p class="section-hint">
-            Swiss tournaments belong to Lichess teams; those of @{{ activeOnlineAccount }}'s teams
-            are listed.
-          </p>
           <p
             v-for="problem in tournaments.list?.problems ?? []"
             :key="problem"
@@ -248,6 +241,7 @@ async function join(): Promise<void> {
               />
               <UButton
                 icon="i-lucide-log-in"
+                size="sm"
                 :loading="busy"
                 :disabled="!detail.playable || detail.verdicts?.accepted === false"
                 @click="join"

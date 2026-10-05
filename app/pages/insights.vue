@@ -97,10 +97,7 @@ const best = computed(() => {
 
 <template>
   <div>
-    <PageHeader
-      title="Insights"
-      subtitle="Patterns in your synced games, worked out on this computer"
-    >
+    <PageHeader title="Insights">
       <USelect
         v-if="accounts.length > 1"
         v-model="account"

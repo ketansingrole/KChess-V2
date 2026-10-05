@@ -275,10 +275,7 @@ function backToTournament(): void {
 
 <template>
   <div>
-    <PageHeader
-      title="Play Online"
-      subtitle="Play live and correspondence games through your connected Lichess accounts"
-    />
+    <PageHeader title="Play Online" />
 
     <div v-if="!data.accounts.some((a) => a.connected)" class="card">
       <UEmpty

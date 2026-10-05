@@ -86,7 +86,7 @@ export const RUN_KINDS = [
 ] as const
 export type RunKind = (typeof RUN_KINDS)[number]
 /** Where a spoken phrase was said. */
-export const VOICE_SOURCES = ['computer', 'coordinates', 'analysis', 'editor'] as const
+export const VOICE_SOURCES = ['computer', 'coordinates', 'analysis', 'editor', 'local'] as const
 export type VoiceSource = (typeof VOICE_SOURCES)[number]
 /**
  * What became of a spoken phrase. Moves: `played` at once, `pending` a choice that then was

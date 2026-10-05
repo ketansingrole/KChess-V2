@@ -45,8 +45,31 @@ export const useStudyStore = defineStore('studies', () => {
     items.value = next
     return candidate.id
   }
-  function remove(id: string): void {
+  function remove(id: string): SavedStudy | undefined {
+    const study = items.value.find((item) => item.id === id)
     items.value = items.value.filter((item) => item.id !== id)
+    return study
   }
-  return { items, error, save, remove }
+  /** Put back a study that was just removed (Undo), where it was in the list. */
+  function restore(study: SavedStudy): void {
+    if (items.value.some((item) => item.id === study.id) || items.value.length >= 50) return
+    items.value = [...items.value, study].sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+  function rename(id: string, name: string): void {
+    const study = items.value.find((item) => item.id === id)
+    if (study && name.trim() && name.trim() !== study.name) save(name, study.pgn, id)
+  }
+  function duplicate(id: string): string | undefined {
+    const study = items.value.find((item) => item.id === id)
+    return study ? save(`${study.name.slice(0, 113)} (copy)`, study.pgn) : undefined
+  }
+  /** A name no saved study has yet: “Untitled study”, “Untitled study 2” … */
+  function freshName(base = 'Untitled study'): string {
+    const taken = new Set(items.value.map((item) => item.name))
+    for (let n = 1; ; n++) {
+      const name = n === 1 ? base : `${base} ${n}`
+      if (!taken.has(name)) return name
+    }
+  }
+  return { items, error, save, remove, restore, rename, duplicate, freshName }
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { INITIAL_FEN } from 'chessops/fen'
 import {
@@ -17,6 +17,15 @@ import { fen as fenOf, navigatePly, setupPgn } from '../utils/chess'
 import { positionProblem } from '../utils/boardEditor'
 import { useLocalGameStore, type LocalClock } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
+import {
+  MOVE_GRAMMAR,
+  spokenChoice,
+  spokenMove,
+  type VoiceMoveChoice,
+} from '../utils/voiceCommands'
+import type { VoiceResult } from '../utils/voiceCapture'
+import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
+import type { VoiceOutcome } from '../../src/shared/types'
 
 const store = useKChessStore()
 const game = useLocalGameStore()
@@ -126,6 +135,102 @@ const confirmOpen = computed({
     if (!value) confirmResign.value = null
   },
 })
+
+/* Both players can speak moves; every move goes through the normal clock and legality checks. */
+const voiceEnabled = ref(false)
+const voiceFeedback = ref('')
+const voiceChoices = ref<VoiceMoveChoice[]>([])
+const voiceActive = computed(
+  () =>
+    mode.value === 'board' && !game.over && game.atLive && !formOpen.value && !confirmOpen.value,
+)
+const voiceRevision = ref(0)
+const voiceContext = computed(() => `${voiceRevision.value}:${fenOf(game.position)}`)
+let choiceContext = ''
+let pendingAttempt: Promise<number | undefined> | undefined
+function settleVoice(outcome: VoiceOutcome, expected?: string): void {
+  const attempt = pendingAttempt
+  pendingAttempt = undefined
+  if (attempt) void attempt.then((id) => updateVoice(id, { outcome, expected }))
+}
+watch(
+  [() => game.setup, () => game.moves, () => game.shownPly, voiceActive, voiceEnabled],
+  () => {
+    settleVoice('abandoned')
+    voiceChoices.value = []
+    voiceFeedback.value = ''
+    voiceRevision.value++
+  },
+  { flush: 'sync' },
+)
+function recordVoice(result: VoiceResult, outcome: VoiceOutcome, parsed?: string) {
+  return logVoice({
+    source: 'local',
+    ...heardFields(result),
+    outcome,
+    parsed,
+    fen: fenOf(game.position),
+  })
+}
+function playVoice(choice: VoiceMoveChoice, outcome: 'played' | 'confirmed' | 'picked'): void {
+  if (!voiceEnabled.value || !voiceActive.value || choiceContext !== voiceContext.value) return
+  // Settle before moving: the position watcher invalidates any remaining pending choices.
+  settleVoice(outcome, choice.san)
+  voiceChoices.value = []
+  voiceFeedback.value = game.move(choice.uci)
+    ? `Played ${choice.san}.`
+    : 'That move is no longer legal.'
+}
+function cancelVoice(): void {
+  settleVoice('cancelled')
+  voiceChoices.value = []
+  voiceFeedback.value = 'Move cancelled.'
+}
+function hearMove(result: VoiceResult): void {
+  if (!voiceEnabled.value || !voiceActive.value) return
+  const index = spokenChoice(result.text)
+  if (index && voiceChoices.value.length && !result.unclear) {
+    void recordVoice(result, 'command', `#${index}`)
+    const choice = voiceChoices.value[index - 1]
+    if (choice) playVoice(choice, 'confirmed')
+    else voiceFeedback.value = 'Choose one of the numbered moves.'
+    return
+  }
+  const parsed = spokenMove(result.text, game.position)
+  if (parsed.kind === 'cancel' && !result.unclear) {
+    void recordVoice(result, 'command', 'cancel')
+    cancelVoice()
+  } else if (parsed.kind === 'confirm' && !result.unclear) {
+    void recordVoice(result, 'command', 'confirm')
+    if (voiceChoices.value.length === 1) playVoice(voiceChoices.value[0]!, 'confirmed')
+    else voiceFeedback.value = 'Say a move, or choose its number.'
+  } else if (parsed.kind === 'move') {
+    settleVoice('replaced')
+    choiceContext = voiceContext.value
+    voiceChoices.value = parsed.choices
+    pendingAttempt = recordVoice(
+      result,
+      'pending',
+      parsed.choices.map((choice) => choice.san).join('|'),
+    )
+    if (parsed.choices.length === 1 && !settings.value.voiceConfirmMoves && !result.unclear)
+      playVoice(parsed.choices[0]!, 'played')
+    else
+      voiceFeedback.value =
+        parsed.choices.length === 1
+          ? `Play ${parsed.choices[0]!.san}? Say “confirm” or “cancel”.`
+          : 'Several moves match: say its number, or select it.'
+  } else {
+    void recordVoice(result, result.unclear ? 'unclear' : 'invalid')
+    voiceFeedback.value = result.unclear
+      ? 'Didn’t catch that. Repeat, or try “Echo four”.'
+      : `Heard “${result.text}”: no legal move matches.`
+  }
+}
+function missedMove(result: VoiceResult): void {
+  if (voiceEnabled.value && voiceActive.value) void recordVoice(result, 'unclear')
+}
+onUnmounted(() => settleVoice('abandoned'))
 function analyse(): void {
   if (game.setup.variant !== 'standard') return
   if (!analysis.loadPgn(setupPgn(game.setup, game.moves), game.shownPly)) return
@@ -191,11 +296,8 @@ function otbText(side: 'top' | 'bottom'): string {
 </script>
 
 <template>
-  <div>
-    <PageHeader
-      title="Over the board"
-      subtitle="Two players at one computer, or a clock for your real board"
-    >
+  <div class="local-page">
+    <PageHeader title="Over the board">
       <UTabs
         v-model="mode"
         :items="[
@@ -235,7 +337,43 @@ function otbText(side: 'top' | 'bottom'): string {
         :variant="game.setup.variant"
         :reset-key="resetKey"
         @move="play"
-      />
+      >
+        <template #bottom-aside>
+          <VoiceInput
+            v-model:enabled="voiceEnabled"
+            compact
+            :active="voiceActive"
+            :context-key="voiceContext"
+            :grammar="MOVE_GRAMMAR"
+            hint="Either player can say “E four” or “Knight F three”."
+            :feedback="voiceFeedback"
+            allow-push-talk
+            accept-unclear
+            @result="hearMove"
+            @unclear="missedMove"
+          >
+            <UButton
+              v-for="(choice, index) in voiceChoices"
+              :key="choice.uci"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              class="shrink-0"
+              @click="playVoice(choice, 'picked')"
+              >{{ index + 1 }} · {{ choice.san }}</UButton
+            >
+            <UButton
+              v-if="voiceChoices.length"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              icon="i-lucide-x"
+              aria-label="Cancel move"
+              @click="cancelVoice"
+            />
+          </VoiceInput>
+        </template>
+      </PlayBoard>
       <MovePanel
         title="Moves"
         :moves="game.history"
@@ -433,11 +571,7 @@ function otbText(side: 'top' | 'bottom'): string {
       </button>
     </div>
 
-    <UModal
-      v-model:open="formOpen"
-      title="New game over the board"
-      description="Variant, start position and clock"
-    >
+    <UModal v-model:open="formOpen" title="New game over the board">
       <template #body>
         <form class="flex flex-col gap-4" @submit.prevent="begin">
           <UFormField label="Variant" :help="VARIANT_HINTS[variant]">
@@ -495,6 +629,10 @@ function otbText(side: 'top' | 'bottom'): string {
 </template>
 
 <style scoped>
+.local-page :deep(.page-header) {
+  max-width: calc(var(--board-size) + 24px + 440px);
+  margin-inline: auto;
+}
 .otb-clock {
   display: flex;
   flex-direction: column;

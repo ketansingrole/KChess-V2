@@ -29,6 +29,13 @@
 * {
   box-sizing: border-box;
 }
+*,
+*::before,
+*::after {
+  /* Remove utility shadows while preserving the rings used by Nuxt UI controls. */
+  --tw-shadow: 0 0 #0000 !important;
+  --tw-inset-shadow: 0 0 #0000 !important;
+}
 html,
 body {
   height: 100%;
@@ -288,16 +295,11 @@ button:disabled {
 }
 .page-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: flex-start;
   flex-wrap: wrap;
   gap: 12px 16px;
   margin-bottom: 20px;
-}
-.page-subtitle {
-  margin: 0;
-  color: var(--ui-text-muted);
-  font-size: 14px;
 }
 .page-actions {
   display: flex;
@@ -518,10 +520,13 @@ button:disabled {
 }
 
 /* ── Playing surface ───────────────────────────────────────────────────── */
-.play-layout {
+.play-layout,
+.local-page {
   /* Board is as large as the viewport height and the page width allow. */
   --board-chrome: 300px; /* vertical space taken by everything but the board */
   --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 760px);
+}
+.play-layout {
   display: grid;
   grid-template-columns: var(--board-size) minmax(300px, 440px);
   gap: 24px;
@@ -554,13 +559,77 @@ button:disabled {
   margin-top: 14px;
 }
 .cg-host {
+  --board-radius: 14px;
   position: relative;
+}
+/* Under the board: the typed-move box, then the page's own controls (voice) on the same row. */
+.board-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.board-move-form {
+  display: flex;
+  flex: 1 1 10rem;
+  min-width: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-bg);
+}
+.board-move-form:focus-within {
+  border-color: var(--ui-primary);
+}
+.board-move-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.board-move-submit {
+  flex: none;
+  width: 32px;
+  border: 0;
+  border-left: 1px solid var(--ui-border);
+  background: transparent;
+  color: var(--ui-text-muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.board-move-submit:not(:disabled):hover {
+  color: var(--ui-primary);
+}
+.board-move-submit:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.board-input-row.inline {
+  margin-top: 0;
+}
+.board-input-row > .voice-bar {
+  max-width: 60%;
 }
 .cg-host .cg-wrap {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 6px;
-  box-shadow: 0 2px 14px rgb(0 0 0 / 22%);
+  border-radius: var(--board-radius);
+}
+.cg-host cg-container {
+  /* Override Chessground's pixel rounding so no unused strip surrounds the board. */
+  width: 100% !important;
+  height: 100% !important;
+}
+.cg-host cg-board {
+  border-radius: var(--board-radius);
+  overflow: hidden;
+}
+.cg-host :is(cg-auto-pieces, .cg-shapes, .cg-shapes-below, .cg-custom-svgs, .cg-custom-below) {
+  /* Clip board artwork without hiding coordinate labels outside the board. */
+  clip-path: inset(0 round var(--board-radius));
 }
 .promo-backdrop {
   position: absolute;
@@ -569,7 +638,7 @@ button:disabled {
   display: grid;
   place-items: center;
   background: rgb(0 0 0 / 50%);
-  border-radius: 6px;
+  border-radius: var(--board-radius);
 }
 .promo-choices {
   display: flex;
@@ -578,7 +647,6 @@ button:disabled {
   border-radius: 12px;
   background: var(--ui-bg-elevated);
   border: 1px solid var(--ui-border);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
 }
 .promo-choice {
   width: 60px;
@@ -655,7 +723,6 @@ cg-board,
 }
 .cg-wrap coords coord {
   flex: 1 1 auto;
-  text-shadow: 0 1px 2px #000;
 }
 coords .coord-light {
   color: var(--board-coord-black, #fff);
@@ -852,9 +919,25 @@ coords .coord-dark {
 }
 .player-id {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+/* The typed-move box, when the board puts it in the player's line. */
+.player-middle {
+  display: flex;
+  flex: 1 1 8rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.move-entry {
+  flex: 1;
+  max-width: 22rem;
+  min-width: 0;
+}
+.move-entry:empty {
+  display: none;
 }
 .player-name {
   overflow: hidden;
@@ -883,7 +966,7 @@ coords .coord-dark {
   border-radius: 50%;
   border: 2px solid var(--ui-bg);
   background: #f4f4f4;
-  box-shadow: 0 0 0 1px var(--ui-border-accented);
+  outline: 1px solid var(--ui-border-accented);
 }
 .player-avatar.black::after {
   background: #1c1c1c;
@@ -980,7 +1063,7 @@ coords .coord-dark {
   color: #fff;
 }
 .player-line.active .player-avatar {
-  box-shadow: 0 0 0 2px var(--ui-primary);
+  outline: 2px solid var(--ui-primary);
 }
 
 /* Status banner (turn / result) */
@@ -1153,7 +1236,7 @@ button.move-cell:hover {
 .theme-option[aria-checked='true'] {
   border-color: var(--ui-primary);
   color: var(--ui-text-highlighted);
-  box-shadow: 0 0 0 1px var(--ui-primary);
+  outline: 1px solid var(--ui-primary);
 }
 .board-swatch {
   display: block;
@@ -1672,7 +1755,7 @@ button.move-cell:hover {
 }
 .tc-option[aria-checked='true'] {
   border-color: var(--ui-primary);
-  box-shadow: 0 0 0 1px var(--ui-primary);
+  outline: 1px solid var(--ui-primary);
   background: color-mix(in srgb, var(--ui-primary) 12%, var(--ui-bg));
 }
 .tc-option .tc-main {
@@ -1761,7 +1844,6 @@ button.move-cell:hover {
 }
 [role='tab'] {
   height: auto;
-  min-height: 32px;
 }
 [role='tab'] .truncate {
   white-space: normal;
@@ -1777,7 +1859,6 @@ button.move-cell:hover {
 }
 [role='tablist'][data-orientation='horizontal'] [role='tab'][data-state='active'] {
   background: var(--ui-primary);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
 }
 
 /* Give segmented controls a visible track: against a card their default background matches it,
@@ -1820,11 +1901,12 @@ button.move-cell:hover {
   gap: 4px;
 }
 .puzzle-board {
-  transition: box-shadow 0.15s;
+  transition: outline-color 0.15s;
+  outline: 3px solid transparent;
   border-radius: 6px;
 }
 .puzzle-board.wrong {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-loss) 55%, transparent);
+  outline-color: color-mix(in srgb, var(--ui-loss) 55%, transparent);
 }
 .session-line {
   display: flex;

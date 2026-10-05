@@ -36,6 +36,26 @@ export interface TreeNode {
   nags?: number[]
 }
 
+/** The move annotations (PGN NAGs 1–6) a study can mark a move with. */
+export const MOVE_GLYPHS = [
+  { nag: 1, glyph: '!', label: 'Good move' },
+  { nag: 2, glyph: '?', label: 'Mistake' },
+  { nag: 3, glyph: '!!', label: 'Brilliant move' },
+  { nag: 4, glyph: '??', label: 'Blunder' },
+  { nag: 5, glyph: '!?', label: 'Interesting move' },
+  { nag: 6, glyph: '?!', label: 'Dubious move' },
+] as const
+/** The move's annotation glyph, if it has one. */
+export function moveGlyph(node: Pick<TreeNode, 'nags'>): (typeof MOVE_GLYPHS)[number] | undefined {
+  return MOVE_GLYPHS.find((entry) => node.nags?.includes(entry.nag))
+}
+/** Mark a move with one annotation glyph (or none), keeping its other NAGs (evaluation symbols…). */
+export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
+  const others = (node.nags ?? []).filter((n) => n < 1 || n > 6)
+  const next = nag ? [nag, ...others] : others
+  node.nags = next.length ? next : undefined
+}
+
 export const pathOf = (moves: readonly string[]): string => moves.join(' ')
 export const movesOf = (path: string): string[] => (path ? path.split(' ') : [])
 

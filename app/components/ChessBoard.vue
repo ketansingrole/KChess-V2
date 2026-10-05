@@ -42,6 +42,8 @@ const props = defineProps<{
   blindfold?: boolean
   /** Rules for typed moves; standard when omitted. */
   variant?: Variant
+  /** Show the typed-move row elsewhere (a CSS selector), such as in the player's own line. */
+  inputTo?: string
 }>()
 
 const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
@@ -49,6 +51,9 @@ const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
 const el = ref<HTMLElement | null>(null)
 const reducedMotion = usePreferredReducedMotion()
 const moveInput = ref('')
+const typing = computed(
+  () => props.interactive !== false && props.movable !== false && Boolean(props.dests?.size),
+)
 const moveMessage = ref('')
 const keyboardInput = ref<HTMLInputElement | null>(null)
 let restoreFocus: HTMLElement | null = null
@@ -233,22 +238,36 @@ onBeforeUnmount(() => {
     @mousedown.capture="clearShapes"
   >
     <div ref="el" :inert="pending ? true : undefined" aria-label="Chess board" />
-    <form
-      v-if="interactive !== false && movable !== false && dests?.size"
-      class="mt-2 flex gap-2"
-      :inert="pending ? true : undefined"
-      @submit.prevent="keyboardMove"
-    >
-      <input
-        ref="keyboardInput"
-        v-model="moveInput"
-        aria-label="Enter a chess move in SAN or UCI"
-        placeholder="Move: Nf3 or g1f3"
-        autocomplete="off"
-        class="min-w-0 flex-1 rounded border border-default bg-default px-2 py-1 text-sm"
-      />
-      <button type="submit" class="rounded border border-default px-3 text-sm">Play move</button>
-    </form>
+    <!-- The move box, and any controls the page adds (voice), share one row under the board. -->
+    <Teleport v-if="typing || $slots.controls" defer :to="inputTo" :disabled="!inputTo">
+      <div class="board-input-row" :class="{ inline: inputTo }">
+        <form
+          v-if="typing"
+          class="board-move-form"
+          :inert="pending ? true : undefined"
+          @submit.prevent="keyboardMove"
+        >
+          <input
+            ref="keyboardInput"
+            v-model="moveInput"
+            aria-label="Enter a chess move in SAN or UCI"
+            placeholder="Type a move: Nf3 or g1f3"
+            autocomplete="off"
+            class="board-move-input"
+          />
+          <button
+            type="submit"
+            class="board-move-submit"
+            aria-label="Play move"
+            title="Play move (Enter)"
+            :disabled="!moveInput.trim()"
+          >
+            ↵
+          </button>
+        </form>
+        <slot name="controls" />
+      </div>
+    </Teleport>
     <p class="sr-only" aria-live="polite">
       {{ moveMessage }} ·
       {{

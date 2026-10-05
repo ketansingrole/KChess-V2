@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { Dests } from '../utils/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
@@ -41,6 +41,8 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ move: [uci: string] }>()
+/** The typed-move box sits in the bottom player's line rather than on a row of its own. */
+const entry = useId()
 const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' : 'white'))
 </script>
 
@@ -71,12 +73,14 @@ const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' 
         :blindfold="blindfold"
         :variant="variant"
         :reset-key="resetKey"
+        :input-to="`[data-move-entry='${entry}']`"
         @move="emit('move', $event)"
       />
     </div>
     <PlayerLine :player="bottom" :color="orientation" :active="live && turnColor === orientation">
       <template v-if="$slots['bottom-name']" #name><slot name="bottom-name" /></template>
       <template v-if="$slots['bottom-aside']" #aside><slot name="bottom-aside" /></template>
+      <template #middle><div :data-move-entry="entry" class="move-entry" /></template>
     </PlayerLine>
   </div>
 </template>

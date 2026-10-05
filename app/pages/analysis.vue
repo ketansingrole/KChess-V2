@@ -2,10 +2,18 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import type { DropdownMenuItem } from '@nuxt/ui'
+import type { ContextMenuItem, DropdownMenuItem } from '@nuxt/ui'
 import type { EngineLine } from '../../src/shared/types'
 import { checkColor, destsFor } from '../utils/chess'
-import { formatEval, onMainline, pvSan } from '../utils/analysisTree'
+import {
+  formatEval,
+  MOVE_GLYPHS,
+  moveGlyph,
+  nodeAt,
+  onMainline,
+  pvSan,
+  setMoveGlyph,
+} from '../utils/analysisTree'
 import { positionProblem, setupFromFen, setupFen } from '../utils/boardEditor'
 import {
   ANALYSIS_GRAMMAR,
@@ -203,6 +211,90 @@ watch(
 const hasMoves = computed(() => root.value.children.length > 0)
 const onVariation = computed(() => !!path.value && !onMainline(root.value, path.value))
 
+/* ── Tools under the engine: one at a time, so the move list gets the room ── */
+
+const { tool } = storeToRefs(analysis)
+const toolTabs = computed(() => {
+  const progress = analysis.reviewProgress
+  return [
+    { value: 'moves' as const, label: 'Moves', icon: 'i-lucide-list-tree', badge: '' },
+    {
+      value: 'review' as const,
+      label: 'Review',
+      icon: 'i-lucide-sparkles',
+      badge: progress ? `${Math.round((100 * progress.done) / Math.max(1, progress.total))}%` : '',
+    },
+    { value: 'explorer' as const, label: 'Explorer', icon: 'i-lucide-book-open-text', badge: '' },
+  ]
+})
+
+/** Right-click a move to comment on it, annotate it, promote or delete it. */
+const notes = ref<{ focus: () => Promise<void> } | null>(null)
+const menuPath = ref('')
+async function comment(): Promise<void> {
+  tool.value = 'moves'
+  await nextTick()
+  await notes.value?.focus()
+}
+function moveContext(event: MouseEvent): void {
+  const at = (event.target as HTMLElement).closest<HTMLElement>('[data-path]')?.dataset.path
+  menuPath.value = at ?? ''
+  if (at !== undefined) analysis.goTo(at)
+}
+const moveMenu = computed<ContextMenuItem[][]>(() => {
+  const at = menuPath.value
+  if (!at)
+    return [
+      [
+        {
+          label: 'Copy PGN',
+          icon: 'i-lucide-file-text',
+          onSelect: () => void copy(analysis.pgn(), 'PGN'),
+        },
+      ],
+    ]
+  const target = nodeAt(root.value, at)
+  const current = moveGlyph(target)
+  return [
+    [
+      {
+        label: target.comments?.length ? 'Edit comment' : 'Add comment',
+        icon: 'i-lucide-message-square-text',
+        kbds: ['C'],
+        onSelect: () => void comment(),
+      },
+      {
+        label: 'Annotate',
+        icon: 'i-lucide-highlighter',
+        children: [
+          MOVE_GLYPHS.map((entry) => ({
+            label: `${entry.glyph}  ${entry.label}`,
+            type: 'checkbox' as const,
+            checked: current?.nag === entry.nag,
+            onSelect: () =>
+              setMoveGlyph(target, current?.nag === entry.nag ? undefined : entry.nag),
+          })),
+        ],
+      },
+    ],
+    [
+      {
+        label: 'Make main line',
+        icon: 'i-lucide-arrow-up-to-line',
+        disabled: onMainline(root.value, at),
+        onSelect: () => analysis.promote(at),
+      },
+      {
+        label: 'Delete from here',
+        icon: 'i-lucide-scissors',
+        color: 'error' as const,
+        onSelect: () => analysis.remove(at),
+      },
+    ],
+    [{ label: 'Copy FEN', icon: 'i-lucide-copy', onSelect: () => void copy(target.fen, 'FEN') }],
+  ]
+})
+
 /* ── Import and export ─────────────────────────────────────────────── */
 
 const importOpen = ref(false)
@@ -295,7 +387,7 @@ const menu = computed<DropdownMenuItem[][]>(() => [
   ],
 ])
 
-/* ── Keyboard: ← → ↑ ↓ step, F flips, Space plays the best move, L toggles the engine ── */
+/* ── Keyboard: ← → ↑ ↓ step, F flips, Space plays the best move, L toggles the engine, C comments ── */
 
 function keydown(event: KeyboardEvent): void {
   if (importOpen.value || event.metaKey || event.ctrlKey || event.altKey) return
@@ -308,6 +400,7 @@ function keydown(event: KeyboardEvent): void {
     ArrowDown: analysis.toEnd,
     f: flip,
     l: () => (engineOn.value = !engineOn.value),
+    c: () => void comment(),
   }
   // Space plays the engine's move, unless a button has focus (then Space presses it).
   if (event.key === ' ' && !target?.closest('button') && !settings.value?.voicePushToTalk)
@@ -397,7 +490,7 @@ function missed(result: VoiceResult): void {
     <p v-if="saveError" role="alert" class="p-3 text-error">Automatic saving: {{ saveError }}</p>
 
     <PageHeader title="Analysis board" />
-    <AnalysisDocument />
+    <StudyBar />
 
     <div class="play-layout analysis-layout">
       <div class="board-stack">
@@ -429,35 +522,38 @@ function missed(result: VoiceResult): void {
               :shapes="shapes"
               :reset-key="resetKey"
               @move="move"
-            />
+            >
+              <template #controls>
+                <VoiceInput
+                  v-model:enabled="voiceEnabled"
+                  compact
+                  active
+                  :context-key="path"
+                  :grammar="ANALYSIS_GRAMMAR"
+                  hint="Say a move like “Knight F three”, or “back”, “next”, “best move”."
+                  :feedback="voiceFeedback"
+                  allow-push-talk
+                  accept-unclear
+                  @result="hear"
+                  @unclear="missed"
+                >
+                  <template v-if="voiceChoices.length">
+                    <UButton
+                      v-for="(choice, index) in voiceChoices"
+                      :key="choice.uci"
+                      color="neutral"
+                      variant="outline"
+                      size="xs"
+                      class="shrink-0"
+                      @click="analysis.play(choice.uci)"
+                      >{{ index + 1 }} · {{ choice.san }}</UButton
+                    >
+                  </template>
+                </VoiceInput>
+              </template>
+            </ChessBoard>
           </div>
         </div>
-        <VoiceInput
-          v-model:enabled="voiceEnabled"
-          compact
-          active
-          :context-key="path"
-          :grammar="ANALYSIS_GRAMMAR"
-          hint="Say a move like “Knight F three”, or “back”, “next”, “best move”."
-          :feedback="voiceFeedback"
-          allow-push-talk
-          accept-unclear
-          @result="hear"
-          @unclear="missed"
-        >
-          <template v-if="voiceChoices.length">
-            <UButton
-              v-for="(choice, index) in voiceChoices"
-              :key="choice.uci"
-              color="neutral"
-              variant="outline"
-              size="xs"
-              class="shrink-0"
-              @click="analysis.play(choice.uci)"
-              >{{ index + 1 }} · {{ choice.san }}</UButton
-            >
-          </template>
-        </VoiceInput>
       </div>
 
       <div class="card side-panel analysis-panel">
@@ -482,59 +578,52 @@ function missed(result: VoiceResult): void {
                 {{ engineStatus }}
               </span>
             </div>
-          </div>
-          <div class="ceval-controls">
-            <UTooltip text="Infinite analysis">
-              <UButton
-                size="xs"
-                :variant="infinite ? 'soft' : 'ghost'"
-                :color="infinite ? 'primary' : 'neutral'"
-                icon="i-lucide-infinity"
-                aria-label="Infinite analysis"
-                :aria-pressed="infinite"
-                :disabled="!engineOn"
-                @click="infinite = !infinite"
-              />
-            </UTooltip>
-            <UTooltip text="Show engine arrows">
-              <UButton
-                size="xs"
-                :variant="showArrows ? 'soft' : 'ghost'"
-                :color="showArrows ? 'primary' : 'neutral'"
-                icon="i-lucide-move-up-right"
-                aria-label="Show engine arrows"
-                :aria-pressed="showArrows"
-                :disabled="!engineOn"
-                @click="showArrows = !showArrows"
-              />
-            </UTooltip>
-            <USelect
-              v-model="engineLines"
-              :items="lineChoices"
-              size="xs"
-              variant="soft"
-              aria-label="Engine lines"
-              class="w-24"
-              :disabled="!engineOn && !settings?.cloudEval"
-            />
-            <UTooltip
-              :text="
-                settings?.cloudEval
-                  ? 'Lichess cloud evaluation is on (sends positions to Lichess)'
-                  : 'Use Lichess cloud evaluation (sends positions to Lichess)'
-              "
-            >
-              <UButton
-                size="xs"
-                :variant="settings?.cloudEval ? 'soft' : 'ghost'"
-                :color="settings?.cloudEval ? 'primary' : 'neutral'"
-                icon="i-lucide-cloud"
-                aria-label="Lichess cloud evaluation"
-                :aria-pressed="settings?.cloudEval"
-                :disabled="!assistanceAllowed"
-                @click="store.toggleSetting('cloudEval')"
-              />
-            </UTooltip>
+            <UPopover :content="{ align: 'end' }">
+              <UTooltip text="Engine settings">
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  icon="i-lucide-settings-2"
+                  aria-label="Engine settings"
+                />
+              </UTooltip>
+              <template #content>
+                <div class="engine-settings">
+                  <USwitch
+                    v-model="infinite"
+                    size="sm"
+                    label="Infinite analysis"
+                    description="Keep searching past depth 26"
+                    :disabled="!engineOn"
+                  />
+                  <USwitch
+                    v-model="showArrows"
+                    size="sm"
+                    label="Show engine arrows"
+                    :disabled="!engineOn"
+                  />
+                  <USwitch
+                    :model-value="settings?.cloudEval ?? false"
+                    size="sm"
+                    label="Lichess cloud evaluation"
+                    description="Sends positions to Lichess"
+                    :disabled="!assistanceAllowed"
+                    @update:model-value="store.toggleSetting('cloudEval')"
+                  />
+                  <UFormField label="Engine lines" size="sm" orientation="horizontal">
+                    <USelect
+                      v-model="engineLines"
+                      :items="lineChoices"
+                      size="sm"
+                      aria-label="Engine lines"
+                      class="w-28"
+                      :disabled="!engineOn && !settings?.cloudEval"
+                    />
+                  </UFormField>
+                </div>
+              </template>
+            </UPopover>
           </div>
           <p
             v-if="settings?.cloudEval && assistanceAllowed && !usingCloud && !gameOver"
@@ -618,26 +707,54 @@ function missed(result: VoiceResult): void {
           </Teleport>
         </section>
 
-        <AnalysisReview v-if="assistanceAllowed" class="panel-divider pt-3.5" />
-        <PositionExplorer v-if="assistanceAllowed" />
-        <p v-else class="panel-divider pt-3.5 text-sm">
-          Engine assistance is paused during your live Lichess game.
-        </p>
+        <div class="panel-tabs" role="tablist" aria-label="Analysis tools">
+          <button
+            v-for="entry in toolTabs"
+            :key="entry.value"
+            type="button"
+            role="tab"
+            class="panel-tab"
+            :class="{ active: tool === entry.value }"
+            :aria-selected="tool === entry.value"
+            @click="tool = entry.value"
+          >
+            <UIcon :name="entry.icon" />{{ entry.label }}
+            <span v-if="entry.badge" class="tab-badge">{{ entry.badge }}</span>
+          </button>
+        </div>
 
-        <div class="moves-wrap">
-          <div ref="treeList" class="tree-list" role="list" aria-label="Moves">
-            <AnalysisLine
-              v-if="hasMoves"
-              :parent="root"
-              parent-path=""
-              :current="path"
-              :depth="0"
-              @select="analysis.goTo"
-            />
-            <div v-else class="moves-empty">
-              Make a move on the board, or import a game. Variations are kept as you explore.
+        <div v-show="tool === 'moves'" class="tool-body moves-tool" role="tabpanel">
+          <UContextMenu :items="moveMenu">
+            <div class="moves-wrap" @contextmenu.capture="moveContext">
+              <div ref="treeList" class="tree-list" role="list" aria-label="Moves">
+                <AnalysisLine
+                  v-if="hasMoves"
+                  :parent="root"
+                  parent-path=""
+                  :current="path"
+                  :depth="0"
+                  @select="analysis.goTo"
+                />
+                <div v-else class="moves-empty">
+                  Make a move on the board, or import a game. Variations are kept as you explore.
+                </div>
+              </div>
             </div>
-          </div>
+          </UContextMenu>
+          <MoveNotes ref="notes" />
+        </div>
+        <div v-if="tool === 'review'" class="tool-body tool-scroll" role="tabpanel">
+          <AnalysisReview v-if="assistanceAllowed && hasMoves" />
+          <p v-else-if="!assistanceAllowed" class="tool-empty">
+            Engine assistance is paused during your live Lichess game.
+          </p>
+          <p v-else class="tool-empty">Make some moves or import a game to review it.</p>
+        </div>
+        <div v-if="tool === 'explorer'" class="tool-body tool-scroll" role="tabpanel">
+          <PositionExplorer v-if="assistanceAllowed" />
+          <p v-else class="tool-empty">
+            Engine assistance is paused during your live Lichess game.
+          </p>
         </div>
 
         <div class="move-controls">
@@ -703,6 +820,16 @@ function missed(result: VoiceResult): void {
             :black="root.headers?.Black || analysis.origin?.black || 'Black'"
             :ply="Math.min(path ? path.split(' ').length : 0, analysis.mainline.length)"
           />
+          <UTooltip text="Import a PGN or FEN">
+            <UButton
+              size="sm"
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-import"
+              aria-label="Import"
+              @click="openImport"
+            />
+          </UTooltip>
           <UDropdownMenu :items="menu">
             <UButton
               size="sm"
@@ -712,19 +839,6 @@ function missed(result: VoiceResult): void {
               aria-label="More analysis actions"
             />
           </UDropdownMenu>
-        </div>
-
-        <div class="panel-actions panel-divider pt-3.5">
-          <UButton
-            variant="outline"
-            color="neutral"
-            icon="i-lucide-pencil-ruler"
-            @click="editPosition"
-            >Board editor</UButton
-          >
-          <UButton variant="outline" color="neutral" icon="i-lucide-import" @click="openImport"
-            >Import</UButton
-          >
         </div>
       </div>
     </div>
@@ -757,7 +871,7 @@ function missed(result: VoiceResult): void {
 
 <style scoped>
 .analysis-layout {
-  --board-chrome: 210px;
+  --board-chrome: 212px;
   /* The evaluation bar sits beside the board and takes from its width. */
   --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 372px), 760px);
   grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 440px);
@@ -785,13 +899,78 @@ function missed(result: VoiceResult): void {
   align-items: center;
   gap: 8px;
 }
-.ceval-controls {
+.engine-settings {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  gap: 12px;
+  width: 260px;
+  padding: 14px;
 }
-.ceval-controls > :last-child {
-  margin-left: auto;
+/* The panel is as tall as the board beside it, never taller: the active tool scrolls inside it. */
+.analysis-panel {
+  contain: size;
+  gap: 12px;
+}
+.analysis-panel > * + * {
+  margin-top: 0;
+}
+.panel-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--ui-bg-accented);
+}
+.panel-tab {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.panel-tab:hover {
+  color: var(--ui-text);
+}
+.panel-tab.active {
+  background: var(--ui-bg);
+  color: var(--ui-text-highlighted);
+}
+.tab-badge {
+  padding: 0 5px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--ui-primary) 25%, transparent);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.tool-body {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.tool-scroll {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tool-empty {
+  padding: 24px 8px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.moves-tool .moves-wrap {
+  min-height: 140px;
 }
 .ceval-score {
   min-width: 3.4em;
@@ -807,9 +986,13 @@ function missed(result: VoiceResult): void {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
   line-height: 1.25;
 }
 .ceval-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 12px;
   font-weight: 600;
 }
@@ -886,7 +1069,6 @@ function missed(result: VoiceResult): void {
   border: 1px solid var(--ui-border);
   border-radius: 10px;
   background: var(--ui-bg);
-  box-shadow: 0 8px 28px rgb(0 0 0 / 28%);
   pointer-events: none;
 }
 .tree-list {
@@ -915,12 +1097,26 @@ function missed(result: VoiceResult): void {
   resize: vertical;
 }
 @container page (max-width: 620px) {
+  .analysis-panel {
+    contain: none;
+  }
+  .tool-body {
+    flex: none;
+    max-height: 420px;
+  }
   .analysis-layout {
     --board-size: min(100cqw - 22px, 100dvh - 260px);
     grid-template-columns: minmax(0, calc(var(--board-size) + 22px));
   }
 }
 @media (max-width: 900px) and (orientation: portrait) {
+  .analysis-panel {
+    contain: none;
+  }
+  .tool-body {
+    flex: none;
+    max-height: 420px;
+  }
   .analysis-layout {
     --board-size: min(100cqw - 22px, max(260px, 100dvh - 260px), 760px);
     grid-template-columns: minmax(0, calc(var(--board-size) + 22px));
@@ -982,5 +1178,24 @@ function missed(result: VoiceResult): void {
 }
 .tree-paren {
   color: var(--ui-text-dimmed);
+}
+/* Comments run on after their move, like Lichess; main-line ones get their own line. */
+.tree-comment {
+  margin: 0 4px;
+  color: var(--ui-text-muted);
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.tree-comment.block {
+  display: block;
+  margin: 2px 0 4px;
+  padding: 4px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--ui-primary) 50%, transparent);
+  border-radius: 0 6px 6px 0;
+  background: var(--ui-bg-elevated);
 }
 </style>

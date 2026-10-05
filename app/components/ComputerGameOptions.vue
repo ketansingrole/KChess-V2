@@ -78,11 +78,7 @@ function begin(): void {
 </script>
 
 <template>
-  <UModal
-    v-model:open="open"
-    title="New game against Stockfish"
-    description="Start position, clock, colour and strength"
-  >
+  <UModal v-model:open="open" title="New game against Stockfish">
     <template #body>
       <form class="flex flex-col gap-4" @submit.prevent="begin">
         <UFormField label="Start from">

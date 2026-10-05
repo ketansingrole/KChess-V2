@@ -164,7 +164,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 
 <template>
   <div>
-    <PageHeader title="Watch" subtitle="Lichess TV, your friends' games and live broadcasts">
+    <PageHeader title="Watch">
       <UTabs
         v-model="tab"
         :items="[

@@ -107,7 +107,7 @@ const reviewColor = computed(() =>
 
 <template>
   <div>
-    <PageHeader title="History" subtitle="Review your synced Lichess games">
+    <PageHeader title="History">
       <UButton
         icon="i-lucide-refresh-cw"
         variant="outline"
@@ -124,6 +124,7 @@ const reviewColor = computed(() =>
           icon="i-lucide-arrow-left"
           variant="ghost"
           color="neutral"
+          size="sm"
           @click="reviewGame = null"
           >All games</UButton
         >
@@ -212,7 +213,7 @@ const reviewColor = computed(() =>
           <USelect v-model="historyRated" :items="ratedItems" aria-label="Filter by rating type" />
           <UButton
             v-if="filtered"
-            size="sm"
+            size="md"
             variant="link"
             color="neutral"
             icon="i-lucide-x"
@@ -259,7 +260,7 @@ const reviewColor = computed(() =>
             <USelect
               v-model="historyPageSize"
               :items="pageSizeItems"
-              size="xs"
+              size="sm"
               aria-label="Games per page"
             />
             <UPagination

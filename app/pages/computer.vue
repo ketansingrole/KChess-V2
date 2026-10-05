@@ -671,8 +671,8 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 
 <style scoped>
 .play-layout {
-  /* No visible page header here, so the board can take that height too. */
-  --board-chrome: 244px;
+  /* No visible page header here, and the move box shares the player's line: the board takes that height. */
+  --board-chrome: 206px;
 }
 .level-select {
   min-width: 13rem;

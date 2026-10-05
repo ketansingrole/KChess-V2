@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import type {
   ExplorerGame,
@@ -16,7 +16,6 @@ const store = useKChessStore()
 const result = ref<PositionLookup | null>(null)
 const error = ref('')
 const busy = ref(false)
-const open = useLocalStorage('kchess:explorer-open', false)
 /** Explorer preferences, remembered on this device like Lichess's explorer settings. */
 const prefs = useLocalStorage<{
   kind: PositionLookupKind
@@ -81,7 +80,7 @@ watch(
     result.value = null
     error.value = ''
     busy.value = false
-    if (open.value && prefs.value.follow) void followLookup()
+    if (prefs.value.follow) void followLookup()
   },
 )
 watch(
@@ -91,8 +90,21 @@ watch(
     error.value = ''
   },
 )
-async function lookup(kind: PositionLookupKind = prefs.value.kind): Promise<void> {
+/** Lichess usernames: what the player database accepts. */
+const USERNAME = /^[a-zA-Z0-9_-]{2,30}$/
+const playerInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
+const needsPlayer = computed(
+  () => prefs.value.kind === 'player' && !USERNAME.test(prefs.value.player.trim()),
+)
+async function lookup(kind: PositionLookupKind = prefs.value.kind, asked = true): Promise<void> {
   prefs.value.kind = kind
+  if (needsPlayer.value) {
+    result.value = null
+    error.value = ''
+    // Ask for the name, but never steal focus from the board while following moves.
+    if (asked) playerInput.value?.inputRef?.focus()
+    return
+  }
   const request = ++epoch
   const fen = analysis.node.fen
   busy.value = true
@@ -112,7 +124,11 @@ async function lookup(kind: PositionLookupKind = prefs.value.kind): Promise<void
     if (request === epoch) busy.value = false
   }
 }
-const followLookup = useDebounceFn(() => void lookup(), 350)
+const followLookup = useDebounceFn(() => void lookup(prefs.value.kind, false), 350)
+// Opening the explorer while following moves looks up the position shown.
+onMounted(() => {
+  if (prefs.value.follow) void lookup(prefs.value.kind, false)
+})
 function toggle<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value]
 }
@@ -165,18 +181,8 @@ const heading = computed(() => {
 })
 </script>
 <template>
-  <details
-    class="panel-divider py-3"
-    :open="open"
-    @toggle="open = ($event.target as HTMLDetailsElement).open"
-  >
-    <summary class="cursor-pointer font-semibold">Opening explorer and tablebases</summary>
-    <p class="mt-2 text-xs text-muted">
-      Lookups send this position to Lichess. The Lichess, Masters and Player databases use a
-      connected account. Saved results remain available offline. Statistics describe games, not move
-      quality.
-    </p>
-    <div class="mt-2 flex flex-wrap items-center gap-2">
+  <section aria-label="Opening explorer and tablebases">
+    <div class="flex flex-wrap items-center gap-2">
       <UTabs
         :model-value="prefs.kind"
         :items="KINDS"
@@ -195,37 +201,44 @@ const heading = computed(() => {
         aria-label="Explorer filters"
         @click="showFilters = !showFilters"
       />
-      <USwitch v-model="prefs.follow" size="xs" label="Follow moves" />
+      <span class="flex-1" />
+      <UTooltip
+        text="Lookups send this position to Lichess. The Lichess, Masters and Player databases use a connected account; saved results stay available offline. Statistics describe games, not move quality."
+      >
+        <UIcon name="i-lucide-info" class="muted" aria-label="About the explorer" />
+      </UTooltip>
+    </div>
+    <div v-if="prefs.kind === 'player'" class="mt-2 flex flex-wrap items-center gap-2">
+      <UInput
+        ref="playerInput"
+        v-model="prefs.player"
+        size="xs"
+        placeholder="Lichess username"
+        aria-label="Player"
+        class="w-36"
+        @keydown.enter="lookup()"
+      />
+      <UButton
+        v-for="name in accounts.filter((a) => a !== prefs.player)"
+        :key="name"
+        size="xs"
+        variant="soft"
+        color="neutral"
+        @click="prefs.player = name"
+        >{{ name }}</UButton
+      >
+      <UTabs
+        v-model="prefs.color"
+        :items="[
+          { label: 'as White', value: 'white' },
+          { label: 'as Black', value: 'black' },
+        ]"
+        :content="false"
+        size="xs"
+        variant="pill"
+      />
     </div>
     <div v-if="showFilters && prefs.kind !== 'tablebase'" class="mt-2 flex flex-col gap-2 text-xs">
-      <div v-if="prefs.kind === 'player'" class="flex flex-wrap items-center gap-2">
-        <UInput
-          v-model="prefs.player"
-          size="xs"
-          placeholder="Lichess username"
-          aria-label="Player"
-          class="w-40"
-        />
-        <UButton
-          v-for="name in accounts"
-          :key="name"
-          size="xs"
-          variant="soft"
-          color="neutral"
-          @click="prefs.player = name"
-          >{{ name }}</UButton
-        >
-        <UTabs
-          v-model="prefs.color"
-          :items="[
-            { label: 'as White', value: 'white' },
-            { label: 'as Black', value: 'black' },
-          ]"
-          :content="false"
-          size="xs"
-          variant="pill"
-        />
-      </div>
       <div class="flex flex-wrap gap-1">
         <UButton
           v-for="speed in EXPLORER_SPEEDS"
@@ -260,11 +273,22 @@ const heading = computed(() => {
         />
       </label>
     </div>
-    <div class="mt-2 flex gap-2">
-      <UButton size="xs" variant="outline" color="neutral" :loading="busy" @click="lookup()"
+    <div class="mt-2 flex items-center gap-3">
+      <UButton
+        size="xs"
+        variant="outline"
+        color="neutral"
+        icon="i-lucide-search"
+        :loading="busy"
+        :disabled="needsPlayer"
+        @click="lookup()"
         >Look up this position</UButton
       >
+      <USwitch v-model="prefs.follow" size="xs" label="Follow moves" />
     </div>
+    <p v-if="needsPlayer" class="mt-2 text-xs muted">
+      Enter a Lichess username to see the moves they played here.
+    </p>
     <p v-if="busy" role="status" class="mt-2 text-sm">
       {{
         prefs.kind === 'player'
@@ -281,8 +305,11 @@ const heading = computed(() => {
         >
       </p>
       <p v-if="result.kind === 'tablebase'" class="text-xs text-muted">
-        DTZ {{ result.dtz ?? 'unknown' }} plies to a pawn move or capture; DTZ is not distance to
-        mate. Cursed wins/blessed losses account for the fifty-move rule.
+        <UTooltip
+          text="Plies to a pawn move or capture; not distance to mate. Cursed wins and blessed losses account for the fifty-move rule."
+        >
+          <span class="underline decoration-dotted">DTZ {{ result.dtz ?? 'unknown' }}</span>
+        </UTooltip>
       </p>
       <p v-if="result.cached" class="text-xs text-muted">
         {{ result.message || 'Saved lookup' }} ·
@@ -343,7 +370,7 @@ const heading = computed(() => {
         </ul>
       </div>
     </div>
-  </details>
+  </section>
 </template>
 
 <style scoped>

@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import Computer from '../../app/pages/computer.vue'
+import Local from '../../app/pages/local.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
+import { useLocalGameStore } from '../../app/stores/local'
 import { desktop, deferred, componentStubs } from './fixtures'
 import type { RunInput } from '../../src/shared/types'
 
@@ -46,6 +48,91 @@ async function computer() {
 }
 
 describe('voice feature integration', () => {
+  async function sharedBoard() {
+    desktop()
+    vi.stubGlobal('useRoute', () => ({ path: '/local', query: {} }))
+    const store = useKChessStore()
+    await store.init()
+    const game = useLocalGameStore()
+    game.start(undefined, {
+      white: { minutes: 5, increment: 3 },
+      black: { minutes: 5, increment: 3 },
+    })
+    const wrapper = mount(Local, { global: { stubs } })
+    await flushPromises()
+    const voice = wrapper.findComponent(VoiceStub)
+    voice.vm.$emit('update:enabled', true)
+    await flushPromises()
+    return { wrapper, voice, store, game }
+  }
+
+  it('confirms shared-board moves for both players through the clock pipeline', async () => {
+    const { wrapper, voice, game } = await sharedBoard()
+    voice.vm.$emit('result', { text: 'e four', confidence: 0.95 })
+    await flushPromises()
+    expect(game.moves).toEqual([])
+    expect(game.paused).toBe(true)
+    expect(wrapper.text()).toContain('1 · e4')
+    voice.vm.$emit('result', { text: 'confirm', confidence: 0.95 })
+    await flushPromises()
+    expect(game.moves).toEqual(['e2e4'])
+    expect(game.paused).toBe(false)
+    voice.vm.$emit('result', { text: 'e five', confidence: 0.95 })
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '1 · e5')!
+      .trigger('click')
+    expect(game.moves).toEqual(['e2e4', 'e7e5'])
+    expect(game.times!.black).toBeGreaterThan(300_000)
+    wrapper.unmount()
+  })
+
+  it('clears shared-board choices after manual moves and same-position restarts', async () => {
+    const { wrapper, voice, game } = await sharedBoard()
+    voice.vm.$emit('result', { text: 'e four', confidence: 0.95 })
+    await flushPromises()
+    game.start()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('1 · e4')
+    voice.vm.$emit('result', { text: 'confirm', confidence: 0.95 })
+    expect(game.moves).toEqual([])
+    voice.vm.$emit('result', { text: 'd four', confidence: 0.95 })
+    await flushPromises()
+    game.move('e2e4')
+    await flushPromises()
+    voice.vm.$emit('result', { text: 'confirm', confidence: 0.95 })
+    expect(game.moves).toEqual(['e2e4'])
+    expect(wrapper.text()).not.toContain('1 · d4')
+    wrapper.unmount()
+  })
+
+  it('guards uncertain shared-board moves and stops voice during review or after game end', async () => {
+    const { wrapper, voice, store, game } = await sharedBoard()
+    store.settings.voiceConfirmMoves = false
+    voice.vm.$emit('result', { text: 'e four', confidence: 0.5, unclear: true })
+    await flushPromises()
+    expect(game.moves).toEqual([])
+    voice.vm.$emit('result', { text: 'cancel', confidence: 0.95 })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('1 · e4')
+    voice.vm.$emit('result', { text: 'e four', confidence: 0.95 })
+    await flushPromises()
+    expect(game.moves).toEqual(['e2e4'])
+    game.view(0)
+    await flushPromises()
+    expect(voice.props('active')).toBe(false)
+    voice.vm.$emit('result', { text: 'e five', confidence: 0.95 })
+    expect(game.moves).toEqual(['e2e4'])
+    game.view(1)
+    game.agreeDraw()
+    await flushPromises()
+    expect(voice.props('active')).toBe(false)
+    voice.vm.$emit('result', { text: 'e five', confidence: 0.95 })
+    expect(game.moves).toEqual(['e2e4'])
+    wrapper.unmount()
+  })
+
   it('requires confirmation and submits through the normal computer-game pipeline', async () => {
     const { wrapper, voice, store } = await computer()
     voice.vm.$emit('result', { text: 'echo two to echo four', confidence: 0.95 })

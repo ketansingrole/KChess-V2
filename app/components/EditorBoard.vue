@@ -239,12 +239,16 @@ function spareLabel(color: Color, role: Role): string {
 }
 .spare.selected {
   background: color-mix(in srgb, var(--ui-primary) 30%, transparent);
-  box-shadow: inset 0 0 0 2px var(--ui-primary);
+  outline: 2px solid var(--ui-primary);
+  outline-offset: -2px;
   color: var(--ui-text);
 }
 .spare-piece {
   width: 86%;
   height: 86%;
+  /* A stable light square keeps both piece colors legible in every app theme. */
+  background-color: #f0d9b5;
+  border-radius: 5px;
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;

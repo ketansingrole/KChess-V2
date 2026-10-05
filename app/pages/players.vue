@@ -150,10 +150,7 @@ async function watchGame(): Promise<void> {
 
 <template>
   <div>
-    <PageHeader
-      title="Players"
-      subtitle="Look up anyone on Lichess: ratings, records and your score against them"
-    />
+    <PageHeader title="Players" />
     <form class="card flex flex-wrap items-center gap-2 mb-5" @submit.prevent="lookup()">
       <UInput
         v-model="query"
