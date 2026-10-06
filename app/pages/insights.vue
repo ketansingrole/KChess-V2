@@ -189,9 +189,7 @@ const best = computed(() => {
         <span><i class="swatch win" /> Won</span>
         <span><i class="swatch draw" /> Drawn</span>
         <span><i class="swatch loss" /> Lost</span>
-        <span class="muted"
-          >· the percentage is your score, the last column the number of games</span
-        >
+        <span class="muted">· Score counts a draw as half a win · hover a bar for the counts</span>
       </p>
 
       <div class="insight-grid">
