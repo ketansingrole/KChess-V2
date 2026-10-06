@@ -73,6 +73,24 @@ const BASE = 'https://lichess.org'
 export const client = createClient<paths>({ baseUrl: BASE, fetch: lichessFetch })
 client.use(throwLichessErrors)
 const OAUTH_CLIENT_ID = 'kchess-desktop'
+/**
+ * Permissions asked for at login. Studies, tournaments, team Swiss events and messages need
+ * their own; accounts connected earlier are asked to reconnect the first time one is used.
+ * Lichess rejects the whole request if any scope is reserved for its own apps (`web:*`).
+ */
+export const OAUTH_SCOPES = [
+  'board:play',
+  'challenge:read',
+  'challenge:write',
+  'follow:read',
+  'msg:write',
+  'puzzle:read',
+  'puzzle:write',
+  'study:read',
+  'study:write',
+  'tournament:write',
+  'team:read',
+] as const
 
 export type StreamCall = { data?: ReadableStream<Uint8Array> | null; response: Response }
 
@@ -339,6 +357,68 @@ export async function exportGame(id: string): Promise<string> {
   return pgn
 }
 
+/**
+ * A player's latest public games, newest first, seen from their side. `rated` asks for more of
+ * their rated games instead: enough to chart their ratings when Lichess sends no history.
+ */
+export async function recentGames(username: string, rated = false): Promise<LichessGame[]> {
+  const max = rated ? RATED_GAMES : RECENT_GAMES
+  return withUsage('', 'profile', async () => {
+    const stream = await asAnyAccount((auth) =>
+      unwrap(
+        client.GET('/api/games/user/{username}', {
+          params: {
+            path: { username },
+            query: {
+              max,
+              moves: false,
+              opening: !rated,
+              ongoing: false,
+              ...(rated ? { rated: true } : {}),
+            },
+          },
+          headers: { ...auth, Accept: 'application/x-ndjson' },
+          parseAs: 'stream',
+        }),
+      ),
+    )
+    const games: LichessGame[] = []
+    await readLines(stream, (line) => {
+      if (games.length < max)
+        games.push(normalizeGame(JSON.parse(line) as components['schemas']['GameJson'], username))
+    })
+    return games
+  })
+}
+const RECENT_GAMES = 10
+const RATED_GAMES = 200
+
+/**
+ * A private message from `account`. Logins made before messaging was requested lack the
+ * permission, and answer "reconnect" rather than failing.
+ */
+export async function sendMessage(
+  account: string,
+  username: string,
+  text: string,
+): Promise<{ sent: true } | NeedsReconnect> {
+  return asAccount(
+    account,
+    async (token) => {
+      await unwrap(
+        client.POST('/inbox/{username}', {
+          params: { path: { username } },
+          body: { text },
+          bodySerializer: urlencoded,
+          headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
+        }),
+      )
+      return { sent: true as const }
+    },
+    'profile',
+  )
+}
+
 /** Lifetime score between two players, and their current matchup when they are playing. */
 export async function crosstable(a: string, b: string): Promise<Crosstable> {
   const raw = (await withUsage('', 'profile', () =>
@@ -362,8 +442,15 @@ export async function crosstable(a: string, b: string): Promise<Crosstable> {
 export async function ratingHistory(username: string): Promise<LichessRatingHistory> {
   return cachedFetch(profileKey(username, 'rating'), () =>
     withUsage(username, 'profile', () =>
-      unwrap(
-        client.GET('/api/user/{username}/rating-history', { params: { path: { username } } }),
+      asAnyAccount(
+        (auth) =>
+          unwrap(
+            client.GET('/api/user/{username}/rating-history', {
+              params: { path: { username } },
+              headers: auth,
+            }),
+          ),
+        username,
       ).catch(noSuchUser(username)),
     ),
   )
@@ -465,7 +552,7 @@ const SYNC_PAGE = 1000
  * a user's own games at 60/s authenticated versus 20/s anonymously. A rejected
  * token falls back to the anonymous request, so sync is never worse than before.
  */
-async function asOwner<T>(
+export async function asOwner<T>(
   account: string,
   call: (auth: Record<string, string>) => Promise<T>,
 ): Promise<T> {
@@ -477,6 +564,23 @@ async function asOwner<T>(
     if (cause instanceof LichessError && cause.status === 401) return call({})
     throw cause
   }
+}
+
+/**
+ * Lichess answers some public lookups (a player's games, rating history and teams) only to
+ * signed-in apps, and otherwise sends nothing or "not found". Use a connected login when there
+ * is one, preferring `account`; a refused login falls back to asking anonymously.
+ */
+export async function asAnyAccount<T>(
+  call: (auth: Record<string, string>) => Promise<T>,
+  account?: string,
+): Promise<T> {
+  const connected = ((await loadData().catch(() => null))?.accounts ?? [])
+    .filter((entry) => entry.connected)
+    .map((entry) => entry.username)
+  const owner =
+    connected.find((name) => name.toLowerCase() === account?.toLowerCase()) ?? connected[0]
+  return owner ? asOwner(owner, call) : call({})
 }
 
 /** Games that ended this long ago have had their chance to be analysed on Lichess. */
@@ -729,10 +833,7 @@ export async function connectLichess(
         response_type: 'code',
         client_id: OAUTH_CLIENT_ID,
         redirect_uri: redirect,
-        // Studies, tournaments and team Swiss events need their own permissions; accounts connected
-        // earlier are asked to reconnect the first time one of those is used.
-        scope:
-          'board:play challenge:read challenge:write follow:read puzzle:read puzzle:write study:read study:write tournament:write team:read',
+        scope: OAUTH_SCOPES.join(' '),
         code_challenge_method: 'S256',
         code_challenge: challenge,
         state,

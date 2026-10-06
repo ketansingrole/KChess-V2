@@ -68,6 +68,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       path?: unknown
       orientation?: unknown
       study?: unknown
+      chapter?: unknown
     }
     if (value.version !== 1 || typeof value.pgn !== 'string') return undefined
     const root = treeFromPgn(value.pgn)
@@ -85,13 +86,19 @@ export const useAnalysisStore = defineStore('analysis', () => {
       path,
       orientation: value.orientation === 'black' ? ('black' as const) : ('white' as const),
       study: typeof value.study === 'string' ? value.study : '',
+      chapter: typeof value.chapter === 'string' ? value.chapter : '',
     }
   })
   const studies = useStudyStore()
   // A mismatched session remains an unsaved recovery document, never overwrites the library.
   const linked = studies.items.find((item) => item.id === saved?.study)
   const conflict = Boolean(
-    linked && saved && treeToPgn(saved.root) !== treeToPgn(treeFromPgn(linked.pgn)!),
+    linked &&
+    saved &&
+    treeToPgn(saved.root) !==
+      treeToPgn(
+        treeFromPgn(linked.chapters.find((c) => c.id === saved?.chapter)?.pgn ?? linked.pgn)!,
+      ),
   )
   const root = ref<TreeNode>(saved?.root ?? newTree())
   const documentPgn = computed(() => treeToPgn(root.value))
@@ -101,6 +108,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const orientation = ref<Color>(saved?.orientation ?? 'white')
   /** The saved study the board is showing; its edits are saved back to it as they happen. */
   const studyId = ref(conflict ? '' : (saved?.study ?? ''))
+  const studyChapterId = ref(saved?.chapter ?? linked?.chapters[0]?.id ?? '')
   const saveError = persistSession(
     'kchess:analysis:v1',
     () => ({
@@ -109,8 +117,15 @@ export const useAnalysisStore = defineStore('analysis', () => {
       path: path.value,
       orientation: orientation.value,
       study: studyId.value,
+      chapter: studyChapterId.value,
     }),
-    () => [documentRevision.value, path.value, orientation.value, studyId.value],
+    () => [
+      documentRevision.value,
+      path.value,
+      orientation.value,
+      studyId.value,
+      studyChapterId.value,
+    ],
   )
   /** The board editor's position, kept while you visit other pages. */
   const editor = ref<EditorSetup>(structuredClone(START_SETUP))
@@ -192,16 +207,19 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   const study = computed(() => studies.items.find((item) => item.id === studyId.value))
   /** The PGN last written to the open study, so opening one does not count as an edit. */
-  let studyPgn = study.value?.pgn ?? ''
+  let studyPgn =
+    study.value?.chapters.find((c) => c.id === studyChapterId.value)?.pgn ?? study.value?.pgn ?? ''
   const studySaveError = ref(
     conflict
       ? 'Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.'
       : '',
   )
-  function openStudy(id: string): boolean {
+  function openStudy(id: string, chapterId?: string): boolean {
     const found = studies.items.find((item) => item.id === id)
-    if (!found || !loadPgn(found.pgn)) return false
+    const chapter = found?.chapters.find((c) => c.id === chapterId) ?? found?.chapters[0]
+    if (!found || !chapter || !loadPgn(chapter.pgn)) return false
     studyId.value = id
+    studyChapterId.value = chapter.id
     studyPgn = pgn()
     studySaveError.value = ''
     return true
@@ -211,6 +229,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     saveStudy()
     const text = pgn()
     studyId.value = studies.save(name, text)
+    studyChapterId.value = studies.items.find((s) => s.id === studyId.value)!.chapters[0]!.id
     studyPgn = text
     studySaveError.value = ''
     return studyId.value
@@ -228,7 +247,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const text = pgn()
     if (text === studyPgn) return
     try {
-      studies.save(open.name, text, open.id)
+      studies.save(open.name, text, open.id, studyChapterId.value)
       studies.flush()
       studyPgn = text
       studySaveError.value = studies.error
@@ -609,9 +628,11 @@ export const useAnalysisStore = defineStore('analysis', () => {
     editPosition,
     origin,
     studyId,
+    studyChapterId,
     study,
     studySaveError,
     openStudy,
+    flushStudy: saveStudy,
     saveAsStudy,
     closeStudy,
     mainline,

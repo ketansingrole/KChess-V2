@@ -53,6 +53,12 @@ similar) are MIT or Apache-2.0 and are not distributed with the app.
 
 | Puzzle database (downloaded on request, sampled into `kchess.db`) | [database.lichess.org](https://database.lichess.org/#puzzles) — CC0 (public domain); the puzzles come from Lichess games and the Lichess puzzle community |
 
+Lichess tournament icons use the unmodified `app/assets/fonts/lichess.woff2` font
+from [lila](https://github.com/lichess-org/lila), revision
+`de023bec6f0eb65388fc91b45640c09ff6bfec96`. Its contributors and licenses (OFL, MIT,
+CC BY 3.0, AGPLv3+) are recorded in `public/licenses/lichess-icons/COPYING.md`,
+which ships alongside the upstream AGPL license in the app.
+
 More detail is in [`app/assets/ATTRIBUTION.md`](app/assets/ATTRIBUTION.md).
 
 ## Stockfish

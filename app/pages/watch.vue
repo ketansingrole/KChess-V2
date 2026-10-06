@@ -185,12 +185,14 @@ const framePlayers = computed(() => {
   const balance = materialBalance(tvFen.value)
   const white = {
     name: label(current.white),
+    username: realPlayer(current.white.name) ? current.white.name : undefined,
     icon: 'i-lucide-user',
     clock: clockOf('white'),
     material: balance > 0 ? balance : 0,
   }
   const black = {
     name: label(current.black),
+    username: realPlayer(current.black.name) ? current.black.name : undefined,
     icon: 'i-lucide-user',
     clock: clockOf('black'),
     material: balance < 0 ? -balance : 0,
@@ -560,7 +562,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             <div v-for="entry in playingFriends" :key="entry.friend.username" class="list-row">
               <UIcon name="i-lucide-swords" />
               <div class="row-main">
-                <div class="row-title">{{ entry.friend.username }}</div>
+                <div class="row-title"><PlayerLink :username="entry.friend.username" /></div>
                 <div class="row-sub">Playing now</div>
               </div>
               <UButton
@@ -578,7 +580,13 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
           <div class="board-stack">
             <PlayerLine :player="framePlayers.top" :color="framePlayers.topColor">
               <template #name>
-                <span class="player-name">{{ framePlayers.top.name }}</span>
+                <PlayerLink
+                  v-if="framePlayers.top.username"
+                  :username="framePlayers.top.username"
+                  class="player-name"
+                  >{{ framePlayers.top.name }}</PlayerLink
+                >
+                <span v-else class="player-name">{{ framePlayers.top.name }}</span>
                 <span v-if="framePlayers.top.material" class="material-diff"
                   >+{{ framePlayers.top.material }}</span
                 >
@@ -596,7 +604,13 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             />
             <PlayerLine :player="framePlayers.bottom" :color="framePlayers.bottomColor">
               <template #name>
-                <span class="player-name">{{ framePlayers.bottom.name }}</span>
+                <PlayerLink
+                  v-if="framePlayers.bottom.username"
+                  :username="framePlayers.bottom.username"
+                  class="player-name"
+                  >{{ framePlayers.bottom.name }}</PlayerLink
+                >
+                <span v-else class="player-name">{{ framePlayers.bottom.name }}</span>
                 <span v-if="framePlayers.bottom.material" class="material-diff"
                   >+{{ framePlayers.bottom.material }}</span
                 >
@@ -644,7 +658,10 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
                 />
               </div>
               <div v-if="scoreLines.length" class="watch-h2h" aria-label="Head to head">
-                <span class="watch-h2h-title">{{ frame.white.name }} – {{ frame.black.name }}</span>
+                <span class="watch-h2h-title"
+                  ><PlayerLink :username="frame.white.name" /> –
+                  <PlayerLink :username="frame.black.name"
+                /></span>
                 <span v-for="line in scoreLines" :key="line.label" class="watch-h2h-line">
                   <span class="muted">{{ line.label }}</span>
                   <strong class="tabular">{{ line.score }}</strong>
@@ -689,44 +706,48 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       <section v-if="pastGames.length" aria-labelledby="tv-past-title">
         <h2 id="tv-past-title" class="section-title mb-3">Previously on this channel</h2>
         <div class="broadcast-grid">
-          <button
-            v-for="entry in pastGames"
-            :key="entry.gameId"
-            type="button"
-            class="broadcast-cell"
-            :title="`Open ${entry.white.name} – ${entry.black.name} in the analysis board`"
-            @click="openPast(entry)"
-          >
+          <div v-for="entry in pastGames" :key="entry.gameId" class="broadcast-cell">
             <div class="past-player">
-              <span class="truncate">{{
-                label(entry.orientation === 'white' ? entry.black : entry.white)
-              }}</span>
+              <PlayerLink
+                class="truncate"
+                :username="(entry.orientation === 'white' ? entry.black : entry.white).name"
+                >{{ label(entry.orientation === 'white' ? entry.black : entry.white) }}</PlayerLink
+              >
               <strong class="tabular">{{
                 pastScore(entry, entry.orientation === 'white' ? 'black' : 'white')
               }}</strong>
             </div>
-            <ChessBoard
-              :fen="entry.fen"
-              :orientation="entry.orientation"
-              :theme="settings.boardTheme"
-              coordinates="none"
-              :piece-set="settings.pieceSet"
-              animation="none"
-              :interactive="false"
-              :last-move="
-                entry.lastMove && !entry.lastMove.includes('@')
-                  ? [entry.lastMove.slice(0, 2) as Key, entry.lastMove.slice(2, 4) as Key]
-                  : undefined
-              "
-            />
+            <button
+              type="button"
+              class="past-board"
+              :aria-label="`Open ${entry.white.name} – ${entry.black.name} in the analysis board`"
+              @click="openPast(entry)"
+            >
+              <ChessBoard
+                :fen="entry.fen"
+                :orientation="entry.orientation"
+                :theme="settings.boardTheme"
+                coordinates="none"
+                :piece-set="settings.pieceSet"
+                animation="none"
+                :interactive="false"
+                :last-move="
+                  entry.lastMove && !entry.lastMove.includes('@')
+                    ? [entry.lastMove.slice(0, 2) as Key, entry.lastMove.slice(2, 4) as Key]
+                    : undefined
+                "
+              />
+            </button>
             <div class="past-player">
-              <span class="truncate">{{
-                label(entry.orientation === 'white' ? entry.white : entry.black)
-              }}</span>
+              <PlayerLink
+                class="truncate"
+                :username="(entry.orientation === 'white' ? entry.white : entry.black).name"
+                >{{ label(entry.orientation === 'white' ? entry.white : entry.black) }}</PlayerLink
+              >
               <strong class="tabular">{{ pastScore(entry, entry.orientation) }}</strong>
             </div>
             <div class="text-xs muted">{{ pastResult(entry) || 'Result pending' }}</div>
-          </button>
+          </div>
         </div>
       </section>
     </div>
@@ -971,6 +992,13 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
     height: 360px;
     min-height: 0;
   }
+}
+.past-board {
+  display: block;
+  border-radius: 6px;
+}
+.past-board :deep(.cg-host) {
+  pointer-events: none;
 }
 .past-player {
   display: flex;

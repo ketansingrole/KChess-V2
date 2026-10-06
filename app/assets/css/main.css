@@ -932,6 +932,18 @@ coords .coord-dark {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A username that opens the player's profile: reads as text until pointed at. */
+.player-link {
+  color: inherit;
+  text-decoration: underline transparent;
+  text-underline-offset: 3px;
+  border-radius: 3px;
+  transition: text-decoration-color 0.15s;
+}
+.player-link:hover {
+  color: var(--ui-text-highlighted);
+  text-decoration-color: currentColor;
+}
 .player-avatar {
   position: relative;
   display: inline-grid;

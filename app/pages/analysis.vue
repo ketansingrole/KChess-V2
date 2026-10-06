@@ -495,7 +495,7 @@ function missed(result: VoiceResult): void {
     <p v-if="studySaveError" role="alert" class="p-3 text-error">{{ studySaveError }}</p>
     <p v-if="saveError" role="alert" class="p-3 text-error">Automatic saving: {{ saveError }}</p>
 
-    <PageHeader title="Analysis board" />
+    <PageHeader :title="analysis.study?.name ?? 'Analysis board'" />
     <StudyBar />
 
     <div class="play-layout analysis-layout">

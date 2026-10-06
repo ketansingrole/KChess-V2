@@ -156,9 +156,9 @@ const reviewColor = computed(() =>
           <USeparator orientation="vertical" class="h-5" />
           <UBadge :color="reviewColor" variant="soft" size="sm">{{ reviewResult }}</UBadge>
           <span class="text-sm"
-            ><strong>{{ reviewGame.account }}</strong> vs
-            <strong>{{ reviewGame.opponent }}</strong></span
-          >
+            ><strong><PlayerLink :username="reviewGame.account" /></strong> vs
+            <strong><PlayerLink :username="reviewGame.opponent" /></strong
+          ></span>
           <span class="muted text-sm">
             · {{ date(reviewGame.createdAt) }}
             <template v-if="reviewGame.opening"> · {{ reviewGame.opening }}</template>
@@ -191,6 +191,7 @@ const reviewColor = computed(() =>
           :animation="settings.pieceAnimation"
           :player-name="reviewGame.account"
           :opponent-name="reviewGame.opponent"
+          link-names
         />
       </template>
 

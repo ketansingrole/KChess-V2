@@ -1,23 +1,36 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { useDocumentVisibility, useIntervalFn, useOnline, useWindowFocus } from '@vueuse/core'
+import { RequestScope } from '../../src/shared/requestScope'
+import StudyCard from './StudyCard.vue'
+import { useLichessStudiesStore } from '../stores/lichessStudies'
 import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore } from '../stores/studies'
-import { treeFromPgn } from '../utils/analysisTree'
-import type { LichessStudy, LichessStudyChapter } from '../../src/shared/types'
+import type { LichessStudyChapter } from '../../src/shared/types'
 
 /** Studies on the player's Lichess accounts: open or keep their chapters, or send the board to one. */
 const analysis = useAnalysisStore()
 const library = useStudyStore()
 const app = useKChessStore()
-const toast = useToast()
 
 const account = ref(app.activeOnlineAccount)
-const remote = ref<LichessStudy[] | null>(null)
-const remoteStudy = ref('')
-const chapters = ref<LichessStudyChapter[] | null>(null)
+const cache = useLichessStudiesStore()
+const cached = computed(() => cache.entry(account.value))
+const remote = computed(() => cached.value?.items ?? null)
+const online = useOnline()
+const focused = useWindowFocus()
+const visibility = useDocumentVisibility()
+const requests = new RequestScope()
+onUnmounted(() => requests.invalidate())
 const busy = ref(false)
 const message = ref('')
-const target = ref('')
+const NEW_STUDY = 'new-study'
+const target = ref(NEW_STUDY)
+const pendingOpen = ref<(() => void) | null>(null)
+function guardOpen(action: () => void): void {
+  if (!analysis.study && analysis.root.children.length) pendingOpen.value = action
+  else action()
+}
 
 function reconnectNote(result: unknown): boolean {
   if (result && typeof result === 'object' && 'needsReconnect' in result) {
@@ -27,76 +40,129 @@ function reconnectNote(result: unknown): boolean {
   return false
 }
 async function work(task: () => Promise<void>): Promise<void> {
+  const request = requests.capture()
   busy.value = true
   message.value = ''
   try {
     await task()
   } catch (cause) {
-    message.value = cause instanceof Error ? cause.message : String(cause)
+    if (request.current()) message.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    busy.value = false
+    if (request.current()) busy.value = false
   }
 }
-function load(): Promise<void> {
-  return work(async () => {
-    const result = await window.kchess.lichessStudies(account.value)
-    if (reconnectNote(result)) return
-    remote.value = result as LichessStudy[]
-    if (!remote.value.length) message.value = 'No studies on this account yet.'
-  })
+function load(force = false): Promise<void> {
+  return online.value ? cache.refresh(account.value, force) : Promise.resolve()
 }
+watch(
+  account,
+  () => {
+    requests.invalidate()
+    target.value = NEW_STUDY
+    message.value = ''
+    busy.value = false
+    void load()
+  },
+  { immediate: true },
+)
+watch(
+  () => app.activeOnlineAccount,
+  (active) => {
+    account.value = active
+  },
+)
+function revalidate(): void {
+  if (focused.value && visibility.value === 'visible') void load()
+}
+watch([online, focused, visibility], revalidate)
+useIntervalFn(revalidate, 60_000)
+const status = computed(
+  () =>
+    message.value ||
+    cached.value?.error ||
+    (cached.value?.needsReconnect
+      ? `Connect @${account.value} again in Settings → My accounts to allow study access.`
+      : remote.value?.length === 0
+        ? 'No studies on this account yet.'
+        : ''),
+)
 function openRemote(id: string): Promise<void> {
-  if (remoteStudy.value === id) {
-    remoteStudy.value = ''
+  const saved = offlineCopy(id)
+  if (saved) {
+    guardOpen(() => {
+      if (analysis.openStudy(saved.id)) app.selectPage('analysis')
+      else message.value = 'This study could not be opened.'
+    })
     return Promise.resolve()
   }
-  remoteStudy.value = id
-  chapters.value = null
+  if (!online.value) {
+    message.value = 'Download this study before opening it offline.'
+    return Promise.resolve()
+  }
+  const openingAccount = account.value
+  const item = remote.value?.find((s) => s.id === id)
+  if (!item) return Promise.resolve()
+  const request = requests.next()
   return work(async () => {
-    const result = await window.kchess.lichessStudyChapters(account.value, id)
-    if (reconnectNote(result)) return
-    chapters.value = result as LichessStudyChapter[]
+    const result = await window.kchess.lichessStudyChapters(openingAccount, id)
+    if (!request.current() || reconnectNote(result)) return
+    guardOpen(() => {
+      if (!request.current()) return
+      try {
+        const downloaded = library.offline(openingAccount, item, result as LichessStudyChapter[])
+        if (!analysis.openStudy(downloaded.id)) throw new Error('This study could not be opened.')
+        app.selectPage('analysis')
+      } catch (cause) {
+        message.value = cause instanceof Error ? cause.message : String(cause)
+      }
+    })
   })
 }
-function openChapter(chapter: LichessStudyChapter): void {
-  if (!analysis.loadPgn(chapter.pgn)) {
-    message.value = 'That chapter uses rules the analysis board cannot show (a variant).'
-    return
-  }
-  app.selectPage('analysis')
+function offlineCopy(id: string) {
+  return library.items.find(
+    (s) => s.cloud?.id === id && s.cloud.account.toLowerCase() === account.value.toLowerCase(),
+  )
 }
-function saveChapters(): void {
-  const studyName = remote.value?.find((s) => s.id === remoteStudy.value)?.name ?? 'Lichess study'
-  let saved = 0
-  try {
-    for (const chapter of chapters.value ?? []) {
-      if (!treeFromPgn(chapter.pgn)) continue
-      library.save(`${studyName} · ${chapter.name}`.slice(0, 120), chapter.pgn)
-      saved++
-    }
-    toast.add({ title: `Saved ${saved} chapters on this device`, icon: 'i-lucide-download' })
-  } catch (cause) {
-    message.value = cause instanceof Error ? cause.message : String(cause)
-  }
+function download(id: string): Promise<void> {
+  const downloadingAccount = account.value
+  const item = remote.value?.find((s) => s.id === id)
+  if (!item) return Promise.resolve()
+  return work(async () => {
+    const request = requests.capture()
+    const result = await window.kchess.lichessStudyChapters(downloadingAccount, id)
+    if (!request.current() || reconnectNote(result)) return
+    analysis.flushStudy()
+    const saved = library.offline(downloadingAccount, item, result as LichessStudyChapter[])
+    if (analysis.studyId === saved.id) analysis.openStudy(saved.id, analysis.studyChapterId)
+    if (saved.conflict)
+      message.value =
+        'Your offline edits were kept. The cloud version was downloaded as a separate copy.'
+    else message.value = 'Study available offline.'
+  })
 }
 function send(): Promise<void> {
   return work(async () => {
+    const request = requests.capture()
+    const sendingAccount = account.value
+    const sendingTarget = target.value
     const chapterName = (
       analysis.study?.name ||
       analysis.root.headers?.Event ||
       'KChess analysis'
     ).slice(0, 100)
     const result = await window.kchess.exportToLichessStudy(
-      account.value,
-      target.value,
+      sendingAccount,
+      sendingTarget === NEW_STUDY ? '' : sendingTarget,
       chapterName,
       analysis.pgn(),
     )
+    if (!request.current()) return
     if (reconnectNote(result)) return
-    message.value = target.value
-      ? `Added “${chapterName}” as a chapter.`
-      : `Created a private study with “${chapterName}”.`
-    void load()
+    message.value =
+      sendingTarget !== NEW_STUDY
+        ? `Added “${chapterName}” as a chapter.`
+        : `Created a private study with “${chapterName}”.`
+    void cache.refresh(sendingAccount, true)
   })
 }
 </script>
@@ -110,57 +176,41 @@ function send(): Promise<void> {
         :items="app.connectedAccounts.map((a) => ({ label: `@${a.username}`, value: a.username }))"
         size="sm"
         aria-label="Account"
-        @update:model-value="remote = null"
       />
       <UButton
         size="sm"
         variant="outline"
         color="neutral"
         icon="i-lucide-refresh-cw"
-        :loading="busy"
-        @click="load"
-        >{{ remote ? 'Refresh' : 'Show my Lichess studies' }}</UButton
+        :loading="cached?.loading"
+        :disabled="!online"
+        @click="load(true)"
+        >Refresh</UButton
       >
     </div>
-    <p v-if="message" role="status" class="text-sm">{{ message }}</p>
+    <p v-if="status" role="status" class="text-sm">{{ status }}</p>
 
-    <ul v-if="remote?.length" class="remote-list">
+    <ul v-if="remote?.length" class="remote-grid" aria-label="Lichess studies">
       <li v-for="item in remote" :key="item.id">
-        <button
-          type="button"
-          class="remote-row"
-          :aria-expanded="remoteStudy === item.id"
-          @click="openRemote(item.id)"
+        <StudyCard
+          :name="item.name"
+          :updated-at="item.updatedAt"
+          :pgn="offlineCopy(item.id)?.pgn"
+          :chapter-count="offlineCopy(item.id)?.chapters.length"
+          :location="offlineCopy(item.id) ? 'Offline · Lichess' : 'Lichess'"
+          @open="openRemote(item.id)"
         >
-          <UIcon
-            :name="remoteStudy === item.id ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-          />
-          <span class="truncate">{{ item.name }}</span>
-        </button>
-        <div v-if="remoteStudy === item.id" class="chapters">
-          <p v-if="!chapters" class="text-xs muted">Loading chapters…</p>
-          <template v-else>
-            <UButton
-              v-for="chapter in chapters"
-              :key="chapter.name + chapter.pgn.length"
-              size="xs"
-              variant="ghost"
-              color="neutral"
-              icon="i-lucide-square-play"
-              class="justify-start"
-              @click="openChapter(chapter)"
-              >{{ chapter.name }}</UButton
-            >
-            <UButton
-              size="xs"
-              variant="soft"
-              icon="i-lucide-download"
-              class="mt-1 self-start"
-              @click="saveChapters"
-              >Save all chapters on this device</UButton
-            >
-          </template>
-        </div>
+          <UButton
+            size="xs"
+            variant="outline"
+            color="neutral"
+            icon="i-lucide-download"
+            :loading="busy"
+            :disabled="!online || busy"
+            @click="download(item.id)"
+            >{{ offlineCopy(item.id) ? 'Download latest' : 'Make available offline' }}</UButton
+          >
+        </StudyCard>
       </li>
     </ul>
 
@@ -169,7 +219,7 @@ function send(): Promise<void> {
       <USelect
         v-model="target"
         :items="[
-          { label: 'A new private study', value: '' },
+          { label: 'A new private study', value: NEW_STUDY },
           ...(remote ?? []).map((s) => ({ label: s.name, value: s.id })),
         ]"
         size="sm"
@@ -178,14 +228,23 @@ function send(): Promise<void> {
       />
       <UButton type="submit" size="sm" icon="i-lucide-upload" :loading="busy">Send</UButton>
     </form>
+    <ConfirmDialog
+      :open="pendingOpen !== null"
+      title="Replace the unsaved analysis?"
+      description="Opening this chapter replaces the unsaved analysis board."
+      confirm-label="Replace"
+      color="error"
+      @update:open="!$event && (pendingOpen = null)"
+      @confirm="(pendingOpen?.(), (pendingOpen = null))"
+    />
   </div>
 </template>
 
 <style scoped>
-.remote-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.remote-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
   margin: 0;
   padding: 0;
   list-style: none;

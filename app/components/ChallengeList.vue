@@ -76,7 +76,7 @@ function colorText(challenge: ChallengeInfo): string {
         <div class="row-main">
           <div class="row-title">
             {{ challenge.opponent.title ? `${challenge.opponent.title} ` : ''
-            }}{{ challenge.opponent.name }}
+            }}<PlayerLink :username="challenge.opponent.name" />
             <span v-if="challenge.opponent.rating" class="muted tabular"
               >({{ challenge.opponent.rating
               }}{{ challenge.opponent.provisional ? '?' : '' }})</span
@@ -115,7 +115,7 @@ function colorText(challenge: ChallengeInfo): string {
       <div v-for="challenge in challenges.outgoing" :key="challenge.id" class="list-row">
         <UIcon name="i-lucide-send" class="shrink-0" />
         <div class="row-main">
-          <div class="row-title">To {{ challenge.opponent.name }}</div>
+          <div class="row-title">To <PlayerLink :username="challenge.opponent.name" /></div>
           <div class="row-sub">
             {{ challenge.variantName }} · {{ describeControl(challenge) }} ·
             {{ challenge.rated ? 'Rated' : 'Casual' }} · {{ colorText(challenge) }} · waiting

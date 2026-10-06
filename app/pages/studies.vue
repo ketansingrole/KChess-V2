@@ -6,11 +6,12 @@ import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore, type SavedStudy } from '../stores/studies'
 import { treeFromPgn } from '../utils/analysisTree'
 import { summarizeStudy } from '../utils/studies'
-import { timeAgo } from '../utils/format'
+import { parsePgn, makePgn } from 'chessops/pgn'
+import StudyCard from '../components/StudyCard.vue'
+import { useLichessStudiesStore } from '../stores/lichessStudies'
 
 /** The study library: browse, search and open saved studies, or bring them in from Lichess. */
 const app = useKChessStore()
-const { settings } = storeToRefs(app)
 const analysis = useAnalysisStore()
 const library = useStudyStore()
 const toast = useToast()
@@ -46,18 +47,7 @@ const cards = computed(() => {
         : b.study.updatedAt - a.study.updatedAt,
     )
 })
-const now = Date.now()
-function details(summary: ReturnType<typeof summarizeStudy>): string {
-  if (!summary) return ''
-  const moves = Math.ceil(summary.plies / 2)
-  const parts = [moves ? `${moves} move${moves === 1 ? '' : 's'}` : 'No moves yet']
-  if (summary.variations)
-    parts.push(`${summary.variations} variation${summary.variations === 1 ? '' : 's'}`)
-  if (summary.comments)
-    parts.push(`${summary.comments} comment${summary.comments === 1 ? '' : 's'}`)
-  return parts.join(' · ')
-}
-
+const uploading = ref('')
 /* ── Opening: never silently throw away an unsaved board ── */
 const pending = ref<(() => void) | null>(null)
 const unsavedBoard = computed(() => !analysis.study && analysis.root.children.length > 0)
@@ -65,10 +55,11 @@ function guard(action: () => void): void {
   if (unsavedBoard.value) pending.value = action
   else action()
 }
-function open(study: SavedStudy): void {
-  if (analysis.studyId === study.id) return app.selectPage('analysis')
+function open(study: SavedStudy, chapterId?: string): void {
+  if (analysis.studyId === study.id && (!chapterId || analysis.studyChapterId === chapterId))
+    return app.selectPage('analysis')
   guard(() => {
-    if (analysis.openStudy(study.id)) app.selectPage('analysis')
+    if (analysis.openStudy(study.id, chapterId)) app.selectPage('analysis')
   })
 }
 function create(): void {
@@ -112,7 +103,7 @@ function duplicate(study: SavedStudy): void {
 }
 async function copyPgn(study: SavedStudy): Promise<void> {
   try {
-    await navigator.clipboard.writeText(study.pgn)
+    await navigator.clipboard.writeText(library.documentPgn(study))
     toast.add({ title: 'PGN copied', icon: 'i-lucide-clipboard-check' })
   } catch {
     toast.add({ title: 'Could not copy the PGN', color: 'error' })
@@ -141,7 +132,14 @@ function actions(study: SavedStudy): DropdownMenuItem[][] {
       { label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => duplicate(study) },
       { label: 'Copy PGN', icon: 'i-lucide-file-text', onSelect: () => void copyPgn(study) },
     ],
-    [{ label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => remove(study) }],
+    [
+      {
+        label: study.cloud ? 'Remove offline copy' : 'Delete',
+        icon: 'i-lucide-trash-2',
+        color: 'error',
+        onSelect: () => remove(study),
+      },
+    ],
   ]
 }
 
@@ -157,9 +155,19 @@ function startImport(): void {
   importOpen.value = true
 }
 function runImport(): void {
-  const tree = treeFromPgn(importText.value.trim())
-  if (!tree) {
-    importError.value = 'Paste one PGN game with legal moves (variations and comments are kept).'
+  const games = parsePgn(importText.value.trim())
+  const chapters = games.map((game, index) => ({
+    name: game.headers.get('ChapterName') ?? `Chapter ${index + 1}`,
+    pgn: makePgn(game),
+  }))
+  const tree = chapters[0] ? treeFromPgn(chapters[0].pgn) : undefined
+  if (
+    !tree ||
+    !chapters.length ||
+    chapters.length > 64 ||
+    chapters.some((c) => !treeFromPgn(c.pgn))
+  ) {
+    importError.value = 'Paste valid PGN with up to 64 chapters.'
     return
   }
   const headers = tree.headers ?? {}
@@ -169,7 +177,7 @@ function runImport(): void {
       ? headers.Event
       : library.freshName('Imported study')
   try {
-    const id = library.save(importName.value.trim() || fallback, importText.value.trim())
+    const id = library.saveChapters(importName.value.trim() || fallback, chapters)
     importOpen.value = false
     const study = library.items.find((item) => item.id === id)
     toast.add({
@@ -179,6 +187,62 @@ function runImport(): void {
     })
   } catch (cause) {
     importError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+async function upload(study: SavedStudy, copy = false): Promise<void> {
+  const account = app.activeOnlineAccount
+  if (!account) {
+    toast.add({ title: 'Connect Lichess to upload a study', color: 'warning' })
+    return
+  }
+  if (uploading.value) return
+  if (!copy && study.cloud && study.cloud.account.toLowerCase() !== account.toLowerCase()) {
+    toast.add({
+      title: `Switch to @${study.cloud.account} to upload changes to this study.`,
+      color: 'warning',
+    })
+    return
+  }
+  analysis.flushStudy()
+  study = library.items.find((item) => item.id === study.id) ?? study
+  uploading.value = study.id
+  try {
+    const games = study.chapters.map((chapter) => {
+      const game = parsePgn(chapter.pgn)[0]!
+      game.headers.set('ChapterName', chapter.name)
+      return makePgn(game)
+    })
+    const pgn = games.join('\n\n')
+    const cloud = study.cloud
+    const linked =
+      !copy && !cloud?.structureChanged && cloud?.account.toLowerCase() === account.toLowerCase()
+    const result = linked
+      ? await window.kchess.syncLichessStudy({
+          account,
+          studyId: cloud!.id,
+          baseline: cloud!.downloadedPgn,
+          pgn,
+        })
+      : await window.kchess.exportToLichessStudy(account, '', study.name.slice(0, 100), pgn)
+    if ('needsReconnect' in result)
+      throw new Error(`Connect @${account} again to allow study access.`)
+    const chapters = Array.isArray(result)
+      ? result
+      : await window.kchess.lichessStudyChapters(account, result.id)
+    if ('needsReconnect' in chapters)
+      throw new Error('Uploaded, but study access needs reconnection.')
+    library.markCloud(
+      study.id,
+      account,
+      linked ? cloud!.id : (result as { id: string }).id,
+      chapters.map((c) => c.pgn).join('\n\n'),
+    )
+    void useLichessStudiesStore().refresh(account, true)
+    toast.add({ title: 'Study uploaded', icon: 'i-lucide-cloud-upload' })
+  } catch (cause) {
+    toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })
+  } finally {
+    uploading.value = ''
   }
 }
 </script>
@@ -236,55 +300,50 @@ function runImport(): void {
       </p>
 
       <ul v-else class="study-grid" aria-label="Saved studies">
-        <li
-          v-for="{ study, summary } in cards"
-          :key="study.id"
-          class="study-card"
-          :class="{ current: analysis.studyId === study.id }"
-        >
-          <button
-            type="button"
-            class="study-open"
-            :aria-label="`Open ${study.name}`"
-            @click="open(study)"
+        <li v-for="{ study } in cards" :key="study.id">
+          <StudyCard
+            :name="study.name"
+            :updated-at="study.updatedAt"
+            :pgn="study.pgn"
+            :chapter-count="study.chapters.length"
+            :location="study.cloud ? 'Offline · Lichess' : 'On this device'"
+            @open="open(study)"
           >
-            <div class="thumb">
-              <ChessBoard
-                v-if="summary"
-                :fen="summary.fen"
-                :theme="settings?.boardTheme"
-                coordinates="none"
-                :piece-set="settings?.pieceSet"
-                animation="none"
-                :interactive="false"
-              />
-            </div>
-          </button>
-          <div class="study-meta">
-            <div class="flex items-start gap-1">
-              <button type="button" class="study-title" @click="open(study)">
-                {{ study.name }}
-              </button>
-              <UDropdownMenu :items="actions(study)">
-                <UButton
+            <template #menu>
+              <UDropdownMenu :items="actions(study)"
+                ><UButton
                   size="xs"
                   variant="ghost"
                   color="neutral"
                   icon="i-lucide-ellipsis-vertical"
                   :aria-label="`Actions for ${study.name}`"
-                />
-              </UDropdownMenu>
-            </div>
-            <p v-if="summary?.players || summary?.event" class="study-line">
-              {{ [summary.players, summary.event].filter(Boolean).join(' · ') }}
-            </p>
-            <p class="study-line">{{ details(summary) }}</p>
-            <p class="study-line dim">
-              <UBadge v-if="analysis.studyId === study.id" size="sm" variant="soft" class="mr-1"
-                >On the board</UBadge
-              >Edited {{ timeAgo(study.updatedAt, now) }}
-            </p>
-          </div>
+              /></UDropdownMenu>
+            </template>
+            <UButton
+              size="xs"
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-cloud-upload"
+              :loading="uploading === study.id"
+              :disabled="!!uploading"
+              @click="upload(study)"
+              >{{
+                study.cloud?.structureChanged
+                  ? 'Upload as new cloud study'
+                  : study.cloud
+                    ? 'Upload changes'
+                    : 'Upload to Lichess'
+              }}</UButton
+            >
+            <UButton
+              v-if="study.cloud && !study.cloud.structureChanged"
+              size="xs"
+              variant="ghost"
+              color="neutral"
+              @click="upload(study, true)"
+              >Upload a new cloud copy</UButton
+            >
+          </StudyCard>
         </li>
       </ul>
     </template>
@@ -318,7 +377,7 @@ function runImport(): void {
       </template>
     </UModal>
 
-    <UModal v-model:open="importOpen" title="Import a study" description="Paste one PGN game.">
+    <UModal v-model:open="importOpen" title="Import a study" description="Paste PGN chapters.">
       <template #body>
         <form class="flex flex-col gap-3" @submit.prevent="runImport">
           <UInput
@@ -374,67 +433,6 @@ function runImport(): void {
   padding: 0;
   list-style: none;
 }
-.study-card {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: 12px;
-  background: var(--ui-bg-elevated);
-  transition:
-    border-color 0.15s,
-    transform 0.15s;
-}
-.study-card:hover {
-  border-color: var(--ui-border-accented);
-  transform: translateY(-2px);
-}
-.study-card.current {
-  border-color: color-mix(in srgb, var(--ui-primary) 70%, transparent);
-}
-.study-open {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-.thumb {
-  aspect-ratio: 1;
-  pointer-events: none;
-}
-.study-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px 8px 12px 12px;
-}
-.study-title {
-  flex: 1;
-  min-width: 0;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--ui-text-highlighted);
-  font: inherit;
-  font-weight: 650;
-  text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-.study-title:hover {
-  color: var(--ui-primary);
-}
-.study-line {
-  overflow: hidden;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.study-line.dim {
-  color: var(--ui-text-dimmed);
-}
 .import-text {
   width: 100%;
   padding: 10px;
@@ -444,8 +442,6 @@ function runImport(): void {
   color: inherit;
   font:
     12px/1.5 ui-monospace,
-    SFMono-Regular,
-    Menlo,
     monospace;
   resize: vertical;
 }

@@ -421,6 +421,9 @@ test('plays keyboard moves and restores an annotated saved study after reload @p
   await navigate(page, 'Studies')
   await expect(page.getByRole('button', { name: 'Open Opening study', exact: true })).toBeVisible()
   await expect(page.getByText('Alice – ?')).toBeVisible()
+  const preview = await page.locator('.study-preview cg-board').boundingBox()
+  expect(preview?.width).toBeGreaterThan(100)
+  expect(preview?.height).toBeGreaterThan(100)
   await page.screenshot({ path: join(process.cwd(), 'test-results', 'study-library.png') })
 })
 
@@ -1249,4 +1252,69 @@ test('quick pick switches modes, runs commands and remembers them', async ({
   const topbar = (await page.locator('.topbar').boundingBox())!
   await page.locator('.topbar').click({ position: { x: topbar.width - 40, y: topbar.height / 2 } })
   await expect(results).toBeHidden()
+})
+
+test('keeps multi-chapter studies together and restores the selected chapter offline', async ({
+  desktop: { page },
+}) => {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'kchess:studies:v1',
+      JSON.stringify({
+        version: 2,
+        items: [
+          {
+            id: 'offline-study',
+            name: 'Offline repertoire',
+            updatedAt: Date.now(),
+            pgn: '1. e4 e5 *',
+            chapters: [
+              { id: 'king', name: 'King pawn', pgn: '1. e4 e5 *' },
+              { id: 'queen', name: 'Queen pawn', pgn: '1. d4 {Offline notes} d5 (1... Nf6 $1) *' },
+            ],
+          },
+        ],
+      }),
+    )
+    localStorage.setItem(
+      'kchess:analysis:v1',
+      JSON.stringify({ version: 1, pgn: '1. c4 *', path: '', orientation: 'white', study: '' }),
+    )
+  })
+  await page.reload()
+  await navigate(page, 'Studies')
+  await expect(page.locator('.study-card')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Open Offline repertoire', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Replace the unsaved analysis?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Replace', exact: true }).click()
+  await page.getByRole('button', { name: 'Study chapter' }).click()
+  await page.getByRole('option', { name: '2. Queen pawn', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText('Queen pawn')
+  await expect(page.getByLabel('Study name', { exact: true })).toHaveValue('Offline repertoire')
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText('Queen pawn')
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('kchess:analysis:v1')!).chapter),
+    )
+    .toBe('queen')
+  await expect(page.getByRole('textbox', { name: 'Chapter name', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Chapter actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate chapter', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText(
+    'Queen pawn (copy)',
+  )
+  await page.getByRole('button', { name: 'Chapter actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Delete chapter', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Delete “Queen pawn (copy)”?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Delete chapter', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText('Queen pawn')
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => JSON.parse(localStorage.getItem('kchess:studies:v1')!).items[0].chapters.length,
+      ),
+    )
+    .toBe(2)
+  await page.screenshot({ path: test.info().outputPath('offline-study-chapters.png') })
 })

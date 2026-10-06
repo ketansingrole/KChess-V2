@@ -516,6 +516,39 @@ export interface TournamentSummary {
   /** The Board API can play its games and KChess knows its variant. */
   playable: boolean
   problem?: string
+  /** Lichess's rating category (`blitz`, `atomic`…). */
+  perf?: string
+  /** How often Lichess runs it (`hourly`, `eastern`, `weekly`…); absent for player-made events. */
+  freq?: string
+  /** Only players rated at most this may join. */
+  maxRating?: number
+}
+
+/** Lichess's allowed values for a new arena. */
+export const ARENA_CLOCK_MINUTES = [
+  0, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 40, 50, 60,
+] as const
+export const ARENA_INCREMENTS = [0, 1, 2, 3, 4, 5, 6, 7, 10, 15, 20, 25, 30, 40, 50, 60] as const
+export const ARENA_DURATIONS = [
+  20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 100, 110, 120, 150, 180, 210, 240, 270, 300, 330,
+  360, 420, 480, 540, 600, 720,
+] as const
+export const ARENA_WAIT_MINUTES = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60] as const
+/** An arena to create on Lichess. */
+export interface NewArena {
+  /** Empty for a random Grandmaster name. */
+  name?: string
+  clockTime: (typeof ARENA_CLOCK_MINUTES)[number]
+  clockIncrement: (typeof ARENA_INCREMENTS)[number]
+  minutes: (typeof ARENA_DURATIONS)[number]
+  /** Minutes from now, unless `startDate` is set. */
+  waitMinutes?: (typeof ARENA_WAIT_MINUTES)[number]
+  startDate?: number
+  variant: string
+  rated: boolean
+  /** An entry code players must type to join. */
+  password?: string
+  description?: string
 }
 
 export interface TournamentStanding {
@@ -541,6 +574,36 @@ export interface TournamentDetail extends TournamentSummary {
   verdicts?: { accepted: boolean; list: { condition: string; verdict: string }[] }
   /** Swiss: when the next round starts. */
   nextRoundIn?: number
+  /** The leaderboard page shown (10 players each). */
+  standingPage?: number
+  /** Arena: the top game being played now. */
+  featured?: TournamentGame & {
+    fen: string
+    orientation: 'white' | 'black'
+    lastMove?: string
+    /** Seconds left on each clock when Lichess sent it. */
+    clocks?: { white: number; black: number }
+  }
+  /** Arena: games being played now. */
+  duels?: TournamentGame[]
+  /** Arena: the top three once it has finished. */
+  podium?: { name: string; rank: number; rating?: number; score?: number; performance?: number }[]
+  /** Arena: totals once it has finished. */
+  stats?: {
+    games: number
+    whiteWins: number
+    blackWins: number
+    draws: number
+    berserks: number
+    averageRating: number
+  }
+}
+
+/** A game between two tournament players, with their current ranks. */
+export interface TournamentGame {
+  id: string
+  white: { name: string; rating?: number; rank?: number }
+  black: { name: string; rating?: number; rank?: number }
 }
 
 export interface TournamentList {
@@ -1276,6 +1339,13 @@ export interface LichessStudy {
   name: string
   updatedAt: number
 }
+export interface StudySyncRequest {
+  account: string
+  studyId: string
+  baseline: string
+  pgn: string
+}
+
 export interface LichessStudyChapter {
   name: string
   pgn: string
@@ -1313,6 +1383,7 @@ export interface DesktopApi {
   lichessStudies(account: string): Promise<LichessStudy[] | NeedsReconnect>
   lichessStudyChapters(account: string, id: string): Promise<LichessStudyChapter[] | NeedsReconnect>
   /** Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty). */
+  syncLichessStudy(request: StudySyncRequest): Promise<LichessStudyChapter[] | NeedsReconnect>
   exportToLichessStudy(
     account: string,
     studyId: string,
@@ -1421,6 +1492,14 @@ export interface DesktopApi {
   onLobbyState(callback: (state: LobbyState) => void): () => void
   playerPerf(username: string, perf: PerfType): Promise<PerfStats>
   crosstable(a: string, b: string): Promise<Crosstable>
+  /** A player's latest public games, from their side; `rated` returns more of their rated ones. */
+  recentGames(username: string, rated?: boolean): Promise<LichessGame[]>
+  /** A Lichess private message from one of the connected accounts. */
+  sendMessage(
+    account: string,
+    username: string,
+    text: string,
+  ): Promise<{ sent: true } | NeedsReconnect>
   /** Lichess TV channels and who is on each. */
   tvChannels(): Promise<TvChannel[]>
   /** Watch a TV channel or any game by id (replacing what was watched); frames on `onWatch`. */
@@ -1435,7 +1514,13 @@ export interface DesktopApi {
   broadcastTour(id: string): Promise<BroadcastTourDetail>
   /** Current arenas, and the Swiss events of the account's teams. */
   tournaments(account: string): Promise<TournamentList>
-  tournament(system: TournamentSystem, id: string, account: string): Promise<TournamentDetail>
+  /** One tournament; `page` picks the leaderboard page (10 players each, arenas only). */
+  tournament(
+    system: TournamentSystem,
+    id: string,
+    account: string,
+    page?: number,
+  ): Promise<TournamentDetail>
   joinTournament(
     system: TournamentSystem,
     id: string,
@@ -1447,6 +1532,8 @@ export interface DesktopApi {
     id: string,
     account: string,
   ): Promise<true | NeedsReconnect>
+  /** Creates an arena on Lichess run by the account. */
+  createTournament(account: string, arena: NewArena): Promise<TournamentSummary | NeedsReconnect>
   /** A game started or ended that the board does not show (refresh `ongoingGames`). */
   onOngoingChanged(callback: () => void): () => void
   /** Delete the games and cached profile downloaded for one account, keeping the account. */

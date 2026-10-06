@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
+import StudyChapters from './StudyChapters.vue'
 import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore } from '../stores/studies'
 import { timeAgo } from '../utils/format'
@@ -122,7 +123,12 @@ const menu = computed<DropdownMenuItem[][]>(() => [
           icon: 'i-lucide-book-x',
           onSelect: () => analysis.closeStudy(),
         },
-        { label: 'Delete study', icon: 'i-lucide-trash-2', color: 'error', onSelect: remove },
+        {
+          label: study.value?.cloud ? 'Remove offline copy' : 'Delete study',
+          icon: 'i-lucide-trash-2',
+          color: 'error',
+          onSelect: remove,
+        },
       ]
     : [],
 ])
@@ -145,6 +151,7 @@ const menu = computed<DropdownMenuItem[][]>(() => [
         @keydown.enter="($event.target as HTMLInputElement).blur()"
         @keydown.escape="((name = study.name), ($event.target as HTMLInputElement).blur())"
       />
+      <StudyChapters class="study-chapters" />
       <span
         v-if="status"
         class="study-status"
@@ -240,10 +247,16 @@ const menu = computed<DropdownMenuItem[][]>(() => [
 <style scoped>
 .study-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 36px;
   margin-bottom: 12px;
+}
+.study-chapters {
+  flex: 0 1 260px;
+  min-width: 160px;
+  max-width: 100%;
 }
 .study-icon {
   flex: none;

@@ -3,6 +3,8 @@ import type { Color } from '@lichess-org/chessground/types'
 
 export interface PlayerInfo {
   name: string
+  /** Lichess username; when set the name opens the player's profile. */
+  username?: string
   icon: string
   /** Short secondary text, e.g. "Thinking…". */
   status?: string
@@ -49,7 +51,10 @@ function presenceTitle(presence: PlayerPresence): string {
         ><UIcon :name="player.icon"
       /></span>
       <slot name="name"
-        ><span class="player-name">{{ player.name }}</span></slot
+        ><PlayerLink v-if="player.username" :username="player.username" class="player-name">{{
+          player.name
+        }}</PlayerLink
+        ><span v-else class="player-name">{{ player.name }}</span></slot
       >
       <span
         v-if="player.presence"

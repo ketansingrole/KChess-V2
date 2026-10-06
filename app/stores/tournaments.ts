@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import type {
+  NewArena,
   TournamentDetail,
   TournamentList,
   TournamentSummary,
@@ -45,12 +46,21 @@ export const useTournamentStore = defineStore('tournaments', () => {
     }
   }
   let detailRequest = 0
-  async function open(system: TournamentSystem, id: string): Promise<void> {
+  /** Leaderboard page of the open tournament (10 players each). */
+  const page = ref(1)
+  async function open(system: TournamentSystem, id: string, standingPage?: number): Promise<void> {
+    const other = selected.value?.system !== system || selected.value?.id !== id
+    if (other) {
+      // Never show one event's details under another's name while it loads.
+      detail.value = null
+      page.value = 1
+    }
+    if (standingPage) page.value = standingPage
     selected.value = { system, id }
     const request = ++detailRequest
     detailError.value = ''
     try {
-      const next = await window.kchess.tournament(system, id, app.activeOnlineAccount)
+      const next = await window.kchess.tournament(system, id, app.activeOnlineAccount, page.value)
       if (request !== detailRequest) return
       detail.value = next
       // An arena says whether you are in it; forget it when it is over or you left.
@@ -120,8 +130,26 @@ export const useTournamentStore = defineStore('tournaments', () => {
     forget(summary.system, summary.id)
     if (selected.value?.id === summary.id) void open(summary.system, summary.id)
   }
+  /** Creates an arena run by the active account, then shows it. */
+  async function create(
+    arena: NewArena,
+  ): Promise<{ created?: TournamentSummary; error?: string; reconnect?: boolean }> {
+    needsReconnect.value = false
+    try {
+      const result = await window.kchess.createTournament(app.activeOnlineAccount, arena)
+      if ('needsReconnect' in result) {
+        needsReconnect.value = true
+        return { reconnect: true }
+      }
+      await refresh()
+      return { created: result }
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause.message : String(cause) }
+    }
+  }
   return {
     list,
+    page,
     loading,
     error,
     selected,
@@ -135,6 +163,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
     close,
     join,
     leave,
+    create,
     isJoined,
   }
 })

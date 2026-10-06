@@ -54,3 +54,14 @@ Licenses are as listed in [lila COPYING.md](https://github.com/lichess-org/lila/
 | `celtic`    | [Maurizio Monge](https://github.com/maurimo/chess-art)            | MIT        |
 | `rhosgfx`   | [RhosGFX](https://rhosgfx.itch.io/)                               | CC0 1.0    |
 | `pixel`     | therealqtpi                                                       | AGPLv3+    |
+
+## Lichess icons — `fonts/lichess.woff2`
+
+Unmodified font from [lichess-org/lila](https://github.com/lichess-org/lila/blob/de023bec6f0eb65388fc91b45640c09ff6bfec96/public/font/lichess.woff2),
+revision `de023bec6f0eb65388fc91b45640c09ff6bfec96`. The category glyph codes follow
+Lichess's `ui/lib/src/licon.ts` and `ui/lib/src/game/perfIcons.ts` at that revision.
+
+Authors: Dave Gandy, GitHub, Webalys, Zurb, Daniel Bruce, Shapemade, Sergey Shmidt,
+and the Lichess authors. Upstream lists OFL, MIT, CC BY 3.0, and AGPLv3+ for this
+font. The complete upstream attribution notice and AGPL license ship in
+`public/licenses/lichess-icons/`. The font is bundled locally and is not modified.

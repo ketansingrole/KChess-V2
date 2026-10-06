@@ -182,6 +182,8 @@ const players = computed(() => {
     name: onlineOpponentRating.value
       ? `${onlineOpponent.value} (${onlineOpponentRating.value})`
       : onlineOpponent.value,
+    // Linked once the game is over, so a stray click never leaves a live game.
+    username: !playing.value && store.opponentId ? onlineOpponent.value : undefined,
     icon: 'i-lucide-user',
     clock: hasClock.value ? clockText(opponentColor.value) : undefined,
     presence: onlinePresence.value.opponent,
@@ -649,7 +651,9 @@ function backToTournament(): void {
           </div>
           <div v-if="!playing && rematchOffer" class="offer-banner" role="alert">
             <UIcon name="i-lucide-repeat" />
-            <span class="offer-text">{{ rematchOffer.opponent.name }} wants a rematch.</span>
+            <span class="offer-text"
+              ><PlayerLink :username="rematchOffer.opponent.name" /> wants a rematch.</span
+            >
             <UButton size="xs" @click="challenges.accept(rematchOffer)">Accept</UButton>
             <UButton
               size="xs"

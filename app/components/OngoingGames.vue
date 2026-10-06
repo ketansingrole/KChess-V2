@@ -65,7 +65,7 @@ async function open(game: OngoingGame): Promise<void> {
         </div>
         <div class="row-main">
           <div class="row-title">
-            {{ game.opponent.name }}
+            <PlayerLink :username="game.opponent.name" />
             <span v-if="game.opponent.rating" class="muted tabular"
               >({{ game.opponent.rating }})</span
             >

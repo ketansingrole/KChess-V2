@@ -13,8 +13,8 @@ const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ confirm: [] }>()
 
 function confirm(): void {
-  open.value = false
   emit('confirm')
+  open.value = false
 }
 </script>
 

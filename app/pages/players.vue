@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { useLocalStorage, useOnline } from '@vueuse/core'
 import type {
   Crosstable,
+  LichessGame,
+  LichessRatingHistory,
   LichessUser,
   PerfStats,
   PerfType,
@@ -11,12 +13,16 @@ import type {
 import { PERF_TYPES } from '../../src/shared/types'
 import { USERNAME } from '../../src/shared/patterns'
 import { useWatchStore } from '../stores/watch'
+import { useAnalysisStore } from '../stores/analysis'
+import { mergeRatingHistories, ratingHistoryFromGames } from '../utils/ratings'
 
 const online = useOnline()
 const store = useKChessStore()
 const { activeOnlineAccount, connectedAccounts, data, trackedAccounts } = storeToRefs(store)
 const route = useRoute()
 const watcher = useWatchStore()
+const analysis = useAnalysisStore()
+const toast = useToast()
 
 const query = ref(typeof route.query.name === 'string' ? route.query.name : '')
 const recent = useLocalStorage<string[]>('kchess:players-recent', [])
@@ -38,6 +44,11 @@ const perf = ref<PerfType>('blitz')
 const stats = ref<PerfStats | null>(null)
 const statsError = ref('')
 const record = ref<Crosstable | null>(null)
+const games = ref<LichessGame[] | null>(null)
+const history = ref<LichessRatingHistory | null>(null)
+/** The chart was rebuilt from recent rated games because Lichess sent no history. */
+const historyFromGames = ref(false)
+const gamesError = ref('')
 const error = ref('')
 const loading = ref(false)
 let request = 0
@@ -84,6 +95,9 @@ async function lookup(name = query.value.trim()): Promise<void> {
   stats.value = null
   record.value = null
   status.value = null
+  games.value = null
+  gamesError.value = ''
+  history.value = null
   try {
     const found = await window.kchess.profile(name)
     if (current !== request) return
@@ -103,6 +117,8 @@ async function lookup(name = query.value.trim()): Promise<void> {
           if (current === request) record.value = value
         })
         .catch(() => undefined)
+    void loadHistory(found.username, current)
+    void loadGames(found.username, current)
     void window.kchess
       .presence([found.username])
       .then((report) => {
@@ -133,6 +149,16 @@ async function loadStats(): Promise<void> {
 }
 watch(perf, () => void loadStats())
 if (query.value) void lookup()
+// A profile link opened while this page is showing changes only the query, not the page.
+watch(
+  () => route.query.name,
+  (name) => {
+    if (typeof name !== 'string' || name.toLowerCase() === profile.value?.username.toLowerCase())
+      return
+    query.value = name
+    void lookup(name)
+  },
+)
 
 const isFriend = computed(() =>
   data.value.accounts.some(
@@ -150,13 +176,130 @@ const score = computed(() => {
     games: value.nbGames,
   }
 })
-function percent(part: number, whole: number): string {
-  return whole ? `${Math.round((100 * part) / whole)}%` : '–'
-}
+/** Current rating per speed, keyed by the names Lichess uses in rating histories. */
+const currentRatings = computed(() =>
+  Object.fromEntries(
+    perfs.value.map((entry) => [
+      PERF_LABELS[entry.key],
+      { rating: entry.rating, provisional: entry.prov, progress: entry.prog },
+    ]),
+  ),
+)
+const perfItems = computed(() =>
+  perfs.value.map((entry) => ({ label: PERF_LABELS[entry.key], value: entry.key })),
+)
 function hours(seconds: number): string {
   const h = seconds / 3600
   return h >= 1 ? `${Math.round(h)} h` : `${Math.round(seconds / 60)} min`
 }
+async function loadGames(username: string, current: number): Promise<void> {
+  games.value = null
+  gamesError.value = ''
+  try {
+    const list = await window.kchess.recentGames(username)
+    if (current === request) games.value = list
+  } catch {
+    // Lichess sometimes answers "not found" for every player's games; say so plainly.
+    if (current === request)
+      gamesError.value = 'Lichess isn’t sending this player’s games right now.'
+  }
+}
+/** Asks Lichess again for the history and games it did not send. */
+function retryActivity(): void {
+  const user = profile.value
+  if (!user) return
+  history.value = null
+  void loadHistory(user.username, request)
+  void loadGames(user.username, request)
+}
+/** Rated games on the profile but nothing to chart: Lichess withheld the data. */
+const historyEmptyText = computed(() =>
+  perfs.value.length ? 'Lichess isn’t sending this player’s rating history right now.' : undefined,
+)
+
+/**
+ * Lichess's rating history, or (when it sends none, as its endpoint sometimes does for
+ * everyone) one rebuilt from the player's recent rated games.
+ */
+async function loadHistory(username: string, current: number): Promise<void> {
+  const official = await window.kchess.ratingHistory(username).catch(() => [])
+  if (current !== request) return
+  if (official.some((entry) => entry.points?.length)) {
+    history.value = official
+    historyFromGames.value = false
+    return
+  }
+  const rated = await window.kchess.recentGames(username, true).catch(() => [])
+  if (current !== request) return
+  history.value = mergeRatingHistories(official, ratingHistoryFromGames(rated))
+  historyFromGames.value = rated.length > 0
+}
+
+/** Opens one of the player's games in the analysis board, from their side. */
+async function openGame(game: LichessGame): Promise<void> {
+  try {
+    const pgn = await window.kchess.exportGame(game.id)
+    if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
+    analysis.orientation = game.color
+    analysis.origin = {
+      white: game.color === 'white' ? game.account : game.opponent,
+      black: game.color === 'white' ? game.opponent : game.account,
+      gameId: game.id,
+    }
+    store.selectPage('analysis')
+  } catch (cause) {
+    toast.add({
+      title: 'Could not open the game',
+      description: cause instanceof Error ? cause.message : String(cause),
+      color: 'error',
+    })
+  }
+}
+
+/* ── Messages ─────────────────────────────────────────────────────────── */
+const canMessage = computed(
+  () =>
+    connectedAccounts.value.length > 0 &&
+    !!profile.value &&
+    profile.value.username.toLowerCase() !== activeOnlineAccount.value.toLowerCase(),
+)
+const messageOpen = ref(false)
+const messageText = ref('')
+const messageBusy = ref(false)
+const messageError = ref('')
+/** The account was connected before messaging was requested and must be connected again. */
+const messageReconnect = ref(false)
+function openMessage(): void {
+  messageError.value = ''
+  messageReconnect.value = false
+  messageOpen.value = true
+}
+async function sendMessage(): Promise<void> {
+  const user = profile.value
+  const text = messageText.value.trim()
+  if (!user || !text || messageBusy.value) return
+  messageBusy.value = true
+  messageError.value = ''
+  try {
+    const result = await window.kchess.sendMessage(activeOnlineAccount.value, user.username, text)
+    if ('needsReconnect' in result) {
+      messageReconnect.value = true
+      return
+    }
+    messageOpen.value = false
+    messageText.value = ''
+    toast.add({ title: `Message sent to ${user.username}`, color: 'success' })
+  } catch (cause) {
+    messageError.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    messageBusy.value = false
+  }
+}
+async function reconnect(): Promise<void> {
+  messageOpen.value = false
+  await store.connect()
+}
+
 async function watchGame(): Promise<void> {
   if (!status.value?.playingId) return
   localStorage.setItem('kchess:watch-tab', 'friends')
@@ -247,6 +390,16 @@ async function watchGame(): Promise<void> {
               >Challenge</UButton
             >
             <UButton
+              v-if="canMessage"
+              size="sm"
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-message-circle"
+              :disabled="!online"
+              @click="openMessage"
+              >Message</UButton
+            >
+            <UButton
               v-if="status?.playingId"
               size="sm"
               variant="outline"
@@ -272,96 +425,209 @@ async function watchGame(): Promise<void> {
             >
           </span>
         </div>
-        <h3 class="section-title text-sm mb-2">Ratings</h3>
-        <div class="list-rows">
-          <button
-            v-for="entry in perfs"
-            :key="entry.key"
-            type="button"
-            class="list-row text-left"
-            :class="{ 'ring-1 ring-primary': perf === entry.key }"
-            @click="perf = entry.key"
+        <h3 class="section-title text-sm mb-3">
+          Rating history
+          <span v-if="historyFromGames" class="muted text-xs font-normal">
+            · from the last 200 rated games</span
           >
-            <div class="row-main">
-              <div class="row-title">{{ PERF_LABELS[entry.key] }}</div>
-              <div class="row-sub">{{ entry.games }} games</div>
-            </div>
-            <span class="tabular font-semibold">{{ entry.rating }}{{ entry.prov ? '?' : '' }}</span>
-            <span
-              v-if="entry.prog"
-              class="tabular text-xs"
-              :class="entry.prog > 0 ? 'text-success' : 'text-error'"
-              >{{ entry.prog > 0 ? '+' : '' }}{{ entry.prog }}</span
+        </h3>
+        <RatingHistoryChart
+          v-if="history"
+          :history="history"
+          :current="currentRatings"
+          :empty-text="historyEmptyText"
+        >
+          <template v-if="historyEmptyText" #empty>
+            <UButton
+              size="xs"
+              variant="link"
+              icon="i-lucide-rotate-cw"
+              :disabled="!online"
+              @click="retryActivity"
+              >Retry</UButton
             >
-          </button>
-        </div>
+          </template>
+        </RatingHistoryChart>
+        <p v-else class="muted text-sm">Loading…</p>
       </section>
       <section class="card">
-        <h2 class="section-title mb-3">{{ PERF_LABELS[perf] }} record</h2>
+        <div class="card-header record-header">
+          <div>
+            <h2 class="section-title">Record</h2>
+            <p v-if="stats" class="section-hint">
+              <strong class="tabular record-rating">{{
+                stats.rating ? Math.round(stats.rating) : '–'
+              }}</strong>
+              <span v-if="stats.deviation"> ± {{ Math.round(stats.deviation) }}</span>
+              <span v-if="stats.rank"> · rank #{{ stats.rank }}</span>
+              <span v-if="stats.percentile"> · better than {{ stats.percentile }}% of players</span>
+            </p>
+          </div>
+          <USelect
+            v-if="perfItems.length"
+            v-model="perf"
+            :items="perfItems"
+            size="sm"
+            aria-label="Speed"
+            class="w-40"
+          />
+        </div>
         <p v-if="statsError" class="text-error text-sm" role="alert">{{ statsError }}</p>
         <template v-else-if="stats">
-          <p class="text-sm mb-3">
-            <strong class="tabular">{{ stats.rating ? Math.round(stats.rating) : '–' }}</strong>
-            <span v-if="stats.deviation" class="muted"> ± {{ Math.round(stats.deviation) }}</span>
-            <span v-if="stats.rank"> · rank #{{ stats.rank }}</span>
-            <span v-if="stats.percentile"> · better than {{ stats.percentile }}% of players</span>
-          </p>
-          <dl class="stats-grid text-sm">
-            <dt>Games</dt>
-            <dd>{{ stats.count.all }} ({{ stats.count.rated }} rated)</dd>
-            <dt>Wins</dt>
-            <dd>{{ stats.count.win }} · {{ percent(stats.count.win, stats.count.all) }}</dd>
-            <dt>Draws</dt>
-            <dd>{{ stats.count.draw }} · {{ percent(stats.count.draw, stats.count.all) }}</dd>
-            <dt>Losses</dt>
-            <dd>{{ stats.count.loss }} · {{ percent(stats.count.loss, stats.count.all) }}</dd>
-            <dt>Opponents' average</dt>
-            <dd>{{ Math.round(stats.count.opAvg) }}</dd>
-            <dt>Time played</dt>
-            <dd>{{ hours(stats.count.seconds) }}</dd>
-            <dt>Tournament games</dt>
-            <dd>{{ stats.count.tour }} · berserked {{ stats.count.berserk }}</dd>
-            <dt>Highest</dt>
-            <dd>
-              {{
-                stats.highest
-                  ? `${stats.highest.rating} (${new Date(stats.highest.at).toLocaleDateString()})`
-                  : '–'
-              }}
-            </dd>
-            <dt>Lowest</dt>
-            <dd>
-              {{
-                stats.lowest
-                  ? `${stats.lowest.rating} (${new Date(stats.lowest.at).toLocaleDateString()})`
-                  : '–'
-              }}
-            </dd>
-            <dt>Winning streak</dt>
-            <dd>{{ stats.winStreak.current }} now · best {{ stats.winStreak.best }}</dd>
-            <dt>Losing streak</dt>
-            <dd>{{ stats.lossStreak.current }} now · worst {{ stats.lossStreak.best }}</dd>
-          </dl>
-          <div class="grid sm:grid-cols-2 gap-4 mt-4 text-sm">
+          <ResultBar
+            label="Results"
+            :record="{
+              win: stats.count.win,
+              draw: stats.count.draw,
+              loss: stats.count.loss,
+              total: stats.count.all,
+            }"
+          />
+          <dl class="stats-list text-sm">
             <div>
-              <h3 class="section-title text-sm mb-1">Best rated wins</h3>
-              <p v-if="!stats.bestWins.length" class="muted">None yet.</p>
-              <p v-for="win in stats.bestWins" :key="win.gameId">
-                {{ win.opponent }} <span class="muted tabular">{{ win.opponentRating }}</span>
-              </p>
+              <dt>Games</dt>
+              <dd>{{ stats.count.all }} · {{ stats.count.rated }} rated</dd>
             </div>
             <div>
-              <h3 class="section-title text-sm mb-1">Worst rated losses</h3>
+              <dt>Opponents' average</dt>
+              <dd>{{ Math.round(stats.count.opAvg) }}</dd>
+            </div>
+            <div>
+              <dt>Time played</dt>
+              <dd>{{ hours(stats.count.seconds) }}</dd>
+            </div>
+            <div>
+              <dt>Tournament games</dt>
+              <dd>{{ stats.count.tour }} · berserked {{ stats.count.berserk }}</dd>
+            </div>
+            <div>
+              <dt>Highest</dt>
+              <dd>
+                <template v-if="stats.highest"
+                  >{{ stats.highest.rating }}
+                  <span class="muted">{{
+                    new Date(stats.highest.at).toLocaleDateString()
+                  }}</span></template
+                ><template v-else>–</template>
+              </dd>
+            </div>
+            <div>
+              <dt>Lowest</dt>
+              <dd>
+                <template v-if="stats.lowest"
+                  >{{ stats.lowest.rating }}
+                  <span class="muted">{{
+                    new Date(stats.lowest.at).toLocaleDateString()
+                  }}</span></template
+                ><template v-else>–</template>
+              </dd>
+            </div>
+            <div>
+              <dt>Winning streak</dt>
+              <dd>{{ stats.winStreak.current }} now · best {{ stats.winStreak.best }}</dd>
+            </div>
+            <div>
+              <dt>Losing streak</dt>
+              <dd>{{ stats.lossStreak.current }} now · worst {{ stats.lossStreak.best }}</dd>
+            </div>
+          </dl>
+          <div class="record-opponents text-sm">
+            <div>
+              <h3 class="section-title text-sm">Best rated wins</h3>
+              <p v-if="!stats.bestWins.length" class="muted">None yet.</p>
+              <ul v-else class="opponent-list">
+                <li v-for="win in stats.bestWins" :key="win.gameId">
+                  <PlayerLink :username="win.opponent" class="truncate" />
+                  <span class="muted tabular">{{ win.opponentRating }}</span>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h3 class="section-title text-sm">Worst rated losses</h3>
               <p v-if="!stats.worstLosses.length" class="muted">None.</p>
-              <p v-for="loss in stats.worstLosses" :key="loss.gameId">
-                {{ loss.opponent }} <span class="muted tabular">{{ loss.opponentRating }}</span>
-              </p>
+              <ul v-else class="opponent-list">
+                <li v-for="loss in stats.worstLosses" :key="loss.gameId">
+                  <PlayerLink :username="loss.opponent" class="truncate" />
+                  <span class="muted tabular">{{ loss.opponentRating }}</span>
+                </li>
+              </ul>
             </div>
           </div>
         </template>
         <p v-else class="muted text-sm">Loading…</p>
       </section>
+      <section class="card player-games">
+        <h2 class="section-title mb-3">Recent games</h2>
+        <p v-if="gamesError" class="muted text-sm" role="status">
+          {{ gamesError }}
+          <UButton
+            size="xs"
+            variant="link"
+            icon="i-lucide-rotate-cw"
+            :disabled="!online"
+            @click="retryActivity"
+            >Retry</UButton
+          >
+        </p>
+        <p v-else-if="!games" class="muted text-sm">Loading…</p>
+        <p v-else-if="!games.length" class="muted text-sm">No games yet.</p>
+        <div v-else class="game-list">
+          <div class="game-head" aria-hidden="true">
+            <span>Result</span><span>Opponent</span><span>Mode</span><span>Rating</span
+            ><span>Accuracy</span><span>Date</span>
+          </div>
+          <GameRow
+            v-for="game in games"
+            :key="game.id"
+            :game="game"
+            detailed
+            @select="openGame(game)"
+          />
+        </div>
+      </section>
     </div>
+    <UModal
+      v-model:open="messageOpen"
+      :title="profile ? `Message ${profile.username}` : 'Message'"
+      :description="`Sent from @${activeOnlineAccount} as a Lichess private message.`"
+    >
+      <template #body>
+        <UAlert
+          v-if="messageReconnect"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-key-round"
+          title="Lichess needs a new permission"
+          :description="`Connect @${activeOnlineAccount} again to allow sending messages.`"
+          :actions="[{ label: 'Reconnect', icon: 'i-lucide-link', onClick: reconnect }]"
+          class="mb-3"
+        />
+        <UTextarea
+          v-model="messageText"
+          :rows="5"
+          :maxlength="8000"
+          autoresize
+          placeholder="Write a message"
+          aria-label="Message"
+          class="w-full"
+          @keydown.meta.enter="sendMessage"
+          @keydown.ctrl.enter="sendMessage"
+        />
+        <p v-if="messageError" class="text-error text-sm mt-2" role="alert">{{ messageError }}</p>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" @click="messageOpen = false">Cancel</UButton>
+          <UButton
+            icon="i-lucide-send"
+            :loading="messageBusy"
+            :disabled="!messageText.trim() || !online"
+            @click="sendMessage"
+            >Send</UButton
+          >
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>
 
@@ -377,12 +643,55 @@ async function watchGame(): Promise<void> {
   justify-content: center;
   margin-top: 4px;
 }
-.stats-grid {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 16px;
+.player-games {
+  grid-column: 1 / -1;
 }
-.stats-grid dt {
+.record-header {
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.record-rating {
+  color: var(--ui-text-highlighted);
+  font-size: 1rem;
+}
+/* Label left, value right, on one ruled line each, like the settings lists. */
+.stats-list {
+  display: grid;
+  margin: 14px 0 0;
+}
+.stats-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-top: 1px solid var(--ui-border);
+}
+.stats-list dt {
   color: var(--ui-text-muted);
+}
+.stats-list dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.record-opponents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 16px 24px;
+  margin-top: 18px;
+}
+.record-opponents .section-title {
+  margin-bottom: 6px;
+}
+.opponent-list {
+  display: grid;
+  gap: 4px;
+}
+.opponent-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
 }
 </style>

@@ -17,6 +17,8 @@ const props = defineProps<{
   animation?: PieceAnimation
   playerName?: string
   opponentName?: string
+  /** The names are Lichess usernames, so they open the players' profiles. */
+  linkNames?: boolean
 }>()
 
 type ReviewStep = { position: Position; lastMove?: Key[] }
@@ -117,8 +119,16 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       :check="check"
       :turn-color="step.position.turn"
       :live="false"
-      :top="{ name: topName ?? 'Opponent', icon: 'i-lucide-user' }"
-      :bottom="{ name: bottomName ?? 'Player', icon: 'i-lucide-user' }"
+      :top="{
+        name: topName ?? 'Opponent',
+        username: linkNames ? topName : undefined,
+        icon: 'i-lucide-user',
+      }"
+      :bottom="{
+        name: bottomName ?? 'Player',
+        username: linkNames ? bottomName : undefined,
+        icon: 'i-lucide-user',
+      }"
     />
     <MovePanel :moves="replay.moves" :ply="ply" @select="ply = $event" @flip="flipped = !flipped" />
   </div>

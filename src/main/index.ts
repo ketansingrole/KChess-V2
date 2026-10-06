@@ -60,6 +60,8 @@ import {
   invalidateLogin,
   cancelAccountSyncs,
   crosstable,
+  recentGames,
+  sendMessage,
   exportGame,
   playerPerf,
   fetchLichessReviews,
@@ -109,13 +111,25 @@ import {
 } from './store'
 import type { ChallengeInfo, OnlineEvent } from '../shared/types'
 import { ChallengeInbox } from './challenges'
-import { joinTournament, leaveTournament, tournament, tournaments } from './tournaments'
+import {
+  createTournament,
+  joinTournament,
+  leaveTournament,
+  tournament,
+  tournaments,
+} from './tournaments'
 import { Spectator, TV_CHANNEL_KEYS, broadcastTour, broadcasts, tvChannels } from './spectate'
 import { cloudEval } from './cloudEval'
 import { insights } from './insights'
-import { exportToLichessStudy, lichessStudies, lichessStudyChapters } from './studies'
+import {
+  exportToLichessStudy,
+  lichessStudies,
+  lichessStudyChapters,
+  syncLichessStudy,
+} from './studies'
 import {
   assertAction,
+  assertStudySyncRequest,
   assertAnalysisRequest,
   assertChatRoom,
   assertChatText,
@@ -151,6 +165,8 @@ import {
   assertUsernames,
   assertSettings,
   assertUci,
+  assertMessageText,
+  assertNewArena,
   assertUsername,
   assertVoiceAttempt,
   assertVoiceId,
@@ -513,6 +529,9 @@ void app
     handle('gamePage', (_event, query: unknown) => gamePage(assertGamePageQuery(query)))
     handle('gameLibraryOverview', () => gameLibraryOverview())
     handle('insights', (_event, query: unknown) => insights(assertInsightsQuery(query)))
+    handle('syncLichessStudy', (_event, request: unknown) =>
+      syncLichessStudy(assertStudySyncRequest(request)),
+    )
     handle('lichessStudies', (_event, account: unknown) => lichessStudies(assertUsername(account)))
     handle('lichessStudyChapters', (_event, account: unknown, id: unknown) =>
       lichessStudyChapters(assertUsername(account), assertLichessId(id)),
@@ -717,6 +736,12 @@ void app
     handle('crosstable', (_event, a: unknown, b: unknown) =>
       crosstable(assertUsername(a), assertUsername(b)),
     )
+    handle('recentGames', (_event, username: unknown, rated: unknown) =>
+      recentGames(assertUsername(username), rated === true),
+    )
+    handle('sendMessage', (_event, account: unknown, username: unknown, text: unknown) =>
+      sendMessage(assertUsername(account), assertUsername(username), assertMessageText(text)),
+    )
     handle('watch', (_event, target: unknown) => {
       if (online.playing) throw new Error('Finish your game before watching another.')
       return spectator.watch(assertWatchTarget(target, TV_CHANNEL_KEYS))
@@ -728,11 +753,12 @@ void app
     handle('stopWatching', () => spectator.stop())
     handle('broadcasts', () => broadcasts())
     handle('broadcastTour', (_event, id: unknown) => broadcastTour(assertLichessId(id)))
-    handle('tournament', (_event, system: unknown, id: unknown, account: unknown) =>
+    handle('tournament', (_event, system: unknown, id: unknown, account: unknown, page: unknown) =>
       tournament(
         assertTournamentSystem(system),
         assertTournamentId(id),
         assertOptionalAccount(account),
+        typeof page === 'number' && Number.isInteger(page) && page >= 1 && page <= 200 ? page : 1,
       ),
     )
     handle(
@@ -756,6 +782,9 @@ void app
         assertTournamentId(id),
         assertUsername(account),
       ),
+    )
+    handle('createTournament', (_event, account: unknown, arena: unknown) =>
+      createTournament(assertUsername(account), assertNewArena(arena)),
     )
     handle('openGame', (_event, account: unknown, id: unknown) =>
       online.open(assertUsername(account), assertGameId(id)),

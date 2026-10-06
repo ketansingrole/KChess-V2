@@ -4,6 +4,7 @@ import type { InvokeMethod, IpcArguments } from '../shared/ipc'
 import { POSITION_LOOKUP_KINDS } from '../shared/types'
 import {
   assertAction,
+  assertStudySyncRequest,
   assertActivityMax,
   assertAnalysisRequest,
   assertBestMoveOptions,
@@ -21,6 +22,8 @@ import {
   assertLevel,
   assertLichessId,
   assertLocalQuery,
+  assertMessageText,
+  assertNewArena,
   assertMoves,
   assertNotification,
   assertOnlineOptions,
@@ -63,6 +66,9 @@ const lines = (value: unknown) =>
   v.parse(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(5)), value)
 const watchTarget = (value: unknown) => assertWatchTarget(value, TV_CHANNEL_KEYS)
 const studyId = (value: unknown) => (value === '' ? '' : assertLichessId(value))
+const optionalPage = (value: unknown) =>
+  v.parse(v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(200))), value)
+const optionalFlag = (value: unknown) => v.parse(v.optional(v.boolean()), value)
 const chapterName = (value: unknown) =>
   v.parse(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(100)), value)
 const pgn = (value: unknown) =>
@@ -98,6 +104,7 @@ export const IPC_CONTRACTS = {
   },
   positionLookup: { min: 2, checks: [lookupKind, fen, assertLookupOptions] },
   saveExport: { min: 1, checks: [assertExport] },
+  syncLichessStudy: { min: 1, checks: [assertStudySyncRequest] },
   lichessStudies: { min: 1, checks: [assertUsername] },
   lichessStudyChapters: { min: 2, checks: [assertUsername, assertLichessId] },
   exportToLichessStudy: { min: 4, checks: [assertUsername, studyId, chapterName, pgn] },
@@ -159,6 +166,8 @@ export const IPC_CONTRACTS = {
   openGame: { min: 2, checks: [assertUsername, assertGameId] },
   playerPerf: { min: 2, checks: [assertUsername, assertPerfType] },
   crosstable: { min: 2, checks: [assertUsername, assertUsername] },
+  recentGames: { min: 1, checks: [assertUsername, optionalFlag] },
+  sendMessage: { min: 3, checks: [assertUsername, assertUsername, assertMessageText] },
   tvChannels: { min: 0, checks: [] },
   watch: { min: 1, checks: [watchTarget] },
   watchBroadcast: { min: 1, checks: [assertLichessId] },
@@ -168,13 +177,14 @@ export const IPC_CONTRACTS = {
   tournaments: { min: 1, checks: [assertOptionalAccount] },
   tournament: {
     min: 3,
-    checks: [assertTournamentSystem, assertTournamentId, assertOptionalAccount],
+    checks: [assertTournamentSystem, assertTournamentId, assertOptionalAccount, optionalPage],
   },
   joinTournament: {
     min: 3,
     checks: [assertTournamentSystem, assertTournamentId, assertUsername, assertTournamentPassword],
   },
   leaveTournament: { min: 3, checks: [assertTournamentSystem, assertTournamentId, assertUsername] },
+  createTournament: { min: 2, checks: [assertUsername, assertNewArena] },
   clearAccountData: { min: 1, checks: [assertUsername] },
   following: { min: 0, checks: [] },
   addFriends: { min: 1, checks: [assertFriendList] },

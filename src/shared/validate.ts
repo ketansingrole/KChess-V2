@@ -1,6 +1,11 @@
 /** Input validation for values crossing the renderer → main IPC boundary. */
 import * as v from 'valibot'
 import {
+  ARENA_CLOCK_MINUTES,
+  ARENA_DURATIONS,
+  ARENA_INCREMENTS,
+  ARENA_WAIT_MINUTES,
+  type NewArena,
   APPEARANCES,
   CHALLENGE_COLORS,
   CHAT_ROOMS,
@@ -383,6 +388,52 @@ export const assertChatText = (value: unknown): string =>
     ),
     value,
   )
+/** A new arena, limited to the values Lichess accepts. */
+const ARENA_VARIANTS = [
+  'standard',
+  'chess960',
+  'crazyhouse',
+  'antichess',
+  'atomic',
+  'horde',
+  'kingOfTheHill',
+  'racingKings',
+  'threeCheck',
+] as const
+export const assertNewArena = (value: unknown): NewArena =>
+  parse(
+    v.strictObject({
+      name: v.optional(
+        v.pipe(
+          v.string(),
+          v.trim(),
+          v.maxLength(30, 'Arena names are limited to 30 characters.'),
+          v.regex(/^[\p{L}\p{N} ,.'&()-]*$/u, 'Use letters, numbers and simple punctuation.'),
+        ),
+      ),
+      clockTime: v.picklist(ARENA_CLOCK_MINUTES, 'Invalid clock.'),
+      clockIncrement: v.picklist(ARENA_INCREMENTS, 'Invalid increment.'),
+      minutes: v.picklist(ARENA_DURATIONS, 'Invalid duration.'),
+      waitMinutes: v.optional(v.picklist(ARENA_WAIT_MINUTES, 'Invalid start.')),
+      startDate: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+      variant: v.picklist(ARENA_VARIANTS, 'Invalid variant.'),
+      rated: v.boolean(),
+      password: v.optional(v.pipe(v.string(), v.maxLength(60))),
+      description: v.optional(v.pipe(v.string(), v.maxLength(2000))),
+    }),
+    value,
+  ) as NewArena
+/** A Lichess private message, which Lichess caps at 8,000 characters. */
+export const assertMessageText = (value: unknown): string =>
+  parse(
+    v.pipe(
+      v.string('Invalid message.'),
+      v.trim(),
+      v.minLength(1, 'Type a message first.'),
+      v.maxLength(8000, 'Messages are limited to 8,000 characters.'),
+    ),
+    value,
+  )
 export const assertDeclineReason = (value: unknown): DeclineReason =>
   parse(v.picklist(DECLINE_REASONS, 'Invalid reason.'), value)
 export const assertTournamentSystem = (value: unknown): 'arena' | 'swiss' =>
@@ -522,3 +573,20 @@ export const assertGamePageQuery = (value: unknown): GamePageQuery =>
     }),
     value,
   )
+
+export function assertStudySyncRequest(value: unknown): import('./types').StudySyncRequest {
+  if (!value || typeof value !== 'object') throw new Error('Invalid study synchronization.')
+  const data = value as Record<string, unknown>
+  const account = assertUsername(data.account)
+  const studyId = assertLichessId(data.studyId)
+  if (
+    typeof data.baseline !== 'string' ||
+    typeof data.pgn !== 'string' ||
+    !data.baseline.trim() ||
+    !data.pgn.trim() ||
+    data.baseline.length > 500_000 ||
+    data.pgn.length > 500_000
+  )
+    throw new Error('The study is empty or too large to upload.')
+  return { account, studyId, baseline: data.baseline, pgn: data.pgn }
+}
