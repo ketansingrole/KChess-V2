@@ -7,7 +7,7 @@ import { app } from 'electron'
 import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/validate'
 import type { BestMoveOptions, EngineStatus } from '../shared/types'
 import { MANAGED_PATH, managedEngine } from './managedEngine'
-import { UciController, SearchCancelled, assertEngineAvailable } from './uci'
+import { UciController, SearchCancelled, assertEngineAvailable, ensureEngineOptions } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
 import { replay } from '../shared/review'
 import { INITIAL_FEN } from 'chessops/fen'
@@ -148,14 +148,19 @@ export async function bestMove(
             controller.signal.throwIfAborted()
             const profile = engineLevelInfo(level)
             target.write('ucinewgame')
-            target.write(`setoption name Threads value ${searchThreads()}`)
-            target.write('setoption name Hash value 64')
-            // Set every time: the warm engine may have played a Chess960 game before.
-            target.write(`setoption name UCI_Chess960 value ${Boolean(chess960)}`)
-            target.write(`setoption name UCI_LimitStrength value ${Boolean(profile.uciElo)}`)
-            if (profile.uciElo) target.write(`setoption name UCI_Elo value ${profile.uciElo}`)
-            else target.write(`setoption name Skill Level value ${profile.skill ?? 20}`)
-            await target.sync()
+            // The warm process reuses the previous game's options; only changed values
+            // are sent, so consecutive moves at the same level skip the round-trip
+            // (and a redundant Hash clear). Chess960 is set every time in the cache:
+            // the warm engine may have played a Chess960 game before.
+            await ensureEngineOptions(target, {
+              Threads: String(searchThreads()),
+              Hash: '64',
+              UCI_Chess960: String(Boolean(chess960)),
+              UCI_LimitStrength: String(Boolean(profile.uciElo)),
+              ...(profile.uciElo
+                ? { UCI_Elo: String(profile.uciElo) }
+                : { 'Skill Level': String(profile.skill ?? 20) }),
+            })
             controller.signal.throwIfAborted()
             target.write(
               `position ${fen ? `fen ${fen}` : 'startpos'}${moves.length ? ` moves ${moves.join(' ')}` : ''}`,

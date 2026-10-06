@@ -80,33 +80,44 @@ const toPuzzles = (rows: PuzzleRow[]): Puzzle[] => rows.flatMap((row) => puzzleF
 const CANDIDATE_CAP = 5_000
 
 function takeRandom<T>(items: T[], count: number): T[] {
-  const pool = [...items]
-  const keep = Math.max(0, Math.min(count, pool.length))
+  // Partial Fisher-Yates in place: `pool` is freshly fetched per query, so no
+  // caller observes the reorder, and a 5000-row candidate pool avoids a copy.
+  const keep = Math.max(0, Math.min(count, items.length))
   for (let i = 0; i < keep; i++) {
-    const j = i + Math.floor(Math.random() * (pool.length - i))
-    ;[pool[i], pool[j]] = [pool[j]!, pool[i]!]
+    const j = i + Math.floor(Math.random() * (items.length - i))
+    ;[items[i], items[j]] = [items[j]!, items[i]!]
   }
-  return pool.slice(0, keep)
+  return items.slice(0, keep)
 }
 
 const hasTheme = (row: PuzzleRow, theme: string): boolean =>
   ` ${row.themes} `.includes(` ${theme} `)
 
-/** Random unused rows from one rating window with a single indexed seek per attempt (no sort). */
+/**
+ * Random unused rows from one rating window with indexed seeks (no COUNT, no
+ * OFFSET walk, no sort). A random pivot splits the window into two
+ * index-range scans, so a 25k-row window costs two small seeks instead of
+ * walking up to 25k index entries.
+ */
 function pickWindow(database: DatabaseSync, min: number, max: number, used: Set<string>): Puzzle[] {
-  const total = (
-    database
-      .prepare('SELECT COUNT(*) AS n FROM puzzles WHERE rating BETWEEN ? AND ?')
-      .get(min, max) as unknown as { n: number }
-  ).n
-  if (!total) return []
-  const offset = Math.floor(Math.random() * total)
+  if (min > max) return []
+  const pivot = min + Math.random() * (max - min)
+  const columns = 'SELECT id, fen, moves, rating, plays, themes FROM puzzles'
   const rows = database
-    .prepare(
-      'SELECT id, fen, moves, rating, plays, themes FROM puzzles WHERE rating BETWEEN ? AND ? LIMIT 8 OFFSET ?',
-    )
-    .all(min, max, offset) as unknown as PuzzleRow[]
-  return toPuzzles(rows).filter((puzzle) => !used.has(puzzle.id))
+    .prepare(`${columns} WHERE rating BETWEEN ? AND ? AND rating >= ? LIMIT 8`)
+    .all(min, max, pivot) as unknown as PuzzleRow[]
+  const combined =
+    rows.length < 8
+      ? [
+          ...rows,
+          ...(
+            database
+              .prepare(`${columns} WHERE rating BETWEEN ? AND ? AND rating < ? LIMIT 8`)
+              .all(min, max, pivot) as unknown as PuzzleRow[]
+          ).filter((row) => !rows.some((other) => other.id === row.id)),
+        ]
+      : rows
+  return toPuzzles(combined).filter((puzzle) => !used.has(puzzle.id))
 }
 
 /** Random puzzles, optionally of one theme and rating range. */
@@ -116,32 +127,47 @@ export function queryPuzzles(database: DatabaseSync, query: LocalPuzzleQuery): P
   const max = query.maxRating ?? 4000
   const count = Math.max(0, query.count)
   if (!count) return []
-  const rows = database
-    .prepare(
-      `SELECT id, fen, moves, rating, plays, themes FROM puzzles WHERE rating BETWEEN ? AND ? LIMIT ?`,
-    )
-    .all(min, max, CANDIDATE_CAP) as unknown as PuzzleRow[]
-  const pool =
-    query.theme && query.theme !== 'mix' ? rows.filter((row) => hasTheme(row, query.theme!)) : rows
+  const theme = query.theme && query.theme !== 'mix' ? query.theme : undefined
+  const columns = 'SELECT id, fen, moves, rating, plays, themes FROM puzzles'
+  // The theme prefilter runs in SQLite so a rare theme no longer transfers 5000
+  // non-matching rows; `hasTheme` below stays authoritative for exact tokens
+  // (`_` is a LIKE wildcard, so SQL may over-match).
+  const rows = (theme
+    ? database
+        .prepare(
+          `${columns} WHERE rating BETWEEN ? AND ? AND (' ' || themes || ' ' LIKE ' %' || ? || ' %') LIMIT ?`,
+        )
+        .all(min, max, theme, CANDIDATE_CAP)
+    : database
+        .prepare(`${columns} WHERE rating BETWEEN ? AND ? LIMIT ?`)
+        .all(min, max, CANDIDATE_CAP)) as unknown as PuzzleRow[]
+  const pool = theme ? rows.filter((row) => hasTheme(row, theme)) : rows
   const pickedRows = takeRandom(pool, count)
-  // Rare theme in a wide range can truncate below `count`: top up with indexed random seeks.
-  if (pickedRows.length < count && query.theme && query.theme !== 'mix') {
+  // Rare theme in a wide range can truncate below `count`: top up with indexed
+  // pivot seeks (up to 8 candidates per seek, no OFFSET walk).
+  if (pickedRows.length < count && theme) {
     const seen = new Set(pool.map((row) => row.id))
-    const total = (
-      database
-        .prepare('SELECT COUNT(*) AS n FROM puzzles WHERE rating BETWEEN ? AND ?')
-        .get(min, max) as unknown as { n: number }
-    ).n
-    for (let attempt = 0; attempt < 200 && pickedRows.length < count && total > 0; attempt++) {
-      const offset = Math.floor(Math.random() * total)
-      const row = (
-        database
-          .prepare(
-            'SELECT id, fen, moves, rating, plays, themes FROM puzzles WHERE rating BETWEEN ? AND ? LIMIT 1 OFFSET ?',
-          )
-          .all(min, max, offset) as unknown as PuzzleRow[]
-      )[0]
-      if (row && !seen.has(row.id) && hasTheme(row, query.theme)) {
+    const like = `(' ' || themes || ' ' LIKE ' %' || ? || ' %')`
+    for (let attempt = 0; attempt < 25 && pickedRows.length < count; attempt++) {
+      const pivot = min + Math.random() * Math.max(0, max - min)
+      const candidates = [
+        ...(
+          database
+            .prepare(`${columns} WHERE rating BETWEEN ? AND ? AND rating >= ? AND ${like} LIMIT 8`)
+            .all(min, max, pivot, theme) as unknown as PuzzleRow[]
+        ).filter((row) => !seen.has(row.id)),
+      ]
+      if (candidates.length < 8) {
+        for (const row of database
+          .prepare(`${columns} WHERE rating BETWEEN ? AND ? AND rating < ? AND ${like} LIMIT 8`)
+          .all(min, max, pivot, theme) as unknown as PuzzleRow[]) {
+          if (!seen.has(row.id)) candidates.push(row)
+          if (candidates.length >= 8) break
+        }
+      }
+      for (const row of candidates) {
+        if (pickedRows.length >= count) break
+        if (seen.has(row.id) || !hasTheme(row, theme)) continue
         seen.add(row.id)
         pickedRows.push(row)
       }

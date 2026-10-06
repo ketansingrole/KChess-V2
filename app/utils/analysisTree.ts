@@ -241,16 +241,31 @@ export function winningChances(line: Pick<EngineLine, 'cp' | 'mate'> | undefined
 }
 
 /** A principal variation in SAN with move numbers, stopping at the first illegal move. */
+const PV_SAN_CACHE_LIMIT = 200
+const pvSanCache = new Map<string, { san: string; uci: string; label: string; fen: string }[]>()
+/** Clear the `pvSan` memo (tests only). */
+export function clearPvSanCache(): void {
+  pvSanCache.clear()
+}
 export function pvSan(
   fen: string,
   pv: readonly string[],
   max = 12,
 ): { san: string; uci: string; label: string; fen: string }[] {
+  const normalized = pv.slice(0, max)
+  const key = `${fen}|${normalized.join(' ')}`
+  const hit = pvSanCache.get(key)
+  if (hit) {
+    // Refresh LRU order so live engine updates keep the current lines hot.
+    pvSanCache.delete(key)
+    pvSanCache.set(key, hit)
+    return hit
+  }
   const pos = positionFromFen(fen)
   if (!pos) return []
   const moves: { san: string; uci: string; label: string; fen: string }[] = []
   let ply = plyOf(pos)
-  for (const uci of pv.slice(0, max)) {
+  for (const uci of normalized) {
     const parsed = parseUci(uci)
     if (!parsed) break
     const move = normalizeMove(pos, parsed)
@@ -260,5 +275,7 @@ export function pvSan(
     moves.push({ san, uci, label: number ? `${number} ${san}` : san, fen: makeFen(pos.toSetup()) })
     ply++
   }
+  pvSanCache.set(key, moves)
+  if (pvSanCache.size > PV_SAN_CACHE_LIMIT) pvSanCache.delete(pvSanCache.keys().next().value!)
   return moves
 }

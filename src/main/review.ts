@@ -16,7 +16,7 @@ import type {
   StoredReview,
 } from '../shared/types'
 import { parseInfo } from '../shared/uciInfo'
-import { UciController, SearchCancelled } from './uci'
+import { UciController, SearchCancelled, ensureEngineOptions } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { gamesToReview, hasAccount, markChecked, readReview, writeReview } from './reviewStore'
@@ -63,6 +63,13 @@ interface Job {
   fen: string
   moves: string[]
   positions: ReplayedPosition[]
+  /**
+   * Precomputed `position` suffixes per ply (`''` or `' moves …'`), so the
+   * search loop reuses one O(n²) build across both passes instead of
+   * re-joining the move array on every position. Full history is preserved
+   * for repetition context.
+   */
+  prefixes: string[]
   gameId?: string
   account?: string
   background: boolean
@@ -129,13 +136,13 @@ async function search(
       controller.signal,
       async () => {
         if (job.cancelled || !host || host.busy() === 'online') throw new SearchCancelled()
-        write(target, `setoption name Threads value ${job.background ? 1 : searchThreads()}`)
-        await target.uci.sync()
+        // Threads is constant within a job (1 in the background, the budget otherwise),
+        // so confirming it once avoids an `isready` round-trip per position (100+ per game).
+        await ensureEngineOptions(target.uci, {
+          Threads: String(job.background ? 1 : searchThreads()),
+        })
         controller.signal.throwIfAborted()
-        write(
-          target,
-          `position fen ${job.fen}${index ? ` moves ${job.moves.slice(0, index).join(' ')}` : ''}`,
-        )
+        write(target, `position fen ${job.fen}${job.prefixes[index] ?? ''}`)
         await target.uci.search(
           `go depth ${depth} movetime ${ms}`,
           (line) => {
@@ -176,11 +183,18 @@ function jobFor(request: ReviewRequest, background: boolean): Job | null {
   if (positions.length < 2) return null
   const moves = request.moves.slice(0, positions.length - 1)
   const fen = positions[0]!.fen
+  const prefixes: string[] = ['']
+  let acc = ''
+  for (const move of moves) {
+    acc += acc ? ` ${move}` : move
+    prefixes.push(` moves ${acc}`)
+  }
   return {
     key: reviewKey(fen, moves),
     fen,
     moves,
     positions,
+    prefixes,
     gameId: request.gameId,
     account: request.account,
     background,

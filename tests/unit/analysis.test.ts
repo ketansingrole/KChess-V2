@@ -3,6 +3,7 @@ import { parseInfo } from '../../src/shared/uciInfo'
 import { assertAnalysisRequest } from '../../src/shared/validate'
 import {
   addMove,
+  clearPvSanCache,
   deleteAt,
   formatEval,
   lineEnd,
@@ -53,6 +54,10 @@ describe('UCI info lines', () => {
     expect(parseInfo('info string NNUE evaluation using nn.nnue', true)).toBeUndefined()
     expect(parseInfo('info depth 0 score mate 0', true)).toBeUndefined()
     expect(parseInfo('bestmove e2e4', true)).toBeUndefined()
+    expect(parseInfo('', true)).toBeUndefined()
+    expect(parseInfo('  bestmove e2e4  ', true)).toBeUndefined()
+    // Indented engine output keeps the old trimmed semantics.
+    expect(parseInfo('  info depth 5 score mate 2 pv d8h4  ', false)?.line.mate).toBe(-2)
   })
   it('steps over the three values of wdl', () => {
     expect(parseInfo('info depth 9 score cp 12 wdl 300 500 200 pv d2d4', true)?.line).toEqual({
@@ -132,6 +137,17 @@ describe('analysis move tree', () => {
   it('numbers moves from a position with Black to move', () => {
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
     expect(pvSan(fen, ['e7e5', 'g1f3', 'zzzz']).map((m) => m.label)).toEqual(['1… e5', '2. Nf3'])
+  })
+  it('reuses the SAN of an unchanged engine line instead of replaying it', () => {
+    clearPvSanCache()
+    const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
+    const pv = ['e7e5', 'g1f3']
+    const first = pvSan(fen, pv)
+    // Live engine ticks resend the same PV at deeper depths: no new chessops replay.
+    expect(pvSan(fen, [...pv])).toBe(first)
+    expect(pvSan(fen, [...pv, 'b8c6'], 2)).toBe(first)
+    expect(pvSan(fen, [...pv, 'b8c6'])).not.toBe(first)
+    expect(pvSan(fen, [...pv]).map((m) => m.san)).toEqual(['e5', 'Nf3'])
   })
   it('formats evaluations like Lichess', () => {
     expect(formatEval({ cp: 34 })).toBe('+0.3')

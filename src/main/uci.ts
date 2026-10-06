@@ -73,7 +73,17 @@ export class UciController {
     })
     const lines = createInterface({ input: child.stdout })
     lines.on('line', (raw) => {
-      for (const listener of [...this.listeners]) listener(raw.trim())
+      const line = raw.trim()
+      if (!line) return
+      // One listener is the common case (a single search); snapshot only when
+      // several listen, so per-line `info` traffic avoids a Set copy and a
+      // trim per listener. Direct Set iteration is safe here: listeners only
+      // ever remove themselves after matching.
+      if (this.listeners.size === 1) {
+        for (const listener of this.listeners) listener(line)
+        return
+      }
+      for (const listener of [...this.listeners]) listener(line)
     })
     // Keep the first bytes of stderr for failure diagnostics; Stockfish is
     // quiet on success, so this stays empty in the common case.
@@ -253,5 +263,50 @@ export class UciController {
   }
   close(): void {
     this.fail(new SearchCancelled())
+    clearEngineOptions(this)
   }
+}
+
+/**
+ * Engine options already confirmed on each process. `setoption` (notably `Hash`
+ * and `Threads`) can clear the transposition table or reallocate threads, and
+ * every redundant write costs an `isready` round-trip, so only changed options
+ * are sent. Review pays this per position (100+ times per game) and analysis
+ * per board step; computer moves reuse the warm process with the same level.
+ */
+const confirmedOptions = new WeakMap<UciController, Map<string, string>>()
+
+/** Forget what was confirmed (engine replaced or closed; a new process starts empty). */
+export function clearEngineOptions(target: UciController): void {
+  confirmedOptions.delete(target)
+}
+
+/**
+ * Write only options whose value changed since the last successful sync, then
+ * `isready` once when anything changed. Unchanged options need no round-trip:
+ * the engine is idle between searches (`bestmove` already returned).
+ */
+export async function ensureEngineOptions(
+  target: UciController,
+  options: Record<string, string>,
+): Promise<void> {
+  let known = confirmedOptions.get(target)
+  if (!known) {
+    known = new Map<string, string>()
+    confirmedOptions.set(target, known)
+  }
+  const pending: [string, string][] = []
+  for (const [name, value] of Object.entries(options)) {
+    if (known.get(name) !== value) pending.push([name, value])
+  }
+  if (!pending.length) return
+  for (const [name, value] of pending) target.write(`setoption name ${name} value ${value}`)
+  try {
+    await target.sync()
+  } catch (cause) {
+    // A failed engine is recreated; its replacement must configure from scratch.
+    confirmedOptions.delete(target)
+    throw cause
+  }
+  for (const [name, value] of pending) known.set(name, value)
 }

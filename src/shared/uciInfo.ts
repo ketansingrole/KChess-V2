@@ -12,6 +12,14 @@ export interface ParsedInfo {
  * (`currmove`, `hashfull` …) and bound scores from an unfinished iteration return undefined.
  */
 export function parseInfo(text: string, whiteToMove: boolean): ParsedInfo | undefined {
+  // Hot path: hundreds of `info` lines per second during a search, plus
+  // `bestmove`/progress lines that carry no score. The exact `startsWith`
+  // check avoids a trim+split for every non-`info` line; indented input falls
+  // through to the trimmed path below so semantics never change.
+  if (!text.startsWith('info')) {
+    const first = text[0]
+    if (first !== ' ' && first !== '\t' && first !== '\n' && first !== '\r') return undefined
+  }
   const tokens = text.trim().split(/\s+/)
   if (tokens[0] !== 'info') return undefined
   let depth: number | undefined
@@ -36,7 +44,11 @@ export function parseInfo(text: string, whiteToMove: boolean): ParsedInfo | unde
       if (tokens[i + 1] === 'lowerbound' || tokens[i + 1] === 'upperbound') return undefined
       continue
     } else if (token === 'pv') {
-      pv = tokens.slice(i + 1).filter((move) => UCI_MOVE.test(move))
+      pv = []
+      for (let j = i + 1; j < tokens.length; j++) {
+        const move = tokens[j]!
+        if (UCI_MOVE.test(move)) pv.push(move)
+      }
       break
     }
     // `string` is free text with no pv; `wdl` takes three values; every other key takes one.

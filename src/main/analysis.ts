@@ -3,7 +3,7 @@ import { assertAnalysisRequest } from '../shared/validate'
 import type { AnalysisRequest, AnalysisUpdate, EngineLine } from '../shared/types'
 import { parseInfo } from '../shared/uciInfo'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
-import { UciController, SearchCancelled } from './uci'
+import { UciController, SearchCancelled, ensureEngineOptions } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
 import { errorSummary, logDebug, logWarn, truncateForLog } from './logger'
 
@@ -72,13 +72,17 @@ export async function startAnalysis(
           async () => {
             await target.ready
             controller.signal.throwIfAborted()
-            target.write(`setoption name Threads value ${searchThreads()}`)
-            target.write('setoption name Hash value 128')
-            target.write(`setoption name MultiPV value ${request.lines}`)
+            // Stepping through a game reuses this process with identical options;
+            // only changed values are sent, so scrubbing skips redundant round-trips
+            // (and redundant Hash clears that wipe the transposition table).
             // Chessops stores castling as king-to-rook UCI, including standard games.
-            // Without this option Stockfish stops replaying history at the first castle.
-            target.write('setoption name UCI_Chess960 value true')
-            await target.sync()
+            // Without UCI_Chess960 Stockfish stops replaying history at the first castle.
+            await ensureEngineOptions(target, {
+              Threads: String(searchThreads()),
+              Hash: '128',
+              MultiPV: String(request.lines),
+              UCI_Chess960: 'true',
+            })
             controller.signal.throwIfAborted()
             target.write(
               `position fen ${request.rootFen ?? request.fen}${request.moves?.length ? ` moves ${request.moves.join(' ')}` : ''}`,
