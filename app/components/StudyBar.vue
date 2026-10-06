@@ -119,7 +119,6 @@ const menu = computed<DropdownMenuItem[][]>(() => [
         { label: 'Save a copy', icon: 'i-lucide-copy', onSelect: saveCopy },
         {
           label: 'Close study',
-          description: 'Keep the board, stop saving to it',
           icon: 'i-lucide-book-x',
           onSelect: () => analysis.closeStudy(),
         },

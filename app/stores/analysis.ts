@@ -234,10 +234,18 @@ export const useAnalysisStore = defineStore('analysis', () => {
     studySaveError.value = ''
     return studyId.value
   }
-  /** Stop saving edits to the open study; the board keeps its moves. */
-  function closeStudy(): void {
+  /** Save the open study before returning to an empty analysis board. */
+  function closeStudy(): boolean {
     saveStudy()
+    if (study.value && pgn() !== studyPgn) return false
+    studies.flush()
+    studySaveError.value = studies.error
+    if (studySaveError.value) return false
     studyId.value = ''
+    studyChapterId.value = ''
+    studyPgn = ''
+    load()
+    return true
   }
   let studyTimer: ReturnType<typeof setTimeout> | undefined
   function saveStudy(): void {

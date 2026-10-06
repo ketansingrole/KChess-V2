@@ -1317,4 +1317,12 @@ test('keeps multi-chapter studies together and restores the selected chapter off
     )
     .toBe(2)
   await page.screenshot({ path: test.info().outputPath('offline-study-chapters.png') })
+  await page.getByRole('button', { name: 'Study actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Close study', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Study chapter', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Unsaved analysis', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('group', { name: 'Moves', exact: true }).locator('.tree-move'),
+  ).toHaveCount(0)
+  await expect(page.locator('.moves-empty')).toBeVisible()
 })

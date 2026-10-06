@@ -131,6 +131,16 @@ function actions(study: SavedStudy): DropdownMenuItem[][] {
       { label: 'Rename…', icon: 'i-lucide-pencil', onSelect: () => startRename(study) },
       { label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => duplicate(study) },
       { label: 'Copy PGN', icon: 'i-lucide-file-text', onSelect: () => void copyPgn(study) },
+      ...(study.cloud && !study.cloud.structureChanged
+        ? [
+            {
+              label: 'Upload a new cloud copy',
+              icon: 'i-lucide-cloud-upload',
+              disabled: !!uploading.value,
+              onSelect: () => void upload(study, true),
+            },
+          ]
+        : []),
     ],
     [
       {
@@ -334,14 +344,6 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
                     ? 'Upload changes'
                     : 'Upload to Lichess'
               }}</UButton
-            >
-            <UButton
-              v-if="study.cloud && !study.cloud.structureChanged"
-              size="xs"
-              variant="ghost"
-              color="neutral"
-              @click="upload(study, true)"
-              >Upload a new cloud copy</UButton
             >
           </StudyCard>
         </li>

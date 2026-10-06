@@ -55,7 +55,10 @@ function remove(): void {
   if (!id) return
   try {
     // Detach the old board before deleting, so pending autosave cannot resurrect its chapter.
-    analysis.closeStudy()
+    if (!analysis.closeStudy()) {
+      error.value = analysis.studySaveError
+      return
+    }
     const next = library.removeChapter(id, chapterId)
     analysis.openStudy(id, next)
     library.flush()

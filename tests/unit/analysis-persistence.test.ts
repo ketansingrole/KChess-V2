@@ -245,3 +245,45 @@ it('hides assistance during startup recovery and after failure until a confirmed
   expect(startAnalysis).toHaveBeenCalled()
   analysis.detach()
 })
+
+it('closing a study saves pending chapter edits and clears the board and move list', async () => {
+  desktop()
+  const library = useStudyStore()
+  const id = library.saveChapters('Two chapters', [
+    { name: 'First', pgn: '1. e4 *' },
+    { name: 'Second', pgn: '1. d4 d5 (1... Nf6 $1) *' },
+  ])
+  const analysis = useAnalysisStore()
+  analysis.openStudy(id, library.items[0]!.chapters[1]!.id)
+  analysis.root.comments = ['Keep the pending edit']
+  await nextTick()
+  expect(analysis.closeStudy()).toBe(true)
+  expect(analysis.studyId).toBe('')
+  expect(analysis.studyChapterId).toBe('')
+  expect(analysis.root.children).toHaveLength(0)
+  expect(analysis.path).toBe('')
+  await nextTick()
+  expect(library.items[0]!.chapters[1]!.pgn).toContain('Keep the pending edit')
+  expect(library.items[0]!.chapters[1]!.pgn).toContain('Nf6 $1')
+  expect(library.items[0]!.chapters[0]!.pgn).toBe('1. e4 *')
+  expect(JSON.parse(localStorage.getItem('kchess:studies:v1')!).items[0].chapters[1].pgn).toContain(
+    'Keep the pending edit',
+  )
+})
+
+it('keeps the study and board open when pending edits cannot be persisted', async () => {
+  desktop()
+  const library = useStudyStore()
+  const id = library.save('Do not lose', '1. e4 *')
+  const analysis = useAnalysisStore()
+  analysis.openStudy(id)
+  analysis.root.comments = ['Unsaved edit']
+  await nextTick()
+  vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+    throw new Error('Storage full')
+  })
+  expect(analysis.closeStudy()).toBe(false)
+  expect(analysis.studyId).toBe(id)
+  expect(analysis.root.children).toHaveLength(1)
+  expect(analysis.studySaveError).toContain('Storage full')
+})
