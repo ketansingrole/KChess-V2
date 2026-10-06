@@ -9,10 +9,18 @@ import type {
   BroadcastTourDetail,
   BroadcastUpdate,
   TvChannel,
+  TvPastGame,
   WatchFrame,
   WatchState,
   WatchPlayer,
 } from '../shared/types'
+import {
+  defaultFen,
+  replaySetup,
+  setupStart,
+  variantFromLichess,
+  type GameSetup,
+} from '../shared/variant'
 import { client, unwrap } from './lichess'
 import { readLines } from './ndjson'
 import { withUsage } from './usage'
@@ -84,10 +92,139 @@ const playerOf = (raw: unknown): WatchPlayer => {
   }
 }
 
+const gameDetails = v.looseObject({
+  rated: v.optional(v.boolean()),
+  speed: v.optional(text(20)),
+  clock: v.optional(v.looseObject({ initial: num, increment: num })),
+})
+type GameDetails = Pick<WatchFrame, 'rated' | 'speed' | 'clock'>
+/** Rated flag, speed and time control of a game: fields the TV feed leaves out. */
+export function parseGameDetails(raw: unknown): GameDetails {
+  const parsed = v.safeParse(gameDetails, raw)
+  if (!parsed.success) return {}
+  const { rated, speed, clock } = parsed.output
+  return {
+    rated,
+    speed,
+    clock: clock ? { initial: clock.initial, increment: clock.increment } : undefined,
+  }
+}
+
+const exportedGame = v.looseObject({
+  moves: v.optional(text(20_000)),
+  initialFen: v.optional(text(120)),
+  variant: v.optional(text(20)),
+  status: v.optional(text(30)),
+  winner: v.optional(v.picklist(['white', 'black'])),
+})
+interface TvGame {
+  details: GameDetails
+  /** Undefined for variants KChess cannot replay (Crazyhouse). */
+  setup?: GameSetup
+  san: string[]
+  status?: string
+  winner?: 'white' | 'black'
+}
+/** A game's details, start and SAN moves from its JSON export (ongoing games lag a few moves). */
+export function parseTvGame(raw: unknown): TvGame {
+  const parsed = v.safeParse(exportedGame, raw)
+  if (!parsed.success) return { details: parseGameDetails(raw), san: [] }
+  const game = parsed.output
+  const variant = variantFromLichess(game.variant ?? 'standard')
+  return {
+    details: parseGameDetails(raw),
+    setup: variant ? { variant, fen: game.initialFen ?? defaultFen(variant) } : undefined,
+    san: game.moves ? game.moves.split(' ').filter(Boolean) : [],
+    status: game.status,
+    winner: game.winner,
+  }
+}
+async function fetchTvGame(id: string, signal: AbortSignal): Promise<TvGame> {
+  const raw = await unwrap(
+    client.GET('/game/export/{gameId}', {
+      params: {
+        path: { gameId: id },
+        query: { moves: true, tags: false, clocks: false, evals: false, opening: false },
+      },
+      headers: { Accept: 'application/json' },
+      signal,
+    }),
+  )
+  return parseTvGame(raw)
+}
+
+/** Board and side to move: what both the feed's positions and a replay can be compared on. */
+const positionKey = (fen: string): string => fen.split(' ').slice(0, 2).join(' ')
+
+/**
+ * Lichess exports an ongoing game a few moves late, and the TV feed only sends positions from
+ * when it joined. Take the export up to the latest position the feed also showed, then the
+ * feed's own moves from there. Undefined until the export reaches a position the feed sent.
+ * `live[i]` is the move that led from `feed[i]` to `feed[i + 1]`.
+ */
+export function alignTvMoves(
+  setup: GameSetup,
+  san: readonly string[],
+  feed: readonly string[],
+  live: readonly (string | undefined)[],
+): string[] | undefined {
+  const start = setupStart(setup)
+  if (!start || !feed.length) return undefined
+  const position = start.clone()
+  const exported: string[] = []
+  const keys = [positionKey(makeFen(position.toSetup()))]
+  for (const token of san) {
+    const move = parseSan(position, token)
+    if (!move) return undefined
+    exported.push(makeUci(move))
+    position.play(move)
+    keys.push(positionKey(makeFen(position.toSetup())))
+  }
+  const target = positionKey(feed.at(-1)!)
+  for (let ply = keys.length - 1; ply >= 0; ply--) {
+    const seen = feed.lastIndexOf(keys[ply]!)
+    if (seen < 0) continue
+    const since = live.slice(seen)
+    if (since.some((move) => !move)) return undefined
+    const moves = [...exported.slice(0, ply), ...(since as string[])]
+    const replayed = replaySetup(setup, moves)
+    if (replayed?.played.length !== moves.length) return undefined
+    return positionKey(makeFen(replayed.position.toSetup())) === target ? moves : undefined
+  }
+  return undefined
+}
+
+/** Waits, returning early when the watch is cancelled. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true },
+    )
+  })
+}
+/** What the feed has shown of the featured game, to line its delayed export up with. */
+interface TvTrack {
+  gameId: string
+  feed: string[]
+  live: (string | undefined)[]
+}
+/** How often, and how many times, to ask for the featured game until its export catches up. */
+const LINE_UP_DELAY_MS = 5_000
+const LINE_UP_ATTEMPTS = 12
+const PAST_GAMES = 6
+
 /** One live stream at a time: watching something else stops the last thing. */
 export class Spectator {
   private controller: AbortController | null = null
   private session = 0
+  /** Earlier games per TV channel, kept for the app's lifetime. */
+  private past = new Map<string, TvPastGame[]>()
   constructor(
     private frame: (frame: WatchFrame) => void,
     private broadcast: (update: BroadcastUpdate) => void,
@@ -135,6 +272,7 @@ export class Spectator {
       }),
     )
     let current: WatchFrame | null = null
+    let track: TvTrack | null = null
     await readLines(
       stream,
       (line) => {
@@ -148,11 +286,13 @@ export class Spectator {
               { seconds?: number } | undefined
           const fen = displayFen(String(data.fen ?? ''))
           if (!fen || typeof data.id !== 'string') return
+          const gameId = data.id.slice(0, 12)
+          if (current && current.gameId !== gameId) this.remember(channel, current, signal)
           current = {
             session,
             source: 'tv',
             channel,
-            gameId: data.id.slice(0, 12),
+            gameId,
             white: playerOf(side('white')),
             black: playerOf(side('black')),
             orientation: data.orientation === 'black' ? 'black' : 'white',
@@ -161,18 +301,35 @@ export class Spectator {
             blackClock: side('black')?.seconds,
             variant: channel,
             finished: false,
+            previous: this.past.get(channel),
           }
+          track = { gameId, feed: [positionKey(fen)], live: [] }
           this.state({ session, phase: 'connected' })
           this.frame(current)
-        } else if (message.t === 'fen' && current) {
+          void this.lineUp(
+            track,
+            signal,
+            () => session === this.session,
+            (patch) => {
+              if (current?.gameId !== gameId) return
+              current = { ...current, ...patch }
+              this.frame(current)
+            },
+          )
+        } else if (message.t === 'fen' && current && track) {
           const fen = displayFen(String(data.fen ?? ''))
           if (!fen) return
+          const lastMove = uciOrUndefined(data.lm)
+          track.feed.push(positionKey(fen))
+          track.live.push(lastMove)
           current = {
             ...current,
             fen,
-            lastMove: uciOrUndefined(data.lm),
+            lastMove,
             whiteClock: typeof data.wc === 'number' ? data.wc : current.whiteClock,
             blackClock: typeof data.bc === 'number' ? data.bc : current.blackClock,
+            // A move the feed did not name breaks the list; better none than a wrong one.
+            moves: current.moves && lastMove ? [...current.moves, lastMove] : undefined,
           }
           this.state({ session, phase: 'connected' })
           this.frame(current)
@@ -180,6 +337,61 @@ export class Spectator {
       },
       { signal },
     )
+  }
+
+  /**
+   * Fills in what the TV feed leaves out: time control, rated flag and, once Lichess's delayed
+   * export reaches a position the feed showed, the moves so far. Failures stay quiet; the board
+   * works without them.
+   */
+  private async lineUp(
+    track: TvTrack,
+    signal: AbortSignal,
+    current: () => boolean,
+    apply: (patch: Partial<WatchFrame>) => void,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < LINE_UP_ATTEMPTS; attempt++) {
+      if (attempt) await pause(LINE_UP_DELAY_MS, signal)
+      if (signal.aborted || !current()) return
+      let game: TvGame
+      try {
+        game = await fetchTvGame(track.gameId, signal)
+      } catch {
+        continue
+      }
+      if (signal.aborted || !current()) return
+      const moves = game.setup && alignTvMoves(game.setup, game.san, track.feed, track.live)
+      if (attempt === 0 || moves)
+        apply({
+          ...game.details,
+          ...(game.setup ? { variant: game.setup.variant } : {}),
+          ...(moves ? { startFen: game.setup!.fen, moves } : {}),
+        })
+      if (moves || !game.setup) return
+    }
+  }
+
+  /** Keeps a game the channel moved on from, and fetches how it ended. */
+  private remember(channel: string, frame: WatchFrame, signal: AbortSignal): void {
+    const entry: TvPastGame = {
+      gameId: frame.gameId,
+      white: frame.white,
+      black: frame.black,
+      fen: frame.fen,
+      lastMove: frame.lastMove,
+      orientation: frame.orientation,
+    }
+    const list = [
+      entry,
+      ...(this.past.get(channel) ?? []).filter((game) => game.gameId !== entry.gameId),
+    ]
+    this.past.set(channel, list.slice(0, PAST_GAMES))
+    fetchTvGame(entry.gameId, signal)
+      .then((game) => {
+        entry.status = game.status
+        entry.winner = game.winner
+      })
+      .catch(() => {})
   }
 
   private async followGame(id: string, session: number, signal: AbortSignal): Promise<void> {
@@ -210,7 +422,7 @@ export class Spectator {
             whiteClock: current?.whiteClock,
             blackClock: current?.blackClock,
             variant: (data.variant as { key?: string } | undefined)?.key ?? 'standard',
-            speed: typeof data.speed === 'string' ? data.speed : undefined,
+            ...parseGameDetails(data),
             status,
             winner: data.winner === 'white' || data.winner === 'black' ? data.winner : undefined,
             finished: Boolean(status && !['created', 'started'].includes(status)),

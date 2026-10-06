@@ -19,22 +19,23 @@ const label = computed(() => {
     case 'error':
       return 'Retry update'
     default:
-      return 'Update available'
+      return status.value?.version ? `Update to ${status.value.version}` : 'Update available'
   }
 })
 const tooltip = computed(() => {
   const version = status.value?.version
+  const from = status.value?.currentVersion
   switch (status.value?.phase) {
     case 'downloading':
-      return `Downloading KChess ${version}`
+      return `Downloading KChess ${version} (you have ${from})`
     case 'downloaded':
       return `KChess ${version} is ready. Restart now, or it installs when you quit.`
     case 'error':
       return status.value.error ?? 'The update could not finish.'
     default:
       return status.value?.canInstall
-        ? `Download KChess ${version}`
-        : `KChess ${version} is available. Download it from the release page.`
+        ? `Download KChess ${version} (you have ${from})`
+        : `KChess ${version} is available (you have ${from}). Download it from the release page.`
   }
 })
 
@@ -70,7 +71,7 @@ async function restart(): Promise<void> {
     </UTooltip>
     <ConfirmDialog
       v-model:open="confirmRestart"
-      title="Restart and install the update?"
+      :title="`Restart and install KChess ${status?.version ?? ''}?`"
       description="KChess will close and reopen. Finish any game or timed puzzle run first; an unfinished local game or run will be lost, and an online game's clock will keep running."
       confirm-label="Restart and install"
       @confirm="restart"

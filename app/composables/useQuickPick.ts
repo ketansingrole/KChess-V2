@@ -8,6 +8,7 @@ import { SETTINGS_SECTIONS, useKChessStore, type Page } from '../stores/kchess'
 import type { PuzzleTab } from '../stores/puzzles'
 import { useLocalGameStore } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
+import { useAppUpdatesStore } from '../stores/appUpdates'
 import {
   escapeHtml,
   highlightRanges,
@@ -94,6 +95,7 @@ export const MODE_ROWS: { prefix: string; label: string; icon: string; kbds?: st
 /** Builds the palette's groups for its current query, VS Code quick-open style. */
 export function useQuickPick(query: Ref<string>) {
   const store = useKChessStore()
+  const updates = useAppUpdatesStore()
   // Page stores are created only when their command is used: their setup expects loaded data.
   const local = () => useLocalGameStore()
   const analysis = () => useAnalysisStore()
@@ -224,6 +226,9 @@ export function useQuickPick(query: Ref<string>) {
         label: section.label,
         icon: section.icon,
         detail: 'Settings',
+        ...(section.id === 'updates'
+          ? { hint: updates.status?.currentVersion, keywords: 'version about upgrade' }
+          : {}),
         run: () => {
           go('settings')
           store.jumpToSection(section.id)

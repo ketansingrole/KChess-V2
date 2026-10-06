@@ -39,7 +39,7 @@ onMounted(() => {
   const challenges = useChallengeStore()
   void store.init().then(() => {
     if (store.ready) challenges.start()
-    return window.kchess.recordPerformance?.('app.ready', performance.now()).catch(() => {})
+    return window.kchess?.recordPerformance?.('app.ready', performance.now()).catch(() => {})
   })
   void updates.init()
   useReviewStore().listen()

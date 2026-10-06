@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { INITIAL_FEN } from 'chessops/fen'
-import { broadcastGame, displayFen } from '../../src/main/spectate'
+import { INITIAL_FEN, makeFen } from 'chessops/fen'
+import {
+  alignTvMoves,
+  broadcastGame,
+  displayFen,
+  parseGameDetails,
+  parseTvGame,
+} from '../../src/main/spectate'
+import { STANDARD_SETUP, replaySetup } from '../../src/shared/variant'
+import { materialBalance } from '../../app/utils/material'
 import { splitPgn } from '../../src/main/studies'
 import { PositionLookupService } from '../../src/main/positionLookup'
 import type { PositionLookup } from '../../src/shared/types'
@@ -148,5 +156,85 @@ describe('opening explorer databases', () => {
   it('rejects unknown filters', async () => {
     const { lookups } = service(vi.fn<typeof fetch>())
     await expect(lookups.lookup('opening', INITIAL_FEN, { ratings: [1234] })).rejects.toThrow()
+  })
+})
+
+describe('TV game details', () => {
+  it('keeps the time control and rated flag the TV feed leaves out', () => {
+    expect(
+      parseGameDetails({
+        id: 'abcdefgh',
+        rated: true,
+        speed: 'bullet',
+        clock: { initial: 60, increment: 0, totalTime: 60 },
+      }),
+    ).toEqual({ rated: true, speed: 'bullet', clock: { initial: 60, increment: 0 } })
+    expect(parseGameDetails({ rated: false, speed: 'correspondence' })).toEqual({
+      rated: false,
+      speed: 'correspondence',
+      clock: undefined,
+    })
+    expect(parseGameDetails({ rated: 'yes' })).toEqual({})
+  })
+
+  it('counts material in pawns, positive when White is ahead', () => {
+    expect(materialBalance(INITIAL_FEN)).toBe(0)
+    // A rook against a bishop shows as +2, as on Lichess TV.
+    expect(materialBalance('4k3/8/8/8/8/2b5/8/R3K3 w - - 0 1')).toBe(2)
+    expect(materialBalance('4k3/8/8/8/8/8/8/3QK3 b - - 0 1')).toBe(9)
+    expect(materialBalance('3qk3/8/8/8/8/8/8/4K3 w - - 0 1')).toBe(-9)
+  })
+})
+
+describe('TV move list', () => {
+  // e4 e5 Nf3 Nc6 Bc4 Bc5, with the feed's view of each position.
+  const uci = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5']
+  const san = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5']
+  const key = (ply: number) =>
+    makeFen(replaySetup(STANDARD_SETUP, uci.slice(0, ply))!.position.toSetup())
+      .split(' ')
+      .slice(0, 2)
+      .join(' ')
+
+  it('joins a lagging export to the moves the feed sent after it', () => {
+    // The feed joined after Nf3 and has since seen Nc6, Bc4 and Bc5; the export stops at Nc6.
+    const feed = [key(3), key(4), key(5), key(6)]
+    const live = ['b8c6', 'f1c4', 'f8c5']
+    expect(alignTvMoves(STANDARD_SETUP, san.slice(0, 4), feed, live)).toEqual(uci)
+  })
+
+  it('waits while the export has not reached anything the feed showed', () => {
+    const feed = [key(5), key(6)]
+    expect(alignTvMoves(STANDARD_SETUP, san.slice(0, 3), feed, ['f8c5'])).toBeUndefined()
+  })
+
+  it('refuses a list with a gap or that ends somewhere else than the board', () => {
+    const feed = [key(3), key(4), key(5)]
+    expect(alignTvMoves(STANDARD_SETUP, san.slice(0, 3), feed, ['b8c6', undefined])).toBeUndefined()
+    expect(alignTvMoves(STANDARD_SETUP, san.slice(0, 3), feed, ['b8c6', 'f1b5'])).toBeUndefined()
+  })
+
+  it('reads the start, moves and result from a game export', () => {
+    expect(
+      parseTvGame({
+        variant: 'chess960',
+        initialFen: 'bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1',
+        moves: 'e4 e5',
+        status: 'mate',
+        winner: 'black',
+        rated: true,
+      }),
+    ).toMatchObject({
+      setup: {
+        variant: 'chess960',
+        fen: 'bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1',
+      },
+      san: ['e4', 'e5'],
+      status: 'mate',
+      winner: 'black',
+      details: { rated: true },
+    })
+    // Crazyhouse cannot be replayed, so it gets the board without a move list.
+    expect(parseTvGame({ variant: 'crazyhouse', moves: 'e4' }).setup).toBeUndefined()
   })
 })

@@ -1726,13 +1726,21 @@ button.move-cell:hover {
 
 /* ── Online form ───────────────────────────────────────────────────────── */
 .online-form {
+  /* Auto margins stop a grid item stretching; without a width it shrinks to its copy. */
+  width: 100%;
   max-width: 760px;
   margin: 0 auto;
 }
 .tc-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+  /* Six presets: even rows of three, or two on narrow pages, never a lone orphan. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+@container page (max-width: 420px) {
+  .tc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .tc-option {
   display: flex;
@@ -2076,7 +2084,9 @@ button.move-cell:hover {
 }
 .online-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 400px);
+  /* Keep the form and its side panels together instead of leaving a gap between them. */
+  grid-template-columns: minmax(0, 760px) minmax(280px, 400px);
+  justify-content: center;
   gap: 20px;
   align-items: start;
 }

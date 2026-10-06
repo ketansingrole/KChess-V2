@@ -18,6 +18,7 @@ import { useSettingsPersistence } from './kchess/settingsPersistence'
 import { useAccountProfile } from './kchess/accountProfile'
 import { formatBytes } from '../utils/format'
 import { useUsageStore } from './usage'
+import { useAppUpdatesStore } from './appUpdates'
 import type { GameSetup } from '../../src/shared/variant'
 import type {
   AppData,
@@ -330,6 +331,11 @@ export const useKChessStore = defineStore('kchess', () => {
             label: section.label,
             icon: section.icon,
             active: settingsSection.value === section.id,
+            // A known newer release should be findable without opening every category.
+            badge:
+              section.id === 'updates' && useAppUpdatesStore().attention
+                ? { label: 'New', color: 'primary' as const, variant: 'soft' as const }
+                : undefined,
             onSelect: () => jumpToSection(section.id),
           })),
         ]

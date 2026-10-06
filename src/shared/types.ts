@@ -649,9 +649,32 @@ export interface WatchFrame {
   blackClock?: number
   variant: string
   speed?: string
+  /** Rated on Lichess; unknown until the game's details arrive. */
+  rated?: boolean
+  /** Time control in seconds; absent for correspondence or until the details arrive. */
+  clock?: { initial: number; increment: number }
   status?: string
   winner?: 'white' | 'black'
   finished: boolean
+  /** FEN before the first move, once the move list is known. */
+  startFen?: string
+  /** UCI moves from `startFen`; absent until the TV feed and Lichess's delayed export line up. */
+  moves?: string[]
+  /** Games this channel showed earlier in this session, newest first. */
+  previous?: TvPastGame[]
+}
+
+/** A game a TV channel showed before the current one, with its result once Lichess has it. */
+export interface TvPastGame {
+  gameId: string
+  white: WatchPlayer
+  black: WatchPlayer
+  /** The last position the feed sent. */
+  fen: string
+  lastMove?: string
+  orientation: 'white' | 'black'
+  status?: string
+  winner?: 'white' | 'black'
 }
 
 export interface TvChannel {

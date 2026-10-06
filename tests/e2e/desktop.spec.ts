@@ -538,16 +538,19 @@ test('shows update capabilities and persists update preferences @packaged', asyn
   ).toBeVisible()
   await navigate(page, 'Updates')
   await expect(page.getByRole('heading', { name: 'Updates', level: 1 })).toBeVisible()
-  await expect(page.getByText(`Version ${status.currentVersion}`)).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: `KChess ${status.currentVersion}`, level: 2 }),
+  ).toBeVisible()
   const check = page.getByRole('button', { name: 'Check for updates', exact: true })
   const download = page.getByRole('switch', {
     name: 'Download updates in the background',
     exact: true,
   })
+  // Controls that cannot work in this installation are left out rather than shown disabled.
   if (status.canCheck) await expect(check).toBeEnabled()
-  else await expect(check).toBeDisabled()
+  else await expect(check).toHaveCount(0)
   if (status.canInstall) await expect(download).toBeEnabled()
-  else await expect(download).toBeDisabled()
+  else await expect(download).toHaveCount(0)
   if (status.canCheck) {
     await page.getByRole('switch', { name: 'Automatically check for updates', exact: true }).click()
     await expect
@@ -571,13 +574,17 @@ test('shows update capabilities and persists update preferences @packaged', asyn
     page.getByRole('heading', { name: 'Appearance', exact: true, level: 1 }),
   ).toBeVisible()
   await navigate(page, 'Updates')
-  await expect(
-    page.getByRole('switch', { name: 'Automatically check for updates', exact: true }),
-  ).not.toBeChecked()
-  await expect(download).not.toBeChecked()
-  await expect(
-    page.getByRole('switch', { name: 'Install updates when I quit', exact: true }),
-  ).not.toBeChecked()
+  if (status.canCheck) {
+    await expect(
+      page.getByRole('switch', { name: 'Automatically check for updates', exact: true }),
+    ).not.toBeChecked()
+  }
+  if (status.canInstall) {
+    await expect(download).not.toBeChecked()
+    await expect(
+      page.getByRole('switch', { name: 'Install updates when I quit', exact: true }),
+    ).not.toBeChecked()
+  }
   await expect(page.evaluate(() => window.kchess.installAppUpdate())).rejects.toThrow(
     'Download an update',
   )

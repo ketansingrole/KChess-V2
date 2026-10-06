@@ -44,25 +44,32 @@ const title = computed(
 
 <style scoped>
 .result-row {
+  /* The bar gets its own line: beside a long label in a narrow card it collapsed to slivers. */
   display: grid;
-  grid-template-columns: minmax(7rem, 14rem) minmax(0, 1fr) 3rem 3rem;
-  align-items: center;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto 3rem;
+  grid-template-areas:
+    'label value count'
+    'bar bar bar';
+  align-items: baseline;
+  gap: 4px 12px;
+  padding-block: 3px;
   font-size: 13px;
 }
 .result-label {
+  grid-area: label;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .result-bar {
+  grid-area: bar;
   display: flex;
   gap: 2px;
-  height: 12px;
+  height: 6px;
 }
 .result-part {
   min-width: 2px;
-  border-radius: 4px;
+  border-radius: 3px;
 }
 .result-part.win {
   background: var(--ui-success);
@@ -73,8 +80,12 @@ const title = computed(
 .result-part.loss {
   background: var(--ui-error);
 }
-.result-value,
+.result-value {
+  grid-area: value;
+  text-align: right;
+}
 .result-count {
+  grid-area: count;
   text-align: right;
 }
 </style>
