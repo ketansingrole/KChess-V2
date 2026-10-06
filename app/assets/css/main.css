@@ -38,13 +38,6 @@
 * {
   box-sizing: border-box;
 }
-*,
-*::before,
-*::after {
-  /* Remove utility shadows while preserving the rings used by Nuxt UI controls. */
-  --tw-shadow: 0 0 #0000 !important;
-  --tw-inset-shadow: 0 0 #0000 !important;
-}
 html,
 body {
   height: 100%;
@@ -95,7 +88,7 @@ button:disabled {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: minmax(40px, 1fr) minmax(0, 360px) minmax(40px, 1fr);
+  grid-template-columns: minmax(40px, 1fr) minmax(0, 600px) minmax(40px, 1fr);
   gap: 8px;
   align-items: center;
   flex: none;
@@ -176,20 +169,6 @@ button:disabled {
   align-items: center;
   gap: 6px;
 }
-.search-trigger {
-  width: 100%;
-  min-width: 0;
-  font-weight: 400;
-}
-.search-trigger-label {
-  flex: 1;
-  text-align: left;
-  color: var(--ui-text-muted);
-}
-.search-trigger-keys {
-  display: inline-flex;
-  gap: 2px;
-}
 /* Sidebar header doubles as the window drag region. It is as tall as the
    topbar (border included) so its divider lands exactly on the topbar's
    border-bottom line and the two form one continuous rule. The sidebar toggle
@@ -243,16 +222,16 @@ button:disabled {
 /* The fixed toggle overflows the sidebar when collapsed to the icon rail, so
    the sidebar container paints above the topbar (z-20) like OpenChamber's
    fixed titlebar cluster does. */
-.app-shell aside [data-slot='container'] {
+.kchess-sidebar-container {
   z-index: 30;
 }
 /* The collapsed rail (4rem) is narrower than the traffic lights (~72px), so its
    right border would cut through the green button. Draw that border only below
    the titlebar row, so the window controls sit on one uninterrupted surface. */
-.is-mac aside [data-slot='container'] {
+.is-mac .kchess-sidebar-container {
   border-inline-end-color: transparent;
 }
-.is-mac aside [data-slot='container']::after {
+.is-mac .kchess-sidebar-container::after {
   content: '';
   position: absolute;
   top: var(--topbar-height);
@@ -1837,7 +1816,7 @@ button.move-cell:hover {
   }
 }
 @media (max-width: 560px) {
-  .search-trigger-keys {
+  .quickpick-keys {
     display: none;
   }
   .topbar {
@@ -1855,38 +1834,6 @@ button.move-cell:hover {
   font-size: 11px;
   font-weight: 600;
   opacity: 0.7;
-}
-
-/* Segmented controls (UTabs) must never cut their labels off: let them wrap onto a second
-   line, and let the row itself wrap when there are many options and little room. */
-[role='tablist'] {
-  flex-wrap: wrap;
-  height: auto;
-}
-[role='tab'] {
-  height: auto;
-}
-[role='tab'] .truncate {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  text-align: center;
-  line-height: 1.25;
-}
-/* The sliding highlight is one absolutely positioned block sized for a single row, so it cannot
-   follow a wrapped list. Paint the active tab itself instead; it looks the same and wraps safely. */
-[role='tablist'] [data-slot='indicator'] {
-  display: none;
-}
-[role='tablist'][data-orientation='horizontal'] [role='tab'][data-state='active'] {
-  background: var(--ui-primary);
-}
-
-/* Give segmented controls a visible track: against a card their default background matches it,
-   which makes the options look like loose text. */
-[role='tablist'] {
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
 }
 
 /* ── Puzzles and practice ─────────────────────────────────────────────── */
@@ -2174,4 +2121,74 @@ button.move-cell:hover {
 .mini-board {
   width: 64px;
   flex: none;
+}
+
+/* ── Quick pick (⌘K) ─────────────────────────────────────────────────────
+   The top bar's search box is the palette itself: focusing it expands the same box downward
+   into results, VS Code style, instead of opening a second search on top of it. */
+.quickpick {
+  position: relative;
+  width: 100%;
+  height: 32px;
+  -webkit-app-region: no-drag;
+}
+.quickpick-panel {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border-accented);
+  border-radius: 8px;
+  background: var(--ui-bg);
+  overflow: hidden;
+}
+.quickpick:not(.open) .quickpick-panel:hover {
+  background: var(--ui-bg-elevated);
+}
+.quickpick.open .quickpick-panel {
+  max-height: min(560px, calc(100dvh - 16px));
+  border-color: var(--ui-primary);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--ui-primary) 20%, transparent),
+    0 16px 36px -10px rgb(0 0 0 / 0.3);
+}
+.quickpick-panel > .kchess-search-palette {
+  flex: 1;
+  min-height: 0;
+}
+.kchess-quickpick-input > input {
+  height: 30px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.quickpick.open .kchess-quickpick-input > input {
+  cursor: text;
+}
+/* The panel's border is the focus indicator; the global outline would be clipped by it. */
+.kchess-quickpick-input > input:focus-visible {
+  outline: none;
+}
+.quickpick-results {
+  border-top: 1px solid var(--ui-border);
+}
+.quickpick-keys {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  display: inline-flex;
+  gap: 2px;
+  pointer-events: none;
+}
+/* The top bar is a window drag area, which swallows clicks; while searching it must take them
+   so a click anywhere on it closes the search. */
+.app-shell.search-open .topbar {
+  -webkit-app-region: no-drag;
+}
+.kchess-quickpick-list {
+  padding: 0 4px;
+}
+.kchess-quickpick-group + .kchess-quickpick-group {
+  border-top: 1px solid var(--ui-border);
 }

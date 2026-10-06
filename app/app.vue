@@ -6,7 +6,7 @@ import { useKChessStore } from './stores/kchess'
 import { useAppUpdatesStore } from './stores/appUpdates'
 import { useReviewStore } from './stores/review'
 import { useChallengeStore } from './stores/challenges'
-import { exposeToastFocusGuards, labelSearchResults } from './utils/uiAccessibility'
+import { useQuickPick } from './composables/useQuickPick'
 
 useHead({
   title: 'KChess',
@@ -30,19 +30,12 @@ const updates = useAppUpdatesStore()
 // can shift the box back by half; the observer also follows the sidebar's open/close animation.
 const mainEl = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | undefined
-let uiObserver: MutationObserver | undefined
 function trackMainOffset(): void {
   const main = mainEl.value
   if (main) main.style.setProperty('--main-left', `${main.getBoundingClientRect().left}px`)
 }
 
 onMounted(() => {
-  uiObserver = new MutationObserver(() => {
-    exposeToastFocusGuards(document.body)
-    labelSearchResults(document.body)
-  })
-  uiObserver.observe(document.body, { childList: true, subtree: true })
-  exposeToastFocusGuards(document.body)
   const challenges = useChallengeStore()
   void store.init().then(() => {
     if (store.ready) challenges.start()
@@ -58,7 +51,6 @@ onMounted(() => {
 })
 onUnmounted(() => {
   resizeObserver?.disconnect()
-  uiObserver?.disconnect()
   useChallengeStore().stop()
   store.dispose()
   updates.dispose()
@@ -72,11 +64,14 @@ const {
   busy,
   error,
   searchOpen,
-  searchGroups,
+  searchQuery,
   confirmation,
   zenActive,
 } = storeToRefs(store)
-const { toggleSearch } = store
+const { groups: searchGroups, mode: searchMode } = useQuickPick(searchQuery)
+watch(searchOpen, (open) => {
+  if (!open) searchQuery.value = ''
+})
 
 // Questions raised outside a page (e.g. starting a game from the palette mid-game). The dialog keeps
 // its own copy so the text survives the store clearing the question while the dialog animates out.
@@ -129,17 +124,27 @@ function toggleMaximize(event?: MouseEvent): void {
 </script>
 
 <template>
-  <UApp :toaster="{ ui: { viewport: 'kchess-toasts' } }">
+  <UApp :toaster="null">
+    <AppToaster />
+    <NuxtRouteAnnouncer />
     <div
       class="app-shell"
-      :class="{ 'is-mac': isMac, 'is-frameless': isFrameless, zen: zenActive }"
+      :class="{
+        'is-mac': isMac,
+        'is-frameless': isFrameless,
+        zen: zenActive,
+        'search-open': searchOpen,
+      }"
     >
       <USidebar
         v-model:open="sidebarOpen"
         collapsible="icon"
         rail
         :menu="{ ui: { content: 'max-w-[85vw] sm:max-w-xs' } }"
-        :ui="{ header: 'h-(--topbar-height) min-h-(--topbar-height)' }"
+        :ui="{
+          header: 'h-(--topbar-height) min-h-(--topbar-height)',
+          container: 'kchess-sidebar-container',
+        }"
       >
         <template #header>
           <div class="sidebar-titlebar">
@@ -246,21 +251,12 @@ function toggleMaximize(event?: MouseEvent): void {
             </div>
           </div>
           <div class="topbar-center">
-            <UButton
-              icon="i-lucide-search"
-              variant="outline"
-              color="neutral"
-              size="sm"
-              class="search-trigger"
-              aria-description="Search pages and actions"
-              aria-keyshortcuts="Meta+K Control+K"
-              @click="toggleSearch"
-            >
-              <span class="search-trigger-label">Search…</span>
-              <span class="search-trigger-keys">
-                <UKbd value="meta" size="sm" /><UKbd value="K" size="sm" />
-              </span>
-            </UButton>
+            <AppCommandPalette
+              v-model:open="searchOpen"
+              v-model:query="searchQuery"
+              :groups="searchGroups"
+              :mode="searchMode"
+            />
           </div>
           <div class="topbar-right">
             <UTooltip
@@ -292,7 +288,9 @@ function toggleMaximize(event?: MouseEvent): void {
             </template>
           </div>
           <div v-else class="page">
-            <NuxtPage />
+            <PageContent>
+              <NuxtPage />
+            </PageContent>
           </div>
         </div>
       </main>
@@ -306,18 +304,6 @@ function toggleMaximize(event?: MouseEvent): void {
         @click="store.toggleSetting('zenMode')"
         >Leave zen mode</UButton
       >
-      <UModal v-model:open="searchOpen" title="Search" :ui="{ content: 'max-w-lg' }">
-        <template #content>
-          <LazyUCommandPalette
-            :groups="searchGroups"
-            :fuse="{ fuseOptions: { useExtendedSearch: true } }"
-            placeholder="Search pages and actions…"
-            :close="true"
-            class="h-80 kchess-search-palette"
-            @update:open="searchOpen = $event"
-          />
-        </template>
-      </UModal>
       <ConfirmDialog
         v-model:open="confirmOpen"
         :title="asked?.title ?? ''"

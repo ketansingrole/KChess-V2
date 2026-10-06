@@ -30,11 +30,22 @@ it.each([
   ['positionLookup', ['opening', INITIAL_FEN, { speeds: ['bad'] }]],
   ['reviewGet', [INITIAL_FEN, ['e2e5']]],
   ['recordPerformance', ['app.ready', Infinity]],
+  ['recordPerformance', ['page.navigation:/players?name=Alice', 10]],
+  ['reportRendererError', [{ route: '/players?name=Alice', message: 'Failure', info: 'render' }]],
+  ['reportRendererError', [{ route: '/analysis', message: 'x'.repeat(1001), info: 'render' }]],
   ['exportToLichessStudy', ['Alice', '', 'Chapter', ' ']],
 ] as [InvokeMethod, unknown[]][])('rejects malformed %s input', (method, args) => {
   expect(() => validateIpcArguments(method, args)).toThrow()
 })
 it('allows optional arguments and preserves valid invocations', () => {
+  expect(() =>
+    validateIpcArguments('recordPerformance', ['page.navigation:/analysis', 10]),
+  ).not.toThrow()
+  expect(() =>
+    validateIpcArguments('reportRendererError', [
+      { route: '/analysis', message: 'Failure', info: 'render' },
+    ]),
+  ).not.toThrow()
   expect(() => validateIpcArguments('syncGames', [])).not.toThrow()
   expect(() => validateIpcArguments('bestMove', [[], 'club'])).not.toThrow()
   expect(() => validateIpcArguments('positionLookup', ['opening', INITIAL_FEN])).not.toThrow()

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-defineProps<{ title: string }>()
+const props = defineProps<{ title: string }>()
+useHead(() => ({ title: `${props.title} — KChess` }))
 </script>
 
 <template>

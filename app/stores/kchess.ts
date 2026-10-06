@@ -3,12 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { useLocalStorage, useMediaQuery } from '@vueuse/core'
 import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
 import { pickConnectedAccount } from '../../src/shared/accounts'
-import {
-  DEFAULT_ENGINE_LEVELS,
-  engineLevelLabel,
-  nearestEngineLevel,
-} from '../../src/shared/engineLevels'
-import { canPlayOnline, perfFor } from '../../src/shared/timeControl'
+import { nearestEngineLevel } from '../../src/shared/engineLevels'
+import { canPlayOnline } from '../../src/shared/timeControl'
 import { boardThemes } from '../utils/boards'
 import { allThemes, applyTheme, findTheme, oauthPageLook } from '../utils/themes'
 import { fen, navigatePly } from '../utils/chess'
@@ -341,7 +337,14 @@ export const useKChessStore = defineStore('kchess', () => {
           label: item.label,
           icon: item.icon,
           active: page.value === item.id,
-          onSelect: () => choosePage(item.id),
+          to: item.id === 'dashboard' ? '/' : `/${item.id}`,
+          prefetchOn: { interaction: true, visibility: false },
+          prefetchedClass: 'route-prefetched',
+          onSelect: () => {
+            error.value = ''
+            message.value = ''
+            if (isNarrow.value) sidebarOpen.value = false
+          },
         })),
   )
 
@@ -415,131 +418,6 @@ export const useKChessStore = defineStore('kchess', () => {
       : [10, 0]
     void startOnlineGame(minutes, increment, rated, username)
   }
-  // The same keys the Puzzles and Practice pages remember their tab in (VueUse keeps every reader in sync).
-  const puzzleTab = useLocalStorage('kchess:puzzle-tab', 'train')
-  const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
-  const pagesForSearch = [
-    ...nav,
-    { id: 'settings' as Page, label: 'Settings', icon: 'i-lucide-settings-2' },
-  ]
-  const searchGroups = computed(() => {
-    const computerLevels = (settings.value?.engineLevels ?? DEFAULT_ENGINE_LEVELS).map((id) => ({
-      id,
-      label: engineLevelLabel(id),
-    }))
-    const computerItems = computerLevels.flatMap((entry) =>
-      (['white', 'black'] as const).map((color) => ({
-        id: `stockfish-${entry.id}-${color}`,
-        label: `Play Stockfish · ${entry.label} · as ${color === 'white' ? 'White' : 'Black'}`,
-        icon: 'i-lucide-cpu',
-        onSelect: () => startComputerGame(entry.id, color),
-      })),
-    )
-    const onlineItems = connectedAccounts.value.length
-      ? [
-          [10, 0],
-          [10, 5],
-          [15, 10],
-          [30, 0],
-        ].flatMap(([minutes, increment]) =>
-          [false, true].map((rated) => ({
-            id: `online-${minutes}-${increment}-${rated}`,
-            label: `Find online game · ${minutes}+${increment} ${perfFor(minutes!, increment!)} · ${rated ? 'Rated' : 'Casual'}`,
-            icon: 'i-lucide-globe-2',
-            onSelect: () => void startOnlineGame(minutes!, increment!, rated),
-          })),
-        )
-      : [
-          {
-            id: 'online-connect',
-            label: 'Connect Lichess to play online',
-            icon: 'i-lucide-link',
-            onSelect: () => chooseSearch('settings'),
-          },
-        ]
-    // A direct challenge allows faster controls than a public seek, so use the form's control when it qualifies.
-    const [challengeMinutes, challengeIncrement] = canPlayOnline(
-      onlineMinutes.value,
-      onlineIncrement.value,
-      true,
-    )
-      ? [onlineMinutes.value, onlineIncrement.value]
-      : [10, 0]
-    const friendItems = connectedAccounts.value.length
-      ? trackedAccounts.value.flatMap((friend) =>
-          [false, true].map((rated) => ({
-            id: `challenge-${friend.username}-${rated}`,
-            label: `Challenge @${friend.username} · ${challengeMinutes}+${challengeIncrement} · ${rated ? 'Rated' : 'Casual'}`,
-            icon: 'i-lucide-swords',
-            onSelect: () =>
-              void startOnlineGame(challengeMinutes, challengeIncrement, rated, friend.username),
-          })),
-        )
-      : []
-    return [
-      {
-        id: 'pages',
-        label: 'Go to',
-        items: pagesForSearch.map((item) => ({
-          id: item.id,
-          label: item.label,
-          icon: item.icon,
-          onSelect: () => chooseSearch(item.id),
-        })),
-      },
-      {
-        id: 'train',
-        label: 'Puzzles and practice',
-        items: [
-          ['train', 'Train puzzles', 'i-lucide-puzzle'],
-          ['daily', 'Daily puzzle', 'i-lucide-calendar-days'],
-          ['rush', 'Puzzle Storm, Streak and Rush (local)', 'i-lucide-zap'],
-          ['stats', 'Puzzle stats (from Lichess)', 'i-lucide-chart-column'],
-        ]
-          .map(([tab, label, icon]) => ({
-            id: `puzzles-${tab}`,
-            label: label!,
-            icon: icon!,
-            onSelect: () => {
-              puzzleTab.value = tab!
-              chooseSearch('puzzles')
-            },
-          }))
-          .concat(
-            [
-              ['coordinates', 'Practice: board coordinates', 'i-lucide-grid-3x3'],
-              ['knight', 'Practice: knight paths', 'i-lucide-crown'],
-              ['endgames', 'Practice: endgame drills', 'i-lucide-swords'],
-            ].map(([tab, label, icon]) => ({
-              id: `practice-${tab}`,
-              label: label!,
-              icon: icon!,
-              onSelect: () => {
-                practiceTab.value = tab!
-                chooseSearch('practice')
-              },
-            })),
-          ),
-      },
-      { id: 'play-computer', label: 'Play the computer', items: computerItems },
-      { id: 'play-online', label: 'Play online', items: [...onlineItems, ...friendItems] },
-      {
-        id: 'actions',
-        label: 'Actions',
-        items: [
-          {
-            id: 'sync',
-            label: 'Sync Lichess games',
-            icon: 'i-lucide-refresh-cw',
-            onSelect: () => {
-              searchOpen.value = false
-              void sync()
-            },
-          },
-        ],
-      },
-    ]
-  })
   const connectedAccounts = computed(() => data.value?.accounts.filter((a) => a.connected) ?? [])
   const trackedAccounts = computed(() => data.value?.accounts.filter((a) => !a.connected) ?? [])
   // The connected account that plays online games (remembered on this device). Falls back
@@ -609,8 +487,15 @@ export const useKChessStore = defineStore('kchess', () => {
         : []),
     ],
   ])
-  function toggleSearch(): void {
-    searchOpen.value = !searchOpen.value
+  /** The palette's query; a leading prefix picks its mode (`>` commands, `@` players, `#` settings). */
+  const searchQuery = ref('')
+  function toggleSearch(prefix = ''): void {
+    if (searchOpen.value && (!prefix || searchQuery.value.startsWith(prefix))) {
+      searchOpen.value = false
+      return
+    }
+    searchQuery.value = prefix
+    searchOpen.value = true
   }
   function chooseSearch(next: Page): void {
     selectPage(next)
@@ -801,6 +686,11 @@ export const useKChessStore = defineStore('kchess', () => {
       event.preventDefault()
       selectPage('settings')
     }
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+      event.preventDefault()
+      toggleSearch('>')
+      return
+    }
     if (
       (event.metaKey || event.ctrlKey) &&
       (event.key.toLowerCase() === 'k' || event.key.toLowerCase() === 'f')
@@ -942,7 +832,10 @@ export const useKChessStore = defineStore('kchess', () => {
     error,
     message,
     searchOpen,
-    searchGroups,
+    searchQuery,
+    nav,
+    ask,
+    startComputerGame,
     confirmation,
     settingsSection,
     startOnlineGame,

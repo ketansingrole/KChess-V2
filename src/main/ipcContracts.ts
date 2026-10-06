@@ -1,4 +1,5 @@
 import * as v from 'valibot'
+import { PERFORMANCE_NAMES, RENDERER_ROUTES } from '../shared/rendererDiagnostics'
 import type { InvokeMethod, IpcArguments } from '../shared/ipc'
 import { POSITION_LOOKUP_KINDS } from '../shared/types'
 import {
@@ -74,14 +75,27 @@ const pgn = (value: unknown) =>
     ),
     value,
   )
-const timingName = (value: unknown) =>
-  v.parse(v.picklist(['app.ready', 'board.frame', 'voice.activation']), value)
+const timingName = (value: unknown) => v.parse(v.picklist(PERFORMANCE_NAMES), value)
 const timingValue = (value: unknown) =>
   v.parse(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(300_000)), value)
 
 /** Every DesktopApi invocation must declare its arity and a validator for every argument. */
 export const IPC_CONTRACTS = {
   recordPerformance: { min: 2, checks: [timingName, timingValue] },
+  reportRendererError: {
+    min: 1,
+    checks: [
+      (value) =>
+        v.parse(
+          v.strictObject({
+            route: v.picklist(RENDERER_ROUTES),
+            message: v.pipe(v.string(), v.maxLength(1000)),
+            info: v.pipe(v.string(), v.maxLength(160)),
+          }),
+          value,
+        ),
+    ],
+  },
   positionLookup: { min: 2, checks: [lookupKind, fen, assertLookupOptions] },
   saveExport: { min: 1, checks: [assertExport] },
   lichessStudies: { min: 1, checks: [assertUsername] },

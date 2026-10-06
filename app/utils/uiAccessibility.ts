@@ -1,8 +1,21 @@
 /** Nuxt UI does not currently forward a label to CommandPalette's inner listbox. */
 export function labelSearchResults(root: ParentNode): void {
   for (const listbox of root.querySelectorAll('.kchess-search-palette [role="listbox"]')) {
-    listbox.setAttribute('aria-label', 'Search results')
+    if (listbox.getAttribute('aria-label') !== 'Search results') {
+      listbox.setAttribute('aria-label', 'Search results')
+    }
   }
+}
+
+/** Observe only a component's owned DOM, including its locally rendered portal content. */
+export function observeUiAccessibility(
+  root: HTMLElement,
+  repair: (root: ParentNode) => void,
+): () => void {
+  const observer = new MutationObserver(() => repair(root))
+  observer.observe(root, { childList: true, subtree: true })
+  repair(root)
+  return () => observer.disconnect()
 }
 
 /** Reka's toast focus proxies must stay keyboard reachable without being aria-hidden. */

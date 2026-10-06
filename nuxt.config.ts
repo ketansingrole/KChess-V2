@@ -1,7 +1,8 @@
-import { localIcons, voskWorkerPlugin } from './scripts/vosk-worker-plugin'
+import { localIcons, voskWorkerPlugin } from './scripts/vosk-worker-plugin.ts'
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
+  future: { compatibilityVersion: 5 },
   ssr: false,
   // Ignore model files left by older builds; voice models now live in the user's cache.
   nitro: { ignore: ['**/voice/model.tar.gz*'] },

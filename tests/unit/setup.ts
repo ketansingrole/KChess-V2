@@ -14,6 +14,7 @@ beforeEach(() => {
   localStorage.clear()
   setActivePinia(createPinia())
   vi.stubGlobal('useRoute', () => ({ path: '/online' }))
+  vi.stubGlobal('useHead', vi.fn())
   vi.stubGlobal('useToast', () => ({ add: vi.fn() }))
   vi.stubGlobal('navigateTo', vi.fn())
   vi.stubGlobal('storeToRefs', storeToRefs)

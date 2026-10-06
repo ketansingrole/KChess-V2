@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import type { InsightsReport } from '../../src/shared/types'
+import { computed, ref } from 'vue'
+import { useInsightsReport } from '../composables/useInsightsReport'
 
 const store = useKChessStore()
 const { data, activeOnlineAccount } = storeToRefs(store)
@@ -8,9 +8,15 @@ const account = ref(activeOnlineAccount.value || data.value.accounts[0]?.usernam
 const speed = ref<string>('all')
 const period = ref<string>('all')
 const rated = ref<string>('all')
-const report = ref<InsightsReport | null>(null)
-const error = ref('')
-const loading = ref(false)
+const query = computed(() => ({
+  account: account.value,
+  speed: speed.value === 'all' ? undefined : speed.value,
+  rated: rated.value === 'all' ? undefined : rated.value === 'rated',
+  days: period.value === 'all' ? undefined : Number(period.value),
+}))
+const { data: report, error: requestError, status, refresh } = useInsightsReport(query)
+const error = computed(() => requestError.value?.message ?? '')
+const loading = computed(() => status.value === 'pending')
 
 const accounts = computed(() =>
   data.value.accounts.map((a) => ({ label: `@${a.username}`, value: a.username })),
@@ -47,25 +53,6 @@ const ENDINGS: Record<string, string> = {
   cheat: 'Cheat detected',
   variantEnd: 'Variant win',
 }
-
-async function load(): Promise<void> {
-  if (!account.value) return
-  loading.value = true
-  error.value = ''
-  try {
-    report.value = await window.kchess.insights({
-      account: account.value,
-      speed: speed.value === 'all' ? undefined : speed.value,
-      rated: rated.value === 'all' ? undefined : rated.value === 'rated',
-      days: period.value === 'all' ? undefined : Number(period.value),
-    })
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
-  } finally {
-    loading.value = false
-  }
-}
-watch([account, speed, period, rated], () => void load(), { immediate: true })
 
 /** Four-hour blocks read better than 24 thin rows. */
 const byTime = computed(() => {
@@ -131,7 +118,11 @@ const best = computed(() => {
         ]"
       />
     </div>
-    <p v-else-if="error" class="text-error text-sm" role="alert">{{ error }}</p>
+    <div v-else-if="error" class="card">
+      <p class="text-error text-sm" role="alert">{{ error }}</p>
+      <UButton class="mt-3" icon="i-lucide-rotate-cw" @click="refresh()">Try again</UButton>
+    </div>
+    <p v-else-if="loading" class="text-muted text-sm" role="status">Loading insights…</p>
     <div v-else-if="report && !report.total" class="card">
       <UEmpty
         variant="naked"

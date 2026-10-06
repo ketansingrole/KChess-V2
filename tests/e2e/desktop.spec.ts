@@ -1033,16 +1033,72 @@ test('quick logout all accounts is a separate explicit action', async ({ desktop
 
 test('labels search results and keeps error notifications keyboard accessible', async ({
   desktop: { page },
-}) => {
-  await page.getByRole('button', { name: /Search/ }).click()
+}, testInfo) => {
+  // Count repair queries in the real renderer without shipping diagnostic state in the app.
+  await page.evaluate(() => {
+    const counts = { search: 0, notifications: 0, body: 0 }
+    ;(window as unknown as { accessibilityQueries: typeof counts }).accessibilityQueries = counts
+    const original = Element.prototype.querySelectorAll
+    Element.prototype.querySelectorAll = function (this: Element, selector: string) {
+      if (selector === '.kchess-toasts' || selector === '.kchess-search-palette [role="listbox"]') {
+        const owner = this.getAttribute('data-ui-accessibility')
+        if (owner === 'search' || owner === 'notifications') counts[owner]++
+        if (this === document.body) counts.body++
+      }
+      return original.call(this, selector)
+    } as typeof original
+  })
+  const counts = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as { accessibilityQueries: Record<string, number> })
+          .accessibilityQueries,
+    )
+  await navigate(page, 'Analysis board')
+  const engine = page.getByRole('switch', { name: 'Engine analysis', exact: true })
+  await expect(engine).toBeEnabled()
+  if ((await engine.getAttribute('aria-checked')) !== 'true') await engine.click()
+  await expect(page.locator('.pv-row:not(.pending)').first()).toBeVisible({ timeout: 30_000 })
+  const moveInput = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  await moveInput.fill('e4')
+  await moveInput.press('Enter')
+  await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
+  await expect(page.locator('.pv-row:not(.pending)').first()).toBeVisible({ timeout: 30_000 })
+  const analysisCounts = await counts()
+  expect(analysisCounts).toEqual({ search: 0, notifications: 0, body: 0 })
+  const search = page.getByRole('textbox', { name: 'Search pages and commands', exact: true })
+  await search.click()
   await expect(page.getByRole('listbox', { name: 'Search results', exact: true })).toBeVisible()
+  await search.fill('zzzz-no-results')
+  await expect(page.getByRole('listbox', { name: 'Search results', exact: true })).toBeVisible()
+  await search.fill('settings')
+  await expect(page.getByRole('listbox', { name: 'Search results', exact: true })).toContainText(
+    'Settings',
+  )
+  const searchCounts = await counts()
+  expect(searchCounts.search).toBeGreaterThan(0)
+  expect(searchCounts.notifications).toBe(0)
   await page.keyboard.press('Escape')
   await navigate(page, 'Following')
+  const navigationCounts = await counts()
+  expect(navigationCounts.notifications).toBe(0)
+  expect(navigationCounts.body).toBe(0)
   await page.getByRole('textbox', { name: 'Lichess username to follow' }).fill('!')
   await page.getByRole('button', { name: 'Follow player', exact: true }).click()
   const notifications = page.locator('.kchess-toasts')
   await expect(notifications.getByText('Something went wrong', { exact: true })).toBeVisible()
   await expect(page.locator('span[aria-hidden="true"][tabindex="0"]')).toHaveCount(0)
+  const notificationCounts = await counts()
+  expect(notificationCounts.notifications).toBeGreaterThan(0)
+  expect(notificationCounts.body).toBe(0)
+  await testInfo.attach('accessibility-repair-queries', {
+    body: JSON.stringify(
+      { analysisCounts, searchCounts, navigationCounts, notificationCounts },
+      null,
+      2,
+    ),
+    contentType: 'application/json',
+  })
   // The library's F8 shortcut enters the notification area; dismissal remains reachable.
   await page.keyboard.press('F8')
   await page.keyboard.press('Tab')
@@ -1051,4 +1107,139 @@ test('labels search results and keeps error notifications keyboard accessible', 
   await expect(close).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(notifications.getByText('Something went wrong', { exact: true })).toBeHidden()
+})
+
+test('announces page navigation and prefetches links on intent @packaged', async ({
+  desktop: { app, page },
+}) => {
+  await expect(page).toHaveTitle('Home — KChess')
+  const sidebar = page.locator('aside')
+  const link = sidebar.getByRole('link', { name: 'Analysis board', exact: true })
+  // Wide desktop sidebar; interaction prefetch must not mount the destination page.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800))
+  await expect(link).toBeVisible()
+  await link.focus()
+  await expect(link).toHaveClass(/prefetched/)
+  await expect(page).toHaveTitle('Home — KChess')
+  await link.click()
+  await expect(page).toHaveTitle('Analysis board — KChess')
+  await expect(page.locator('.nuxt-route-announcer [aria-live="polite"]')).toHaveText(
+    'Analysis board — KChess',
+  )
+  await navigate(page, 'Practice')
+  await expect(page).toHaveTitle('Practice — KChess')
+  await expect(page.locator('.nuxt-route-announcer [aria-live="polite"]')).toHaveText(
+    'Practice — KChess',
+  )
+})
+
+test('recovers a failed reviewed game Insights page and records route diagnostics @packaged', async ({
+  desktop: { app, page, profile },
+}) => {
+  await navigate(page, 'Lichess insights')
+  await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
+  const corruptInsights = () =>
+    page.evaluate(() => {
+      const nuxt = (
+        window as unknown as {
+          useNuxtApp(): { _asyncData: Record<string, { data: { value: unknown } }> }
+        }
+      ).useNuxtApp()
+      // Simulate malformed output reaching a rendering component, through real Nuxt state.
+      nuxt._asyncData['insights-report']!.data.value = { total: 1 }
+    })
+  await corruptInsights()
+  await expect(page.getByRole('alert')).toHaveText("This page couldn't load")
+  await expect(page.locator('aside').getByText('Analysis board', { exact: true })).toBeAttached()
+  await page.getByRole('button', { name: 'Try again', exact: true }).click()
+  await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
+  await corruptInsights()
+  await expect(page.getByRole('alert')).toHaveText("This page couldn't load")
+  await navigate(page, 'Analysis board')
+  await expect(page).toHaveTitle('Analysis board — KChess')
+  await expect(page.locator('cg-board')).toBeVisible()
+  await expect(page.getByText("This page couldn't load")).toHaveCount(0)
+  const destination = join(profile, 'diagnostics.json')
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath })
+  }, destination)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await navigate(page, 'Data & storage')
+  await page.getByRole('button', { name: 'Export diagnostics', exact: true }).click()
+  await expect(page.getByText('Diagnostics exported.', { exact: true })).toBeVisible()
+  const report = JSON.parse(await readFile(destination, 'utf8'))
+  expect(report.logs.join('')).toContain('Renderer page error:')
+  expect(report.logs.join('')).toContain('/insights')
+  expect(report.performance.operations).toHaveProperty(['page.navigation:/insights'])
+})
+
+test('quick pick switches modes, runs commands and remembers them', async ({
+  desktop: { page },
+}, testInfo) => {
+  const results = page.getByRole('listbox', { name: 'Search results', exact: true })
+  const input = page.getByRole('textbox', { name: 'Search pages and commands', exact: true })
+  await page.keyboard.press('ControlOrMeta+K')
+  await expect(input).toBeFocused()
+  await expect(results.getByRole('option', { name: /Run a command/ })).toBeVisible()
+  await testInfo.attach('quick-pick-open', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  })
+  // Picking a mode row switches the prefix instead of closing the palette.
+  await results.getByRole('option', { name: /Run a command/ }).click()
+  await expect(input).toHaveValue('>')
+  await input.pressSequentially(' new analysis')
+  await expect(results.getByRole('option').first()).toContainText('New analysis board')
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(results).toBeHidden()
+
+  // Shift+Cmd/Ctrl+P opens straight into command mode; Backspace returns to plain search.
+  await page.keyboard.press('ControlOrMeta+Shift+P')
+  await expect(input).toHaveValue('>')
+  await expect(results.getByRole('option', { name: /Flip board/ })).toBeVisible()
+  await input.press('Backspace')
+  await expect(input).toHaveValue('')
+  await expect(results.getByRole('option', { name: /New analysis board/ })).toContainText(
+    'recently used',
+  )
+
+  // Settings mode shows current state and toggles in place.
+  await input.fill('#sound')
+  const sound = results.getByRole('option', { name: /^Sound (On|Off)$/ })
+  const before = (await sound.textContent())?.includes('On')
+  await sound.click()
+  await expect(results).toBeHidden()
+  await expect
+    .poll(async () => (await page.evaluate(() => window.kchess.loadData())).settings.soundEnabled)
+    .toBe(!before)
+
+  // Unprefixed text searches everything, with acronym matches.
+  await page.keyboard.press('ControlOrMeta+K')
+  await input.fill('otb')
+  await expect(results.getByRole('option').first()).toContainText('Over the board')
+  await input.fill('stockfish black')
+  await expect(results.getByRole('option').first()).toContainText('Play Stockfish')
+  await expect(results.getByRole('option').first()).toContainText('Black')
+  await testInfo.attach('quick-pick-search', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  })
+  await page.keyboard.press('Escape')
+  await expect(results).toBeHidden()
+
+  // The top bar's own box expands in place; clicking anywhere else, even on the top bar, closes it.
+  const closedBox = await input.boundingBox()
+  await input.click()
+  await expect(input).toBeFocused()
+  await expect(results).toBeVisible()
+  expect(await input.boundingBox()).toEqual(closedBox)
+  await page.locator('.main-content').click({ position: { x: 20, y: 600 } })
+  await expect(results).toBeHidden()
+  await expect(input).not.toBeFocused()
+  await input.click()
+  await expect(results).toBeVisible()
+  const topbar = (await page.locator('.topbar').boundingBox())!
+  await page.locator('.topbar').click({ position: { x: topbar.width - 40, y: topbar.height / 2 } })
+  await expect(results).toBeHidden()
 })

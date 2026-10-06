@@ -30,6 +30,7 @@ function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): Ip
 
 const api: DesktopApi = {
   recordPerformance: (name, milliseconds) => invoke('recordPerformance', name, milliseconds),
+  reportRendererError: (report) => invoke('reportRendererError', report),
   positionLookup: (kind, fen, options) => invoke('positionLookup', kind, fen, options),
   mastersGame: (id) => invoke('mastersGame', id),
   exportGame: (id) => invoke('exportGame', id),

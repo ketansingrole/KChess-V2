@@ -1,3 +1,4 @@
+import { PERFORMANCE_NAMES, type PerformanceName } from '../shared/rendererDiagnostics'
 import {
   app,
   BrowserWindow,
@@ -393,9 +394,12 @@ void app
     setupDiagnostics()
     configureEngineResources(() => powerMonitor.isOnBatteryPower())
     handle('exportDiagnostics', exportDiagnostics)
+    handle('reportRendererError', (_event, report) => {
+      console.error('Renderer page error:', report)
+    })
     handle('recordPerformance', (_event, name: unknown, milliseconds: unknown) => {
       if (
-        !['app.ready', 'board.frame', 'voice.activation'].includes(String(name)) ||
+        !PERFORMANCE_NAMES.includes(name as PerformanceName) ||
         typeof milliseconds !== 'number' ||
         !Number.isFinite(milliseconds) ||
         milliseconds < 0 ||

@@ -1,3 +1,4 @@
+import type { PerformanceName, RendererErrorReport } from './rendererDiagnostics'
 import type { components, paths } from '@lichess-org/types'
 import type { Variant } from './variant'
 
@@ -1273,10 +1274,8 @@ export interface CloudEval {
 }
 
 export interface DesktopApi {
-  recordPerformance(
-    name: 'app.ready' | 'board.frame' | 'voice.activation',
-    milliseconds: number,
-  ): Promise<void>
+  reportRendererError(report: RendererErrorReport): Promise<void>
+  recordPerformance(name: PerformanceName, milliseconds: number): Promise<void>
   positionLookup(
     kind: PositionLookupKind,
     fen: string,
