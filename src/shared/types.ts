@@ -236,6 +236,10 @@ export interface Settings {
   cloudEval: boolean
   /** Name the opening of the position in games and analysis. */
   showOpeningName: boolean
+  /** Go back and forward with a horizontal two-finger swipe. */
+  swipeNavigation: boolean
+  /** Show an edge hint that follows the swipe. */
+  swipeIndicator: boolean
 }
 
 export interface AppUpdateStatus {
@@ -748,6 +752,7 @@ export interface TvChannel {
 }
 
 export interface BroadcastSummary {
+  players?: string
   tourId: string
   tourName: string
   description?: string
@@ -1510,7 +1515,7 @@ export interface DesktopApi {
   onWatchState(callback: (state: WatchState) => void): () => void
   onWatch(callback: (frame: WatchFrame) => void): () => void
   onBroadcast(callback: (update: BroadcastUpdate) => void): () => void
-  broadcasts(): Promise<BroadcastSummary[]>
+  broadcasts(query?: string): Promise<BroadcastSummary[]>
   broadcastTour(id: string): Promise<BroadcastTourDetail>
   /** Current arenas, and the Swiss events of the account's teams. */
   tournaments(account: string): Promise<TournamentList>

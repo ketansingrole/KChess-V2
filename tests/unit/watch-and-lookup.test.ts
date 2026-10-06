@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { client } from '../../src/main/lichess'
 import { INITIAL_FEN, makeFen } from 'chessops/fen'
 import {
   alignTvMoves,
   broadcastGame,
+  broadcastSummaries,
+  broadcasts,
   displayFen,
   parseGameDetails,
   parseTvGame,
@@ -12,7 +15,16 @@ import { materialBalance } from '../../app/utils/material'
 import { splitPgn } from '../../src/main/studies'
 import { PositionLookupService } from '../../src/main/positionLookup'
 import type { PositionLookup } from '../../src/shared/types'
-import { assertExport, assertOnlineOptions, assertWatchTarget } from '../../src/shared/validate'
+import {
+  assertBroadcastQuery,
+  assertExport,
+  assertOnlineOptions,
+  assertWatchTarget,
+} from '../../src/shared/validate'
+
+vi.mock('../../src/main/usage', () => ({
+  withUsage: (_account: string, _kind: string, work: () => unknown) => work(),
+}))
 
 vi.mock('electron', () => ({ shell: {} }))
 vi.mock('../../src/main/store', () => ({ getToken: vi.fn() }))
@@ -28,6 +40,56 @@ const pgn = `[Event "Test Open"]
 1. e4 { [%clk 0:30:00] } 1... e5 { [%clk 0:29:40] } 2. Nf3 { [%eval 0.2] [%clk 0:29:10] } *`
 
 describe('watching', () => {
+  it('searches recent official broadcasts rather than filtering only featured events', async () => {
+    const get = vi.spyOn(client, 'GET').mockResolvedValue({
+      data: {
+        currentPageResults: [
+          {
+            tour: { id: 'search01', name: 'Historical Open' },
+            round: { id: 'round001', name: 'Final', finishedAt: 1700000000000 },
+          },
+        ],
+      },
+      response: new Response(),
+    } as never)
+    expect(await broadcasts(' Historical ')).toMatchObject([
+      { tourName: 'Historical Open', section: 'past' },
+    ])
+    expect(get).toHaveBeenCalledWith('/api/broadcast/search', {
+      params: { query: { q: 'Historical', page: 1 } },
+    })
+    expect(assertBroadcastQuery(undefined)).toBeUndefined()
+    expect(assertBroadcastQuery(' Open ')).toBe('Open')
+    expect(() => assertBroadcastQuery('x'.repeat(101))).toThrow()
+  })
+
+  it('classifies scheduled rounds correctly and retains trusted broadcast images', () => {
+    const entries = [
+      {
+        tour: { id: 'tour1234', name: 'Open', image: 'https://image.lichess1.org/example.webp' },
+        round: { id: 'round123', name: 'Round 4', startsAt: 1800000000000 },
+      },
+      {
+        tour: { id: 'tour5678', name: 'Live', image: 'https://untrusted.example/image.jpg' },
+        round: { id: 'round456', name: 'Round 1', ongoing: true },
+      },
+      {
+        tour: { id: 'tour9012', name: 'Finished' },
+        round: { id: 'round789', name: 'Final', finished: true },
+      },
+    ]
+    const [scheduled, live, past] = broadcastSummaries(entries, 'past')
+    expect(scheduled).toMatchObject({
+      section: 'upcoming',
+      startsAt: 1800000000000,
+      image: 'https://image.lichess1.org/example.webp',
+    })
+    expect(live).toMatchObject({ section: 'active', ongoing: true })
+    expect(live.image).toBeUndefined()
+    expect(past.section).toBe('past')
+    expect(broadcastSummaries([{ tour: { id: 123 } }], 'active')).toEqual([])
+  })
+
   it('reads a broadcast board: players, clocks, moves and its chapter id', () => {
     const game = broadcastGame(pgn)!
     expect(game).toMatchObject({

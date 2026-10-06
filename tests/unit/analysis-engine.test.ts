@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { AnalysisUpdate } from '../../src/shared/types'
+import { replay } from '../../src/shared/review'
 
 // The bundled Stockfish is found relative to the app; here that is the repository.
 vi.mock('electron', () => ({ app: { getAppPath: () => process.cwd() } }))
@@ -26,6 +27,17 @@ function until(test: (update: AnalysisUpdate) => boolean, ms = 20_000): Promise<
 afterAll(() => stopAnalysis(true))
 
 describe('analysis engine (bundled Stockfish)', () => {
+  it('replays castling in game history and produces legal lines for the selected position', async () => {
+    const rootFen = 'r3k2r/ppp2ppp/8/8/8/8/PPP2PPP/R3K2R w KQkq - 0 1'
+    const moves = ['e1h1']
+    const fen = replay(rootFen, moves).at(-1)!.fen
+    const id = await startAnalysis({ fen, rootFen, moves, lines: 3, infinite: true }, '', send)
+    const update = await until((u) => u.id === id && u.lines.length === 3 && u.depth >= 8)
+    for (const line of update.lines) {
+      expect(replay(fen, line.pv)).toHaveLength(line.pv.length + 1)
+    }
+    stopAnalysis()
+  }, 30_000)
   it('streams several scored lines for a position', async () => {
     const id = await startAnalysis({ fen: START, lines: 2, infinite: true }, '', send)
     const update = await until((u) => u.id === id && u.lines.length === 2 && u.depth >= 8)

@@ -51,6 +51,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: 'i-lucide-palette' },
   { id: 'themes', label: 'App theme', icon: 'i-lucide-swatch-book' },
   { id: 'gameplay', label: 'Gameplay', icon: 'i-lucide-gamepad-2' },
+  { id: 'gestures', label: 'Gestures', icon: 'i-lucide-hand' },
   { id: 'online', label: 'Online play', icon: 'i-lucide-globe-2' },
   { id: 'analysis', label: 'Analysis', icon: 'i-lucide-microscope' },
   { id: 'sound', label: 'Sound', icon: 'i-lucide-volume-2' },

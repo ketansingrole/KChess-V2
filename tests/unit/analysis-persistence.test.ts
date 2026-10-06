@@ -41,7 +41,9 @@ it('hides cloud scores, variations, arrows and playable suggestions during live 
     ].map((name) => [name, true]),
   )
   const mountPage = () =>
-    shallowMount(AnalysisPage, { global: { stubs: { ...stubs, ChessBoard: Board } } })
+    shallowMount(AnalysisPage, {
+      global: { stubs: { ...stubs, ChessBoard: Board, EngineLines: false } },
+    })
   let page = mountPage()
   store.cloud = {
     fen: store.node.fen,

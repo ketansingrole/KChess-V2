@@ -110,6 +110,18 @@ pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOW
   names, semantic headings, labels, and live status/error announcements. Update affected
   UI tests to verify actions and state rather than require discarded explanatory copy.
 
+## Reuse existing UI and behavior
+
+- Before building a new UI or interaction, inspect existing components and equivalent
+  screens. Reuse their components, composables, styles, and behavior wherever possible.
+- If an existing implementation is page-local, extract it into a shared component and
+  migrate both uses. Improve the shared component to support the new use case before
+  introducing a separate implementation. Keep related surfaces consistent in density,
+  accessibility, keyboard behavior, previews, and settings.
+- Create a separate implementation only when the existing component cannot reasonably
+  fit the new use case; explain the concrete constraint. Do not duplicate functionality
+  merely because it appears on a different page.
+
 ## Architecture and regression ownership
 
 - Renderer stores own view state; main owns credentials, networking, privileged files and engine processes. Every new desktop method belongs in `DesktopApi`, the shared IPC channel map and preload. IPC must authenticate the owned top-level frame as well as validate input.

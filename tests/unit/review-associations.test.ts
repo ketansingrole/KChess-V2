@@ -69,8 +69,9 @@ it('retains both associations when identical searches are queued before their fi
 })
 it('backfills associations from the preceding schema without discarding evaluations', () => {
   const legacy = new DatabaseSync(':memory:')
-  for (const sql of MIGRATIONS.slice(0, -1)) legacy.exec(sql)
-  legacy.exec(`PRAGMA user_version=${MIGRATIONS.length - 1}`)
+  const backfill = MIGRATIONS.findIndex((sql) => sql.includes('CREATE TABLE game_reviews'))
+  for (const sql of MIGRATIONS.slice(0, backfill)) legacy.exec(sql)
+  legacy.exec(`PRAGMA user_version=${backfill}`)
   legacy
     .prepare('INSERT INTO reviews VALUES (?,?,?,?,?,?,?,?)')
     .run(review.key, 'Game0001', 'local', 1, 18, JSON.stringify(review), '{}', 1)

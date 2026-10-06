@@ -331,6 +331,27 @@ async function navigate(page: Page, label: string) {
   await expect(menu).toBeHidden()
 }
 
+test('swipes through page history without repeating navigation during momentum', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Board editor')
+  await expect(page).toHaveURL(/\/editor/)
+  await navigate(page, 'Analysis board')
+  await expect(page).toHaveURL(/\/analysis/)
+  await page.locator('cg-board').hover()
+  await page.mouse.wheel(-120, 0)
+  await expect(page).toHaveURL(/\/editor/)
+  await page.mouse.wheel(-120, 0)
+  await page.waitForTimeout(350)
+  await expect(page).toHaveURL(/\/editor/)
+  await page.mouse.wheel(120, 0)
+  await expect(page).toHaveURL(/\/analysis/)
+  await page.waitForTimeout(350)
+  await page.mouse.wheel(120, 0)
+  await page.waitForTimeout(350)
+  await expect(page).toHaveURL(/\/analysis/)
+})
+
 /** Click one square; in the board editor this puts down the chosen spare piece. */
 async function clickSquare(page: Page, square: string) {
   const bounds = await page.locator('cg-board').boundingBox()
@@ -1325,4 +1346,147 @@ test('keeps multi-chapter studies together and restores the selected chapter off
     page.getByRole('group', { name: 'Moves', exact: true }).locator('.tree-move'),
   ).toHaveCount(0)
   await expect(page.locator('.moves-empty')).toBeVisible()
+})
+
+test('analyses a broadcast inline and explores lines without changing saved analysis', async ({
+  desktop: { app, page },
+}, testInfo) => {
+  await app.evaluate(() => {
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname
+      const tour = { id: 'Broad001', name: 'Training broadcast' }
+      const round = { id: 'Round001', name: 'Round 1', ongoing: true }
+      if (path === '/api/broadcast/top') return Response.json({ active: [{ tour, round }] })
+      if (path === '/api/broadcast/Broad001')
+        return Response.json({ tour, rounds: [round], defaultRoundId: round.id })
+      if (path === '/api/stream/broadcast/round/Round001.pgn')
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  '[Event "Training broadcast"]\n[White "Alpha"]\n[Black "Beta"]\n[GameURL "https://lichess.org/broadcast/training/round-1/Round001/Board001"]\n[Result "*"]\n\n1. e4 {[%clk 0:01:00]} e5 {[%clk 0:01:10]} *\n\n\n',
+                ),
+              )
+            },
+          }),
+          { headers: { 'Content-Type': 'application/x-chess-pgn' } },
+        )
+      if (path === '/api/tv/channels') return Response.json({})
+      throw new Error('Unexpected fixture request: ' + path)
+    }
+  })
+  await navigate(page, 'Watch')
+  await page.getByRole('tab', { name: 'Broadcasts', exact: true }).click()
+  // Failed verification without a game ID is uncertainty, not an active game.
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.webContents.send('online:state', {
+      session: 99,
+      lane: 'game',
+      phase: 'disconnected',
+      gameId: 'OldGame1',
+    }),
+  )
+  await expect(page.getByText('You are in a game', { exact: true })).toBeVisible()
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.webContents.send('online:state', {
+      session: 100,
+      lane: 'game',
+      phase: 'disconnected',
+      gameId: '',
+      message: 'Game status request failed',
+    }),
+  )
+  await expect(page.getByText('You are in a game', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Game status not verified', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Training broadcast/ })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.webContents.send('online:state', {
+      session: 100,
+      lane: 'game',
+      phase: 'idle',
+      gameId: '',
+    }),
+  )
+  await expect(page.getByText('Game status not verified', { exact: true })).toHaveCount(0)
+  const headingGap = await page
+    .getByRole('heading', { name: 'Live now', exact: true })
+    .evaluate(
+      (heading) =>
+        heading.nextElementSibling!.getBoundingClientRect().top -
+        heading.getBoundingClientRect().bottom,
+    )
+  expect(headingGap).toBe(12)
+  await page.getByRole('button', { name: /Training broadcast/ }).click()
+  const gridBar = page.locator('.broadcast-grid').getByRole('meter', { name: 'Evaluation' })
+  await expect(gridBar).toHaveCount(1)
+  await expect(gridBar).toHaveAttribute('aria-valuenow', /^\d+$/)
+  const gridSwitch = page.getByRole('switch', { name: 'Evaluation bars', exact: true })
+  await gridSwitch.click()
+  await expect(gridBar).toHaveCount(0)
+  await gridSwitch.click()
+  await expect(gridBar).toHaveAttribute('aria-valuenow', /^\d+$/)
+  await page.screenshot({ path: testInfo.outputPath('broadcast-grid-evaluations.png') })
+  await page.getByRole('button', { name: /Beta.*Alpha/ }).click()
+  const whiteClock = page.getByLabel('white clock', { exact: true })
+  await expect(page.locator('.player-line.active .player-clock')).toHaveAttribute(
+    'aria-label',
+    'white clock',
+  )
+  const beforeTick = await whiteClock.innerText()
+  await expect(whiteClock).not.toHaveText(beforeTick)
+  await expect(page.getByLabel('black clock', { exact: true })).toHaveText('1:10')
+  const toggle = page.getByRole('switch', { name: 'Broadcast engine analysis', exact: true })
+  await toggle.click()
+  await expect(page.getByRole('meter', { name: 'Evaluation' })).toBeVisible()
+  const broadcastBoardWidth = (await page.locator('.broadcast-board .cg-wrap').boundingBox())!.width
+  const broadcastPanelWidth = (await page.locator('.broadcast-layout .side-panel').boundingBox())!
+    .width
+  const lines = page.getByRole('list', { name: 'Engine lines' })
+  await expect(lines.locator('li')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Move 1, white, e4', exact: true }).click()
+  // Historical board navigation does not change which live clock is running.
+  await expect(page.locator('.player-line.active .player-clock')).toHaveAttribute(
+    'aria-label',
+    'white clock',
+  )
+  await expect(lines.locator('.pv-move').first()).toHaveText(/^1… /)
+  await page.getByRole('button', { name: 'Go to first move', exact: true }).click()
+  await expect(lines.locator('.pv-move').first()).toHaveText(/^1\. /)
+  await page.getByRole('button', { name: 'Go to last move', exact: true }).click()
+  await expect(lines.locator('.pv-move').first()).toHaveText(/^2\. /)
+  const move = lines.locator('.pv-move').first()
+  await move.hover()
+  await expect(page.locator('.pv-preview .cg-wrap')).toBeVisible()
+  expect(
+    await lines
+      .locator('.pv-row')
+      .first()
+      .evaluate((row) => row.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(36)
+  await move.click()
+  await expect(page.locator('.pv-preview')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Return to game', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Return to game', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Return to game', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Broadcast analysis settings', exact: true }).click()
+  await expect(page.getByRole('switch', { name: 'Best move arrows', exact: true })).toBeVisible()
+  await page.getByRole('switch', { name: 'Evaluation bar', exact: true }).click()
+  await expect(page.getByRole('meter', { name: 'Evaluation' })).toHaveCount(0)
+  expect((await page.locator('.broadcast-board .cg-wrap').boundingBox())!.width).toBe(
+    broadcastBoardWidth,
+  )
+  await page.keyboard.press('Escape')
+  await toggle.click()
+  await expect(lines).toHaveCount(0)
+  await navigate(page, 'Analysis board')
+  expect((await page.locator('.analysis-board .cg-wrap').boundingBox())!.width).toBe(
+    broadcastBoardWidth,
+  )
+  expect((await page.locator('.analysis-panel').boundingBox())!.width).toBe(broadcastPanelWidth)
+  await expect(page.getByText('Unsaved analysis', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('group', { name: 'Moves', exact: true }).locator('.tree-move'),
+  ).toHaveCount(0)
 })

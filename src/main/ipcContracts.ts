@@ -4,6 +4,7 @@ import type { InvokeMethod, IpcArguments } from '../shared/ipc'
 import { POSITION_LOOKUP_KINDS } from '../shared/types'
 import {
   assertAction,
+  assertBroadcastQuery,
   assertStudySyncRequest,
   assertActivityMax,
   assertAnalysisRequest,
@@ -172,7 +173,7 @@ export const IPC_CONTRACTS = {
   watch: { min: 1, checks: [watchTarget] },
   watchBroadcast: { min: 1, checks: [assertLichessId] },
   stopWatching: { min: 0, checks: [] },
-  broadcasts: { min: 0, checks: [] },
+  broadcasts: { min: 0, checks: [assertBroadcastQuery] },
   broadcastTour: { min: 1, checks: [assertLichessId] },
   tournaments: { min: 1, checks: [assertOptionalAccount] },
   tournament: {

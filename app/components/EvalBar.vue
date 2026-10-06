@@ -6,6 +6,7 @@ import { formatEval, winningChances } from '../utils/analysisTree'
 
 /** Lichess-style vertical evaluation bar: White's share fills from White's side of the board. */
 const props = defineProps<{ line?: EngineLine; orientation: Color; result?: string }>()
+const known = computed(() => Boolean(props.line || (props.result && props.result !== '*')))
 
 const white = computed(() => {
   if (props.result === '1-0') return 100
@@ -19,17 +20,17 @@ const label = computed(() => props.result || formatEval(props.line))
 <template>
   <div
     class="eval-bar"
-    :class="{ flipped: orientation === 'black' }"
+    :class="{ flipped: orientation === 'black', pending: !known }"
     role="meter"
     aria-label="Evaluation"
-    :aria-valuenow="Math.round(white)"
+    :aria-valuenow="known ? Math.round(white) : undefined"
     aria-valuemin="0"
     aria-valuemax="100"
     :aria-valuetext="label"
     :title="label"
   >
-    <div class="eval-white" :style="{ height: `${white}%` }" />
-    <div class="eval-mid" />
+    <div v-if="known" class="eval-white" :style="{ height: `${white}%` }" />
+    <div v-if="known" class="eval-mid" />
   </div>
 </template>
 
@@ -46,6 +47,9 @@ const label = computed(() => props.result || formatEval(props.line))
 }
 .eval-bar.flipped {
   flex-direction: column;
+}
+.eval-bar.pending {
+  background: repeating-linear-gradient(135deg, #403d39 0 4px, #68645e 4px 8px);
 }
 .eval-white {
   background: #f2f0ea;

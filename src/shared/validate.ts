@@ -176,6 +176,8 @@ const settingsSchema = v.object(
     blindfold: v.boolean('Invalid blindfold setting.'),
     cloudEval: v.boolean('Invalid cloud evaluation setting.'),
     showOpeningName: v.boolean('Invalid opening name setting.'),
+    swipeNavigation: v.boolean('Invalid swipe setting.'),
+    swipeIndicator: v.boolean('Invalid swipe setting.'),
   },
   'Invalid settings.',
 )
@@ -589,4 +591,9 @@ export function assertStudySyncRequest(value: unknown): import('./types').StudyS
   )
     throw new Error('The study is empty or too large to upload.')
   return { account, studyId, baseline: data.baseline, pgn: data.pgn }
+}
+
+/** Bounded text for Lichess broadcast search. */
+export function assertBroadcastQuery(value: unknown): string | undefined {
+  return v.parse(v.optional(v.pipe(v.string(), v.trim(), v.maxLength(100))), value)
 }

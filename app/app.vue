@@ -7,6 +7,9 @@ import { useAppUpdatesStore } from './stores/appUpdates'
 import { useReviewStore } from './stores/review'
 import { useChallengeStore } from './stores/challenges'
 import { useQuickPick } from './composables/useQuickPick'
+import { usePageSwipeNavigation } from './composables/usePageSwipeNavigation'
+
+usePageSwipeNavigation()
 
 useHead({
   title: 'KChess',

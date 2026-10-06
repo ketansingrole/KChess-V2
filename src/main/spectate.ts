@@ -609,9 +609,11 @@ const roundSchema = v.looseObject({
   name: text(120),
   ongoing: v.optional(v.boolean()),
   finished: v.optional(v.boolean()),
+  finishedAt: v.optional(num),
   startsAt: v.optional(num),
 })
 const tourSchema = v.looseObject({
+  info: v.optional(v.looseObject({ players: v.optional(text(500)) })),
   id: text(12),
   name: text(200),
   description: v.optional(text(4000)),
@@ -620,7 +622,15 @@ const tourSchema = v.looseObject({
 const entrySchema = v.looseObject({ tour: v.optional(tourSchema), round: v.optional(roundSchema) })
 
 /** The broadcasts Lichess features: live, upcoming, then recently finished. */
-export async function broadcasts(): Promise<BroadcastSummary[]> {
+export async function broadcasts(query?: string): Promise<BroadcastSummary[]> {
+  if (query?.trim()) {
+    const raw = await withUsage('', 'watch', () =>
+      unwrap(
+        client.GET('/api/broadcast/search', { params: { query: { q: query.trim(), page: 1 } } }),
+      ),
+    )
+    return broadcastSummaries(raw.currentPageResults, 'past')
+  }
   const raw = await withUsage('', 'watch', () =>
     unwrap(client.GET('/api/broadcast/top', { params: { query: { page: 1 } } })),
   )
@@ -629,27 +639,37 @@ export async function broadcasts(): Promise<BroadcastSummary[]> {
     ['upcoming', raw.upcoming],
     ['past', raw.past?.currentPageResults],
   ]
-  return sections.flatMap(([section, entries]) =>
-    (entries ?? []).slice(0, 30).flatMap((entry) => {
-      const parsed = v.safeParse(entrySchema, entry)
-      if (!parsed.success || !parsed.output.tour) return []
-      const { tour, round } = parsed.output
-      return [
-        {
-          tourId: tour.id,
-          tourName: tour.name,
-          description: tour.description,
-          // Images come from Lichess's own CDN; anything else is dropped.
-          image: tour.image?.startsWith('https://image.lichess1.org/') ? tour.image : undefined,
-          roundId: round?.id,
-          roundName: round?.name,
-          ongoing: Boolean(round?.ongoing),
-          startsAt: round?.startsAt,
-          section,
-        },
-      ]
-    }),
-  )
+  return sections.flatMap(([section, entries]) => broadcastSummaries(entries, section))
+}
+
+/** Normalize both featured and search entries; only trust Lichess image URLs. */
+export function broadcastSummaries(
+  entries: unknown[] | undefined,
+  section: BroadcastSummary['section'],
+): BroadcastSummary[] {
+  return (entries ?? []).slice(0, 30).flatMap((entry) => {
+    const parsed = v.safeParse(entrySchema, entry)
+    if (!parsed.success || !parsed.output.tour) return []
+    const { tour, round } = parsed.output
+    return [
+      {
+        players: tour.info?.players,
+        tourId: tour.id,
+        tourName: tour.name,
+        description: tour.description,
+        image: tour.image?.startsWith('https://image.lichess1.org/') ? tour.image : undefined,
+        roundId: round?.id,
+        roundName: round?.name,
+        ongoing: Boolean(round?.ongoing),
+        startsAt: round?.startsAt,
+        section: round?.ongoing
+          ? 'active'
+          : round && !round.finished && !round.finishedAt
+            ? 'upcoming'
+            : section,
+      },
+    ]
+  })
 }
 
 export async function broadcastTour(id: string): Promise<BroadcastTourDetail> {

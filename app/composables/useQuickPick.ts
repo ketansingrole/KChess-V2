@@ -158,7 +158,8 @@ export function useQuickPick(query: Ref<string>) {
   const settingsCommands = computed<QuickCommand[]>(() => {
     const settings = store.ready ? store.settings : null
     const toggle = (
-      key: 'soundEnabled' | 'showLegalMoves' | 'premove' | 'notificationsEnabled',
+      key:
+        'soundEnabled' | 'showLegalMoves' | 'premove' | 'notificationsEnabled' | 'swipeNavigation',
       label: string,
       icon: string,
       keywords: string,
@@ -211,6 +212,12 @@ export function useQuickPick(query: Ref<string>) {
       quick('showOpeningName', 'Show opening name', 'i-lucide-book-marked', 'eco'),
       quick('cloudEval', 'Lichess cloud evaluation', 'i-lucide-cloud', 'analysis engine'),
       toggle('notificationsEnabled', 'Notifications', 'i-lucide-bell', 'alerts'),
+      toggle(
+        'swipeNavigation',
+        'Two-finger swipe',
+        'i-lucide-hand',
+        'gesture trackpad back forward',
+      ),
       ...COORDINATE_MODES.map((mode) => ({
         id: `setting:coordinates:${mode}`,
         label: `Coordinates: ${mode === 'none' ? 'Hidden' : mode === 'inside' ? 'Inside the board' : 'Outside the board'}`,

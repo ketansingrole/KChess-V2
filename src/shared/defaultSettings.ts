@@ -40,4 +40,6 @@ export const DEFAULT_SETTINGS: Settings = {
   blindfold: false,
   cloudEval: false,
   showOpeningName: true,
+  swipeNavigation: true,
+  swipeIndicator: true,
 }

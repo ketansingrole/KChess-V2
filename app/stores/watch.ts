@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import { RequestScope, SubscriptionScope } from '../../src/shared/requestScope'
+import { Clock } from '../utils/clock'
 import type {
   BroadcastGame,
   BroadcastUpdate,
@@ -23,12 +24,15 @@ export const useWatchStore = defineStore('watch', () => {
   const requests = new RequestScope()
   const connection = ref<WatchState | null>(null)
 
+  const broadcastLoading = ref(false)
+  const broadcastError = ref('')
   const broadcastList = ref<BroadcastSummary[] | null>(null)
   const tour = ref<BroadcastTourDetail | null>(null)
   const roundId = ref('')
   const games = shallowRef<Map<string, BroadcastGame>>(new Map())
   const selectedGame = ref('')
   const roundEnded = ref(false)
+  const broadcastClocks = new Map<string, Clock>()
   let roundSession = -1
 
   let pendingKind: 'watch' | 'round' | undefined
@@ -67,10 +71,35 @@ export const useWatchStore = defineStore('watch', () => {
     if (update.session !== roundSession) return
     if (update.games.length) {
       const next = new Map(games.value)
-      for (const game of update.games) next.set(game.id, game)
+      for (const game of update.games) {
+        const previous = next.get(game.id)
+        // Repeated PGNs must not reset a clock that is already counting down.
+        if (
+          !previous ||
+          previous.fen !== game.fen ||
+          previous.whiteClock !== game.whiteClock ||
+          previous.blackClock !== game.blackClock ||
+          previous.ongoing !== game.ongoing
+        ) {
+          const clock = broadcastClocks.get(game.id) ?? new Clock()
+          clock.set({
+            white: (game.whiteClock ?? 0) * 1000,
+            black: (game.blackClock ?? 0) * 1000,
+            ticking:
+              game.ongoing && game.moves.length && !update.ended
+                ? game.fen.split(' ')[1] === 'b'
+                  ? 'black'
+                  : 'white'
+                : undefined,
+          })
+          broadcastClocks.set(game.id, clock)
+        }
+        next.set(game.id, game)
+      }
       games.value = next
     }
     if (update.ended) {
+      for (const clock of broadcastClocks.values()) clock.pause()
       roundEnded.value = true
       if (update.error) error.value = update.error
     }
@@ -138,6 +167,7 @@ export const useWatchStore = defineStore('watch', () => {
     }
   }
   async function stop(): Promise<void> {
+    for (const clock of broadcastClocks.values()) clock.pause()
     requests.invalidate()
     clearPending()
     connection.value = null
@@ -149,10 +179,15 @@ export const useWatchStore = defineStore('watch', () => {
   }
 
   async function loadBroadcasts(): Promise<void> {
+    if (broadcastLoading.value) return
+    broadcastLoading.value = true
+    broadcastError.value = ''
     try {
       broadcastList.value = await window.kchess.broadcasts()
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : String(cause)
+      broadcastError.value = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      broadcastLoading.value = false
     }
   }
   async function openTour(id: string): Promise<void> {
@@ -189,6 +224,7 @@ export const useWatchStore = defineStore('watch', () => {
     frame.value = null
     roundId.value = id
     games.value = new Map()
+    broadcastClocks.clear()
     selectedGame.value = game
     roundEnded.value = false
     pendingKind = 'round'
@@ -216,6 +252,13 @@ export const useWatchStore = defineStore('watch', () => {
   }
   const roundGames = computed(() => [...games.value.values()])
   const currentGame = computed(() => games.value.get(selectedGame.value))
+  function broadcastClock(game: BroadcastGame, color: 'white' | 'black', now: number) {
+    if (game[color === 'white' ? 'whiteClock' : 'blackClock'] === undefined) return undefined
+    return broadcastClocks.get(game.id)?.remaining(color, now)
+  }
+  function broadcastClockRunning(game: BroadcastGame, color: 'white' | 'black') {
+    return broadcastClocks.get(game.id)?.running === color
+  }
 
   return {
     connection,
@@ -225,11 +268,15 @@ export const useWatchStore = defineStore('watch', () => {
     target,
     error,
     broadcastList,
+    broadcastLoading,
+    broadcastError,
     tour,
     roundId,
     roundGames,
     selectedGame,
     currentGame,
+    broadcastClock,
+    broadcastClockRunning,
     roundEnded,
     loadChannels,
     watch,

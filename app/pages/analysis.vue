@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EngineLines from '../components/EngineLines.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
@@ -119,6 +120,7 @@ const result = computed(() => {
 /** Lichess steps through moves with the mouse wheel over the board. */
 let wheelTravel = 0
 function wheel(event: WheelEvent): void {
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
   event.preventDefault()
   wheelTravel += event.deltaY
   if (Math.abs(wheelTravel) < 40) return
@@ -156,41 +158,10 @@ const lineChoices = [1, 2, 3, 4, 5].map((count) => ({
   label: `${count} ${count === 1 ? 'line' : 'lines'}`,
   value: count,
 }))
-const pvMoves = computed(() =>
-  lines.value.map((line) => ({ line, moves: pvSan(node.value.fen, line.pv) })),
-)
 /** Play an engine line up to (and including) the move clicked. */
 function playLine(pv: readonly string[], upTo = 0): void {
   for (const uci of pv.slice(0, upTo + 1)) if (!analysis.play(uci)) break
 }
-/** The position after a hovered engine move, shown on a small board beside it. */
-const PREVIEW_SIZE = 220
-const hovered = ref<{ line: number; move: number; top: number; left: number } | null>(null)
-const preview = computed(() => {
-  const at = hovered.value
-  const pvMove = at && pvMoves.value[at.line]?.moves[at.move]
-  if (!at || !pvMove) return null
-  return {
-    fen: pvMove.fen,
-    lastMove: [pvMove.uci.slice(0, 2), pvMove.uci.slice(2, 4)] as Key[],
-    style: { top: `${at.top}px`, left: `${at.left}px`, width: `${PREVIEW_SIZE}px` },
-  }
-})
-function showPreview(event: Event, line: number, move: number): void {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const gap = 8
-  // Above the move when it fits, otherwise below; kept inside the window sideways.
-  const top = rect.top - PREVIEW_SIZE - gap >= 0 ? rect.top - PREVIEW_SIZE - gap : rect.bottom + gap
-  const left = Math.min(
-    Math.max(gap, rect.left + rect.width / 2 - PREVIEW_SIZE / 2),
-    window.innerWidth - PREVIEW_SIZE - gap,
-  )
-  hovered.value = { line, move, top, left }
-}
-function hidePreview(): void {
-  hovered.value = null
-}
-watch(path, hidePreview)
 function playBest(): void {
   const uci = best.value?.pv[0]
   if (uci) analysis.play(uci)
@@ -498,7 +469,7 @@ function missed(result: VoiceResult): void {
     <PageHeader :title="analysis.study?.name ?? 'Analysis board'" />
     <StudyBar />
 
-    <div class="play-layout analysis-layout">
+    <div class="play-layout analysis-layout analysis-surface">
       <div class="board-stack">
         <div class="analysis-board">
           <EvalBar
@@ -663,57 +634,16 @@ function missed(result: VoiceResult): void {
             >
             to see evaluations.
           </div>
-          <ol
+          <EngineLines
             v-else-if="assistanceAllowed && (engineOn || usingCloud) && !gameOver"
-            class="pv-list"
-          >
-            <li v-for="(entry, index) in pvMoves" :key="index" class="pv-row">
-              <button
-                type="button"
-                class="pv-eval"
-                :title="`Play ${entry.moves[0]?.san ?? ''}`"
-                @click="playLine(entry.line.pv)"
-              >
-                {{ formatEval(entry.line) }}
-              </button>
-              <span class="pv-moves">
-                <button
-                  v-for="(pvMove, moveIndex) in entry.moves"
-                  :key="moveIndex"
-                  type="button"
-                  class="pv-move"
-                  @click="playLine(entry.line.pv, moveIndex)"
-                  @mouseenter="showPreview($event, index, moveIndex)"
-                  @mouseleave="hidePreview"
-                  @focus="showPreview($event, index, moveIndex)"
-                  @blur="hidePreview"
-                >
-                  {{ pvMove.label }}
-                </button>
-              </span>
-            </li>
-            <li
-              v-for="index in usingCloud ? 0 : Math.max(0, engineLines - pvMoves.length)"
-              :key="`wait-${index}`"
-              class="pv-row pending"
-            >
-              <span class="pv-eval">…</span>
-            </li>
-          </ol>
-          <Teleport to="body">
-            <div v-if="preview" class="pv-preview" :style="preview.style" aria-hidden="true">
-              <ChessBoard
-                :fen="preview.fen"
-                :orientation="orientation"
-                :theme="settings?.boardTheme"
-                coordinates="none"
-                :piece-set="settings?.pieceSet"
-                animation="none"
-                :interactive="false"
-                :last-move="preview.lastMove"
-              />
-            </div>
-          </Teleport>
+            :fen="node.fen"
+            :lines="lines"
+            :orientation="orientation"
+            :board-theme="settings?.boardTheme"
+            :piece-set="settings?.pieceSet"
+            :pending="usingCloud ? 0 : engineLines"
+            @select="playLine"
+          />
         </section>
 
         <div class="panel-tabs" role="tablist" aria-label="Analysis tools">
@@ -879,15 +809,12 @@ function missed(result: VoiceResult): void {
 </template>
 
 <style scoped>
-.analysis-layout {
-  --board-chrome: 212px;
-  /* The evaluation bar sits beside the board and takes from its width. */
-  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 372px), 760px);
-  grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 440px);
-}
 .analysis-board {
   display: flex;
   gap: 8px;
+}
+.analysis-board:not(:has(.analysis-eval)) {
+  padding-left: 22px;
 }
 .analysis-eval {
   flex: none;
@@ -1022,73 +949,6 @@ function missed(result: VoiceResult): void {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.pv-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--ui-border);
-  border-radius: 10px;
-  background: var(--ui-bg);
-  overflow: hidden;
-}
-.pv-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-height: 30px;
-  padding: 5px 8px;
-  font-size: 12.5px;
-}
-.pv-row + .pv-row {
-  border-top: 1px solid var(--ui-border);
-}
-.pv-eval {
-  flex: none;
-  min-width: 3.4em;
-  padding: 1px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: var(--ui-bg-accented);
-  color: inherit;
-  font: inherit;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  cursor: pointer;
-}
-.pv-row.pending .pv-eval {
-  cursor: default;
-  color: var(--ui-text-dimmed);
-}
-.pv-moves {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.pv-move {
-  min-width: 24px;
-  min-height: 24px;
-  padding: 1px 2px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--ui-text-toned);
-  font: inherit;
-  cursor: pointer;
-}
-.pv-move:hover,
-.pv-eval:hover {
-  background: color-mix(in srgb, var(--ui-primary) 24%, transparent);
-}
-.pv-preview {
-  position: fixed;
-  z-index: 60;
-  padding: 4px;
-  border: 1px solid var(--ui-border);
-  border-radius: 10px;
-  background: var(--ui-bg);
-  pointer-events: none;
-}
 .tree-list {
   position: absolute;
   inset: 0;
@@ -1122,10 +982,6 @@ function missed(result: VoiceResult): void {
     flex: none;
     max-height: 420px;
   }
-  .analysis-layout {
-    --board-size: min(100cqw - 22px, 100dvh - 260px);
-    grid-template-columns: minmax(0, calc(var(--board-size) + 22px));
-  }
 }
 @media (max-width: 900px) and (orientation: portrait) {
   .analysis-panel {
@@ -1134,10 +990,6 @@ function missed(result: VoiceResult): void {
   .tool-body {
     flex: none;
     max-height: 420px;
-  }
-  .analysis-layout {
-    --board-size: min(100cqw - 22px, max(260px, 100dvh - 260px), 760px);
-    grid-template-columns: minmax(0, calc(var(--board-size) + 22px));
   }
 }
 </style>

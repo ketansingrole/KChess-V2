@@ -77,6 +77,8 @@ const SETTINGS_KEYS = [
   'blindfold',
   'cloudEval',
   'showOpeningName',
+  'swipeNavigation',
+  'swipeIndicator',
 ] as const satisfies readonly (keyof Settings)[]
 
 const placeholders = (count: number): string => Array(count).fill('?').join(', ')
@@ -183,6 +185,8 @@ function rowToSettings(row: SettingsRow): Settings {
     blindfold: row.blindfold === 1,
     cloudEval: row.cloudEval === 1,
     showOpeningName: row.showOpeningName !== 0,
+    swipeNavigation: row.swipeNavigation !== 0,
+    swipeIndicator: row.swipeIndicator !== 0,
   })
 }
 

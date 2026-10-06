@@ -1,4 +1,4 @@
-import { Chess, type Position } from 'chessops/chess'
+import { Chess, normalizeMove, type Position } from 'chessops/chess'
 import { INITIAL_FEN, makeFen } from 'chessops/fen'
 import {
   ChildNode,
@@ -84,12 +84,15 @@ export const nodeAt = (root: TreeNode, path: string): TreeNode => nodesAlong(roo
 /** Play `uci` after `path`, re-using the node when that move was already tried. */
 export function addMove(root: TreeNode, path: string, uci: string): string | undefined {
   const parent = nodeAt(root, path)
+  const pos = positionFromFen(parent.fen)
+  const parsed = parseUci(uci)
+  if (!pos || !parsed) return undefined
+  const move = normalizeMove(pos, parsed)
+  if (!pos.isLegal(move)) return undefined
+  uci = makeUci(move)
   const existing = parent.children.find((child) => child.uci === uci)
   const childPath = pathOf([...movesOf(path), uci])
   if (existing) return childPath
-  const pos = positionFromFen(parent.fen)
-  const move = parseUci(uci)
-  if (!pos || !move || !pos.isLegal(move)) return undefined
   const san = makeSanAndPlay(pos, move)
   parent.children.push({ uci, san, fen: makeFen(pos.toSetup()), ply: parent.ply + 1, children: [] })
   return childPath
@@ -248,8 +251,10 @@ export function pvSan(
   const moves: { san: string; uci: string; label: string; fen: string }[] = []
   let ply = plyOf(pos)
   for (const uci of pv.slice(0, max)) {
-    const move = parseUci(uci)
-    if (!move || !pos.isLegal(move)) break
+    const parsed = parseUci(uci)
+    if (!parsed) break
+    const move = normalizeMove(pos, parsed)
+    if (!pos.isLegal(move)) break
     const number = moveNumber(ply, moves.length === 0)
     const san = makeSanAndPlay(pos, move)
     moves.push({ san, uci, label: number ? `${number} ${san}` : san, fen: makeFen(pos.toSetup()) })

@@ -30,10 +30,40 @@ const games = computed(() =>
     .sort((a, b) => b.startedAt - a.startedAt),
 )
 const visible = computed(() => games.value.slice((page.value - 1) * 20, page.value * 20))
+/** What the last swipe-back undid, while nothing else changed since. */
+const swipeRedo = ref<ArchivedGame | null>(null)
+/** A swipe steps out of the open game before leaving the page. */
+const hasDetail = computed(() => selected.value !== null)
+function goBack(): void {
+  swipeRedo.value = selected.value
+  selected.value = null
+}
+const hasRedo = computed(
+  () =>
+    swipeRedo.value !== null &&
+    selected.value === null &&
+    games.value.some((game) => game.id === swipeRedo.value!.id),
+)
+function goForward(): void {
+  if (!hasRedo.value) return
+  selected.value = swipeRedo.value
+  swipeRedo.value = null
+}
+/** Manual drill actions drop the swipe's redo; only a swipe-back sets it. */
+function selectGame(game: ArchivedGame): void {
+  swipeRedo.value = null
+  selected.value = game
+}
+function closeGame(): void {
+  swipeRedo.value = null
+  selected.value = null
+}
+defineExpose({ hasDetail, goBack, hasRedo, goForward })
 watch(
   () => props.source,
   () => {
     selected.value = null
+    swipeRedo.value = null
     page.value = 1
   },
 )
@@ -89,7 +119,7 @@ async function exportGame(game: ArchivedGame): Promise<void> {
     <p v-if="archive.error" role="alert" class="text-error">{{ archive.error }}</p>
     <template v-if="selected">
       <div class="toolbar-row">
-        <UButton variant="ghost" color="neutral" icon="i-lucide-arrow-left" @click="selected = null"
+        <UButton variant="ghost" color="neutral" icon="i-lucide-arrow-left" @click="closeGame"
           >All games</UButton
         >
         <span>{{ selected.white }} vs {{ selected.black }} · {{ selected.result }}</span>
@@ -162,7 +192,7 @@ async function exportGame(game: ArchivedGame): Promise<void> {
             v-if="game.source !== 'clock'"
             variant="soft"
             color="neutral"
-            @click="selected = game"
+            @click="selectGame(game)"
             >Replay</UButton
           >
           <UButton variant="ghost" color="neutral" @click="exportGame(game)">{{

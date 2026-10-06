@@ -311,7 +311,6 @@ button:disabled {
   margin-bottom: 14px;
 }
 .section-title {
-  margin: 0;
   font-size: 15px;
   font-weight: 650;
 }
@@ -525,6 +524,15 @@ button:disabled {
 }
 .play-layout.review {
   --board-chrome: 352px;
+}
+/* Analysis and broadcasts use the same board and panel dimensions. Reserve the
+   evaluation gutter separately so switching it on never shrinks the board. */
+.analysis-surface {
+  --board-chrome: 352px;
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 372px), 760px);
+}
+.play-layout.analysis-surface {
+  grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 440px);
 }
 .board-stack {
   display: flex;
@@ -1060,7 +1068,7 @@ coords .coord-dark {
 }
 .player-line.active .player-clock {
   background: var(--ui-primary);
-  color: #fff;
+  color: var(--ui-text-inverted);
 }
 .player-line.active .player-avatar {
   outline: 2px solid var(--ui-primary);
@@ -1809,6 +1817,10 @@ button.move-cell:hover {
     grid-template-columns: minmax(0, var(--board-size));
     justify-content: center;
   }
+  .play-layout.analysis-surface {
+    --board-size: min(100cqw - 22px, 100dvh - 260px);
+    grid-template-columns: minmax(0, calc(var(--board-size) + 22px));
+  }
   .moves-wrap {
     flex: none;
     height: 240px;
@@ -1829,6 +1841,10 @@ button.move-cell:hover {
     --board-size: min(100cqw, max(260px, 100dvh - 260px), 760px);
     grid-template-columns: minmax(0, var(--board-size));
     justify-content: center;
+  }
+  .play-layout.analysis-surface {
+    --board-size: min(100cqw - 22px, max(260px, 100dvh - 260px), 760px);
+    grid-template-columns: minmax(0, calc(var(--board-size) + 22px));
   }
   .moves-wrap {
     flex: none;
@@ -2055,6 +2071,85 @@ button.move-cell:hover {
   right: 16px;
   bottom: 16px;
   z-index: 40;
+}
+
+/* ── Two-finger swipe feedback ───────────────────────────────────────────
+   A tab that slides in from the edge and follows the swipe, so navigation
+   never lands without warning. Left tab goes back, right tab goes forward. */
+.page-swipe-edge {
+  position: fixed;
+  top: 50%;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 116px;
+  margin-top: -58px;
+  border: 1px solid transparent;
+  background: var(--ui-primary);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.45);
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out,
+    background-color 120ms,
+    color 120ms,
+    border-color 120ms;
+}
+.page-swipe-edge.is-back {
+  left: 0;
+  border-radius: 0 14px 14px 0;
+  transform: translateX(-120%);
+}
+.page-swipe-edge.is-forward {
+  right: 0;
+  border-radius: 14px 0 0 14px;
+  transform: translateX(120%);
+}
+.page-swipe-edge.is-visible {
+  opacity: 1;
+}
+.page-swipe-edge.is-back.is-visible {
+  transform: translateX(calc((var(--swipe-progress, 0) - 1) * 120%));
+}
+.page-swipe-edge.is-forward.is-visible {
+  transform: translateX(calc((1 - var(--swipe-progress, 0)) * 120%));
+}
+.page-swipe-edge.is-ready {
+  box-shadow:
+    0 8px 24px -8px rgb(0 0 0 / 0.45),
+    0 0 0 2px color-mix(in srgb, var(--ui-primary) 45%, transparent);
+}
+.page-swipe-edge.is-blocked {
+  border-color: var(--ui-border-accented);
+  border-style: dashed;
+  background: var(--ui-bg-accented);
+  color: var(--ui-text-dimmed);
+  box-shadow: none;
+}
+.page-swipe-edge.is-committed {
+  animation: page-swipe-pop 200ms ease-out;
+}
+.page-swipe-edge .page-swipe-arrow {
+  position: relative;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.25));
+}
+.page-swipe-edge.is-blocked .page-swipe-arrow {
+  filter: none;
+}
+@keyframes page-swipe-pop {
+  0% {
+    scale: 1;
+  }
+  40% {
+    scale: 1.1;
+  }
+  100% {
+    scale: 1;
+  }
 }
 
 /* ── Online extras: offers, chat, challenges ───────────────────────────── */

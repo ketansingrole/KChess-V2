@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { useOnline } from '@vueuse/core'
 import { gameResult } from '../utils/games'
+import { useSwipeBack } from '../composables/useSwipeBack'
+import type { LichessGame } from '../../src/shared/types'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import { judgmentCounts } from '../utils/review'
@@ -32,6 +34,48 @@ const {
   visibleGames,
 } = storeToRefs(store)
 const { sync, date, openReview, selectPage } = store
+
+/** What the last swipe-back undid on the Lichess tab, while nothing else changed since. */
+const lichessRedo = ref<LichessGame | null>(null)
+/** A swipe steps out of the open game or review before leaving the page. */
+const localHistory = ref<{
+  hasDetail: boolean
+  goBack: () => void
+  hasRedo: boolean
+  goForward: () => void
+} | null>(null)
+useSwipeBack({
+  canBack: () => reviewGame.value !== null || (localHistory.value?.hasDetail ?? false),
+  back: () => {
+    if (localHistory.value?.hasDetail) localHistory.value.goBack()
+    else if (reviewGame.value) {
+      lichessRedo.value = reviewGame.value
+      reviewGame.value = null
+    }
+  },
+  canForward: () =>
+    (localHistory.value?.hasRedo ?? false) ||
+    (lichessRedo.value !== null &&
+      reviewGame.value === null &&
+      source.value === 'lichess' &&
+      visibleGames.value.some((game) => game.id === lichessRedo.value!.id)),
+  forward: () => {
+    if (localHistory.value?.hasRedo) localHistory.value.goForward()
+    else if (lichessRedo.value) {
+      const redo = lichessRedo.value
+      lichessRedo.value = null
+      void openReview(redo)
+    }
+  },
+})
+/** Manual drill actions drop the swipe's redo; only a swipe-back sets it. */
+function openHistoryReview(game: LichessGame): void {
+  lichessRedo.value = null
+  void openReview(game)
+}
+watch(source, () => {
+  lichessRedo.value = null
+})
 
 const analysis = useAnalysisStore()
 const reviews = useReviewStore()
@@ -137,6 +181,7 @@ const reviewColor = computed(() =>
     />
     <LocalGameHistory
       v-if="source !== 'lichess'"
+      ref="localHistory"
       :source="source === 'computer' ? 'computer' : 'board'"
     />
     <section v-else class="lichess-history">
@@ -294,7 +339,7 @@ const reviewColor = computed(() =>
                 :game="game"
                 :review="summaries[game.id]"
                 detailed
-                @select="openReview(game)"
+                @select="openHistoryReview(game)"
               />
             </div>
             <div class="pager">

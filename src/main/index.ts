@@ -140,6 +140,7 @@ import {
   assertPerfType,
   assertExport,
   assertInsightsQuery,
+  assertBroadcastQuery,
   assertWatchTarget,
   assertTournamentPassword,
   assertTournamentSystem,
@@ -751,7 +752,7 @@ void app
       return spectator.watchRound(assertLichessId(roundId))
     })
     handle('stopWatching', () => spectator.stop())
-    handle('broadcasts', () => broadcasts())
+    handle('broadcasts', (_event, query) => broadcasts(assertBroadcastQuery(query)))
     handle('broadcastTour', (_event, id: unknown) => broadcastTour(assertLichessId(id)))
     handle('tournament', (_event, system: unknown, id: unknown, account: unknown, page: unknown) =>
       tournament(

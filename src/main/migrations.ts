@@ -228,6 +228,9 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX idx_game_reviews_key ON game_reviews(reviewKey);
   INSERT INTO game_reviews SELECT gameId, key FROM reviews WHERE gameId IS NOT NULL;`,
+  // Two-finger swipe navigation and its edge feedback.
+  `ALTER TABLE settings ADD COLUMN swipeNavigation INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE settings ADD COLUMN swipeIndicator INTEGER NOT NULL DEFAULT 1;`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

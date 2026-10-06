@@ -176,3 +176,72 @@ it('keeps only the newest selection across generated reply and cancellation orde
     { numRuns: 30 },
   )
 })
+
+it('finishes loading after a failed broadcast request and allows retry', async () => {
+  let attempts = 0
+  desktop({
+    broadcasts: async () => {
+      if (++attempts === 1) throw new Error('Rate limited')
+      return []
+    },
+  })
+  const watch = useWatchStore()
+  await watch.loadBroadcasts()
+  expect(watch.broadcastLoading).toBe(false)
+  expect(watch.broadcastError).toBe('Rate limited')
+  await watch.loadBroadcasts()
+  expect(watch.broadcastError).toBe('')
+  expect(watch.broadcastList).toEqual([])
+})
+
+it('ticks broadcast clocks, preserves countdown across duplicate frames, corrects on moves and freezes on stop', async () => {
+  let receive!: (update: import('../../src/shared/types').BroadcastUpdate) => void
+  desktop({
+    onWatchState: () => () => {},
+    onWatch: () => () => {},
+    onBroadcast: (callback) => {
+      receive = callback
+      return () => {}
+    },
+    watchBroadcast: async () => 2,
+    stopWatching: async () => {},
+  })
+  const watch = useWatchStore()
+  const time = vi.spyOn(performance, 'now').mockReturnValue(1000)
+  await watch.openRound('Round001')
+  const game: import('../../src/shared/types').BroadcastGame = {
+    id: 'Board001',
+    name: 'Test',
+    white: { name: 'A' },
+    black: { name: 'B' },
+    result: '*',
+    startFen: INITIAL_FEN,
+    moves: ['e2e4'],
+    fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    whiteClock: 60,
+    blackClock: 70,
+    ongoing: true,
+    pgn: '',
+  }
+  receive({ session: 2, roundId: 'Round001', games: [game] })
+  expect(watch.broadcastClock(game, 'black', 4000)).toBe(67000)
+  expect(watch.broadcastClockRunning(game, 'black')).toBe(true)
+  expect(watch.broadcastClockRunning(game, 'white')).toBe(false)
+  expect(watch.broadcastClock(game, 'white', 4000)).toBe(60000)
+  time.mockReturnValue(4000)
+  receive({ session: 2, roundId: 'Round001', games: [{ ...game }] })
+  expect(watch.broadcastClock(game, 'black', 5000)).toBe(66000)
+  const next = { ...game, moves: ['e2e4', 'e7e5'], fen: INITIAL_FEN, blackClock: 65 }
+  receive({ session: 2, roundId: 'Round001', games: [next] })
+  expect(watch.broadcastClock(next, 'white', 5000)).toBe(59000)
+  expect(watch.broadcastClockRunning(next, 'white')).toBe(true)
+  expect(watch.broadcastClockRunning(next, 'black')).toBe(false)
+  expect(watch.broadcastClock(next, 'black', 5000)).toBe(65000)
+  time.mockReturnValue(5000)
+  receive({ session: 2, roundId: 'Round001', games: [], ended: true })
+  expect(watch.broadcastClock(next, 'white', 10000)).toBe(59000)
+  expect(watch.broadcastClockRunning(next, 'white')).toBe(false)
+  await watch.stop()
+  expect(watch.broadcastClock(next, 'white', 20000)).toBe(59000)
+  time.mockRestore()
+})

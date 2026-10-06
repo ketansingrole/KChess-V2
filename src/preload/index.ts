@@ -138,7 +138,7 @@ const api: DesktopApi = {
   watch: (target) => invoke('watch', target),
   watchBroadcast: (roundId) => invoke('watchBroadcast', roundId),
   stopWatching: () => invoke('stopWatching'),
-  broadcasts: () => invoke('broadcasts'),
+  broadcasts: (query) => invoke('broadcasts', query),
   broadcastTour: (id) => invoke('broadcastTour', id),
   onWatchState: (callback) => {
     const listener = (_: unknown, state: WatchState): void => callback(state)

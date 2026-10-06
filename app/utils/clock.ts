@@ -38,6 +38,10 @@ export class Clock {
     this.ticking = undefined
   }
 
+  get running(): Color | undefined {
+    return this.ticking
+  }
+
   remaining(color: Color, now = performance.now()): number {
     const elapsed = this.ticking === color ? Math.max(0, now - this.lastUpdate) : 0
     return Math.max(0, this.times[color] - elapsed)

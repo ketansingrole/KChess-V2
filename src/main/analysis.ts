@@ -70,6 +70,9 @@ export async function startAnalysis(
             target.write(`setoption name Threads value ${searchThreads()}`)
             target.write('setoption name Hash value 128')
             target.write(`setoption name MultiPV value ${request.lines}`)
+            // Chessops stores castling as king-to-rook UCI, including standard games.
+            // Without this option Stockfish stops replaying history at the first castle.
+            target.write('setoption name UCI_Chess960 value true')
             await target.sync()
             controller.signal.throwIfAborted()
             target.write(
