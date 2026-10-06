@@ -36,6 +36,7 @@ function save(): void {
     editing.value = null
     error.value = ''
   } catch (cause) {
+    console.warn('[study-chapters] Could not save chapter:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
@@ -46,6 +47,7 @@ function duplicate(): void {
     const id = library.duplicateChapter(study.value.id, analysis.studyChapterId)
     analysis.openStudy(study.value.id, id)
   } catch (cause) {
+    console.warn('[study-chapters] Could not duplicate chapter:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
@@ -64,6 +66,7 @@ function remove(): void {
     library.flush()
   } catch (cause) {
     analysis.openStudy(id, chapterId)
+    console.warn('[study-chapters] Could not delete chapter:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }

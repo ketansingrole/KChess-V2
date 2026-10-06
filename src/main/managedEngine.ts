@@ -20,6 +20,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { pickStockfishAsset, type ReleaseAsset } from './stockfishAsset.ts'
+import { logDebug } from './logger.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -51,7 +52,8 @@ export async function managedEngine(dir = MANAGED_DIR): Promise<ManagedEngine> {
   const path = join(dir, EXECUTABLE)
   try {
     if (!(await stat(path)).isFile()) return { installed: false, path }
-  } catch {
+  } catch (cause) {
+    logDebug('managed-engine', 'Managed engine check failed:', dir, cause)
     return { installed: false, path }
   }
   const version = await readFile(join(dir, VERSION_FILE), 'utf8').then(
@@ -63,13 +65,19 @@ export async function managedEngine(dir = MANAGED_DIR): Promise<ManagedEngine> {
 
 const mutations = new Map<string, Promise<unknown>>()
 function mutate<T>(dir: string, action: () => Promise<T>): Promise<T> {
-  const result = (mutations.get(dir) ?? Promise.resolve()).catch(() => {}).then(action)
+  const result = (mutations.get(dir) ?? Promise.resolve())
+    .catch((error: unknown) => {
+      logDebug('managed-engine', 'Previous engine mutation failed:', dir, error)
+    })
+    .then(action)
   mutations.set(dir, result)
   void result
     .finally(() => {
       if (mutations.get(dir) === result) mutations.delete(dir)
     })
-    .catch(() => {})
+    .catch((error: unknown) => {
+      logDebug('managed-engine', 'Engine mutation failed:', dir, error)
+    })
   return result
 }
 

@@ -5,6 +5,7 @@ import { parseInfo } from '../shared/uciInfo'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { UciController, SearchCancelled } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
+import { errorSummary, logDebug, logWarn, truncateForLog } from './logger'
 
 const DEPTH_LIMIT = 26
 const TIME_LIMIT_MS = 60_000
@@ -27,17 +28,21 @@ export async function startAnalysis(
   current = controller
   clearTimeout(idleTimer)
   serial = serial
-    .catch(() => {})
+    .catch((error: unknown) => {
+      logDebug('analysis', 'Previous analysis failed:', error)
+    })
     .then(async () => {
       const lines = new Map<number, EngineLine>()
       let nps: number | undefined
       let key = ''
       let lastEmit = 0
+      const context = analysisContext(request.rootFen ?? request.fen, request.moves)
+      const whiteToMove = (request.fen.split(' ')[1] ?? 'w') === 'w'
       const emit = (reason?: AnalysisUpdate['reason'], error?: string): void =>
         send({
           id,
           fen: request.fen,
-          context: analysisContext(request.rootFen ?? request.fen, request.moves),
+          context,
           clientId: request.clientId,
           depth: lines.get(1)?.depth ?? 0,
           nps,
@@ -83,7 +88,7 @@ export async function startAnalysis(
                 ? 'go infinite'
                 : `go depth ${DEPTH_LIMIT} movetime ${TIME_LIMIT_MS}`,
               (line) => {
-                const parsed = parseInfo(line, request.fen.split(' ')[1] === 'w')
+                const parsed = parseInfo(line, whiteToMove)
                 if (!parsed || parsed.line.rank > request.lines || controller.signal.aborted) return
                 lines.set(parsed.line.rank, parsed.line)
                 nps = parsed.nps ?? nps
@@ -99,8 +104,14 @@ export async function startAnalysis(
           },
         )
       } catch (cause) {
-        if (controller.signal.aborted || cause instanceof SearchCancelled) emit('interrupted')
-        else emit('failed', cause instanceof Error ? cause.message : String(cause))
+        const context = `fen=${truncateForLog(request.fen, 60)} client=${truncateForLog(request.clientId ?? 'none', 40)}`
+        if (controller.signal.aborted || cause instanceof SearchCancelled) {
+          logDebug('analysis', 'Analysis interrupted:', context, errorSummary(cause))
+          emit('interrupted')
+        } else {
+          logWarn('analysis', 'Analysis failed:', context, errorSummary(cause))
+          emit('failed', cause instanceof Error ? cause.message : String(cause))
+        }
       } finally {
         if (current === controller) {
           current = undefined

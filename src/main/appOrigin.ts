@@ -1,4 +1,6 @@
 /** Custom schemes have opaque URL.origin values; compare protocol and authority explicitly. */
+import { logDebug } from './logger'
+
 export function isAppUrl(value: string, developmentUrl = process.env.KCHESS_NUXT_URL): boolean {
   try {
     const candidate = new URL(value)
@@ -9,7 +11,8 @@ export function isAppUrl(value: string, developmentUrl = process.env.KCHESS_NUXT
       candidate.protocol === expected.protocol &&
       candidate.host === expected.host
     )
-  } catch {
+  } catch (cause) {
+    logDebug('startup', 'Invalid URL for app origin check:', cause)
     return false
   }
 }

@@ -1,4 +1,5 @@
 import { app, session, shell, systemPreferences } from 'electron'
+import { logDebug } from './logger'
 import type { MicrophoneAccess, MicrophoneStatus } from '../shared/types'
 
 function status(): MicrophoneStatus {
@@ -11,7 +12,8 @@ function status(): MicrophoneStatus {
       value === 'not-determined'
       ? value
       : 'unknown'
-  } catch {
+  } catch (cause) {
+    logDebug('microphone', 'Could not read microphone access status:', cause)
     return 'unknown'
   }
 }
@@ -38,8 +40,8 @@ export async function microphoneAccess(request: boolean): Promise<MicrophoneAcce
     return report(current)
   try {
     await systemPreferences.askForMediaAccess('microphone')
-  } catch {
-    /* status below reports the outcome */
+  } catch (cause) {
+    logDebug('microphone', 'Microphone access request failed:', cause)
   }
   return report(status())
 }

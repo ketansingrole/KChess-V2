@@ -1,5 +1,6 @@
 import type { ChildProcessByStdio } from 'node:child_process'
 import { timed } from './performance'
+import { errorSummary, isExpectedCancellation, logDebug, logWarn, uciCommandName } from './logger'
 import { createInterface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
 
@@ -74,17 +75,40 @@ export class UciController {
     lines.on('line', (raw) => {
       for (const listener of [...this.listeners]) listener(raw.trim())
     })
+    // Keep the first bytes of stderr for failure diagnostics; Stockfish is
+    // quiet on success, so this stays empty in the common case.
+    let stderrSnippet = ''
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderrSnippet.length < 2048) {
+        stderrSnippet += chunk.toString('utf8', 0, 2048 - stderrSnippet.length)
+      }
+    })
     child.stderr.resume()
     child.stdin.on('error', (error) => this.fail(error))
     child.on('error', (error) => this.fail(error))
-    child.on('exit', () => {
+    child.on('exit', (code, signal) => {
       clearTimeout(this.termination)
       lines.close()
+      if (this.failure) {
+        logDebug('uci', 'Engine process exited:', `code=${code}`, `signal=${signal ?? 'none'}`)
+        return
+      }
+      logWarn(
+        'uci',
+        'Engine process exited unexpectedly:',
+        `code=${code}`,
+        `signal=${signal ?? 'none'}`,
+        stderrSnippet
+          ? `stderr=${stderrSnippet.replace(/\s+/g, ' ').slice(0, 200)}`
+          : 'stderr=empty',
+      )
       this.fail(new Error('Stockfish stopped unexpectedly. Choose another engine or retry.'))
     })
     this.ready = this.initialize()
     // Initialization may fail before a consumer has reached its await.
-    void this.ready.catch(() => {})
+    void this.ready.catch((error: unknown) => {
+      logDebug('uci', 'Engine init deferred:', error)
+    })
   }
 
   get failed(): Error | undefined {
@@ -136,16 +160,22 @@ export class UciController {
       }
       const timer =
         timeout > 0
-          ? setTimeout(
-              () => this.fail(new Error('Stockfish timed out. Retry or choose another engine.')),
-              timeout,
-            )
+          ? setTimeout(() => {
+              logWarn(
+                'uci',
+                'Engine command timed out:',
+                uciCommandName(command),
+                `timeoutMs=${timeout}`,
+              )
+              this.fail(new Error('Stockfish timed out. Retry or choose another engine.'))
+            }, timeout)
           : undefined
       this.listeners.add(line)
       this.failures.add(fail)
       try {
         this.write(command)
       } catch (error) {
+        logWarn('uci', 'Engine command write failed:', uciCommandName(command), errorSummary(error))
         fail(error instanceof Error ? error : new Error(String(error)))
       }
     })
@@ -170,7 +200,8 @@ export class UciController {
       stopTiming = timed('engine.stop')
       try {
         this.write('stop')
-      } catch {
+      } catch (cause) {
+        logDebug('uci', 'Engine stop failed:', cause)
         /* failure rejects the waiter */
       }
       stopping = setTimeout(
@@ -203,7 +234,15 @@ export class UciController {
     this.stopSearch?.()
   }
   private fail(error: Error): void {
-    if (this.failure) return
+    if (this.failure) {
+      logDebug('uci', 'Engine failure already reported:', errorSummary(error))
+      return
+    }
+    if (isExpectedCancellation(error)) {
+      logDebug('uci', 'Engine stopped:', errorSummary(error))
+    } else {
+      logWarn('uci', 'Engine failed:', errorSummary(error))
+    }
     this.failure = error
     for (const listener of [...this.failures]) listener(error)
     this.listeners.clear()

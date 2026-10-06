@@ -7,13 +7,16 @@ let off: (() => void) | undefined
 async function refresh(): Promise<void> {
   try {
     isMaximized.value = await window.kchess.windowIsMaximized()
-  } catch {
+  } catch (cause) {
+    console.warn('[window-controls] Could not read maximized state:', cause)
     /* browser preview has no window controls */
   }
 }
 
 function minimize(): void {
-  void window.kchess.windowMinimize().catch(() => {})
+  void window.kchess.windowMinimize().catch((error: unknown) => {
+    console.warn('[window-controls] Minimize failed:', error)
+  })
 }
 
 function toggleMaximize(): void {
@@ -22,11 +25,15 @@ function toggleMaximize(): void {
     .then((state) => {
       isMaximized.value = state.maximized
     })
-    .catch(() => {})
+    .catch((error: unknown) => {
+      console.warn('[window-controls] Toggle maximize failed:', error)
+    })
 }
 
 function closeWindow(): void {
-  void window.kchess.windowClose().catch(() => {})
+  void window.kchess.windowClose().catch((error: unknown) => {
+    console.warn('[window-controls] Close failed:', error)
+  })
 }
 
 onMounted(() => {
@@ -35,7 +42,8 @@ onMounted(() => {
     off = window.kchess.onWindowMaximized((state) => {
       isMaximized.value = state.maximized
     })
-  } catch {
+  } catch (cause) {
+    console.warn('[window-controls] Window listener unavailable:', cause)
     off = undefined
   }
 })

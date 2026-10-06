@@ -13,6 +13,7 @@ import {
 } from '../shared/types'
 import { USERNAME } from '../shared/patterns'
 import { assertAnalysisRequest } from '../shared/validate'
+import { logDebug } from './logger'
 
 const count = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
 const categories = v.picklist([
@@ -281,7 +282,9 @@ export class PositionLookupService {
         }
         text += decoder.decode()
       } finally {
-        await reader.cancel().catch(() => {})
+        await reader.cancel().catch((error: unknown) => {
+          logDebug('position-lookup', 'Stream cancel failed:', error)
+        })
         reader.releaseLock()
       }
       // The player database answers with a stream of ever more complete results: use the last.

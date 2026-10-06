@@ -40,6 +40,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
     try {
       list.value = await window.kchess.tournaments(app.activeOnlineAccount)
     } catch (cause) {
+      console.warn('[tournaments] loading tournaments failed:', cause)
       error.value = cause instanceof Error ? cause.message : String(cause)
     } finally {
       loading.value = false
@@ -67,8 +68,10 @@ export const useTournamentStore = defineStore('tournaments', () => {
       if (system === 'arena' && (next.status === 'finished' || !next.me || next.me.withdraw))
         forget(system, id)
     } catch (cause) {
-      if (request === detailRequest)
+      if (request === detailRequest) {
+        console.warn('[tournaments] loading tournament failed:', cause)
         detailError.value = cause instanceof Error ? cause.message : String(cause)
+      }
     }
   }
   function close(): void {
@@ -144,6 +147,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
       await refresh()
       return { created: result }
     } catch (cause) {
+      console.warn('[tournaments] creating tournament failed:', cause)
       return { error: cause instanceof Error ? cause.message : String(cause) }
     }
   }

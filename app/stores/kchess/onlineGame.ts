@@ -252,7 +252,8 @@ export function useOnlineGame(options: {
       if (epoch !== presenceEpoch || onlinePhase.value !== 'playing') return
       presence.value = report
       latencySamples.value = [...latencySamples.value, report.latencyMs].slice(-30)
-    } catch {
+    } catch (cause) {
+      console.warn('[online-game] polling presence failed:', cause)
       // A missed poll leaves the last reading; a later tick recovers.
     } finally {
       presencePending = false
@@ -456,7 +457,8 @@ export function useOnlineGame(options: {
       const lines = await window.kchess.onlineChat(id)
       if (onlineId.value === id)
         chat.value = [...lines, ...chat.value.filter((l) => l.room !== 'player')]
-    } catch {
+    } catch (cause) {
+      console.warn('[online-game] loading chat failed:', cause)
       // The chat is a courtesy; the game goes on without it.
     }
   }
@@ -659,6 +661,7 @@ export function useOnlineGame(options: {
       moveAckMs.value = Math.round(performance.now() - sent)
     } catch (cause) {
       // The server may have accepted the move before the response was lost. Never replay it.
+      console.warn('[online-game] sending move failed:', cause)
       onlinePhase.value = 'disconnected'
       onlineStatus.value =
         'The move could not be confirmed. Reconnect to check the server position.'

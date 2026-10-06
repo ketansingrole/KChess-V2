@@ -45,6 +45,7 @@ async function exportDiagnostics(): Promise<void> {
   try {
     if (await window.kchess.exportDiagnostics()) diagnosticsNote.value = 'Diagnostics exported.'
   } catch (cause) {
+    console.warn('[settings] Diagnostics export failed:', cause)
     diagnosticsNote.value = cause instanceof Error ? cause.message : 'Could not export diagnostics.'
   } finally {
     exportingDiagnostics.value = false
@@ -222,7 +223,10 @@ const skipReasons: Record<NotificationSkip, string> = {
   failed: 'The system refused the notification.',
 }
 async function openSystemSettings(): Promise<void> {
-  const opened = await window.kchess.openNotificationSettings().catch(() => false)
+  const opened = await window.kchess.openNotificationSettings().catch((error: unknown) => {
+    console.warn('[settings] Could not open notification settings:', error)
+    return false
+  })
   if (!opened) testNote.value = 'Open your system notification settings and allow KChess there.'
 }
 
@@ -248,6 +252,7 @@ async function sendTest(): Promise<void> {
         : 'Sent. If nothing appeared, check KChess in your system notification settings and that Focus is off.'
       : `${skipReasons[result.skipped ?? 'unsupported']}${result.error ? ` (${result.error})` : ''}`
   } catch (cause) {
+    console.warn('[settings] Test notification failed:', cause)
     testNote.value = cause instanceof Error ? cause.message : 'Could not send the notification.'
   } finally {
     testPending.value = false
@@ -321,6 +326,7 @@ async function toggleMicTest(): Promise<void> {
     tick()
     await mic.refresh()
   } catch (cause) {
+    console.warn('[settings] Microphone test failed:', cause)
     micTestError.value = describeMicError(cause).message
     await mic.refresh()
   }
@@ -332,7 +338,9 @@ function stopMicTest(): void {
   if (!test) return
   cancelAnimationFrame(test.frame)
   test.stream.getTracks().forEach((track) => track.stop())
-  void test.context.close().catch(() => {})
+  void test.context.close().catch((error: unknown) => {
+    console.warn('[settings] Microphone test cleanup failed:', error)
+  })
 }
 onBeforeUnmount(stopMicTest)
 

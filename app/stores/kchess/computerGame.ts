@@ -267,7 +267,9 @@ export function useComputerGame(options: {
     times.value = { ...times.value!, [turn]: 0 }
     flagged.value = turn
     gameEpoch.value++
-    void window.kchess.stopEngine().catch(() => {})
+    void window.kchess.stopEngine().catch((error: unknown) => {
+      console.warn('[computer-game] stopping engine failed:', error)
+    })
     thinking.value = false
     void play('lowTime')
     return true
@@ -365,6 +367,7 @@ export function useComputerGame(options: {
     } catch (cause) {
       // A new game or takeback cancels the search; that is not an error.
       if (epoch === gameEpoch.value) {
+        console.warn('[computer-game] engine move failed:', cause)
         fail(cause)
         // The engine may have vanished since the last check; make the indicator tell the truth.
         void recheckEngine()
@@ -388,7 +391,9 @@ export function useComputerGame(options: {
     if (setup && !isVariant((setup as Partial<GameSetup>).variant)) setup = undefined
     archive.reset()
     gameEpoch.value++
-    void window.kchess.stopEngine().catch(() => {})
+    void window.kchess.stopEngine().catch((error: unknown) => {
+      console.warn('[computer-game] stopping engine failed:', error)
+    })
     thinking.value = false
     resigned.value = false
     if (setup) localSetup.value = setup
@@ -401,7 +406,9 @@ export function useComputerGame(options: {
   function takeback(): void {
     if (!localMoves.value.length) return
     gameEpoch.value++
-    void window.kchess.stopEngine().catch(() => {})
+    void window.kchess.stopEngine().catch((error: unknown) => {
+      console.warn('[computer-game] stopping engine failed:', error)
+    })
     thinking.value = false
     resigned.value = false
     flagged.value = null
@@ -419,7 +426,9 @@ export function useComputerGame(options: {
   function resign(): void {
     if (!localMoves.value.length || localOver.value) return
     gameEpoch.value++
-    void window.kchess.stopEngine().catch(() => {})
+    void window.kchess.stopEngine().catch((error: unknown) => {
+      console.warn('[computer-game] stopping engine failed:', error)
+    })
     thinking.value = false
     resigned.value = true
     localPly.value = localMoves.value.length

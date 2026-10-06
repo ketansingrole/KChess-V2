@@ -14,7 +14,8 @@ export const useUsageStore = defineStore('usage', () => {
     loading.value = true
     try {
       report.value = await window.kchess.usage()
-    } catch {
+    } catch (cause) {
+      console.warn('[usage] refreshing usage failed:', cause)
       // Accounting is informational; keep showing the last numbers.
     } finally {
       loading.value = false

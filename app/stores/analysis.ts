@@ -260,6 +260,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       studyPgn = text
       studySaveError.value = studies.error
     } catch (cause) {
+      console.warn('[analysis] saving study failed:', cause)
       studySaveError.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
@@ -327,6 +328,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const key = update.context ?? update.fen
     const known = evaluations.get(key)
     if (!update.lines.length) return
+    // Failed searches surface through engineError; never cache them as evaluations.
+    if (update.error || update.reason === 'failed') return
+    // A completed search stays the cached evaluation until a newer completed one
+    // replaces it. An interrupted update is kept only when nothing completed exists
+    // yet, so stepping back still shows it as interrupted rather than as complete.
+    if (known?.reason === 'completed' && update.reason !== 'completed') {
+      if (!known.engine || !update.engine || known.engine === update.engine) return
+    }
     if (known && known.depth > update.depth && known.lines.length >= update.lines.length) return
     evaluations.delete(key)
     evaluations.set(key, update)
@@ -366,7 +375,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ) {
       wanted = ''
       engineBusy.value = false
-      void window.kchess.stopAnalysis().catch(() => {})
+      void window.kchess.stopAnalysis().catch((error: unknown) => {
+        console.warn('[analysis] stopping analysis failed:', error)
+      })
       return
     }
     const known = evaluations.get(context())
@@ -379,7 +390,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ) {
       wanted = fen
       engineBusy.value = false
-      void window.kchess.stopAnalysis().catch(() => {})
+      void window.kchess.stopAnalysis().catch((error: unknown) => {
+        console.warn('[analysis] stopping analysis failed:', error)
+      })
       return
     }
     wanted = fen
@@ -397,6 +410,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       if (wanted === fen && clientId === requestId) latestId = Math.max(latestId, id)
     } catch (cause) {
       if (wanted !== fen || clientId !== requestId) return
+      console.warn('[analysis] starting analysis failed:', cause)
       engineBusy.value = false
       engineError.value = cause instanceof Error ? cause.message : String(cause)
     }
@@ -444,6 +458,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
         )
         if (request === cloudRequest) cloud.value = result
       } catch (cause) {
+        if (request === cloudRequest) console.warn('[analysis] cloud evaluation failed:', cause)
         if (request === cloudRequest)
           cloudError.value = cause instanceof Error ? cause.message : String(cause)
       } finally {
@@ -491,7 +506,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     off = undefined
     wanted = ''
     engineBusy.value = false
-    void window.kchess.stopAnalysis().catch(() => {})
+    void window.kchess.stopAnalysis().catch((error: unknown) => {
+      console.warn('[analysis] stopping analysis failed:', error)
+    })
   }
 
   /* ── Game review ─────────────────────────────────────────────────── */

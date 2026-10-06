@@ -19,8 +19,10 @@ async function refreshVoice(): Promise<void> {
     const status = await window.kchess.voiceModelStatus()
     if (alive) voice.value = status
   } catch (cause) {
-    if (alive)
+    if (alive) {
+      console.warn('[offline-downloads] Could not check the voice model:', cause)
       voiceError.value = cause instanceof Error ? cause.message : 'Could not check the voice model.'
+    }
   } finally {
     refreshing = false
   }
@@ -45,9 +47,11 @@ async function downloadVoice(): Promise<void> {
   try {
     await window.kchess.ensureVoiceModel()
   } catch (cause) {
-    if (alive)
+    if (alive) {
+      console.warn('[offline-downloads] Could not download the voice model:', cause)
       voiceError.value =
         cause instanceof Error ? cause.message : 'Could not download the voice model.'
+    }
   } finally {
     downloading.value = false
     if (alive) void refreshVoice()

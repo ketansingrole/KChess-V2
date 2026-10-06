@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { getDb } from './db'
+import { logDebug } from './logger'
 import { writeReview } from './reviewStore'
 import {
   PIECE_ANIMATIONS,
@@ -267,8 +268,8 @@ function runInsertGame(database: DatabaseSync, game: LichessGame): void {
 function rollback(database: DatabaseSync): void {
   try {
     database.exec('ROLLBACK')
-  } catch {
-    // Ignore rollback failures; the original error is what matters.
+  } catch (cause) {
+    logDebug('store', 'Rollback failed:', cause)
   }
 }
 
@@ -312,7 +313,8 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
   let raw: JsonBackup | null
   try {
     raw = JSON.parse(await readFile(dataPath, 'utf8')) as JsonBackup
-  } catch {
+  } catch (cause) {
+    logDebug('store', 'No JSON backup to migrate:', cause)
     return false
   }
   if (!raw) return false
@@ -322,7 +324,8 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
   let tokens: Record<string, string>
   try {
     tokens = JSON.parse(await readFile(tokenPath, 'utf8')) as Record<string, string>
-  } catch {
+  } catch (cause) {
+    logDebug('store', 'No token backup to migrate:', cause)
     tokens = {}
   }
   database.exec('BEGIN IMMEDIATE')
@@ -343,19 +346,20 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
     )
     for (const [username, encrypted] of Object.entries(tokens)) insertToken.run(username, encrypted)
     database.exec('COMMIT')
-  } catch {
+  } catch (cause) {
+    logDebug('store', 'JSON migration failed:', cause)
     rollback(database)
     return false
   }
   try {
     await rename(dataPath, `${dataPath}.bak`)
-  } catch {
-    // Keep the original file if it cannot be archived.
+  } catch (cause) {
+    logDebug('store', 'Could not archive migrated data file:', cause)
   }
   try {
     await rename(tokenPath, `${tokenPath}.bak`)
-  } catch {
-    // Token file may not exist; nothing to archive.
+  } catch (cause) {
+    logDebug('store', 'Could not archive migrated token file:', cause)
   }
   return true
 }
@@ -366,7 +370,8 @@ async function migrateLegacy(database: DatabaseSync): Promise<void> {
   let legacy: DatabaseSync
   try {
     legacy = new DatabaseSync(legacyPath, { readOnly: true })
-  } catch {
+  } catch (cause) {
+    logDebug('store', 'No legacy database to migrate:', legacyPath, cause)
     return
   }
   try {
@@ -378,14 +383,16 @@ async function migrateLegacy(database: DatabaseSync): Promise<void> {
       settingRows = legacy
         .prepare('SELECT key, value FROM app_settings')
         .all() as unknown as typeof settingRows
-    } catch {
+    } catch (cause) {
+      logDebug('store', 'Legacy settings are unavailable:', cause)
       settingRows = []
     }
     try {
       oldAccounts = legacy
         .prepare('SELECT username, auth_kind, last_synced_at FROM lichess_accounts')
         .all() as unknown as typeof oldAccounts
-    } catch {
+    } catch (cause) {
+      logDebug('store', 'Legacy accounts are unavailable:', cause)
       oldAccounts = []
     }
     try {
@@ -394,14 +401,16 @@ async function migrateLegacy(database: DatabaseSync): Promise<void> {
           'SELECT game_id, account_username, played_at, rated, speed, perf, status, winner, color, opponent_name, opponent_rating, player_rating, rating_diff, opening_name, moves FROM lichess_games ORDER BY played_at DESC LIMIT 5000',
         )
         .all() as unknown as typeof oldGames
-    } catch {
+    } catch (cause) {
+      logDebug('store', 'Legacy games are unavailable:', cause)
       oldGames = []
     }
     try {
       oldTokens = legacy
         .prepare('SELECT username, token FROM lichess_tokens')
         .all() as unknown as typeof oldTokens
-    } catch {
+    } catch (cause) {
+      logDebug('store', 'Legacy tokens are unavailable:', cause)
       oldTokens = []
     }
     const get = (key: string): string | undefined =>
@@ -454,14 +463,15 @@ async function migrateLegacy(database: DatabaseSync): Promise<void> {
           insertToken.run(row.username, safeStorage.encryptString(row.token).toString('base64'))
       }
       database.exec('COMMIT')
-    } catch {
+    } catch (cause) {
+      logDebug('store', 'Legacy migration failed:', cause)
       rollback(database)
     }
   } finally {
     try {
       legacy.close()
-    } catch {
-      // Ignore close errors for the legacy read-only handle.
+    } catch (cause) {
+      logDebug('store', 'Legacy database close failed:', cause)
     }
   }
 }
@@ -631,7 +641,8 @@ export async function readApiCache<T>(
   if (!row) return null
   try {
     return { value: JSON.parse(row.value) as T, fetchedAt: row.fetchedAt }
-  } catch {
+  } catch (cause) {
+    logDebug('store', 'API cache entry is invalid:', key, cause)
     return null
   }
 }
@@ -723,16 +734,6 @@ export async function dismissedFriends(): Promise<Set<string>> {
  * without a game. A game another tracked account also played keeps its reviews.
  */
 function purgeAccountData(db: DatabaseSync, account: string, options: { usage: boolean }): void {
-  const games = db
-    .prepare('SELECT id FROM games WHERE account = ? COLLATE NOCASE')
-    .all(account) as unknown as { id: string }[]
-  const reviewKeys = new Set<string>()
-  for (const { id } of games) {
-    const keys = db
-      .prepare('SELECT reviewKey FROM game_reviews WHERE gameId = ?')
-      .all(id) as unknown as { reviewKey: string }[]
-    for (const { reviewKey } of keys) reviewKeys.add(reviewKey)
-  }
   db.prepare('DELETE FROM games WHERE account = ? COLLATE NOCASE').run(account)
   db.prepare('DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE').run(account)
   db.prepare('DELETE FROM api_cache WHERE substr(key, 1, ?) = ? COLLATE NOCASE').run(
@@ -744,18 +745,17 @@ function purgeAccountData(db: DatabaseSync, account: string, options: { usage: b
     `player:%"player":"${account.replace(/[\\%_]/g, '\\$&')}"%`,
   )
   if (options.usage) db.prepare('DELETE FROM usage WHERE account = ? COLLATE NOCASE').run(account)
-  for (const { id } of games) {
-    db.prepare(
-      'DELETE FROM lichess_review_checks WHERE id = ? AND NOT EXISTS (SELECT 1 FROM games WHERE id = ?)',
-    ).run(id, id)
-    db.prepare(
-      'DELETE FROM game_reviews WHERE gameId = ? AND NOT EXISTS (SELECT 1 FROM games WHERE id = ?)',
-    ).run(id, id)
-  }
-  for (const key of reviewKeys)
-    db.prepare(
-      'DELETE FROM reviews WHERE key = ? AND NOT EXISTS (SELECT 1 FROM game_reviews WHERE reviewKey = ?)',
-    ).run(key, key)
+  // Set-based orphan cleanup (one statement each, not one per game). A game another tracked
+  // account also played keeps its checks and reviews: they still join to a remaining game row.
+  db.prepare(
+    'DELETE FROM lichess_review_checks WHERE NOT EXISTS (SELECT 1 FROM games WHERE games.id = lichess_review_checks.id)',
+  ).run()
+  db.prepare(
+    'DELETE FROM game_reviews WHERE NOT EXISTS (SELECT 1 FROM games WHERE games.id = game_reviews.gameId)',
+  ).run()
+  db.prepare(
+    'DELETE FROM reviews WHERE NOT EXISTS (SELECT 1 FROM game_reviews WHERE game_reviews.reviewKey = reviews.key)',
+  ).run()
 }
 
 export async function logoutAccounts(username?: string): Promise<AppData> {
@@ -960,7 +960,8 @@ export async function getToken(username: string): Promise<string | null> {
     const token = safeStorage.decryptString(Buffer.from(row.encrypted, 'base64'))
     registerDiagnosticSecret(token)
     return token
-  } catch {
+  } catch (cause) {
+    logDebug('store', 'Stored login is unavailable:', username, cause)
     return null
   }
 }

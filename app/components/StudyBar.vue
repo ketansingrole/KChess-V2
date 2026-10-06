@@ -54,6 +54,7 @@ function saveNew(): void {
       icon: 'i-lucide-book-check',
     })
   } catch (cause) {
+    console.warn('[study-bar] Could not save study:', cause)
     saveError.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
@@ -102,6 +103,7 @@ function saveCopy(): void {
     analysis.saveAsStudy(`${open.name.slice(0, 113)} (copy)`)
     toast.add({ title: 'Saved as a new study', icon: 'i-lucide-copy' })
   } catch (cause) {
+    console.warn('[study-bar] Could not save study copy:', cause)
     toast.add({ title: String(cause), color: 'error' })
   }
 }

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { stat } from 'node:fs/promises'
+import { logDebug, logWarn } from './logger'
 import { dbPath, getDb } from './db'
 import type { UsageCell, UsageKind, UsageReport } from '../shared/types'
 
@@ -111,8 +112,8 @@ export function flushUsage(): void {
       database.exec('ROLLBACK')
       throw cause
     }
-  } catch {
-    // Accounting must never break the app; the counts of this batch are simply lost.
+  } catch (cause) {
+    logWarn('usage', 'Dropping usage batch:', rows.length, cause)
   }
 }
 
@@ -133,7 +134,8 @@ export function resetUsage(): void {
 async function fileSize(path: string): Promise<number> {
   try {
     return (await stat(path)).size
-  } catch {
+  } catch (cause) {
+    logDebug('usage', 'Size check failed:', path, cause)
     return 0
   }
 }

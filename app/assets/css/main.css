@@ -523,13 +523,15 @@ button:disabled {
   margin: 0 auto;
 }
 .play-layout.review {
-  --board-chrome: 352px;
+  /* Player strips plus the review header above the grid. */
+  --board-chrome: 260px;
 }
 /* Analysis and broadcasts use the same board and panel dimensions. Reserve the
    evaluation gutter separately so switching it on never shrinks the board. */
 .analysis-surface {
-  --board-chrome: 352px;
-  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 372px), 760px);
+  /* Topbar, page padding, study/tour bar and the input/player rows below the board. */
+  --board-chrome: 260px;
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 366px), 760px);
 }
 .play-layout.analysis-surface {
   grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 440px);

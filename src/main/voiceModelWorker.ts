@@ -5,6 +5,11 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { unzipSync } from 'fflate'
 import { create } from 'tar'
 
+// Worker threads run without the main DiagnosticLog patch and without
+// extensionless TS resolution, so they log via console (visible in dev) and
+// report failures via postMessage (persisted by the parent). Never swallow.
+/* eslint-disable logging/no-raw-console -- worker has no DiagnosticLog; parent persists postMessage errors */
+
 const MAX_EXTRACTED = 200 * 1024 * 1024
 const { archive, directory, model } = workerData as {
   archive: string
@@ -53,6 +58,7 @@ async function prepare(): Promise<void> {
 }
 void prepare()
   .catch((cause: unknown) => {
+    console.warn('[voice] Voice model preparation failed:', cause)
     parentPort!.postMessage({ error: cause instanceof Error ? cause.message : String(cause) })
   })
   .finally(() => parentPort!.close())

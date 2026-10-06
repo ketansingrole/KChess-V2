@@ -12,7 +12,10 @@ watch(
     if (show && !table.value)
       void loadOpenings()
         .then((value) => (table.value = value))
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          console.warn('[opening-name] Could not load openings:', error)
+          return undefined
+        })
   },
   { immediate: true },
 )

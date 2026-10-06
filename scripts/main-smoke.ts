@@ -161,6 +161,8 @@ const settings = {
   blindfold: false,
   cloudEval: false,
   showOpeningName: true,
+  swipeNavigation: true,
+  swipeIndicator: true,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
 throws('settings reject bad review mode', () =>

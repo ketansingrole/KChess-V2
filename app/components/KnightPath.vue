@@ -109,7 +109,8 @@ async function finish(): Promise<void> {
       detail: { reached: reached.value, skipped: missedRounds.value },
     })
     summary.value = saved.value.summary
-  } catch {
+  } catch (cause) {
+    console.warn('[knight-path] Could not save run:', cause)
     // The score is still on screen; only the record is lost.
   }
 }

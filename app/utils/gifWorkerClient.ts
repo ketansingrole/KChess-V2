@@ -46,6 +46,7 @@ export class GifWorkerClient {
           frame ? [frame.rgba.buffer] : [],
         )
       } catch (cause) {
+        console.warn('[gif-worker] posting frame failed:', cause)
         this.fail(cause instanceof Error ? cause : new Error(String(cause)))
       }
     })

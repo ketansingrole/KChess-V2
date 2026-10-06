@@ -15,6 +15,7 @@ export default defineNuxtPlugin((nuxtApp) => {
         `page.navigation:${diagnosticRoute(router.currentRoute.value.path)}`,
         elapsed,
       )
+      // eslint-disable-next-line logging/no-silent-promise-catch -- diagnostics pipeline must not recurse
       .catch(() => {})
   })
   nuxtApp.hook('vue:error', (error, _instance, info) => {
@@ -24,6 +25,7 @@ export default defineNuxtPlugin((nuxtApp) => {
         message: (error instanceof Error ? error.message : String(error)).slice(0, 1000),
         info: info.slice(0, 160),
       })
+      // eslint-disable-next-line logging/no-silent-promise-catch -- diagnostics pipeline must not recurse
       .catch(() => {})
   })
 })

@@ -52,6 +52,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   process.exitCode = await runChecks([
     ['format', ['run', 'format:check']],
     ['lint', ['run', 'lint']],
+    ['notices', ['run', 'check:notices']],
     ['types', ['run', 'typecheck']],
     ['smoke', ['run', 'test:smoke']],
     ['unit', ['run', 'test:unit']],

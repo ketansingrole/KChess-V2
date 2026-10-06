@@ -58,7 +58,6 @@ const arenas = computed(() =>
           { label: 'All', value: 'all' },
         ]"
         :content="false"
-        size="sm"
         variant="pill"
       />
       <UButton

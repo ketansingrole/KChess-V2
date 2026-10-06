@@ -9,13 +9,17 @@ export function useMicrophoneAccess(onFocus?: (access: MicrophoneAccess) => void
   async function refresh(request = false): Promise<MicrophoneAccess | null> {
     try {
       access.value = (await window.kchess?.microphoneAccess?.(request)) ?? null
-    } catch {
+    } catch (cause) {
+      console.warn('[microphone] checking microphone access failed:', cause)
       access.value = null
     }
     return access.value
   }
   async function openSettings(): Promise<void> {
-    const opened = await window.kchess?.openMicrophoneSettings?.().catch(() => false)
+    const opened = await window.kchess?.openMicrophoneSettings?.().catch((error: unknown) => {
+      console.warn('[microphone] opening microphone settings failed:', error)
+      return false
+    })
     note.value = opened ? '' : 'Open your system privacy settings and allow the microphone there.'
   }
   async function focus(): Promise<void> {

@@ -142,6 +142,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       show(draw.puzzle)
     } catch (cause) {
       if (token !== loadToken) return
+      console.warn('[puzzles] loading next puzzle failed:', cause)
       const text = message(cause)
       if (mode.value === 'offline' && /Download the puzzle database/.test(text))
         phase.value = 'nodb'
@@ -238,6 +239,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       if (current.value?.id === puzzle.id) lastReport.value = { win, ratingDiff: result.ratingDiff }
     } catch (cause) {
       if (!stillCurrent()) return
+      console.warn('[puzzles] reporting puzzle result failed:', cause)
       lastReport.value = { win, failed: message(cause) }
     }
   }
@@ -258,6 +260,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     try {
       daily.value = await window.kchess.puzzleDaily()
     } catch (cause) {
+      console.warn('[puzzles] loading daily puzzle failed:', cause)
       dailyError.value = message(cause)
     } finally {
       dailyLoading.value = false
@@ -330,6 +333,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       activityState.value = { loading: false, error: '', needsReconnect: false, loaded: who }
     } catch (cause) {
       if (token !== activityToken || who !== account.value) return
+      console.warn('[puzzles] loading puzzle activity failed:', cause)
       activityState.value = {
         loading: false,
         error: message(cause),
@@ -381,6 +385,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     try {
       db.value = await window.kchess.puzzleDbStatus()
     } catch (cause) {
+      console.warn('[puzzles] reading puzzle database status failed:', cause)
       dbError.value = message(cause)
     }
     offProgress ??= window.kchess.onPuzzleDbProgress((progress) => {
@@ -393,6 +398,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     try {
       db.value = await window.kchess.puzzleDbInstall()
     } catch (cause) {
+      console.warn('[puzzles] installing puzzle database failed:', cause)
       dbError.value = message(cause)
     } finally {
       await refreshDb()

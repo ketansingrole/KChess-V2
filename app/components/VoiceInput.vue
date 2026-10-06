@@ -147,7 +147,9 @@ watch(
         .then(() => {
           if (capture === session) session.update(props.active, props.grammar, pushTalk.value)
         })
-        .catch(() => {})
+        .catch((error: unknown) => {
+          console.warn('[voice-input] Voice preflight failed:', error)
+        })
     }
   },
   { flush: 'sync', immediate: true },
@@ -171,7 +173,8 @@ async function prepare(): Promise<boolean> {
   try {
     await capture.prepare(props.grammar)
     return true
-  } catch {
+  } catch (cause) {
+    console.warn('[voice-input] Voice preparation failed:', cause)
     return false
   }
 }

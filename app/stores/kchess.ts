@@ -264,7 +264,9 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   /** Ask the main process for a desktop notification; it applies the Settings and window-state rules. */
   function notifyDesktop(kind: NotificationKind, title: string, body: string): void {
-    void window.kchess.notify({ kind, title, body }).catch(() => undefined)
+    void window.kchess.notify({ kind, title, body }).catch((error: unknown) => {
+      console.warn('[kchess] desktop notification failed:', error)
+    })
   }
   let offOnline: (() => void) | undefined
   let offOnlineState: (() => void) | undefined
@@ -297,6 +299,7 @@ export const useKChessStore = defineStore('kchess', () => {
     try {
       return await action()
     } catch (cause) {
+      console.warn('[kchess] action failed:', cause)
       fail(cause)
       return undefined
     } finally {
@@ -569,7 +572,8 @@ export const useKChessStore = defineStore('kchess', () => {
         (entry) => account && entry.account?.toLowerCase() !== account.toLowerCase(),
       )
       localStorage.setItem('kchess:tournaments-joined', JSON.stringify(kept))
-    } catch {
+    } catch (cause) {
+      console.warn('[kchess] pruning joined tournaments failed:', cause)
       localStorage.removeItem('kchess:tournaments-joined')
     }
     if (!result.accounts.some((a) => a.connected)) {
@@ -669,6 +673,7 @@ export const useKChessStore = defineStore('kchess', () => {
       themeProblems.value = report.problems
       themesDir.value = report.dir
     } catch (cause) {
+      console.warn('[kchess] reloading themes failed:', cause)
       themeProblems.value = [cause instanceof Error ? cause.message : 'Could not read the themes.']
     }
   }
@@ -749,11 +754,14 @@ export const useKChessStore = defineStore('kchess', () => {
       settings.value = { ...data.value.settings }
       selectedAccount.value = defaultAccount(data.value.accounts)
       // The engine check is not needed to show the app; it flips `engineReady` when it lands.
-      void refreshEngine().catch(() => undefined)
+      void refreshEngine().catch((error: unknown) => {
+        console.warn('[kchess] initial engine check failed:', error)
+      })
       void reloadThemes()
       error.value = ''
     } catch (cause) {
       initialized = false
+      console.warn('[kchess] initial load failed:', cause)
       fail(cause)
       return
     }
@@ -788,6 +796,7 @@ export const useKChessStore = defineStore('kchess', () => {
         }
       })
       .catch((cause) => {
+        console.warn('[kchess] resuming online game failed:', cause)
         if (onlineGame.onlineConnection.value?.phase === 'checking')
           onlineGame.onlineConnection.value = {
             ...onlineGame.onlineConnection.value,

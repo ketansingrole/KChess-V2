@@ -44,6 +44,7 @@ export class SubscriptionScope {
       try {
         cleanup()
       } catch (cause) {
+        console.warn('[requestScope] Subscription cleanup failed', cause)
         failure ??= cause
       }
     }

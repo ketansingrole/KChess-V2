@@ -29,7 +29,10 @@ export const useFriendsStore = defineStore('friends', () => {
       for (const friend of friends.value) {
         const key = friend.username.toLowerCase()
         if (profiles.value[key]) continue
-        const saved = await window.kchess.cachedProfile(friend.username).catch(() => null)
+        const saved = await window.kchess.cachedProfile(friend.username).catch((error: unknown) => {
+          console.warn('[friends] reading cached profile failed:', error)
+          return null
+        })
         if (saved?.profile) {
           profiles.value[key] = saved.profile
           if (saved.profileFetchedAt && Date.now() - saved.profileFetchedAt < 3_600_000)
@@ -42,7 +45,8 @@ export const useFriendsStore = defineStore('friends', () => {
           profiles.value[friend.username.toLowerCase()] = await window.kchess.profile(
             friend.username,
           )
-        } catch {
+        } catch (cause) {
+          console.warn('[friends] loading profile failed:', cause)
           // Keep whatever was saved; the card simply shows fewer details.
         }
       }
@@ -60,7 +64,8 @@ export const useFriendsStore = defineStore('friends', () => {
         const report = await window.kchess.presence(names.slice(start, start + PRESENCE_CHUNK))
         Object.assign(status.value, report.users)
         statusAt.value = Date.now()
-      } catch {
+      } catch (cause) {
+        console.warn('[friends] refreshing presence failed:', cause)
         // Statuses are a nicety; the next poll tries again.
       }
     }
@@ -77,6 +82,7 @@ export const useFriendsStore = defineStore('friends', () => {
     try {
       following.value = await window.kchess.following()
     } catch (cause) {
+      console.warn('[friends] loading following failed:', cause)
       following.value = null
       followingError.value = cause instanceof Error ? cause.message : String(cause)
     } finally {

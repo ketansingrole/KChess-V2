@@ -164,7 +164,6 @@ function onOutcome(win: boolean): void {
             v-model="mode"
             :items="[...modes]"
             aria-labelledby="train-mode-label"
-            size="sm"
             :content="false"
             variant="pill"
             class="w-full"

@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { logDebug, logWarn } from './logger'
 import { assertTheme } from '../shared/validate'
 import type { AppTheme, CustomThemeReport } from '../shared/types'
 
@@ -43,9 +44,10 @@ export async function loadCustomThemes(): Promise<CustomThemeReport> {
   const problems: string[] = []
   await mkdir(dir, { recursive: true })
   const template = join(dir, '_template.json')
-  await stat(template).catch(() =>
-    writeFile(template, `${JSON.stringify(TEMPLATE, null, 2)}\n`, 'utf8'),
-  )
+  await stat(template).catch((cause: unknown) => {
+    logDebug('themes', 'Theme template is missing, creating it:', cause)
+    return writeFile(template, `${JSON.stringify(TEMPLATE, null, 2)}\n`, 'utf8')
+  })
   const files = (await readdir(dir))
     .filter((name) => name.endsWith('.json') && !name.startsWith('_') && !name.startsWith('.'))
     .sort()
@@ -57,6 +59,7 @@ export async function loadCustomThemes(): Promise<CustomThemeReport> {
       const theme = assertTheme(JSON.parse(await readFile(path, 'utf8')))
       themes.push({ ...theme, custom: true })
     } catch (cause) {
+      logWarn('themes', 'Skipping invalid theme file:', name, cause)
       problems.push(`${name}: ${cause instanceof Error ? cause.message : 'unreadable'}`)
     }
   }

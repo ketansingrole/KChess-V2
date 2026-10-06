@@ -22,7 +22,6 @@ const tabs = [
       :items="tabs"
       :content="false"
       variant="pill"
-      size="sm"
       class="mb-5"
       @update:model-value="practiceTab = $event as string"
     />

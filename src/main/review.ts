@@ -20,6 +20,7 @@ import { UciController, SearchCancelled } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { gamesToReview, hasAccount, markChecked, readReview, writeReview } from './reviewStore'
+import { logDebug, logWarn } from './logger'
 
 /**
  * Game review: Stockfish scores every position of a game, one after another, in its own process
@@ -332,7 +333,8 @@ async function nextBackgroundJob(): Promise<Job | null> {
       const found = await host.fetchLichess(account, ids)
       if (epoch !== reviewEpoch) return null
       for (const review of found) host.update(updateOf(review))
-    } catch {
+    } catch (cause) {
+      logWarn('review', 'Lichess review lookup failed, reviewing locally:', account, cause)
       if (epoch !== reviewEpoch) return null
       // Offline or rate limited: review locally rather than wait.
       markChecked(ids)
@@ -423,7 +425,10 @@ async function run(job: Job): Promise<void> {
   try {
     // A Lichess game someone opened: Lichess may have analysed it already.
     if (!job.background && job.gameId && job.account) {
-      const found = await host.fetchLichess(job.account, [job.gameId]).catch(() => [])
+      const found = await host.fetchLichess(job.account, [job.gameId]).catch((error: unknown) => {
+        logDebug('review', 'Lichess review fetch failed:', job.gameId ?? job.key, error)
+        return []
+      })
       const match = found.find((r) => r.key === job.key)
       if (match) {
         publish(match)
@@ -485,10 +490,12 @@ async function run(job: Job): Promise<void> {
       cause instanceof SearchCancelled ||
       (searchController?.signal.aborted && !engine?.uci.failed)
     ) {
+      logDebug('review', 'Review interrupted:', job.key, cause)
       if (review.evals.some(Boolean)) publish(review)
       if (!job.cancelled && !job.background && host) asked.push(job)
       return
     }
+    logWarn('review', 'Review failed:', job.key, job.gameId, cause)
     // The engine is missing or failed: try other games, and this one again next session.
     skipped.add(job.gameId ?? job.key)
     if (!job.background)

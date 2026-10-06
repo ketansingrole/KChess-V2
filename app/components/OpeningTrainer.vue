@@ -190,7 +190,6 @@ const accuracy = computed(() => {
             { label: 'Black', value: 'black' },
           ]"
           :content="false"
-          size="sm"
           variant="pill"
           class="w-full"
         />

@@ -46,8 +46,9 @@ export const throwLichessErrors: Middleware = {
     let body: unknown = text || undefined
     try {
       body = text ? JSON.parse(text) : undefined
-    } catch {
+    } catch (cause) {
       // Not JSON (Lichess serves its HTML 404 page for unknown users); `lichessError` handles that.
+      console.warn('[lichessError] Non-JSON error body, using raw text', cause)
     }
     throw lichessError(response, body, `${request.method} ${new URL(request.url).pathname}`)
   },

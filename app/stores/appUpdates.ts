@@ -48,6 +48,7 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
       // A progress event can overtake the initial IPC response.
       if (revision === started) status.value = initial
     } catch (cause) {
+      console.warn('[app-updates] reading update status failed:', cause)
       error.value = cause instanceof Error ? cause.message : 'Could not read update status.'
     }
   }
@@ -62,6 +63,7 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
       else if (kind === 'install') await window.kchess.installAppUpdate()
       else await window.kchess.openAppReleases()
     } catch (cause) {
+      console.warn('[app-updates] update action failed:', cause)
       error.value = cause instanceof Error ? cause.message : 'Could not complete the update action.'
     }
   }

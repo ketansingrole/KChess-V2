@@ -21,7 +21,6 @@ const tabs = [
       :items="tabs"
       :content="false"
       variant="pill"
-      size="sm"
       class="mb-5"
       @update:model-value="tab = $event as PuzzleTab"
     />

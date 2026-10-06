@@ -1,4 +1,5 @@
 import { getDb } from './db'
+import { logDebug } from './logger'
 import type { RunInput, RunKind, RunRecord, RunSaved, RunSummary } from '../shared/types'
 
 interface RunRow {
@@ -16,8 +17,8 @@ function toRecord(row: RunRow): RunRecord {
   let detail: RunRecord['detail'] = {}
   try {
     detail = JSON.parse(row.detail) as RunRecord['detail']
-  } catch {
-    // A damaged row still shows its score.
+  } catch (cause) {
+    logDebug('runs', 'Run row has invalid detail JSON:', cause)
   }
   return {
     id: row.id,

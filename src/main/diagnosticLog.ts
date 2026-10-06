@@ -20,13 +20,19 @@ export function registerDiagnosticSecret(secret: string): void {
 export function redactDiagnostics(value: string): string {
   let text = value.replaceAll(homedir(), '~')
   for (const secret of secrets) text = text.replaceAll(secret, '[redacted]')
-  return text
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]')
-    .replace(/\b(?:lip|lio)_[A-Za-z0-9_-]+\b/g, '[redacted]')
-    .replace(
-      /(["']?(?:access_token|refresh_token|token|password|authorization|cookie|code|state)["']?\s*[:=]\s*)(["']?)[^\s,"'&}]+\2/gi,
-      '$1[redacted]',
-    )
+  return (
+    text
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]')
+      .replace(/\b(?:lip|lio)_[A-Za-z0-9_-]+\b/g, '[redacted]')
+      // OAuth/PKCE and credential keys: `code` alone must not match `code_verifier`
+      // as a prefix without its suffix, so list the longer keys explicitly.
+      .replace(
+        /(["']?(?:access_token|refresh_token|id_token|token|password|authorization|cookie|code_verifier|code_challenge|client_secret|verifier|challenge|code|state)["']?\s*[:=]\s*)(["']?)[^\s,"'&}]+\2/gi,
+        '$1[redacted]',
+      )
+      // Email addresses are PII; usernames stay so logs remain correlatable.
+      .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[redacted]')
+  )
 }
 
 /** Bounded local logs; never include database contents or request bodies. */

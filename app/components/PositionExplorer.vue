@@ -118,6 +118,7 @@ async function lookup(kind: PositionLookupKind = prefs.value.kind, asked = true)
     )
     if (request === epoch) result.value = data
   } catch (cause) {
+    console.warn('[position-explorer] Lookup failed:', cause)
     if (request === epoch)
       error.value = cause instanceof Error ? cause.message : 'Lookup failed. Retry.'
   } finally {
@@ -162,6 +163,7 @@ async function openGame(game: ExplorerGame): Promise<void> {
       gameId: result.value?.kind === 'masters' ? undefined : game.id,
     }
   } catch (cause) {
+    console.warn('[position-explorer] Could not open the game:', cause)
     toast.add({
       title: 'Could not open the game',
       description: cause instanceof Error ? cause.message : String(cause),
@@ -187,7 +189,6 @@ const heading = computed(() => {
         :model-value="prefs.kind"
         :items="KINDS"
         :content="false"
-        size="xs"
         variant="pill"
         @update:model-value="lookup($event as PositionLookupKind)"
       />
@@ -234,7 +235,6 @@ const heading = computed(() => {
           { label: 'as Black', value: 'black' },
         ]"
         :content="false"
-        size="xs"
         variant="pill"
       />
     </div>

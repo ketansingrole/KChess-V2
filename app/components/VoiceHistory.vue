@@ -46,6 +46,7 @@ async function load(): Promise<void> {
   try {
     entries.value = await window.kchess.voiceHistory(2000)
   } catch (cause) {
+    console.warn('[voice-history] Could not read voice history:', cause)
     error.value = cause instanceof Error ? cause.message : 'The voice history couldn’t be read.'
   } finally {
     loading.value = false
@@ -121,6 +122,7 @@ async function exportLog(): Promise<void> {
   try {
     await window.kchess.exportVoiceHistory()
   } catch (cause) {
+    console.warn('[voice-history] Voice history export failed:', cause)
     error.value = cause instanceof Error ? cause.message : 'The export failed.'
   }
 }

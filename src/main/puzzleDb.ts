@@ -2,6 +2,7 @@ import { Worker } from 'node:worker_threads'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { dbPath, getDb } from './db'
+import { errorSummary, logError, logWarn } from './logger'
 import { recordUsage } from './usage'
 import type {
   LocalLadderQuery,
@@ -29,6 +30,8 @@ function service(): Worker {
   const failed = (error: Error): void => {
     if (worker !== self) return
     worker = undefined
+    const pending = waiting.size
+    logError('puzzles', 'Puzzle service failed:', `pending=${pending}`, errorSummary(error))
     for (const entry of waiting.values()) entry.reject(error)
     waiting.clear()
   }
@@ -37,6 +40,7 @@ function service(): Worker {
     (message: {
       id?: number
       error?: string
+      errorStack?: string
       result?: unknown
       progress?: PuzzleDbProgress
       usage?: { requests: number; bytes: number }
@@ -47,8 +51,14 @@ function service(): Worker {
       if (message.id !== undefined) {
         const entry = waiting.get(message.id)
         waiting.delete(message.id)
-        if (message.error) entry?.reject(new Error(message.error))
-        else entry?.resolve(message.result)
+        if (message.error) {
+          const error = new Error(message.error)
+          // Worker stacks name the worker frames; keep them for handover debugging.
+          if (message.errorStack)
+            error.stack = `${error.stack ?? ''}\nCaused by worker: ${message.errorStack.slice(0, 1000)}`
+          logWarn('puzzles', 'Puzzle operation failed:', errorSummary(error))
+          entry?.reject(error)
+        } else entry?.resolve(message.result)
       }
     },
   )

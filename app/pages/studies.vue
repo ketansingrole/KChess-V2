@@ -69,6 +69,7 @@ function create(): void {
       analysis.saveAsStudy(library.freshName())
       app.selectPage('analysis')
     } catch (cause) {
+      console.warn('[studies] Could not save study:', cause)
       toast.add({ title: String(cause), color: 'error' })
     }
   })
@@ -98,6 +99,7 @@ function duplicate(study: SavedStudy): void {
   try {
     library.duplicate(study.id)
   } catch (cause) {
+    console.warn('[studies] Could not duplicate study:', cause)
     toast.add({ title: String(cause), color: 'error' })
   }
 }
@@ -105,7 +107,8 @@ async function copyPgn(study: SavedStudy): Promise<void> {
   try {
     await navigator.clipboard.writeText(library.documentPgn(study))
     toast.add({ title: 'PGN copied', icon: 'i-lucide-clipboard-check' })
-  } catch {
+  } catch (cause) {
+    console.warn('[studies] Copy PGN failed:', cause)
     toast.add({ title: 'Could not copy the PGN', color: 'error' })
   }
 }
@@ -196,6 +199,7 @@ function runImport(): void {
       actions: study ? [{ label: 'Open', onClick: () => open(study) }] : [],
     })
   } catch (cause) {
+    console.warn('[studies] Import failed:', cause)
     importError.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
@@ -250,6 +254,7 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
     void useLichessStudiesStore().refresh(account, true)
     toast.add({ title: 'Study uploaded', icon: 'i-lucide-cloud-upload' })
   } catch (cause) {
+    console.warn('[studies] Study upload failed:', cause)
     toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })
   } finally {
     uploading.value = ''
@@ -274,7 +279,6 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
       :items="tabs"
       :content="false"
       variant="pill"
-      size="sm"
       class="mb-5"
     />
 

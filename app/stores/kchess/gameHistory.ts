@@ -90,8 +90,10 @@ export function useGameHistory(options: {
         }
         visibleGames.value = result.games
       } catch (cause) {
-        if (epoch === pageEpoch)
+        if (epoch === pageEpoch) {
+          console.warn('[game-history] loading game page failed:', cause)
           historyError.value = cause instanceof Error ? cause.message : String(cause)
+        }
       } finally {
         if (epoch === pageEpoch) historyLoading.value = false
       }
@@ -108,7 +110,8 @@ export function useGameHistory(options: {
       try {
         const result = await window.kchess.gameLibraryOverview()
         if (epoch === overviewEpoch) libraryOverview.value = result
-      } catch {
+      } catch (cause) {
+        console.warn('[game-history] loading library overview failed:', cause)
         /* An unavailable overview must not show another account's counts. */
       }
     },
@@ -167,7 +170,12 @@ export function useGameHistory(options: {
 
   async function openReview(game: LichessGame): Promise<void> {
     // List rows carry no PGN; it is read locally on demand.
-    const pgn = game.pgn ?? (await window.kchess.gamePgn(game.account, game.id).catch(() => null))
+    const pgn =
+      game.pgn ??
+      (await window.kchess.gamePgn(game.account, game.id).catch((cause: unknown) => {
+        console.warn('[game-history] loading game PGN failed:', cause)
+        return null
+      }))
     reviewGame.value = pgn ? { ...game, pgn } : game
     selectPage('history')
   }

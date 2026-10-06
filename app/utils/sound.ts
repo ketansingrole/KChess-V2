@@ -39,7 +39,8 @@ export async function play(name: SoundName, gain = 1): Promise<void> {
     node.gain.value = volume * gain
     source.connect(node).connect(ctx.destination)
     source.start()
-  } catch {
+  } catch (cause) {
+    console.warn('[sound] playing sound failed:', cause)
     /* sound is optional */
   }
 }
@@ -59,7 +60,10 @@ let primed = false
 function prime(): void {
   primed = true
   for (const event of primerEvents) window.removeEventListener(event, prime, { capture: true })
-  if (context?.state === 'suspended') void context.resume().catch(() => undefined)
+  if (context?.state === 'suspended')
+    void context.resume().catch((error: unknown) => {
+      console.warn('[sound] resuming audio context failed:', error)
+    })
 }
 
 function audioContext(): Promise<AudioContext> {

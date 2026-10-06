@@ -77,8 +77,10 @@ export const useLichessStudiesStore = defineStore('lichess-studies', () => {
           cached.needsReconnect = false
         }
       } catch (cause) {
-        if (entries.value[key] === cached)
+        if (entries.value[key] === cached) {
+          console.warn('[lichess-studies] loading studies failed:', cause)
           cached.error = cause instanceof Error ? cause.message : String(cause)
+        }
       } finally {
         cached.loading = false
         if (entries.value[key] === cached) pending.delete(key)

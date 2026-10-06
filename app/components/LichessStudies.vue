@@ -46,7 +46,10 @@ async function work(task: () => Promise<void>): Promise<void> {
   try {
     await task()
   } catch (cause) {
-    if (request.current()) message.value = cause instanceof Error ? cause.message : String(cause)
+    if (request.current()) {
+      console.warn('[lichess-studies] Request failed:', cause)
+      message.value = cause instanceof Error ? cause.message : String(cause)
+    }
   } finally {
     if (request.current()) busy.value = false
   }
@@ -113,6 +116,7 @@ function openRemote(id: string): Promise<void> {
         if (!analysis.openStudy(downloaded.id)) throw new Error('This study could not be opened.')
         app.selectPage('analysis')
       } catch (cause) {
+        console.warn('[lichess-studies] Could not open study:', cause)
         message.value = cause instanceof Error ? cause.message : String(cause)
       }
     })

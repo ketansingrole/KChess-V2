@@ -30,6 +30,39 @@ optional arguments. Declare minimum arity, reject excess arguments and retain
 domain/service validation. Startup refuses duplicate or missing handlers.
 The OAuth appearance parser deliberately falls back to safe default colors.
 
+## Logging: never swallow errors
+
+- Every `catch` block and every inline `.catch()` must log or rethrow.
+  Silent fallbacks (`.catch(() => null)`, empty `catch {}`) fail lint
+  (`logging/no-silent-catch`, `logging/no-silent-promise-catch`) and fail
+  `tests/unit/logging-guardrail.test.ts`.
+- Main uses `logDebug/logWarn/logError` from `src/main/logger.ts` with a
+  `[scope]` (file basename, e.g. `engine`, `lichess`): `logDebug` for
+  expected/benign (cancel teardown, chain reset, cache miss), `logWarn` for
+  recoverable (cache write, reconnect, throttle), `logError` for failures
+  needing attention. `logInfo` is for operational milestones (sync completed,
+  update available/downloaded). Raw `console.*` in `src/main` fails
+  (`logging/no-raw-console`); only `logger.ts` and `diagnostics.ts` may use it.
+- Production context: every failure log carries `method`/`account`/`gameId`/
+  `durationMs`/`failures` as applicable, errors go through `errorSummary`
+  (preserves `status`/`endpoint`/`code`), long payloads through
+  `truncateForLog`, UCI commands through `uciCommandName` (never full
+  positions). Never log tokens, passwords, request bodies, or PGNs;
+  `redactDiagnostics` covers Bearer/`lip_`/`lio_`/OAuth keys/PKCE/emails plus
+  registered secrets. Cancellations (`AbortError`, `SearchCancelled`,
+  superseded) log at debug via `isExpectedCancellation`.
+- Correlation: `diagnosticSessionId()` tags the startup banner and the
+  exported diagnostics JSON so a shared log file splits per launch. IPC
+  failures log centrally in `src/main/ipc.ts` with method + duration (never
+  args); per-IPC timings feed `performanceSnapshot()` in the export.
+- Renderer/shared cannot import the main logger. Renderer `console.warn/error`
+  is forwarded to the main `DiagnosticLog` file; `console.log/info` is not
+  captured, so never use it for errors. Shared uses `console.warn`.
+- The only allowed silences carry an explicit `eslint-disable` with
+  justification: the diagnostics pipeline itself (logging there would recurse)
+  and its fire-and-forget IPC (would loop). Everything else logs with context
+  (account/key/gameId/phase) and never logs secrets, tokens, or bodies.
+
 ## Lifecycle ownership
 
 Use RequestScope for replaceable work: next() aborts the previous signal; capture()

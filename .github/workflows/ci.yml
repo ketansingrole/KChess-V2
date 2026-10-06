@@ -36,8 +36,26 @@ jobs:
           path: |
             test-results/guardrails/
             test-results/unit.xml
+            test-results/coverage/coverage-summary.json
           if-no-files-found: ignore
           retention-days: 30
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Advisory-only: several flagged packages have no patched release upstream
+      # (tracked in docs/reviews/2026-10-03-implementation.md), so a blocking
+      # audit would fail every build. Revisit once patches are published.
+      - name: Dependency audit (informational)
+        continue-on-error: true
+        run: pnpm audit --audit-level moderate
 
   desktop:
     strategy:

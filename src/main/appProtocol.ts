@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { APP_CSP, VOICE_WORKER_CSP } from './appOrigin'
+import { logDebug } from './logger'
 import { app, net, protocol } from 'electron'
 import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -33,7 +34,8 @@ export function handleAppProtocol(voiceModelPath: string): void {
           status: response.status,
           headers: { 'Content-Type': 'application/gzip', 'Access-Control-Allow-Origin': '*' },
         })
-      } catch {
+      } catch (cause) {
+        logDebug('startup', 'Voice model asset is unavailable:', cause)
         return new Response(null, { status: 404 })
       }
     }
@@ -43,7 +45,8 @@ export function handleAppProtocol(voiceModelPath: string): void {
         root,
         `.${decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)}`,
       )
-    } catch {
+    } catch (cause) {
+      logDebug('startup', 'Invalid app protocol path:', cause)
       return new Response(null, { status: 400 })
     }
     if (!path.startsWith(`${root}${sep}`)) return new Response(null, { status: 403 })
@@ -67,7 +70,8 @@ export function handleAppProtocol(voiceModelPath: string): void {
         url.pathname === '/_nuxt/vosk-worker.js' ? VOICE_WORKER_CSP : APP_CSP,
       )
       return new Response(response.body, { status: response.status, headers })
-    } catch {
+    } catch (cause) {
+      logDebug('startup', 'App protocol asset is unavailable:', cause)
       return new Response(null, { status: 404 })
     }
   })

@@ -51,7 +51,8 @@ async function start(): Promise<void> {
   requested.value = mainlineKey.value
   try {
     await analysis.requestReview()
-  } catch {
+  } catch (cause) {
+    console.warn('[analysis-review] Review request failed:', cause)
     requested.value = ''
   }
 }

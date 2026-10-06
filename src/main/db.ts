@@ -2,6 +2,7 @@ import { chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { app } from 'electron'
+import { logDebug } from './logger'
 import { migrate } from './migrations'
 
 let db: DatabaseSync | null = null
@@ -23,8 +24,8 @@ export function getDb(): DatabaseSync {
   migrate(instance)
   try {
     chmodSync(path, 0o600)
-  } catch {
-    // Best effort: userData permissions already restrict access on most systems.
+  } catch (cause) {
+    logDebug('db', 'chmod failed:', cause)
   }
   db = instance
   return db
@@ -33,8 +34,8 @@ export function getDb(): DatabaseSync {
 export function closeDb(): void {
   try {
     db?.close()
-  } catch {
-    // Ignore close errors during shutdown or tests.
+  } catch (cause) {
+    logDebug('db', 'Close failed:', cause)
   }
   db = null
 }

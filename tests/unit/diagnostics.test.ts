@@ -7,6 +7,7 @@ import {
   redactDiagnostics,
   registerDiagnosticSecret,
 } from '../../src/main/diagnosticLog'
+import { diagnosticSessionId } from '../../src/main/diagnostics'
 
 it('redacts registered secrets, Lichess tokens, headers, query parameters and home paths', () => {
   registerDiagnosticSecret('opaque-oauth-secret')
@@ -25,6 +26,23 @@ it('redacts registered secrets, Lichess tokens, headers, query parameters and ho
   ])
     expect(text).not.toContain(secret)
   expect(text).toContain('[redacted]')
+})
+
+it('redacts PKCE secrets and email addresses while keeping usernames', () => {
+  const text = redactDiagnostics(
+    'code_verifier=abc123 challenge=xyz code_challenge=qrs client_secret=topsecret user@example.com FEN rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR',
+  )
+  for (const secret of ['abc123', 'qrs', 'topsecret', 'user@example.com']) {
+    expect(text).not.toContain(secret)
+  }
+  expect(text).toContain('[redacted]')
+  // Usernames stay so logs remain correlatable per account.
+  expect(redactDiagnostics('Game sync completed: Magnus')).toContain('Magnus')
+})
+
+it('issues one stable session id per launch', () => {
+  expect(diagnosticSessionId()).toBe(diagnosticSessionId())
+  expect(diagnosticSessionId().length).toBeGreaterThan(8)
 })
 
 it('rotates bounded logs and exports only redacted records, including large messages', () => {

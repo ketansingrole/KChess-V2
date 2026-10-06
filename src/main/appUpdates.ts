@@ -1,4 +1,5 @@
 import type { AppUpdater } from 'electron-updater'
+import { logDebug, logInfo, logWarn } from './logger'
 import type { AppUpdateStatus, Settings } from '../shared/types'
 
 export type UpdatePreferences = Pick<
@@ -46,15 +47,18 @@ export class AppUpdates {
     updater.allowDowngrade = false
     updater.disableWebInstaller = true
     updater.on('update-available', (info) => {
+      logInfo('app-updates', 'Update available:', `version=${info.version ?? 'unknown'}`)
       this.set({ phase: 'available', version: info.version, releaseDate: info.releaseDate })
     })
     updater.on('update-not-available', () => {
+      logInfo('app-updates', 'Update check: up-to-date', `current=${this.state.currentVersion}`)
       this.set({ phase: 'up-to-date', version: undefined, releaseDate: undefined })
     })
     updater.on('download-progress', (progress) => {
       this.set({ phase: 'downloading', progress })
     })
     updater.on('update-downloaded', (info) => {
+      logInfo('app-updates', 'Update downloaded:', `version=${info.version ?? 'unknown'}`)
       this.set({
         phase: 'downloaded',
         version: info.version,
@@ -79,7 +83,14 @@ export class AppUpdates {
   private failed(cause: unknown): void {
     const wasInstalling = this.installing
     this.installing = false
-    console.warn('App update failed:', cause)
+    logWarn(
+      'app-updates',
+      'App update failed:',
+      `current=${this.state.currentVersion}`,
+      this.state.version ? `available=${this.state.version}` : 'available=none',
+      `phase=${this.state.phase}`,
+      cause,
+    )
     // A preference read or an unrelated late error does not invalidate the verified installer.
     if (this.state.phase === 'downloaded' && !wasInstalling) return
     this.set({
@@ -111,6 +122,7 @@ export class AppUpdates {
 
   private async performCheck(): Promise<AppUpdateStatus> {
     this.set({ phase: 'checking', error: undefined, version: undefined, progress: undefined })
+    logDebug('app-updates', 'Checking for updates:', `current=${this.state.currentVersion}`)
     try {
       const result = await this.updater.checkForUpdates()
       if (!result) throw new Error('This installation cannot check for updates.')
@@ -120,6 +132,7 @@ export class AppUpdates {
       if (this.state.phase === 'available' && this.state.canInstall && settings.updateAutoDownload)
         void this.download()
     } catch (cause) {
+      logDebug('app-updates', 'Update check failed:', cause)
       this.failed(cause)
     }
     return this.status()
@@ -147,6 +160,7 @@ export class AppUpdates {
       this.applyPreferences(await this.preferences())
       await this.updater.downloadUpdate()
     } catch (cause) {
+      logDebug('app-updates', 'Update download failed:', cause)
       this.failed(cause)
     }
     return this.status()
@@ -192,6 +206,7 @@ export class AppUpdates {
     try {
       if (!this.stopped && (await this.preferences()).updateAutoCheck) await this.check()
     } catch (cause) {
+      logDebug('app-updates', 'Automatic update check failed:', cause)
       this.failed(cause)
     }
   }

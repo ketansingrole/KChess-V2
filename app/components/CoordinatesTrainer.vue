@@ -192,7 +192,8 @@ async function finish(): Promise<void> {
       detail: { mistakes: mistakes.value, accuracy: accuracy.value, side: orientation.value },
     })
     summary.value = saved.value.summary
-  } catch {
+  } catch (cause) {
+    console.warn('[coordinates-trainer] Could not save run:', cause)
     // The score is still on screen; only the record is lost.
   }
 }
@@ -241,7 +242,6 @@ async function finish(): Promise<void> {
               { label: 'Say the square', value: 'voice', icon: 'i-lucide-mic' },
             ]"
             aria-labelledby="coord-mode"
-            size="sm"
             :content="false"
             variant="pill"
             class="w-full"
@@ -259,7 +259,6 @@ async function finish(): Promise<void> {
               { label: 'Random', value: 'random' },
             ]"
             aria-labelledby="coord-side"
-            size="sm"
             :content="false"
             variant="pill"
             class="w-full"

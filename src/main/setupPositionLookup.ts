@@ -1,4 +1,5 @@
 import { getDb } from './db'
+import { logDebug } from './logger'
 import { lichessFetch } from './requestPolicy'
 import { PositionLookupService, decodeLookupCache } from './positionLookup'
 import { getToken } from './store'
@@ -11,7 +12,8 @@ export const positionLookups = new PositionLookupService(
       if (!row || row.data.length > 512_000) return undefined
       try {
         return decodeLookupCache(JSON.parse(row.data))
-      } catch {
+      } catch (cause) {
+        logDebug('position', 'Position lookup cache entry is invalid:', key, cause)
         return undefined
       }
     },

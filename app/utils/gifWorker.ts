@@ -16,6 +16,7 @@ self.addEventListener(
         self.postMessage({ ready: true })
       }
     } catch (cause) {
+      console.warn('[gif-worker] encoding frame failed:', cause)
       self.postMessage({ error: cause instanceof Error ? cause.message : String(cause) })
     }
   },

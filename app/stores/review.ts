@@ -45,7 +45,9 @@ export const useReviewStore = defineStore('review', () => {
     void window.kchess
       .reviewStatus()
       .then((next) => (status.value = next))
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        console.warn('[review] reading review status failed:', error)
+      })
   }
 
   /**
@@ -58,7 +60,8 @@ export const useReviewStore = defineStore('review', () => {
     let found: Record<string, ReviewSummary>
     try {
       found = await window.kchess.reviewSummaries([...ids])
-    } catch {
+    } catch (cause) {
+      console.warn('[review] loading review summaries failed:', cause)
       return // The list simply shows no accuracy.
     }
     const next = { ...summaries.value }
@@ -79,7 +82,8 @@ export const useReviewStore = defineStore('review', () => {
       const review = await window.kchess.reviewGet(fen, moves)
       if (review) remember(review)
       return review
-    } catch {
+    } catch (cause) {
+      console.warn('[review] loading review failed:', cause)
       return null
     }
   }
@@ -93,7 +97,9 @@ export const useReviewStore = defineStore('review', () => {
   }
 
   async function cancel(key: string): Promise<void> {
-    await window.kchess.reviewCancel(key).catch(() => undefined)
+    await window.kchess.reviewCancel(key).catch((error: unknown) => {
+      console.warn('[review] cancelling review failed:', error)
+    })
   }
 
   function dispose(): void {

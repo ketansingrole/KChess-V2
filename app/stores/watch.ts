@@ -139,6 +139,7 @@ export const useWatchStore = defineStore('watch', () => {
     try {
       channels.value = await window.kchess.tvChannels()
     } catch (cause) {
+      console.warn('[watch] loading TV channels failed:', cause)
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
@@ -161,6 +162,7 @@ export const useWatchStore = defineStore('watch', () => {
       }
     } catch (cause) {
       if (!request.current()) return
+      console.warn('[watch] watching game failed:', cause)
       clearPending()
       error.value = cause instanceof Error ? cause.message : String(cause)
       target.value = null
@@ -175,7 +177,9 @@ export const useWatchStore = defineStore('watch', () => {
     roundSession = -1
     target.value = null
     frame.value = null
-    await window.kchess.stopWatching().catch(() => undefined)
+    await window.kchess.stopWatching().catch((error: unknown) => {
+      console.warn('[watch] stopping watch failed:', error)
+    })
   }
 
   async function loadBroadcasts(): Promise<void> {
@@ -185,6 +189,7 @@ export const useWatchStore = defineStore('watch', () => {
     try {
       broadcastList.value = await window.kchess.broadcasts()
     } catch (cause) {
+      console.warn('[watch] loading broadcasts failed:', cause)
       broadcastError.value = cause instanceof Error ? cause.message : String(cause)
     } finally {
       broadcastLoading.value = false
@@ -207,6 +212,7 @@ export const useWatchStore = defineStore('watch', () => {
       if (round) await openRound(round.id)
     } catch (cause) {
       if (!request.current()) return
+      console.warn('[watch] opening tournament failed:', cause)
       clearPending()
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
@@ -236,6 +242,7 @@ export const useWatchStore = defineStore('watch', () => {
       }
     } catch (cause) {
       if (!request.current()) return
+      console.warn('[watch] opening broadcast round failed:', cause)
       clearPending()
       error.value = cause instanceof Error ? cause.message : String(cause)
     }

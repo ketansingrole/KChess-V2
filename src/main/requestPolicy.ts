@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises'
+import { logWarn } from './logger'
 import { meteredFetch } from './usage'
 
 let cooldownUntil = 0
@@ -77,6 +78,7 @@ function releaseWithBody(response: Response, release: () => void): Response {
           controller.close()
         } else controller.enqueue(value)
       } catch (cause) {
+        logWarn('request-policy', 'Bulk export body failed:', cause)
         done()
         controller.error(cause)
       }
@@ -170,6 +172,18 @@ async function admitted(original: Request): Promise<Response> {
       cooldownUntil =
         Date.now() +
         (Number.isFinite(seconds) && seconds > 0 ? Math.min(300, seconds) * 1000 : 60_000)
+      try {
+        const path = new URL(original.url).pathname
+        logWarn(
+          'request-policy',
+          'Lichess rate limited:',
+          path.slice(0, 80),
+          `retryAfter=${retry ?? 'none'}`,
+          `cooldownMs=${cooldownUntil - Date.now()}`,
+        )
+      } catch {
+        logWarn('request-policy', 'Lichess rate limited:', `retryAfter=${retry ?? 'none'}`)
+      }
     }
     return response
   } finally {

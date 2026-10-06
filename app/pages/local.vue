@@ -271,7 +271,8 @@ async function copyPgn(): Promise<void> {
   try {
     await navigator.clipboard.writeText(setupPgn(game.setup, game.moves, headers))
     toast.add({ title: 'PGN copied', icon: 'i-lucide-clipboard-check' })
-  } catch {
+  } catch (cause) {
+    console.warn('[local] Copy PGN failed:', cause)
     toast.add({ title: 'Could not copy the PGN', color: 'error' })
   }
 }
@@ -326,7 +327,6 @@ function otbText(side: 'top' | 'bottom'): string {
           { label: 'Chess clock', value: 'clock', icon: 'i-lucide-timer' },
         ]"
         :content="false"
-        size="sm"
         variant="pill"
       />
     </PageHeader>

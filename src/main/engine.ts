@@ -12,6 +12,7 @@ import { withEngineLease, searchThreads } from './engineScheduler'
 import { replay } from '../shared/review'
 import { INITIAL_FEN } from 'chessops/fen'
 import { engineLevelInfo } from '../shared/engineLevels'
+import { errorSummary, logDebug, logWarn, truncateForLog } from './logger'
 
 /**
  * Stockfish ships with the app as the `stockfish` npm package's lite
@@ -39,7 +40,8 @@ async function isExecutableFile(path: string): Promise<boolean> {
   try {
     await access(path, constants.X_OK)
     return (await stat(path)).isFile()
-  } catch {
+  } catch (cause) {
+    logDebug('engine', 'Engine executable check failed:', path, cause)
     return false
   }
 }
@@ -54,7 +56,8 @@ export async function engineStatus(configured = ''): Promise<EngineStatus> {
   try {
     await access(bundledEnginePath(), constants.R_OK)
     return { ready: true, path: '', bundled: true, managed, canDownload }
-  } catch {
+  } catch (cause) {
+    logDebug('engine', 'Bundled engine check failed:', cause)
     return { ready: false, path: configured, bundled: false, managed, canDownload }
   }
 }
@@ -119,14 +122,17 @@ export async function bestMove(
     rejectResult = reject
   })
   serial = serial
-    .catch(() => {})
+    .catch((error: unknown) => {
+      logDebug('engine', 'Previous engine search failed:', error)
+    })
     .then(async () => {
+      let key = ''
       try {
         controller.signal.throwIfAborted()
         const status = await engineStatus(configured)
         if (!status.ready)
           throw new Error('Stockfish could not be found. Choose an engine in Settings.')
-        const key = await engineIdentity(status)
+        key = await engineIdentity(status)
         if (epoch !== generation) throw new SearchCancelled()
         if (warm?.key !== key || warm.uci.failed) {
           warm?.uci.close()
@@ -174,6 +180,15 @@ export async function bestMove(
           },
         )
       } catch (cause) {
+        const context = [
+          `level=${level}`,
+          `moves=${moves.length}`,
+          `engine=${truncateForLog(key || 'unstarted', 80)}`,
+          fen ? `fen=${truncateForLog(fen, 60)}` : 'startpos',
+        ].join(' ')
+        if (controller.signal.aborted || cause instanceof SearchCancelled)
+          logDebug('engine', 'Engine search superseded:', context, errorSummary(cause))
+        else logWarn('engine', 'Engine search failed:', context, errorSummary(cause))
         rejectResult(
           controller.signal.aborted || cause instanceof SearchCancelled
             ? new Error(SUPERSEDED)

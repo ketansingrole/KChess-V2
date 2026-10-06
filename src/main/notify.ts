@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { app, Notification } from 'electron'
+import { logError } from './logger'
 import { getSettings } from './store'
 import type {
   NotificationKind,
@@ -83,7 +84,7 @@ export async function notify(
     notification.once('show', () => resolve({ shown: true, via: 'system' }))
     notification.once('failed', (_event, error) => {
       forget()
-      console.error('Notification failed:', error)
+      logError('notify', 'Notification failed:', error)
       resolve({ shown: false, skipped: 'failed', error })
     })
     setTimeout(() => resolve({ shown: true, via: 'system' }), 1500)

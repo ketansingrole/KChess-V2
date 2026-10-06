@@ -1,4 +1,5 @@
 import { getDb } from './db'
+import { logDebug } from './logger'
 import type { GameRecord, InsightsQuery, InsightsReport, ReviewSummary } from '../shared/types'
 import { RESULT_SQL } from './store'
 
@@ -157,7 +158,8 @@ export function insights(query: InsightsQuery): InsightsReport {
     let summary: ReviewSummary
     try {
       summary = JSON.parse(row.summary) as ReviewSummary
-    } catch {
+    } catch (cause) {
+      logDebug('insights', 'Review summary has invalid JSON:', cause)
       continue
     }
     const side = summary[row.color]

@@ -110,6 +110,7 @@ async function start(): Promise<void> {
       throw new Error('The puzzle database is too small; download it again.')
   } catch (cause) {
     if (mine !== generation) return
+    console.warn('[puzzle-rush] Could not load ladder:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
     stage.value = 'menu'
     return
@@ -197,6 +198,7 @@ async function endRun(): Promise<void> {
     if (mine === generation) saved.value = result
   } catch (cause) {
     if (mine !== generation) return
+    console.warn('[puzzle-rush] Could not save run:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }

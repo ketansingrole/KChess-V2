@@ -306,7 +306,8 @@ async function copy(text: string, what: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text)
     toast.add({ title: `${what} copied`, icon: 'i-lucide-clipboard-check' })
-  } catch {
+  } catch (cause) {
+    console.warn('[analysis] Copy failed:', cause)
     toast.add({ title: `Could not copy the ${what}`, color: 'error', icon: 'i-lucide-clipboard-x' })
   }
 }

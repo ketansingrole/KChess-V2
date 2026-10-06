@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { existsSync, chmodSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { PuzzleSampler, sampleZstdCsv } from './puzzleSampler'
+import { logDebug, logWarn } from './logger'
 import { clearStored, queryLadder, queryPuzzles, readStatus, storeSample } from './puzzleQueries'
 import type { LocalLadderQuery, LocalPuzzleQuery, PuzzleDbProgress } from '../shared/types'
 
@@ -15,8 +16,8 @@ CREATE TABLE IF NOT EXISTS puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), im
 CREATE TABLE IF NOT EXISTS worker_meta (id INTEGER PRIMARY KEY CHECK(id = 1));`)
 try {
   chmodSync(data.path, 0o600)
-} catch {
-  /* userData restricts access */
+} catch (cause) {
+  logDebug('puzzles', 'Could not restrict database file permissions', cause)
 }
 // The old database remains an intact fallback; all subsequent puzzle writes have one worker owner.
 if (
@@ -107,9 +108,11 @@ parentPort!.on(
         else throw new Error('Unknown puzzle operation.')
         parentPort!.postMessage({ id: message.id, result })
       } catch (cause) {
+        logWarn('puzzles', `Puzzle operation ${message.method} failed`, cause)
         parentPort!.postMessage({
           id: message.id,
           error: cause instanceof Error ? cause.message : String(cause),
+          errorStack: cause instanceof Error ? (cause.stack ?? '').slice(0, 2000) : undefined,
         })
       }
     })()

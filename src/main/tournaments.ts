@@ -12,6 +12,7 @@ import { canBoardSeek } from '../shared/timeControl'
 import { LichessError } from '../shared/lichessError'
 import { variantFromLichess } from '../shared/variant'
 import { asAccount, asOwner, authorize, client, unwrap, urlencoded } from './lichess'
+import { logDebug, logWarn } from './logger'
 import { readLines } from './ndjson'
 import { withUsage } from './usage'
 import { getToken } from './store'
@@ -186,10 +187,12 @@ export async function tournaments(account: string): Promise<TournamentList> {
               swiss.push(swissSummary(parsed.output, { id: team.id, name: team.name }))
           })
         } catch (cause) {
+          logWarn('tournaments', 'Could not load Swiss events:', team.id, cause)
           problems.push(`Couldn’t load Swiss events of ${team.name}${teamProblem(cause)}`)
         }
       }
     } catch (cause) {
+      logWarn('tournaments', 'Could not load teams:', account, cause)
       problems.push(`Couldn’t load the teams of @${account}${teamProblem(cause)}`)
     }
   }
@@ -329,7 +332,12 @@ export async function tournament(
   account: string,
   page = 1,
 ): Promise<TournamentDetail> {
-  const token = account ? await getToken(account).catch(() => null) : null
+  const token = account
+    ? await getToken(account).catch((cause: unknown) => {
+        logDebug('tournaments', 'Stored login is unavailable:', account, cause)
+        return null
+      })
+    : null
   const headers = token ? authorize(token) : {}
   return withUsage(account, 'tournament', async () => {
     if (system === 'arena') {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { logDebug } from './logger.ts'
 import type { VoiceModelProgress, VoiceModelStatus } from '../shared/types'
 
 export const VOICE_MODEL = {
@@ -88,7 +89,10 @@ export class VoiceModelCache {
     if (!installed) return { installed: false, bytes: 0, busy: false }
     const bytes = await stat(this.path)
       .then((file) => file.size)
-      .catch(() => 0)
+      .catch((cause: unknown) => {
+        logDebug('voice', 'Voice model file is missing:', cause)
+        return 0
+      })
     return { installed: bytes > 0, bytes, busy: false }
   }
 
@@ -110,7 +114,8 @@ export class VoiceModelCache {
         (await stat(this.path)).size === marker.size &&
         (await checksum(this.path)) === marker.sha256
       )
-    } catch {
+    } catch (cause) {
+      logDebug('voice', 'Voice model cache check failed:', cause)
       return false
     }
   }

@@ -35,9 +35,10 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types scripts/main-smoke.ts",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --coverage",
     "test:watch": "vitest",
     "check": "node scripts/run-checks.mjs",
+    "check:notices": "node scripts/check-notices.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:packaged": "node scripts/e2e.mjs --packaged",
     "pack": "pnpm run build && electron-builder --dir",
@@ -70,6 +71,7 @@
     "@unovis/ts": "^1.7.1",
     "@unovis/vue": "^1.7.1",
     "@vitejs/plugin-vue": "^6.0.9",
+    "@vitest/coverage-v8": "^4.1.11",
     "@vue/test-utils": "^2.5.1",
     "@vueuse/core": "^15.0.0",
     "chessops": "^0.15.1",
@@ -96,7 +98,7 @@
   "build": {
     "appId": "com.kchess.electron",
     "productName": "KChess",
-    "copyright": "Copyright \u00a9 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
+    "copyright": "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
     "directories": {
       "output": "dist",
       "buildResources": "build"

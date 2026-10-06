@@ -48,12 +48,15 @@ export const useChallengeStore = defineStore('challenges', () => {
               title: `Your move against ${game.opponent.name}`,
               body: `Correspondence game · @${game.account}`,
             })
-            .catch(() => undefined)
+            .catch((error: unknown) => {
+              console.warn('[challenges] correspondence notification failed:', error)
+            })
         lastTurn.set(game.gameId, game.isMyTurn)
       }
       ongoing.value = games
       ongoingError.value = ''
     } catch (cause) {
+      console.warn('[challenges] refreshing ongoing games failed:', cause)
       ongoingError.value = cause instanceof Error ? cause.message : String(cause)
     } finally {
       ongoingLoaded.value = true
@@ -82,7 +85,9 @@ export const useChallengeStore = defineStore('challenges', () => {
   )
   watch(lobbyAccount, (account) => {
     if (!started) return
-    void window.kchess.stayConnected(account).catch(() => undefined)
+    void window.kchess.stayConnected(account).catch((error: unknown) => {
+      console.warn('[challenges] staying connected failed:', error)
+    })
     if (!account) lobby.value = null
   })
 
@@ -97,8 +102,12 @@ export const useChallengeStore = defineStore('challenges', () => {
     void window.kchess
       .challenges()
       .then((next) => (list.value = next))
-      .catch(() => undefined)
-    void window.kchess.stayConnected(lobbyAccount.value).catch(() => undefined)
+      .catch((error: unknown) => {
+        console.warn('[challenges] loading challenges failed:', error)
+      })
+    void window.kchess.stayConnected(lobbyAccount.value).catch((error: unknown) => {
+      console.warn('[challenges] staying connected failed:', error)
+    })
     void refreshOngoing()
     if (app.settings.correspondencePoll) {
       pollMs.value = app.settings.correspondencePoll * 60_000

@@ -108,6 +108,7 @@ async function exportGame(game: ArchivedGame): Promise<void> {
       exportMessage.value = 'Saved the PGN'
     }
   } catch (cause) {
+    console.warn('[local-game-history] Export failed:', cause)
     exportMessage.value = cause instanceof Error ? cause.message : 'Export failed'
   }
 }

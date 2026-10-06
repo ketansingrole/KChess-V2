@@ -36,6 +36,7 @@ export function useSettingsPersistence(options: {
         settings.value = { ...saved }
       if (saved.enginePath !== previousEngine) void refreshEngine()
     } catch (cause) {
+      console.warn('[settings] saving settings failed:', cause)
       fail(cause)
       // Show what is actually stored rather than a change that did not stick.
       if (data.value) settings.value = { ...data.value.settings }

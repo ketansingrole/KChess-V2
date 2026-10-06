@@ -42,7 +42,11 @@ onMounted(() => {
   const challenges = useChallengeStore()
   void store.init().then(() => {
     if (store.ready) challenges.start()
-    return window.kchess?.recordPerformance?.('app.ready', performance.now()).catch(() => {})
+    return window.kchess
+      ?.recordPerformance?.('app.ready', performance.now())
+      .catch((error: unknown) => {
+        console.warn('[app] recording app-ready performance failed:', error)
+      })
   })
   void updates.init()
   useReviewStore().listen()
@@ -119,8 +123,11 @@ function toggleMaximize(event?: MouseEvent): void {
     const api = (
       window as unknown as { kchess?: { windowToggleMaximize?: () => Promise<unknown> } }
     ).kchess
-    void api?.windowToggleMaximize?.()?.catch(() => {})
-  } catch {
+    void api?.windowToggleMaximize?.()?.catch((error: unknown) => {
+      console.warn('[app] toggling maximize failed:', error)
+    })
+  } catch (cause) {
+    console.warn('[app] toggling maximize failed:', cause)
     /* browser preview has no window controls */
   }
 }

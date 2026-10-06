@@ -59,7 +59,10 @@ export function describeMicError(error: unknown): { message: string; kind: Voice
 
 /** Ask the desktop shell for OS-level permission first; Electron won't prompt on its own. */
 async function ensureMicrophonePermission(): Promise<void> {
-  const access = await window.kchess?.microphoneAccess?.(true).catch(() => undefined)
+  const access = await window.kchess?.microphoneAccess?.(true).catch((error: unknown) => {
+    console.warn('[voice-capture] checking microphone permission failed:', error)
+    return undefined
+  })
   if (access && (access.status === 'denied' || access.status === 'restricted'))
     throw new VoiceError(MIC_DENIED_MESSAGE, 'denied')
 }
@@ -131,8 +134,7 @@ export class VoiceCapture {
           if ('result' in message && message.result) resolve()
           else reject(new VoiceError('The offline voice model couldn’t load.', 'model'))
         })
-        model.on('error', (message) => {
-          console.error('Offline voice model failed:', message)
+        model.on('error', (_message) => {
           clearTimeout(timer)
           reject(new VoiceError('The offline voice model couldn’t load. Try again.', 'model'))
         })
@@ -227,9 +229,14 @@ export class VoiceCapture {
     } finally {
       void window.kchess
         ?.recordPerformance?.('voice.activation', performance.now() - started)
-        .catch(() => {})
+        .catch((error: unknown) => {
+          console.warn('[voice-capture] recording activation performance failed:', error)
+        })
       stream?.getTracks().forEach((track) => track.stop())
-      if (context) await context.close().catch(() => {})
+      if (context)
+        await context.close().catch((error: unknown) => {
+          console.warn('[voice-capture] closing audio context failed:', error)
+        })
     }
   }
 
@@ -250,7 +257,9 @@ export class VoiceCapture {
         .then(() => {
           if (!this.disposed && this.active) this.resetRecognizer()
         })
-        .catch(() => {})
+        .catch((error: unknown) => {
+          console.warn('[voice-capture] preparing microphone failed:', error)
+        })
   }
 
   talk(held: boolean): void {
@@ -327,7 +336,10 @@ export class VoiceCapture {
       track.onended = null
       track.stop()
     })
-    if (this.context) void this.context.close().catch(() => {})
+    if (this.context)
+      void this.context.close().catch((error: unknown) => {
+        console.warn('[voice-capture] closing audio context failed:', error)
+      })
     this.node = undefined
     this.source = undefined
     this.stream = undefined

@@ -89,7 +89,10 @@ async function engine(): Promise<void> {
     moves.value = [...moves.value, reply]
     playMoveSound(sanFrom(drill.value.fen, moves.value).at(-1))
   } catch (cause) {
-    if (mine === epoch) engineError.value = cause instanceof Error ? cause.message : String(cause)
+    if (mine === epoch) {
+      console.warn('[endgame-drills] Engine move failed:', cause)
+      engineError.value = cause instanceof Error ? cause.message : String(cause)
+    }
   } finally {
     if (mine === epoch) thinking.value = false
   }
@@ -119,7 +122,8 @@ watch(
         },
       })
       summary.value = saved.summary
-    } catch {
+    } catch (cause) {
+      console.warn('[endgame-drills] Could not save run:', cause)
       // The result is on screen; only the record is lost.
     }
   },
@@ -150,6 +154,7 @@ async function showHint(): Promise<void> {
     })
     if (mine === epoch && yourTurn.value) hint.value = best
   } catch (cause) {
+    console.warn('[endgame-drills] Hint failed:', cause)
     engineError.value = cause instanceof Error ? cause.message : String(cause)
   }
 }

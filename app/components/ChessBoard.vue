@@ -63,7 +63,9 @@ function submitMove(uci: string): void {
   requestAnimationFrame(() => {
     void window.kchess
       ?.recordPerformance?.('board.frame', performance.now() - started)
-      .catch(() => {})
+      .catch((error: unknown) => {
+        console.warn('[chess-board] Performance record failed:', error)
+      })
   })
 }
 function keyboardMove(): void {

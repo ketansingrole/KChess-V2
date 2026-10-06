@@ -90,7 +90,6 @@ function begin(): void {
               { label: 'A position', value: 'fen' },
             ]"
             :content="false"
-            size="sm"
             variant="pill"
             class="w-full"
           />

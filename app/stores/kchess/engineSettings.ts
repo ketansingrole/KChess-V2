@@ -33,7 +33,8 @@ export function useEngineSettings(options: {
       : 'Your Stockfish'
   })
   async function recheckEngine(): Promise<void> {
-    await refreshEngine().catch(() => {
+    await refreshEngine().catch((cause: unknown) => {
+      console.warn('[engine-settings] rechecking engine failed:', cause)
       engineReady.value = false
     })
   }

@@ -1,6 +1,7 @@
 import withNuxt from './.nuxt/eslint.config.mjs'
 import prettier from 'eslint-config-prettier'
 import architecture from './scripts/eslint/architecture.mjs'
+import logging from './scripts/eslint/logging.mjs'
 
 export default withNuxt(
   {
@@ -18,7 +19,7 @@ export default withNuxt(
   },
   {
     files: ['app/**/*.{ts,vue}', 'src/**/*.ts'],
-    plugins: { architecture },
+    plugins: { architecture, logging },
     languageOptions: {
       parserOptions: {
         project: ['./.nuxt/tsconfig.app.json', './tsconfig.electron.json'],
@@ -27,6 +28,9 @@ export default withNuxt(
     },
     rules: {
       'architecture/boundaries': 'error',
+      'logging/no-silent-catch': 'error',
+      'logging/no-silent-promise-catch': 'error',
+      'logging/no-raw-console': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
       '@typescript-eslint/no-explicit-any': 'error',

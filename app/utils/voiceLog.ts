@@ -24,7 +24,8 @@ export async function logVoice(attempt: VoiceAttemptInput): Promise<number | und
       ...attempt,
       parsed: attempt.parsed?.slice(0, 120),
     })
-  } catch {
+  } catch (cause) {
+    console.warn('[voice-log] saving voice attempt failed:', cause)
     // The history is a study aid; losing an entry must never disturb play.
     return undefined
   }
@@ -33,5 +34,7 @@ export async function logVoice(attempt: VoiceAttemptInput): Promise<number | und
 /** Record what came of a logged phrase, once it is known. */
 export function updateVoice(id: number | undefined, update: VoiceAttemptUpdate): void {
   if (!id) return
-  void window.kchess.updateVoiceAttempt(id, update).catch(() => {})
+  void window.kchess.updateVoiceAttempt(id, update).catch((error: unknown) => {
+    console.warn('[voice-log] updating voice attempt failed:', error)
+  })
 }

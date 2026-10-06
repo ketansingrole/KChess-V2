@@ -65,6 +65,7 @@ async function save(kind: 'gif' | 'png' | 'pgn'): Promise<void> {
       toast.add({ title: `Saved the ${kind.toUpperCase()}`, icon: 'i-lucide-check' })
   } catch (cause) {
     if (controller.signal.aborted) return
+    console.warn('[export-game] Export failed:', cause)
     toast.add({
       title: 'Could not export the game',
       description: cause instanceof Error ? cause.message : String(cause),

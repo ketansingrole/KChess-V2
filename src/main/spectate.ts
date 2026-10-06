@@ -24,6 +24,7 @@ import {
 import { client, unwrap } from './lichess'
 import { readLines } from './ndjson'
 import { withUsage } from './usage'
+import { logDebug, logWarn } from './logger'
 
 /** Lichess TV channels, keyed as the feed URLs name them. */
 export const TV_CHANNELS: readonly { key: string; label: string }[] = [
@@ -254,6 +255,12 @@ export class Spectator {
         else await this.followGame(target.gameId, session, signal)
         report('ended', 'The feed ended. Retry to reconnect.')
       } catch (cause) {
+        logWarn(
+          'spectate',
+          'Watch failed:',
+          'channel' in target ? target.channel : target.gameId,
+          cause,
+        )
         report(
           'error',
           cause instanceof Error ? cause.message : 'The feed disconnected. Retry to reconnect.',
@@ -356,7 +363,8 @@ export class Spectator {
       let game: TvGame
       try {
         game = await fetchTvGame(track.gameId, signal)
-      } catch {
+      } catch (cause) {
+        logDebug('spectate', 'TV lineup fetch failed:', track.gameId, cause)
         continue
       }
       if (signal.aborted || !current()) return
@@ -391,7 +399,9 @@ export class Spectator {
         entry.status = game.status
         entry.winner = game.winner
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        logDebug('spectate', 'Past game fetch failed:', entry.gameId, error)
+      })
   }
 
   private async followGame(id: string, session: number, signal: AbortSignal): Promise<void> {
@@ -466,6 +476,7 @@ export class Spectator {
         })
         if (session === this.session) this.broadcast({ session, roundId, games: [], ended: true })
       } catch (cause) {
+        logWarn('spectate', 'Broadcast feed failed:', roundId, cause)
         if (session === this.session && !signal.aborted)
           this.broadcast({
             session,
@@ -513,7 +524,10 @@ async function readPgnStream(
     buffer += decoder.decode()
     flush(true)
   } finally {
-    await reader.cancel().catch(() => undefined)
+    await reader.cancel().catch((error: unknown) => {
+      logDebug('spectate', 'Stream cancel failed:', error)
+      return undefined
+    })
     reader.releaseLock()
   }
 }

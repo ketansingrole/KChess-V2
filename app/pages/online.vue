@@ -263,7 +263,8 @@ watch(
         theirs: table.users[opponent.toLowerCase()] ?? 0,
         games: table.nbGames,
       }
-    } catch {
+    } catch (cause) {
+      console.warn('[online] Crosstable unavailable:', cause)
       // A courtesy line; nothing to report when it is unavailable.
     }
   },
@@ -373,7 +374,6 @@ function backToTournament(): void {
               v-model="onlineIncrement"
               :items="increments"
               aria-label="Increment per move"
-              size="sm"
               :content="false"
               variant="pill"
               class="w-full"
@@ -387,7 +387,6 @@ function backToTournament(): void {
             v-model="onlineDays"
             :items="dayChoices"
             aria-label="Days per move"
-            size="sm"
             :content="false"
             variant="pill"
             class="w-full"

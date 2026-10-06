@@ -1,4 +1,5 @@
 import { getDb } from './db'
+import { logDebug } from './logger'
 import { summarize } from '../shared/review'
 import type { ReviewSummary, StoredReview } from '../shared/types'
 
@@ -16,16 +17,24 @@ interface ReviewRow {
 function parse<T>(text: string): T | null {
   try {
     return JSON.parse(text) as T
-  } catch {
+  } catch (cause) {
+    logDebug('review-store', 'Review parse failed:', cause)
     return null
   }
 }
 
 export function readReview(key: string): StoredReview | null {
+  return readStored(key)?.review ?? null
+}
+
+function readStored(key: string): { review: StoredReview; summary: ReviewSummary | null } | null {
   const row = getDb()
     .prepare('SELECT key, data, summary FROM reviews WHERE key = ?')
     .get(key) as unknown as ReviewRow | undefined
-  return row ? parse<StoredReview>(row.data) : null
+  if (!row) return null
+  const review = parse<StoredReview>(row.data)
+  if (!review) return null
+  return { review, summary: parse<ReviewSummary>(row.summary) }
 }
 
 /** Which review to keep: Lichess's own beats ours, a finished one beats one in progress. */
@@ -45,18 +54,18 @@ export function writeReview(review: StoredReview): {
         .prepare('INSERT OR IGNORE INTO game_reviews (gameId, reviewKey) VALUES (?, ?)')
         .run(review.gameId, review.key)
   }
-  const existing = readReview(review.key)
-  if (existing && rank(existing) > rank(review)) {
+  const existing = readStored(review.key)
+  if (existing && rank(existing.review) > rank(review)) {
     link()
     return {
-      review: { ...existing, gameId: review.gameId ?? existing.gameId },
-      summary: summarize(existing),
+      review: { ...existing.review, gameId: review.gameId ?? existing.review.gameId },
+      summary: existing.summary ?? summarize(existing.review),
     }
   }
   const merged: StoredReview = {
     ...review,
     // A local review of a game opened from the list keeps the game it belongs to.
-    gameId: review.gameId ?? existing?.gameId,
+    gameId: review.gameId ?? existing?.review.gameId,
     updatedAt: Date.now(),
   }
   const summary = summarize(merged)

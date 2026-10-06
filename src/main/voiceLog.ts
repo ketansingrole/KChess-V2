@@ -1,6 +1,7 @@
 import { dialog } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { getDb } from './db'
+import { logDebug } from './logger'
 import type {
   VoiceAttempt,
   VoiceAttemptInput,
@@ -31,8 +32,8 @@ function toAttempt(row: VoiceRow): VoiceAttempt {
   let words: VoiceWord[] = []
   try {
     words = JSON.parse(row.words) as VoiceWord[]
-  } catch {
-    // A damaged row still shows what was heard.
+  } catch (cause) {
+    logDebug('voice', 'Voice log row has invalid words JSON:', cause)
   }
   return {
     id: row.id,

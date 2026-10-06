@@ -1,4 +1,5 @@
 import { DEFAULT_OAUTH_LOOK, oauthPage } from './oauthPage'
+import { errorSummary, logDebug, logInfo, logWarn } from './logger'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -153,7 +154,9 @@ const profileCache = new LRUCache<string, object, () => Promise<unknown>>({
     const value = (await load()) as object
     const current = (): boolean => epoch === accountEpoch(account)
     if (!current()) throw new Error('Account was logged out.')
-    await writeApiCache(key, value, current).catch(() => undefined)
+    await writeApiCache(key, value, current).catch((error: unknown) =>
+      logWarn('lichess-cache', 'Profile cache write failed:', key, error),
+    )
     return value
   },
 })
@@ -167,7 +170,10 @@ async function cachedFetch<T extends object>(key: string, load: () => Promise<T>
     return (await profileCache.fetch(key, { context: load })) as T
   } catch (cause) {
     if (cause instanceof LichessError && cause.status === 404) throw cause
-    const stale = await readApiCache<T>(key).catch(() => null)
+    const stale = await readApiCache<T>(key).catch((error: unknown) => {
+      logDebug('lichess', 'API cache read failed:', key, error)
+      return null
+    })
     if (stale) return stale.value
     throw cause
   }
@@ -187,8 +193,14 @@ export async function cachedProfile(username: string): Promise<{
   profileFetchedAt?: number
 }> {
   const [profileHit, ratingHit] = await Promise.all([
-    readApiCache<LichessUser>(profileKey(username, 'profile')).catch(() => null),
-    readApiCache<LichessRatingHistory>(profileKey(username, 'rating')).catch(() => null),
+    readApiCache<LichessUser>(profileKey(username, 'profile')).catch((error: unknown) => {
+      logDebug('lichess', 'Cached profile read failed:', username, error)
+      return null
+    }),
+    readApiCache<LichessRatingHistory>(profileKey(username, 'rating')).catch((error: unknown) => {
+      logDebug('lichess', 'Cached rating read failed:', username, error)
+      return null
+    }),
   ])
   return {
     profile: profileHit?.value ?? null,
@@ -253,6 +265,7 @@ export async function followedUsers(): Promise<FollowingReport> {
       })
     } catch (cause) {
       const denied = cause instanceof LichessError && (cause.status === 401 || cause.status === 403)
+      logWarn('lichess', 'Could not load followed users:', account.username, cause)
       problems.push({
         account: account.username,
         message: denied
@@ -276,7 +289,11 @@ export async function followedUsers(): Promise<FollowingReport> {
 export async function primeProfiles(usernames: string[]): Promise<void> {
   for (const name of usernames) {
     const user = lastFollowing.get(name.toLowerCase())
-    if (user) await writeApiCache(profileKey(name, 'profile'), user).catch(() => undefined)
+    if (user)
+      await writeApiCache(profileKey(name, 'profile'), user).catch((error: unknown) => {
+        logDebug('lichess', 'Profile prime write failed:', name, error)
+        return undefined
+      })
   }
 }
 
@@ -556,7 +573,10 @@ export async function asOwner<T>(
   account: string,
   call: (auth: Record<string, string>) => Promise<T>,
 ): Promise<T> {
-  const token = await getToken(account).catch(() => null)
+  const token = await getToken(account).catch((error: unknown) => {
+    logDebug('lichess', 'Stored login is unavailable:', account, error)
+    return null
+  })
   if (!token) return call({})
   try {
     return await call(authorize(token))
@@ -575,7 +595,14 @@ export async function asAnyAccount<T>(
   call: (auth: Record<string, string>) => Promise<T>,
   account?: string,
 ): Promise<T> {
-  const connected = ((await loadData().catch(() => null))?.accounts ?? [])
+  const connected = (
+    (
+      await loadData().catch((error: unknown) => {
+        logDebug('lichess', 'Stored accounts are unavailable:', error)
+        return null
+      })
+    )?.accounts ?? []
+  )
     .filter((entry) => entry.connected)
     .map((entry) => entry.username)
   const owner =
@@ -623,17 +650,22 @@ async function fetchGamesPage(
     ),
   )
   const page: GamesPage = { games: [], reviews: [], settled: [] }
+  // Drain the stream fast (releasing the bulk lane sooner), then do the chess work in batches
+  // with yields so a 1,000-game page does not block the event loop for seconds.
+  const lines: string[] = []
   await readLines(stream, (line) => {
-    const raw = JSON.parse(line) as components['schemas']['GameJson']
+    lines.push(line)
+  })
+  const now = Date.now()
+  for (let i = 0; i < lines.length; i++) {
+    const raw = JSON.parse(lines[i]!) as components['schemas']['GameJson']
     page.games.push(normalizeGame(raw, account))
     const review = reviewFromLichess(raw)
     if (review) page.reviews.push(review)
-    if (
-      !isGameInProgress(raw.status) &&
-      (review || Date.now() - raw.lastMoveAt > ANALYSIS_SETTLED_MS)
-    )
+    if (!isGameInProgress(raw.status) && (review || now - raw.lastMoveAt > ANALYSIS_SETTLED_MS))
       page.settled.push(raw.id)
-  })
+    if (i % 200 === 199) await sleep(0)
+  }
   return page
 }
 
@@ -660,10 +692,15 @@ export async function fetchLichessReviews(
         }) as Promise<StreamCall>,
       ),
     )
+    const lines: string[] = []
     await readLines(stream, (line) => {
-      const review = reviewFromLichess(JSON.parse(line) as components['schemas']['GameJson'])
-      if (review) parsed.push(review)
+      lines.push(line)
     })
+    for (let i = 0; i < lines.length; i++) {
+      const review = reviewFromLichess(JSON.parse(lines[i]!) as components['schemas']['GameJson'])
+      if (review) parsed.push(review)
+      if (i % 100 === 99) await sleep(0)
+    }
   })
   // Nothing is written until the download is over: a logout meanwhile keeps it all off disk.
   if (epoch !== accountEpoch(account)) throw new Error('Sync was cancelled.')
@@ -700,22 +737,27 @@ async function refreshPendingGames(account: string): Promise<void> {
     const requested = new Set(ids.slice(offset, offset + 300))
     const games: LichessGame[] = []
     const reviews: StoredReview[] = []
+    const lines: string[] = []
     await readLines(stream, (line) => {
-      const raw = JSON.parse(line) as components['schemas']['GameJson']
-      if (!requested.has(raw.id)) return
+      lines.push(line)
+    })
+    for (let i = 0; i < lines.length; i++) {
+      const raw = JSON.parse(lines[i]!) as components['schemas']['GameJson']
+      if (!requested.has(raw.id)) continue
       games.push(normalizeGame(raw, account))
       const review = reviewFromLichess(raw)
       if (review) reviews.push(review)
-    })
+      if (i % 100 === 99) await sleep(0)
+    }
     // Missing IDs remain pending; a failed request never advances the sync cursor.
     await saveGamesPage(account, games, reviews, () => epoch === accountEpoch(account))
   }
 }
 
-const syncs = new Map<string, Promise<void>>()
+const syncs = new Map<string, Promise<number>>()
 
 /** One sync per account at a time: a second request joins the running one. */
-function syncAccount(account: LichessAccount): Promise<void> {
+function syncAccount(account: LichessAccount): Promise<number> {
   const epoch = accountEpoch(account.username)
   const key = account.username.toLowerCase()
   const running = syncs.get(key)
@@ -747,9 +789,15 @@ function syncAccount(account: LichessAccount): Promise<void> {
     }
     await saveGames(account.username, [], startedAt, () => epoch === accountEpoch(account.username))
     forgetProfile(account.username)
-  }).finally(() => {
-    if (syncs.get(key) === run) syncs.delete(key)
+    return fetched
   })
+    .then((fetched) => {
+      logInfo('lichess', 'Game sync completed:', account.username, `fetched=${fetched}`)
+      return fetched
+    })
+    .finally(() => {
+      if (syncs.get(key) === run) syncs.delete(key)
+    })
   syncs.set(key, run)
   return run
 }
@@ -766,6 +814,7 @@ export async function syncGames(username?: string): Promise<AppData> {
     try {
       await syncAccount(account)
     } catch (cause) {
+      logWarn('lichess', 'Game sync failed:', account.username, errorSummary(cause))
       firstError ??= cause
     }
   }
@@ -839,7 +888,10 @@ export async function connectLichess(
         state,
       }))
         url.searchParams.set(key, value)
-      shell.openExternal(url.toString()).catch((cause) => finish(asError(cause)))
+      shell.openExternal(url.toString()).catch((cause: unknown) => {
+        logWarn('lichess', 'Could not open Lichess login page:', cause)
+        finish(asError(cause))
+      })
     })
   })
   const token = await unwrap(
@@ -1106,6 +1158,7 @@ export class OnlineSession {
         )
       } catch (cause) {
         if (signal.aborted) return
+        logDebug('lichess', 'Stream failed:', account, gameId, cause)
         const permanent =
           cause instanceof LichessError && cause.status < 500 && cause.status !== 429
         if (!options.reconnect || permanent) {
@@ -1126,6 +1179,13 @@ export class OnlineSession {
       }
       failures = received ? 1 : failures + 1
       if (failures > MAX_RECONNECTS) {
+        logWarn(
+          'lichess',
+          'Lichess stream gave up reconnecting:',
+          account,
+          gameId,
+          `failures=${failures}`,
+        )
         state('disconnected', 'Lost connection to Lichess. Reconnect to recover the game.')
         if (!options.quiet)
           this.error('Lost connection to Lichess. Check your network and reopen the game.')
@@ -1134,7 +1194,10 @@ export class OnlineSession {
       state('reconnecting', 'Connection interrupted. Reconnecting…')
       // Resolves early (rejects) if the session is cancelled while backing off; the loop then exits.
       await sleep(Math.min(15_000, 500 * 2 ** failures), undefined, { signal }).catch(
-        () => undefined,
+        (cause: unknown) => {
+          logDebug('lichess', 'Reconnect wait was cancelled:', account, gameId, cause)
+          return undefined
+        },
       )
     }
   }
@@ -1220,7 +1283,10 @@ export class OnlineSession {
     const quiet = (phase: OnlineConnection['phase'], message?: string): void =>
       this.hooks.lobbyState?.({ account, phase, message })
     void (async () => {
-      const token = await getToken(account).catch(() => null)
+      const token = await getToken(account).catch((error: unknown) => {
+        logDebug('lichess', 'Stored login is unavailable:', account, error)
+        return null
+      })
       if (controller.signal.aborted) return
       if (!token) {
         quiet('auth-required', 'Its Lichess login is unavailable. Reconnect it in Settings.')
@@ -1231,7 +1297,10 @@ export class OnlineSession {
           if (controller.signal.aborted) return
           if (isChallengeEvent(event)) this.hooks.challenge?.(account, event)
           else if (event.type === 'gameStart' && event.game.speed !== 'correspondence')
-            void this.attach(account, event.game.gameId).catch((cause) => this.report(cause))
+            void this.attach(account, event.game.gameId).catch((cause: unknown) => {
+              logWarn('lichess', 'Could not open game:', account, event.game.gameId, cause)
+              this.report(cause)
+            })
           else if (event.type === 'gameStart' || event.type === 'gameFinish')
             this.hooks.ongoingChanged?.()
         }),
@@ -1340,6 +1409,7 @@ export class OnlineSession {
             throw new DOMException('Recovery cancelled.', 'AbortError')
           if (protectedAccount && account.username.toLowerCase() === protectedAccount.toLowerCase())
             throw cause
+          logWarn('lichess', 'Game recovery check failed:', account.username, cause)
           firstError ??= cause
         }
       }
@@ -1416,6 +1486,7 @@ export class OnlineSession {
           })
         }
       } catch (cause) {
+        logWarn('lichess', 'Could not load ongoing games:', account.username, cause)
         firstError ??= cause
       }
     }
@@ -1577,7 +1648,10 @@ export class OnlineSession {
         params: { path: { challengeId: id } },
         headers: authorize(token),
       }),
-    ).catch(() => undefined)
+    ).catch((cause: unknown) => {
+      logDebug('lichess', 'Challenge cancel failed:', id, cause)
+      return undefined
+    })
   }
 
   /** Accept an incoming challenge as the account it was sent to; a real-time game opens at once. */
@@ -1761,7 +1835,10 @@ export class OnlineSession {
     if (existing) return existing
     const request = this.fetchPresence(ids, account)
     this.presenceCache.set(key, request)
-    void request.catch(() => this.presenceCache.delete(key))
+    void request.catch((cause: unknown) => {
+      logDebug('lichess', 'Presence check failed:', cause)
+      this.presenceCache.delete(key)
+    })
     return request
   }
   private async fetchPresence(usernames: string[], account: string): Promise<PresenceReport> {
@@ -1880,7 +1957,10 @@ export class OnlineSession {
           if (!token) return undefined
           return this.cancelChallenge(id, token)
         })
-        .catch(() => undefined)
+        .catch((cause: unknown) => {
+          logDebug('lichess', 'Pending challenge cancel failed:', id, cause)
+          return undefined
+        })
     }
     // Whatever replaces this session (start, attach) claims the event stream first; otherwise
     // the idle stream resumes so challenges keep arriving.

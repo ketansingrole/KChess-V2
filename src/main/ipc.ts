@@ -3,6 +3,8 @@ import { IPC_CHANNELS, type InvokeMethod, type IpcInput, type IpcResult } from '
 
 import { isAppUrl } from './appOrigin'
 import { validateIpcArguments } from './ipcContracts'
+import { errorSummary, isExpectedCancellation, logDebug, logWarn } from './logger'
+import { recordTiming } from './performance'
 
 const registered = new Set<InvokeMethod>()
 
@@ -28,6 +30,25 @@ export function handle<K extends InvokeMethod>(
 ): void {
   if (registered.has(method)) throw new Error(`Duplicate desktop handler: ${method}`)
   ipcMain.handle(IPC_CHANNELS[method], (event, ...args: IpcInput<K>) => {
+    const started = Date.now()
+    const finish = (outcome: 'ok' | 'error', cause?: unknown): void => {
+      const durationMs = Date.now() - started
+      recordTiming(`ipc.${method}`, durationMs)
+      if (outcome === 'error' && cause !== undefined) {
+        // Never log args: they can carry FENs, PGNs, or user content.
+        // Method + duration + error summary is enough to triage from logs alone.
+        if (isExpectedCancellation(cause)) {
+          logDebug(
+            'ipc',
+            `IPC ${method} cancelled:`,
+            `durationMs=${durationMs}`,
+            errorSummary(cause),
+          )
+        } else {
+          logWarn('ipc', `IPC ${method} failed:`, `durationMs=${durationMs}`, errorSummary(cause))
+        }
+      }
+    }
     const window = owner()
     if (
       !window ||
@@ -35,10 +56,34 @@ export function handle<K extends InvokeMethod>(
       event.sender !== window.webContents ||
       event.senderFrame !== event.sender.mainFrame ||
       !isAppUrl(event.senderFrame.url)
+    ) {
+      const cause = new Error('This page cannot access KChess desktop services.')
+      finish('error', cause)
+      throw cause
+    }
+    try {
+      validateIpcArguments(method, args)
+    } catch (cause) {
+      finish('error', cause)
+      throw cause
+    }
+    let result: Awaited<IpcResult<K>> | IpcResult<K>
+    try {
+      result = listener(event, ...args)
+    } catch (cause) {
+      finish('error', cause)
+      throw cause
+    }
+    return Promise.resolve(result).then(
+      (value) => {
+        finish('ok')
+        return value
+      },
+      (cause) => {
+        finish('error', cause)
+        throw cause
+      },
     )
-      throw new Error('This page cannot access KChess desktop services.')
-    validateIpcArguments(method, args)
-    return listener(event, ...args)
   })
   registered.add(method)
 }

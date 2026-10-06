@@ -11,5 +11,20 @@ export default defineConfig({
     outputFile: { junit: 'test-results/unit.xml' },
     restoreMocks: true,
     clearMocks: true,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      reportsDirectory: 'test-results/coverage',
+      include: ['app/**/*.ts', 'app/**/*.vue', 'src/main/**/*.ts', 'src/shared/**/*.ts'],
+      exclude: ['src/main/appIconSvg.ts', 'src/renderer/**', '**/*.d.ts', 'tests/**'],
+      thresholds: {
+        // Baseline from 2026-10-06 (48% lines). Ratchet upward as suites grow;
+        // these fail the run on real regressions, not on noise.
+        lines: 45,
+        functions: 32,
+        branches: 30,
+        statements: 43,
+      },
+    },
   },
 })

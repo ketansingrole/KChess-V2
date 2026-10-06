@@ -32,7 +32,10 @@ export function useAccountProfile(selectedAccount: Ref<string>, fail: (cause: un
       profile.value = p
       applyRatingHistory(history)
     } catch (cause) {
-      if (request === epoch) fail(cause)
+      if (request === epoch) {
+        console.warn('[account-profile] loading profile failed:', cause)
+        fail(cause)
+      }
     }
   }
   watch(selectedAccount, () => {

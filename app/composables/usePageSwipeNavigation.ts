@@ -9,7 +9,8 @@ export function usePageSwipeNavigation(): void {
   let store: ReturnType<typeof useKChessStore> | null = null
   try {
     store = useKChessStore()
-  } catch {
+  } catch (cause) {
+    console.warn('[swipe-navigation] reading store failed:', cause)
     store = null
   }
   const subscriptions = new SubscriptionScope()

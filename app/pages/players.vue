@@ -116,7 +116,10 @@ async function lookup(name = query.value.trim()): Promise<void> {
         .then((value) => {
           if (current === request) record.value = value
         })
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          console.warn('[players] Crosstable unavailable:', error)
+          return undefined
+        })
     void loadHistory(found.username, current)
     void loadGames(found.username, current)
     void window.kchess
@@ -124,9 +127,13 @@ async function lookup(name = query.value.trim()): Promise<void> {
       .then((report) => {
         if (current === request) status.value = report.users[found.username.toLowerCase()] ?? null
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        console.warn('[players] Presence unavailable:', error)
+        return undefined
+      })
   } catch (cause) {
     if (current === request) {
+      console.warn('[players] Profile lookup failed:', cause)
       profile.value = null
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
@@ -143,8 +150,10 @@ async function loadStats(): Promise<void> {
     const next = await window.kchess.playerPerf(user.username, perf.value)
     if (current === request) stats.value = next
   } catch (cause) {
-    if (current === request)
+    if (current === request) {
+      console.warn('[players] Performance stats unavailable:', cause)
       statsError.value = cause instanceof Error ? cause.message : String(cause)
+    }
   }
 }
 watch(perf, () => void loadStats())
@@ -198,7 +207,8 @@ async function loadGames(username: string, current: number): Promise<void> {
   try {
     const list = await window.kchess.recentGames(username)
     if (current === request) games.value = list
-  } catch {
+  } catch (cause) {
+    console.warn('[players] Recent games unavailable:', cause)
     // Lichess sometimes answers "not found" for every player's games; say so plainly.
     if (current === request)
       gamesError.value = 'Lichess isn’t sending this player’s games right now.'
@@ -222,14 +232,20 @@ const historyEmptyText = computed(() =>
  * everyone) one rebuilt from the player's recent rated games.
  */
 async function loadHistory(username: string, current: number): Promise<void> {
-  const official = await window.kchess.ratingHistory(username).catch(() => [])
+  const official = await window.kchess.ratingHistory(username).catch((error: unknown) => {
+    console.warn('[players] Rating history unavailable:', error)
+    return []
+  })
   if (current !== request) return
   if (official.some((entry) => entry.points?.length)) {
     history.value = official
     historyFromGames.value = false
     return
   }
-  const rated = await window.kchess.recentGames(username, true).catch(() => [])
+  const rated = await window.kchess.recentGames(username, true).catch((error: unknown) => {
+    console.warn('[players] Rated games unavailable:', error)
+    return []
+  })
   if (current !== request) return
   history.value = mergeRatingHistories(official, ratingHistoryFromGames(rated))
   historyFromGames.value = rated.length > 0
@@ -248,6 +264,7 @@ async function openGame(game: LichessGame): Promise<void> {
     }
     store.selectPage('analysis')
   } catch (cause) {
+    console.warn('[players] Could not open the game:', cause)
     toast.add({
       title: 'Could not open the game',
       description: cause instanceof Error ? cause.message : String(cause),
@@ -290,6 +307,7 @@ async function sendMessage(): Promise<void> {
     messageText.value = ''
     toast.add({ title: `Message sent to ${user.username}`, color: 'success' })
   } catch (cause) {
+    console.warn('[players] Message send failed:', cause)
     messageError.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     messageBusy.value = false

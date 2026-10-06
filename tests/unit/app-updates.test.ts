@@ -259,6 +259,20 @@ describe('desktop updater', () => {
     expect(updates.status().phase).toBe('up-to-date')
     expect(updater.downloadUpdate).not.toHaveBeenCalled()
   })
+
+  it('logs update failures with current, available, and phase context', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { updates, updater } = fixture({ settings: { updateAutoDownload: false } })
+    await updates.check()
+    updater.downloadUpdate.mockRejectedValueOnce(new Error('SHA512 checksum mismatch'))
+    await updates.download()
+    expect(updates.status().phase).toBe('error')
+    expect(warn).toHaveBeenCalled()
+    const line = warn.mock.calls.map((call) => String(call[0])).join('\n')
+    expect(line).toContain('current=2026.10.0')
+    expect(line).toContain('available=2026.10.1')
+    expect(line).toContain('phase=')
+  })
 })
 
 it('keeps a newer status event when it overtakes the renderer initial status request', async () => {

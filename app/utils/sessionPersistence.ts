@@ -10,7 +10,8 @@ export function readSession<T>(
     if (!text || text.length > 2_000_000) return undefined
     const value: unknown = JSON.parse(text)
     return decode(value)
-  } catch {
+  } catch (cause) {
+    console.warn('[session] reading session failed:', key, cause)
     return undefined
   }
 }
@@ -31,6 +32,7 @@ export function persistSession<T>(
       localStorage.setItem(key, value)
       error.value = ''
     } catch (cause) {
+      console.warn('[session] saving session failed:', key, cause)
       error.value =
         cause instanceof Error ? cause.message : 'Automatic saving failed. Export a PGN copy.'
     }

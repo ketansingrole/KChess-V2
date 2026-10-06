@@ -313,6 +313,7 @@ async function openPast(entry: TvPastGame): Promise<void> {
     analysis.origin = { white: entry.white.name, black: entry.black.name, gameId: entry.gameId }
     store.selectPage('analysis')
   } catch (cause) {
+    console.warn('[watch] Could not open the game:', cause)
     toast.add({
       title: 'Could not open the game',
       description: cause instanceof Error ? cause.message : String(cause),
@@ -382,7 +383,8 @@ watchValue(pairing, async (key) => {
   try {
     const table = await window.kchess.crosstable(white, black)
     if (pairing.value === key && table.nbGames) headToHead.value = { key, table }
-  } catch {
+  } catch (cause) {
+    console.warn('[watch] Head-to-head unavailable:', cause)
     // Optional context: the game is watchable without it.
   }
 })
@@ -436,8 +438,10 @@ watchValue(broadcastQuery, (query) => {
       const found = await window.kchess.broadcasts(query.trim())
       if (request.current()) broadcastResults.value = found
     } catch (cause) {
-      if (request.current())
+      if (request.current()) {
+        console.warn('[watch] Broadcast search failed:', cause)
         broadcastSearchError.value = cause instanceof Error ? cause.message : String(cause)
+      }
     } finally {
       if (request.current()) broadcastSearching.value = false
     }
@@ -703,7 +707,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
           { label: 'Broadcasts', value: 'broadcasts', icon: 'i-lucide-radio' },
         ]"
         :content="false"
-        size="sm"
         variant="pill"
       />
     </PageHeader>

@@ -235,7 +235,10 @@ test('browses public tournaments anonymously and asks to connect only when joini
     }
   })
   await navigate(page, 'Tournaments')
-  await page.getByRole('button', { name: /Public rapid arena/ }).click()
+  await page
+    .locator('.timeline')
+    .getByRole('listitem', { name: /Public rapid arena/ })
+    .click()
   await expect(
     page.locator('ol').getByRole('listitem').filter({ hasText: 'TestPlayer' }),
   ).toBeVisible()
@@ -635,6 +638,7 @@ test('exports redacted diagnostics through Settings', async ({
   expect(report).not.toContain('test-oauth-secret')
   expect(Object.keys(JSON.parse(report))).toEqual([
     'generatedAt',
+    'sessionId',
     'version',
     'platform',
     'arch',
@@ -897,7 +901,7 @@ test('starts a Chess960 game against Stockfish with a clock', async ({ desktop: 
 test('summarises a reviewed game on the Insights page', async ({ desktop: { page } }) => {
   await navigate(page, 'Lichess insights')
   await expect(page.getByText('Games', { exact: true })).toBeVisible()
-  await expect(page.getByTitle(/^Checkmate: 1 games/)).toBeVisible()
+  await expect(page.getByRole('img', { name: /^Checkmate: 1 game/ })).toBeVisible()
   await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
 })
 
@@ -1489,4 +1493,197 @@ test('analyses a broadcast inline and explores lines without changing saved anal
   await expect(
     page.getByRole('group', { name: 'Moves', exact: true }).locator('.tree-move'),
   ).toHaveCount(0)
+})
+
+test('practices every trainer offline without leaving the page', async ({ desktop: { page } }) => {
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Coordinates', exact: true }).click()
+  await expect(page.getByText('Board from the side of', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Square colours', exact: true }).click()
+  await expect(page.getByText(/Name each square/)).toBeVisible()
+  await page.getByRole('tab', { name: 'Knight paths', exact: true }).click()
+  await expect(page.getByText('Reach the green square in the fewest moves.')).toBeVisible()
+  await page.getByRole('tab', { name: 'Endgames', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Basic mates', exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Openings', exact: true }).click()
+  await expect(page.getByText('Save a repertoire first', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Analyze a game', exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Puzzle themes', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Mate patterns', exact: true })).toBeVisible()
+})
+
+test('scores coordinates and square-colour runs from board and keyboard', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Coordinates', exact: true }).click()
+  await page.getByRole('button', { name: 'Start', exact: true }).click()
+  const target = page.locator('.coord-target')
+  await expect(target).toBeVisible()
+  const square = (await target.innerText()).trim()
+  expect(square).toMatch(/^[a-h][1-8]$/)
+  await clickSquare(page, square)
+  await expect(page.locator('.run-score strong')).toHaveText('1')
+  await page.getByRole('button', { name: 'End run', exact: true }).click()
+  await expect(page.getByText(/accuracy/)).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Square colours', exact: true }).click()
+  await page.getByRole('button', { name: 'Start', exact: true }).click()
+  const shown = page.locator('.drill-square')
+  await expect(shown).toBeVisible()
+  const name = (await shown.innerText()).trim()
+  expect(name).toMatch(/^[a-h][1-8]$/)
+  const file = name.charCodeAt(0) - 97
+  const rank = Number(name[1]) - 1
+  await page.keyboard.press((file + rank) % 2 === 0 ? 'd' : 'l')
+  await expect(page.locator('.drill-stage')).toContainText('1 correct')
+})
+
+test('starts a knight run and skips a round', async ({ desktop: { page } }) => {
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Knight paths', exact: true }).click()
+  await page.getByRole('button', { name: 'Start', exact: true }).click()
+  await expect(page.locator('.knight-target')).toContainText(/^Reach [a-h][1-8] in \d+ jump/)
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(page.getByText(/Skipped — the shortest path was/)).toBeVisible()
+  await page.getByRole('button', { name: 'End run', exact: true }).click()
+  await expect(page.getByText(/shortest paths/)).toBeVisible()
+})
+
+test('browses puzzle tabs and shows offline account states', async ({ desktop: { app, page } }) => {
+  await app.evaluate(() => {
+    globalThis.fetch = () => Promise.reject(new Error('Offline puzzles test.'))
+  })
+  await navigate(page, 'Puzzles')
+  await page.getByRole('tab', { name: 'Daily', exact: true }).click()
+  await expect(page.getByText('Couldn’t get the daily puzzle', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Storm · Streak · Rush', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Play a run', exact: true })).toBeVisible()
+  await expect(page.getByRole('radio', { name: /Storm/ })).toBeVisible()
+  await page.getByRole('tab', { name: 'Lichess stats', exact: true }).click()
+  await expect(page.getByText('Connect a Lichess account', { exact: true }).first()).toBeVisible()
+  await page.getByRole('tab', { name: 'Lichess history', exact: true }).click()
+  await expect(page.getByText('Connect a Lichess account', { exact: true }).first()).toBeVisible()
+})
+
+test('validates account-free online, following and player lookup', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Play on Lichess')
+  await expect(page.getByText('Connect Lichess to play', { exact: true })).toBeVisible()
+  await navigate(page, 'Players')
+  await page.getByRole('textbox', { name: 'Lichess username', exact: true }).fill('!')
+  await page.getByRole('button', { name: 'Look up', exact: true }).click()
+  await expect(page.getByText('Enter a Lichess username.', { exact: true })).toBeVisible()
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
+    window.dispatchEvent(new Event('offline'))
+  })
+  await expect(
+    page.getByText('Offline · reconnect to look up players.', { exact: true }),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Look up', exact: true })).toBeDisabled()
+  await navigate(page, 'Following')
+  await expect(page.getByText('Follow your first player', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Follow player', exact: true })).toBeDisabled()
+  await navigate(page, 'Play on Lichess')
+  await expect(
+    page.getByText('Offline · reconnect to play on Lichess.', { exact: true }),
+  ).toBeVisible()
+})
+
+test('watches TV channels and followed players without an account', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Watch')
+  await expect(page.getByRole('heading', { name: 'Channels', exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Following', exact: true }).click()
+  await expect(page.getByText('Followed players playing now', { exact: true })).toBeVisible()
+  await expect(page.getByText('No followed player is playing right now.')).toBeVisible()
+  await page.getByRole('tab', { name: 'TV', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Channels', exact: true })).toBeVisible()
+})
+
+test('filters tournaments and guards arena creation offline', async ({
+  desktop: { app, page },
+}) => {
+  await app.evaluate(() => {
+    const original = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      if (new URL(request.url).pathname.startsWith('/api/tournament'))
+        return Response.json({ started: [], created: [] })
+      return original(input, init)
+    }
+  })
+  await navigate(page, 'Tournaments')
+  await page.getByRole('tab', { name: 'Playable here', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'All', exact: true })).toBeVisible()
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
+    window.dispatchEvent(new Event('offline'))
+  })
+  await expect(
+    page.getByText('Offline · standings may be out of date.', { exact: true }),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Create arena', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled()
+})
+
+test('guards local game creation and runs the chess clock', async ({ desktop: { page } }) => {
+  await navigate(page, 'Over the board')
+  await expect(page.getByRole('button', { name: 'Take back', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'New game', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'New game over the board' })).toBeVisible()
+  await page.getByPlaceholder('Standard start').fill('not-a-fen')
+  await expect(page.getByRole('button', { name: 'Start', exact: true })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await page.getByRole('tab', { name: 'Chess clock', exact: true }).click()
+  await expect(page.getByText('Layout', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Start', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Reset', exact: true }).click()
+})
+
+test('persists gameplay and sound settings', async ({ desktop: { page } }) => {
+  const before = await page.evaluate(async () => (await window.kchess.loadData()).settings)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await navigate(page, 'Gameplay')
+  const moves = page.getByRole('switch', { name: 'Show possible moves', exact: true })
+  await expect(moves).toBeVisible()
+  await moves.click()
+  await expect
+    .poll(async () => (await page.evaluate(() => window.kchess.loadData())).settings.showLegalMoves)
+    .toBe(!before.showLegalMoves)
+  await navigate(page, 'Sound')
+  const sound = page.getByRole('switch', { name: 'Game sounds', exact: true })
+  await expect(sound).toBeVisible()
+  await sound.click()
+  await expect
+    .poll(async () => (await page.evaluate(() => window.kchess.loadData())).settings.soundEnabled)
+    .toBe(!before.soundEnabled)
+})
+
+test('validates study import, editor FEN and analysis import', async ({ desktop: { page } }) => {
+  await navigate(page, 'Studies')
+  await expect(page.getByText('No studies yet', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Import PGN', exact: true }).first().click()
+  await page.getByLabel('PGN', { exact: true }).fill('[FEN "not-a-fen"]\n\n1. e4 e5 *')
+  await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(page.getByText('Paste valid PGN with up to 64 chapters.')).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  await navigate(page, 'Board editor')
+  await page.getByLabel('FEN', { exact: true }).fill('bad-fen')
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('That is not a valid FEN.', { exact: true })).toBeVisible()
+
+  await navigate(page, 'Analysis board')
+  await page.locator('.analysis-panel').getByRole('button', { name: 'Import', exact: true }).click()
+  await page.getByRole('textbox', { name: 'FEN or PGN' }).fill('[FEN "not-a-fen"]\n\n1. e4 e5 *')
+  await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(
+    page.getByText('Use a valid FEN or one PGN game with legal moves, under 2 MB.'),
+  ).toBeVisible()
 })

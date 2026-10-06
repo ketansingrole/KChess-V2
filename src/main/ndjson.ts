@@ -1,4 +1,6 @@
 /** Bounded line decoding, including heartbeats, with cancellation and a stalled-stream deadline. */
+import { logDebug } from './logger.ts'
+
 export async function readLines(
   stream: ReadableStream<Uint8Array>,
   onLine: (line: string) => void,
@@ -10,7 +12,9 @@ export async function readLines(
   const max = options.maxLineBytes ?? 2_000_000
   let timer: ReturnType<typeof setTimeout> | undefined
   const cancel = (): void => {
-    void reader.cancel().catch(() => {})
+    void reader.cancel().catch((error: unknown) => {
+      logDebug('ndjson', 'Stream cancel failed:', error)
+    })
   }
   options.signal?.addEventListener('abort', cancel, { once: true })
   try {
@@ -29,13 +33,15 @@ export async function readLines(
       options.signal?.throwIfAborted()
       if (result.done) break
       tail += decoder.decode(result.value, { stream: true })
-      let end: number
-      while ((end = tail.indexOf('\n')) >= 0) {
-        if (end > max) throw new Error('Lichess sent an oversized stream record.')
-        const line = tail.slice(0, end).trim()
-        tail = tail.slice(end + 1)
+      let start = 0
+      let end = -1
+      while ((end = tail.indexOf('\n', start)) >= 0) {
+        if (end - start > max) throw new Error('Lichess sent an oversized stream record.')
+        const line = tail.slice(start, end).trim()
+        start = end + 1
         if (line) onLine(line)
       }
+      if (start > 0) tail = tail.slice(start)
       if (tail.length > max) throw new Error('Lichess sent an oversized stream record.')
     }
     tail += decoder.decode()
@@ -43,7 +49,9 @@ export async function readLines(
   } finally {
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', cancel)
-    await reader.cancel().catch(() => {})
+    await reader.cancel().catch((error: unknown) => {
+      logDebug('ndjson', 'Stream cancel failed:', error)
+    })
     reader.releaseLock()
   }
 }

@@ -37,7 +37,9 @@ export function usePositionEngine(request: () => AnalysisRequest | null) {
       busy.value = Boolean(value)
       clearTimeout(timer)
       // Cancellation reaches the main-owned UCI search, including when the switch turns off.
-      const stopped = window.kchess.stopAnalysis().catch(() => undefined)
+      const stopped = window.kchess.stopAnalysis().catch((error: unknown) => {
+        console.warn('[position-engine] stopping analysis failed:', error)
+      })
       if (!value) return
       const id = clientId
       timer = setTimeout(async () => {
@@ -47,6 +49,7 @@ export function usePositionEngine(request: () => AnalysisRequest | null) {
           await window.kchess.startAnalysis({ ...value, clientId: id })
         } catch (cause) {
           if (!current.current()) return
+          console.warn('[position-engine] starting analysis failed:', cause)
           error.value = cause instanceof Error ? cause.message : String(cause)
           busy.value = false
         }
@@ -59,7 +62,9 @@ export function usePositionEngine(request: () => AnalysisRequest | null) {
     requests.invalidate()
     wanted = null
     off()
-    void window.kchess.stopAnalysis().catch(() => undefined)
+    void window.kchess.stopAnalysis().catch((error: unknown) => {
+      console.warn('[position-engine] stopping analysis failed:', error)
+    })
   })
   return { update, error, busy }
 }

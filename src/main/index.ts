@@ -10,6 +10,7 @@ import {
   shell,
 } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
+import { logDebug, logError, logWarn } from './logger'
 import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle, setIpcOwner, assertIpcComplete } from './ipc'
@@ -231,7 +232,10 @@ const online = new OnlineSession(
           body: `${fresh.variantName} · ${control} · ${fresh.rated ? 'Rated' : 'Casual'} (@${fresh.account})`,
         },
         (alert) => send(IPC_EVENTS.notification, alert),
-      ).catch(() => undefined)
+      ).catch((cause: unknown) => {
+        logDebug('notify', 'Challenge notification failed:', cause)
+        return undefined
+      })
     },
     ongoingChanged,
     lobbyState: (state) => send(IPC_EVENTS.lobby, state),
@@ -255,7 +259,8 @@ function appIconPath(): string | undefined {
   try {
     if (process.env.KCHESS_NUXT_URL) return join(app.getAppPath(), 'build', 'icon.png')
     return join(app.getAppPath(), '.output/public/icon.png')
-  } catch {
+  } catch (cause) {
+    logDebug('startup', 'App icon path is unavailable:', cause)
     return undefined
   }
 }
@@ -272,7 +277,8 @@ function themeIconPath(dark: boolean): string | undefined {
   try {
     if (process.env.KCHESS_NUXT_URL) return join(app.getAppPath(), 'build', file)
     return join(app.getAppPath(), '.output/public', file)
-  } catch {
+  } catch (cause) {
+    logDebug('startup', 'Theme icon path is unavailable:', cause)
     return undefined
   }
 }
@@ -285,8 +291,8 @@ function refreshAppIcon(): void {
       const dockIcon = nativeImage.createFromPath(iconPath)
       if (!dockIcon.isEmpty()) app.dock?.setIcon(dockIcon)
     }
-  } catch {
-    /* dock icon is optional */
+  } catch (cause) {
+    logDebug('startup', 'Dock icon refresh failed:', cause)
   }
 }
 
@@ -344,24 +350,29 @@ function createWindow(): void {
     if (!isAppUrl(url)) event.preventDefault()
   })
   window.webContents.on('render-process-gone', (_event, details) => {
-    console.error('Renderer exited:', details.reason, details.exitCode)
+    logError('renderer', 'Renderer exited:', details.reason, details.exitCode)
   })
   window.webContents.on('preload-error', (_event, _path, error) => {
-    console.error('Preload failed:', error)
+    logError('renderer', 'Preload failed:', error)
   })
   window.webContents.on('console-message', ({ level, message }) => {
-    if (level === 'warning' || level === 'error') console.error('Renderer:', message)
+    if (level === 'warning' || level === 'error') logError('renderer', 'Renderer console:', message)
   })
   window.webContents.on('did-fail-load', (_event, code, description, url) =>
-    console.error('Renderer load failed:', code, description, url),
+    logError('renderer', 'Renderer load failed:', code, description, url),
   )
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://lichess.org/')) void shell.openExternal(url)
     return { action: 'deny' }
   })
   if (process.env.KCHESS_NUXT_URL)
-    void window.loadURL(process.env.KCHESS_NUXT_URL).catch(console.error)
-  else void window.loadURL('kchess://app/index.html').catch(console.error)
+    void window.loadURL(process.env.KCHESS_NUXT_URL).catch((error: unknown) => {
+      logError('renderer', 'Renderer loadURL failed:', process.env.KCHESS_NUXT_URL, error)
+    })
+  else
+    void window.loadURL('kchess://app/index.html').catch((error: unknown) => {
+      logError('renderer', 'Renderer loadURL failed:', 'kchess://app/index.html', error)
+    })
 }
 
 function setupAppMenu(): void {
@@ -412,7 +423,7 @@ void app
     configureEngineResources(() => powerMonitor.isOnBatteryPower())
     handle('exportDiagnostics', exportDiagnostics)
     handle('reportRendererError', (_event, report) => {
-      console.error('Renderer page error:', report)
+      logError('renderer', 'Renderer page error:', report)
     })
     handle('recordPerformance', (_event, name: unknown, milliseconds: unknown) => {
       if (
@@ -873,7 +884,7 @@ void app
     })
   })
   .catch((error: unknown) => {
-    console.error('Startup failed:', error)
+    logError('startup', 'Startup failed:', error)
     app.quit()
   })
 
@@ -894,7 +905,7 @@ app.on('before-quit', (event) => {
       appUpdates.install(false)
     } catch (cause) {
       // The updater reports the failure in Settings; leave the app open so it can be retried.
-      console.warn('Could not install on quit:', cause)
+      logWarn('app-updates', 'Could not install on quit:', cause)
     }
   }
 })

@@ -75,7 +75,8 @@ async function finish(): Promise<void> {
       detail: { mistakes: mistakes.value, accuracy: accuracy.value },
     })
     summary.value = saved.value.summary
-  } catch {
+  } catch (cause) {
+    console.warn('[square-color-trainer] Could not save run:', cause)
     // The score is still on screen; only the record is lost.
   }
 }

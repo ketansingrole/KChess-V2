@@ -93,7 +93,8 @@ async function copyFen(): Promise<void> {
   try {
     await navigator.clipboard.writeText(fen.value)
     toast.add({ title: 'FEN copied', icon: 'i-lucide-clipboard-check' })
-  } catch {
+  } catch (cause) {
+    console.warn('[editor] Copy FEN failed:', cause)
     toast.add({ title: 'Could not copy the FEN', color: 'error', icon: 'i-lucide-clipboard-x' })
   }
 }
@@ -213,7 +214,6 @@ function missed(result: VoiceResult): void {
               { label: 'Black', value: 'black' },
             ]"
             aria-labelledby="editor-turn"
-            size="sm"
             :content="false"
             variant="pill"
           />
