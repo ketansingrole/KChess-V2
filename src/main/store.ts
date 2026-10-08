@@ -608,7 +608,7 @@ export async function gameRatingHistory(account: string): Promise<LichessRatingH
     byPerf.set(perf, points)
   }
   return [...byPerf].map(([perf, points]) => ({
-    name: perf.charAt(0).toUpperCase() + perf.slice(1),
+    name: perf as LichessRatingHistory[number]['name'],
     points,
   }))
 }

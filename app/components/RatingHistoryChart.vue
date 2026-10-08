@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
 import type { LichessRatingHistory } from '../../src/shared/types'
+import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '../utils/ratings'
 
 /** Current rating per Lichess history name ("Blitz"), shown on the toggle chips. */
 export interface CurrentRating {
@@ -20,40 +21,48 @@ const props = defineProps<{
 /**
  * Colour follows the speed, never its rank: each keeps its slot when others are hidden.
  * Slots come from the validated categorical palette; one variant takes the last slot.
+ * Keys are Lichess perf keys (`blitz`, not `Blitz`); legacy display names normalize to them.
  */
-const FIXED_SLOTS = [
-  'Bullet',
-  'Blitz',
-  'Rapid',
-  'Classical',
-  'Correspondence',
-  'UltraBullet',
-  'Chess960',
+const FIXED_SLOT_KEYS = [
+  'bullet',
+  'blitz',
+  'rapid',
+  'classical',
+  'correspondence',
+  'ultraBullet',
+  'chess960',
 ]
 const VARIANT_SLOT = 8
 const DAY_MS = 86_400_000
 
 interface Series {
+  /** Perf key (`blitz`); stable identity for hiding, rows and current ratings. */
+  key: string
+  /** Human label (`Blitz`), shown on chips and tooltips. */
   name: string
   slot: number
   points: { date: number; rating: number }[]
 }
 const series = computed<Series[]>(() => {
   const withPoints = props.history
-    .filter((entry) => entry.name && entry.name !== 'Puzzles' && entry.points?.length)
-    .map((entry) => ({
-      name: entry.name!,
-      points: entry.points!.map(([year, month, day, rating]) => ({
-        date: Date.UTC(year!, month!, day!),
-        rating: rating!,
-      })),
-    }))
+    .filter((entry) => entry.name && !isPuzzleHistory(entry.name) && entry.points?.length)
+    .map((entry) => {
+      const key = normalizeRatingKey(entry.name)
+      return {
+        key,
+        name: ratingDisplayName(entry.name),
+        points: entry.points!.map(([year, month, day, rating]) => ({
+          date: Date.UTC(year!, month!, day!),
+          rating: rating!,
+        })),
+      }
+    })
   const fixed = withPoints
-    .filter((entry) => FIXED_SLOTS.includes(entry.name))
-    .map((entry) => ({ ...entry, slot: FIXED_SLOTS.indexOf(entry.name) + 1 }))
+    .filter((entry) => FIXED_SLOT_KEYS.includes(entry.key))
+    .map((entry) => ({ ...entry, slot: FIXED_SLOT_KEYS.indexOf(entry.key) + 1 }))
   // More than eight series cannot stay distinguishable; the most played variant gets the last slot.
   const variant = withPoints
-    .filter((entry) => !FIXED_SLOTS.includes(entry.name))
+    .filter((entry) => !FIXED_SLOT_KEYS.includes(entry.key))
     .sort((a, b) => b.points.length - a.points.length)[0]
   return [...fixed, ...(variant ? [{ ...variant, slot: VARIANT_SLOT }] : [])].sort(
     (a, b) => a.slot - b.slot,
@@ -65,13 +74,13 @@ watch(
   () => props.history,
   () => (hidden.value = new Set()),
 )
-function toggle(name: string): void {
+function toggle(key: string): void {
   const next = new Set(hidden.value)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
   hidden.value = next
 }
-const shown = computed(() => series.value.filter((entry) => !hidden.value.has(entry.name)))
+const shown = computed(() => series.value.filter((entry) => !hidden.value.has(entry.key)))
 
 const RANGES = [
   { label: '1M', days: 31 },
@@ -101,7 +110,7 @@ const rows = computed<Row[]>(() => {
     shown.value.forEach((entry, index) => {
       while (cursors[index]! < entry.points.length && entry.points[cursors[index]!]!.date <= date)
         last[index] = entry.points[cursors[index]!++]!.rating
-      row[entry.name] = last[index]
+      row[entry.key] = last[index]
     })
     return row
   })
@@ -115,7 +124,7 @@ const rows = computed<Row[]>(() => {
 
 const x = (row: Row): number => row.date
 const accessors = computed(() =>
-  shown.value.map((entry) => (row: Row) => row[entry.name] as number | undefined),
+  shown.value.map((entry) => (row: Row) => row[entry.key] as number | undefined),
 )
 const colors = computed(() => shown.value.map((entry) => `var(--rating-series-${entry.slot})`))
 const color = (_row: Row, index: number): string => colors.value[index] ?? 'var(--ui-primary)'
@@ -123,7 +132,7 @@ const color = (_row: Row, index: number): string => colors.value[index] ?? 'var(
 const PAD = 15
 const domain = computed<[number, number]>(() => {
   const values = rows.value.flatMap((row) =>
-    shown.value.map((entry) => row[entry.name]).filter((value) => value !== undefined),
+    shown.value.map((entry) => row[entry.key]).filter((value) => value !== undefined),
   ) as number[]
   if (!values.length) return [0, 1]
   return [Math.min(...values) - PAD, Math.max(...values) + PAD]
@@ -146,10 +155,10 @@ const escape = (text: string) =>
   text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 const tooltip = (row: Row): string => {
   const lines = shown.value
-    .filter((entry) => row[entry.name] !== undefined)
+    .filter((entry) => row[entry.key] !== undefined)
     .map(
       (entry) =>
-        `<span class="rh-tip-line"><i style="background:var(--rating-series-${entry.slot})"></i>${escape(entry.name)}<strong>${row[entry.name]}</strong></span>`,
+        `<span class="rh-tip-line"><i style="background:var(--rating-series-${entry.slot})"></i>${escape(entry.name)}<strong>${row[entry.key]}</strong></span>`,
     )
   return `<div class="rh-tip"><span class="rh-tip-date">${formatDate(row.date, true)}</span>${lines.join('')}</div>`
 }
@@ -167,26 +176,26 @@ const summary = computed(
       <div class="rh-chips" role="group" aria-label="Show ratings">
         <button
           v-for="entry in series"
-          :key="entry.name"
+          :key="entry.key"
           type="button"
           class="rh-chip"
-          :class="{ off: hidden.has(entry.name) }"
-          :aria-pressed="!hidden.has(entry.name)"
-          :title="hidden.has(entry.name) ? `Show ${entry.name}` : `Hide ${entry.name}`"
-          @click="toggle(entry.name)"
+          :class="{ off: hidden.has(entry.key) }"
+          :aria-pressed="!hidden.has(entry.key)"
+          :title="hidden.has(entry.key) ? `Show ${entry.name}` : `Hide ${entry.name}`"
+          @click="toggle(entry.key)"
         >
           <i class="rh-swatch" :style="{ background: `var(--rating-series-${entry.slot})` }" />
           <span>{{ entry.name }}</span>
           <strong class="tabular">
-            {{ current?.[entry.name]?.rating ?? entry.points.at(-1)?.rating
-            }}{{ current?.[entry.name]?.provisional ? '?' : '' }}
+            {{ current?.[entry.key]?.rating ?? entry.points.at(-1)?.rating
+            }}{{ current?.[entry.key]?.provisional ? '?' : '' }}
           </strong>
           <span
-            v-if="current?.[entry.name]?.progress"
+            v-if="current?.[entry.key]?.progress"
             class="rh-progress tabular"
-            :class="current[entry.name]!.progress! > 0 ? 'up' : 'down'"
-            >{{ current[entry.name]!.progress! > 0 ? '+' : ''
-            }}{{ current[entry.name]!.progress }}</span
+            :class="current[entry.key]!.progress! > 0 ? 'up' : 'down'"
+            >{{ current[entry.key]!.progress! > 0 ? '+' : ''
+            }}{{ current[entry.key]!.progress }}</span
           >
         </button>
       </div>

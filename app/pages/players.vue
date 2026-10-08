@@ -185,11 +185,11 @@ const score = computed(() => {
     games: value.nbGames,
   }
 })
-/** Current rating per speed, keyed by the names Lichess uses in rating histories. */
+/** Current rating per speed, keyed by rating-history key (`blitz`, `puzzle`). */
 const currentRatings = computed(() =>
   Object.fromEntries(
     perfs.value.map((entry) => [
-      PERF_LABELS[entry.key],
+      entry.key,
       { rating: entry.rating, provisional: entry.prov, progress: entry.prog },
     ]),
   ),
