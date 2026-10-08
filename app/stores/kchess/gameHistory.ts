@@ -6,7 +6,7 @@ import type {
   LichessRatingHistory,
 } from '../../../src/shared/types'
 import { pgnFromMoves } from '../../utils/chess'
-import { mergeRatingHistories } from '../../utils/ratings'
+import { mergeRatingHistories, normalizeRatingKey } from '../../utils/ratings'
 
 export function useGameHistory(options: {
   data: Ref<AppData | null>
@@ -137,18 +137,27 @@ export function useGameHistory(options: {
   const ratingHistoriesResolved = computed(() =>
     mergeRatingHistories(ratingHistories.value, fallbackRatings.value),
   )
+  /**
+   * History entries are keyed by perf key since `@lichess-org/types` 2.0.176
+   * (`blitz`, not `Blitz`); the selected mode may still hold a legacy display
+   * name, so both sides normalize before comparing.
+   */
+  const findByMode = (history: LichessRatingHistory, mode: string) => {
+    const want = normalizeRatingKey(mode)
+    return history.find((item) => normalizeRatingKey(item.name) === want)
+  }
   /** The chosen mode's points come from synced games rather than Lichess. */
   const chartFromGames = computed(
     () =>
-      !ratingHistories.value.find((item) => item.name === chartMode.value)?.points?.length &&
-      Boolean(
-        ratingHistoriesResolved.value.find((item) => item.name === chartMode.value)?.points?.length,
-      ),
+      !findByMode(ratingHistories.value, chartMode.value)?.points?.length &&
+      Boolean(findByMode(ratingHistoriesResolved.value, chartMode.value)?.points?.length),
   )
   // Keep the selected mode on one that has data.
   watch(ratingHistoriesResolved, (history) => {
-    if (!history.find((item) => item.name === chartMode.value)?.points?.length)
-      chartMode.value = history.find((item) => item.points?.length)?.name ?? 'Blitz'
+    if (!findByMode(history, chartMode.value)?.points?.length) {
+      const next = history.find((item) => item.points?.length)?.name
+      chartMode.value = next ? normalizeRatingKey(next) : 'blitz'
+    }
   })
   /** Rating points for the chosen mode and range, oldest first. */
   const chartSeries = computed(() => {
@@ -159,8 +168,7 @@ export function useGameHistory(options: {
         : chartRange.value === 'All'
           ? 0
           : Date.now() - (cutoffDays[chartRange.value] ?? 0) * 86_400_000
-    const points =
-      ratingHistoriesResolved.value.find((item) => item.name === chartMode.value)?.points ?? []
+    const points = findByMode(ratingHistoriesResolved.value, chartMode.value)?.points ?? []
     return points
       .filter((p) => p.length >= 4)
       .map((p) => ({ date: Date.UTC(p[0]!, p[1]!, p[2]!), rating: p[3]! }))

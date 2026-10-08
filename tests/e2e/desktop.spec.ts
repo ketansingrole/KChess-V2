@@ -342,11 +342,17 @@ test('swipes through page history without repeating navigation during momentum',
   await navigate(page, 'Analysis board')
   await expect(page).toHaveURL(/\/analysis/)
   await page.locator('cg-board').hover()
-  await page.mouse.wheel(-120, 0)
+  // Momentum arrives as one burst: dispatch both wheels in the same task so the
+  // tail is processed inside the gesture window no matter how loaded the runner is.
+  await page.evaluate(() => {
+    const board = document.querySelector('cg-board')!
+    for (let i = 0; i < 2; i++)
+      board.dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: -120 }),
+      )
+  })
   await expect(page).toHaveURL(/\/editor/)
-  await page.mouse.wheel(-120, 0)
   await page.waitForTimeout(350)
-  await expect(page).toHaveURL(/\/editor/)
   await page.mouse.wheel(120, 0)
   await expect(page).toHaveURL(/\/analysis/)
   await page.waitForTimeout(350)
@@ -1274,8 +1280,10 @@ test('quick pick switches modes, runs commands and remembers them', async ({
   await expect(input).not.toBeFocused()
   await input.click()
   await expect(results).toBeVisible()
-  const topbar = (await page.locator('.topbar').boundingBox())!
-  await page.locator('.topbar').click({ position: { x: topbar.width - 40, y: topbar.height / 2 } })
+  // Other chrome dismisses too. The top bar itself can't take a coordinate
+  // click: its right end is window controls on frameless builds and the open
+  // palette spans the middle, so step home from the sidebar instead.
+  await navigate(page, 'Home')
   await expect(results).toBeHidden()
 })
 

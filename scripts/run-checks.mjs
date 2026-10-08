@@ -2,6 +2,20 @@ import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * How to invoke pnpm. `pnpm/setup@v1` installs a standalone executable, so
+ * `npm_execpath` is a native binary that node cannot load; corepack instead
+ * points it at a `.mjs` launcher that must run under node. A direct `node`
+ * invocation (no package manager) leaves it unset.
+ */
+function pnpmCommand() {
+  const execPath = process.env.npm_execpath
+  if (execPath && /\.([cm]?js)$/.test(execPath))
+    return { cmd: process.execPath, prefix: [execPath] }
+  if (execPath) return { cmd: execPath, prefix: [] }
+  return { cmd: 'pnpm', prefix: [] }
+}
+
 export async function runChecks(steps, mode = 'full') {
   const report = { mode, startedAt: new Date().toISOString(), steps: [] }
   const start = performance.now()
@@ -11,7 +25,8 @@ export async function runChecks(steps, mode = 'full') {
       console.info('[kchess] Checking ' + name + '…')
       const stepStart = performance.now()
       const code = await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [process.env.npm_execpath, ...args], {
+        const { cmd, prefix } = pnpmCommand()
+        const child = spawn(cmd, [...prefix, ...args], {
           stdio: 'inherit',
         })
         child.once('error', reject)
