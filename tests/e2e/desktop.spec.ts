@@ -342,10 +342,15 @@ test('swipes through page history without repeating navigation during momentum',
   await navigate(page, 'Analysis board')
   await expect(page).toHaveURL(/\/analysis/)
   await page.locator('cg-board').hover()
-  await page.mouse.wheel(-120, 0)
-  // Momentum arrives as a burst: the tail must follow immediately. Awaiting
-  // between the wheels lets the gesture expire (>300ms) and navigates again.
-  await page.mouse.wheel(-120, 0)
+  // Momentum arrives as one burst: dispatch both wheels in the same task so the
+  // tail is processed inside the gesture window no matter how loaded the runner is.
+  await page.evaluate(() => {
+    const board = document.querySelector('cg-board')!
+    for (let i = 0; i < 2; i++)
+      board.dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: -120 }),
+      )
+  })
   await expect(page).toHaveURL(/\/editor/)
   await page.waitForTimeout(350)
   await page.mouse.wheel(120, 0)
@@ -1276,9 +1281,11 @@ test('quick pick switches modes, runs commands and remembers them', async ({
   await input.click()
   await expect(results).toBeVisible()
   // Click bare topbar chrome: the far right holds the frameless window
-  // controls on Windows/Linux (Close would kill the window), so use the left
-  // end, which has no single-click action.
-  await page.locator('.topbar-left').click()
+  // controls on Windows/Linux (Close would kill the window) and the empty
+  // left end collapses to zero height, so click the header's padded left
+  // edge, which has no single-click action.
+  const topbar = (await page.locator('.topbar').boundingBox())!
+  await page.locator('.topbar').click({ position: { x: 10, y: topbar.height / 2 } })
   await expect(results).toBeHidden()
 })
 
