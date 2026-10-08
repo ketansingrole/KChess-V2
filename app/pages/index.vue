@@ -51,6 +51,18 @@ const ratingChange = computed(() => {
 const blitzProg = computed(() => profile.value?.perfs?.blitz?.prog ?? 0)
 const trackedCount = computed(() => profile.value?.count?.all ?? selectedGameCount.value)
 const accountItems = computed(() => store.connectedAccounts.map((account) => account.username))
+/** Rating modes by perf key (`blitz`); labels match the previous display names. */
+const chartModes = [
+  { label: 'Bullet', value: 'bullet' },
+  { label: 'Blitz', value: 'blitz' },
+  { label: 'Rapid', value: 'rapid' },
+  { label: 'Classical', value: 'classical' },
+  { label: 'Correspondence', value: 'correspondence' },
+  { label: 'Puzzle', value: 'puzzle' },
+]
+const chartLabel = computed(
+  () => chartModes.find((mode) => mode.value === chartMode.value)?.label ?? chartMode.value,
+)
 const hasConnectedAccount = computed(() =>
   store.connectedAccounts.some(
     (account) => account.username.toLowerCase() === selectedAccount.value.toLowerCase(),
@@ -246,7 +258,7 @@ const hasConnectedAccount = computed(() =>
             <div class="toolbar-row">
               <USelect
                 v-model="chartMode"
-                :items="['Bullet', 'Blitz', 'Rapid', 'Classical', 'Correspondence', 'Puzzle']"
+                :items="chartModes"
                 aria-label="Rating mode"
                 size="sm"
               /><USelect
@@ -260,7 +272,7 @@ const hasConnectedAccount = computed(() =>
           <LazyRatingChart
             v-if="chartSeries.length >= 2"
             :points="chartSeries"
-            :label="chartMode"
+            :label="chartLabel"
           />
           <p v-if="chartSeries.length >= 2 && chartFromGames" class="section-hint">
             Built from your synced rated games. Lichess has no rating history for this account.

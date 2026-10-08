@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { nextTick, effectScope, ref } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia, disposePinia, getActivePinia } from 'pinia'
 import { useLocalGameStore } from '../../app/stores/local'
+import { useGameHistory } from '../../app/stores/kchess/gameHistory'
+import { desktop } from './fixtures'
+import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
+import type { AppData, LichessRatingHistory } from '../../src/shared/types'
 import {
   useGameArchiveStore,
   useGameArchive,
@@ -246,4 +251,55 @@ it('keeps all 500 games when the archive is full and permits replacing an existi
   await vi.advanceTimersByTimeAsync(300)
   expect(write).not.toHaveBeenCalled()
   expect(JSON.parse(localStorage.getItem('kchess:game-history:v1')!).games[0].result).toBe('1-0')
+})
+
+describe('rating chart mode', () => {
+  it('matches perf keys and legacy display names', async () => {
+    desktop()
+    const data = ref<AppData | null>({
+      settings: { ...DEFAULT_SETTINGS },
+      accounts: [],
+      gameCount: 0,
+    })
+    const selectedAccount = ref('Alice')
+    const ratingHistories = ref<LichessRatingHistory>([
+      {
+        name: 'blitz',
+        points: [
+          [2026, 0, 1, 1500],
+          [2026, 0, 2, 1510],
+        ],
+      },
+    ])
+    const chartMode = ref('Blitz')
+    const chartRange = ref('All')
+    const scope = effectScope()
+    const state = scope.run(() =>
+      useGameHistory({
+        data,
+        selectedAccount,
+        ratingHistories,
+        chartMode,
+        chartRange,
+        selectPage: vi.fn(),
+      }),
+    )!
+    await flushPromises()
+    // A legacy display name still resolves key-named histories.
+    expect(state.chartSeries.value).toHaveLength(2)
+    // A history with only bullet moves the mode to its perf key.
+    ratingHistories.value = [
+      {
+        name: 'bullet',
+        points: [
+          [2026, 0, 1, 1600],
+          [2026, 0, 2, 1610],
+        ],
+      },
+    ]
+    await flushPromises()
+    expect(chartMode.value).toBe('bullet')
+    expect(state.chartSeries.value).toHaveLength(2)
+    scope.stop()
+  })
 })

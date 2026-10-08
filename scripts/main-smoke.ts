@@ -314,28 +314,28 @@ const rebuilt = ratingHistoryFromGames([
   rated('5', '2026-02-02T10:00:00Z', 1500, 3, { perf: 'bullet' }),
 ])
 assert(
-  'one entry per rated perf, named like Lichess',
+  'one entry per rated perf, named by perf key',
   rebuilt.map((h) => h.name),
-  ['Blitz', 'Bullet'],
+  ['blitz', 'bullet'],
 )
 assert('points are [year, month0, day, rating after], one per day', rebuilt[0]!.points, [
   [2026, 0, 31, 1437],
   [2026, 1, 1, 1445],
 ])
 const official = [
-  { name: 'Blitz', points: [[2026, 0, 1, 1400]] },
-  { name: 'Rapid', points: [] },
+  { name: 'blitz', points: [[2026, 0, 1, 1400]] },
+  { name: 'rapid', points: [] },
 ]
 const filled = mergeRatingHistories(official, [
-  { name: 'Blitz', points: [[2026, 0, 2, 1]] },
-  { name: 'Rapid', points: [[2026, 0, 3, 2]] },
+  { name: 'blitz', points: [[2026, 0, 2, 1]] },
+  { name: 'rapid', points: [[2026, 0, 3, 2]] },
 ])
-assert('Lichess history wins where it has points', filled.find((h) => h.name === 'Blitz')?.points, [
+assert('Lichess history wins where it has points', filled.find((h) => h.name === 'blitz')?.points, [
   [2026, 0, 1, 1400],
 ])
 assert(
   'games fill perfs Lichess left empty',
-  filled.filter((h) => h.name === 'Rapid').at(-1)?.points,
+  filled.filter((h) => h.name === 'rapid').at(-1)?.points,
   [[2026, 0, 3, 2]],
 )
 

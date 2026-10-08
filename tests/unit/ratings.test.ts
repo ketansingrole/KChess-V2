@@ -62,7 +62,11 @@ describe('rating history keys (@lichess-org/types 2.0.176)', () => {
 
   it('dedupes official and rebuilt histories across key/display spellings', () => {
     const official = [{ name: 'blitz', points: [[2026, 9, 1, 1508]] }] as LichessRatingHistory
-    const fromGames = [{ name: 'Blitz', points: [[2026, 9, 2, 1516]] }] as LichessRatingHistory
+    // 'Blitz' is the legacy display name, not a perf key in @lichess-org/types
+    // 2.0.176, so it goes through unknown.
+    const fromGames = [
+      { name: 'Blitz', points: [[2026, 9, 2, 1516]] },
+    ] as unknown as LichessRatingHistory
     expect(mergeRatingHistories(official, fromGames)).toEqual(official)
   })
 })

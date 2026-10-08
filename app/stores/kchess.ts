@@ -127,7 +127,7 @@ export const useKChessStore = defineStore('kchess', () => {
   const usernameInput = ref('')
   const selectedAccount = ref('')
   const { profile, ratingHistories, loadProfile } = useAccountProfile(selectedAccount, fail)
-  const chartMode = ref('Blitz')
+  const chartMode = ref('blitz')
   const chartRange = ref('All')
   const {
     historyResult,
