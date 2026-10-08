@@ -8,9 +8,9 @@ import {
   type PuzzleState,
 } from '../src/shared/puzzle.ts'
 import { FEN, PUZZLE_ANGLE } from '../src/shared/patterns.ts'
-import { PuzzleSampler, sampleZstdCsv } from '../src/main/puzzleSampler.ts'
-import { queryLadder, queryPuzzles, readStatus, storeSample } from '../src/main/puzzleQueries.ts'
-import { MIGRATIONS, migrate } from '../src/main/migrations.ts'
+import { PuzzleSampler, sampleZstdCsv } from '../src/core/puzzleSampler.ts'
+import { queryLadder, queryPuzzles, readStatus, storeSample } from '../src/core/puzzleQueries.ts'
+import { MIGRATIONS, migrate } from '../src/core/migrations.ts'
 import { DatabaseSync } from 'node:sqlite'
 import { Readable } from 'node:stream'
 import { zstdCompressSync } from 'node:zlib'
@@ -26,10 +26,10 @@ import {
   puzzleSolved,
   skip,
   tick,
-} from '../app/utils/rush.ts'
-import { knightChallenge, knightDistance, knightFen, knightMoves } from '../app/utils/knight.ts'
-import { ALL_SQUARES, randomSquare, squareColor } from '../app/utils/coordinates.ts'
-import { ENDGAME_DRILLS, evaluateEndgame } from '../app/utils/endgames.ts'
+} from '../src/shared/rush.ts'
+import { knightChallenge, knightDistance, knightFen, knightMoves } from '../src/shared/knight.ts'
+import { ALL_SQUARES, randomSquare, squareColor } from '../src/shared/coordinates.ts'
+import { ENDGAME_DRILLS, evaluateEndgame } from '../src/shared/endgames.ts'
 import { themeName } from '../app/utils/puzzleThemes.ts'
 
 const assert = (label: string, actual: unknown, expected: unknown): void => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatGameDate, gameResult } from '../utils/games'
+import { formatGameDate } from '../utils/games'
+import { gameResult } from '../../src/shared/gameStatus'
 import { judgmentCounts } from '../utils/review'
 import type { LichessGame, ReviewSummary } from '../../src/shared/types'
 

@@ -1,183 +1,42 @@
 import { PERFORMANCE_NAMES, type PerformanceName } from '../shared/rendererDiagnostics'
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  Menu,
-  nativeImage,
-  nativeTheme,
-  powerMonitor,
-  shell,
-} from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
-import { logDebug, logError, logWarn } from './logger'
 import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle, setIpcOwner, assertIpcComplete } from './ipc'
 import { isAppUrl } from './appOrigin'
-import { IPC_EVENTS, type IpcEvents } from '../shared/ipc'
+import {
+  FORWARDED_CORE_EVENTS,
+  IPC_EVENTS,
+  type IpcArguments,
+  type IpcEvents,
+  type IpcResult,
+} from '../shared/ipc'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
 import { setupAppUpdates, APP_RELEASES_URL } from './setupAppUpdates'
 import type { AppUpdates } from './appUpdates'
 import { setupDiagnostics, exportDiagnostics } from './diagnostics'
-import { configureEngineResources } from './engineScheduler'
-import { recordTiming } from './performance'
-import { positionLookups } from './setupPositionLookup'
-import {
-  bestMove,
-  computerPlaying,
-  engineStatus,
-  engineIdentity,
-  isTrustedEnginePath,
-  stopEngine,
-  trustEnginePath,
-} from './engine'
-import { closeDb } from './db'
 import { notify } from './notify'
 import { loadCustomThemes, themesDir } from './themes'
-import { flushUsage, forgetUsage, resetUsage, usageReport } from './usage'
-import { deleteManagedEngine, installManagedEngine } from './managedEngine'
-import { withEngineMaintenance } from './uci'
-import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
 import {
-  cancelReview,
-  discardAccountReviews,
-  getReview,
-  requestReview,
-  restartReviewEngine,
-  reviewStatus,
-  reviewsChanged,
-  setupReviews,
-  stopReviews,
-} from './review'
-import { reviewSummaries } from './reviewStore'
-import { oauthLook } from './oauthPage'
-import {
-  OnlineSession,
-  cachedProfile,
-  connectLichess,
-  invalidateLogin,
-  cancelAccountSyncs,
-  crosstable,
-  recentGames,
-  sendMessage,
-  exportGame,
-  playerPerf,
-  fetchLichessReviews,
-  followedUsers,
-  forgetProfile,
-  primeProfiles,
-  profile,
-  puzzleActivity,
-  puzzleDaily,
-  puzzleDashboard,
-  puzzleNext,
-  puzzleSolve,
-  ratingHistory,
-  stormDashboard,
-  syncGames,
-} from './lichess'
-import {
-  cancelPuzzleDb,
-  closePuzzleWorker,
-  deletePuzzleDb,
-  installPuzzleDb,
-  localLadder,
-  localPuzzles,
-  puzzleDbStatus,
-} from './puzzleDb'
-import { clearRuns, runSummary, saveRun } from './runs'
-import {
-  clearVoiceHistory,
-  exportVoiceHistory,
-  saveVoiceAttempt,
-  updateVoiceAttempt,
-  voiceHistory,
-} from './voiceLog'
-import {
-  addAccount,
-  addFriends,
-  clearAccountData,
-  gamePgn,
-  gamePage,
-  gameLibraryOverview,
-  gameRatingHistory,
-  getSettings,
-  loadData,
-  removeAccount,
-  logoutAccounts,
-  saveSettings,
-} from './store'
-import type { ChallengeInfo, OnlineEvent } from '../shared/types'
-import { ChallengeInbox } from './challenges'
-import {
-  createTournament,
-  joinTournament,
-  leaveTournament,
-  tournament,
-  tournaments,
-} from './tournaments'
-import { Spectator, TV_CHANNEL_KEYS, broadcastTour, broadcasts, tvChannels } from './spectate'
-import { cloudEval } from './cloudEval'
-import { insights } from './insights'
-import {
-  exportToLichessStudy,
-  lichessStudies,
-  lichessStudyChapters,
-  syncLichessStudy,
-} from './studies'
-import {
-  assertAction,
-  assertStudySyncRequest,
-  assertAnalysisRequest,
-  assertChatRoom,
-  assertChatText,
-  assertDeclineReason,
-  assertOptionalAccount,
-  assertTournamentId,
-  assertLichessId,
-  assertPerfType,
-  assertExport,
-  assertInsightsQuery,
-  assertBroadcastQuery,
-  assertWatchTarget,
-  assertTournamentPassword,
-  assertTournamentSystem,
-  assertActivityMax,
-  assertBestMoveOptions,
-  assertDays,
-  assertFriendList,
-  assertGameId,
-  assertGameIds,
-  assertGamePageQuery,
-  assertLadderQuery,
-  assertLevel,
-  assertLocalQuery,
-  assertMoves,
-  assertNotification,
-  assertOnlineOptions,
-  assertPuzzleRequest,
-  assertPuzzleSolve,
-  assertReviewKey,
-  assertReviewRequest,
-  assertRunInput,
-  assertRunKind,
-  assertUsernames,
-  assertSettings,
-  assertUci,
-  assertMessageText,
-  assertNewArena,
-  assertUsername,
-  assertVoiceAttempt,
-  assertVoiceId,
-  assertVoiceLimit,
-  assertVoiceUpdate,
-} from '../shared/validate'
+  createKChessCore,
+  CORE_METHODS,
+  logDebug,
+  logError,
+  logWarn,
+  recordTiming,
+  type CoreMethod,
+  type KChessCore,
+} from '../core'
+import { electronPlatform } from './platform'
+import { saveWithDialog } from './saveDialog'
+import { assertExport, assertNotification } from '../shared/validate'
+import type { ChallengeInfo } from '../shared/types'
 
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
+let core: KChessCore | undefined
 setIpcOwner(() => window)
 registerAppScheme()
 app.setName('KChess')
@@ -192,64 +51,52 @@ if (process.env.KCHESS_USER_DATA_DIR) {
 function send<K extends keyof IpcEvents>(channel: K, payload: IpcEvents[K]): void {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
 }
-const challengeInbox = new ChallengeInbox((list) => send(IPC_EVENTS.challenges, list))
-let ongoingTimer: ReturnType<typeof setTimeout> | undefined
-/** Several games start and end together when a stream (re)connects; tell the window once. */
-function ongoingChanged(): void {
-  clearTimeout(ongoingTimer)
-  ongoingTimer = setTimeout(() => send(IPC_EVENTS.ongoingChanged, null), 750)
+
+/** Bring the window forward, e.g. when the browser sign-in returns. */
+function bringToFront(): void {
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  // macOS keeps the browser active unless the app explicitly takes focus.
+  app.focus({ steal: true })
+  window.focus()
 }
-const online = new OnlineSession(
-  (event: OnlineEvent) => send(IPC_EVENTS.online, event),
-  (message: string) => send(IPC_EVENTS.error, message),
-  (state) => {
-    if (state.phase === 'checking' || (state.gameId && state.phase !== 'idle')) {
-      stopEngine()
-      stopAnalysis()
-      restartReviewEngine()
-      // Your own game needs the connection more than someone else's.
-      spectator.stop()
-    }
-    send(IPC_EVENTS.onlineState, state)
-  },
-  {
-    challenge: (account, event) => {
-      const fresh = challengeInbox.ingest(account, event)
-      if (!fresh) return
-      const control =
-        fresh.timeControl.type === 'clock'
-          ? `${fresh.timeControl.limit / 60}+${fresh.timeControl.increment}`
-          : fresh.timeControl.type === 'correspondence'
-            ? `${fresh.timeControl.days} days per move`
-            : 'no clock'
-      void notify(
-        window,
-        {
-          kind: 'challenge',
-          title: fresh.rematchOf
-            ? `${fresh.opponent.name} wants a rematch`
-            : `${fresh.opponent.name} challenges you`,
-          body: `${fresh.variantName} · ${control} · ${fresh.rated ? 'Rated' : 'Casual'} (@${fresh.account})`,
-        },
-        (alert) => send(IPC_EVENTS.notification, alert),
-      ).catch((cause: unknown) => {
-        logDebug('notify', 'Challenge notification failed:', cause)
-        return undefined
-      })
+
+function challengeAlert(service: KChessCore, challenge: ChallengeInfo): void {
+  const control =
+    challenge.timeControl.type === 'clock'
+      ? `${challenge.timeControl.limit / 60}+${challenge.timeControl.increment}`
+      : challenge.timeControl.type === 'correspondence'
+        ? `${challenge.timeControl.days} days per move`
+        : 'no clock'
+  void notify(
+    window,
+    {
+      kind: 'challenge',
+      title: challenge.rematchOf
+        ? `${challenge.opponent.name} wants a rematch`
+        : `${challenge.opponent.name} challenges you`,
+      body: `${challenge.variantName} · ${control} · ${challenge.rated ? 'Rated' : 'Casual'} (@${challenge.account})`,
     },
-    ongoingChanged,
-    lobbyState: (state) => send(IPC_EVENTS.lobby, state),
-  },
-)
-const spectator = new Spectator(
-  (frame) => send(IPC_EVENTS.watch, frame),
-  (update) => send(IPC_EVENTS.broadcast, update),
-  (state) => send(IPC_EVENTS.watchState, state),
-)
-function knownChallenge(id: unknown): ChallengeInfo {
-  const challenge = challengeInbox.get(assertGameId(id))
-  if (!challenge) throw new Error('That challenge is no longer open.')
-  return challenge
+    (alert) => send(IPC_EVENTS.notification, alert),
+    service.settings,
+  ).catch((cause: unknown) => {
+    logDebug('notify', 'Challenge notification failed:', cause)
+    return undefined
+  })
+}
+
+/** Every CoreApi method is served to the renderer as-is; the core validates its own input. */
+function forwardCore(service: KChessCore): void {
+  for (const method of CORE_METHODS) {
+    // IPC contracts have already checked the argument shapes against DesktopApi.
+    const call = service[method] as (...args: unknown[]) => IpcResult<CoreMethod>
+    handle(method, (_event, ...args) => call(...(args as IpcArguments<CoreMethod>)) as never)
+  }
+  for (const event of FORWARDED_CORE_EVENTS)
+    service.on(event, (payload) => send(event, payload as never))
+  service.on('challenge:received', (challenge) => challengeAlert(service, challenge))
+  service.on('settings:saved', (settings) => appUpdates?.applyPreferences(settings))
 }
 
 function appIconPath(): string | undefined {
@@ -416,11 +263,10 @@ void app
       return 'kchess://app/voice/model.tar.gz'
     })
     setupMediaPermissions(isAppUrl)
-    // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
-    // the system appearance changes. Packaged builds fall back to the bundle
-    // .icns until this override applies.
     setupDiagnostics()
-    configureEngineResources(() => powerMonitor.isOnBatteryPower())
+    const service = createKChessCore(electronPlatform(bringToFront))
+    core = service
+    forwardCore(service)
     handle('exportDiagnostics', exportDiagnostics)
     handle('reportRendererError', (_event, report) => {
       logError('renderer', 'Renderer page error:', report)
@@ -453,6 +299,9 @@ void app
     handle('windowIsMaximized', () =>
       Boolean(window && !window.isDestroyed() && window.isMaximized()),
     )
+    // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
+    // the system appearance changes. Packaged builds fall back to the bundle
+    // .icns until this override applies.
     refreshAppIcon()
     nativeTheme.on('updated', refreshAppIcon)
     setupAppMenu()
@@ -468,358 +317,51 @@ void app
           window.focus()
         }
       },
+      service.settings,
     )
     handle('appUpdateStatus', () => appUpdates!.status())
     handle('checkAppUpdate', () => appUpdates!.check())
     handle('downloadAppUpdate', () => appUpdates!.download())
     handle('installAppUpdate', () => appUpdates!.install())
     handle('openAppReleases', () => shell.openExternal(APP_RELEASES_URL))
-    handle('loadData', () => loadData())
-    handle('saveSettings', async (_event, raw: unknown) => {
-      const settings = assertSettings(raw)
-      const previous = await getSettings()
-      // The renderer may not point the app at an arbitrary executable: only a path
-      // picked in the native dialog, downloaded by KChess, or already saved is accepted.
-      if (settings.enginePath && !isTrustedEnginePath(settings.enginePath)) {
-        const stored = await getSettings()
-        if (settings.enginePath !== stored.enginePath)
-          throw new Error('Choose the Stockfish executable with the file picker.')
-      }
-      const saved = await saveSettings(settings)
-      if (previous.enginePath !== saved.enginePath) {
-        stopEngine(true)
-        stopAnalysis(true)
-        restartReviewEngine()
-      }
-      appUpdates!.applyPreferences(saved)
-      reviewsChanged()
-      return saved
-    })
-    handle('addAccount', (_event, username: unknown) => addAccount(assertUsername(username)))
-    /** Ends everything a signed-in account has running: login, syncs, live play, reviews, usage. */
-    async function endSessions(username?: string): Promise<string[]> {
-      const accounts = (await loadData()).accounts
-        .filter(
-          (a) => a.connected && (!username || a.username.toLowerCase() === username.toLowerCase()),
-        )
-        .map((a) => a.username)
-      invalidateLogin(accounts)
-      online.logout(username === undefined ? undefined : accounts)
-      discardAccountReviews(accounts)
-      flushUsage()
-      forgetUsage(accounts)
-      for (const name of accounts) challengeInbox.forget(name)
-      return accounts
-    }
-    async function logout(username?: string) {
-      await endSessions(username)
-      const data = await logoutAccounts(username)
-      reviewsChanged()
-      return data
-    }
-    handle('logout', (_event, username: unknown) => logout(assertUsername(username)))
-    handle('logoutAll', () => logout())
-    handle('removeAccount', async (_event, username: unknown) => {
-      const name = assertUsername(username)
-      // A followed player has no login, but its sync and reviews must still stop before rows go.
-      if (!(await endSessions(name)).length) {
-        cancelAccountSyncs([name])
-        discardAccountReviews([name])
-        flushUsage()
-        forgetUsage([name])
-      }
-      challengeInbox.forget(name)
-      const data = await removeAccount(name)
-      reviewsChanged()
-      return data
-    })
-    handle('syncGames', async (_event, username?: unknown) => {
-      const data = await syncGames(username === undefined ? undefined : assertUsername(username))
-      reviewsChanged()
-      return data
-    })
-    handle('gamePage', (_event, query: unknown) => gamePage(assertGamePageQuery(query)))
-    handle('gameLibraryOverview', () => gameLibraryOverview())
-    handle('insights', (_event, query: unknown) => insights(assertInsightsQuery(query)))
-    handle('syncLichessStudy', (_event, request: unknown) =>
-      syncLichessStudy(assertStudySyncRequest(request)),
-    )
-    handle('lichessStudies', (_event, account: unknown) => lichessStudies(assertUsername(account)))
-    handle('lichessStudyChapters', (_event, account: unknown, id: unknown) =>
-      lichessStudyChapters(assertUsername(account), assertLichessId(id)),
-    )
-    handle(
-      'exportToLichessStudy',
-      (_event, account: unknown, studyId: unknown, name: unknown, pgn: unknown) => {
-        const id = studyId === '' ? '' : assertLichessId(studyId)
-        if (typeof name !== 'string' || !name.trim() || name.length > 100)
-          throw new Error('Name the chapter (up to 100 characters).')
-        if (typeof pgn !== 'string' || !pgn.trim() || pgn.length > 500_000)
-          throw new Error('Nothing to export, or the game is too large.')
-        return exportToLichessStudy(assertUsername(account), id, name.trim(), pgn)
-      },
-    )
-    handle('gameRatingHistory', (_event, account: unknown) =>
-      gameRatingHistory(assertUsername(account)),
-    )
-    handle('gamePgn', (_event, account: unknown, id: unknown) => {
-      return gamePgn(assertUsername(account), assertGameId(id))
-    })
-    handle('cachedProfile', (_event, username: unknown) => cachedProfile(assertUsername(username)))
-    handle('profile', (_event, username: unknown) => profile(assertUsername(username)))
-    handle('ratingHistory', (_event, username: unknown) => ratingHistory(assertUsername(username)))
-    handle('connectLichess', async (_event, look: unknown) => {
-      const bringToFront = (): void => {
-        if (!window || window.isDestroyed()) return
-        if (window.isMinimized()) window.restore()
-        window.show()
-        // macOS keeps the browser active unless the app explicitly takes focus.
-        app.focus({ steal: true })
-        window.focus()
-      }
-      const connected = await connectLichess(oauthLook(look), bringToFront)
-      bringToFront()
-      return connected
-    })
-    handle('engineStatus', async () => {
-      const status = await engineStatus((await getSettings()).enginePath)
-      return { ...status, identity: status.ready ? await engineIdentity(status) : undefined }
-    })
     handle('chooseEngine', async () => {
       const result = await dialog.showOpenDialog({
         title: 'Choose Stockfish executable',
         properties: ['openFile'],
       })
       const path = result.canceled ? null : (result.filePaths[0] ?? null)
-      if (path) trustEnginePath(path)
+      if (path) service.trustEnginePath(path)
       return path
     })
-    const replaceEngineFile = (commit: () => Promise<void>): Promise<void> =>
-      withEngineMaintenance(commit, () => {
-        stopEngine(true)
-        stopAnalysis(true)
-        restartReviewEngine()
-      })
-    handle('installEngine', async () => {
-      const { path, version, updated } = await installManagedEngine({ replace: replaceEngineFile })
-      return { path, version, updated }
-    })
-    handle('deleteEngine', () => deleteManagedEngine(undefined, replaceEngineFile))
-    handle('stopEngine', () => stopEngine())
-    handle('bestMove', async (_event, moves: unknown, level: unknown, options?: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Engine assistance is unavailable during a live Lichess game.')
-      return bestMove(
-        assertMoves(moves),
-        assertLevel(level),
-        (await getSettings()).enginePath,
-        assertBestMoveOptions(options),
-      )
-    })
-    handle('startAnalysis', async (_event, request: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Analysis is unavailable during a live Lichess game.')
-      return startAnalysis(request, (await getSettings()).enginePath, (update) =>
-        send(IPC_EVENTS.analysis, update),
-      )
-    })
-    handle('positionLookup', async (_event, kind: unknown, fen: unknown, options?: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Position lookups are unavailable during a live Lichess game.')
-      return positionLookups.lookup(kind, fen, options)
-    })
-    handle('exportGame', (_event, id: unknown) => exportGame(assertGameId(id)))
-    handle('saveExport', async (_event, raw: unknown) => {
+    handle('saveExport', (_event, raw: unknown) => {
       const request = assertExport(raw)
       const filters = {
         gif: { name: 'Animated GIF', extensions: ['gif'] },
         png: { name: 'PNG image', extensions: ['png'] },
         pgn: { name: 'PGN game', extensions: ['pgn'] },
       }
-      const options = {
+      return saveWithDialog(window, {
         title: 'Save game',
         defaultPath: join(app.getPath('downloads'), `${request.name}.${request.kind}`),
         filters: [filters[request.kind]],
-      }
-      const result =
-        window && !window.isDestroyed()
-          ? await dialog.showSaveDialog(window, options)
-          : await dialog.showSaveDialog(options)
-      if (result.canceled || !result.filePath) return false
-      await writeFile(result.filePath, request.data)
-      return true
+        data: request.data,
+      })
     })
-    handle('mastersGame', (_event, id: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Position lookups are unavailable during a live Lichess game.')
-      return positionLookups.mastersGame(id)
-    })
-    handle('cloudEval', async (_event, fen: unknown, lines: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Analysis is unavailable during a live Lichess game.')
-      // Each request sends the position to Lichess, so it needs the setting turned on.
-      if (!(await getSettings()).cloudEval)
-        throw new Error('Turn on cloud evaluation in Settings → Analysis first.')
-      const request = assertAnalysisRequest({ fen, lines })
-      return cloudEval(request.fen, request.lines)
-    })
-    handle('stopAnalysis', () => stopAnalysis())
-    handle('reviewGet', (_event, fen: unknown, moves: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Review is unavailable until your Lichess game status is verified.')
-      const request = assertReviewRequest({ fen, moves })
-      return getReview(request.fen, request.moves)
-    })
-    handle('reviewRequest', (_event, request: unknown) => {
-      if (online.assistanceBlocked)
-        throw new Error('Review is unavailable during a live Lichess game.')
-      return requestReview(assertReviewRequest(request))
-    })
-    handle('reviewCancel', (_event, key: unknown) => cancelReview(assertReviewKey(key)))
-    handle('reviewStatus', () => reviewStatus())
-    handle('reviewSummaries', (_event, ids: unknown) => reviewSummaries(assertGameIds(ids)))
-    setupReviews({
-      settings: getSettings,
-      accounts: async () => {
-        const { accounts } = await loadData()
-        // Your own accounts: the connected ones, or the first one added when none is.
-        const own = accounts.filter((account) => account.connected)
-        return (own.length ? own : accounts.slice(0, 1)).map((account) => account.username)
-      },
-      onBattery: () => powerMonitor.isOnBatteryPower(),
-      // The computer opponent counts as busy for a minute after its move: the game goes on.
-      busy: () =>
-        online.assistanceBlocked
-          ? 'online'
-          : analysisRunning() || computerPlaying(60_000)
-            ? 'engine'
-            : undefined,
-      fetchLichess: fetchLichessReviews,
-      update: (update) => send(IPC_EVENTS.reviewUpdate, update),
-      status: (status) => send(IPC_EVENTS.reviewStatus, status),
-    })
-    handle('startOnline', (_event, options: unknown) => online.start(assertOnlineOptions(options)))
-    handle('resumeOnline', () => online.resume())
-    handle('cancelOnline', () => online.cancel())
-    handle('playOnline', (_event, id: unknown, move: unknown) =>
-      online.move(assertGameId(id), assertUci(move)),
+    handle('exportVoiceHistory', () =>
+      saveWithDialog(window, {
+        title: 'Export voice history',
+        defaultPath: `kchess-voice-history-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        data: service.voiceHistoryDocument(),
+      }),
     )
-    handle('onlineAction', (_event, id: unknown, action: unknown) =>
-      online.action(assertGameId(id), assertAction(action)),
-    )
-    handle('presence', (_event, usernames: unknown) => online.presence(assertUsernames(usernames)))
-    handle('onlineChat', (_event, id: unknown) => online.chat(assertGameId(id)))
-    handle('sendChat', (_event, id: unknown, room: unknown, text: unknown) =>
-      online.sendChat(assertGameId(id), assertChatRoom(room), assertChatText(text)),
-    )
-    handle('stayConnected', async (_event, account: unknown) => {
-      const name = assertOptionalAccount(account)
-      const connected = (await loadData()).accounts.some(
-        (entry) => entry.connected && entry.username.toLowerCase() === name.toLowerCase(),
-      )
-      online.stayConnected(connected ? name : '')
-    })
-    handle('challenges', () => challengeInbox.list())
-    handle('acceptChallenge', async (_event, id: unknown) => {
-      const challenge = knownChallenge(id)
-      if (challenge.direction !== 'in' || !challenge.playable)
-        throw new Error(challenge.problem ?? 'Only challenges sent to you can be accepted.')
-      await online.acceptChallenge(challenge)
-      challengeInbox.remove(challenge.id)
-    })
-    handle('declineChallenge', async (_event, id: unknown, reason: unknown) => {
-      const challenge = knownChallenge(id)
-      if (challenge.direction !== 'in') throw new Error('Withdraw your own challenge instead.')
-      await online.declineChallenge(challenge, assertDeclineReason(reason))
-      challengeInbox.remove(challenge.id)
-    })
-    handle('cancelChallenge', async (_event, id: unknown) => {
-      const challenge = knownChallenge(id)
-      if (challenge.direction !== 'out') throw new Error('Decline a challenge sent to you instead.')
-      await online.withdrawChallenge(challenge)
-      challengeInbox.remove(challenge.id)
-    })
-    handle('ongoingGames', () => online.ongoing())
-    handle('tournaments', (_event, account: unknown) => tournaments(assertOptionalAccount(account)))
-    handle('tvChannels', () => tvChannels())
-    handle('playerPerf', (_event, username: unknown, perf: unknown) =>
-      playerPerf(assertUsername(username), assertPerfType(perf)),
-    )
-    handle('crosstable', (_event, a: unknown, b: unknown) =>
-      crosstable(assertUsername(a), assertUsername(b)),
-    )
-    handle('recentGames', (_event, username: unknown, rated: unknown) =>
-      recentGames(assertUsername(username), rated === true),
-    )
-    handle('sendMessage', (_event, account: unknown, username: unknown, text: unknown) =>
-      sendMessage(assertUsername(account), assertUsername(username), assertMessageText(text)),
-    )
-    handle('watch', (_event, target: unknown) => {
-      if (online.playing) throw new Error('Finish your game before watching another.')
-      return spectator.watch(assertWatchTarget(target, TV_CHANNEL_KEYS))
-    })
-    handle('watchBroadcast', (_event, roundId: unknown) => {
-      if (online.playing) throw new Error('Finish your game before watching another.')
-      return spectator.watchRound(assertLichessId(roundId))
-    })
-    handle('stopWatching', () => spectator.stop())
-    handle('broadcasts', (_event, query) => broadcasts(assertBroadcastQuery(query)))
-    handle('broadcastTour', (_event, id: unknown) => broadcastTour(assertLichessId(id)))
-    handle('tournament', (_event, system: unknown, id: unknown, account: unknown, page: unknown) =>
-      tournament(
-        assertTournamentSystem(system),
-        assertTournamentId(id),
-        assertOptionalAccount(account),
-        typeof page === 'number' && Number.isInteger(page) && page >= 1 && page <= 200 ? page : 1,
-      ),
-    )
-    handle(
-      'joinTournament',
-      async (_event, system: unknown, id: unknown, account: unknown, password: unknown) => {
-        const name = assertUsername(account)
-        const result = await joinTournament(
-          assertTournamentSystem(system),
-          assertTournamentId(id),
-          name,
-          assertTournamentPassword(password),
-        )
-        // Pairings arrive on the event stream: keep it open while in the tournament.
-        if (result === true) online.stayConnected(name)
-        return result
-      },
-    )
-    handle('leaveTournament', (_event, system: unknown, id: unknown, account: unknown) =>
-      leaveTournament(
-        assertTournamentSystem(system),
-        assertTournamentId(id),
-        assertUsername(account),
-      ),
-    )
-    handle('createTournament', (_event, account: unknown, arena: unknown) =>
-      createTournament(assertUsername(account), assertNewArena(arena)),
-    )
-    handle('openGame', (_event, account: unknown, id: unknown) =>
-      online.open(assertUsername(account), assertGameId(id)),
-    )
-    handle('clearAccountData', async (_event, username: unknown) => {
-      const name = assertUsername(username)
-      // Stop a running sync and review first, or they would write back into the cleared library.
-      cancelAccountSyncs([name])
-      discardAccountReviews([name])
-      const data = await clearAccountData(name)
-      forgetProfile(name)
-      reviewsChanged()
-      return data
-    })
-    handle('following', () => followedUsers())
-    handle('addFriends', async (_event, usernames: unknown) => {
-      const names = assertFriendList(usernames)
-      const data = await addFriends(names)
-      await primeProfiles(names)
-      return data
-    })
     handle('notify', (_event, request: unknown) =>
-      notify(window, assertNotification(request), (alert) => send(IPC_EVENTS.notification, alert)),
+      notify(
+        window,
+        assertNotification(request),
+        (alert) => send(IPC_EVENTS.notification, alert),
+        service.settings,
+      ),
     )
     handle('loadThemes', () => loadCustomThemes())
     handle('openThemesFolder', async () => {
@@ -840,42 +382,6 @@ void app
     })
     handle('microphoneAccess', (_event, request: unknown) => microphoneAccess(request === true))
     handle('openMicrophoneSettings', () => openMicrophoneSettings())
-    handle('puzzleNext', (_event, request: unknown) => puzzleNext(assertPuzzleRequest(request)))
-    handle('puzzleSolve', (_event, request: unknown) => puzzleSolve(assertPuzzleSolve(request)))
-    handle('puzzleDaily', () => puzzleDaily())
-    handle('puzzleDashboard', (_event, account: unknown, days: unknown) =>
-      puzzleDashboard(assertUsername(account), assertDays(days)),
-    )
-    handle('puzzleActivity', (_event, account: unknown, max: unknown) =>
-      puzzleActivity(assertUsername(account), assertActivityMax(max)),
-    )
-    handle('stormDashboard', (_event, username: unknown, days: unknown) =>
-      stormDashboard(assertUsername(username), assertDays(days)),
-    )
-    handle('puzzleDbStatus', () => puzzleDbStatus())
-    handle('puzzleDbInstall', () =>
-      installPuzzleDb((progress) => send(IPC_EVENTS.puzzleProgress, progress)),
-    )
-    handle('puzzleDbCancel', () => cancelPuzzleDb())
-    handle('puzzleDbDelete', () => deletePuzzleDb())
-    handle('localPuzzles', (_event, query: unknown) => localPuzzles(assertLocalQuery(query)))
-    handle('localLadder', (_event, query: unknown) => localLadder(assertLadderQuery(query)))
-    handle('saveRun', (_event, run: unknown) => saveRun(assertRunInput(run)))
-    handle('runSummary', (_event, kind: unknown) => runSummary(assertRunKind(kind)))
-    handle('clearRuns', (_event, kind: unknown) =>
-      clearRuns(kind === undefined ? undefined : assertRunKind(kind)),
-    )
-    handle('saveVoiceAttempt', (_event, attempt: unknown) =>
-      saveVoiceAttempt(assertVoiceAttempt(attempt)),
-    )
-    handle('updateVoiceAttempt', (_event, id: unknown, update: unknown) =>
-      updateVoiceAttempt(assertVoiceId(id), assertVoiceUpdate(update)),
-    )
-    handle('voiceHistory', (_event, limit: unknown) => voiceHistory(assertVoiceLimit(limit)))
-    handle('clearVoiceHistory', () => clearVoiceHistory())
-    handle('exportVoiceHistory', () => exportVoiceHistory())
-    handle('usage', () => usageReport())
-    handle('resetUsage', () => resetUsage())
     assertIpcComplete()
     createWindow()
     appUpdates.start()
@@ -889,12 +395,7 @@ void app
   })
 
 app.on('window-all-closed', () => {
-  cancelPuzzleDb()
-  spectator.stop()
-  // Nothing can answer a challenge without a window; a new window asks to stay connected again.
-  online.close()
-  stopEngine(true)
-  stopAnalysis(true)
+  core?.suspend()
   if (process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', (event) => {
@@ -911,11 +412,5 @@ app.on('before-quit', (event) => {
 })
 app.on('will-quit', () => {
   appUpdates?.stop()
-  online.close()
-  stopEngine(true)
-  stopAnalysis(true)
-  stopReviews()
-  flushUsage()
-  closePuzzleWorker()
-  closeDb()
+  core?.close()
 })

@@ -7,8 +7,9 @@ import type { Api } from '@lichess-org/chessground/api'
 import type { Config } from '@lichess-org/chessground/config'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { DrawShape } from '@lichess-org/chessground/draw'
+import type { SquareName } from 'chessops/types'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { isPromotionMove, type Dests } from '../utils/chess'
+import { isPromotionMove, type Dests } from '../../src/shared/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
 import { setupStart, type Variant } from '../../src/shared/variant'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
@@ -76,7 +77,9 @@ function keyboardMove(): void {
     !pos ||
     !move ||
     !pos.isLegal(move) ||
-    !props.dests?.get(makeUci(move).slice(0, 2) as Key)?.includes(makeUci(move).slice(2, 4) as Key)
+    !props.dests
+      ?.get(makeUci(move).slice(0, 2) as SquareName)
+      ?.includes(makeUci(move).slice(2, 4) as SquareName)
   ) {
     moveMessage.value = 'Enter a legal move, such as Nf3 or g1f3.'
     return

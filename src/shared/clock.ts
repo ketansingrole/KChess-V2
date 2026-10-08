@@ -1,4 +1,4 @@
-import type { Color } from '@lichess-org/chessground/types'
+import type { Color } from 'chessops/types'
 
 /**
  * Client clock modelled on lila's `ui/lib/src/game/clock/clockCtrl.ts`:

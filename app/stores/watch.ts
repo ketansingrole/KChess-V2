@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import { RequestScope, SubscriptionScope } from '../../src/shared/requestScope'
-import { Clock } from '../utils/clock'
+import { Clock } from '../../src/shared/clock'
 import type {
   BroadcastGame,
   BroadcastUpdate,

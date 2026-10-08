@@ -1,5 +1,5 @@
 import { app, session, shell, systemPreferences } from 'electron'
-import { logDebug } from './logger'
+import { logDebug } from '../core/logger'
 import type { MicrophoneAccess, MicrophoneStatus } from '../shared/types'
 
 function status(): MicrophoneStatus {

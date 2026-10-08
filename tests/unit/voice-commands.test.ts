@@ -7,8 +7,8 @@ import {
   COORDINATE_GRAMMAR,
   GAME_GRAMMAR,
   MOVE_GRAMMAR,
-} from '../../app/utils/voiceCommands'
-import { positionAfter, positionFromFen } from '../../app/utils/chess'
+} from '../../src/shared/voiceCommands'
+import { positionAfter, positionFromFen } from '../../src/shared/chess'
 
 describe('spoken square names', () => {
   it.each([

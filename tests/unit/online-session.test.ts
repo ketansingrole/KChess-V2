@@ -2,7 +2,7 @@ import { beforeEach, it, expect, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { deferred } from './fixtures'
 
-import { OnlineSession } from '../../src/main/lichess'
+import { OnlineSession } from '../../src/core/lichess'
 import { LichessError } from '../../src/shared/lichessError'
 
 const mocks = vi.hoisted(() => ({
@@ -13,18 +13,17 @@ const mocks = vi.hoisted(() => ({
   accounts: [{ username: 'Alice', connected: true }],
   readLines: vi.fn(async () => {}),
 }))
-vi.mock('electron', () => ({ shell: {} }))
 vi.mock('openapi-fetch', () => ({ default: () => mocks }))
-vi.mock('../../src/main/store', () => ({
+vi.mock('../../src/core/store', () => ({
   loadData: async () => ({ accounts: mocks.accounts }),
   getToken: mocks.getToken,
 }))
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/usage', () => ({
   meteredFetch: vi.fn(),
   attributeTo: vi.fn(),
   withUsage: (_account: string, _kind: string, fn: () => unknown) => fn(),
 }))
-vi.mock('../../src/main/ndjson', () => ({ readLines: mocks.readLines }))
+vi.mock('../../src/core/ndjson', () => ({ readLines: mocks.readLines }))
 
 beforeEach(() => {
   mocks.accounts = [{ username: 'Alice', connected: true }]

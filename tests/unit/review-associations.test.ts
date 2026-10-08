@@ -1,18 +1,18 @@
 import { DatabaseSync } from 'node:sqlite'
 import { afterAll, beforeEach, expect, it, vi } from 'vitest'
 import { INITIAL_FEN } from 'chessops/fen'
-import { migrate, MIGRATIONS } from '../../src/main/migrations'
-import { writeReview, readReview, reviewSummaries, gamesToReview } from '../../src/main/reviewStore'
-import { insights } from '../../src/main/insights'
+import { migrate, MIGRATIONS } from '../../src/core/migrations'
+import { writeReview, readReview, reviewSummaries, gamesToReview } from '../../src/core/reviewStore'
+import { insights } from '../../src/core/insights'
 import { reviewKey } from '../../src/shared/review'
 import type { StoredReview } from '../../src/shared/types'
-import { requestReview, stopReviews } from '../../src/main/review'
+import { requestReview, stopReviews } from '../../src/core/review'
 
 const db = new DatabaseSync(':memory:')
 migrate(db)
 db.exec('PRAGMA foreign_keys=ON')
-vi.mock('../../src/main/db', () => ({ getDb: () => db }))
-vi.mock('../../src/main/engine', () => ({
+vi.mock('../../src/core/db', () => ({ getDb: () => db }))
+vi.mock('../../src/core/engine', () => ({
   engineIdentity: vi.fn(),
   engineStatus: vi.fn(),
   spawnEngine: vi.fn(),

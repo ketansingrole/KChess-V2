@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
 import type { GameSetup } from '../../src/shared/variant'
-import { loadOpenings, openingAt } from '../utils/openings'
+import { loadOpenings, openingAt } from '../../src/shared/openings'
 
 const props = defineProps<{ setup: GameSetup; moves: readonly string[]; ply?: number }>()
 const store = useKChessStore()

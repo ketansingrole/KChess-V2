@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
-import type { Dests } from '../utils/chess'
+import type { Dests } from '../../src/shared/chess'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '../../src/shared/types'
 import type { PlayerInfo } from './PlayerLine.vue'
 import type { Variant } from '../../src/shared/variant'

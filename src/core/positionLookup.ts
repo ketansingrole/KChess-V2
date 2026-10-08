@@ -11,8 +11,7 @@ import {
   type PositionLookup,
   type PositionLookupKind,
 } from '../shared/types'
-import { USERNAME } from '../shared/patterns'
-import { assertAnalysisRequest } from '../shared/validate'
+import { assertAnalysisRequest, assertLookupOptions } from '../shared/validate'
 import { logDebug } from './logger'
 
 const count = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
@@ -62,27 +61,6 @@ const tablebaseSchema = v.object({
   dtz,
   moves: v.pipe(v.array(v.object({ ...move, category: categories, dtz })), v.maxLength(256)),
 })
-const optionsSchema = v.optional(
-  v.object(
-    {
-      speeds: v.optional(v.pipe(v.array(v.picklist(EXPLORER_SPEEDS)), v.maxLength(6))),
-      ratings: v.optional(
-        v.pipe(
-          v.array(v.picklist(EXPLORER_RATINGS as unknown as number[] as [number, ...number[]])),
-          v.maxLength(9),
-        ),
-      ),
-      player: v.optional(v.pipe(v.string(), v.regex(USERNAME))),
-      color: v.optional(v.picklist(['white', 'black'])),
-      modes: v.optional(v.pipe(v.array(v.picklist(['rated', 'casual'])), v.maxLength(2))),
-      since: v.optional(v.pipe(v.string(), v.regex(/^\d{4}(-\d{2})?$/))),
-    },
-    'Invalid explorer filters.',
-  ),
-  {},
-)
-
-export const assertLookupOptions = (value: unknown): LookupOptions => v.parse(optionsSchema, value)
 
 type Cached = Omit<PositionLookup, 'cached' | 'stale' | 'message'>
 const cachedGame = v.object({

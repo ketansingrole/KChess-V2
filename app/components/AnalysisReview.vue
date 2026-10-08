@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { explainReviewedMove } from '../utils/coach'
+import { explainReviewedMove } from '../../src/shared/coach'
 import { useMistakeStore } from '../stores/mistakes'
-import { movesOf, pathOf } from '../utils/analysisTree'
+import { movesOf, pathOf } from '../../src/shared/analysisTree'
 import { useAnalysisStore, type ReviewMark } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import type { Judgment } from '../../src/shared/types'
@@ -68,12 +68,17 @@ const canReview = computed(
 )
 const practice = useMistakeStore()
 const practiceFeedback = ref('')
-function addPractice(color: 'white' | 'black'): void {
+async function addPractice(color: 'white' | 'black'): Promise<void> {
   if (!review.value || !complete.value) return
-  const count = practice.add(review.value, color)
-  practiceFeedback.value = count
-    ? `${count} positions added to Practice → Your mistakes.`
-    : 'No new verified mistakes to add.'
+  try {
+    const count = await practice.add(review.value, color)
+    practiceFeedback.value = count
+      ? `${count} positions added to Practice → Your mistakes.`
+      : 'No new verified mistakes to add.'
+  } catch (cause) {
+    console.warn('[analysis-review] Adding mistakes failed:', cause)
+    practiceFeedback.value = cause instanceof Error ? cause.message : String(cause)
+  }
 }
 const explanation = computed(() =>
   review.value && currentIndex.value > 0

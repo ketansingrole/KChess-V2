@@ -16,7 +16,7 @@ import {
   skip,
   tick,
   type RushState,
-} from '../utils/rush'
+} from '../../src/shared/rush'
 import { play } from '../utils/sound'
 import type PuzzleBoard from './PuzzleBoard.vue'
 

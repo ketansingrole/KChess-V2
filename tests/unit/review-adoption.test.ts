@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
+import { seedSaved } from './libraryBackend'
 import { flushPromises } from '@vue/test-utils'
 import * as fc from 'fast-check'
 import { Chess } from 'chessops/chess'
 import { makeUci } from 'chessops/util'
 import { INITIAL_FEN } from 'chessops/fen'
-import { addMove, newTree, nodeAt, treeFromPgn, treeToPgn } from '../../app/utils/analysisTree'
+import { addMove, newTree, nodeAt, treeFromPgn, treeToPgn } from '../../src/shared/analysisTree'
 import { assertAnalysisRequest } from '../../src/shared/validate'
 import { isAppUrl, APP_CSP } from '../../src/main/appOrigin'
-import { readLines } from '../../src/main/ndjson'
+import { readLines } from '../../src/core/ndjson'
 import { validateOnlineEvent } from '../../src/shared/onlineEvent'
-import { pickStockfishAsset } from '../../src/main/stockfishAsset'
+import { pickStockfishAsset } from '../../src/core/stockfishAsset'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { desktop, deferred } from './fixtures'
@@ -198,7 +199,7 @@ describe('desktop recovery', () => {
   })
   it('restores a valid computer game and rejects invalid saved moves', async () => {
     desktop()
-    localStorage.setItem(
+    seedSaved(
       'kchess:computer:v1',
       JSON.stringify({
         version: 1,
@@ -215,7 +216,7 @@ describe('desktop recovery', () => {
   })
   it('restores a study, annotations and selected variation', () => {
     desktop()
-    localStorage.setItem(
+    seedSaved(
       'kchess:analysis:v1',
       JSON.stringify({
         version: 1,

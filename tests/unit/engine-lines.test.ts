@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import { INITIAL_FEN } from 'chessops/fen'
 import EngineLines from '../../app/components/EngineLines.vue'
-import { addMove, newTree, pvSan } from '../../app/utils/analysisTree'
+import { addMove, newTree, pvSan } from '../../src/shared/analysisTree'
 import type { EngineLine } from '../../src/shared/types'
 
 const line: EngineLine = { rank: 1, depth: 18, cp: 30, pv: ['e2e4', 'e7e5', 'g1f3'] }

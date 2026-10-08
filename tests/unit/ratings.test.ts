@@ -6,7 +6,7 @@ import {
   normalizeRatingKey,
   ratingDisplayName,
   ratingHistoryFromGames,
-} from '../../app/utils/ratings'
+} from '../../src/shared/ratings'
 
 function game(overrides: Partial<LichessGame> = {}): LichessGame {
   return {

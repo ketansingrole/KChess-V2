@@ -2,6 +2,7 @@ import { vi } from 'vitest'
 import { defineComponent } from 'vue'
 import type { DesktopApi, OnlineEvent, Puzzle } from '../../src/shared/types'
 import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
+import { libraryApi } from './libraryBackend'
 
 export const puzzle: Puzzle = {
   id: 'mate123',
@@ -24,6 +25,7 @@ export function deferred<T>() {
 export function desktop(overrides: Partial<DesktopApi> = {}) {
   let onEvent: (event: OnlineEvent) => void = () => {}
   const api = {
+    ...libraryApi(),
     loadData: async () => ({
       settings: { ...DEFAULT_SETTINGS },
       accounts: [

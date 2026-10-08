@@ -16,16 +16,23 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
 
 ## Ownership enforced by lint
 
-- Renderer and shared modules cannot import privileged Node/Electron APIs or main
-  services. Use DesktopApi for privileged work.
-- Main, shared and preload cannot import renderer code.
+- Renderer and shared modules cannot import privileged Node/Electron APIs, core or
+  main services. Use DesktopApi for privileged work.
+- Core (`src/core`) cannot import Electron, `src/main`, `src/preload` or renderer code.
+  Host capabilities go through `CorePlatform`; `tsconfig.core.json` typechecks core and
+  shared with Node types only, and `pnpm run test:core` builds `out/core` and drives it
+  in plain Node (bundled engine, puzzle worker, library).
+- Main imports the core only through `src/core` (its entry) and `src/core/logger`.
+- Main, core, shared and preload cannot import renderer code.
 - Register IPC through src/main/ipc.ts; it authenticates the owned top-level frame
   before validating input and invoking a handler.
 - Only puzzleWorker imports puzzle queries. Runtime SQLite imports belong in the
   database owners; store.ts retains its existing legacy-database migration.
 
-Add every invocation to DesktopApi, IPC_CHANNELS, IPC_CONTRACTS, preload and main
-registration. Contract tuples require a validator for every argument, including
+A headless capability belongs in `CoreApi`, `CORE_METHODS` and the core service, which
+validates its own input; main forwards every core method over IPC. Desktop-only methods
+extend `DesktopApi` and register in main. Add every invocation to IPC_CHANNELS,
+IPC_CONTRACTS and preload. Contract tuples require a validator for every argument, including
 optional arguments. Declare minimum arity, reject excess arguments and retain
 domain/service validation. Startup refuses duplicate or missing handlers.
 The OAuth appearance parser deliberately falls back to safe default colors.
@@ -36,12 +43,12 @@ The OAuth appearance parser deliberately falls back to safe default colors.
   Silent fallbacks (`.catch(() => null)`, empty `catch {}`) fail lint
   (`logging/no-silent-catch`, `logging/no-silent-promise-catch`) and fail
   `tests/unit/logging-guardrail.test.ts`.
-- Main uses `logDebug/logWarn/logError` from `src/main/logger.ts` with a
+- Core and main use `logDebug/logWarn/logError` from `src/core/logger.ts` with a
   `[scope]` (file basename, e.g. `engine`, `lichess`): `logDebug` for
   expected/benign (cancel teardown, chain reset, cache miss), `logWarn` for
   recoverable (cache write, reconnect, throttle), `logError` for failures
   needing attention. `logInfo` is for operational milestones (sync completed,
-  update available/downloaded). Raw `console.*` in `src/main` fails
+  update available/downloaded). Raw `console.*` in `src/core` and `src/main` fails
   (`logging/no-raw-console`); only `logger.ts` and `diagnostics.ts` may use it.
 - Production context: every failure log carries `method`/`account`/`gameId`/
   `durationMs`/`failures` as applicable, errors go through `errorSummary`

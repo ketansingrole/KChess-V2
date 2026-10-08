@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { INITIAL_FEN } from 'chessops/fen'
-import { PositionLookupService } from '../../src/main/positionLookup'
+import { PositionLookupService } from '../../src/core/positionLookup'
 import type { PositionLookup } from '../../src/shared/types'
 import { deferred } from './fixtures'
 

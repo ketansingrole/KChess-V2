@@ -1,5 +1,5 @@
 /** Custom schemes have opaque URL.origin values; compare protocol and authority explicitly. */
-import { logDebug } from './logger'
+import { logDebug } from '../core/logger'
 
 export function isAppUrl(value: string, developmentUrl = process.env.KCHESS_NUXT_URL): boolean {
   try {

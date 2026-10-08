@@ -9,8 +9,8 @@ import {
   spokenMove,
   type GameCommand,
   type VoiceMoveChoice,
-} from '../utils/voiceCommands'
-import { setupPgn } from '../utils/chess'
+} from '../../src/shared/voiceCommands'
+import { setupPgn } from '../../src/shared/chess'
 import { VARIANT_LABELS } from '../../src/shared/variant'
 import { useAnalysisStore } from '../stores/analysis'
 import type { VoiceResult } from '../utils/voiceCapture'

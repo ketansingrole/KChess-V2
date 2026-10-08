@@ -1,4 +1,4 @@
-// Builds app/assets/openings.json from Lichess's CC0 opening names (github.com/lichess-org/chess-openings).
+// Builds src/shared/data/openings.json from Lichess's CC0 opening names (github.com/lichess-org/chess-openings).
 // Usage: node scripts/make-openings.mjs [dir-with-a..e.tsv]  (downloads the TSVs when no dir is given)
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -43,7 +43,7 @@ const compact = Object.fromEntries(
     .map(([epd, [eco, name]]) => [epd, `${eco}|${name}`]),
 )
 await writeFile(
-  new URL('../app/assets/openings.json', import.meta.url),
+  new URL('../src/shared/data/openings.json', import.meta.url),
   JSON.stringify(compact) + '\n',
 )
 console.log(`${Object.keys(compact).length} named positions`)

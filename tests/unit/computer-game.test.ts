@@ -1,4 +1,5 @@
 import { it, expect, vi } from 'vitest'
+import { seedSaved } from './libraryBackend'
 import { flushPromises } from '@vue/test-utils'
 import { useKChessStore } from '../../app/stores/kchess'
 import { desktop, deferred } from './fixtures'
@@ -35,7 +36,7 @@ it('keeps computer-game state across navigation and invalidates engine replies o
 
 it('waits to resume a restored computer turn until startup recovery confirms no live game', async () => {
   const recovery = deferred<null>()
-  localStorage.setItem(
+  seedSaved(
     'kchess:computer:v1',
     JSON.stringify({ version: 1, moves: ['e2e4'], ply: 1, level: 'club', color: 'white' }),
   )
@@ -61,7 +62,7 @@ it('waits to resume a restored computer turn until startup recovery confirms no 
 it('pauses a restored computer clock while startup recovery is unverified', async () => {
   vi.useFakeTimers()
   const recovery = deferred<null>()
-  localStorage.setItem(
+  seedSaved(
     'kchess:computer:v1',
     JSON.stringify({
       version: 2,

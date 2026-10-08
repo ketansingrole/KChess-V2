@@ -2,6 +2,9 @@
 import * as v from 'valibot'
 import {
   ARENA_CLOCK_MINUTES,
+  EXPLORER_RATINGS,
+  EXPLORER_SPEEDS,
+  type LookupOptions,
   ARENA_DURATIONS,
   ARENA_INCREMENTS,
   ARENA_WAIT_MINUTES,
@@ -597,3 +600,26 @@ export function assertStudySyncRequest(value: unknown): import('./types').StudyS
 export function assertBroadcastQuery(value: unknown): string | undefined {
   return v.parse(v.optional(v.pipe(v.string(), v.trim(), v.maxLength(100))), value)
 }
+
+const lookupOptionsSchema = v.optional(
+  v.object(
+    {
+      speeds: v.optional(v.pipe(v.array(v.picklist(EXPLORER_SPEEDS)), v.maxLength(6))),
+      ratings: v.optional(
+        v.pipe(
+          v.array(v.picklist(EXPLORER_RATINGS as unknown as number[] as [number, ...number[]])),
+          v.maxLength(9),
+        ),
+      ),
+      player: v.optional(v.pipe(v.string(), v.regex(USERNAME))),
+      color: v.optional(v.picklist(['white', 'black'])),
+      modes: v.optional(v.pipe(v.array(v.picklist(['rated', 'casual'])), v.maxLength(2))),
+      since: v.optional(v.pipe(v.string(), v.regex(/^\d{4}(-\d{2})?$/))),
+    },
+    'Invalid explorer filters.',
+  ),
+  {},
+)
+
+export const assertLookupOptions = (value: unknown): LookupOptions =>
+  v.parse(lookupOptionsSchema, value)

@@ -26,10 +26,10 @@ const busy = ref(false)
 const message = ref('')
 const NEW_STUDY = 'new-study'
 const target = ref(NEW_STUDY)
-const pendingOpen = ref<(() => void) | null>(null)
-function guardOpen(action: () => void): void {
+const pendingOpen = ref<(() => void | Promise<void>) | null>(null)
+function guardOpen(action: () => void | Promise<void>): void {
   if (!analysis.study && analysis.root.children.length) pendingOpen.value = action
-  else action()
+  else void action()
 }
 
 function reconnectNote(result: unknown): boolean {
@@ -109,10 +109,15 @@ function openRemote(id: string): Promise<void> {
   return work(async () => {
     const result = await window.kchess.lichessStudyChapters(openingAccount, id)
     if (!request.current() || reconnectNote(result)) return
-    guardOpen(() => {
+    guardOpen(async () => {
       if (!request.current()) return
       try {
-        const downloaded = library.offline(openingAccount, item, result as LichessStudyChapter[])
+        const downloaded = await library.offline(
+          openingAccount,
+          item,
+          result as LichessStudyChapter[],
+        )
+        if (!request.current()) return
         if (!analysis.openStudy(downloaded.id)) throw new Error('This study could not be opened.')
         app.selectPage('analysis')
       } catch (cause) {
@@ -135,8 +140,8 @@ function download(id: string): Promise<void> {
     const request = requests.capture()
     const result = await window.kchess.lichessStudyChapters(downloadingAccount, id)
     if (!request.current() || reconnectNote(result)) return
-    analysis.flushStudy()
-    const saved = library.offline(downloadingAccount, item, result as LichessStudyChapter[])
+    await analysis.flushStudy()
+    const saved = await library.offline(downloadingAccount, item, result as LichessStudyChapter[])
     if (analysis.studyId === saved.id) analysis.openStudy(saved.id, analysis.studyChapterId)
     if (saved.conflict)
       message.value =

@@ -37,7 +37,7 @@ const button = (wrapper: ReturnType<typeof mount>, text: string) =>
 it('confirms replacement before closing the dialog and opens the full local study', async () => {
   desktop()
   const library = useStudyStore()
-  const id = library.saveChapters('Two chapters', [
+  const id = await library.saveChapters('Two chapters', [
     { name: 'King pawn', pgn: '1. e4 *' },
     { name: 'Queen pawn', pgn: '1. d4 *' },
   ])
@@ -72,6 +72,7 @@ it('opens all cloud chapters as a study after accepting replacement, rather than
   expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
   expect(analysis.study).toBeUndefined()
   await button(wrapper, 'Replace').trigger('click')
+  await flushPromises()
   expect(analysis.study!.name).toBe('Cloud study')
   expect(analysis.study!.chapters.map((c) => c.name)).toEqual(['First', 'Second'])
   expect(analysis.study!.cloud!.id).toBe('Study001')
@@ -80,7 +81,7 @@ it('opens all cloud chapters as a study after accepting replacement, rather than
 
 it('cancels replacement without changing the analysis or downloading an offline copy', async () => {
   desktop()
-  const id = useStudyStore().save('Saved', '1. e4 *')
+  const id = await useStudyStore().save('Saved', '1. e4 *')
   const analysis = useAnalysisStore()
   analysis.loadPgn('1. c4 *')
   const wrapper = mount(Studies, { global })
@@ -104,7 +105,7 @@ const Dropdown = defineComponent({
 it('selects chapters from a compact dropdown and adds, renames, duplicates, and deletes the active chapter', async () => {
   desktop()
   const library = useStudyStore()
-  const id = library.saveChapters('Workspace', [
+  const id = await library.saveChapters('Workspace', [
     { name: 'First', pgn: '1. e4 *' },
     { name: 'Second', pgn: '1. d4 {Notes} *' },
   ])
@@ -123,8 +124,10 @@ it('selects chapters from a compact dropdown and adds, renames, duplicates, and 
   await button(wrapper, 'Rename chapter').trigger('click')
   await wrapper.get('input[aria-label="Chapter name"]').setValue('Queen pawn')
   await wrapper.get('form').trigger('submit')
+  await flushPromises()
   expect(analysis.study!.chapters[1]!.name).toBe('Queen pawn')
   await button(wrapper, 'Duplicate chapter').trigger('click')
+  await flushPromises()
   expect(analysis.study!.chapters).toHaveLength(3)
   expect(analysis.study!.chapters.at(-1)!.name).toBe('Queen pawn (copy)')
   expect(analysis.pgn()).toContain('Notes')
@@ -135,12 +138,14 @@ it('selects chapters from a compact dropdown and adds, renames, duplicates, and 
     .findAll('button')
     .find((b) => b.text() === 'Delete chapter' && b.attributes('color') === 'error')!
     .trigger('click')
+  await flushPromises()
   expect(analysis.study!.chapters).toHaveLength(2)
   expect(analysis.study!.chapters.some((c) => c.id === duplicateId)).toBe(false)
   expect(analysis.studyChapterId).toBe(analysis.study!.chapters[1]!.id)
   await button(wrapper, 'Add chapter').trigger('click')
   await wrapper.get('input[aria-label="Chapter name"]').setValue('Third')
   await wrapper.get('form').trigger('submit')
+  await flushPromises()
   expect(analysis.studyId).toBe(id)
   expect(analysis.study!.chapters).toHaveLength(3)
   expect(analysis.study!.chapters.at(-1)!.name).toBe('Third')

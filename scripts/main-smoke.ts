@@ -1,8 +1,8 @@
-import { mergeRatingHistories, ratingHistoryFromGames } from '../app/utils/ratings.ts'
+import { mergeRatingHistories, ratingHistoryFromGames } from '../src/shared/ratings.ts'
 import { isGameInProgress } from '../src/shared/gameStatus.ts'
 import { pickConnectedAccount } from '../src/shared/accounts.ts'
 import { LichessError, lichessError, throwLichessErrors } from '../src/shared/lichessError.ts'
-import { readLines } from '../src/main/ndjson.ts'
+import { readLines } from '../src/core/ndjson.ts'
 import {
   canBoardSeek,
   canDirectChallenge,
@@ -44,9 +44,9 @@ import {
   deleteManagedEngine,
   installManagedEngine,
   managedEngine,
-} from '../src/main/managedEngine.ts'
-import { MIGRATIONS, migrate } from '../src/main/migrations.ts'
-import { pickMacAsset } from '../src/main/stockfishAsset.ts'
+} from '../src/core/managedEngine.ts'
+import { MIGRATIONS, migrate } from '../src/core/migrations.ts'
+import { pickMacAsset } from '../src/core/stockfishAsset.ts'
 
 const assert = (label: string, actual: unknown, expected: unknown): void => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)

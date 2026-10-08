@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { logDebug } from './logger.ts'
+import { logDebug } from '../core/logger.ts'
 import type { VoiceModelProgress, VoiceModelStatus } from '../shared/types'
 
 export const VOICE_MODEL = {

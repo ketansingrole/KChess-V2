@@ -1,9 +1,9 @@
-import { DEFAULT_OAUTH_LOOK, oauthPage } from './oauthPage'
+import { DEFAULT_OAUTH_LOOK } from '../shared/oauthLook'
+import { oauthPage } from './oauthPage'
 import { errorSummary, logDebug, logInfo, logWarn } from './logger'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { shell } from 'electron'
 import { LRUCache } from 'lru-cache'
 import createClient from 'openapi-fetch'
 import { INITIAL_FEN } from 'chessops/fen'
@@ -50,6 +50,7 @@ import { lichessLine, replay, reviewKey, sanToUci } from '../shared/review'
 import { markChecked, writeReview } from './reviewStore'
 import { LichessError, throwLichessErrors } from '../shared/lichessError'
 import { isGameInProgress } from '../shared/gameStatus'
+import { platform } from './platform'
 import { lichessFetch } from './requestPolicy'
 import { validateOnlineEvent } from '../shared/onlineEvent'
 import { readLines } from './ndjson'
@@ -888,10 +889,12 @@ export async function connectLichess(
         state,
       }))
         url.searchParams.set(key, value)
-      shell.openExternal(url.toString()).catch((cause: unknown) => {
-        logWarn('lichess', 'Could not open Lichess login page:', cause)
-        finish(asError(cause))
-      })
+      platform()
+        .openExternal(url.toString())
+        .catch((cause: unknown) => {
+          logWarn('lichess', 'Could not open Lichess login page:', cause)
+          finish(asError(cause))
+        })
     })
   })
   const token = await unwrap(

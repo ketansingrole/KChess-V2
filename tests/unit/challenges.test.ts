@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ChallengeInbox, readChallengeEvent } from '../../src/main/challenges'
+import { ChallengeInbox, readChallengeEvent } from '../../src/core/challenges'
 
 const challenge = (overrides: Record<string, unknown> = {}) => ({
   type: 'challenge',

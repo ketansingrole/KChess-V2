@@ -1,7 +1,7 @@
 import { normalizeMove, type Position } from 'chessops/chess'
 import { makeFen } from 'chessops/fen'
 import { parseUci } from 'chessops/util'
-import { setupStart, type GameSetup } from '../../src/shared/variant.ts'
+import { setupStart, type GameSetup } from './variant.ts'
 
 export interface OpeningName {
   eco: string
@@ -11,7 +11,7 @@ export interface OpeningName {
 /** Lichess's CC0 opening names (scripts/make-openings.mjs), keyed by EPD; loaded on first use. */
 let table: Promise<Map<string, string>> | undefined
 export function loadOpenings(): Promise<Map<string, string>> {
-  table ??= import('../assets/openings.json').then(
+  table ??= import('./data/openings.json').then(
     (module) => new Map(Object.entries(module.default as Record<string, string>)),
   )
   return table

@@ -7,7 +7,7 @@ import { nearestEngineLevel } from '../../src/shared/engineLevels'
 import { canPlayOnline } from '../../src/shared/timeControl'
 import { boardThemes } from '../utils/boards'
 import { allThemes, applyTheme, findTheme, oauthPageLook } from '../utils/themes'
-import { fen, navigatePly } from '../utils/chess'
+import { fen, navigatePly } from '../../src/shared/chess'
 import { configure } from '../utils/sound'
 import { formatGameDate } from '../utils/games'
 import { useOnlineGame } from './kchess/onlineGame'
@@ -563,19 +563,6 @@ export const useKChessStore = defineStore('kchess', () => {
       .toLowerCase()
     if (!account || puzzleAccount === account.toLowerCase())
       localStorage.removeItem('kchess:puzzle-account')
-    // Tournaments joined as a signed-out account would otherwise reopen its event streams.
-    try {
-      const joined = JSON.parse(localStorage.getItem('kchess:tournaments-joined') ?? '[]') as {
-        account?: string
-      }[]
-      const kept = joined.filter(
-        (entry) => account && entry.account?.toLowerCase() !== account.toLowerCase(),
-      )
-      localStorage.setItem('kchess:tournaments-joined', JSON.stringify(kept))
-    } catch (cause) {
-      console.warn('[kchess] pruning joined tournaments failed:', cause)
-      localStorage.removeItem('kchess:tournaments-joined')
-    }
     if (!result.accounts.some((a) => a.connected)) {
       localStorage.removeItem('kchess:puzzle-mode')
       localStorage.removeItem('kchess:puzzle-tab')

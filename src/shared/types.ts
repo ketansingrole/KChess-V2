@@ -1,6 +1,18 @@
 import type { PerformanceName, RendererErrorReport } from './rendererDiagnostics'
 import type { components, paths } from '@lichess-org/types'
 import type { Variant } from './variant'
+import type {
+  ArchivedGame,
+  JoinedTournament,
+  LegacyDocuments,
+  LibrarySnapshot,
+  MistakeExercise,
+  RepertoireMisses,
+  SessionDocuments,
+  SessionKind,
+  StudyCommand,
+  StudyCommandResult,
+} from './library'
 
 export type { Variant }
 
@@ -1371,19 +1383,16 @@ export interface CloudEval {
   lines: EngineLine[]
 }
 
-export interface DesktopApi {
-  reportRendererError(report: RendererErrorReport): Promise<void>
-  recordPerformance(name: PerformanceName, milliseconds: number): Promise<void>
+/**
+ * The headless KChess services: chess, engine, Lichess, puzzles, studies, review and local
+ * storage. Every frontend reaches them through this contract; `src/core` implements it.
+ */
+export interface CoreApi {
   positionLookup(
     kind: PositionLookupKind,
     fen: string,
     options?: LookupOptions,
   ): Promise<PositionLookup>
-  /**
-   * Save an exported game (an animated GIF, a PNG of a position, or PGN text) where the native
-   * dialog says; false when cancelled.
-   */
-  saveExport(request: ExportRequest): Promise<boolean>
   /** Studies an account owns or belongs to on Lichess. */
   lichessStudies(account: string): Promise<LichessStudy[] | NeedsReconnect>
   lichessStudyChapters(account: string, id: string): Promise<LichessStudyChapter[] | NeedsReconnect>
@@ -1401,21 +1410,6 @@ export interface DesktopApi {
   mastersGame(id: string): Promise<string>
   /** Lichess's cached cloud evaluation of a position, or null when it has none. */
   cloudEval(fen: string, lines: number): Promise<CloudEval | null>
-  /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
-  exportDiagnostics(): Promise<boolean>
-  /** Frameless-chrome window controls (Windows/Linux); no-ops where the OS draws its own chrome. */
-  windowMinimize(): Promise<void>
-  windowToggleMaximize(): Promise<{ maximized: boolean }>
-  windowClose(): Promise<void>
-  windowIsMaximized(): Promise<boolean>
-  onWindowMaximized(callback: (state: { maximized: boolean }) => void): () => void
-  appUpdateStatus(): Promise<AppUpdateStatus>
-  checkAppUpdate(): Promise<AppUpdateStatus>
-  downloadAppUpdate(): Promise<AppUpdateStatus>
-  installAppUpdate(): Promise<void>
-  /** Opens only this app's official GitHub Releases page. */
-  openAppReleases(): Promise<void>
-  onAppUpdate(callback: (status: AppUpdateStatus) => void): () => void
   loadData(): Promise<AppData>
   saveSettings(settings: Settings): Promise<Settings>
   addAccount(username: string): Promise<AppData>
@@ -1442,7 +1436,6 @@ export interface DesktopApi {
   /** Sign in through the browser. `username` is the account Lichess authorised. */
   connectLichess(look?: OAuthPageLook): Promise<{ data: AppData; username: string }>
   engineStatus(): Promise<EngineStatus>
-  chooseEngine(): Promise<string | null>
   /**
    * Download and verify the latest official Stockfish build into KChess's own folder.
    * `updated` is false when the installed copy was already the latest and nothing was downloaded.
@@ -1455,7 +1448,6 @@ export interface DesktopApi {
   /** Start analysing a position (replacing any running analysis); updates arrive on `onAnalysis`. */
   startAnalysis(request: AnalysisRequest): Promise<number>
   stopAnalysis(): Promise<void>
-  onAnalysis(callback: (update: AnalysisUpdate) => void): () => void
   /** The stored review of these moves from this position, if any. */
   reviewGet(fen: string, moves: string[]): Promise<StoredReview | null>
   /**
@@ -1467,8 +1459,6 @@ export interface DesktopApi {
   reviewStatus(): Promise<ReviewStatus>
   /** Review summaries of up to one history page of games, by game id. */
   reviewSummaries(ids: string[]): Promise<Record<string, ReviewSummary>>
-  onReviewUpdate(callback: (update: ReviewUpdate) => void): () => void
-  onReviewStatus(callback: (status: ReviewStatus) => void): () => void
   startOnline(options: OnlineOptions): Promise<{ id?: string; url?: string; seeking?: boolean }>
   /** Reattach to a game in progress on any connected account. */
   resumeOnline(): Promise<{ id: string; account: string } | null>
@@ -1485,7 +1475,6 @@ export interface DesktopApi {
   stayConnected(account: string): Promise<void>
   /** Pending challenges to and from the connected accounts. */
   challenges(): Promise<ChallengeInfo[]>
-  onChallenges(callback: (challenges: ChallengeInfo[]) => void): () => void
   acceptChallenge(id: string): Promise<void>
   declineChallenge(id: string, reason: DeclineReason): Promise<void>
   /** Withdraw a challenge you sent. */
@@ -1494,7 +1483,6 @@ export interface DesktopApi {
   ongoingGames(): Promise<OngoingGame[]>
   /** Open one of those games on the online board (a correspondence game, or a live one). */
   openGame(account: string, id: string): Promise<void>
-  onLobbyState(callback: (state: LobbyState) => void): () => void
   playerPerf(username: string, perf: PerfType): Promise<PerfStats>
   crosstable(a: string, b: string): Promise<Crosstable>
   /** A player's latest public games, from their side; `rated` returns more of their rated ones. */
@@ -1512,9 +1500,6 @@ export interface DesktopApi {
   /** Follow a broadcast round's live PGN; updates on `onBroadcast`. */
   watchBroadcast(roundId: string): Promise<number>
   stopWatching(): Promise<void>
-  onWatchState(callback: (state: WatchState) => void): () => void
-  onWatch(callback: (frame: WatchFrame) => void): () => void
-  onBroadcast(callback: (update: BroadcastUpdate) => void): () => void
   broadcasts(query?: string): Promise<BroadcastSummary[]>
   broadcastTour(id: string): Promise<BroadcastTourDetail>
   /** Current arenas, and the Swiss events of the account's teams. */
@@ -1539,8 +1524,6 @@ export interface DesktopApi {
   ): Promise<true | NeedsReconnect>
   /** Creates an arena on Lichess run by the account. */
   createTournament(account: string, arena: NewArena): Promise<TournamentSummary | NeedsReconnect>
-  /** A game started or ended that the board does not show (refresh `ongoingGames`). */
-  onOngoingChanged(callback: () => void): () => void
   /** Delete the games and cached profile downloaded for one account, keeping the account. */
   clearAccountData(username: string): Promise<AppData>
   /** Players the connected accounts follow on Lichess (needs the follow permission). */
@@ -1552,6 +1535,94 @@ export interface DesktopApi {
   resetUsage(): Promise<void>
   /** Online/playing/signal of the given users, for the game in progress. */
   presence(usernames: string[]): Promise<PresenceReport>
+  /** Lichess puzzle training. Rated results change the account's Lichess puzzle rating. */
+  puzzleNext(request: PuzzleRequest): Promise<PuzzleDraw | NeedsReconnect>
+  /** Report a puzzle result to Lichess (needs `puzzle:write`). */
+  puzzleSolve(request: PuzzleSolveRequest): Promise<PuzzleSolveResult | NeedsReconnect>
+  /** The daily puzzle; public, nothing is recorded. */
+  puzzleDaily(): Promise<Puzzle>
+  /** Read-only: the account's puzzle dashboard. */
+  puzzleDashboard(account: string, days: number): Promise<PuzzleDashboard | NeedsReconnect>
+  /** Read-only: the account's most recent puzzle attempts. */
+  puzzleActivity(account: string, max: number): Promise<PuzzleActivityEntry[] | NeedsReconnect>
+  /** Read-only: anyone's public Storm dashboard. */
+  stormDashboard(username: string, days: number): Promise<StormDashboard>
+  /** Local puzzle database (downloaded from database.lichess.org). */
+  puzzleDbStatus(): Promise<PuzzleDbStatus>
+  puzzleDbInstall(): Promise<PuzzleDbStatus>
+  puzzleDbCancel(): Promise<void>
+  puzzleDbDelete(): Promise<PuzzleDbStatus>
+  localPuzzles(query: LocalPuzzleQuery): Promise<Puzzle[]>
+  /** Puzzles of rising difficulty, for Storm, Streak and Rush. */
+  localLadder(query: LocalLadderQuery): Promise<Puzzle[]>
+  /** Local scores (Storm, Streak, Rush and the practice drills). They never leave this computer. */
+  saveRun(run: RunInput): Promise<RunSaved>
+  runSummary(kind: RunKind): Promise<RunSummary>
+  clearRuns(kind?: RunKind): Promise<void>
+  /** Local log of voice input (Settings › Voice). It never leaves this computer unless exported. */
+  saveVoiceAttempt(attempt: VoiceAttemptInput): Promise<number>
+  updateVoiceAttempt(id: number, update: VoiceAttemptUpdate): Promise<void>
+  /** Newest first. */
+  voiceHistory(limit: number): Promise<VoiceAttempt[]>
+  clearVoiceHistory(): Promise<void>
+
+  /** The local library as saved: studies, played games, drills, sessions and training notes. */
+  library(): Promise<LibrarySnapshot>
+  /** Take over the documents an earlier release kept in the renderer; runs once. */
+  importLibrary(documents: LegacyDocuments): Promise<LibrarySnapshot>
+  studyCommand(command: StudyCommand): Promise<StudyCommandResult>
+  /** Add or replace a played game; it becomes the most recent. */
+  saveArchivedGame(game: ArchivedGame): Promise<void>
+  removeArchivedGame(id: string): Promise<void>
+  /** Drills from a stored review's mistakes (one side's, when given); `added` counts new ones. */
+  addMistakes(
+    reviewKey: string,
+    color?: 'white' | 'black',
+  ): Promise<{ added: number; items: MistakeExercise[] }>
+  answerMistake(id: string, solved: boolean): Promise<MistakeExercise[]>
+  /** Keep an unfinished game or analysis so it can be resumed. */
+  saveSession<K extends SessionKind>(kind: K, session: SessionDocuments[K]): Promise<void>
+  /** Tournaments joined from KChess that have not ended. */
+  joinedTournaments(): Promise<JoinedTournament[]>
+  recordRepertoireMiss(key: string, fen: string): Promise<RepertoireMisses>
+  clearRepertoireMisses(key: string): Promise<RepertoireMisses>
+}
+
+/** The desktop frontend: the core plus window, OS integration and event subscriptions. */
+export interface DesktopApi extends CoreApi {
+  reportRendererError(report: RendererErrorReport): Promise<void>
+  recordPerformance(name: PerformanceName, milliseconds: number): Promise<void>
+  /**
+   * Save an exported game (an animated GIF, a PNG of a position, or PGN text) where the native
+   * dialog says; false when cancelled.
+   */
+  saveExport(request: ExportRequest): Promise<boolean>
+  /** Save redacted runtime diagnostics to a location chosen in the native dialog. */
+  exportDiagnostics(): Promise<boolean>
+  /** Frameless-chrome window controls (Windows/Linux); no-ops where the OS draws its own chrome. */
+  windowMinimize(): Promise<void>
+  windowToggleMaximize(): Promise<{ maximized: boolean }>
+  windowClose(): Promise<void>
+  windowIsMaximized(): Promise<boolean>
+  onWindowMaximized(callback: (state: { maximized: boolean }) => void): () => void
+  appUpdateStatus(): Promise<AppUpdateStatus>
+  checkAppUpdate(): Promise<AppUpdateStatus>
+  downloadAppUpdate(): Promise<AppUpdateStatus>
+  installAppUpdate(): Promise<void>
+  /** Opens only this app's official GitHub Releases page. */
+  openAppReleases(): Promise<void>
+  onAppUpdate(callback: (status: AppUpdateStatus) => void): () => void
+  chooseEngine(): Promise<string | null>
+  onAnalysis(callback: (update: AnalysisUpdate) => void): () => void
+  onReviewUpdate(callback: (update: ReviewUpdate) => void): () => void
+  onReviewStatus(callback: (status: ReviewStatus) => void): () => void
+  onChallenges(callback: (challenges: ChallengeInfo[]) => void): () => void
+  onLobbyState(callback: (state: LobbyState) => void): () => void
+  onWatchState(callback: (state: WatchState) => void): () => void
+  onWatch(callback: (frame: WatchFrame) => void): () => void
+  onBroadcast(callback: (update: BroadcastUpdate) => void): () => void
+  /** A game started or ended that the board does not show (refresh `ongoingGames`). */
+  onOngoingChanged(callback: () => void): () => void
   /** Show a desktop notification if Settings allow it for this kind and the window's state. */
   notify(request: NotificationRequest): Promise<NotificationResult>
   /** Custom themes from the themes folder (created on first use). */
@@ -1573,41 +1644,7 @@ export interface DesktopApi {
   onOnlineState(callback: (state: OnlineConnection) => void): () => void
   onOnlineEvent(callback: (event: OnlineEvent) => void): () => void
   onOnlineError(callback: (message: string) => void): () => void
-
-  /** Lichess puzzle training. Rated results change the account's Lichess puzzle rating. */
-  puzzleNext(request: PuzzleRequest): Promise<PuzzleDraw | NeedsReconnect>
-  /** Report a puzzle result to Lichess (needs `puzzle:write`). */
-  puzzleSolve(request: PuzzleSolveRequest): Promise<PuzzleSolveResult | NeedsReconnect>
-  /** The daily puzzle; public, nothing is recorded. */
-  puzzleDaily(): Promise<Puzzle>
-  /** Read-only: the account's puzzle dashboard. */
-  puzzleDashboard(account: string, days: number): Promise<PuzzleDashboard | NeedsReconnect>
-  /** Read-only: the account's most recent puzzle attempts. */
-  puzzleActivity(account: string, max: number): Promise<PuzzleActivityEntry[] | NeedsReconnect>
-  /** Read-only: anyone's public Storm dashboard. */
-  stormDashboard(username: string, days: number): Promise<StormDashboard>
-
-  /** Local puzzle database (downloaded from database.lichess.org). */
-  puzzleDbStatus(): Promise<PuzzleDbStatus>
-  puzzleDbInstall(): Promise<PuzzleDbStatus>
-  puzzleDbCancel(): Promise<void>
-  puzzleDbDelete(): Promise<PuzzleDbStatus>
-  localPuzzles(query: LocalPuzzleQuery): Promise<Puzzle[]>
-  /** Puzzles of rising difficulty, for Storm, Streak and Rush. */
-  localLadder(query: LocalLadderQuery): Promise<Puzzle[]>
   onPuzzleDbProgress(callback: (progress: PuzzleDbProgress) => void): () => void
-
-  /** Local scores (Storm, Streak, Rush and the practice drills). They never leave this computer. */
-  saveRun(run: RunInput): Promise<RunSaved>
-  runSummary(kind: RunKind): Promise<RunSummary>
-  clearRuns(kind?: RunKind): Promise<void>
-
-  /** Local log of voice input (Settings › Voice). It never leaves this computer unless exported. */
-  saveVoiceAttempt(attempt: VoiceAttemptInput): Promise<number>
-  updateVoiceAttempt(id: number, update: VoiceAttemptUpdate): Promise<void>
-  /** Newest first. */
-  voiceHistory(limit: number): Promise<VoiceAttempt[]>
-  clearVoiceHistory(): Promise<void>
   /** Save the whole log as JSON where the native dialog says; false when cancelled. */
   exportVoiceHistory(): Promise<boolean>
 }

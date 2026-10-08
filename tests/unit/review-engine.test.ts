@@ -2,17 +2,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { useTestPlatform } from './corePlatform'
 import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
 import type { ReviewStatus, ReviewUpdate, StoredReview } from '../../src/shared/types'
 
 // The bundled Stockfish is found relative to the app; the database goes to a scratch folder.
 const userData = mkdtempSync(join(tmpdir(), 'kchess-review-'))
-vi.mock('electron', () => ({
-  app: { getAppPath: () => process.cwd(), getPath: () => userData },
-}))
+useTestPlatform({ dataDir: userData })
 const { requestReview, setupReviews, stopReviews, FULL_DEPTH } =
-  await import('../../src/main/review')
-const { closeDb } = await import('../../src/main/db')
+  await import('../../src/core/review')
+const { closeDb } = await import('../../src/core/db')
 const { analyseReview } = await import('../../src/shared/review')
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'

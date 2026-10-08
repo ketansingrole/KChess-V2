@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { queryLadder, queryPuzzles, storeSample } from '../../src/main/puzzleQueries'
+import { queryLadder, queryPuzzles, storeSample } from '../../src/core/puzzleQueries'
 import type { DbPuzzle } from '../../src/shared/puzzle'
 
 const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'

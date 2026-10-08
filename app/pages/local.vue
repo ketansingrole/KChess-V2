@@ -13,9 +13,9 @@ import {
   type GameSetup,
   type Variant,
 } from '../../src/shared/variant'
-import { formatClock } from '../utils/clock'
-import { fen as fenOf, navigatePly, setupPgn } from '../utils/chess'
-import { positionProblem } from '../utils/boardEditor'
+import { formatClock } from '../../src/shared/clock'
+import { fen as fenOf, navigatePly, setupPgn } from '../../src/shared/chess'
+import { positionProblem } from '../../src/shared/boardEditor'
 import { useLocalGameStore, type LocalClock } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import {
@@ -23,7 +23,7 @@ import {
   spokenChoice,
   spokenMove,
   type VoiceMoveChoice,
-} from '../utils/voiceCommands'
+} from '../../src/shared/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
 import type { VoiceOutcome } from '../../src/shared/types'

@@ -5,7 +5,7 @@ import { useDocumentVisibility, useIntervalFn, useLocalStorage, useOnline } from
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import { useBroadcastEvaluations } from '../composables/useBroadcastEvaluations'
 import { useSwipeBack } from '../composables/useSwipeBack'
-import { formatEval } from '../utils/analysisTree'
+import { formatEval } from '../../src/shared/analysisTree'
 import type { Key } from '@lichess-org/chessground/types'
 import { RequestScope } from '../../src/shared/requestScope'
 import type {
@@ -16,15 +16,15 @@ import type {
   WatchPlayer,
 } from '../../src/shared/types'
 import { isVariant, type GameSetup } from '../../src/shared/variant'
-import { formatClock } from '../utils/clock'
-import { materialBalance } from '../utils/material'
+import { formatClock } from '../../src/shared/clock'
+import { materialBalance } from '../../src/shared/material'
 import {
   lastMoveKeys,
   setupPgn,
   setupPositionAfter,
   setupSanHistory,
   fen as fenOf,
-} from '../utils/chess'
+} from '../../src/shared/chess'
 import { useWatchStore } from '../stores/watch'
 import { useFriendsStore } from '../stores/friends'
 import { useAnalysisStore } from '../stores/analysis'

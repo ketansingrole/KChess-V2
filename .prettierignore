@@ -13,4 +13,4 @@ coverage/
 pnpm-lock.yaml
 src/renderer/auto-imports.d.ts
 src/renderer/components.d.ts
-app/assets/openings.json
+src/shared/data/openings.json

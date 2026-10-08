@@ -17,21 +17,30 @@ function lint(code, filename) {
   )
 }
 it.each([
-  ['app/page.js', "import { getDb } from '../src/main/db'"],
-  ['app/page.js', "export * from '../src/main/store'"],
-  ['app/page.js', "const main = import('../src/main/db')"],
+  ['app/page.js', "import { getDb } from '../src/core/db'"],
+  ['app/page.js', "export * from '../src/core/store'"],
+  ['app/page.js', "const main = import('../src/core/db')"],
   ['app/page.js', "const fs = require('fs')"],
-  ['app/page.js', "import { getDb } from '@@/src/main/db'"],
-  ['app/page.js', "import { getDb } from '~/../src/main/db'"],
+  ['app/page.js', "import { getDb } from '@@/src/core/db'"],
+  ['app/page.js', "import { getDb } from '~/../src/core/db'"],
   ['src/main/test.js', "const electron = require('electron')"],
   ['src/main/test.js', "const sqlite = import('node:sqlite')"],
   ['src/shared/test.js', "import fs from 'node:fs'"],
   ['src/main/test.js', "import { ipcMain as ipc } from 'electron'"],
   ['src/main/test.js', "import * as electron from 'electron'"],
-  ['src/main/test.js', "import { queryPuzzles } from './puzzleQueries'"],
+  ['src/main/test.js', "import { queryPuzzles } from '../core/puzzleQueries'"],
+  ['src/main/test.js', "import { getSettings } from '../core/store'"],
   ['src/main/test.js', "import { DatabaseSync } from 'node:sqlite'"],
   ['src/preload/test.js', "import { getDb } from '../main/db'"],
   ['src/main/test.js', "import { view } from '../../app/view'"],
+  ['app/page.js', "import { createKChessCore } from '../src/core'"],
+  ['src/shared/test.js', "import { loadData } from '../core/store'"],
+  ['src/core/test.js', "import { app } from 'electron'"],
+  ['src/core/test.js', "const updater = import('electron-updater')"],
+  ['src/core/test.js', "import { send } from '../main/ipc'"],
+  ['src/core/test.js', "import { view } from '../../app/view'"],
+  ['src/core/test.js', "import { queryPuzzles } from './puzzleQueries'"],
+  ['src/core/test.js', "import { DatabaseSync } from 'node:sqlite'"],
 ])('rejects forbidden dependency in %s: %s', (filename, code) => {
   expect(lint(code, filename)).toHaveLength(1)
 })
@@ -40,7 +49,7 @@ it.each([
   ['app/page.js', "import { IPC_CHANNELS } from '../src/shared/ipc'"],
   ['src/preload/index.js', "import { ipcRenderer } from 'electron'"],
   ['src/main/ipc.ts', "import { ipcMain } from 'electron'"],
-  ['src/main/puzzleWorker.ts', "import { queryPuzzles } from './puzzleQueries'"],
+  ['src/core/puzzleWorker.ts', "import { queryPuzzles } from './puzzleQueries'"],
 ])('allows owned dependency in %s', (filename, code) => {
   // Rule ownership uses the actual TS path while ESLint parses plain JS test snippets.
   const messages = new Linter().verify(

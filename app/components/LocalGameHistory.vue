@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useGameArchiveStore, type ArchivedGame } from '../stores/gameArchive'
 import { useAnalysisStore } from '../stores/analysis'
-import { setupPgn } from '../utils/chess'
+import { setupPgn } from '../../src/shared/chess'
 
 const props = defineProps<{ source: 'computer' | 'board' }>()
 const archive = useGameArchiveStore()
@@ -18,7 +18,7 @@ const deleteOpen = computed({
   },
 })
 function deleteGame(): void {
-  if (pendingDelete.value) archive.remove(pendingDelete.value.id)
+  if (pendingDelete.value) void archive.remove(pendingDelete.value.id)
   pendingDelete.value = null
   page.value = Math.max(1, Math.min(page.value, Math.ceil(games.value.length / 20)))
 }

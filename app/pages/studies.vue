@@ -4,8 +4,8 @@ import { useLocalStorage } from '@vueuse/core'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore, type SavedStudy } from '../stores/studies'
-import { treeFromPgn } from '../utils/analysisTree'
-import { summarizeStudy } from '../utils/studies'
+import { treeFromPgn } from '../../src/shared/analysisTree'
+import { summarizeStudy } from '../../src/shared/studies'
 import { parsePgn, makePgn } from 'chessops/pgn'
 import StudyCard from '../components/StudyCard.vue'
 import { useLichessStudiesStore } from '../stores/lichessStudies'
@@ -51,9 +51,10 @@ const uploading = ref('')
 /* ── Opening: never silently throw away an unsaved board ── */
 const pending = ref<(() => void) | null>(null)
 const unsavedBoard = computed(() => !analysis.study && analysis.root.children.length > 0)
-function guard(action: () => void): void {
-  if (unsavedBoard.value) pending.value = action
-  else action()
+function guard(action: () => void | Promise<void>): void {
+  const run = (): void => void action()
+  if (unsavedBoard.value) pending.value = run
+  else run()
 }
 function open(study: SavedStudy, chapterId?: string): void {
   if (analysis.studyId === study.id && (!chapterId || analysis.studyChapterId === chapterId))
@@ -63,10 +64,10 @@ function open(study: SavedStudy, chapterId?: string): void {
   })
 }
 function create(): void {
-  guard(() => {
+  guard(async () => {
     analysis.load()
     try {
-      analysis.saveAsStudy(library.freshName())
+      await analysis.saveAsStudy(library.freshName())
       app.selectPage('analysis')
     } catch (cause) {
       console.warn('[studies] Could not save study:', cause)
@@ -82,22 +83,37 @@ function startRename(study: SavedStudy): void {
   renaming.value = study
   newName.value = study.name
 }
+const failed = (what: string) => (cause: unknown) => {
+  console.warn(`[studies] Could not ${what}:`, cause)
+  toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })
+}
 function rename(): void {
-  if (renaming.value && newName.value.trim()) library.rename(renaming.value.id, newName.value)
+  if (renaming.value && newName.value.trim())
+    library.rename(renaming.value.id, newName.value).catch(failed('rename study'))
   renaming.value = null
 }
-function remove(study: SavedStudy): void {
-  const removed = library.remove(study.id)
+async function remove(study: SavedStudy): Promise<void> {
+  let removed
+  try {
+    removed = await library.remove(study.id)
+  } catch (cause) {
+    console.warn('[studies] Could not delete study:', cause)
+    toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })
+    return
+  }
   if (!removed) return
+  const undo = removed
   toast.add({
     title: `Deleted “${removed.name}”`,
     icon: 'i-lucide-trash-2',
-    actions: [{ label: 'Undo', onClick: () => library.restore(removed) }],
+    actions: [
+      { label: 'Undo', onClick: () => void library.restore(undo).catch(failed('restore study')) },
+    ],
   })
 }
-function duplicate(study: SavedStudy): void {
+async function duplicate(study: SavedStudy): Promise<void> {
   try {
-    library.duplicate(study.id)
+    await library.duplicate(study.id)
   } catch (cause) {
     console.warn('[studies] Could not duplicate study:', cause)
     toast.add({ title: String(cause), color: 'error' })
@@ -167,7 +183,7 @@ function startImport(): void {
   importError.value = ''
   importOpen.value = true
 }
-function runImport(): void {
+async function runImport(): Promise<void> {
   const games = parsePgn(importText.value.trim())
   const chapters = games.map((game, index) => ({
     name: game.headers.get('ChapterName') ?? `Chapter ${index + 1}`,
@@ -190,7 +206,7 @@ function runImport(): void {
       ? headers.Event
       : library.freshName('Imported study')
   try {
-    const id = library.saveChapters(importName.value.trim() || fallback, chapters)
+    const id = await library.saveChapters(importName.value.trim() || fallback, chapters)
     importOpen.value = false
     const study = library.items.find((item) => item.id === id)
     toast.add({
@@ -217,16 +233,11 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
     })
     return
   }
-  analysis.flushStudy()
-  study = library.items.find((item) => item.id === study.id) ?? study
   uploading.value = study.id
   try {
-    const games = study.chapters.map((chapter) => {
-      const game = parsePgn(chapter.pgn)[0]!
-      game.headers.set('ChapterName', chapter.name)
-      return makePgn(game)
-    })
-    const pgn = games.join('\n\n')
+    await analysis.flushStudy()
+    study = library.items.find((item) => item.id === study.id) ?? study
+    const pgn = library.documentPgn(study)
     const cloud = study.cloud
     const linked =
       !copy && !cloud?.structureChanged && cloud?.account.toLowerCase() === account.toLowerCase()
@@ -245,7 +256,7 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
       : await window.kchess.lichessStudyChapters(account, result.id)
     if ('needsReconnect' in chapters)
       throw new Error('Uploaded, but study access needs reconnection.')
-    library.markCloud(
+    await library.markCloud(
       study.id,
       account,
       linked ? cloud!.id : (result as { id: string }).id,

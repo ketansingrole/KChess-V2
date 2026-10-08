@@ -6,7 +6,7 @@ import SquareColorTrainer from '../../app/components/SquareColorTrainer.vue'
 import { useLocalGameStore } from '../../app/stores/local'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useKChessStore } from '../../app/stores/kchess'
-import { squareColor, type Square } from '../../app/utils/coordinates'
+import { squareColor, type Square } from '../../src/shared/coordinates'
 import { desktop, componentStubs } from './fixtures'
 import type { RunInput } from '../../src/shared/types'
 

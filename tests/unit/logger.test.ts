@@ -8,9 +8,9 @@ import {
   logWarn,
   truncateForLog,
   uciCommandName,
-} from '../../src/main/logger'
+} from '../../src/core/logger'
 import { LichessError } from '../../src/shared/lichessError'
-import { SearchCancelled } from '../../src/main/uci'
+import { SearchCancelled } from '../../src/core/uci'
 
 afterEach(() => {
   vi.restoreAllMocks()

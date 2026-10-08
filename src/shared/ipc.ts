@@ -1,39 +1,35 @@
-import type {
-  BroadcastUpdate,
-  WatchFrame,
-  WatchState,
-  ChallengeInfo,
-  LobbyState,
-  AnalysisUpdate,
-  AppUpdateStatus,
-  DesktopApi,
-  OnlineEvent,
-  OnlineConnection,
-  PuzzleDbProgress,
-  ReviewStatus,
-  ReviewUpdate,
-  VoiceModelProgress,
-} from './types'
+import type { CoreEvents } from './core'
+import type { AppUpdateStatus, DesktopApi, VoiceModelProgress } from './types'
 
-export interface IpcEvents {
-  'online:state': OnlineConnection
-  'online:event': OnlineEvent
-  'online:error': string
+/** Core events the shell handles itself instead of forwarding. */
+type ShellHandledCoreEvent = 'challenge:received' | 'settings:saved'
+export type ForwardedCoreEvent = Exclude<keyof CoreEvents, ShellHandledCoreEvent>
+
+export interface IpcEvents extends Pick<CoreEvents, ForwardedCoreEvent> {
   'notify:alert': { title: string; body: string }
-  'puzzledb:progress': PuzzleDbProgress
   'app:update': AppUpdateStatus
   'voice:model-progress': VoiceModelProgress
   'window:maximized-changed': { maximized: boolean }
-  'engine:analysis': AnalysisUpdate
-  'review:update': ReviewUpdate
-  'review:status': ReviewStatus
-  'challenges:update': ChallengeInfo[]
-  'online:lobby': LobbyState
-  'online:ongoing-changed': null
-  'watch:state': WatchState
-  'watch:frame': WatchFrame
-  'watch:broadcast': BroadcastUpdate
 }
+
+const forwarded: Record<ForwardedCoreEvent, true> = {
+  'online:state': true,
+  'online:event': true,
+  'online:error': true,
+  'puzzledb:progress': true,
+  'engine:analysis': true,
+  'review:update': true,
+  'review:status': true,
+  'challenges:update': true,
+  'online:lobby': true,
+  'online:ongoing-changed': true,
+  'watch:state': true,
+  'watch:frame': true,
+  'watch:broadcast': true,
+}
+/** Core events the shell relays to the renderer unchanged. */
+export const FORWARDED_CORE_EVENTS = Object.keys(forwarded) as ForwardedCoreEvent[]
+
 export const IPC_EVENTS = {
   onlineState: 'online:state',
   online: 'online:event',
@@ -185,6 +181,17 @@ export const IPC_CHANNELS = {
   voiceHistory: 'voice:log',
   clearVoiceHistory: 'voice:log-clear',
   exportVoiceHistory: 'voice:log-export',
+  library: 'library:load',
+  importLibrary: 'library:import',
+  studyCommand: 'library:study',
+  saveArchivedGame: 'library:game-save',
+  removeArchivedGame: 'library:game-remove',
+  addMistakes: 'library:mistakes-add',
+  answerMistake: 'library:mistake-answer',
+  saveSession: 'library:session-save',
+  joinedTournaments: 'library:tournaments-joined',
+  recordRepertoireMiss: 'library:repertoire-miss',
+  clearRepertoireMisses: 'library:repertoire-clear',
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
   windowClose: 'window:close',

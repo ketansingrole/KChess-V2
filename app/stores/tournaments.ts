@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
 import type {
   NewArena,
   TournamentDetail,
@@ -9,16 +8,8 @@ import type {
   TournamentSystem,
 } from '../../src/shared/types'
 import { useKChessStore } from './kchess'
-
-/** Tournaments you have joined from KChess, by `system:id`, kept on this device. */
-interface Joined {
-  system: TournamentSystem
-  id: string
-  account: string
-  name: string
-  /** Stop keeping the event stream open for it after this time. */
-  until: number
-}
+import { initialLibrary } from '../utils/library'
+import type { JoinedTournament } from '../../src/shared/library'
 
 export const useTournamentStore = defineStore('tournaments', () => {
   const app = useKChessStore()
@@ -29,7 +20,8 @@ export const useTournamentStore = defineStore('tournaments', () => {
   const detail = ref<TournamentDetail | null>(null)
   const detailError = ref('')
   const needsReconnect = ref(false)
-  const stored = useLocalStorage<Joined[]>('kchess:tournaments-joined', [])
+  /** Tournaments joined from KChess, as the core keeps them. */
+  const stored = ref<JoinedTournament[]>(initialLibrary().joinedTournaments)
   const joined = computed(() => stored.value.filter((entry) => entry.until > Date.now()))
   /** A tournament is under way for an account: pairings must be able to arrive. */
   const active = computed(() => joined.value.length > 0)
@@ -64,9 +56,8 @@ export const useTournamentStore = defineStore('tournaments', () => {
       const next = await window.kchess.tournament(system, id, app.activeOnlineAccount, page.value)
       if (request !== detailRequest) return
       detail.value = next
-      // An arena says whether you are in it; forget it when it is over or you left.
-      if (system === 'arena' && (next.status === 'finished' || !next.me || next.me.withdraw))
-        forget(system, id)
+      // The core forgets an arena that is over or that you left.
+      if (isJoined(system, id)) await reloadJoined()
     } catch (cause) {
       if (request === detailRequest) {
         console.warn('[tournaments] loading tournament failed:', cause)
@@ -79,24 +70,12 @@ export const useTournamentStore = defineStore('tournaments', () => {
     detail.value = null
     detailRequest++
   }
-  function remember(
-    summary: Pick<TournamentSummary, 'system' | 'id' | 'name'>,
-    ends: number,
-  ): void {
-    const key = `${summary.system}:${summary.id}`
-    stored.value = [
-      ...stored.value.filter((entry) => `${entry.system}:${entry.id}` !== key),
-      {
-        system: summary.system,
-        id: summary.id,
-        name: summary.name,
-        account: app.activeOnlineAccount,
-        until: ends,
-      },
-    ]
-  }
-  function forget(system: TournamentSystem, id: string): void {
-    stored.value = stored.value.filter((entry) => !(entry.system === system && entry.id === id))
+  async function reloadJoined(): Promise<void> {
+    try {
+      stored.value = await window.kchess.joinedTournaments()
+    } catch (cause) {
+      console.warn('[tournaments] loading joined tournaments failed:', cause)
+    }
   }
   function isJoined(system: TournamentSystem, id: string): boolean {
     return joined.value.some((entry) => entry.system === system && entry.id === id)
@@ -111,8 +90,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
       needsReconnect.value = true
       return false
     }
-    // Arenas end at `finishesAt`; Swiss events have no fixed end, so allow a day.
-    remember(summary, summary.finishesAt ?? Date.now() + 86_400_000)
+    await reloadJoined()
     app.notifyInfo(
       summary.system === 'arena'
         ? `Joined ${summary.name}. Games open here automatically when you are paired.`
@@ -130,7 +108,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
       needsReconnect.value = true
       return
     }
-    forget(summary.system, summary.id)
+    await reloadJoined()
     if (selected.value?.id === summary.id) void open(summary.system, summary.id)
   }
   /** Creates an arena run by the active account, then shows it. */

@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
 import type { Key } from '@lichess-org/chessground/types'
 import type { TournamentGame, TournamentSystem } from '../../src/shared/types'
-import { formatClock } from '../utils/clock'
+import { formatClock } from '../../src/shared/clock'
 import { useTournamentStore } from '../stores/tournaments'
 import { useWatchStore } from '../stores/watch'
 

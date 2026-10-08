@@ -13,7 +13,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
@@ -21,13 +21,15 @@ import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { pickStockfishAsset, type ReleaseAsset } from './stockfishAsset.ts'
 import { logDebug } from './logger.ts'
+import { platform } from './platform.ts'
 
 const execFileAsync = promisify(execFile)
 
 /** The Stockfish KChess downloads and owns; the only engine directory KChess ever deletes. */
-export const MANAGED_DIR = join(homedir(), '.kchess/engines/stockfish/current')
+export const managedDir = (): string =>
+  platform().managedEngineDir ?? join(platform().dataDir, 'engines/stockfish/current')
 const EXECUTABLE = process.platform === 'win32' ? 'stockfish.exe' : 'stockfish'
-export const MANAGED_PATH = join(MANAGED_DIR, EXECUTABLE)
+export const managedPath = (): string => join(managedDir(), EXECUTABLE)
 const VERSION_FILE = 'VERSION'
 const RELEASE_URL = 'https://api.github.com/repos/official-stockfish/Stockfish/releases/latest'
 const MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
@@ -48,7 +50,7 @@ export interface ManagedLocation {
   replace?: (commit: () => Promise<void>) => Promise<void>
 }
 
-export async function managedEngine(dir = MANAGED_DIR): Promise<ManagedEngine> {
+export async function managedEngine(dir = managedDir()): Promise<ManagedEngine> {
   const path = join(dir, EXECUTABLE)
   try {
     if (!(await stat(path)).isFile()) return { installed: false, path }
@@ -83,7 +85,7 @@ function mutate<T>(dir: string, action: () => Promise<T>): Promise<T> {
 
 /** Remove the downloaded engine. Bundled and user-picked engines are never touched. */
 export async function deleteManagedEngine(
-  dir = MANAGED_DIR,
+  dir = managedDir(),
   replace?: ManagedLocation['replace'],
 ): Promise<void> {
   await mutate(dir, () => {
@@ -120,12 +122,12 @@ export interface InstallResult extends ManagedEngine {
  * installed engine is already that version.
  */
 export function installManagedEngine(location: ManagedLocation = {}): Promise<InstallResult> {
-  return mutate(location.dir ?? MANAGED_DIR, () => install(location))
+  return mutate(location.dir ?? managedDir(), () => install(location))
 }
 async function install(location: ManagedLocation): Promise<InstallResult> {
-  const dir = location.dir ?? MANAGED_DIR
+  const dir = location.dir ?? managedDir()
   const releaseResponse = await fetch(location.releaseUrl ?? RELEASE_URL, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'KChess-Electron' },
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'KChess' },
     signal: AbortSignal.timeout(30_000),
   })
   if (!releaseResponse.ok)

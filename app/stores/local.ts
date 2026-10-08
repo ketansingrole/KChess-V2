@@ -2,7 +2,9 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { INITIAL_FEN } from 'chessops/fen'
-import { readSession, persistSession } from '../utils/sessionPersistence'
+import { initialLibrary, persistSession } from '../utils/library'
+import type { LocalClock } from '../../src/shared/library'
+import { boardResult, pgnResult, timeoutWinner } from '../../src/shared/gameResult'
 import {
   checkColor,
   lastMoveKeys,
@@ -10,75 +12,18 @@ import {
   setupDrawReason,
   setupPositionAfter,
   setupSanHistory,
-} from '../utils/chess'
-import { UCI_MOVE } from '../../src/shared/patterns'
-import {
-  isVariant,
-  replaySetup,
-  STANDARD_SETUP,
-  type GameSetup,
-  type Variant,
-} from '../../src/shared/variant'
+} from '../../src/shared/chess'
+import { replaySetup, STANDARD_SETUP, type GameSetup } from '../../src/shared/variant'
 import { play, playMoveSound } from '../utils/sound'
 
 import { useGameArchive } from './gameArchive'
 
 type Color = 'white' | 'black'
-/** Each side's clock: minutes and seconds added after every move (sides may differ, for odds). */
-export interface LocalClock {
-  white: { minutes: number; increment: number }
-  black: { minutes: number; increment: number }
-}
-
-const VARIANT_WIN: Partial<Record<Variant, string>> = {
-  kingOfTheHill: 'King reached the centre',
-  threeCheck: 'Third check',
-  antichess: 'Lost every piece',
-  atomic: 'King exploded',
-  horde: 'Horde captured',
-  racingKings: 'King reached the eighth rank',
-}
+export type { LocalClock }
 
 /** Two people at one computer, and a stand-alone chess clock for a real board. */
 export const useLocalGameStore = defineStore('local', () => {
-  const saved = readSession('kchess:local:v1', (raw) => {
-    const value = raw as {
-      version?: unknown
-      setup?: { variant?: unknown; fen?: unknown }
-      moves?: unknown
-      clock?: LocalClock | null
-      times?: { white?: unknown; black?: unknown } | null
-      result?: { winner?: unknown; reason?: unknown } | null
-    }
-    if (!value || value.version !== 1 || !value.setup || !isVariant(value.setup.variant)) return
-    if (typeof value.setup.fen !== 'string' || value.setup.fen.length > 120) return
-    const setup = { variant: value.setup.variant, fen: value.setup.fen }
-    if (
-      !Array.isArray(value.moves) ||
-      value.moves.length > 1024 ||
-      !value.moves.every((m) => typeof m === 'string' && UCI_MOVE.test(m)) ||
-      replaySetup(setup, value.moves)?.played.length !== value.moves.length
-    )
-      return
-    const ms = (n: unknown): number =>
-      typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0
-    return {
-      setup,
-      moves: value.moves as string[],
-      clock: value.clock ?? null,
-      times: value.times ? { white: ms(value.times.white), black: ms(value.times.black) } : null,
-      result:
-        value.result && typeof value.result.reason === 'string'
-          ? {
-              winner:
-                value.result.winner === 'white' || value.result.winner === 'black'
-                  ? (value.result.winner as Color)
-                  : undefined,
-              reason: value.result.reason.slice(0, 80),
-            }
-          : null,
-    }
-  })
+  const saved = initialLibrary().sessions.local
   const setup = ref<GameSetup>(saved?.setup ?? STANDARD_SETUP)
   const moves = ref<string[]>(saved?.moves ?? [])
   const ply = ref<number | null>(null)
@@ -99,8 +44,7 @@ export const useLocalGameStore = defineStore('local', () => {
   })
   const fixedOrientation = ref<Color>('white')
   let turnStarted = performance.now()
-  const saveError = persistSession('kchess:local:v1', () => ({
-    version: 1,
+  const saveError = persistSession('local', () => ({
     setup: setup.value,
     moves: moves.value,
     clock: clock.value,
@@ -122,20 +66,7 @@ export const useLocalGameStore = defineStore('local', () => {
   const draw = computed(() => setupDrawReason(setup.value, moves.value))
   const result = computed<{ winner?: Color; reason: string } | null>(() => {
     if (declared.value) return declared.value
-    const pos = position.value
-    const outcome = pos.outcome()
-    if (outcome) {
-      const reason = pos.isCheckmate()
-        ? 'Checkmate'
-        : pos.isStalemate()
-          ? 'Stalemate'
-          : pos.isVariantEnd()
-            ? (VARIANT_WIN[setup.value.variant] ?? 'Game over')
-            : 'Insufficient material'
-      return { winner: outcome.winner, reason }
-    }
-    if (draw.value) return { reason: draw.value }
-    return null
+    return boardResult(position.value, setup.value.variant, draw.value)
   })
   const over = computed(() => Boolean(result.value))
   const atLive = computed(() => shownPly.value === moves.value.length)
@@ -150,13 +81,7 @@ export const useLocalGameStore = defineStore('local', () => {
       moves: [...moves.value],
       white: 'White',
       black: 'Black',
-      result: result.value
-        ? result.value.winner === 'white'
-          ? '1-0'
-          : result.value.winner === 'black'
-            ? '0-1'
-            : '1/2-1/2'
-        : '*',
+      result: pgnResult(Boolean(result.value), result.value?.winner),
       reason: result.value?.reason ?? 'In progress',
       timeControl: clock.value
         ? `${clock.value.white.minutes * 60}+${clock.value.white.increment} / ${clock.value.black.minutes * 60}+${clock.value.black.increment}`
@@ -179,10 +104,10 @@ export const useLocalGameStore = defineStore('local', () => {
     const turn = position.value.turn
     if (remaining(turn, at) > 0) return false
     times.value = { ...times.value!, [turn]: 0 }
-    const winner = turn === 'white' ? 'black' : 'white'
-    declared.value = position.value.hasInsufficientMaterial(winner)
-      ? { reason: 'Time out, but mate was impossible' }
-      : { winner, reason: 'Time out' }
+    const winner = timeoutWinner(position.value, turn)
+    declared.value = winner
+      ? { winner, reason: 'Time out' }
+      : { reason: 'Time out, but mate was impossible' }
     void play('lowTime')
     return true
   }

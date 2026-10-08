@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { moveGlyph, moveNumber, pathOf, movesOf, type TreeNode } from '../utils/analysisTree'
+import {
+  moveGlyph,
+  moveNumber,
+  pathOf,
+  movesOf,
+  type TreeNode,
+} from '../../src/shared/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
 import type { Judgment } from '../../src/shared/types'
 

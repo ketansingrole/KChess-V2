@@ -48,10 +48,19 @@ import {
   assertVoiceLimit,
   assertVoiceUpdate,
   assertWatchTarget,
+  assertLookupOptions,
 } from '../shared/validate'
-import { oauthLook } from './oauthPage'
-import { assertLookupOptions } from './positionLookup'
-import { TV_CHANNEL_KEYS } from './spectate'
+import {
+  assertArchivedGame,
+  assertLegacyDocuments,
+  assertLibraryId,
+  assertRepertoireKey,
+  assertSessionKind,
+  assertSide,
+  assertStudyCommand,
+} from '../shared/library'
+import { oauthLook } from '../shared/oauthLook'
+import { TV_CHANNEL_KEYS } from '../shared/tvChannels'
 
 type Check = (value: unknown) => unknown
 type Checks<T extends unknown[]> = { [P in keyof T]-?: Check }
@@ -82,6 +91,7 @@ const pgn = (value: unknown) =>
     ),
     value,
   )
+const sessionObject = (value: unknown) => v.parse(v.looseObject({}), value)
 const timingName = (value: unknown) => v.parse(v.picklist(PERFORMANCE_NAMES), value)
 const timingValue = (value: unknown) =>
   v.parse(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(300_000)), value)
@@ -219,6 +229,17 @@ export const IPC_CONTRACTS = {
   updateVoiceAttempt: { min: 2, checks: [assertVoiceId, assertVoiceUpdate] },
   voiceHistory: { min: 1, checks: [assertVoiceLimit] },
   clearVoiceHistory: { min: 0, checks: [] },
+  library: { min: 0, checks: [] },
+  importLibrary: { min: 1, checks: [assertLegacyDocuments] },
+  studyCommand: { min: 1, checks: [assertStudyCommand] },
+  saveArchivedGame: { min: 1, checks: [assertArchivedGame] },
+  removeArchivedGame: { min: 1, checks: [assertLibraryId] },
+  addMistakes: { min: 1, checks: [assertReviewKey, optional(assertSide)] },
+  answerMistake: { min: 2, checks: [assertLibraryId, boolean] },
+  saveSession: { min: 2, checks: [assertSessionKind, sessionObject] },
+  joinedTournaments: { min: 0, checks: [] },
+  recordRepertoireMiss: { min: 2, checks: [assertRepertoireKey, fen] },
+  clearRepertoireMisses: { min: 1, checks: [assertRepertoireKey] },
   exportVoiceHistory: { min: 0, checks: [] },
 } satisfies Contracts
 

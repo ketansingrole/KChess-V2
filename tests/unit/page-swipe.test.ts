@@ -12,7 +12,7 @@ import {
 } from '../../app/utils/swipeBack'
 import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
 import { assertSettings } from '../../src/shared/validate'
-import { migrate, MIGRATIONS } from '../../src/main/migrations'
+import { migrate, MIGRATIONS } from '../../src/core/migrations'
 
 describe('trackpad page history', () => {
   let dispose: () => void

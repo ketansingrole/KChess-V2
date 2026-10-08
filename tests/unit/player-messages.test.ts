@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { OAUTH_SCOPES, recentGames, sendMessage } from '../../src/main/lichess'
+import { OAUTH_SCOPES, recentGames, sendMessage } from '../../src/core/lichess'
 import { LichessError } from '../../src/shared/lichessError'
 import { assertMessageText } from '../../src/shared/validate'
 
@@ -10,18 +10,17 @@ const mocks = vi.hoisted(() => ({
   getToken: vi.fn(async (): Promise<string | null> => 'Alice-token'),
   readLines: vi.fn(async (_stream: unknown, _onLine: (line: string) => void): Promise<void> => {}),
 }))
-vi.mock('electron', () => ({ shell: {} }))
 vi.mock('openapi-fetch', () => ({ default: () => mocks }))
-vi.mock('../../src/main/store', () => ({
+vi.mock('../../src/core/store', () => ({
   loadData: async () => ({ accounts: [{ username: 'Alice', connected: true }] }),
   getToken: mocks.getToken,
 }))
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/usage', () => ({
   meteredFetch: vi.fn(),
   attributeTo: vi.fn(),
   withUsage: (_account: string, _kind: string, fn: () => unknown) => fn(),
 }))
-vi.mock('../../src/main/ndjson', () => ({ readLines: mocks.readLines }))
+vi.mock('../../src/core/ndjson', () => ({ readLines: mocks.readLines }))
 
 beforeEach(() => {
   mocks.GET.mockReset()

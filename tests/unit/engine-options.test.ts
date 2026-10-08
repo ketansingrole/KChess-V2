@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcessByStdio } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
-import { UciController, ensureEngineOptions } from '../../src/main/uci'
+import { UciController, ensureEngineOptions } from '../../src/core/uci'
 
 function fake() {
   const written: string[] = []

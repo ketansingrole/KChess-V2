@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { client } from '../../src/main/lichess'
+import { client } from '../../src/core/lichess'
 import { INITIAL_FEN, makeFen } from 'chessops/fen'
 import {
   alignTvMoves,
@@ -9,11 +9,11 @@ import {
   displayFen,
   parseGameDetails,
   parseTvGame,
-} from '../../src/main/spectate'
+} from '../../src/core/spectate'
 import { STANDARD_SETUP, replaySetup } from '../../src/shared/variant'
-import { materialBalance } from '../../app/utils/material'
-import { splitPgn } from '../../src/main/studies'
-import { PositionLookupService } from '../../src/main/positionLookup'
+import { materialBalance } from '../../src/shared/material'
+import { splitPgn } from '../../src/core/studies'
+import { PositionLookupService } from '../../src/core/positionLookup'
 import type { PositionLookup } from '../../src/shared/types'
 import {
   assertBroadcastQuery,
@@ -22,12 +22,11 @@ import {
   assertWatchTarget,
 } from '../../src/shared/validate'
 
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/usage', () => ({
   withUsage: (_account: string, _kind: string, work: () => unknown) => work(),
 }))
 
-vi.mock('electron', () => ({ shell: {} }))
-vi.mock('../../src/main/store', () => ({ getToken: vi.fn() }))
+vi.mock('../../src/core/store', () => ({ getToken: vi.fn() }))
 
 const pgn = `[Event "Test Open"]
 [White "Alpha"]

@@ -10,7 +10,7 @@ import {
 } from '../../src/shared/timeControl'
 import { CORRESPONDENCE_DAYS } from '../../src/shared/types'
 import { VARIANT_HINTS, VARIANT_LABELS, VARIANTS } from '../../src/shared/variant'
-import { setupPgn } from '../utils/chess'
+import { setupPgn } from '../../src/shared/chess'
 import { useChallengeStore } from '../stores/challenges'
 import { useAnalysisStore } from '../stores/analysis'
 import { useTournamentStore } from '../stores/tournaments'

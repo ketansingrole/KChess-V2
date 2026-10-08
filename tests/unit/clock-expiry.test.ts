@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { seedSaved } from './libraryBackend'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { useLocalGameStore } from '../../app/stores/local'
@@ -27,7 +28,7 @@ it('computer game must reject an expired human move before the display timer run
   vi.useFakeTimers()
   let time = 0
   vi.spyOn(performance, 'now').mockImplementation(() => time)
-  localStorage.setItem(
+  seedSaved(
     'kchess:computer:v1',
     JSON.stringify({
       version: 2,
@@ -74,7 +75,7 @@ it.each([0, 3])(
     vi.useFakeTimers()
     let time = 0
     vi.spyOn(performance, 'now').mockImplementation(() => time)
-    localStorage.setItem(
+    seedSaved(
       'kchess:computer:v1',
       JSON.stringify({
         version: 2,

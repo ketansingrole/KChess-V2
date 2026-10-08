@@ -3,8 +3,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSummary } from '../../src/shared/types'
-import { ENDGAME_DRILLS, evaluateEndgame, sanFrom, type EndgameDrill } from '../utils/endgames'
-import { checkColor, destsFor, positionFromFen } from '../utils/chess'
+import {
+  ENDGAME_DRILLS,
+  evaluateEndgame,
+  sanFrom,
+  type EndgameDrill,
+} from '../../src/shared/endgames'
+import { checkColor, destsFor, positionFromFen } from '../../src/shared/chess'
 import { moveSquares } from '../../src/shared/puzzle'
 import { playMoveSound } from '../utils/sound'
 

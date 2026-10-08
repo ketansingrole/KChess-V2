@@ -14,7 +14,7 @@ import { PERF_TYPES } from '../../src/shared/types'
 import { USERNAME } from '../../src/shared/patterns'
 import { useWatchStore } from '../stores/watch'
 import { useAnalysisStore } from '../stores/analysis'
-import { mergeRatingHistories, ratingHistoryFromGames } from '../utils/ratings'
+import { mergeRatingHistories, ratingHistoryFromGames } from '../../src/shared/ratings'
 
 const online = useOnline()
 const store = useKChessStore()

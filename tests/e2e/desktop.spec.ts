@@ -1,4 +1,4 @@
-import { oauthPage } from '../../src/main/oauthPage'
+import { oauthPage } from '../../src/core/oauthPage'
 import {
   test as base,
   expect,
@@ -12,8 +12,8 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
-import { migrate } from '../../src/main/migrations'
-import { storeSample } from '../../src/main/puzzleQueries'
+import { migrate } from '../../src/core/migrations'
+import { storeSample } from '../../src/core/puzzleQueries'
 import { reviewKey, summarize } from '../../src/shared/review'
 import type { StoredReview } from '../../src/shared/types'
 
@@ -440,7 +440,7 @@ test('plays keyboard moves and restores an annotated saved study after reload @p
   await page.getByRole('button', { name: 'Save study', exact: true }).click()
   await expect(page.getByText('Study saved', { exact: true })).toBeVisible()
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem('kchess:studies:v1')))
+    .poll(() => page.evaluate(async () => JSON.stringify((await window.kchess.library()).studies)))
     .toContain('Keep this annotation.')
   await page.reload()
   const moves = page.getByRole('group', { name: 'Moves', exact: true })
@@ -1290,29 +1290,27 @@ test('quick pick switches modes, runs commands and remembers them', async ({
 test('keeps multi-chapter studies together and restores the selected chapter offline', async ({
   desktop: { page },
 }) => {
-  await page.evaluate(() => {
-    localStorage.setItem(
-      'kchess:studies:v1',
-      JSON.stringify({
-        version: 2,
-        items: [
-          {
-            id: 'offline-study',
-            name: 'Offline repertoire',
-            updatedAt: Date.now(),
-            pgn: '1. e4 e5 *',
-            chapters: [
-              { id: 'king', name: 'King pawn', pgn: '1. e4 e5 *' },
-              { id: 'queen', name: 'Queen pawn', pgn: '1. d4 {Offline notes} d5 (1... Nf6 $1) *' },
-            ],
-          },
+  await page.evaluate(async () => {
+    await window.kchess.studyCommand({
+      op: 'restore',
+      study: {
+        id: 'offline-study',
+        name: 'Offline repertoire',
+        updatedAt: Date.now(),
+        pgn: '1. e4 e5 *',
+        chapters: [
+          { id: 'king', name: 'King pawn', pgn: '1. e4 e5 *' },
+          { id: 'queen', name: 'Queen pawn', pgn: '1. d4 {Offline notes} d5 (1... Nf6 $1) *' },
         ],
-      }),
-    )
-    localStorage.setItem(
-      'kchess:analysis:v1',
-      JSON.stringify({ version: 1, pgn: '1. c4 *', path: '', orientation: 'white', study: '' }),
-    )
+      },
+    })
+    await window.kchess.saveSession('analysis', {
+      pgn: '1. c4 *',
+      path: '',
+      orientation: 'white',
+      study: '',
+      chapter: '',
+    })
   })
   await page.reload()
   await navigate(page, 'Studies')
@@ -1328,7 +1326,7 @@ test('keeps multi-chapter studies together and restores the selected chapter off
   await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText('Queen pawn')
   await expect
     .poll(() =>
-      page.evaluate(() => JSON.parse(localStorage.getItem('kchess:analysis:v1')!).chapter),
+      page.evaluate(async () => (await window.kchess.library()).sessions.analysis?.chapter),
     )
     .toBe('queen')
   await expect(page.getByRole('textbox', { name: 'Chapter name', exact: true })).toHaveCount(0)
@@ -1344,9 +1342,7 @@ test('keeps multi-chapter studies together and restores the selected chapter off
   await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText('Queen pawn')
   await expect
     .poll(() =>
-      page.evaluate(
-        () => JSON.parse(localStorage.getItem('kchess:studies:v1')!).items[0].chapters.length,
-      ),
+      page.evaluate(async () => (await window.kchess.library()).studies[0]!.chapters.length),
     )
     .toBe(2)
   await page.screenshot({ path: test.info().outputPath('offline-study-chapters.png') })

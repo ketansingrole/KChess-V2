@@ -1,14 +1,14 @@
 import { chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { app } from 'electron'
 import { logDebug } from './logger'
 import { migrate } from './migrations'
+import { platform } from './platform'
 
 let db: DatabaseSync | null = null
 
 export function dbPath(): string {
-  return join(app.getPath('userData'), 'kchess.db')
+  return join(platform().dataDir, 'kchess.db')
 }
 
 export function getDb(): DatabaseSync {

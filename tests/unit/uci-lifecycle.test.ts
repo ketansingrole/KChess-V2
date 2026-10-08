@@ -8,8 +8,8 @@ import {
   SearchCancelled,
   withEngineMaintenance,
   assertEngineAvailable,
-} from '../../src/main/uci'
-import { acquireEngine } from '../../src/main/engineScheduler'
+} from '../../src/core/uci'
+import { acquireEngine } from '../../src/core/engineScheduler'
 function fake(reply: (command: string) => string | undefined) {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -154,7 +154,7 @@ it('retains the executable when an engine will not exit before the maintenance d
 it.each(['success', 'failure', 'cancel'] as const)(
   'releases the shared engine lease after %s',
   async (outcome) => {
-    const { withEngineLease } = await import('../../src/main/engineScheduler')
+    const { withEngineLease } = await import('../../src/core/engineScheduler')
     const controller = new AbortController()
     const work = withEngineLease(
       1,

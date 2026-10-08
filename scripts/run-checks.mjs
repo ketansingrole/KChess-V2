@@ -70,6 +70,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ['notices', ['run', 'check:notices']],
     ['types', ['run', 'typecheck']],
     ['smoke', ['run', 'test:smoke']],
+    ['core', ['run', 'test:core']],
     ['unit', ['run', 'test:unit']],
     ['performance', ['run', 'check:performance']],
   ])

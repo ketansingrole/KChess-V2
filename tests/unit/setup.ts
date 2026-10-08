@@ -3,6 +3,8 @@ import { createPinia, setActivePinia, storeToRefs, getActivePinia, disposePinia 
 import { useKChessStore } from '../../app/stores/kchess'
 import { usePuzzleStore } from '../../app/stores/puzzles'
 import { useUsageStore } from '../../app/stores/usage'
+import type { DesktopApi } from '../../src/shared/types'
+import { detachedLibraryApi, resetLibrary } from './testLibrary'
 
 vi.mock('../../app/utils/sound', () => ({
   configure: vi.fn(),
@@ -12,6 +14,8 @@ vi.mock('../../app/utils/sound', () => ({
 
 beforeEach(() => {
   localStorage.clear()
+  resetLibrary()
+  window.kchess = detachedLibraryApi() as unknown as DesktopApi
   setActivePinia(createPinia())
   vi.stubGlobal('useRoute', () => ({ path: '/online' }))
   vi.stubGlobal('useHead', vi.fn())

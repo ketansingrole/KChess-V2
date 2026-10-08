@@ -25,14 +25,15 @@ function edit(mode: 'add' | 'rename'): void {
   error.value = ''
   editing.value = mode
 }
-function save(): void {
+async function save(): Promise<void> {
   if (!study.value || !name.value.trim()) return
+  const studyId = study.value.id
   try {
-    analysis.flushStudy()
+    await analysis.flushStudy()
     if (editing.value === 'add') {
-      const id = library.addChapter(study.value.id, name.value)
-      analysis.openStudy(study.value.id, id)
-    } else library.renameChapter(study.value.id, analysis.studyChapterId, name.value)
+      const id = await library.addChapter(studyId, name.value)
+      analysis.openStudy(studyId, id)
+    } else await library.renameChapter(studyId, analysis.studyChapterId, name.value)
     editing.value = null
     error.value = ''
   } catch (cause) {
@@ -40,30 +41,30 @@ function save(): void {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
-function duplicate(): void {
+async function duplicate(): Promise<void> {
   if (!study.value) return
+  const studyId = study.value.id
   try {
-    analysis.flushStudy()
-    const id = library.duplicateChapter(study.value.id, analysis.studyChapterId)
-    analysis.openStudy(study.value.id, id)
+    await analysis.flushStudy()
+    const id = await library.duplicateChapter(studyId, analysis.studyChapterId)
+    analysis.openStudy(studyId, id)
   } catch (cause) {
     console.warn('[study-chapters] Could not duplicate chapter:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
-function remove(): void {
+async function remove(): Promise<void> {
   const id = study.value?.id
   const chapterId = analysis.studyChapterId
   if (!id) return
   try {
     // Detach the old board before deleting, so pending autosave cannot resurrect its chapter.
-    if (!analysis.closeStudy()) {
+    if (!(await analysis.closeStudy())) {
       error.value = analysis.studySaveError
       return
     }
-    const next = library.removeChapter(id, chapterId)
+    const next = await library.removeChapter(id, chapterId)
     analysis.openStudy(id, next)
-    library.flush()
   } catch (cause) {
     analysis.openStudy(id, chapterId)
     console.warn('[study-chapters] Could not delete chapter:', cause)

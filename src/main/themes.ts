@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { logDebug, logWarn } from './logger'
+import { logDebug, logWarn } from '../core/logger'
 import { assertTheme } from '../shared/validate'
 import type { AppTheme, CustomThemeReport } from '../shared/types'
 

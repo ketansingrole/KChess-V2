@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
-import type { Key } from '@lichess-org/chessground/types'
+import type { SquareName } from 'chessops/types'
 import type { RunSaved, RunSummary } from '../../src/shared/types'
-import { knightChallenge, knightFen, knightMoves } from '../utils/knight'
-import type { Square } from '../utils/coordinates'
+import { knightChallenge, knightFen, knightMoves } from '../../src/shared/knight'
+import type { Square } from '../../src/shared/coordinates'
 import { useCountdown } from '../utils/countdown'
-import { formatRunClock } from '../utils/rush'
+import { formatRunClock } from '../../src/shared/rush'
 import { playMoveSound } from '../utils/sound'
 
 /**
@@ -38,7 +38,10 @@ const countdown = useCountdown(60_000, () => void finish())
 const bestScore = computed(() => summary.value?.best[level.value]?.score)
 const fen = computed(() => knightFen(knight.value))
 const dests = computed(
-  () => new Map<Key, Key[]>([[knight.value as Key, knightMoves(knight.value) as Key[]]]),
+  () =>
+    new Map<SquareName, SquareName[]>([
+      [knight.value as SquareName, knightMoves(knight.value) as SquareName[]],
+    ]),
 )
 const shapes = computed<DrawShape[]>(() =>
   stage.value === 'running' ? [{ orig: goal.value, brush: 'green' }] : [],

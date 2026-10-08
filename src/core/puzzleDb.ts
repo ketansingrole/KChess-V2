@@ -1,8 +1,8 @@
 import { Worker } from 'node:worker_threads'
 import { join } from 'node:path'
-import { app } from 'electron'
 import { dbPath, getDb } from './db'
 import { errorSummary, logError, logWarn } from './logger'
+import { platform } from './platform'
 import { recordUsage } from './usage'
 import type {
   LocalLadderQuery,
@@ -23,9 +23,12 @@ let cancellation: Int32Array | undefined
 function service(): Worker {
   if (worker) return worker
   getDb() // Ensure legacy schema/migrations are ready before the worker reads it.
-  const self = new Worker(join(import.meta.dirname, 'puzzleWorker.js'), {
-    workerData: { path: join(app.getPath('userData'), 'puzzles.db'), legacyPath: dbPath() },
-  })
+  const self = new Worker(
+    platform().puzzleWorkerPath ?? join(import.meta.dirname, 'puzzleWorker.js'),
+    {
+      workerData: { path: join(platform().dataDir, 'puzzles.db'), legacyPath: dbPath() },
+    },
+  )
   worker = self
   const failed = (error: Error): void => {
     if (worker !== self) return

@@ -6,7 +6,7 @@ import {
   deleteManagedEngine,
   installManagedEngine,
   managedEngine,
-} from '../../src/main/managedEngine'
+} from '../../src/core/managedEngine'
 
 const exe = process.platform === 'win32' ? 'stockfish.exe' : 'stockfish'
 let dir: string

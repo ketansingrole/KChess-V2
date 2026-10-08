@@ -1,13 +1,12 @@
 import { DEFAULT_SETTINGS } from '../shared/defaultSettings'
 import { normalizeEngineLevels } from '../shared/engineLevels'
 import { registerDiagnosticSecret } from './diagnosticLog'
-import { app, safeStorage } from 'electron'
 import { readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { getDb } from './db'
 import { logDebug } from './logger'
+import { platform } from './platform'
 import { writeReview } from './reviewStore'
 import {
   PIECE_ANIMATIONS,
@@ -30,13 +29,7 @@ const defaults = DEFAULT_SETTINGS
 /** Games kept per account. */
 export const MAX_GAMES = 5000
 
-/** `safeStorage` reports "available" on Linux even with its plaintext fallback backend. */
-function encryptionAvailable(): boolean {
-  if (!safeStorage.isEncryptionAvailable()) return false
-  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
-    return false
-  return true
-}
+const encryptionAvailable = (): boolean => platform().secrets.available()
 
 /** Every persisted setting, in column order. Adding a setting means adding it here, to `Settings` and to a migration. */
 const SETTINGS_KEYS = [
@@ -303,8 +296,8 @@ async function runMigration(): Promise<void> {
 }
 
 async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
-  const dataPath = join(app.getPath('userData'), 'kchess-data.json')
-  const tokenPath = join(app.getPath('userData'), 'lichess-tokens.json')
+  const dataPath = join(platform().dataDir, 'kchess-data.json')
+  const tokenPath = join(platform().dataDir, 'lichess-tokens.json')
   interface JsonBackup {
     settings?: Partial<Settings> & { boardPreset?: string }
     accounts?: AppData['accounts']
@@ -365,8 +358,8 @@ async function migrateFromJson(database: DatabaseSync): Promise<boolean> {
 }
 
 async function migrateLegacy(database: DatabaseSync): Promise<void> {
-  if (process.platform !== 'darwin' || process.env.KCHESS_USER_DATA_DIR) return
-  const legacyPath = join(homedir(), '.kchess', 'kchess.db')
+  const legacyPath = platform().legacyDatabasePath
+  if (!legacyPath) return
   let legacy: DatabaseSync
   try {
     legacy = new DatabaseSync(legacyPath, { readOnly: true })
@@ -460,7 +453,7 @@ async function migrateLegacy(database: DatabaseSync): Promise<void> {
           'INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)',
         )
         for (const row of oldTokens)
-          insertToken.run(row.username, safeStorage.encryptString(row.token).toString('base64'))
+          insertToken.run(row.username, platform().secrets.encrypt(row.token))
       }
       database.exec('COMMIT')
     } catch (cause) {
@@ -928,7 +921,7 @@ export async function saveLogin(
   const name = assertUsername(username.trim())
   await ensureMigrated()
   if (!stillCurrent()) throw new Error('Login was cancelled by logout.')
-  const encrypted = safeStorage.encryptString(token).toString('base64')
+  const encrypted = platform().secrets.encrypt(token)
   const database = getDb()
   database.exec('BEGIN IMMEDIATE')
   try {
@@ -957,7 +950,7 @@ export async function getToken(username: string): Promise<string | null> {
     .get(username) as unknown as { encrypted: string } | undefined
   if (!row || !encryptionAvailable()) return null
   try {
-    const token = safeStorage.decryptString(Buffer.from(row.encrypted, 'base64'))
+    const token = platform().secrets.decrypt(row.encrypted)
     registerDiagnosticSecret(token)
     return token
   } catch (cause) {

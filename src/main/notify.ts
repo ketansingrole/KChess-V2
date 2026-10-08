@@ -1,7 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { app, Notification } from 'electron'
-import { logError } from './logger'
-import { getSettings } from './store'
+import { logError } from '../core/logger'
 import type {
   NotificationKind,
   NotificationRequest,
@@ -52,8 +51,9 @@ export async function notify(
   window: BrowserWindow | null,
   request: NotificationRequest,
   alert: (payload: { title: string; body: string }) => void,
+  readSettings: () => Promise<Settings>,
 ): Promise<NotificationResult> {
-  const settings = await getSettings()
+  const settings = await readSettings()
   const away = isAway(window)
   if (request.kind !== 'test') {
     if (!settings.notificationsEnabled) return { shown: false, skipped: 'disabled' }

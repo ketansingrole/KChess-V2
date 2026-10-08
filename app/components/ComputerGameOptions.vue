@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { INITIAL_FEN } from 'chessops/fen'
 import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '../../src/shared/engineLevels'
 import { chess960Fen, setupStart, type GameSetup } from '../../src/shared/variant'
-import { positionProblem } from '../utils/boardEditor'
+import { positionProblem } from '../../src/shared/boardEditor'
 
 const open = defineModel<boolean>('open', { default: false })
 const store = useKChessStore()

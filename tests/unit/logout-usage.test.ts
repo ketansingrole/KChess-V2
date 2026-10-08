@@ -1,10 +1,10 @@
 import { it, expect, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { deferred } from './fixtures'
-import { withUsage, meteredFetch, forgetUsage, flushUsage } from '../../src/main/usage'
+import { withUsage, meteredFetch, forgetUsage, flushUsage } from '../../src/core/usage'
 
 const state = vi.hoisted(() => ({ db: null as DatabaseSync | null }))
-vi.mock('../../src/main/db', () => ({ getDb: () => state.db, dbPath: () => '' }))
+vi.mock('../../src/core/db', () => ({ getDb: () => state.db, dbPath: () => '' }))
 
 it('does not restore account usage from a request that finishes after logout', async () => {
   state.db = new DatabaseSync(':memory:')

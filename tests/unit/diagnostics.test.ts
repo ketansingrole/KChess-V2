@@ -6,7 +6,7 @@ import {
   DiagnosticLog,
   redactDiagnostics,
   registerDiagnosticSecret,
-} from '../../src/main/diagnosticLog'
+} from '../../src/core/diagnosticLog'
 import { diagnosticSessionId } from '../../src/main/diagnostics'
 
 it('redacts registered secrets, Lichess tokens, headers, query parameters and home paths', () => {

@@ -223,6 +223,17 @@ const api: DesktopApi = {
   updateVoiceAttempt: (id, update) => invoke('updateVoiceAttempt', id, update),
   voiceHistory: (limit) => invoke('voiceHistory', limit),
   clearVoiceHistory: () => invoke('clearVoiceHistory'),
+  library: () => invoke('library'),
+  importLibrary: (documents) => invoke('importLibrary', documents),
+  studyCommand: (command) => invoke('studyCommand', command),
+  saveArchivedGame: (game) => invoke('saveArchivedGame', game),
+  removeArchivedGame: (id) => invoke('removeArchivedGame', id),
+  addMistakes: (reviewKey, color) => invoke('addMistakes', reviewKey, color),
+  answerMistake: (id, solved) => invoke('answerMistake', id, solved),
+  saveSession: (kind, session) => invoke('saveSession', kind, session),
+  joinedTournaments: () => invoke('joinedTournaments'),
+  recordRepertoireMiss: (key, fen) => invoke('recordRepertoireMiss', key, fen),
+  clearRepertoireMisses: (key) => invoke('clearRepertoireMisses', key),
   exportVoiceHistory: () => invoke('exportVoiceHistory'),
   onOnlineError: (callback) => {
     const listener = (_: unknown, message: string): void => callback(message)

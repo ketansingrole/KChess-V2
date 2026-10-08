@@ -3,10 +3,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { migrate, MIGRATIONS } from '../../src/main/migrations'
+import { migrate, MIGRATIONS } from '../../src/core/migrations'
 import type { LichessGame } from '../../src/shared/types'
 import { assertGamePageQuery } from '../../src/shared/validate'
-import { ratingHistoryFromGames } from '../../app/utils/ratings'
+import { ratingHistoryFromGames } from '../../src/shared/ratings'
 import {
   clearAccountData,
   gameLibraryOverview,
@@ -23,7 +23,7 @@ import {
   saveGamesPage,
   saveLogin,
   writeApiCache,
-} from '../../src/main/store'
+} from '../../src/core/store'
 import {
   cancelAccountSyncs,
   fetchLichessReviews,
@@ -31,20 +31,21 @@ import {
   invalidateLogin,
   primeProfiles,
   syncGames,
-} from '../../src/main/lichess'
-import { hasAccount, reviewSummaries } from '../../src/main/reviewStore'
-import { safeStorage } from 'electron'
+} from '../../src/core/lichess'
+import { hasAccount, reviewSummaries } from '../../src/core/reviewStore'
+import { fakeSecrets, useTestPlatform } from './corePlatform'
 
 const state = vi.hoisted(() => ({ db: null as DatabaseSync | null, fetch: vi.fn() }))
-vi.mock('electron', () => ({ shell: {}, app: {}, safeStorage: {} }))
-vi.mock('../../src/main/db', () => ({ getDb: () => state.db! }))
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/db', () => ({ getDb: () => state.db! }))
+vi.mock('../../src/core/usage', () => ({
   withUsage: (_account: string, _kind: string, fn: () => unknown) => fn(),
   attributeTo: () => {},
 }))
-vi.mock('../../src/main/requestPolicy', () => ({
+vi.mock('../../src/core/requestPolicy', () => ({
   lichessFetch: (request: Request) => state.fetch(request),
 }))
+const secrets = fakeSecrets()
+useTestPlatform({ secrets })
 
 function game(id: string, overrides: Partial<LichessGame> = {}): LichessGame {
   return {
@@ -451,18 +452,13 @@ describe('Sync cancelled by logout, removal or clearing', () => {
 
 describe('Lichess export authentication', () => {
   beforeEach(() => {
-    Object.assign(safeStorage, {
-      isEncryptionAvailable: () => true,
-      getSelectedStorageBackend: () => 'keychain',
-      decryptString: (buffer: Buffer) => buffer.toString(),
-    })
+    secrets.enabled = true
     state.db!.exec(
       `INSERT INTO tokens (username, encrypted) VALUES ('Alice', '${Buffer.from('lip_alice').toString('base64')}')`,
     )
   })
   afterEach(() => {
-    for (const key of ['isEncryptionAvailable', 'getSelectedStorageBackend', 'decryptString'])
-      delete (safeStorage as unknown as Record<string, unknown>)[key]
+    secrets.enabled = false
   })
 
   it("sends the account's own token, and none for a friend without one", async () => {
@@ -555,21 +551,10 @@ describe('No account data comes back after logout, removal or clearing', () => {
 
   describe('with OS encryption', () => {
     beforeEach(() => {
-      Object.assign(safeStorage, {
-        isEncryptionAvailable: () => true,
-        getSelectedStorageBackend: () => 'keychain',
-        encryptString: (text: string) => Buffer.from(text),
-        decryptString: (buffer: Buffer) => buffer.toString(),
-      })
+      secrets.enabled = true
     })
     afterEach(() => {
-      for (const key of [
-        'isEncryptionAvailable',
-        'getSelectedStorageBackend',
-        'encryptString',
-        'decryptString',
-      ])
-        delete (safeStorage as unknown as Record<string, unknown>)[key]
+      secrets.enabled = false
     })
 
     it('stores a login and its account together, or neither after a logout', async () => {

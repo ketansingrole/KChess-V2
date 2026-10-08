@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
 import type { LichessRatingHistory } from '../../src/shared/types'
-import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '../utils/ratings'
+import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '../../src/shared/ratings'
 
 /** Current rating per Lichess history name ("Blitz"), shown on the toggle chips. */
 export interface CurrentRating {

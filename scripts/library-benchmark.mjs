@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { PERFORMANCE_BUDGETS, assertLibraryBudget } from './performance-budgets.mjs'
 import { DatabaseSync } from 'node:sqlite'
-import { migrate } from '../src/main/migrations.ts'
+import { migrate } from '../src/core/migrations.ts'
 
 // Structural probe of list-row SQL/clone cost, not a renderer or full loadData benchmark.
 const db = new DatabaseSync(':memory:')

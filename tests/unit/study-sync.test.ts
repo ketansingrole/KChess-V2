@@ -1,8 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { syncLichessStudy } from '../../src/main/studies'
+import { syncLichessStudy } from '../../src/core/studies'
 import { assertStudySyncRequest } from '../../src/shared/validate'
 const mocks = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), pgn: '' }))
-vi.mock('../../src/main/lichess', () => ({
+vi.mock('../../src/core/lichess', () => ({
   client: mocks,
   asAccount: (_account: string, task: (token: string) => unknown) => task('token'),
   authorize: (token: string) => ({ Authorization: `Bearer ${token}` }),

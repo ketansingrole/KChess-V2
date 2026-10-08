@@ -3,8 +3,8 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import { treeFromPgn, type TreeNode } from '../utils/analysisTree'
-import { checkColor, destsFor, positionFromFen } from '../utils/chess'
+import { treeFromPgn, type TreeNode } from '../../src/shared/analysisTree'
+import { checkColor, destsFor, positionFromFen } from '../../src/shared/chess'
 import { useStudyStore } from '../stores/studies'
 import { playMoveSound } from '../utils/sound'
 
@@ -17,11 +17,6 @@ const { settings } = storeToRefs(store)
 const library = useStudyStore()
 const studyId = useLocalStorage('kchess:repertoire-study', '')
 const color = useLocalStorage<'white' | 'black'>('kchess:repertoire-color', 'white')
-/** Mistakes per position (by FEN) and study, remembered on this device. */
-const misses = useLocalStorage<Record<string, Record<string, number>>>(
-  'kchess:repertoire-misses',
-  {},
-)
 const stats = ref({ lines: 0, correct: 0, wrong: 0 })
 
 const study = computed(() => library.items.find((item) => item.id === studyId.value))
@@ -42,7 +37,7 @@ const lastMove = computed<Key[] | undefined>(() =>
 )
 /** How often the moves below a node were missed: the trainer steers towards weak lines. */
 function weakness(start: TreeNode): number {
-  const table = misses.value[missKey.value] ?? {}
+  const table = library.misses[missKey.value] ?? {}
   let total = 0
   const stack = [start]
   while (stack.length) {
@@ -88,9 +83,7 @@ function play(uci: string): void {
   const child = current.children.find((entry) => entry.uci === uci || sameCastle(entry.uci, uci))
   if (!child) {
     stats.value.wrong++
-    const table = { ...(misses.value[missKey.value] ?? {}) }
-    table[current.fen] = (table[current.fen] ?? 0) + 1
-    misses.value = { ...misses.value, [missKey.value]: table }
+    library.recordMiss(missKey.value, current.fen)
     feedback.value = {
       kind: 'wrong',
       text: `Not in your repertoire. Expected ${current.children.map((c) => c.san).join(' or ') || 'nothing (line ended)'}.`,
@@ -126,9 +119,7 @@ function showAnswer(): void {
   }))
 }
 function clearMisses(): void {
-  const next = { ...misses.value }
-  delete next[missKey.value]
-  misses.value = next
+  library.clearMisses(missKey.value)
 }
 const studyItems = computed(() =>
   library.items.map((item) => ({ label: item.name, value: item.id })),

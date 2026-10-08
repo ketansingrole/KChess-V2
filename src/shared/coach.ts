@@ -1,5 +1,5 @@
-import type { StoredReview } from '../../src/shared/types'
-import { replay } from '../../src/shared/review'
+import type { StoredReview } from './types'
+import { replay } from './review'
 import { formatEval, pvSan } from './analysisTree'
 /** Every claim comes from a scored, legally replayed position; no generated chess facts. */
 export function explainReviewedMove(review: StoredReview, index: number): string {

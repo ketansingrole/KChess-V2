@@ -26,15 +26,15 @@ pnpm run test:e2e
 - Match the surrounding code: naming, comment density, and idiom. Prettier settings are in
   `.prettierrc.json`.
 - Add lifecycle regression cases under `tests/unit/` using Vitest, real Pinia stores and mounted Vue components. Put actual Electron integration checks under `tests/e2e/`; these use temporary profiles and the branded launcher.
-- Keep request channels in `src/shared/ipc.ts` and signatures in `DesktopApi`. IPC handlers accept unknown inputs and must validate them before use.
+- Put headless features in `src/core` behind `CoreApi`, and pure chess or training rules in `src/shared`; desktop-only features extend `DesktopApi`. Documents a user keeps belong in the core's library, not in renderer storage. Keep request channels in `src/shared/ipc.ts`. IPC handlers accept unknown inputs and must validate them before use.
 - Anything that crosses the Electron IPC boundary must be validated in
   `src/shared/validate.ts`. The renderer is sandboxed and must never choose what the main
   process executes.
 - New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
-  `src/main/store.ts`, and a new entry at the end of `MIGRATIONS` in
-  `src/main/migrations.ts` (never edit an earlier migration).
+  `src/core/store.ts`, and a new entry at the end of `MIGRATIONS` in
+  `src/core/migrations.ts` (never edit an earlier migration).
 - Be gentle with Lichess. Bulk downloads run one request at a time, and requests should be
-  attributed for the data-usage counters (`withUsage` in `src/main/usage.ts`).
+  attributed for the data-usage counters (`withUsage` in `src/core/usage.ts`).
 
 ## Licensing of contributions
 

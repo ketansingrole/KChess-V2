@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { EngineLine, Settings } from '../../src/shared/types'
-import { formatEval, pvSan } from '../utils/analysisTree'
+import { formatEval, pvSan } from '../../src/shared/analysisTree'
 
 const props = withDefaults(
   defineProps<{

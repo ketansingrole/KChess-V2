@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { GameSetup } from '../../src/shared/variant'
-import { setupPgn } from '../utils/chess'
+import { setupPgn } from '../../src/shared/chess'
 
 const props = defineProps<{
   setup: GameSetup

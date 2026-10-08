@@ -5,7 +5,7 @@ import { defineComponent } from 'vue'
 import ChessBoard from '../../app/components/ChessBoard.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
-import { EMPTY_FEN } from '../../app/utils/coordinates'
+import { EMPTY_FEN } from '../../src/shared/coordinates'
 import { desktop, componentStubs } from './fixtures'
 import type { RunInput } from '../../src/shared/types'
 

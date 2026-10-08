@@ -29,7 +29,11 @@ function rename(): void {
   const open = study.value
   if (!open) return
   if (!name.value.trim()) name.value = open.name
-  else library.rename(open.id, name.value)
+  else
+    library.rename(open.id, name.value).catch((cause: unknown) => {
+      console.warn('[study-bar] Could not rename study:', cause)
+      name.value = open.name
+    })
 }
 
 /* ── Saving the board as a new study ── */
@@ -44,9 +48,9 @@ watch(saveOpen, (opened) => {
     white && black && white !== '?' && black !== '?' ? `${white} – ${black}` : library.freshName()
   saveError.value = ''
 })
-function saveNew(): void {
+async function saveNew(): Promise<void> {
   try {
-    analysis.saveAsStudy(newName.value)
+    await analysis.saveAsStudy(newName.value)
     saveOpen.value = false
     toast.add({
       title: 'Study saved',
@@ -80,10 +84,17 @@ const status = computed(() => {
   return { icon: 'i-lucide-check', text: `Saved ${timeAgo(open.updatedAt, now.value)}` }
 })
 
-function remove(): void {
+async function remove(): Promise<void> {
   const open = study.value
   if (!open) return
-  const removed = library.remove(open.id)
+  let removed
+  try {
+    removed = await library.remove(open.id)
+  } catch (cause) {
+    console.warn('[study-bar] Could not delete study:', cause)
+    toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })
+    return
+  }
   if (!removed) return
   toast.add({
     title: `Deleted “${removed.name}”`,
@@ -92,15 +103,20 @@ function remove(): void {
     actions: [{ label: 'Undo', onClick: () => restore(removed) }],
   })
 }
-function restore(removed: NonNullable<typeof study.value>): void {
-  library.restore(removed)
-  analysis.studyId = removed.id
+async function restore(removed: NonNullable<typeof study.value>): Promise<void> {
+  try {
+    await library.restore(removed)
+    analysis.studyId = removed.id
+  } catch (cause) {
+    console.warn('[study-bar] Could not restore study:', cause)
+    toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })
+  }
 }
-function saveCopy(): void {
+async function saveCopy(): Promise<void> {
   const open = study.value
   if (!open) return
   try {
-    analysis.saveAsStudy(`${open.name.slice(0, 113)} (copy)`)
+    await analysis.saveAsStudy(`${open.name.slice(0, 113)} (copy)`)
     toast.add({ title: 'Saved as a new study', icon: 'i-lucide-copy' })
   } catch (cause) {
     console.warn('[study-bar] Could not save study copy:', cause)

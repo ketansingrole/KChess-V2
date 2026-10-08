@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { useTestPlatform } from './corePlatform'
 import {
   DEFAULT_ENGINE_LEVELS,
   ENGINE_LADDER,
@@ -11,8 +12,8 @@ import { assertSettings } from '../../src/shared/validate'
 import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
 
 // The bundled Stockfish is found relative to the app; here that is the repository.
-vi.mock('electron', () => ({ app: { getAppPath: () => process.cwd() } }))
-const { bestMove, stopEngine } = await import('../../src/main/engine')
+useTestPlatform()
+const { bestMove, stopEngine } = await import('../../src/core/engine')
 
 afterAll(() => stopEngine(true))
 

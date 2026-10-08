@@ -1,14 +1,15 @@
 import { expect, it, vi } from 'vitest'
+import { seedSaved, storedLibrary } from './libraryBackend'
 import { defineComponent, nextTick } from 'vue'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { desktop, deferred } from './fixtures'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useStudyStore } from '../../app/stores/studies'
 import { useKChessStore } from '../../app/stores/kchess'
-import * as tree from '../../app/utils/analysisTree'
+import * as tree from '../../src/shared/analysisTree'
 import AnalysisPage from '../../app/pages/analysis.vue'
 import { makeUci } from 'chessops/util'
-import { positionFromFen } from '../../app/utils/chess'
+import { positionFromFen } from '../../src/shared/chess'
 
 it('hides cloud scores, variations, arrows and playable suggestions during live play and remount', async () => {
   desktop({ reviewGet: async () => null, onAnalysis: () => () => {}, stopAnalysis: async () => {} })
@@ -109,14 +110,14 @@ it('clears cached cloud assistance while detached and rejects a late cloud respo
 it('preserves a conflicting restored session as an unsaved copy', async () => {
   vi.useFakeTimers()
   desktop({ reviewGet: async () => null })
-  localStorage.setItem(
+  seedSaved(
     'kchess:studies:v1',
     JSON.stringify({
       version: 1,
       items: [{ id: 's', name: 'Study', pgn: '1. d4 *', updatedAt: 2 }],
     }),
   )
-  localStorage.setItem(
+  seedSaved(
     'kchess:analysis:v1',
     JSON.stringify({ version: 1, study: 's', pgn: '1. e4 *', path: '', orientation: 'white' }),
   )
@@ -128,33 +129,35 @@ it('preserves a conflicting restored session as an unsaved copy', async () => {
   store.node.comments = ['Recovered edit']
   await vi.advanceTimersByTimeAsync(200)
   expect(studies.items[0]?.pgn).toBe('1. d4 *')
-  expect(JSON.parse(localStorage.getItem('kchess:analysis:v1')!).pgn).toContain('Recovered edit')
+  expect(storedLibrary().studies[0]?.pgn).toBe('1. d4 *')
+  expect(storedLibrary().sessions.analysis?.pgn).toContain('Recovered edit')
 })
-it.each(['kchess:studies:v1', 'kchess:analysis:v1'])(
+it.each(['studies', 'analysis'] as const)(
   'preserves the previous document and surfaces a failed write to %s',
-  async (failedKey) => {
+  async (failed) => {
     vi.useFakeTimers()
-    desktop({ reviewGet: async () => null })
+    const { api } = desktop({ reviewGet: async () => null })
     const store = useAnalysisStore()
     store.loadPgn('1. e4 *')
-    store.saveAsStudy('Study')
+    await store.saveAsStudy('Study')
     await vi.advanceTimersByTimeAsync(200)
-    const before = localStorage.getItem(failedKey)
-    const write = localStorage.setItem.bind(localStorage)
-    const fail = vi.spyOn(localStorage, 'setItem').mockImplementation((key, value) => {
-      if (key === failedKey) throw new Error('Storage unavailable')
-      write(key, value)
-    })
+    const before = storedLibrary()
+    const storageUnavailable = () => Promise.reject(new Error('Storage unavailable'))
+    if (failed === 'studies') api.studyCommand = storageUnavailable
+    else api.saveSession = storageUnavailable
     store.forward()
     store.node.comments = ['Recover this edit']
     await vi.advanceTimersByTimeAsync(200)
-    expect(localStorage.getItem(failedKey)).toBe(before)
-    expect(failedKey.includes('studies') ? store.studySaveError : store.saveError).toContain(
-      'Storage unavailable',
-    )
-    const otherKey = failedKey.includes('studies') ? 'kchess:analysis:v1' : 'kchess:studies:v1'
-    expect(localStorage.getItem(otherKey)).toContain('Recover this edit')
-    fail.mockRestore()
+    const after = storedLibrary()
+    if (failed === 'studies') {
+      expect(after.studies).toEqual(before.studies)
+      expect(store.studySaveError).toContain('Storage unavailable')
+      expect(after.sessions.analysis?.pgn).toContain('Recover this edit')
+    } else {
+      expect(after.sessions.analysis).toEqual(before.sessions.analysis)
+      expect(store.saveError).toContain('Storage unavailable')
+      expect(after.studies[0]!.pgn).toContain('Recover this edit')
+    }
   },
 )
 it('flushes pending edits before opening another study and before unload', async () => {
@@ -162,20 +165,18 @@ it('flushes pending edits before opening another study and before unload', async
   const store = useAnalysisStore(),
     studies = useStudyStore()
   store.loadPgn('1. e4 *')
-  const first = store.saveAsStudy('One')
-  const second = studies.save('Two', '1. d4 *')
+  const first = await store.saveAsStudy('One')
+  const second = await studies.save('Two', '1. d4 *')
   store.forward()
   store.node.comments = ['Keep before switch']
   store.openStudy(second)
+  await flushPromises()
   expect(studies.items.find((s) => s.id === first)?.pgn).toContain('Keep before switch')
   store.forward()
   store.node.comments = ['Keep before quit']
   window.dispatchEvent(new Event('beforeunload'))
-  expect(
-    JSON.parse(localStorage.getItem('kchess:studies:v1')!).items.find(
-      (s: { id: string }) => s.id === second,
-    ).pgn,
-  ).toContain('Keep before quit')
+  await flushPromises()
+  expect(storedLibrary().studies.find((s) => s.id === second)?.pgn).toContain('Keep before quit')
 })
 it('reuses the document PGN while navigating and debounces serialization of edits', async () => {
   vi.useFakeTimers()
@@ -251,7 +252,7 @@ it('hides assistance during startup recovery and after failure until a confirmed
 it('closing a study saves pending chapter edits and clears the board and move list', async () => {
   desktop()
   const library = useStudyStore()
-  const id = library.saveChapters('Two chapters', [
+  const id = await library.saveChapters('Two chapters', [
     { name: 'First', pgn: '1. e4 *' },
     { name: 'Second', pgn: '1. d4 d5 (1... Nf6 $1) *' },
   ])
@@ -259,7 +260,7 @@ it('closing a study saves pending chapter edits and clears the board and move li
   analysis.openStudy(id, library.items[0]!.chapters[1]!.id)
   analysis.root.comments = ['Keep the pending edit']
   await nextTick()
-  expect(analysis.closeStudy()).toBe(true)
+  expect(await analysis.closeStudy()).toBe(true)
   expect(analysis.studyId).toBe('')
   expect(analysis.studyChapterId).toBe('')
   expect(analysis.root.children).toHaveLength(0)
@@ -268,23 +269,19 @@ it('closing a study saves pending chapter edits and clears the board and move li
   expect(library.items[0]!.chapters[1]!.pgn).toContain('Keep the pending edit')
   expect(library.items[0]!.chapters[1]!.pgn).toContain('Nf6 $1')
   expect(library.items[0]!.chapters[0]!.pgn).toBe('1. e4 *')
-  expect(JSON.parse(localStorage.getItem('kchess:studies:v1')!).items[0].chapters[1].pgn).toContain(
-    'Keep the pending edit',
-  )
+  expect(storedLibrary().studies[0]!.chapters[1]!.pgn).toContain('Keep the pending edit')
 })
 
 it('keeps the study and board open when pending edits cannot be persisted', async () => {
-  desktop()
+  const { api } = desktop()
   const library = useStudyStore()
-  const id = library.save('Do not lose', '1. e4 *')
+  const id = await library.save('Do not lose', '1. e4 *')
   const analysis = useAnalysisStore()
   analysis.openStudy(id)
   analysis.root.comments = ['Unsaved edit']
   await nextTick()
-  vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
-    throw new Error('Storage full')
-  })
-  expect(analysis.closeStudy()).toBe(false)
+  api.studyCommand = () => Promise.reject(new Error('Storage full'))
+  expect(await analysis.closeStudy()).toBe(false)
   expect(analysis.studyId).toBe(id)
   expect(analysis.root.children).toHaveLength(1)
   expect(analysis.studySaveError).toContain('Storage full')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readLines } from '../../src/main/ndjson'
+import { readLines } from '../../src/core/ndjson'
 
 function streamOf(chunks: (string | Uint8Array)[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()

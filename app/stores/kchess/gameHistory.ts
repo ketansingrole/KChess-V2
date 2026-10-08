@@ -5,8 +5,8 @@ import type {
   LichessGame,
   LichessRatingHistory,
 } from '../../../src/shared/types'
-import { pgnFromMoves } from '../../utils/chess'
-import { mergeRatingHistories, normalizeRatingKey } from '../../utils/ratings'
+import { pgnFromMoves } from '../../../src/shared/chess'
+import { mergeRatingHistories, normalizeRatingKey } from '../../../src/shared/ratings'
 
 export function useGameHistory(options: {
   data: Ref<AppData | null>

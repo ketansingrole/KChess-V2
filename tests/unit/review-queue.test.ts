@@ -2,16 +2,15 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { useTestPlatform } from './corePlatform'
 import { DEFAULT_SETTINGS } from '../../src/shared/defaultSettings'
 import type { ReviewStatus, ReviewUpdate, Settings } from '../../src/shared/types'
 
 const userData = mkdtempSync(join(tmpdir(), 'kchess-review-queue-'))
-vi.mock('electron', () => ({
-  app: { getAppPath: () => process.cwd(), getPath: () => userData },
-}))
-const { reviewsChanged, setupReviews, stopReviews } = await import('../../src/main/review')
-const { closeDb, getDb } = await import('../../src/main/db')
-const { reviewSummaries } = await import('../../src/main/reviewStore')
+useTestPlatform({ dataDir: userData })
+const { reviewsChanged, setupReviews, stopReviews } = await import('../../src/core/review')
+const { closeDb, getDb } = await import('../../src/core/db')
+const { reviewSummaries } = await import('../../src/core/reviewStore')
 
 function addGame(id: string, moves: string, perf = 'blitz'): void {
   getDb()
@@ -34,7 +33,7 @@ setupReviews({
   busy: () => busy,
   fetchLichess: async (_account, ids) => {
     asked.push(ids)
-    const { markChecked } = await import('../../src/main/reviewStore')
+    const { markChecked } = await import('../../src/core/reviewStore')
     markChecked(ids)
     return []
   },

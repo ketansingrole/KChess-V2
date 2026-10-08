@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { useTestPlatform } from './corePlatform'
 import type { AnalysisUpdate } from '../../src/shared/types'
 import { replay } from '../../src/shared/review'
 
 // The bundled Stockfish is found relative to the app; here that is the repository.
-vi.mock('electron', () => ({ app: { getAppPath: () => process.cwd() } }))
-const { startAnalysis, stopAnalysis } = await import('../../src/main/analysis')
+useTestPlatform()
+const { startAnalysis, stopAnalysis } = await import('../../src/core/analysis')
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const ITALIAN = 'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3'

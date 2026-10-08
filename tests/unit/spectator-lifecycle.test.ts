@@ -1,16 +1,15 @@
 import { expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { Spectator } from '../../src/main/spectate'
+import { Spectator } from '../../src/core/spectate'
 import { deferred } from './fixtures'
 const mocks = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), use: vi.fn(), readLines: vi.fn() }))
-vi.mock('electron', () => ({ shell: {} }))
 vi.mock('openapi-fetch', () => ({ default: () => mocks }))
-vi.mock('../../src/main/store', () => ({ getToken: vi.fn() }))
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/store', () => ({ getToken: vi.fn() }))
+vi.mock('../../src/core/usage', () => ({
   meteredFetch: vi.fn(),
   withUsage: (_a: string, _k: string, fn: () => unknown) => fn(),
 }))
-vi.mock('../../src/main/ndjson', () => ({ readLines: mocks.readLines }))
+vi.mock('../../src/core/ndjson', () => ({ readLines: mocks.readLines }))
 it('reports an initial HTTP failure after the start call has returned', async () => {
   mocks.GET.mockRejectedValue(new Error('Offline'))
   const state = vi.fn(),

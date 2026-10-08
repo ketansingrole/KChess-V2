@@ -1,5 +1,5 @@
 import type { AppUpdater } from 'electron-updater'
-import { logDebug, logInfo, logWarn } from './logger'
+import { logDebug, logInfo, logWarn } from '../core/logger'
 import type { AppUpdateStatus, Settings } from '../shared/types'
 
 export type UpdatePreferences = Pick<

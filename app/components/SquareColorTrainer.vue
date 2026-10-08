@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { RunSaved, RunSummary } from '../../src/shared/types'
-import { randomSquare, squareColor, type Square } from '../utils/coordinates'
+import { randomSquare, squareColor, type Square } from '../../src/shared/coordinates'
 import { useCountdown } from '../utils/countdown'
-import { formatRunClock } from '../utils/rush'
+import { formatRunClock } from '../../src/shared/rush'
 import { play } from '../utils/sound'
 
 /** Is this square light or dark? Thirty seconds; the best score stays on this computer. */

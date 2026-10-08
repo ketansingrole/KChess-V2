@@ -1,7 +1,6 @@
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { nextTick, effectScope, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
-import { createPinia, setActivePinia, disposePinia, getActivePinia } from 'pinia'
 import { useLocalGameStore } from '../../app/stores/local'
 import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { desktop } from './fixtures'
@@ -10,14 +9,18 @@ import type { AppData, LichessRatingHistory } from '../../src/shared/types'
 import {
   useGameArchiveStore,
   useGameArchive,
-  decodeArchive,
   type GameSnapshot,
   type ArchivedGame,
 } from '../../app/stores/gameArchive'
+import { decodeArchive } from '../../src/shared/library'
+import { restart, storedLibrary } from './libraryBackend'
 import { STANDARD_SETUP } from '../../src/shared/variant'
-import { setupPgn } from '../../app/utils/chess'
-import { DEFAULT_OAUTH_LOOK, oauthLook, oauthPage } from '../../src/main/oauthPage'
+import { setupPgn } from '../../src/shared/chess'
+import { DEFAULT_OAUTH_LOOK, oauthLook } from '../../src/shared/oauthLook'
+import { oauthPage } from '../../src/core/oauthPage'
 
+// Every test here keeps its games in the core's library.
+beforeEach(() => void desktop())
 describe('local game history', () => {
   it('keeps results and earlier games when starting a new board game', async () => {
     const board = useLocalGameStore()
@@ -63,8 +66,7 @@ describe('local game history', () => {
     )
     const id = useGameArchiveStore().games[0]!.id
     scope.stop()
-    disposePinia(getActivePinia()!)
-    setActivePinia(createPinia())
+    await restart()
     scope = effectScope()
     const tracker = scope.run(() =>
       useGameArchive(
@@ -108,8 +110,7 @@ describe('local game history', () => {
     expect(game).toMatchObject({ source: 'clock', moves: [], result: '*', finished: true })
     expect(game.clockSummary).toContain('Top: 1 moves')
     const oldId = game.id
-    disposePinia(getActivePinia()!)
-    setActivePinia(createPinia())
+    await restart()
     const nextBoard = useLocalGameStore()
     nextBoard.otbPress('bottom')
     nextBoard.otbPress('top')
@@ -172,68 +173,71 @@ const archived = (id: string): ArchivedGame => ({
   timeControl: '-',
 })
 
-it('batches history writes and only serializes changed games', async () => {
+it('batches history writes and sends only the latest version of changed games', async () => {
   vi.useFakeTimers()
+  const { api } = desktop()
   const history = useGameArchiveStore()
   for (let n = 0; n < 100; n++) history.save(archived(String(n)))
-  history.flush()
-  const stringify = vi.spyOn(JSON, 'stringify')
-  const write = vi.spyOn(localStorage, 'setItem')
+  await history.flush()
+  const write = vi.spyOn(api, 'saveArchivedGame')
   history.save({ ...archived('0'), moves: ['e2e4', 'e7e5'] })
   history.save({ ...archived('0'), moves: ['e2e4', 'e7e5', 'g1f3'] })
-  expect(stringify).toHaveBeenCalledTimes(2)
   expect(write).not.toHaveBeenCalled()
   await vi.advanceTimersByTimeAsync(150)
-  expect(stringify).toHaveBeenCalledTimes(2)
   expect(write).toHaveBeenCalledTimes(1)
-  const saved = JSON.parse(localStorage.getItem('kchess:game-history:v1')!)
-  expect(saved.games).toHaveLength(100)
-  expect(saved.games[0].moves).toEqual(['e2e4', 'e7e5', 'g1f3'])
+  const saved = storedLibrary().games
+  expect(saved).toHaveLength(100)
+  expect(saved[0]!.moves).toEqual(['e2e4', 'e7e5', 'g1f3'])
   await vi.advanceTimersByTimeAsync(300)
   expect(write).toHaveBeenCalledTimes(1)
 })
 
-it('flushes pending history on window unload and persists removals immediately', () => {
+it('flushes pending history on window unload and persists removals immediately', async () => {
   vi.useFakeTimers()
   const history = useGameArchiveStore()
   history.save(archived('first'))
-  expect(localStorage.getItem('kchess:game-history:v1')).toBeNull()
+  expect(storedLibrary().games).toEqual([])
   window.dispatchEvent(new Event('beforeunload'))
-  expect(decodeArchive(JSON.parse(localStorage.getItem('kchess:game-history:v1')!))).toHaveLength(1)
-  history.remove('first')
-  expect(decodeArchive(JSON.parse(localStorage.getItem('kchess:game-history:v1')!))).toEqual([])
+  await flushPromises()
+  expect(storedLibrary().games).toHaveLength(1)
+  await history.remove('first')
+  expect(storedLibrary().games).toEqual([])
 })
 
-it('enforces the exact encoded history limit without dropping the previous archive', () => {
-  vi.useFakeTimers()
+it('shows the saved version again when the core refuses a change', async () => {
+  const { api } = desktop()
   const history = useGameArchiveStore()
-  const game = archived('boundary')
-  // Synthetic large metadata exercises encoded length including escaped characters.
-  const base = JSON.stringify({ version: 1, games: [game] }).length
-  game.reason = 'x'.repeat(2_000_000 - base + game.reason.length)
-  history.save(game)
-  history.flush()
-  const saved = localStorage.getItem('kchess:game-history:v1')!
-  expect(saved).toHaveLength(2_000_000)
-  history.save({ ...game, reason: game.reason + '\n' })
+  history.save({ ...archived('kept'), finished: true })
+  await flushPromises()
+  vi.spyOn(api, 'saveArchivedGame').mockRejectedValueOnce(
+    new Error('Game history is full. Export saved games before making room for new games.'),
+  )
+  history.save({ ...archived('kept'), reason: 'Edited', finished: true })
+  expect(history.games[0]!.reason).toBe('Edited')
+  await flushPromises()
   expect(history.error).toContain('full')
-  expect(localStorage.getItem('kchess:game-history:v1')).toBe(saved)
-  expect(history.games[0]?.reason).toBe(game.reason)
+  expect(history.games[0]!.reason).toBe('In progress')
+  history.save({ ...archived('new'), finished: true })
+  vi.spyOn(api, 'saveArchivedGame').mockRejectedValueOnce(new Error('Game history is full.'))
+  history.save({ ...archived('refused'), finished: true })
+  await flushPromises()
+  expect(history.games.map((g) => g.id)).toEqual(['new', 'kept'])
+  expect(storedLibrary().games.map((g) => g.id)).toEqual(['new', 'kept'])
 })
 
-it('retains history on storage failure and retries the latest game', async () => {
+it('keeps the saved history when a write fails and saves the latest game next time', async () => {
   vi.useFakeTimers()
+  const { api } = desktop()
   const history = useGameArchiveStore()
-  const write = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
-    throw new Error('Storage full')
-  })
+  const write = vi.spyOn(api, 'saveArchivedGame').mockRejectedValueOnce(new Error('Storage full'))
   history.save(archived('first'))
   await vi.advanceTimersByTimeAsync(150)
   expect(history.error).toBe('Storage full')
-  expect(history.games).toHaveLength(1)
+  expect(storedLibrary().games).toEqual([])
   history.save({ ...archived('first'), result: '1-0', finished: true })
+  await flushPromises()
   expect(history.error).toBe('')
-  expect(JSON.parse(localStorage.getItem('kchess:game-history:v1')!).games[0].result).toBe('1-0')
+  expect(storedLibrary().games[0]!.result).toBe('1-0')
   expect(write).toHaveBeenCalledTimes(2)
 })
 
@@ -241,16 +245,19 @@ it('keeps all 500 games when the archive is full and permits replacing an existi
   vi.useFakeTimers()
   const history = useGameArchiveStore()
   for (let n = 0; n < 500; n++) history.save(archived(String(n)))
+  await history.flush()
   history.save(archived('overflow'))
+  await history.flush()
   expect(history.error).toContain('full')
   expect(history.games).toHaveLength(500)
+  expect(history.games.some((g) => g.id === 'overflow')).toBe(false)
   history.save({ ...archived('0'), result: '1-0', finished: true })
+  await flushPromises()
   expect(history.error).toBe('')
   expect(history.games).toHaveLength(500)
-  const write = vi.spyOn(localStorage, 'setItem')
-  await vi.advanceTimersByTimeAsync(300)
-  expect(write).not.toHaveBeenCalled()
-  expect(JSON.parse(localStorage.getItem('kchess:game-history:v1')!).games[0].result).toBe('1-0')
+  const saved = storedLibrary().games
+  expect(saved).toHaveLength(500)
+  expect(saved[0]).toMatchObject({ id: '0', result: '1-0' })
 })
 
 describe('rating chart mode', () => {

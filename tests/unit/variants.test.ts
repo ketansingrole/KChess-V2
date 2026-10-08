@@ -7,8 +7,8 @@ import {
   STANDARD_SETUP,
   variantFromLichess,
 } from '../../src/shared/variant'
-import { setupDrawReason, setupPgn, setupSanHistory } from '../../app/utils/chess'
-import { openingAt } from '../../app/utils/openings'
+import { setupDrawReason, setupPgn, setupSanHistory } from '../../src/shared/chess'
+import { openingAt } from '../../src/shared/openings'
 
 describe('variants', () => {
   it('numbers Chess960 starts as the Scharnagl scheme does', () => {

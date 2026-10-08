@@ -1,30 +1,26 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
-import { app } from 'electron'
 import { assertBestMoveOptions, assertMoves, type EngineLevel } from '../shared/validate'
 import type { BestMoveOptions, EngineStatus } from '../shared/types'
-import { MANAGED_PATH, managedEngine } from './managedEngine'
+import { managedEngine, managedPath } from './managedEngine'
 import { UciController, SearchCancelled, assertEngineAvailable, ensureEngineOptions } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
 import { replay } from '../shared/review'
 import { INITIAL_FEN } from 'chessops/fen'
 import { engineLevelInfo } from '../shared/engineLevels'
 import { errorSummary, logDebug, logWarn, truncateForLog } from './logger'
+import { platform } from './platform'
 
 /**
  * Stockfish ships with the app as the `stockfish` npm package's lite
- * multi-threaded WASM build, run as a UCI process by Electron's own Node
+ * multi-threaded WASM build, run as a UCI process by the host's own Node
  * runtime. A native executable picked in Settings takes precedence.
  */
-const BUNDLED_SCRIPT = 'node_modules/stockfish/bin/stockfish-19-lite.js'
+export const BUNDLED_ENGINE_SCRIPT = 'node_modules/stockfish/bin/stockfish-19-lite.js'
 
-/** Where the bundled engine lives; packaged apps keep it outside the asar so a child process can load its .wasm. */
-function bundledEnginePath(): string {
-  return join(app.getAppPath(), BUNDLED_SCRIPT).replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
-}
+const bundledEnginePath = (): string => platform().bundledEnginePath
 
 /**
  * Engine paths the renderer may persist in settings: the downloaded engine
@@ -34,7 +30,7 @@ function bundledEnginePath(): string {
 const trusted = new Set<string>()
 export const trustEnginePath = (path: string): void => void trusted.add(path)
 export const isTrustedEnginePath = (path: string): boolean =>
-  path === MANAGED_PATH || trusted.has(path)
+  path === managedPath() || trusted.has(path)
 
 async function isExecutableFile(path: string): Promise<boolean> {
   try {
@@ -62,7 +58,7 @@ export async function engineStatus(configured = ''): Promise<EngineStatus> {
   }
 }
 
-/** Start the engine `engineStatus` found: the bundled WASM build under Electron's Node, or a native one. */
+/** Start the engine `engineStatus` found: the bundled WASM build under the host's Node, or a native one. */
 export function spawnEngine(
   status: EngineStatus,
 ): ChildProcessByStdio<Writable, Readable, Readable> {
@@ -70,7 +66,7 @@ export function spawnEngine(
   return status.bundled
     ? spawn(process.execPath, [bundledEnginePath()], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        env: { ...process.env, ...platform().nodeEnv },
       })
     : spawn(status.path, [], { stdio: ['pipe', 'pipe', 'pipe'] })
 }

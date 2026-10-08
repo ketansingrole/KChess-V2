@@ -1,18 +1,21 @@
-import { expect, it } from 'vitest'
+import { beforeEach, expect, it } from 'vitest'
+import { seedSaved, storedLibrary } from './libraryBackend'
 import { nextTick } from 'vue'
 import { useStudyStore } from '../../app/stores/studies'
 import { useAnalysisStore } from '../../app/stores/analysis'
-import { treeFromPgn } from '../../app/utils/analysisTree'
+import { treeFromPgn } from '../../src/shared/analysisTree'
 import { parsePgn } from 'chessops/pgn'
 import { desktop } from './fixtures'
 
+// Every test here keeps its studies in the core's library.
+beforeEach(() => void desktop())
 const chapters = [
   { name: 'King pawn', pgn: '[Event "King pawn"]\n\n1. e4 {Keep this} e5 (1... c5 $1) *' },
   { name: 'Queen pawn', pgn: '[Event "Queen pawn"]\n\n1. d4 d5 *' },
 ]
 
 it('migrates existing single-game studies without changing their PGN', () => {
-  localStorage.setItem(
+  seedSaved(
     'kchess:studies:v1',
     JSON.stringify({
       version: 1,
@@ -29,66 +32,67 @@ it('migrates existing single-game studies without changing their PGN', () => {
 it('keeps all chapters together and edits the selected chapter without overwriting another', async () => {
   desktop()
   const library = useStudyStore()
-  const id = library.saveChapters('Repertoire', chapters)
+  const id = await library.saveChapters('Repertoire', chapters)
   const analysis = useAnalysisStore()
   const firstPgn = library.items[0]!.chapters[0]!.pgn
   const secondId = library.items[0]!.chapters[1]!.id
   expect(analysis.openStudy(id, secondId)).toBe(true)
   analysis.root.comments = ['Queen pawn notes']
   await nextTick()
-  analysis.flushStudy()
+  await analysis.flushStudy()
   expect(library.items[0]!.chapters[0]!.pgn).toBe(firstPgn)
   expect(library.items[0]!.chapters[1]!.pgn).toContain('Queen pawn notes')
   expect(analysis.openStudy(id, library.items[0]!.chapters[0]!.id)).toBe(true)
   expect(analysis.pgn()).toContain('Keep this')
   expect(analysis.pgn()).toContain('$1')
   expect(analysis.pgn()).toContain('c5')
-  library.rename(id, 'Renamed')
-  const duplicate = library.duplicate(id)!
+  await library.rename(id, 'Renamed')
+  const duplicate = (await library.duplicate(id))!
   expect(library.items.find((s) => s.id === duplicate)!.chapters).toHaveLength(2)
   const exported = parsePgn(library.documentPgn(library.items.find((s) => s.id === id)!))
   expect(exported.map((g) => g.headers.get('ChapterName'))).toEqual(['King pawn', 'Queen pawn'])
 })
 
-it('updates an unchanged offline copy without duplicates and keeps edited copies on download conflicts', () => {
+it('updates an unchanged offline copy without duplicates and keeps edited copies on download conflicts', async () => {
   const library = useStudyStore()
   const remote = { id: 'Study001', name: 'Remote repertoire' }
-  const initial = library.offline('Alice', remote, chapters)
+  const initial = await library.offline('Alice', remote, chapters)
   expect(library.items[0]!.cloud!.downloadedPgn).toBe(chapters.map((c) => c.pgn).join('\n\n'))
-  const refreshed = library.offline('alice', remote, chapters)
+  const refreshed = await library.offline('alice', remote, chapters)
   expect(refreshed.id).toBe(initial.id)
   expect(library.items).toHaveLength(1)
   const study = library.items[0]!
-  library.save(study.name, '1. c4 *', study.id, study.chapters[1]!.id)
-  const conflict = library.offline('Alice', remote, chapters)
+  await library.save(study.name, '1. c4 *', study.id, study.chapters[1]!.id)
+  const conflict = await library.offline('Alice', remote, chapters)
   expect(conflict.conflict).toBe(true)
   expect(library.items).toHaveLength(2)
   expect(library.items.find((s) => s.id === initial.id)!.chapters[1]!.pgn).toContain('c4')
   expect(library.items.find((s) => s.id === conflict.id)!.chapters[1]!.pgn).toContain('d4')
 })
 
-it('rejects invalid downloads atomically, retaining the previous offline document', () => {
+it('rejects invalid downloads atomically, retaining the previous offline document', async () => {
   const library = useStudyStore()
   const remote = { id: 'Study001', name: 'Remote repertoire' }
-  library.offline('Alice', remote, chapters)
+  await library.offline('Alice', remote, chapters)
   const before = JSON.stringify(library.items)
   expect(treeFromPgn('1. e5 *')).toBeUndefined()
-  expect(() =>
+  await expect(
     library.offline('Alice', remote, [...chapters, { name: 'Broken', pgn: '1. e5 *' }]),
-  ).toThrow()
+  ).rejects.toThrow()
   expect(JSON.stringify(library.items)).toBe(before)
+  expect(JSON.stringify(storedLibrary().studies)).toBe(before)
 })
 
-it('duplicates chapter annotations and removes chapters without changing surviving identities', () => {
+it('duplicates chapter annotations and removes chapters without changing surviving identities', async () => {
   const library = useStudyStore()
-  const id = library.saveChapters('Study', chapters)
+  const id = await library.saveChapters('Study', chapters)
   const [first, second] = library.items[0]!.chapters
-  const copy = library.duplicateChapter(id, first!.id)
+  const copy = await library.duplicateChapter(id, first!.id)
   expect(library.items[0]!.chapters.map((c) => c.id)).toEqual([first!.id, second!.id, copy])
   expect(library.items[0]!.chapters[2]!.pgn).toBe(first!.pgn)
-  const next = library.removeChapter(id, first!.id)
+  const next = await library.removeChapter(id, first!.id)
   expect(next).toBe(second!.id)
   expect(library.items[0]!.pgn).toBe(second!.pgn)
-  library.removeChapter(id, copy)
-  expect(() => library.removeChapter(id, second!.id)).toThrow('at least one chapter')
+  await library.removeChapter(id, copy)
+  await expect(library.removeChapter(id, second!.id)).rejects.toThrow('at least one chapter')
 })

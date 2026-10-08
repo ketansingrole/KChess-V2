@@ -231,6 +231,18 @@ export const MIGRATIONS: readonly string[] = [
   // Two-finger swipe navigation and its edge feedback.
   `ALTER TABLE settings ADD COLUMN swipeNavigation INTEGER NOT NULL DEFAULT 1;
   ALTER TABLE settings ADD COLUMN swipeIndicator INTEGER NOT NULL DEFAULT 1;`,
+  // The local library: studies, played games, drills and unfinished sessions as bounded JSON.
+  `CREATE TABLE documents (
+    key TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
+  CREATE TABLE archived_games (
+    id TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    seq INTEGER NOT NULL
+  );
+  CREATE INDEX idx_archived_games_seq ON archived_games(seq);`,
 ]
 
 /** Apply every migration newer than the database's `user_version`, each in its own transaction. */

@@ -3,6 +3,11 @@ import { resolve, relative } from 'node:path'
 
 const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/, '')))
 const normalize = (path) => path.replaceAll('\\', '/')
+/** A path inside `dir`, including the directory's own index. */
+const within = (path, dir) => path === dir || path.startsWith(`${dir}/`)
+/** What a frontend may import from the core: its entry and the shared logger. */
+const PUBLIC_CORE = ['src/core', 'src/core/index', 'src/core/logger']
+const SQLITE_OWNERS = ['src/core/db.ts', 'src/core/puzzleWorker.ts', 'src/core/store.ts']
 
 export const boundaries = {
   meta: {
@@ -32,11 +37,23 @@ export const boundaries = {
       const shared = file.startsWith('src/shared/')
       const preload = file.startsWith('src/preload/')
       const main = file.startsWith('src/main/')
+      const core = file.startsWith('src/core/')
       let reason
-      if ((renderer || shared || preload) && imported.startsWith('src/main/'))
+      if (
+        (renderer || shared || preload) &&
+        (within(imported, 'src/main') || within(imported, 'src/core'))
+      )
         reason = 'Main-process services are accessible only through DesktopApi.'
-      else if ((main || shared || preload) && imported.startsWith('app/'))
-        reason = 'Main, preload and shared code cannot depend on renderer code.'
+      else if ((main || core || shared || preload) && imported.startsWith('app/'))
+        reason = 'Main, core, preload and shared code cannot depend on renderer code.'
+      else if (
+        core &&
+        (/^electron(?:-|\/|$)/.test(source) ||
+          within(imported, 'src/main') ||
+          within(imported, 'src/preload'))
+      )
+        reason =
+          'The headless core cannot depend on Electron or the desktop shell; add a CorePlatform capability.'
       else if (
         (renderer || shared) &&
         (source === 'electron' || builtins.has(source.replace(/^node:/, '')))
@@ -44,8 +61,14 @@ export const boundaries = {
         reason = 'Renderer and shared code cannot import privileged Electron or Node APIs.'
       else if (
         main &&
+        within(imported, 'src/core') &&
+        !PUBLIC_CORE.includes(imported.replace(/\.ts$/, ''))
+      )
+        reason = 'The desktop shell uses only the core entry (src/core) and its logger.'
+      else if (
+        (main || core) &&
         /(?:^|\/)puzzle(?:Queries|Worker)(?:\.ts)?$/.test(imported) &&
-        file !== 'src/main/puzzleWorker.ts'
+        file !== 'src/core/puzzleWorker.ts'
       )
         reason = 'Only puzzleWorker owns puzzle queries; use the asynchronous puzzleDb service.'
       if (reason) context.report({ node, messageId: 'boundary', data: { reason } })
@@ -61,8 +84,8 @@ export const boundaries = {
         })
       if (
         source === 'node:sqlite' &&
-        file.startsWith('src/main/') &&
-        !['src/main/db.ts', 'src/main/puzzleWorker.ts', 'src/main/store.ts'].includes(file)
+        (file.startsWith('src/main/') || file.startsWith('src/core/')) &&
+        !SQLITE_OWNERS.includes(file)
       )
         context.report({
           node,
@@ -89,10 +112,7 @@ export const boundaries = {
               })
           }
         }
-        if (
-          node.source.value === 'node:sqlite' &&
-          !['src/main/db.ts', 'src/main/puzzleWorker.ts', 'src/main/store.ts'].includes(file)
-        ) {
+        if (node.source.value === 'node:sqlite' && !SQLITE_OWNERS.includes(file)) {
           for (const specifier of node.specifiers) {
             if (node.importKind !== 'type' && specifier.importKind !== 'type')
               context.report({

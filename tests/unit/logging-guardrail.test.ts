@@ -31,7 +31,7 @@ describe('logging guardrails', () => {
   })
 
   it('has no silent inline promise catches in shipped sources', () => {
-    const roots = ['src/main', 'src/shared', 'src/preload', 'app']
+    const roots = ['src/core', 'src/main', 'src/shared', 'src/preload', 'app']
     const silent: string[] = []
     for (const root of roots) {
       for (const file of sources(root)) {
@@ -54,7 +54,7 @@ describe('logging guardrails', () => {
   })
 
   it('has no empty catch blocks in shipped sources', () => {
-    const roots = ['src/main', 'src/shared', 'src/preload', 'app']
+    const roots = ['src/core', 'src/main', 'src/shared', 'src/preload', 'app']
     const silent: string[] = []
     for (const root of roots) {
       for (const file of sources(root)) {

@@ -2,10 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import type { components } from '@lichess-org/types'
 import { analyseReview, reviewKey } from '../../src/shared/review'
 
-vi.mock('electron', () => ({ shell: {} }))
-vi.mock('../../src/main/store', () => ({}))
-vi.mock('../../src/main/reviewStore', () => ({ writeReview: vi.fn(), markChecked: vi.fn() }))
-const { reviewFromLichess } = await import('../../src/main/lichess')
+vi.mock('../../src/core/store', () => ({}))
+vi.mock('../../src/core/reviewStore', () => ({ writeReview: vi.fn(), markChecked: vi.fn() }))
+const { reviewFromLichess } = await import('../../src/core/lichess')
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 type GameJson = components['schemas']['GameJson']

@@ -28,8 +28,8 @@ import {
   setupPositionAfter,
   setupSanHistory,
   turnColor,
-} from '../../utils/chess'
-import { Clock, formatClock } from '../../utils/clock'
+} from '../../../src/shared/chess'
+import { Clock, formatClock } from '../../../src/shared/clock'
 import { signalFromLatency } from '../../utils/format'
 import { play, playMoveSound } from '../../utils/sound'
 

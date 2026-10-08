@@ -14,8 +14,8 @@ import {
   statusText,
   takebackMoves,
   turnColor,
-} from '../app/utils/chess.ts'
-import { Clock, formatClock } from '../app/utils/clock.ts'
+} from '../src/shared/chess.ts'
+import { Clock, formatClock } from '../src/shared/clock.ts'
 
 const assert = (label: string, actual: unknown, expected: unknown): void => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)

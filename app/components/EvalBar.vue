@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Color } from '@lichess-org/chessground/types'
 import type { EngineLine } from '../../src/shared/types'
-import { formatEval, winningChances } from '../utils/analysisTree'
+import { formatEval, winningChances } from '../../src/shared/analysisTree'
 
 /** Lichess-style vertical evaluation bar: White's share fills from White's side of the board. */
 const props = defineProps<{ line?: EngineLine; orientation: Color; result?: string }>()

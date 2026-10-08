@@ -15,7 +15,7 @@ import {
   treeFromPgn,
   treeToPgn,
   winningChances,
-} from '../../app/utils/analysisTree'
+} from '../../src/shared/analysisTree'
 import {
   castlingAvailable,
   EMPTY_BOARD,
@@ -25,13 +25,13 @@ import {
   setupFromFen,
   START_SETUP,
   withPiece,
-} from '../../app/utils/boardEditor'
+} from '../../src/shared/boardEditor'
 import {
   ANALYSIS_GRAMMAR,
   EDITOR_GRAMMAR,
   spokenAnalysisCommand,
   spokenEdit,
-} from '../../app/utils/voiceCommands'
+} from '../../src/shared/voiceCommands'
 
 describe('UCI info lines', () => {
   it('reads a scored principal variation from White’s point of view', () => {

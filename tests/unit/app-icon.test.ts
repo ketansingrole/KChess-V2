@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_ICON_SVG } from '../../src/main/appIconSvg'
+import { APP_ICON_SVG } from '../../src/core/appIconSvg'
 
 describe('APP_ICON_SVG', () => {
   it('is a non-empty svg with a viewBox and no scripts', () => {

@@ -6,7 +6,7 @@ import { runChecks } from './run-checks.mjs'
 export function selectChecks(files) {
   const relevant = files.filter((file) => !file.startsWith('docs/'))
   const full = relevant.some((file) =>
-    /^(?:package\.json|pnpm-(?:lock|workspace)\.yaml|\.npmrc|.*config\.[^/]+|\.github\/|scripts\/|src\/shared\/|AGENTS\.md)/.test(
+    /^(?:package\.json|pnpm-(?:lock|workspace)\.yaml|\.npmrc|.*config\.[^/]+|\.github\/|scripts\/|src\/shared\/|src\/core\/(?:index|platform|service)\.ts$|AGENTS\.md)/.test(
       file,
     ),
   )

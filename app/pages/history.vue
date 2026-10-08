@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useOnline } from '@vueuse/core'
-import { gameResult } from '../utils/games'
+import { gameResult } from '../../src/shared/gameStatus'
 import { useSwipeBack } from '../composables/useSwipeBack'
 import type { LichessGame } from '../../src/shared/types'
 import { useAnalysisStore } from '../stores/analysis'

@@ -1,22 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { migrate } from '../../src/main/migrations'
+import { migrate } from '../../src/core/migrations'
 import type { VoiceAttemptInput } from '../../src/shared/types'
-import { dialog } from 'electron'
 import {
   clearVoiceHistory,
-  exportVoiceHistory,
   saveVoiceAttempt,
   updateVoiceAttempt,
   voiceHistory,
-} from '../../src/main/voiceLog'
+  voiceHistoryDocument,
+} from '../../src/core/voiceLog'
 
 const state = vi.hoisted(() => ({ db: null as DatabaseSync | null }))
-vi.mock('electron', () => ({ dialog: { showSaveDialog: vi.fn() } }))
-vi.mock('../../src/main/db', () => ({ getDb: () => state.db! }))
+vi.mock('../../src/core/db', () => ({ getDb: () => state.db! }))
 
 const attempt = (overrides: Partial<VoiceAttemptInput> = {}): VoiceAttemptInput => ({
   source: 'computer',
@@ -30,7 +25,6 @@ const attempt = (overrides: Partial<VoiceAttemptInput> = {}): VoiceAttemptInput 
 beforeEach(() => {
   state.db = new DatabaseSync(':memory:')
   migrate(state.db)
-  vi.mocked(dialog.showSaveDialog).mockReset()
 })
 
 afterEach(() => {
@@ -50,28 +44,19 @@ describe('voice log', () => {
     expect(history[1]).toMatchObject({ id: first, outcome: 'confirmed', expected: 'Nf3' })
   })
 
-  it('clears the log and reports a cancelled export as false', async () => {
+  it('clears the log', () => {
     saveVoiceAttempt(attempt())
     clearVoiceHistory()
     expect(voiceHistory(10)).toEqual([])
-    vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({ canceled: true } as never)
-    expect(await exportVoiceHistory()).toBe(false)
   })
 
-  it('exports entries as JSON to the chosen path', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'kchess-voice-'))
-    try {
-      const filePath = join(directory, 'history.json')
-      saveVoiceAttempt(attempt({ heard: 'castle kingside' }))
-      vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({ canceled: false, filePath } as never)
-      expect(await exportVoiceHistory()).toBe(true)
-      const exported = JSON.parse(await readFile(filePath, 'utf8')) as {
-        entries: { heard: string }[]
-      }
-      expect(exported.entries).toHaveLength(1)
-      expect(exported.entries[0]!.heard).toBe('castle kingside')
-    } finally {
-      await rm(directory, { recursive: true, force: true })
+  it('exports entries as a JSON document', () => {
+    saveVoiceAttempt(attempt({ heard: 'castle kingside' }))
+    const exported = JSON.parse(voiceHistoryDocument()) as {
+      entries: { heard: string; time: string }[]
     }
+    expect(exported.entries).toHaveLength(1)
+    expect(exported.entries[0]!.heard).toBe('castle kingside')
+    expect(Date.parse(exported.entries[0]!.time)).not.toBeNaN()
   })
 })

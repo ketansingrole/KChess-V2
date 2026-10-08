@@ -2,8 +2,7 @@ import { app, dialog } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { startPerformanceMonitoring, performanceSnapshot } from './performance'
-import { DiagnosticLog } from './diagnosticLog'
+import { DiagnosticLog, performanceSnapshot, startPerformanceMonitoring } from '../core'
 
 let log: DiagnosticLog | undefined
 

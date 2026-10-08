@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PuzzleSampler } from '../../src/main/puzzleSampler'
+import { PuzzleSampler } from '../../src/core/puzzleSampler'
 
 const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const MOVES = 'e2e4 e7e5'

@@ -9,9 +9,11 @@
     "noEmit": true,
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "types": ["vite/client", "electron-vite/node"]
   },
   "include": [
+    "src/core/**/*.ts",
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",

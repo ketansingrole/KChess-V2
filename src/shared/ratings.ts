@@ -1,4 +1,4 @@
-import type { LichessGame, LichessRatingHistory } from '../../src/shared/types'
+import type { LichessGame, LichessRatingHistory } from './types'
 
 const DAY_MS = 86_400_000
 

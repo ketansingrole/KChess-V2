@@ -12,7 +12,7 @@ import {
   startPuzzle,
   type PuzzleState,
 } from '../../src/shared/puzzle'
-import { checkColor, destsFor, positionFromFen } from '../utils/chess'
+import { checkColor, destsFor, positionFromFen } from '../../src/shared/chess'
 import { play, playMoveSound } from '../utils/sound'
 
 /**

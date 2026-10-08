@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { lichessFetch } from '../../src/main/requestPolicy'
+import { lichessFetch } from '../../src/core/requestPolicy'
 
 const state = vi.hoisted(() => ({ fetch: vi.fn() }))
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/usage', () => ({
   meteredFetch: (request: Request) => state.fetch(request),
 }))
 

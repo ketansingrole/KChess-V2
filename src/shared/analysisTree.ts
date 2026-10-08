@@ -12,7 +12,7 @@ import {
 } from 'chessops/pgn'
 import { makeSanAndPlay, parseSan } from 'chessops/san'
 import { makeUci, parseUci } from 'chessops/util'
-import type { EngineLine } from '../../src/shared/types'
+import type { EngineLine } from './types'
 import { positionFromFen } from './chess'
 
 /**

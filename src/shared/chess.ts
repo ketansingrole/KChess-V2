@@ -4,17 +4,11 @@ import { makeFen, parseFen } from 'chessops/fen'
 import { extend, defaultGame, makePgn, type PgnNodeData } from 'chessops/pgn'
 import { makeSanAndPlay } from 'chessops/san'
 import { makeSquare, parseSquare, parseUci } from 'chessops/util'
-import type { Color, Key } from '@lichess-org/chessground/types'
-import { UCI_MOVE } from '../../src/shared/patterns.ts'
-import {
-  isChess960,
-  replaySetup,
-  setupStart,
-  STANDARD_SETUP,
-  type GameSetup,
-} from '../../src/shared/variant.ts'
+import type { Color, SquareName } from 'chessops/types'
+import { UCI_MOVE } from './patterns.ts'
+import { isChess960, replaySetup, setupStart, STANDARD_SETUP, type GameSetup } from './variant.ts'
 
-export type Dests = Map<Key, Key[]>
+export type Dests = Map<SquareName, SquareName[]>
 
 export function fen(pos: Position): string {
   return makeFen(pos.toSetup())
@@ -72,8 +66,8 @@ export function destsFor(pos: Position): Dests {
   return chessgroundDests(pos) as Dests
 }
 
-/** Last move as chessground keys, for the board highlight. */
-export function lastMoveKeys(moves: readonly string[]): Key[] | undefined {
+/** Last move as squares, for the board highlight. */
+export function lastMoveKeys(moves: readonly string[]): SquareName[] | undefined {
   const last = moves.at(-1)
   const move = last && parseUci(last.trim())
   return move && 'from' in move ? [makeSquare(move.from), makeSquare(move.to)] : undefined
@@ -98,7 +92,7 @@ export function statusText(pos: Position): string {
 }
 
 /** True when moving `orig`→`dest` on this FEN is a pawn reaching the last rank. */
-export function isPromotionMove(fen: string, orig: Key, dest: Key): boolean {
+export function isPromotionMove(fen: string, orig: string, dest: string): boolean {
   const setup = parseFen(fen)
   if (setup.isErr) return false
   const from = parseSquare(orig)

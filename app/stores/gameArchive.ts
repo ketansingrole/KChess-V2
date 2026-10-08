@@ -1,114 +1,71 @@
 import { defineStore } from 'pinia'
-import { ref, shallowRef, watch, toRef, type Ref } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
-import { readSession, persistSession } from '../utils/sessionPersistence'
-import { isVariant, replaySetup, type GameSetup } from '../../src/shared/variant'
+import { onScopeDispose, ref, shallowRef, watch, toRef, type Ref } from 'vue'
+import { initialLibrary, persistSession, plain } from '../utils/library'
+import type { ArchiveIdentity, ArchivedGame, GameSnapshot } from '../../src/shared/library'
 
-export interface ArchivedGame {
-  id: string
-  source: 'computer' | 'board' | 'clock'
-  startedAt: number
-  updatedAt: number
-  white: string
-  black: string
-  result: '*' | '1-0' | '0-1' | '1/2-1/2'
-  reason: string
-  finished: boolean
-  setup: GameSetup
-  moves: string[]
-  timeControl: string
-  clockSummary?: string
-}
-export type GameSnapshot = Omit<ArchivedGame, 'id' | 'startedAt' | 'updatedAt' | 'finished'>
+export type { ArchivedGame, GameSnapshot }
 
-/** Bounded local documents, with semantic validation before a saved game reaches a board. */
-export function decodeArchive(raw: unknown): ArchivedGame[] | undefined {
-  if (!raw || typeof raw !== 'object') return
-  const doc = raw as { version?: unknown; games?: unknown }
-  if (doc.version !== 1 || !Array.isArray(doc.games) || doc.games.length > 500) return
-  const games: ArchivedGame[] = []
-  const ids = new Set<string>()
-  for (const rawGame of doc.games) {
-    if (!rawGame || typeof rawGame !== 'object') return
-    const g = rawGame as ArchivedGame
-    if (
-      typeof g.id !== 'string' ||
-      g.id.length > 80 ||
-      ids.has(g.id) ||
-      !['computer', 'board', 'clock'].includes(g.source) ||
-      !Number.isFinite(g.startedAt) ||
-      !Number.isFinite(g.updatedAt) ||
-      !['*', '1-0', '0-1', '1/2-1/2'].includes(g.result) ||
-      typeof g.finished !== 'boolean' ||
-      ![g.white, g.black, g.reason, g.timeControl].every(
-        (s) => typeof s === 'string' && s.length <= 200,
-      ) ||
-      (g.clockSummary !== undefined &&
-        (typeof g.clockSummary !== 'string' || g.clockSummary.length > 200)) ||
-      !g.setup ||
-      !isVariant(g.setup.variant) ||
-      typeof g.setup.fen !== 'string' ||
-      g.setup.fen.length > 120 ||
-      !Array.isArray(g.moves) ||
-      g.moves.length > 1024 ||
-      !g.moves.every((m) => typeof m === 'string' && m.length <= 10) ||
-      replaySetup(g.setup, g.moves)?.played.length !== g.moves.length
-    )
-      return
-    ids.add(g.id)
-    games.push(g)
-  }
-  return games
-}
-
+/**
+ * Played games as the core keeps them. Changes show at once and are written shortly after, the
+ * latest version of each changed game only; a game the core refuses returns to its saved version.
+ */
 export const useGameArchiveStore = defineStore('gameArchive', () => {
-  const games = shallowRef(readSession('kchess:game-history:v1', decodeArchive) ?? [])
-  // Entries are replaced, never edited in place. Serialize only the changed game;
-  // reuse earlier entries for the exact size limit and the debounced disk write.
-  const encoded = new WeakMap<ArchivedGame, string>()
-  const encode = (game: ArchivedGame): string => {
-    let text = encoded.get(game)
-    if (text === undefined) {
-      text = JSON.stringify(game)
-      encoded.set(game, text)
-    }
-    return text
+  const games = shallowRef<ArchivedGame[]>(initialLibrary().games)
+  const error = ref('')
+  const saved = new Map(games.value.map((game) => [game.id, game]))
+  const pending = new Map<string, ArchivedGame>()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  function revert(id: string): void {
+    const previous = saved.get(id)
+    games.value = previous
+      ? games.value.map((game) => (game.id === id ? previous : game))
+      : games.value.filter((game) => game.id !== id)
   }
-  const revision = ref(0)
-  const error = persistSession(
-    'kchess:game-history:v1',
-    () => games.value,
-    () => revision.value,
-    {
-      serialize: (items) => `{"version":1,"games":[${items.map(encode).join(',')}]}`,
-      flush: 'sync',
-    },
-  )
-  const overhead = JSON.stringify({ version: 1, games: [] }).length
+  async function flush(): Promise<void> {
+    clearTimeout(timer)
+    const batch = [...pending.values()]
+    pending.clear()
+    for (const game of batch) {
+      try {
+        await window.kchess.saveArchivedGame(game)
+        saved.set(game.id, game)
+        error.value = ''
+      } catch (cause) {
+        console.warn('[history] saving a game failed:', game.id, cause)
+        error.value = cause instanceof Error ? cause.message : String(cause)
+        if (!pending.has(game.id)) revert(game.id)
+      }
+    }
+  }
+  const flushNow = (): void => void flush()
   function save(game: ArchivedGame): void {
-    const candidate = { ...game, setup: { ...game.setup }, moves: [...game.moves] }
-    const next = [candidate, ...games.value.filter((g) => g.id !== candidate.id)]
-    const size =
-      overhead +
-      next.reduce((sum, item) => sum + encode(item).length, 0) +
-      Math.max(0, next.length - 1)
-    // Never silently discard older games to make room for a new one.
-    if (next.length > 500 || size > 2_000_000) {
-      error.value = 'Game history is full. Export saved games before making room for new games.'
-      return
-    }
-    games.value = next
-    revision.value++
-    if (candidate.finished) error.flush()
+    const candidate = plain(game)
+    games.value = [candidate, ...games.value.filter((g) => g.id !== candidate.id)]
+    pending.set(candidate.id, candidate)
+    clearTimeout(timer)
+    if (candidate.finished) flushNow()
+    else timer = setTimeout(flushNow, 150)
   }
-  function remove(id: string): void {
+  async function remove(id: string): Promise<void> {
     const next = games.value.filter((g) => g.id !== id)
     if (next.length === games.value.length) return
     games.value = next
-    revision.value++
-    error.flush()
+    pending.delete(id)
+    try {
+      await window.kchess.removeArchivedGame(id)
+      saved.delete(id)
+    } catch (cause) {
+      console.warn('[history] removing a game failed:', id, cause)
+      error.value = cause instanceof Error ? cause.message : String(cause)
+      revert(id)
+    }
   }
-  return { games, error, save, remove, flush: () => error.flush() }
+  window.addEventListener('beforeunload', flushNow)
+  onScopeDispose(() => {
+    flushNow()
+    window.removeEventListener('beforeunload', flushNow)
+  })
+  return { games, error, save, remove, flush }
 })
 
 /** One stable identity per session: reloads and takebacks update the same history entry. */
@@ -123,10 +80,13 @@ export function useGameArchive(
 } {
   const archive = useGameArchiveStore()
   const kind = source().source
-  const identity = useLocalStorage(`kchess:history-session:${kind}`, {
-    id: crypto.randomUUID(),
-    startedAt: Date.now(),
-  })
+  const identity = ref<ArchiveIdentity>(
+    initialLibrary().sessions[`archive:${kind}`] ?? {
+      id: crypto.randomUUID(),
+      startedAt: Date.now(),
+    },
+  )
+  persistSession(`archive:${kind}`, () => identity.value, undefined, { flush: 'sync' })
   if (!resume) {
     const previous = archive.games.find((g) => g.id === identity.value.id)
     if (previous && !previous.finished) archive.save({ ...previous, finished: true })
@@ -135,7 +95,7 @@ export function useGameArchive(
   let hadPlay = false
   function save(finished = false): void {
     if (!hasPlay()) {
-      if (hadPlay) archive.remove(identity.value.id)
+      if (hadPlay) void archive.remove(identity.value.id)
       hadPlay = false
       return
     }

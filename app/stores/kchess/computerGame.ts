@@ -11,14 +11,12 @@ import {
   setupSanHistory,
   statusText,
   turnColor,
-} from '../../utils/chess'
-import { readSession, persistSession } from '../../utils/sessionPersistence'
+} from '../../../src/shared/chess'
+import { initialLibrary, persistSession } from '../../utils/library'
+import { boardResult, opponent, pgnResult, timeoutWinner } from '../../../src/shared/gameResult'
 import { useGameArchive } from '../gameArchive'
-import { ENGINE_LEVELS } from '../../../src/shared/types'
-import { UCI_MOVE } from '../../../src/shared/patterns'
 import { engineLevelInfo } from '../../../src/shared/engineLevels'
 import {
-  engineSupports,
   isStandardStart,
   isVariant,
   replaySetup,
@@ -43,70 +41,7 @@ export function useComputerGame(options: {
 }) {
   const { engineReady, fail, recheckEngine, notifyDesktop } = options
   const allowed = () => options.assistanceAllowed?.() ?? true
-  const saved = readSession('kchess:computer:v1', (raw) => {
-    if (!raw || typeof raw !== 'object') return undefined
-    const value = raw as {
-      version?: unknown
-      moves?: unknown
-      ply?: unknown
-      level?: unknown
-      color?: unknown
-      resigned?: unknown
-      setup?: { variant?: unknown; fen?: unknown }
-      clock?: { minutes?: unknown; increment?: unknown } | null
-      times?: { white?: unknown; black?: unknown }
-      flagged?: unknown
-    }
-    // Version 1 games began at the standard start and had no clock.
-    const setup: GameSetup =
-      value.version === 2 &&
-      value.setup &&
-      isVariant(value.setup.variant) &&
-      typeof value.setup.fen === 'string' &&
-      value.setup.fen.length <= 100
-        ? { variant: value.setup.variant, fen: value.setup.fen }
-        : STANDARD_SETUP
-    if (
-      (value.version !== 1 && value.version !== 2) ||
-      !engineSupports(setup.variant) ||
-      !Array.isArray(value.moves) ||
-      value.moves.length > 1024 ||
-      !value.moves.every((m) => typeof m === 'string' && UCI_MOVE.test(m)) ||
-      replaySetup(setup, value.moves)?.played.length !== value.moves.length ||
-      !ENGINE_LEVELS.includes(value.level as EngineLevel) ||
-      !['white', 'black'].includes(String(value.color))
-    )
-      return undefined
-    const clock =
-      value.clock &&
-      Number.isInteger(value.clock.minutes) &&
-      Number.isInteger(value.clock.increment) &&
-      (value.clock.minutes as number) >= 0 &&
-      (value.clock.minutes as number) <= 180 &&
-      (value.clock.increment as number) >= 0 &&
-      (value.clock.increment as number) <= 180
-        ? { minutes: value.clock.minutes as number, increment: value.clock.increment as number }
-        : null
-    const time = (n: unknown): number =>
-      typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0
-    return {
-      moves: value.moves as string[],
-      ply:
-        typeof value.ply === 'number'
-          ? Math.max(0, Math.min(value.moves.length, Math.floor(value.ply)))
-          : value.moves.length,
-      level: value.level as EngineLevel,
-      color: value.color as 'white' | 'black',
-      resigned: value.resigned === true,
-      setup,
-      clock,
-      times: clock ? { white: time(value.times?.white), black: time(value.times?.black) } : null,
-      flagged:
-        value.flagged === 'white' || value.flagged === 'black'
-          ? (value.flagged as 'white' | 'black')
-          : null,
-    }
-  })
+  const saved = initialLibrary().sessions.computer
   const localMoves = ref<string[]>(saved?.moves ?? [])
   const localPly = ref(saved?.ply ?? 0)
   const level = ref<EngineLevel>(saved?.level ?? 'club')
@@ -158,6 +93,13 @@ export function useComputerGame(options: {
   const localTurn = computed(() => turnColor(localDisplay.value))
   const localCheck = computed(() => checkColor(localDisplay.value))
   /** How a finished computer game ended, from the player's point of view. */
+  /** The winner once the game is over; none for a draw. */
+  const localWinner = computed<'white' | 'black' | undefined>(() => {
+    if (!localOver.value) return undefined
+    if (resigned.value) return opponent(userColor.value)
+    if (flagged.value) return timeoutWinner(localGame.value, flagged.value)
+    return localGame.value.outcome()?.winner
+  })
   const localResult = computed<{
     kind: 'win' | 'loss' | 'draw'
     title: string
@@ -165,10 +107,10 @@ export function useComputerGame(options: {
   } | null>(() => {
     if (!localOver.value) return null
     if (resigned.value) return { kind: 'loss', title: 'Stockfish won', detail: 'You resigned' }
+    const winner = localWinner.value
     if (flagged.value) {
-      const winner = flagged.value === 'white' ? 'black' : 'white'
       // Running out of time is a draw when the other side cannot possibly mate.
-      if (localGame.value.hasInsufficientMaterial(winner))
+      if (!winner)
         return { kind: 'draw', title: 'Draw', detail: 'Time ran out, but mate was impossible' }
       const won = winner === userColor.value
       return {
@@ -177,17 +119,14 @@ export function useComputerGame(options: {
         detail: won ? 'Stockfish ran out of time' : 'You ran out of time',
       }
     }
-    const game = localGame.value
-    if (game.isCheckmate()) {
-      const won = game.turn !== userColor.value
-      return {
-        kind: won ? 'win' : 'loss',
-        title: won ? 'You won' : 'Stockfish won',
-        detail: 'Checkmate',
-      }
+    const board = boardResult(localGame.value, localSetup.value.variant, localDraw.value)
+    if (!winner) return { kind: 'draw', title: 'Draw', detail: board?.reason ?? 'Draw' }
+    const won = winner === userColor.value
+    return {
+      kind: won ? 'win' : 'loss',
+      title: won ? 'You won' : 'Stockfish won',
+      detail: board?.reason ?? 'Game over',
     }
-    const detail = localDraw.value ?? (game.isStalemate() ? 'Stalemate' : 'Insufficient material')
-    return { kind: 'draw', title: 'Draw', detail }
   })
   /** The player may touch pieces: it is their move, or they may queue one. */
   const localCanPlay = computed(
@@ -210,8 +149,7 @@ export function useComputerGame(options: {
     if (!clockRunning.value || localGame.value.turn !== color) return left
     return Math.max(0, left - (now - turnStarted))
   }
-  const localSaveError = persistSession('kchess:computer:v1', () => ({
-    version: 2,
+  const localSaveError = persistSession('computer', () => ({
     moves: localMoves.value,
     ply: localPly.value,
     level: level.value,
@@ -224,18 +162,6 @@ export function useComputerGame(options: {
   }))
   const archive = useGameArchive(
     () => {
-      const outcome = localGame.value.outcome()
-      const winner = resigned.value
-        ? userColor.value === 'white'
-          ? 'black'
-          : 'white'
-        : flagged.value
-          ? localGame.value.hasInsufficientMaterial(flagged.value === 'white' ? 'black' : 'white')
-            ? undefined
-            : flagged.value === 'white'
-              ? 'black'
-              : 'white'
-          : outcome?.winner
       const engine = `Stockfish (${engineLevelInfo(level.value).label})`
       return {
         source: 'computer',
@@ -243,13 +169,7 @@ export function useComputerGame(options: {
         moves: [...localMoves.value],
         white: userColor.value === 'white' ? 'You' : engine,
         black: userColor.value === 'black' ? 'You' : engine,
-        result: localOver.value
-          ? winner === 'white'
-            ? '1-0'
-            : winner === 'black'
-              ? '0-1'
-              : '1/2-1/2'
-          : '*',
+        result: pgnResult(localOver.value, localWinner.value),
         reason: localResult.value?.detail ?? 'In progress',
         timeControl: localClock.value
           ? `${localClock.value.minutes * 60}+${localClock.value.increment}`

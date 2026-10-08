@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { arenaExtras, createTournament, tournaments } from '../../src/main/tournaments'
+import { arenaExtras, createTournament, tournaments } from '../../src/core/tournaments'
 import { LichessError } from '../../src/shared/lichessError'
 import { assertNewArena } from '../../src/shared/validate'
 
@@ -9,13 +9,12 @@ const mocks = vi.hoisted(() => ({
   use: vi.fn(),
   getToken: vi.fn(async (): Promise<string | null> => 'Alice-token'),
 }))
-vi.mock('electron', () => ({ shell: {} }))
 vi.mock('openapi-fetch', () => ({ default: () => mocks }))
-vi.mock('../../src/main/store', () => ({
+vi.mock('../../src/core/store', () => ({
   loadData: async () => ({ accounts: [] }),
   getToken: mocks.getToken,
 }))
-vi.mock('../../src/main/usage', () => ({
+vi.mock('../../src/core/usage', () => ({
   meteredFetch: vi.fn(),
   attributeTo: vi.fn(),
   withUsage: (_account: string, _kind: string, fn: () => unknown) => fn(),

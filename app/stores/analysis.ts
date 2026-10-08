@@ -8,7 +8,7 @@ import {
   watch,
   type EffectScope,
 } from 'vue'
-import { readSession, persistSession } from '../utils/sessionPersistence'
+import { initialLibrary, persistSession } from '../utils/library'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
 import type { AnalysisUpdate, CloudEval, Judgment } from '../../src/shared/types'
@@ -29,9 +29,9 @@ import {
   treeFromPgn,
   treeToPgn,
   type TreeNode,
-} from '../utils/analysisTree'
-import { playUci, positionFromFen } from '../utils/chess'
-import { setupFromFen, START_SETUP, type EditorSetup } from '../utils/boardEditor'
+} from '../../src/shared/analysisTree'
+import { playUci, positionFromFen } from '../../src/shared/chess'
+import { setupFromFen, START_SETUP, type EditorSetup } from '../../src/shared/boardEditor'
 
 /** Evaluations kept per position, so stepping back and forth shows them at once. */
 const CACHE_SIZE = 600
@@ -60,35 +60,9 @@ export interface ReviewMark {
  */
 export const useAnalysisStore = defineStore('analysis', () => {
   const app = useKChessStore()
-  const saved = readSession('kchess:analysis:v1', (raw) => {
-    if (!raw || typeof raw !== 'object') return undefined
-    const value = raw as {
-      version?: unknown
-      pgn?: unknown
-      path?: unknown
-      orientation?: unknown
-      study?: unknown
-      chapter?: unknown
-    }
-    if (value.version !== 1 || typeof value.pgn !== 'string') return undefined
-    const root = treeFromPgn(value.pgn)
-    if (!root) return undefined
-    const path =
-      typeof value.path === 'string'
-        ? pathOf(
-            nodesAlong(root, value.path)
-              .slice(1)
-              .map((n) => n.uci),
-          )
-        : ''
-    return {
-      root,
-      path,
-      orientation: value.orientation === 'black' ? ('black' as const) : ('white' as const),
-      study: typeof value.study === 'string' ? value.study : '',
-      chapter: typeof value.chapter === 'string' ? value.chapter : '',
-    }
-  })
+  const session = initialLibrary().sessions.analysis
+  const sessionRoot = session && treeFromPgn(session.pgn)
+  const saved = sessionRoot ? { ...session, root: sessionRoot } : undefined
   const studies = useStudyStore()
   // A mismatched session remains an unsaved recovery document, never overwrites the library.
   const linked = studies.items.find((item) => item.id === saved?.study)
@@ -110,9 +84,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const studyId = ref(conflict ? '' : (saved?.study ?? ''))
   const studyChapterId = ref(saved?.chapter ?? linked?.chapters[0]?.id ?? '')
   const saveError = persistSession(
-    'kchess:analysis:v1',
+    'analysis',
     () => ({
-      version: 1,
       pgn: documentPgn.value,
       path: path.value,
       orientation: orientation.value,
@@ -145,7 +118,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /* ── Navigation and editing the tree ──────────────────────────────── */
 
   function load(fen?: string): void {
-    saveStudy()
+    void saveStudy()
     root.value = newTree(fen)
     path.value = ''
     evaluations.clear()
@@ -156,7 +129,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   function loadPgn(text: string, ply = 0): boolean {
     const tree = treeFromPgn(text)
     if (!tree) return false
-    saveStudy()
+    void saveStudy()
     root.value = tree
     path.value = pathOf(movesOf(lineEnd(tree, '')).slice(0, Math.max(0, ply)))
     evaluations.clear()
@@ -225,22 +198,20 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return true
   }
   /** Keep the board as a study (named), and save its edits to it from now on. */
-  function saveAsStudy(name: string): string {
-    saveStudy()
+  async function saveAsStudy(name: string): Promise<string> {
+    await saveStudy()
     const text = pgn()
-    studyId.value = studies.save(name, text)
-    studyChapterId.value = studies.items.find((s) => s.id === studyId.value)!.chapters[0]!.id
+    const id = await studies.save(name, text)
+    studyId.value = id
+    studyChapterId.value = studies.items.find((s) => s.id === id)!.chapters[0]!.id
     studyPgn = text
     studySaveError.value = ''
-    return studyId.value
+    return id
   }
   /** Save the open study before returning to an empty analysis board. */
-  function closeStudy(): boolean {
-    saveStudy()
-    if (study.value && pgn() !== studyPgn) return false
-    studies.flush()
-    studySaveError.value = studies.error
-    if (studySaveError.value) return false
+  async function closeStudy(): Promise<boolean> {
+    await saveStudy()
+    if ((study.value && pgn() !== studyPgn) || studySaveError.value) return false
     studyId.value = ''
     studyChapterId.value = ''
     studyPgn = ''
@@ -248,31 +219,34 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return true
   }
   let studyTimer: ReturnType<typeof setTimeout> | undefined
-  function saveStudy(): void {
+  async function saveStudy(): Promise<void> {
     clearTimeout(studyTimer)
     const open = study.value
     if (!open) return
     const text = pgn()
     if (text === studyPgn) return
+    const previous = studyPgn
+    // Counted as saved while the core writes it; a failure makes it unsaved again.
+    studyPgn = text
     try {
-      studies.save(open.name, text, open.id, studyChapterId.value)
-      studies.flush()
-      studyPgn = text
-      studySaveError.value = studies.error
+      await studies.save(open.name, text, open.id, studyChapterId.value)
+      studySaveError.value = ''
     } catch (cause) {
       console.warn('[analysis] saving study failed:', cause)
+      if (studyPgn === text) studyPgn = previous
       studySaveError.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
+  const saveStudyNow = (): void => void saveStudy()
   watch([documentRevision, studyId], () => {
     clearTimeout(studyTimer)
-    if (studyId.value) studyTimer = setTimeout(saveStudy, 150)
+    if (studyId.value) studyTimer = setTimeout(saveStudyNow, 150)
   })
   // Flush the previous study before handing the board to another document.
-  window.addEventListener('beforeunload', saveStudy, { capture: true })
+  window.addEventListener('beforeunload', saveStudyNow, { capture: true })
   onScopeDispose(() => {
-    saveStudy()
-    window.removeEventListener('beforeunload', saveStudy, { capture: true })
+    saveStudyNow()
+    window.removeEventListener('beforeunload', saveStudyNow, { capture: true })
   })
   // A study removed from the library (here or on the Studies page) no longer receives edits.
   watch(study, (open) => {

@@ -1,5 +1,3 @@
-import { dialog } from 'electron'
-import { writeFile } from 'node:fs/promises'
 import { getDb } from './db'
 import { logDebug } from './logger'
 import type {
@@ -97,21 +95,11 @@ export function clearVoiceHistory(): void {
   getDb().exec('DELETE FROM voice_log')
 }
 
-export async function exportVoiceHistory(): Promise<boolean> {
-  const date = new Date().toISOString().slice(0, 10)
-  const result = await dialog.showSaveDialog({
-    title: 'Export voice history',
-    defaultPath: `kchess-voice-history-${date}.json`,
-    filters: [{ name: 'JSON', extensions: ['json'] }],
-  })
-  if (result.canceled || !result.filePath) return false
+/** The whole log as a JSON document, for export. */
+export function voiceHistoryDocument(): string {
   const entries = voiceHistory(MAX_ENTRIES).map((entry) => ({
     ...entry,
     time: new Date(entry.at).toISOString(),
   }))
-  await writeFile(
-    result.filePath,
-    `${JSON.stringify({ exportedAt: Date.now(), entries }, null, 2)}\n`,
-  )
-  return true
+  return `${JSON.stringify({ exportedAt: Date.now(), entries }, null, 2)}\n`
 }

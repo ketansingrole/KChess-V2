@@ -9,6 +9,7 @@ it('runs only changed formatting, lint and related tests for renderer edits', ()
 })
 it.each([
   'src/shared/types.ts',
+  'src/core/platform.ts',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
   'vitest.config.ts',

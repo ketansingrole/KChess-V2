@@ -3,8 +3,7 @@ import { IPC_CHANNELS, type InvokeMethod, type IpcInput, type IpcResult } from '
 
 import { isAppUrl } from './appOrigin'
 import { validateIpcArguments } from './ipcContracts'
-import { errorSummary, isExpectedCancellation, logDebug, logWarn } from './logger'
-import { recordTiming } from './performance'
+import { errorSummary, isExpectedCancellation, logDebug, logWarn, recordTiming } from '../core'
 
 const registered = new Set<InvokeMethod>()
 

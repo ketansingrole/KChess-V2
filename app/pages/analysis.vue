@@ -5,7 +5,7 @@ import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { ContextMenuItem, DropdownMenuItem } from '@nuxt/ui'
 import type { EngineLine } from '../../src/shared/types'
-import { checkColor, destsFor } from '../utils/chess'
+import { checkColor, destsFor } from '../../src/shared/chess'
 import {
   formatEval,
   MOVE_GLYPHS,
@@ -14,15 +14,15 @@ import {
   onMainline,
   pvSan,
   setMoveGlyph,
-} from '../utils/analysisTree'
-import { positionProblem, setupFromFen, setupFen } from '../utils/boardEditor'
+} from '../../src/shared/analysisTree'
+import { positionProblem, setupFromFen, setupFen } from '../../src/shared/boardEditor'
 import {
   ANALYSIS_GRAMMAR,
   spokenAnalysisCommand,
   spokenChoice,
   spokenMove,
   type VoiceMoveChoice,
-} from '../utils/voiceCommands'
+} from '../../src/shared/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'

@@ -3,9 +3,8 @@ import updaterPackage from 'electron-updater'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AppUpdates } from './appUpdates'
-import { logDebug, logError, logWarn } from './logger'
-import { getSettings } from './store'
-import type { AppUpdateStatus } from '../shared/types'
+import { logDebug, logError, logWarn } from '../core/logger'
+import type { AppUpdateStatus, Settings } from '../shared/types'
 
 export const APP_RELEASES_URL = 'https://github.com/ketansingrole/KChess-V2/releases'
 
@@ -45,6 +44,7 @@ export function resolveUpdateCapabilities(host: UpdateHost): {
 export async function setupAppUpdates(
   emit: (status: AppUpdateStatus) => void,
   onInstallFailure: () => void,
+  getSettings: () => Promise<Settings>,
 ): Promise<AppUpdates> {
   const { autoUpdater } = updaterPackage
   autoUpdater.logger = {

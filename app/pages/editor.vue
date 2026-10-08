@@ -10,8 +10,8 @@ import {
   setupFromFen,
   START_SETUP,
   withPiece,
-} from '../utils/boardEditor'
-import { EDITOR_GRAMMAR, spokenEdit, type PieceColor } from '../utils/voiceCommands'
+} from '../../src/shared/boardEditor'
+import { EDITOR_GRAMMAR, spokenEdit, type PieceColor } from '../../src/shared/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'
