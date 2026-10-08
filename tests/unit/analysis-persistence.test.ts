@@ -180,7 +180,8 @@ it('flushes pending edits before opening another study and before unload', async
 })
 it('reuses the document PGN while navigating and debounces serialization of edits', async () => {
   vi.useFakeTimers()
-  desktop({ reviewGet: async () => null })
+  // Measures the renderer's serialization; the core's validation of saves is tested elsewhere.
+  desktop({ reviewGet: async () => null, saveSession: async () => {} })
   const serialize = vi.spyOn(tree, 'treeToPgn')
   const store = useAnalysisStore()
   const branching = tree.newTree()

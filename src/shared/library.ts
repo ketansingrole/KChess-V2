@@ -323,11 +323,18 @@ export function decodeMistakes(raw: unknown): MistakeExercise[] | undefined {
   )
 }
 
+/**
+ * The last document parsed: sessions are saved after every move along the board as well as after
+ * edits, and moving changes only the path.
+ */
+let parsed: { pgn: string; root: ReturnType<typeof treeFromPgn> } | undefined
+
 export function decodeAnalysisSession(raw: unknown): AnalysisSession | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const value = raw as Record<string, unknown>
   if (value.version !== 1 || typeof value.pgn !== 'string') return undefined
-  const root = treeFromPgn(value.pgn)
+  if (parsed?.pgn !== value.pgn) parsed = { pgn: value.pgn, root: treeFromPgn(value.pgn) }
+  const root = parsed.root
   if (!root) return undefined
   // A path the document no longer contains ends where the document does.
   const path =
