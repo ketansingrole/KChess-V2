@@ -1280,12 +1280,10 @@ test('quick pick switches modes, runs commands and remembers them', async ({
   await expect(input).not.toBeFocused()
   await input.click()
   await expect(results).toBeVisible()
-  // Click bare topbar chrome: the far right holds the frameless window
-  // controls on Windows/Linux (Close would kill the window) and the empty
-  // left end collapses to zero height, so click the header's padded left
-  // edge, which has no single-click action.
-  const topbar = (await page.locator('.topbar').boundingBox())!
-  await page.locator('.topbar').click({ position: { x: 10, y: topbar.height / 2 } })
+  // Other chrome dismisses too. The top bar itself can't take a coordinate
+  // click: its right end is window controls on frameless builds and the open
+  // palette spans the middle, so step home from the sidebar instead.
+  await navigate(page, 'Home')
   await expect(results).toBeHidden()
 })
 
