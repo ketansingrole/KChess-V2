@@ -67,6 +67,17 @@ describe('trackpad page history', () => {
     expect(go).toHaveBeenCalledTimes(2)
   })
 
+  it('swallows a discrete repeat like Playwright momentum, then navigates again after a pause', () => {
+    wheel(-120)
+    expect(go).toHaveBeenCalledExactlyOnceWith(-1)
+    wheel(-120)
+    expect(go).toHaveBeenCalledTimes(1)
+    time += 350
+    wheel(120)
+    expect(go).toHaveBeenLastCalledWith(1)
+    expect(go).toHaveBeenCalledTimes(2)
+  })
+
   it('does not leave the app or navigate beyond either end of history', () => {
     canGo.mockReturnValue(false)
     wheel(-120)
