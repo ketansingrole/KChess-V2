@@ -11,6 +11,8 @@ shakmaty.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 memchr.workspace = true
+# Unicode general categories (`\p{L}`, `\p{N}`) for the arena name check; already in Cargo.lock.
+regex-syntax = "0.8"
 
 [dev-dependencies]
 regex = { version = "1" }

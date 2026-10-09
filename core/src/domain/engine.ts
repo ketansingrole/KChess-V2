@@ -25,6 +25,72 @@ export function rules<T>(method: string, ...args: unknown[]): T {
   return JSON.parse(binding.invoke(method, JSON.stringify(args))) as T
 }
 
+/** Where a value JSON cannot carry sat: `at` is the argument, then the path inside it. */
+interface LosslessSpecial {
+  at: (string | number)[]
+  /** 0 undefined, 1 NaN, 2 Infinity, 3 -Infinity, 4 a `Uint8Array` (`n` its length, `h` its first bytes). */
+  k: number
+  /** For an `undefined` property: its index among the object's keys, so it keeps its place. */
+  i?: number
+  n?: number
+  h?: number[]
+}
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+const LONE_SURROGATES = new RegExp(LONE_SURROGATE.source, 'g')
+
+function losslessValue(
+  value: unknown,
+  at: (string | number)[],
+  specials: LosslessSpecial[],
+): unknown {
+  if (value === undefined) {
+    specials.push({ at, k: 0 })
+    return null
+  }
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) specials.push({ at, k: 1 })
+    else if (value === Infinity) specials.push({ at, k: 2 })
+    else if (value === -Infinity) specials.push({ at, k: 3 })
+    else return value
+    return null
+  }
+  if (typeof value === 'string')
+    // JSON cannot carry an unpaired surrogate; both halves are one UTF-16 unit, so U+FFFD keeps lengths.
+    return LONE_SURROGATE.test(value) ? value.replace(LONE_SURROGATES, '�') : value
+  if (value instanceof Uint8Array) {
+    specials.push({ at, k: 4, n: value.length, h: Array.from(value.subarray(0, 4)) })
+    return null
+  }
+  if (Array.isArray(value))
+    return value.map((item, index) => losslessValue(item, [...at, index], specials))
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    const source = value as Record<string, unknown>
+    Object.keys(source).forEach((key, index) => {
+      const safeKey = LONE_SURROGATE.test(key) ? key.replace(LONE_SURROGATES, '�') : key
+      const item = source[key]
+      if (item === undefined) specials.push({ at: [...at, safeKey], k: 0, i: index })
+      else out[safeKey] = losslessValue(item, [...at, safeKey], specials)
+    })
+    return out
+  }
+  return value
+}
+
+/**
+ * Call a rules method whose arguments are JS values that JSON cannot carry losslessly
+ * (`undefined` properties, NaN, infinities, binary data, unpaired surrogates). The Rust side reads
+ * a sidecar of where those sat before the JSON arguments, so each check sees what the TypeScript
+ * check saw.
+ */
+export function rulesLossless<T>(method: string, ...args: unknown[]): T {
+  if (!binding) throw new Error('The chess rules are not loaded yet.')
+  const specials: LosslessSpecial[] = []
+  const safe = args.map((arg, index) => losslessValue(arg, [index], specials))
+  return JSON.parse(binding.invoke(method, JSON.stringify([specials, ...safe]))) as T
+}
+
 /** The exports of the rules' WebAssembly module (see `crates/kchess-wasm/src/lib.rs`). */
 interface RulesExports {
   /** Only its current buffer is read, so the core needs no WebAssembly types. */

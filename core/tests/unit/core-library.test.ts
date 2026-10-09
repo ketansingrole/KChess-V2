@@ -1,5 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import * as analysisTree from '../../src/domain/analysisTree'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { useTestPlatform } from '../../../tests/fixtures/corePlatform'
 import { closeDb, getDb } from '../../src/services/db'
 import {
@@ -193,8 +192,7 @@ describe('tournaments and repertoire notes', () => {
 })
 
 describe('analysis sessions', () => {
-  it('validates a moved-along document without parsing it again', () => {
-    const parse = vi.spyOn(analysisTree, 'treeFromPgn')
+  it('validates a moved-along document and keeps the path it still contains', () => {
     const session = {
       pgn: '1. e4 e5 2. Nf3 *',
       path: '',
@@ -203,10 +201,8 @@ describe('analysis sessions', () => {
       chapter: '',
     }
     assertSession('analysis', session)
-    assertSession('analysis', { ...session, path: 'e2e4 e7e5' })
-    expect(parse).toHaveBeenCalledTimes(1)
+    expect(assertSession('analysis', { ...session, path: 'e2e4 e7e5' }).path).toBe('e2e4 e7e5')
     expect(assertSession('analysis', { ...session, path: 'e2e4 d7d5' }).path).toBe('e2e4')
     expect(() => assertSession('analysis', { ...session, pgn: '1. e5 *' })).toThrow()
-    parse.mockRestore()
   })
 })
