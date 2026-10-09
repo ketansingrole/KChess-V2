@@ -1,4 +1,5 @@
 import type { ArchiveIdentity, ArchivedGame, GameSnapshot } from './library'
+import { assignWritten, transition, type HostRead } from './gameSession.ts'
 
 export interface ArchiveState {
   identity: ArchiveIdentity
@@ -13,15 +14,28 @@ export interface ArchiveHost {
   now(): number
   id(): string
 }
+
+/** What an archive transition tells the driver to do, in order. */
+type ArchiveEffect = { type: 'save'; game: ArchivedGame } | { type: 'remove'; id: string }
+
+interface ArchiveDone {
+  value: unknown
+  state?: ArchiveState
+  written: string[]
+  effects: ArchiveEffect[]
+}
+
 export function archiveState(
   identity: ArchiveIdentity | undefined,
   host: Pick<ArchiveHost, 'now' | 'id'>,
 ): ArchiveState {
-  return {
-    identity: identity ? { ...identity } : { id: host.id(), startedAt: host.now() },
-    hadPlay: false,
-  }
+  return transition<{ value: ArchiveState }>('archiveState', [identity ?? null], (kind) => {
+    if (kind === 'id') return host.id()
+    if (kind === 'now') return host.now()
+    throw new Error(`An archive identity has no host read ${kind}`)
+  }).value
 }
+
 /** Stable archive identity and completion rules shared by every game frontend. */
 export class GameArchive {
   constructor(
@@ -29,52 +43,40 @@ export class GameArchive {
     private host: ArchiveHost,
     resume = true,
   ) {
-    if (!resume) {
-      const previous = host.games().find((game) => game.id === state.identity.id)
-      if (previous && !previous.finished) host.save({ ...previous, finished: true })
-      this.newIdentity()
+    this.perform(this.apply('archiveInit', [resume]).effects)
+  }
+  private read = (kind: HostRead): unknown => {
+    const host = this.host
+    switch (kind) {
+      case 'hasPlay':
+        return host.hasPlay()
+      case 'source':
+        return host.source()
+      case 'games':
+        return host.games()
+      case 'now':
+        return host.now()
+      case 'id':
+        return host.id()
+      default:
+        throw new Error(`An archive has no host read ${kind}`)
     }
   }
-  private newIdentity(): void {
-    this.state.identity = { id: this.host.id(), startedAt: this.host.now() }
+  private apply(method: string, input: unknown[] = []): ArchiveDone {
+    const done = transition<ArchiveDone>(method, [this.state, ...input], this.read)
+    if (done.state) assignWritten(this.state, done.state, done.written)
+    return done
+  }
+  private perform(effects: readonly ArchiveEffect[]): void {
+    for (const effect of effects) {
+      if (effect.type === 'save') this.host.save(effect.game)
+      else this.host.remove(effect.id)
+    }
   }
   save(finished = false): void {
-    if (!this.host.hasPlay()) {
-      if (this.state.hadPlay) this.host.remove(this.state.identity.id)
-      this.state.hadPlay = false
-      return
-    }
-    this.state.hadPlay = true
-    const snapshot = this.host.source()
-    this.host.save({
-      ...snapshot,
-      ...this.state.identity,
-      reason:
-        finished && snapshot.result === '*' && snapshot.source !== 'clock'
-          ? 'Stopped before the game ended'
-          : snapshot.reason,
-      updatedAt: this.host.now(),
-      finished: finished || snapshot.result !== '*',
-    })
+    this.perform(this.apply('archiveSave', [finished]).effects)
   }
   reset(): void {
-    const previous = this.host.games().find((game) => game.id === this.state.identity.id)
-    const latest = this.host.source()
-    if (previous && JSON.stringify(previous.moves) === JSON.stringify(latest.moves)) {
-      const result = previous.result === '*' ? latest.result : previous.result
-      this.host.save({
-        ...previous,
-        result,
-        finished: true,
-        reason:
-          result === '*' && latest.source !== 'clock'
-            ? 'Stopped before the game ended'
-            : previous.result === '*'
-              ? latest.reason
-              : previous.reason,
-      })
-    } else this.save(true)
-    this.state.hadPlay = false
-    this.newIdentity()
+    this.perform(this.apply('archiveReset').effects)
   }
 }
