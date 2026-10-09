@@ -9,7 +9,11 @@ use crate::host::{Config, Host};
 use crate::puzzles::PuzzleService;
 
 pub struct Core {
+    config: Config,
+    host: Arc<dyn Host>,
     puzzles: PuzzleService,
+    /// `kchess.db`, opened on first use.
+    db: std::sync::Mutex<Option<rusqlite::Connection>>,
 }
 
 fn arg<T: serde::de::DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -24,7 +28,10 @@ fn json<T: serde::Serialize>(value: T) -> Result<Value> {
 impl Core {
     pub fn new(config: Config, host: Arc<dyn Host>) -> Core {
         Core {
-            puzzles: PuzzleService::new(config, host),
+            puzzles: PuzzleService::new(config.clone(), Arc::clone(&host)),
+            config,
+            host,
+            db: std::sync::Mutex::new(None),
         }
     }
 
@@ -50,12 +57,28 @@ impl Core {
     /// Run one synchronous method: storage that TypeScript callers still use synchronously.
     /// Unknown methods and malformed arguments are errors.
     pub fn call_sync(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        let _ = args;
-        Err(CoreError::new(format!("Unknown core method {method}.")))
+        if !method.starts_with("store.") {
+            return Err(CoreError::new(format!("Unknown core method {method}.")));
+        }
+        let mut db = self
+            .db
+            .lock()
+            .map_err(|_| CoreError::new("The database is unavailable."))?;
+        if db.is_none() {
+            let path = self.config.data_dir.join("kchess.db");
+            *db = Some(crate::store::open(&path, self.host.as_ref())?);
+        }
+        match db.as_ref() {
+            Some(connection) => crate::store::call(connection, method, &args),
+            None => Err(CoreError::new("The database is unavailable.")),
+        }
     }
 
     /// Cancel running work and release files; later calls fail.
     pub async fn close(&self) {
         self.puzzles.close().await;
+        if let Ok(mut db) = self.db.lock() {
+            db.take();
+        }
     }
 }

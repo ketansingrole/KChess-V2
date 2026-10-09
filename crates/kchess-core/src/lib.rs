@@ -5,6 +5,7 @@ pub mod core;
 pub mod error;
 pub mod host;
 pub mod puzzles;
+pub mod store;
 
 pub use crate::core::Core;
 pub use error::{CoreError, Result};
