@@ -174,6 +174,9 @@ pub fn call(method: &str, args: &str) -> Result<String> {
                 crate::training::call,
                 crate::records::call,
                 crate::misc::call,
+                crate::games::call,
+                crate::online_game::call,
+                crate::trainer::call,
             ];
             return match moved.iter().find_map(|call| call(method, &args)) {
                 Some(result) => serde_json::to_string(&result?).map_err(|e| e.to_string()),
