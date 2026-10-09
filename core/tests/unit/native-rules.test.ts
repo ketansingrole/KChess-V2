@@ -74,6 +74,10 @@ afterAll(() => {
     writeFileSync(GOLDEN_PATH, JSON.stringify({ ...goldenFile, ...recorded }, null, 1) + '\n')
 })
 
+// Coverage instrumentation in CI slows the TypeScript side roughly tenfold (seed 7003 took
+// 21.5 s there against 1.6 s locally), so the suites get generous limits.
+const TIMEOUT = 120_000 * SCALE
+
 function rng(seed: number): () => number {
   return () => {
     seed = (seed + 0x6d2b79f5) | 0
@@ -130,7 +134,7 @@ function damage(random: () => number, moves: string[]): string[] {
 
 const CHESS960 = Array.from({ length: 24 }, (_, i) => chess960Fen(i * 40 + 3))
 
-describe('native rules match the TypeScript rules', { timeout: 20_000 * SCALE }, () => {
+describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => {
   it('replays every variant identically (seed 7001)', () => {
     const random = rng(7001)
     for (let i = 0; i < 600 * SCALE; i++) {
@@ -402,7 +406,7 @@ describe('native rules match the TypeScript rules', { timeout: 20_000 * SCALE },
   })
 })
 
-describe('native phase 2 rules match the TypeScript rules', { timeout: 20_000 * SCALE }, () => {
+describe('native phase 2 rules match the TypeScript rules', { timeout: TIMEOUT }, () => {
   it('analyses and summarizes reviews identically (seed 7101)', () => {
     const random = rng(7101)
     for (let i = 0; i < 300 * SCALE; i++) {
