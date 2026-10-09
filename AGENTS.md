@@ -13,7 +13,10 @@ creating/pushing a tag or publishing a release.
 - Use `pnpm run release:version`. It must successfully fetch tags from `origin` first.
   If fetching fails, restore access and retry; do not select a version from stale tags.
   Commit all workspace `package.json` manifests and `pnpm-lock.yaml`; the lockfile must match the declared dependencies.
-- Release only a reviewed commit merged into `origin/main`. Include every intended file,
+- Changes may land on `main` directly or through a pull request; a PR is optional. Before
+  pushing to `main`, run `pnpm run check` locally, and after pushing, confirm CI is green and
+  fix any failure with a follow-up commit (never force-push `main`).
+- Release only a commit on `origin/main` whose CI is green. Include every intended file,
   including new/untracked files; explicitly stage the files instead of relying on
   `git commit -am`. Keep the working tree clean before tagging and verify CI is green
   for the intended release commit.

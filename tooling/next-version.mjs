@@ -44,7 +44,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const version = prepareNextVersion()
   console.log(`package.json is now ${version}.
 Review and explicitly stage every intended file, including new files. Run pnpm run check,
-then commit and merge the release change into main. Follow AGENTS.md's release checklist.
-The tag must be v${version}, pointing at that reviewed commit on origin/main.
+then commit the release change to main (directly or via a pull request). Follow AGENTS.md's release checklist.
+The tag must be v${version}, pointing at that commit on origin/main with green CI.
 Pushing the tag creates a draft release. Publishing is a separate action.`)
 }
