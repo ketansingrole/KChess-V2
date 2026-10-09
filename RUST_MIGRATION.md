@@ -100,3 +100,30 @@ For each TypeScript module in `core/src/domain` assigned to you:
 kchess-domain`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`,
    `npx vitest run core/tests/unit apps/desktop/tests/unit`, `pnpm run typecheck`,
    `pnpm run lint`, `pnpm run format:check`. Commit on your branch with a descriptive message.
+
+## Porting a stateful module (phase 2b pattern)
+
+Session classes (`ComputerGame`, `LocalGame`, `GameArchive`, `OnlineGame`, `PuzzleSession`) keep
+their exported TypeScript API, but every decision moves to Rust:
+
+- **State** is a plain serializable object (the existing `*State` plus any private fields the
+  class kept, such as `turnStarted`, `permitted`, `disposed`), owned by the TypeScript object so
+  it stays reactive where hosts make it reactive.
+- **Transitions** are pure Rust functions `method(state, input, ctx) → { state, …, effects }`.
+  `ctx` carries what the class read from its host at that moment (`now`, `allowed`, `ready`,
+  `activeAccount`, …) — read it once, in the same order the TypeScript did, before the call.
+  Getters (`over`, `winner`, `result`, `remaining`, …) become a Rust `view(state, ctx)`.
+- **Effects** are data the TypeScript driver executes in order: host callbacks (`moved`,
+  `flagged`, `notify`, `failed`), engine/network requests (with the epoch/count they must be
+  matched against), timers. Async results come back through another transition
+  (`searchFinished(state, {epoch, count, move | error}, ctx)`), so cancellation and stale-reply
+  rules stay in Rust.
+- The driver has no conditionals about chess or game rules: it reads ctx, calls Rust, assigns
+  the returned state back into the existing state object (keep object identity), and runs
+  effects. Promise plumbing (`this.search` reuse, `void` fire-and-forget, `console.debug` of
+  cancelled replies) stays exactly as before.
+- **Golden traces:** before switching, record sequences of method calls with scripted host
+  responses (seeded, including races: stale epochs, disposal mid-search, availability changes,
+  clock expiry) and their observable outputs (state snapshots, return values, host calls in
+  order). Record them from the TypeScript class, then check the Rust-backed class against them.
+  Every existing test of the class must keep passing unchanged.
