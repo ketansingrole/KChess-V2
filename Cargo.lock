@@ -609,6 +609,7 @@ name = "kchess-core"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "getrandom 0.2.17",
  "kchess-domain",
  "reqwest",
  "rusqlite",
