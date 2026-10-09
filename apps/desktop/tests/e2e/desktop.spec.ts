@@ -13,7 +13,6 @@ import { createHash } from 'node:crypto'
 import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
 import { migrate } from '../../../../core/src/services/migrations'
-import { storeSample } from '../../../../core/src/services/puzzleQueries'
 import { reviewKey } from '@kchess/core/domain/review'
 import { summarizeReview } from '../../../../core/src/services/rules'
 import type { StoredReview } from '@kchess/core/contracts/types'
@@ -75,15 +74,21 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       })
     const db = new DatabaseSync(join(profile, 'kchess.db'))
     migrate(db)
-    storeSample(db, [
-      {
-        id: 'promo123',
-        fen: '6k1/P6p/8/8/8/8/5PPP/6K1 b - - 0 1',
-        moves: 'h7h6 a7a8q',
-        rating: 1500,
-        themes: 'promotion',
-      },
-    ])
+    // The legacy puzzle tables; the Rust core imports them into puzzles.db on first open.
+    const puzzle = {
+      id: 'promo123',
+      fen: '6k1/P6p/8/8/8/8/5PPP/6K1 b - - 0 1',
+      moves: 'h7h6 a7a8q',
+      rating: 1500,
+      themes: 'promotion',
+    }
+    db.prepare(
+      'INSERT INTO puzzles (id, fen, moves, rating, plays, themes) VALUES (?, ?, ?, ?, 0, ?)',
+    ).run(puzzle.id, puzzle.fen, puzzle.moves, puzzle.rating, puzzle.themes)
+    db.prepare('INSERT INTO puzzle_meta (id, importedAt, count, bytes) VALUES (1, ?, 1, ?)').run(
+      Date.now(),
+      Buffer.byteLength(puzzle.id + puzzle.fen + puzzle.moves + puzzle.themes) + 24,
+    )
     if (testInfo.title.includes('unverified startup'))
       db.prepare('INSERT INTO accounts (username, connected) VALUES (?, 1)').run('tester')
     if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)

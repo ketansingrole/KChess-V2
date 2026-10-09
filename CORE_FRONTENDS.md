@@ -34,7 +34,7 @@ try {
 ```
 
 Create multiple clients with different profile directories. Each gets a separate worker,
-module state, SQLite connection, puzzle worker and engine scheduler. Their methods are
+module state, SQLite connection, puzzle service and engine scheduler. Their methods are
 asynchronous. The Node host also exposes asynchronous `settings`, `trustEnginePath`,
 `voiceHistoryDocument` and `suspend` helpers. Diagnostic output goes to stderr so CLI JSON
 on stdout remains usable in pipelines. A failed worker rejects outstanding calls.
@@ -107,7 +107,7 @@ plaintext credential fallback; `--no-credentials` disables login storage.
 
 `pnpm run check` covers architectural import rules, Node-only types, shared and desktop
 unit regressions, direct-core smoke tests, two concurrent Node profiles, subscriptions,
-real engine searches, the puzzle worker, CLI input/output, persistence and validation.
+real engine searches, the puzzle service, CLI input/output, persistence and validation.
 Production Electron and packaged checks remain required for desktop changes. OAuth and
 OS-keychain integration require a real account/user session; automated fixtures never
 open a browser or access the user's credentials.

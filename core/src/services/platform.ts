@@ -13,8 +13,6 @@ export interface CorePlatform {
   nodeEnv?: Record<string, string>
   /** Where KChess keeps the Stockfish build it downloads; defaults to the data directory. */
   managedEngineDir?: string
-  /** The built puzzle worker (`puzzleWorker.ts`); by default, `puzzleWorker.js` beside the core. */
-  puzzleWorkerPath?: string
   /** OS-backed encryption for stored Lichess tokens. */
   secrets: SecretStore
   /** Open a URL in the user's browser (Lichess sign-in). */

@@ -36,10 +36,6 @@ it.each([
   ['apps/desktop/electron/main/test.js', "import * as electron from 'electron'"],
   [
     'apps/desktop/electron/main/test.js',
-    "import { queryPuzzles } from '../../../../core/src/services/puzzleQueries'",
-  ],
-  [
-    'apps/desktop/electron/main/test.js',
     "import { getSettings } from '../../../../core/src/services/store'",
   ],
   ['apps/desktop/electron/main/test.js', "import { DatabaseSync } from 'node:sqlite'"],
@@ -56,7 +52,6 @@ it.each([
   ['core/src/services/test.js', "const updater = import('electron-updater')"],
   ['core/src/services/test.js', "import { send } from '../../../apps/desktop/electron/main/ipc'"],
   ['core/src/services/test.js', "import { view } from '../../../apps/desktop/app/view'"],
-  ['core/src/services/test.js', "import { queryPuzzles } from './puzzleQueries'"],
   ['core/src/services/test.js', "import { DatabaseSync } from 'node:sqlite'"],
   ['apps/desktop/app/page.js', "import { logDebug } from '@kchess/core/logger'"],
   ['apps/desktop/app/page.js', "import { parseFen } from '../../../core/src/domain/chess'"],
@@ -73,7 +68,6 @@ it.each([
   ['apps/desktop/app/page.js', "import { IPC_CHANNELS } from '../contracts/ipc'"],
   ['apps/desktop/electron/preload/index.js', "import { ipcRenderer } from 'electron'"],
   ['apps/desktop/electron/main/ipc.ts', "import { ipcMain } from 'electron'"],
-  ['core/src/services/puzzleWorker.ts', "import { queryPuzzles } from './puzzleQueries'"],
   ['apps/desktop/app/page.js', "import { parseFen } from '@kchess/core/domain/chess'"],
   ['apps/desktop/app/page.js', "import typeOnly from '@kchess/core/contracts/types'"],
   ['apps/desktop/electron/main/test.js', "import { createKChessCore } from '@kchess/core'"],

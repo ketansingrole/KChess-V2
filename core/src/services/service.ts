@@ -137,7 +137,7 @@ import {
 } from './platform'
 import {
   cancelPuzzleDb,
-  closePuzzleWorker,
+  closePuzzleDb,
   deletePuzzleDb,
   installPuzzleDb,
   localLadder,
@@ -406,7 +406,7 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       abortPlatform()
       closePlatform()
       listeners.clear()
-      const puzzles = closePuzzleWorker()
+      const puzzles = closePuzzleDb()
       closing = (async () => {
         await Promise.allSettled([...pending, reviews, puzzles])
         await closeEngines().catch((cause) => logWarn('core', 'Engine shutdown failed:', cause))

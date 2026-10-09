@@ -7,11 +7,7 @@ const normalize = (path) => path.replaceAll('\\', '/')
 const within = (path, dir) => path === dir || path.startsWith(`${dir}/`)
 /** What a frontend may import from the core: its entry and the shared logger. */
 const PUBLIC_CORE = ['core/src', 'core/src/index', 'core/src/services/logger']
-const SQLITE_OWNERS = [
-  'core/src/services/db.ts',
-  'core/src/services/puzzleWorker.ts',
-  'core/src/services/store.ts',
-]
+const SQLITE_OWNERS = ['core/src/services/db.ts', 'core/src/services/store.ts']
 
 export const boundaries = {
   meta: {
@@ -109,12 +105,6 @@ export const boundaries = {
       )
         reason =
           'Import the core by its public names: @kchess/core, @kchess/core/logger, @kchess/core/domain/*, @kchess/core/contracts/*.'
-      else if (
-        (main || core) &&
-        /(?:^|\/)puzzle(?:Queries|Worker)(?:\.ts)?$/.test(imported) &&
-        file !== 'core/src/services/puzzleWorker.ts'
-      )
-        reason = 'Only puzzleWorker owns puzzle queries; use the asynchronous puzzleDb service.'
       if (reason) context.report({ node, messageId: 'boundary', data: { reason } })
     }
     function privilegedLoad(node, source) {

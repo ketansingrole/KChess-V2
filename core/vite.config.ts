@@ -10,7 +10,6 @@ export default defineConfig({
       input: {
         index: 'core/src/index.ts',
         logger: 'core/src/services/logger.ts',
-        puzzleWorker: 'core/src/services/puzzleWorker.ts',
         voiceModelWorker: 'core/src/services/voiceModelWorker.ts',
         gameSession: 'core/src/domain/gameSession.ts',
         gameArchive: 'core/src/domain/gameArchive.ts',

@@ -1,0 +1,20 @@
+[package]
+name = "kchess-core"
+description = "KChess core services: storage, engines, Lichess and the rest of the headless core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kchess-domain = { path = "../kchess-domain" }
+serde.workspace = true
+serde_json.workspace = true
+rusqlite = { version = "0.37", features = ["bundled"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
+futures-util = "0.3"
+zstd = "0.13"
+
+[dev-dependencies]
+tempfile = "3"

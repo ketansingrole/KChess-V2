@@ -1,6 +1,8 @@
 //! `@kchess/native`: the Rust rules for Node and Electron hosts. Values cross as JSON text
 //! (see `core/src/services/native.ts`); `null` stands for the TypeScript `undefined`.
 
+mod core;
+
 use kchess_domain::{api, library, pgn, puzzle, replay, review, tree};
 use napi_derive::napi;
 use serde_json::Value;

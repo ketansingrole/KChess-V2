@@ -38,6 +38,19 @@ export interface NativeRules {
   /** Any rules method by name (`core/src/domain/engine.ts`). */
   invoke(method: string, args: string): string
   version(): string
+  /** The core's services (`crates/kchess-node/src/core.rs`); see `nativeCore.ts`. */
+  NativeCore: new (
+    options: { dataDir: string; legacyDatabasePath?: string },
+    log: (json: string) => void,
+    emit: (json: string) => void,
+  ) => NativeCoreHandle
+}
+
+/** One instance of the Rust core's services. */
+export interface NativeCoreHandle {
+  /** Rejects with the core's message; cancellations start with `AbortError: `. */
+  call(method: string, args: string): Promise<string>
+  close(): Promise<void>
 }
 
 /** The puzzle CSV sampler: push decompressed bytes, `finish`, then `kept()` as JSON. */

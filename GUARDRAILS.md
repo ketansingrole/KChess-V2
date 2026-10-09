@@ -21,7 +21,7 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
 - Core (`core/src/services`) cannot import Electron, `apps/desktop/electron/main`, `apps/desktop/electron/preload` or renderer code.
   Host capabilities go through `CorePlatform`; `core/tsconfig.json` typechecks core and
   shared with Node types only, and `pnpm run test:core` builds `core/dist` and drives it
-  in plain Node (bundled engine, puzzle worker, library, concurrent isolated Node hosts and CLI).
+  in plain Node (bundled engine, puzzle service, library, concurrent isolated Node hosts and CLI).
 - Node and CLI hosts use only the core entry and logger; core cannot import either host or
   Vue/Pinia/Nuxt. Game sessions and archive rules in `core/src/domain` have no UI dependency.
 - Main imports the core only through `@kchess/core`, `@kchess/core/logger`, `@kchess/core/domain/*`
@@ -30,7 +30,8 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
 - Main, core, shared and preload cannot import renderer code.
 - Register IPC through apps/desktop/electron/main/ipc.ts; it authenticates the owned top-level frame
   before validating input and invoking a handler.
-- Only puzzleWorker imports puzzle queries. Runtime SQLite imports belong in the
+- The Rust puzzle service is the only owner of `puzzles.db`; TypeScript reaches it through
+  `puzzleDb.ts`. Runtime SQLite imports belong in the
   database owners; store.ts retains its existing legacy-database migration.
 
 A headless capability belongs in `CoreApi`, `CORE_METHODS` and the core service, which

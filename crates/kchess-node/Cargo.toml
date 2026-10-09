@@ -11,7 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 kchess-domain = { path = "../kchess-domain" }
-napi = { version = "3", features = ["napi8"] }
+kchess-core = { path = "../kchess-core" }
+napi = { version = "3", features = ["napi8", "tokio_rt"] }
 napi-derive = "3"
 serde.workspace = true
 serde_json.workspace = true

@@ -66,7 +66,8 @@ DEALINGS IN THE SOFTWARE.`
 function standardLicense(pkg) {
   if (/GPL-3\.0/.test(pkg.license ?? ''))
     return `--- GPL-3.0 (the same license as KChess) ---\n${readFileSync(join(root, 'LICENSE'), 'utf8').trim()}\n`
-  if (pkg.license === 'MIT') {
+  // `MIT OR ...` (r-efi): the MIT option is elected, so its text is the license that applies.
+  if (pkg.license === 'MIT' || /^MIT OR /.test(pkg.license ?? '')) {
     const holders = pkg.authors?.length ? pkg.authors.join(', ') : `the ${pkg.name} authors`
     return `--- MIT ---\nCopyright (c) ${holders}\n\n${MIT}\n`
   }

@@ -79,7 +79,7 @@ try {
   assert('the bundled engine is ready', engine.ready && engine.bundled)
   const move = await core.bestMove(['e2e4'], 'beginner')
   assert('the bundled engine plays a move', /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move))
-  assert('the puzzle worker answers', (await core.puzzleDbStatus()).installed, false)
+  assert('the puzzle service answers', (await core.puzzleDbStatus()).installed, false)
   await second.resumeOnline()
   const secondMove = second.bestMove(['d2d4'], 'beginner')
   const firstMove = core.bestMove(['c2c4'], 'beginner')
@@ -89,7 +89,7 @@ try {
     moves.every((move) => /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)),
   )
   assert(
-    'direct core puzzle workers are independent',
+    'direct core puzzle services are independent',
     (await second.puzzleDbStatus()).installed,
     false,
   )

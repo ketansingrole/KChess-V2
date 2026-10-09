@@ -13,7 +13,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: entry('electron/main/index.ts'),
-          puzzleWorker: entry('../../core/src/services/puzzleWorker.ts'),
           voiceModelWorker: entry('../../core/src/services/voiceModelWorker.ts'),
         },
       },

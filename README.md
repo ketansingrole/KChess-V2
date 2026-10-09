@@ -27,7 +27,7 @@ Credentials use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows
 `--no-credentials` disables credential storage. Desktop and Node ciphertext formats differ,
 so use separate profiles rather than pointing the CLI at Electron's profile.
 
-`pnpm run build:core` builds the Node library, CLI and puzzle worker under `core/dist`.
+`pnpm run build:core` builds the Node library and CLI under `core/dist`.
 `pnpm run test:core` verifies the direct core, concurrent Node hosts and CLI in temporary
 profiles without accessing your accounts or keychain. See
 [core/frontend architecture](CORE_FRONTENDS.md) for host contracts,

@@ -26,7 +26,6 @@ export function testPlatform(overrides: Partial<CorePlatform> = {}): CorePlatfor
   }
   return {
     bundledEnginePath: join(process.cwd(), 'node_modules/stockfish/bin/stockfish-19-lite.js'),
-    puzzleWorkerPath: join(process.cwd(), 'core/dist/puzzleWorker.js'),
     secrets: fakeSecrets(),
     openExternal: async () => {},
     onBattery: () => false,

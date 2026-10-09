@@ -10,7 +10,6 @@ export interface NodeCoreOptions {
   dataDir?: string
   bundledEnginePath?: string
   managedEngineDir?: string
-  puzzleWorkerPath?: string
   /** Disable credentials for unattended tools and isolated tests. */
   disableCredentials?: boolean
   /** Print login URLs instead of launching a browser on an SSH/headless host. */
@@ -27,7 +26,6 @@ export async function nodePlatform(options: NodeCoreOptions): Promise<CorePlatfo
     dataDir,
     bundledEnginePath,
     managedEngineDir: options.managedEngineDir ?? join(dataDir, 'engines'),
-    puzzleWorkerPath: options.puzzleWorkerPath,
     secrets: systemSecrets(dataDir, options.disableCredentials),
     onBattery: () => false,
     async openExternal(url) {

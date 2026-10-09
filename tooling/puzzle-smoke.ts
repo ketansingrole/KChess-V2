@@ -9,18 +9,9 @@ import {
   type PuzzleState,
 } from '../core/src/domain/puzzle.ts'
 import { FEN, PUZZLE_ANGLE } from '../core/src/domain/patterns.ts'
-import { sampleZstdCsv, type ChunkSampler } from '../core/src/services/puzzleSampler.ts'
+import type { ChunkSampler } from '../core/src/services/puzzleSampler.ts'
 import { installNativeRules } from './native-rules.ts'
-import {
-  queryLadder,
-  queryPuzzles,
-  readStatus,
-  storeSample,
-} from '../core/src/services/puzzleQueries.ts'
-import { MIGRATIONS, migrate } from '../core/src/services/migrations.ts'
-import { DatabaseSync } from 'node:sqlite'
-import { Readable } from 'node:stream'
-import { zstdCompressSync } from 'node:zlib'
+import { MIGRATIONS } from '../core/src/services/migrations.ts'
 import {
   RUSH_CONFIGS,
   accuracy,
@@ -342,7 +333,10 @@ const repeated = evaluateEndgame(
 )
 assert('threefold repetition draws', repeated.title.includes('repetition'), true)
 
-// ── Puzzle database: zstd CSV stream → sample → SQLite → queries ────────────────────────────────
+// ── Puzzle CSV sampling (the native sampler) ─────────────────────────────────────────────────────
+// Lichess's file arrives in pieces that split lines anywhere; the sample must not depend on where
+// they split. Download, decompression and storage are the Rust core's (`crates/kchess-core/src/puzzles`,
+// tested in Rust and by `pnpm run test:puzzle-worker`).
 const themesFor = ['mate mateIn2 middlegame', 'fork middlegame', 'endgame rookEndgame', 'pin short']
 const csvRows = [
   'PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags',
@@ -352,92 +346,18 @@ for (let i = 0; i < 6000; i++)
     `p${String(i).padStart(4, '0')},q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17,e8d7 a2e6 d7d8 f7f8,${500 + (i % 2400)},60,92,2000,${themesFor[i % 4]},https://lichess.org/x,`,
   )
 csvRows.push('broken,line')
-const compressed = zstdCompressSync(Buffer.from(csvRows.join('\n')))
+const csv = Buffer.from(csvRows.join('\n'))
 const streamed = nativeSampler()
-// Deliver it in small pieces, as a network would, to exercise chunk boundaries inside lines.
-const pieces: Buffer[] = []
-for (let at = 0; at < compressed.length; at += 997) pieces.push(compressed.subarray(at, at + 997))
-await sampleZstdCsv(Readable.from(pieces), streamed, new AbortController().signal)
+for (let at = 0; at < csv.length; at += 997) streamed.push(csv.subarray(at, at + 997))
+streamed.finish()
 assert('streamed every well-formed line', streamed.lines, 6000)
-const sample = streamed.kept()
 assert(
   'the sample keeps puzzles from every rating bucket',
-  new Set(sample.map((row) => Math.floor(row.rating / 50))).size,
+  new Set(streamed.kept().map((row) => Math.floor(row.rating / 50))).size,
   48,
 )
-const database = new DatabaseSync(':memory:')
-migrate(database)
-assert('a database with no puzzles is not installed', readStatus(database, false).installed, false)
-let emptyError = ''
-try {
-  queryPuzzles(database, { count: 1 })
-} catch (cause) {
-  emptyError = (cause as Error).message
-}
-assert(
-  'querying without puzzles explains what to do',
-  emptyError.startsWith('Download the puzzle database'),
-  true,
-)
-const stored = storeSample(database, sample)
-assert('every sampled puzzle was stored', stored, sample.length)
-assert(
-  'status after import',
-  [readStatus(database, false).installed, readStatus(database, false).count],
-  [true, stored],
-)
-const forks = queryPuzzles(database, { theme: 'fork', count: 20 })
-assert(
-  'theme query returns that theme only',
-  forks.length === 20 && forks.every((puzzle) => puzzle.themes.includes('fork')),
-  true,
-)
-assert(
-  'theme query is not fooled by prefixes',
-  queryPuzzles(database, { theme: 'mate', count: 5 }).every((puzzle) =>
-    puzzle.themes.includes('mate'),
-  ),
-  true,
-)
-const banded = queryPuzzles(database, { minRating: 1000, maxRating: 1100, count: 30 })
-assert(
-  'rating range respected',
-  banded.every((puzzle) => puzzle.rating >= 1000 && puzzle.rating <= 1100),
-  true,
-)
-const ladder = queryLadder(database, { from: 600, to: 2600, count: 60 })
-assert('ladder has the steps asked for', ladder.length, 60)
-assert(
-  'ladder rises',
-  ladder.every((puzzle, i) => i === 0 || puzzle.rating >= ladder[i - 1]!.rating - 60),
-  true,
-)
-assert('ladder puzzles are distinct', new Set(ladder.map((puzzle) => puzzle.id)).size, 60)
 assert(
   'a migration creates the puzzle tables',
   MIGRATIONS.some((migration) => migration.includes('CREATE TABLE IF NOT EXISTS puzzles')),
   true,
 )
-// A second import replaces the first completely.
-storeSample(database, sample.slice(0, 10))
-assert('re-importing replaces the puzzles', readStatus(database, false).count, 10)
-
-// A failed replacement must keep the existing puzzles and metadata.
-const previousStatus = readStatus(database, false)
-for (const replacement of [[], [{ ...sample[0]!, fen: 'invalid' }]]) {
-  let rejected = false
-  try {
-    storeSample(database, replacement)
-  } catch {
-    rejected = true
-  }
-  assert('invalid replacement rejected', rejected, true)
-  assert('invalid replacement retains previous sample', readStatus(database, false), previousStatus)
-}
-try {
-  storeSample(database, sample, () => true)
-} catch {
-  /* expected cancellation */
-}
-assert('cancelled replacement retains previous sample', readStatus(database, false), previousStatus)
-assert('duplicate IDs counted once', storeSample(database, [sample[0]!, sample[0]!]), 1)

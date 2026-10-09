@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-node", "crates/kchess-wasm"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,7 +18,8 @@ memchr = "2"
 lto = "fat"
 codegen-units = 1
 panic = "unwind"
-strip = "symbols"
+# Not "symbols": see .cargo/config.toml (macOS strips at link time; elsewhere sizes are similar).
+strip = "none"
 
 # WebAssembly cannot unwind; a panic traps and the host reports it.
 [profile.wasm]
