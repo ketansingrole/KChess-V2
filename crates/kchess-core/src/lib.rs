@@ -1,5 +1,5 @@
 //! The KChess headless core's services, migrating from `core/src/services` (see
-//! `docs/rust-migration.md`). Hosts drive it through `kchess-node`'s `NativeCore`.
+//! `RUST_MIGRATION.md`). Hosts drive it through `kchess-node`'s `NativeCore`.
 
 pub mod core;
 pub mod error;

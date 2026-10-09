@@ -7,7 +7,7 @@ import type { UsageKind } from '../contracts/types'
 
 /**
  * The Rust core's services (`crates/kchess-core`), one instance per core scope, while the core
- * migrates to Rust (`docs/rust-migration.md`). Its logs go to the core logger; its events reach
+ * migrates to Rust (`RUST_MIGRATION.md`). Its logs go to the core logger; its events reach
  * the handlers registered with `onNativeEvent`, and `host:*` events ask TypeScript services
  * that have not moved yet to act.
  */

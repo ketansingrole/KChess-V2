@@ -1,4 +1,4 @@
-//! Rules moved from `core/src/domain` (see docs/rust-migration.md); reached through `api::call`.
+//! Rules moved from `core/src/domain` (see RUST_MIGRATION.md); reached through `api::call`.
 
 use serde_json::Value;
 

@@ -6,7 +6,7 @@ import { afterAll, expect } from 'vitest'
 
 /**
  * Golden outputs for rules that moved to Rust: hashes of what the TypeScript implementation
- * returned for each case before it was removed (see docs/rust-migration.md). Each suite file
+ * returned for each case before it was removed (see RUST_MIGRATION.md). Each suite file
  * (`golden/<file>.json`) belongs to one test file. `KCHESS_WRITE_GOLDEN=1` records the
  * `reference` (the TypeScript output while it still exists) or else the actual output; do that
  * only while porting or for an intended behaviour change.
