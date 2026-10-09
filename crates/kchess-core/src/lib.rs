@@ -2,6 +2,7 @@
 //! `RUST_MIGRATION.md`). Hosts drive it through `kchess-node`'s `NativeCore`.
 
 pub mod core;
+pub mod engine;
 pub mod error;
 pub mod host;
 pub mod puzzles;
