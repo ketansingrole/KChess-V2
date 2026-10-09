@@ -7,6 +7,12 @@ import { rules } from './engine.ts'
  * from it, the first child being the main line and the rest its variations. A node is addressed
  * by its path, the UCI moves from the root joined with spaces (unique, since a move from a given
  * position is unique).
+ *
+ * Hosts hold the tree as a mutable (often reactive) object and keep references to its nodes, so
+ * edits change the caller's tree in place and keep every node's identity. The decisions (what a
+ * path means, whether a move is new, where a node goes, what a glyph is) are Rust's
+ * (`crates/kchess-domain/src/trainer/analysis_tree.rs`); this module walks the tree and applies
+ * what Rust returns.
  */
 export interface TreeNode {
   /** Empty at the root. */
@@ -32,19 +38,19 @@ export const MOVE_GLYPHS = [
   { nag: 5, glyph: '!?', label: 'Interesting move' },
   { nag: 6, glyph: '?!', label: 'Dubious move' },
 ] as const
+
 /** The move's annotation glyph, if it has one. */
 export function moveGlyph(node: Pick<TreeNode, 'nags'>): (typeof MOVE_GLYPHS)[number] | undefined {
-  return MOVE_GLYPHS.find((entry) => node.nags?.includes(entry.nag))
-}
-/** Mark a move with one annotation glyph (or none), keeping its other NAGs (evaluation symbols…). */
-export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
-  const others = (node.nags ?? []).filter((n) => n < 1 || n > 6)
-  const next = nag ? [nag, ...others] : others
-  node.nags = next.length ? next : undefined
+  return rules<(typeof MOVE_GLYPHS)[number] | null>('moveGlyph', node.nags ?? null) ?? undefined
 }
 
-export const pathOf = (moves: readonly string[]): string => moves.join(' ')
-export const movesOf = (path: string): string[] => (path ? path.split(' ') : [])
+/** Mark a move with one annotation glyph (or none), keeping its other NAGs (evaluation symbols…). */
+export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
+  node.nags = rules<number[] | null>('setMoveGlyph', node.nags ?? null, nag ?? null) ?? undefined
+}
+
+export const pathOf = (moves: readonly string[]): string => rules<string>('pathOf', moves)
+export const movesOf = (path: string): string[] => rules<string[]>('movesOf', path)
 
 export function newTree(fen = INITIAL_FEN): TreeNode {
   // An unusable FEN starts from the usual position.
@@ -63,67 +69,72 @@ export function nodesAlong(root: TreeNode, path: string): TreeNode[] {
   return nodes
 }
 
+/** The index of each node along `nodes` among its parent's children (the first child is 0). */
+const indicesAlong = (nodes: readonly TreeNode[]): number[] =>
+  nodes.slice(1).map((node, index) => nodes[index]!.children.indexOf(node))
+
 export const nodeAt = (root: TreeNode, path: string): TreeNode => nodesAlong(root, path).at(-1)!
 
 /** Play `uci` after `path`, re-using the node when that move was already tried. */
 export function addMove(root: TreeNode, path: string, uci: string): string | undefined {
   const parent = nodeAt(root, path)
-  // Castling comes back as king-takes-rook, so a move has one spelling in the tree.
-  const played = rules<{ uci: string; san: string; fen: string } | null>(
-    'playMove',
-    parent.fen,
+  const plan = rules<{
+    childPath: string
+    child: { uci: string; san: string; fen: string; ply: number } | null
+  } | null>('addMovePlan', {
+    path,
     uci,
-  )
-  if (!played) return undefined
-  const childPath = pathOf([...movesOf(path), played.uci])
-  if (parent.children.some((child) => child.uci === played.uci)) return childPath
-  parent.children.push({ ...played, ply: parent.ply + 1, children: [] })
-  return childPath
+    fen: parent.fen,
+    ply: parent.ply,
+    childUcis: parent.children.map((child) => child.uci),
+  })
+  if (!plan) return undefined
+  if (plan.child) parent.children.push({ ...plan.child, children: [] })
+  return plan.childPath
 }
 
 /** Follow the first child from `path` to the end of that line. */
 export function lineEnd(root: TreeNode, path: string): string {
-  const moves = movesOf(path)
+  const chain: string[] = []
   let node = nodeAt(root, path)
   while (node.children[0]) {
     node = node.children[0]
-    moves.push(node.uci)
+    chain.push(node.uci)
   }
-  return pathOf(moves)
+  return rules<string>('lineEnd', path, chain)
 }
 
 /** True when every move on `path` is a first child. */
 export function onMainline(root: TreeNode, path: string): boolean {
-  const nodes = nodesAlong(root, path)
-  return nodes.every((node, index) => index === 0 || nodes[index - 1]!.children[0] === node)
+  return rules<boolean>('onMainline', indicesAlong(nodesAlong(root, path)))
 }
 
 /** Remove the move at `path` and everything after it; returns the parent's path. */
 export function deleteAt(root: TreeNode, path: string): string {
-  const moves = movesOf(path)
-  const uci = moves.pop()
-  if (!uci) return ''
-  const parentPath = pathOf(moves)
-  const parent = nodeAt(root, parentPath)
-  parent.children = parent.children.filter((child) => child.uci !== uci)
-  return parentPath
+  const plan = rules<{ parentPath: string; uci: string | null }>('deleteAtPlan', path)
+  if (plan.uci !== null) {
+    const parent = nodeAt(root, plan.parentPath)
+    // In place: the children array keeps its identity, as the nodes do.
+    let kept = 0
+    for (const child of parent.children) if (child.uci !== plan.uci) parent.children[kept++] = child
+    parent.children.length = kept
+  }
+  return plan.parentPath
 }
 
 /** Make the line through `path` the main line at every branch on the way. */
 export function promoteToMainline(root: TreeNode, path: string): void {
   const nodes = nodesAlong(root, path)
-  for (let i = 1; i < nodes.length; i++) {
-    const parent = nodes[i - 1]!
-    const node = nodes[i]!
-    parent.children = [node, ...parent.children.filter((child) => child !== node)]
+  for (const [depth, from] of rules<[number, number][]>('promotePlan', indicesAlong(nodes))) {
+    const children = nodes[depth]!.children
+    const [child] = children.splice(from, 1)
+    children.unshift(child!)
   }
 }
 
 /** “1.”, “1…”: the number to print before a move at this ply (the ply *before* it is played). */
 export function moveNumber(ply: number, always: boolean): string {
-  const number = Math.floor(ply / 2) + 1
-  if (ply % 2 === 0) return `${number}.`
-  return always ? `${number}…` : ''
+  return rules<string>('moveNumber', ply, always)
 }
 
 /* ── PGN ─────────────────────────────────────────────────────────────── */
@@ -144,10 +155,7 @@ export function treeFromPgn(text: string): TreeNode | undefined {
 
 /** “+0.34”, “−1.20”, “#3”, “#−2”, as Lichess prints them. */
 export function formatEval(line: Pick<EngineLine, 'cp' | 'mate'> | undefined): string {
-  if (!line) return '…'
-  if (line.mate !== undefined) return `#${line.mate < 0 ? '−' : ''}${Math.abs(line.mate)}`
-  const pawns = (line.cp ?? 0) / 100
-  return `${pawns > 0 ? '+' : pawns < 0 ? '−' : ''}${Math.abs(pawns).toFixed(1)}`
+  return rules<string>('formatEval', line ?? null)
 }
 
 /**
@@ -155,10 +163,7 @@ export function formatEval(line: Pick<EngineLine, 'cp' | 'mate'> | undefined): s
  * middle and a won one fills the bar, without ±10 pawns and ±1 pawn looking alike or apart.
  */
 export function winningChances(line: Pick<EngineLine, 'cp' | 'mate'> | undefined): number {
-  if (!line) return 0
-  if (line.mate !== undefined) return line.mate > 0 ? 1 : line.mate < 0 ? -1 : 0
-  const cp = Math.max(-1000, Math.min(1000, line.cp ?? 0))
-  return 2 / (1 + Math.exp(-0.00368208 * cp)) - 1
+  return rules<number>('winningChances', line ?? null)
 }
 
 /** A principal variation in SAN with move numbers, stopping at the first illegal move. */
