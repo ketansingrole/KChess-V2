@@ -1,6 +1,10 @@
-import { APPEARANCES, type OAuthPageColors, type OAuthPageLook } from '../contracts/types'
+import type { OAuthPageLook } from '../contracts/types'
+import { rules } from './engine.ts'
 
-/** KChess's default look (see `apps/desktop/app/utils/themes.ts`), used until the app sends its own colors. */
+/**
+ * KChess's default look (see `apps/desktop/app/utils/themes.ts`), used until the app sends its own colors.
+ * The Rust rules hold the same values (`records/oauth.rs`); the golden test keeps them equal.
+ */
 export const DEFAULT_OAUTH_LOOK: OAuthPageLook = {
   appearance: 'system',
   light: {
@@ -21,32 +25,7 @@ export const DEFAULT_OAUTH_LOOK: OAuthPageLook = {
   },
 }
 
-const COLOR_KEYS = ['bg', 'elevated', 'text', 'textMuted', 'primary', 'border'] as const
-/** Hex colors and `color-mix(in srgb, …)` of them; no `;`, braces or `<` can leave the declaration. */
-const CSS_COLOR = /^(?:#[0-9a-f]{3,8}|color-mix\(in srgb,[#0-9a-z(),.% -]+\))$/i
-
-function colors(value: unknown): OAuthPageColors | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const result: Partial<OAuthPageColors> = {}
-  for (const key of COLOR_KEYS) {
-    const color = (value as Record<string, unknown>)[key]
-    if (typeof color !== 'string' || color.length > 240 || !CSS_COLOR.test(color)) return undefined
-    result[key] = color
-  }
-  return result as OAuthPageColors
-}
-
 /** The renderer's theme for the callback page; anything malformed falls back to the default look. */
 export function oauthLook(value: unknown): OAuthPageLook {
-  if (!value || typeof value !== 'object') return DEFAULT_OAUTH_LOOK
-  const { appearance, light, dark } = value as Record<string, unknown>
-  const lightColors = colors(light)
-  const darkColors = colors(dark)
-  if (!lightColors || !darkColors || !APPEARANCES.includes(appearance as never))
-    return DEFAULT_OAUTH_LOOK
-  return {
-    appearance: appearance as OAuthPageLook['appearance'],
-    light: lightColors,
-    dark: darkColors,
-  }
+  return rules<OAuthPageLook | null>('oauthLook', value) ?? DEFAULT_OAUTH_LOOK
 }

@@ -13,17 +13,7 @@ type Color = 'white' | 'black'
 
 /** A short, stable key for a start position and its moves (cyrb53, as hex). */
 export function reviewKey(fen: string, moves: readonly string[]): string {
-  const text = `${fen}|${moves.join(' ')}`
-  let h1 = 0xdeadbeef
-  let h2 = 0x41c6ce57
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i)
-    h1 = Math.imul(h1 ^ code, 2654435761)
-    h2 = Math.imul(h2 ^ code, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  return `${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`
+  return rules<string>('reviewKey', fen, moves)
 }
 
 export interface ReplayedPosition {
@@ -42,12 +32,11 @@ export function replay(fen: string, moves: readonly string[]): ReplayedPosition[
 }
 
 /** A position may carry only the engine's move (Lichess names it without a score). */
-export const hasScore = (score: ReviewEval): boolean =>
-  score.cp !== undefined || score.mate !== undefined
+export const hasScore = (score: ReviewEval): boolean => rules<boolean>('hasScore', score)
 
 /** The score of a finished position: checkmate is lost for the side to move, the rest drawn. */
 export function endEval(end: 'checkmate' | 'draw'): ReviewEval {
-  return end === 'checkmate' ? { mate: 0 } : { cp: 0 }
+  return rules<ReviewEval>('endEval', end)
 }
 
 /* ── A whole game ─────────────────────────────────────────────────── */
@@ -84,12 +73,4 @@ export function analyseReview(review: StoredReview): GameAnalysis {
 /* ── Games as start position + UCI moves ─────────────────────────── */
 
 /** Lichess speeds of standard chess; variants (Chess960, Crazyhouse …) are not reviewed. */
-const STANDARD_PERFS = new Set([
-  'ultraBullet',
-  'bullet',
-  'blitz',
-  'rapid',
-  'classical',
-  'correspondence',
-])
-export const isReviewablePerf = (perf: string): boolean => STANDARD_PERFS.has(perf)
+export const isReviewablePerf = (perf: string): boolean => rules<boolean>('isReviewablePerf', perf)
