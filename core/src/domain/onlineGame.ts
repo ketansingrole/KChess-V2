@@ -8,10 +8,9 @@ import type {
   OnlineOptions,
   CorrespondenceDays,
 } from '../contracts/types'
-import { STANDARD_SETUP, defaultFen, variantFromLichess, type GameSetup } from './variant'
-import { setupPositionAfter, setupSanHistory } from './chess'
-import { isGameInProgress } from './gameStatus'
-import { RequestScope } from './requestScope'
+import { STANDARD_SETUP, type GameSetup, type Variant } from './variant'
+import { rules } from './engine.ts'
+import { Position, type Color } from './position.ts'
 import { Clock } from './clock'
 
 export interface FinishedGame {
@@ -25,7 +24,6 @@ export interface FinishedGame {
   increment?: number
   days?: CorrespondenceDays
 }
-const CORRESPONDENCE: readonly number[] = [1, 2, 3, 5, 7, 10, 14]
 export function onlineGameState() {
   return {
     onlinePhase: 'idle' as 'idle' | 'seeking' | 'playing' | 'finished' | 'disconnected',
@@ -78,418 +76,218 @@ export interface OnlineGameHost {
   moveAcknowledged?(milliseconds: number): void
   failed(cause: unknown): void
 }
+
+/** The fields the rules keep beside the public state (`OnlineGame` private and public fields). */
+interface Private {
+  stateEpoch: number
+  generation: number
+  shownGame: string
+}
+
+/** One effect the host must see, in order (`crates/kchess-domain/src/online_game/model.rs`). */
+type Effect =
+  | { effect: 'warn'; message: string }
+  | { effect: 'notify'; kind: NotificationKind; title: string; body: string }
+  | { effect: 'moved'; san: string | null }
+  | { effect: 'resetView' }
+  | { effect: 'connectionChanged' }
+  | { effect: 'moveAcknowledged'; ms: number }
+  | { effect: 'failed' }
+  | { effect: 'clockPause' }
+  | { effect: 'clockSet'; white: number; black: number; ticking?: Color; initialSeconds?: number }
+  | { effect: 'loadChat'; id: string }
+
+interface Transition {
+  state: OnlineGameState & Private
+  effects: Effect[]
+  ret?: unknown
+  call?: { method: keyof OnlineGameHost['api']; args: unknown[] }
+  pending?: unknown
+  rethrow: boolean
+}
+
+interface View {
+  position: { variant: Variant; fen: string }
+  history: string[]
+  ownMoves: number
+  correspondence: boolean
+  rematch: Partial<OnlineOptions> | null
+}
+
+/** The fields the rules report as `null` where the class keeps `undefined`. */
+const UNDEFINED_WHEN_NULL: readonly string[] = ['onlineOpponentRating', 'onlineDaysPerTurn']
+
+/** Equal as the state compares them: same value, or the same JSON for an object. */
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  return (
+    typeof a === 'object' &&
+    typeof b === 'object' &&
+    a !== null &&
+    b !== null &&
+    JSON.stringify(a) === JSON.stringify(b)
+  )
+}
+
 /** Server events own game state; hosts supply presentation and input. */
 export class OnlineGame {
   readonly clock: Clock
   shownGame = ''
   private stateEpoch = -1
-  private requests = new RequestScope()
+  private generation = 0
   constructor(
     readonly state: OnlineGameState,
     private host: OnlineGameHost,
   ) {
     this.clock = new Clock(host.now)
   }
-  get position() {
-    return setupPositionAfter(this.state.onlineSetup, this.state.onlineMoves)
+  get position(): Position {
+    const { variant, fen } = this.view().position
+    return Position.from({ variant, fen })!
   }
-  get history() {
-    return setupSanHistory(this.state.onlineSetup, this.state.onlineMoves)
+  get history(): string[] {
+    return this.view().history
   }
-  get ownMoves() {
-    const whiteFirst = this.state.onlineSetup.fen.split(' ')[1] !== 'b'
-    const mine = this.state.onlineColor === 'white' ? 0 : 1
-    return this.state.onlineMoves.filter((_, i) => (whiteFirst ? i % 2 : (i + 1) % 2) === mine)
-      .length
+  get ownMoves(): number {
+    return this.view().ownMoves
   }
   get correspondence(): boolean {
-    return this.state.onlineSpeed === 'correspondence' || this.state.onlineDaysPerTurn !== undefined
+    return this.view().correspondence
   }
   rematchOptions(): Partial<OnlineOptions> | undefined {
-    const game = this.state.lastGame
-    if (!game) return undefined
-    return {
-      target: game.opponent,
-      account: game.account,
-      color: game.color === 'white' ? 'black' : 'white',
-      rated: game.rated,
-      ...(game.minutes === undefined ? {} : { minutes: game.minutes }),
-      ...(game.increment === undefined ? {} : { increment: game.increment }),
-      days: game.days,
-      variant: game.setup.variant === 'standard' ? undefined : game.setup.variant,
-      fen:
-        game.setup.variant === 'standard' && game.setup.fen !== STANDARD_SETUP.fen
-          ? game.setup.fen
-          : undefined,
-    }
+    return this.view().rematch ?? undefined
   }
   async start(options: OnlineOptions): Promise<boolean> {
-    if (
-      (this.state.onlinePhase === 'disconnected' && this.state.onlineId) ||
-      (this.state.onlinePhase === 'playing' && !this.correspondence) ||
-      this.state.onlinePhase === 'seeking'
-    )
-      return false
-    const request = this.requests.next()
-    const correspondence = options.days !== undefined
-    const previous = this.state.onlinePhase
-    if (!correspondence) {
-      this.state.onlineId = ''
-      this.state.onlineAccount = options.account ?? this.host.activeAccount()
-      this.state.onlinePhase = 'seeking'
-      this.state.onlineStatus = 'Looking for an opponent…'
-    }
-    try {
-      const result = await this.host.api.startOnline(options)
-      if (!request.current()) return false
-      if (!correspondence && this.state.onlinePhase === 'seeking')
-        this.state.onlineStatus = result.url
-          ? 'Challenge sent. Waiting for acceptance…'
-          : 'Looking for an opponent…'
-      return true
-    } catch (cause) {
-      console.warn('[onlineGame] starting game failed:', cause)
-      if (!request.current()) return false
-      if (!correspondence && this.state.onlinePhase === 'seeking') {
-        this.state.onlinePhase = previous === 'finished' ? 'finished' : 'idle'
-        this.state.onlineStatus = ''
-      }
-      throw cause
-    }
+    return (await this.perform('start', options)) as boolean
   }
   async stop(): Promise<void> {
-    this.requests.invalidate()
-    if (this.state.onlinePhase !== 'disconnected' && this.state.onlinePhase !== 'playing') {
-      this.state.onlinePhase = 'idle'
-      this.state.onlineStatus = ''
-    }
-    await this.host.api.cancelOnline()
+    await this.perform('stop', null)
   }
   async reconnect(): Promise<void> {
-    const request = this.requests.next()
-    this.checkingOnline()
-    const resumed = await this.host.api.resumeOnline()
-    if (!request.current()) return
-    if (resumed) {
-      this.state.onlineAccount = resumed.account
-      this.state.onlineId = resumed.id
-      this.state.onlineStatus = 'Reconnecting…'
-    } else {
-      this.state.onlinePhase = 'idle'
-      this.state.onlineId = ''
-      this.state.onlineStatus = 'No game in progress. You can find another game.'
-    }
+    await this.perform('reconnect', null)
   }
   async open(account: string, id: string): Promise<void> {
-    const request = this.requests.next()
-    await this.host.api.openGame(account, id)
-    if (!request.current()) return
-    if (this.shownGame !== id) this.resetGame()
-    this.shownGame = ''
-    this.state.onlineAccount = account
-    this.state.onlineId = id
-    this.state.onlineStatus = 'Opening game…'
-    if (this.state.onlinePhase !== 'playing') this.state.onlinePhase = 'disconnected'
+    await this.perform('open', { account, id })
   }
   resetGame(): void {
-    this.host.resetView?.()
-    this.state.onlineMoves = []
-    this.state.opponentGone = false
-    this.state.claimAt = null
-    this.state.drawOffer = 'none'
-    this.state.takebackOffer = 'none'
-    this.state.firstMoveBy = null
-    this.state.berserked = false
-    this.state.chat = []
-    this.state.onlineInitial = 0
-    this.state.onlineSetup = STANDARD_SETUP
-    this.state.onlineUnsupported = ''
-    this.state.onlineSpeed = ''
-    this.state.onlineClockConfig = null
-    this.state.onlineDaysPerTurn = undefined
-    this.state.onlineTournament = ''
-    this.state.onlineOpponentRating = undefined
+    this.transition('onlineGameReset', [])
   }
   readOnlineState(state: OnlineConnection): void {
-    if (state.session < this.stateEpoch) return
-    if (state.session !== this.stateEpoch) {
-      this.stateEpoch = state.session
-      this.host.connectionChanged?.()
-    }
-    this.state.onlineConnection = state
-    if (state.account) this.state.onlineAccount = state.account
-    if (state.gameId) this.state.onlineId = state.gameId
-    if (state.lane === 'events' && this.state.onlineId) return
-    if (state.lane === 'game' && state.phase === 'idle') {
-      this.state.onlinePhase = 'idle'
-      this.state.onlineId = ''
-      this.state.onlineStatus = 'No game in progress.'
-      this.clock.pause()
-    }
-    if (['checking', 'reconnecting', 'disconnected', 'auth-required'].includes(state.phase)) {
-      this.state.onlinePhase = 'disconnected'
-      this.state.onlineStatus =
-        state.message ?? 'Connection interrupted. Reconnect to recover your game.'
-      this.clock.pause()
-    }
-  }
-  checkingOnline(): void {
-    this.state.onlinePhase = 'disconnected'
-    this.state.onlineStatus = 'Checking Lichess for an ongoing game…'
-    this.state.onlineConnection = {
-      session: this.stateEpoch,
-      account: this.state.onlineAccount,
-      gameId: this.state.onlineId,
-      lane: 'game',
-      phase: 'checking',
-      message: this.state.onlineStatus,
-    }
-    this.clock.pause()
-  }
-  finish(winner: 'white' | 'black' | undefined, reason: string, notify: boolean): void {
-    const previous = this.state.onlinePhase
-    this.state.onlinePhase = 'finished'
-    this.state.onlineStatus = `Game ended: ${reason}`
-    this.state.drawOffer = 'none'
-    this.state.takebackOffer = 'none'
-    this.state.claimAt = null
-    this.state.firstMoveBy = null
-    this.clock.pause()
-    const config = this.state.onlineClockConfig
-    if (this.state.onlineId && this.state.opponentId)
-      this.state.lastGame = {
-        id: this.state.onlineId,
-        account: this.state.onlineAccount || this.host.activeAccount(),
-        opponent: this.state.opponentId,
-        color: this.state.onlineColor,
-        rated: this.state.onlineGameRated,
-        setup: this.state.onlineSetup,
-        minutes: config ? Math.max(1, Math.round(config.initial / 60)) : undefined,
-        increment: config ? config.increment : undefined,
-        days: CORRESPONDENCE.includes(this.state.onlineDaysPerTurn ?? 0)
-          ? (this.state.onlineDaysPerTurn as CorrespondenceDays)
-          : undefined,
-      }
-    if (notify && previous === 'playing') {
-      const outcome =
-        reason === 'aborted'
-          ? 'Game aborted'
-          : !winner
-            ? 'Draw'
-            : winner === this.state.onlineColor
-              ? 'You won'
-              : 'You lost'
-      this.host.notify?.('gameEvents', outcome, `Against ${this.state.onlineOpponent} · ${reason}.`)
-    }
+    this.transition('onlineGameConnection', [state])
   }
   readOnlineEvent(event: OnlineEvent): void {
-    if (event.type === 'gameStart') {
-      if (event.game.speed === 'correspondence' && event.game.gameId !== this.state.onlineId) return
-      if (this.shownGame !== event.game.gameId) this.resetGame()
-      this.shownGame = event.game.gameId
-      this.state.onlineId = event.game.gameId
-      this.state.onlineColor = event.game.color ?? 'white'
-      this.state.onlineOpponent = event.game.opponent?.username ?? 'Opponent'
-      this.state.onlineGameRated = event.game.rated ?? false
-      this.state.opponentId = event.game.opponent?.id ?? ''
-      this.state.onlinePhase = 'playing'
-      this.state.onlineStatus = 'Game in progress'
-      if (event.game.speed !== 'correspondence')
-        this.host.notify?.(
-          'gameEvents',
-          'Game started',
-          `You are playing ${this.state.onlineOpponent} as ${this.state.onlineColor}.`,
-        )
-      return
-    }
-    if (event.type === 'gameFinish') {
-      if (event.game.gameId !== this.state.onlineId) return
-      this.finish(event.game.winner, event.game.status?.name ?? 'finished', true)
-      return
-    }
-    if (event.type === 'opponentGone') {
-      if ('id' in event && event.id !== this.state.onlineId) return
-      if (this.state.onlinePhase === 'playing') {
-        this.state.opponentGone = event.gone
-        this.state.claimAt =
-          event.gone && event.claimWinInSeconds !== undefined
-            ? this.host.now() + event.claimWinInSeconds * 1000
-            : null
-        this.state.onlineStatus = event.gone ? 'Opponent disconnected…' : 'Game in progress'
-      }
-      return
-    }
-    if (event.type === 'chatLine') {
-      if ('id' in event && event.id !== this.state.onlineId) return
-      if (!this.host.chatEnabled()) return
-      this.state.chat = [
-        ...this.state.chat,
-        {
-          user: event.username,
-          text: event.text,
-          room: event.room === 'spectator' ? ('spectator' as const) : ('player' as const),
-        },
-      ].slice(-300)
-      return
-    }
-    // Challenges carry no game state; treating them as one would wipe the board.
-    if (event.type !== 'gameFull' && event.type !== 'gameState') return
-    if ('id' in event && this.state.onlineId && event.id !== this.state.onlineId) return
-    const state = event.type === 'gameFull' ? event.state : event
-    const previousCount = this.state.onlineMoves.length
-    if (event.type === 'gameFull') {
-      if (this.shownGame !== event.id) {
-        this.resetGame()
-        this.shownGame = event.id
-        void this.loadChat(event.id)
-      }
-      this.state.onlineId = event.id
-      const clockConfig = event.clock
-      this.state.onlineClockConfig =
-        clockConfig && clockConfig.initial !== undefined
-          ? { initial: clockConfig.initial / 1000, increment: (clockConfig.increment ?? 0) / 1000 }
-          : null
-      this.state.onlineInitial = (clockConfig?.initial ?? 0) / 1000
-      this.state.onlineGameRated = event.rated
-      this.state.onlineSpeed = event.speed ?? ''
-      this.state.onlineDaysPerTurn = event.daysPerTurn
-      this.state.onlineTournament = event.tournamentId ?? ''
-      const key = (event as { variant?: { key?: string } }).variant?.key
-      const variant = variantFromLichess(key)
-      this.state.onlineUnsupported = variant ? '' : (key ?? 'unknown')
-      const initial = event.initialFen
-      this.state.onlineSetup = {
-        variant: variant ?? 'standard',
-        fen: !initial || initial === 'startpos' ? defaultFen(variant ?? 'standard') : initial,
-      }
-      const ours = (this.state.onlineAccount || this.host.activeAccount()).toLowerCase()
-      // Match by account; if neither side does, keep the colour `gameStart` announced.
-      if (event.white.id?.toLowerCase() === ours) this.state.onlineColor = 'white'
-      else if (event.black.id?.toLowerCase() === ours) this.state.onlineColor = 'black'
-      const opponent = this.state.onlineColor === 'white' ? event.black : event.white
-      this.state.onlineOpponent =
-        opponent.name ?? (opponent.aiLevel ? `Stockfish level ${opponent.aiLevel}` : 'Opponent')
-      this.state.onlineOpponentRating = opponent.rating
-      this.state.opponentId = opponent.id ?? ''
-    }
-    this.state.onlineMoves = String(state.moves ?? '')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-    if (previousCount && this.state.onlineMoves.length > previousCount) {
-      const san = this.history.at(-1)
-      this.host.moved?.(san)
-      // A move by the other colour than ours is the opponent's.
-      if (this.position.turn === this.state.onlineColor) {
-        this.host.notify?.(
-          'opponentMove',
-          `${this.state.onlineOpponent} moved`,
-          `${san}. Your move.`,
-        )
-        // A new move answers any takeback request.
-        this.state.takebackOffer = 'none'
-      }
-    }
-    const theirs = this.state.onlineColor === 'white' ? 'b' : 'w'
-    const mine = this.state.onlineColor === 'white' ? 'w' : 'b'
-    const flags = state as {
-      wdraw?: boolean
-      bdraw?: boolean
-      wtakeback?: boolean
-      btakeback?: boolean
-      expiration?: { idleMillis: number; millisToMove: number }
-      winner?: 'white' | 'black'
-    }
-    const theirDraw = flags[`${theirs}draw`],
-      myDraw = flags[`${mine}draw`]
-    if (theirDraw && this.state.drawOffer !== 'theirs' && event.type === 'gameState')
-      this.host.notify?.(
-        'gameEvents',
-        'Draw offered',
-        `${this.state.onlineOpponent} offers a draw.`,
-      )
-    this.state.drawOffer = theirDraw ? 'theirs' : myDraw ? 'mine' : 'none'
-    this.state.takebackOffer = flags[`${theirs}takeback`]
-      ? 'theirs'
-      : flags[`${mine}takeback`]
-        ? 'mine'
-        : 'none'
-    this.state.firstMoveBy = flags.expiration
-      ? this.host.now() + Math.max(0, flags.expiration.millisToMove - flags.expiration.idleMillis)
-      : null
-    const running = isGameInProgress(state.status)
-    const white = Number(state.wtime ?? 0)
-    const black = Number(state.btime ?? 0)
-    // Berserking halves the clock; the next state shows it.
-    if (this.state.onlineTournament && this.state.onlineClockConfig) {
-      const half = this.state.onlineClockConfig.initial * 500
-      const mineLeft = this.state.onlineColor === 'white' ? white : black
-      if (this.ownMoves === 0 && mineLeft <= half + 1000 && mineLeft > 0)
-        this.state.berserked = true
-    }
-    this.clock.set({
-      white,
-      black,
-      ticking: running ? this.position.turn : undefined,
-      initialSeconds: this.state.onlineInitial || undefined,
-    })
-    if (running) {
-      this.state.onlinePhase = 'playing'
-      if (!this.state.opponentGone) this.state.onlineStatus = 'Game in progress'
-    } else this.finish(flags.winner, state.status, true)
+    this.transition('onlineGameEvent', [event])
+  }
+  checkingOnline(): void {
+    this.transition('onlineGameChecking', [])
+  }
+  finish(winner: 'white' | 'black' | undefined, reason: string, notify: boolean): void {
+    this.transition('onlineGameFinish', [{ winner, reason, notify }])
   }
   async loadChat(id: string): Promise<void> {
-    if (!this.host.chatEnabled()) return
-    try {
-      const lines = await this.host.api.onlineChat(id)
-      if (this.state.onlineId === id)
-        this.state.chat = [...lines, ...this.state.chat.filter((l) => l.room !== 'player')]
-    } catch (cause) {
-      console.warn('[onlineGame] request failed:', cause)
-      // The chat is a courtesy; the game goes on without it.
-    }
+    await this.perform('chat', id)
   }
   async onlineMove(uci: string): Promise<void> {
-    if (!this.state.onlineId || this.state.onlinePhase !== 'playing') return
-    const request = this.requests.capture()
-    const id = this.state.onlineId
-    const epoch = this.stateEpoch
-    const current = (): boolean =>
-      request.current() && id === this.state.onlineId && epoch === this.stateEpoch
-    const sent = this.host.now()
-    try {
-      await this.host.api.playOnline(id, uci)
-      if (!current()) return
-      this.host.moveAcknowledged?.(Math.round(this.host.now() - sent))
-    } catch (cause) {
-      // The server may have accepted the move before the response was lost. Never replay it.
-      console.warn('[onlineGame] request failed:', cause)
-      if (!current()) return
-      this.state.onlinePhase = 'disconnected'
-      this.state.onlineStatus =
-        'The move could not be confirmed. Reconnect to check the server position.'
-      this.clock.pause()
-      this.host.failed(cause)
-    }
+    await this.perform('move', uci)
   }
   async onlineAction(action: OnlineAction): Promise<void> {
-    if (!this.state.onlineId) return
-    const request = this.requests.capture()
-    const id = this.state.onlineId
-    const epoch = this.stateEpoch
+    await this.perform('action', action)
+  }
+
+  /** Runs a network-backed operation: the rules start it, the host makes the call, the rules settle it. */
+  private async perform(operation: string, input: unknown): Promise<unknown> {
+    const begun = this.transition('onlineGameBegin', [operation, input])
+    if (!begun.call) return begun.ret
+    const api = this.host.api as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>
+    let value: unknown
     try {
-      await this.host.api.onlineAction(id, action)
-      if (!request.current() || id !== this.state.onlineId || epoch !== this.stateEpoch) return
+      value = await api[begun.call.method]!(...begun.call.args)
     } catch (cause) {
-      console.warn('[onlineGame] request failed:', cause)
-      this.host.failed(cause)
-      return
+      const settled = this.transition('onlineGameSettle', [begun.pending, { ok: false }], cause)
+      if (settled.rethrow) throw cause
+      return settled.ret
     }
-    if (action === 'offerDraw') this.state.drawOffer = 'mine'
-    if (action === 'declineDraw' || action === 'acceptDraw') this.state.drawOffer = 'none'
-    if (action === 'takeback')
-      this.state.takebackOffer = this.state.takebackOffer === 'theirs' ? 'none' : 'mine'
-    if (action === 'declineTakeback') this.state.takebackOffer = 'none'
-    if (action === 'berserk') this.state.berserked = true
+    return this.transition('onlineGameSettle', [begun.pending, { ok: true, value }]).ret
+  }
+
+  /** Asks the rules for the next state, stores it, then runs its effects in order. */
+  private transition(method: string, args: unknown[], cause?: unknown): Transition {
+    const next = rules<Transition>(method, this.snapshot(), ...args, this.context())
+    this.commit(next, cause)
+    return next
+  }
+
+  private view(): View {
+    return rules<View>('onlineGameView', this.snapshot())
+  }
+
+  private snapshot(): OnlineGameState & Private {
+    return {
+      ...this.state,
+      stateEpoch: this.stateEpoch,
+      generation: this.generation,
+      shownGame: this.shownGame,
+    }
+  }
+
+  private context(): { now: number; activeAccount: string; chatEnabled: boolean } {
+    return {
+      now: this.host.now(),
+      activeAccount: this.host.activeAccount(),
+      chatEnabled: this.host.chatEnabled(),
+    }
+  }
+
+  private commit(next: Transition, cause: unknown): void {
+    const { stateEpoch, generation, shownGame, ...fields } = next.state
+    this.stateEpoch = stateEpoch
+    this.generation = generation
+    this.shownGame = shownGame
+    const target = this.state as unknown as Record<string, unknown>
+    for (const [key, value] of Object.entries(fields)) {
+      const field = value === null && UNDEFINED_WHEN_NULL.includes(key) ? undefined : value
+      if (!same(target[key], field)) target[key] = field
+    }
+    for (const effect of next.effects) this.run(effect, cause)
+  }
+
+  private run(effect: Effect, cause: unknown): void {
+    switch (effect.effect) {
+      case 'warn':
+        console.warn(effect.message, cause)
+        return
+      case 'notify':
+        this.host.notify?.(effect.kind, effect.title, effect.body)
+        return
+      case 'moved':
+        this.host.moved?.(effect.san ?? undefined)
+        return
+      case 'resetView':
+        this.host.resetView?.()
+        return
+      case 'connectionChanged':
+        this.host.connectionChanged?.()
+        return
+      case 'moveAcknowledged':
+        this.host.moveAcknowledged?.(effect.ms)
+        return
+      case 'failed':
+        this.host.failed(cause)
+        return
+      case 'clockPause':
+        this.clock.pause()
+        return
+      case 'clockSet':
+        this.clock.set({
+          white: effect.white,
+          black: effect.black,
+          ticking: effect.ticking,
+          initialSeconds: effect.initialSeconds,
+        })
+        return
+      case 'loadChat':
+        void this.loadChat(effect.id)
+        return
+    }
   }
 }
