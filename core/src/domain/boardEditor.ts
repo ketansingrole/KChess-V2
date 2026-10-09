@@ -1,5 +1,5 @@
 import { rules } from './engine.ts'
-import { INITIAL_BOARD_FEN } from './position.ts'
+import { INITIAL_BOARD_FEN, type Role } from './position.ts'
 
 /** What the editor knows besides where the pieces stand. */
 export interface EditorSetup {
@@ -20,46 +20,18 @@ export const START_SETUP: EditorSetup = {
 }
 export const EMPTY_BOARD = '8/8/8/8/8/8/8/8'
 
-/** The piece letter on a square of a FEN board field (`e1` → `K`), or undefined. */
-function pieceOn(board: string, square: string): string | undefined {
-  const file = square.charCodeAt(0) - 97
-  const row = board.split('/')[8 - Number(square[1])]
-  if (!row) return undefined
-  let index = 0
-  for (const char of row) {
-    if (/\d/.test(char)) index += Number(char)
-    else if (index++ === file) return char
-    if (index > file) return undefined
-  }
-  return undefined
-}
-
-const LETTERS = { king: 'k', queen: 'q', rook: 'r', bishop: 'b', knight: 'n', pawn: 'p' } as const
-
 /** The board field with `square` holding `piece`, or emptied when `piece` is undefined. */
 export function withPiece(
   board: string,
   square: string,
-  piece: { color: 'white' | 'black'; role: keyof typeof LETTERS } | undefined,
+  piece: { color: 'white' | 'black'; role: Role } | undefined,
 ): string {
-  const rows = board.split('/').map((row) => row.replace(/\d/g, (n) => '.'.repeat(Number(n))))
-  const rank = 8 - Number(square[1])
-  const cells = rows[rank]!.split('')
-  const letter = piece ? LETTERS[piece.role] : '.'
-  cells[square.charCodeAt(0) - 97] = piece?.color === 'white' ? letter.toUpperCase() : letter
-  rows[rank] = cells.join('')
-  return rows.map((row) => row.replace(/\.+/g, (dots) => String(dots.length))).join('/')
+  return rules<string>('withPiece', board, square, piece ?? null)
 }
 
 /** Which castling rights the king and rook squares still allow. */
 export function castlingAvailable(board: string): EditorSetup['castling'] {
-  const at = (square: string, piece: string): boolean => pieceOn(board, square) === piece
-  return {
-    K: at('e1', 'K') && at('h1', 'R'),
-    Q: at('e1', 'K') && at('a1', 'R'),
-    k: at('e8', 'k') && at('h8', 'r'),
-    q: at('e8', 'k') && at('a8', 'r'),
-  }
+  return rules<EditorSetup['castling']>('castlingAvailable', board)
 }
 
 /**
@@ -67,24 +39,11 @@ export function castlingAvailable(board: string): EditorSetup['castling'] {
  * en passant there: the pawn stands on its fourth rank with both squares behind it empty.
  */
 export function enPassantSquares(board: string, turn: EditorSetup['turn']): string[] {
-  const [pawn, rank, passed, start] = turn === 'white' ? ['p', '5', '6', '7'] : ['P', '4', '3', '2']
-  return [...'abcdefgh']
-    .filter(
-      (file) =>
-        pieceOn(board, `${file}${rank}`) === pawn &&
-        !pieceOn(board, `${file}${passed}`) &&
-        !pieceOn(board, `${file}${start}`),
-    )
-    .map((file) => `${file}${passed}`)
+  return rules<string[]>('enPassantSquares', board, turn)
 }
 
 export function setupFen(setup: EditorSetup): string {
-  const available = castlingAvailable(setup.board)
-  const castling = (['K', 'Q', 'k', 'q'] as const)
-    .filter((right) => setup.castling[right] && available[right])
-    .join('')
-  const ep = enPassantSquares(setup.board, setup.turn).includes(setup.ep) ? setup.ep : '-'
-  return `${setup.board} ${setup.turn === 'white' ? 'w' : 'b'} ${castling || '-'} ${ep} 0 1`
+  return rules<string>('setupFen', setup)
 }
 
 /** Read a FEN typed or pasted into the editor; undefined when it is not one. */

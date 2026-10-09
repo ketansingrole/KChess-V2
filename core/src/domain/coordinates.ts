@@ -1,3 +1,5 @@
+import { rules } from './engine.ts'
+
 /** Board-vision drills: naming squares, finding them, and telling their color. */
 
 export const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
@@ -8,19 +10,22 @@ export const ALL_SQUARES: readonly Square[] = FILES.flatMap((file) =>
   RANKS.map((rank) => `${file}${rank}` as Square),
 )
 
-/** A random square that is not `previous`. */
+/**
+ * A random square that is not `previous`. The rules pick from the draws in order; this draws
+ * one more number each time the first ones give `previous`.
+ */
 export function randomSquare(previous?: string, random: () => number = Math.random): Square {
-  let square: Square
-  do square = ALL_SQUARES[Math.floor(random() * ALL_SQUARES.length)]!
-  while (square === previous)
-  return square
+  const draws: number[] = []
+  for (;;) {
+    draws.push(random())
+    const square = rules<Square | null>('randomSquare', previous ?? null, draws)
+    if (square) return square
+  }
 }
 
 /** a1 is dark, h1 is light. */
 export function squareColor(square: string): 'light' | 'dark' {
-  const file = square.charCodeAt(0) - 97
-  const rank = Number(square[1]) - 1
-  return (file + rank) % 2 === 0 ? 'dark' : 'light'
+  return rules<'light' | 'dark'>('squareColor', square)
 }
 
 /** The empty board. */

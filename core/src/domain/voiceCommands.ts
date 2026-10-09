@@ -1,31 +1,14 @@
+import { rules } from './engine.ts'
 import type { Position, Role } from './position.ts'
 import { ALL_SQUARES, type Square } from './coordinates'
 
-const fileWords: Record<string, string> = {
-  a: 'a',
-  alpha: 'a',
-  alfa: 'a',
-  ay: 'a',
-  b: 'b',
-  bravo: 'b',
-  bee: 'b',
-  c: 'c',
-  charlie: 'c',
-  see: 'c',
-  d: 'd',
-  delta: 'd',
-  dee: 'd',
-  e: 'e',
-  echo: 'e',
-  f: 'f',
-  foxtrot: 'f',
-  g: 'g',
-  golf: 'g',
-  gee: 'g',
-  h: 'h',
-  hotel: 'h',
-  aitch: 'h',
-}
+/*
+ * Spoken commands, moves and edits for Vosk's small English model. The matching is in Rust
+ * (`crates/kchess-domain/src/voice.rs`). The grammar lists stay here as constants: the renderer
+ * reads them when this module loads, before the rules are bound, and
+ * `core/tests/unit/native-voice.test.ts` pins them to the Rust lists.
+ */
+
 const rankWords: Record<string, string> = {
   one: '1',
   two: '2',
@@ -60,8 +43,6 @@ export const COORDINATE_GRAMMAR = [
 ]
 const CONFIRM_WORDS = ['confirm', 'yes', 'yeah', 'okay']
 const CANCEL_WORDS = ['cancel', 'no']
-/** Filler that may accompany a confirmation: “yes play”, “confirm move”. */
-const CONFIRM_FILLER = ['play', 'move']
 
 export const MOVE_GRAMMAR = [
   ...COORDINATE_GRAMMAR,
@@ -100,52 +81,15 @@ const GAME_COMMANDS: Record<string, GameCommand> = {
 export const GAME_GRAMMAR = [...MOVE_GRAMMAR, ...Object.keys(GAME_COMMANDS)]
 
 export function spokenCommand(text: string): GameCommand | undefined {
-  const phrase = text
-    .toLowerCase()
-    .replace(/[.,!?]/g, '')
-    .split(/\s+/)
-    .filter((word) => word && word !== '[unk]')
-    .join(' ')
-  return GAME_COMMANDS[phrase === 'takeback' ? 'take back' : phrase]
+  return rules<GameCommand | null>('spokenCommand', text) ?? undefined
 }
 
 export function spokenChoice(text: string): number | undefined {
-  const normalized = text.trim().toLowerCase()
-  const rank = rankWords[normalized] ?? normalized
-  return /^[1-8]$/.test(rank) ? Number(rank) : undefined
-}
-
-/** Normalize exact words only: unrelated speech must never become a move by fuzzy matching. */
-function tokens(text: string): string[] {
-  const words = text
-    .toLowerCase()
-    .replace(/[.,!?]/g, '')
-    .split(/\s+/)
-    // Vosk marks noise it could not match to the grammar as [unk]; it carries no meaning.
-    .filter((word) => word && word !== '[unk]')
-  const result: string[] = []
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i]!
-    // The letter “a” said “ay” is often heard as “eight”: “bishop a three” → “bishop eight three”.
-    // Rank-then-rank is never a square, so read it as file a — unless a square follows, as in
-    // “rook eight to a three” (the “to” heard as “two”), where the eight is a source rank.
-    const file =
-      word === 'eight' && rankWords[words[i + 1]!] && !fileWords[words[i + 2]!]
-        ? 'a'
-        : fileWords[word]
-    const rank =
-      rankWords[words[i + 1]!] ?? (/^[1-8]$/.test(words[i + 1] ?? '') ? words[i + 1] : undefined)
-    if (file && rank) {
-      result.push(`${file}${rank}`)
-      i++
-    } else result.push(file ?? rankWords[word] ?? word)
-  }
-  return result
+  return rules<number | null>('spokenChoice', text) ?? undefined
 }
 
 export function spokenSquare(text: string): Square | undefined {
-  const words = tokens(text)
-  return words.length === 1 && /^[a-h][1-8]$/.test(words[0]!) ? (words[0] as Square) : undefined
+  return rules<Square | null>('spokenSquare', text) ?? undefined
 }
 
 export interface VoiceMoveChoice {
@@ -160,94 +104,7 @@ export type VoiceMoveResult =
 
 /** Resolve only against the actual playable position, including underpromotion and castling. */
 export function spokenMove(text: string, pos: Position): VoiceMoveResult {
-  const words = tokens(text)
-  if (
-    words.some((word) => CONFIRM_WORDS.includes(word)) &&
-    words.every((word) => CONFIRM_WORDS.includes(word) || CONFIRM_FILLER.includes(word))
-  )
-    return { kind: 'confirm' }
-  if (words.length && words.every((word) => CANCEL_WORDS.includes(word))) return { kind: 'cancel' }
-  if (words[0] === 'move' || words[0] === 'play') words.shift()
-  const castle = words.join(' ').replace('castling', 'castle')
-  let castleSide: 'king' | 'queen' | undefined
-  if (['castle kingside', 'castle king side'].includes(castle)) castleSide = 'king'
-  else if (['castle queenside', 'castle queen side'].includes(castle)) castleSide = 'queen'
-
-  let promotion: Role | undefined
-  const last = roles[words.at(-1) ?? '']
-  if (last && ['queen', 'rook', 'bishop', 'knight'].includes(last)) {
-    promotion = last
-    words.pop()
-    if (words.at(-1) === 'to') words.pop()
-    if (['promote', 'promotion', 'equals'].includes(words.at(-1) ?? '')) words.pop()
-  }
-  const dest = words.pop()
-  const capture = words.includes('takes') || words.includes('captures')
-  let role: Role | undefined
-  if (roles[words[0] ?? '']) role = roles[words.shift()!]!
-  if (words[0] === 'from') words.shift()
-  // Recognizers can hear the separator “to” as “two”. Only reinterpret it
-  // between two complete coordinates, where it cannot be a source rank.
-  if (words.length === 2 && /^[a-h][1-8]$/.test(words[0]!) && words[1] === '2') words.pop()
-  if (['to', 'takes', 'captures'].includes(words.at(-1) ?? '')) words.pop()
-  const source = words[0]
-  if (
-    !castleSide &&
-    (!dest ||
-      !/^[a-h][1-8]$/.test(dest) ||
-      words.length > 1 ||
-      (source && !/^(?:[a-h][1-8]|[a-h]|[1-8])$/.test(source)))
-  )
-    return { kind: 'invalid' }
-  // A square alone means a pawn move; piece names and explicit origins are also supported.
-  if (!castleSide && !role && !source) role = 'pawn'
-  const choices = matchingMoves(pos, { castleSide, dest, role, source, capture, promotion })
-  // “Pawn to e5” is often heard as “pawn two e five”. A lone rank 2 that fits no move was that “to”.
-  if (!choices.length && source === '2' && role)
-    choices.push(...matchingMoves(pos, { castleSide, dest, role, capture, promotion }))
-  return choices.length ? { kind: 'move', choices } : { kind: 'invalid' }
-}
-
-const PROMOTION_LETTER: Partial<Record<Role, string>> = {
-  queen: 'q',
-  rook: 'r',
-  bishop: 'b',
-  knight: 'n',
-}
-
-function matchingMoves(
-  pos: Position,
-  spoken: {
-    castleSide?: 'king' | 'queen'
-    dest?: string
-    role?: Role
-    source?: string
-    capture: boolean
-    promotion?: Role
-  },
-): VoiceMoveChoice[] {
-  const { castleSide, dest, role, source, capture, promotion } = spoken
-  const choices: VoiceMoveChoice[] = []
-  for (const move of pos.legalMoves()) {
-    const { from, to, san, promotion: promoted } = move
-    if (castleSide) {
-      if (san.replace(/[+#]$/, '') !== (castleSide === 'king' ? 'O-O' : 'O-O-O')) continue
-    } else {
-      const castleDest = san.startsWith('O-O')
-        ? `${san.startsWith('O-O-O') ? 'c' : 'g'}${pos.turn === 'white' ? '1' : '8'}`
-        : undefined
-      if ((to !== dest && castleDest !== dest) || (role && move.role !== role)) continue
-      if (source && !from.includes(source)) continue
-      if (capture && !san.includes('x')) continue
-      if (promotion && promoted !== promotion) continue
-    }
-    // The rules write castling king-takes-rook (e1h1); engines expect standard UCI (e1g1).
-    const uci = san.startsWith('O-O')
-      ? `${from}${san.startsWith('O-O-O') ? 'c' : 'g'}${from[1]}`
-      : `${from}${to}${promoted ? PROMOTION_LETTER[promoted] : ''}`
-    if (!choices.some((choice) => choice.uci === uci)) choices.push({ uci, san })
-  }
-  return choices
+  return rules<VoiceMoveResult>('spokenMove', text, pos.setup)
 }
 
 /* ── Board editor ─────────────────────────────────────────────────────── */
@@ -300,26 +157,7 @@ export function spokenEdit(
   text: string,
   color: PieceColor = 'white',
 ): EditorVoiceAction | undefined {
-  const phrase = text
-    .toLowerCase()
-    .replace(/[.,!?]/g, '')
-    .split(/\s+/)
-    .filter((word) => word && word !== '[unk]')
-    .join(' ')
-  const fixed = EDITOR_PHRASES[phrase]
-  if (fixed) return fixed
-  const words = tokens(text).filter((word) => !['on', 'to', 'at', 'the'].includes(word))
-  const square = words.at(-1)
-  if (!square || !/^[a-h][1-8]$/.test(square)) return undefined
-  const rest = words.slice(0, -1)
-  if (rest.length === 1 && REMOVE_WORDS.includes(rest[0]!))
-    return { kind: 'remove', square: square as Square }
-  let spokenColor: PieceColor | undefined
-  if (rest[0] === 'white' || rest[0] === 'black') spokenColor = rest.shift() as PieceColor
-  const role = rest.length === 1 ? roles[rest[0]!] : undefined
-  return role
-    ? { kind: 'place', square: square as Square, color: spokenColor ?? color, role }
-    : undefined
+  return rules<EditorVoiceAction | null>('spokenEdit', text, color) ?? undefined
 }
 
 /* ── Analysis board ───────────────────────────────────────────────────── */
@@ -349,11 +187,5 @@ const ANALYSIS_COMMANDS: Record<string, AnalysisCommand> = {
 export const ANALYSIS_GRAMMAR = [...MOVE_GRAMMAR, ...Object.keys(ANALYSIS_COMMANDS)]
 
 export function spokenAnalysisCommand(text: string): AnalysisCommand | undefined {
-  const phrase = text
-    .toLowerCase()
-    .replace(/[.,!?]/g, '')
-    .split(/\s+/)
-    .filter((word) => word && word !== '[unk]')
-    .join(' ')
-  return ANALYSIS_COMMANDS[phrase === 'takeback' ? 'take back' : phrase]
+  return rules<AnalysisCommand | null>('spokenAnalysisCommand', text) ?? undefined
 }
