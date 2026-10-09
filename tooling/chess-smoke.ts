@@ -16,6 +16,9 @@ import {
   turnColor,
 } from '../core/src/domain/chess.ts'
 import { Clock, formatClock } from '../core/src/domain/clock.ts'
+import { installNativeRules } from './native-rules.ts'
+
+installNativeRules()
 
 const assert = (label: string, actual: unknown, expected: unknown): void => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)

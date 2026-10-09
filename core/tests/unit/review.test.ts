@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  analyseReview,
-  judge,
-  moveAccuracy,
-  replay,
-  reviewKey,
-  winChances,
-} from '../../src/domain/review'
+import { analyseReview, replay, reviewKey } from '../../src/domain/review'
 import type { StoredReview } from '../../src/contracts/types'
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -41,57 +34,6 @@ describe('replaying a game', () => {
   })
   it('stops at the first illegal move', () => {
     expect(replay(START, ['e2e4', 'e2e4'])).toHaveLength(2)
-  })
-})
-
-describe('winning chances', () => {
-  it('follow Lichess’s curve and treat checkmate as lost for the side to move', () => {
-    expect(winChances({ cp: 0 }, 'white')).toBe(0)
-    expect(winChances({ cp: 5000 }, 'white')).toBeCloseTo(winChances({ cp: 1000 }, 'white'))
-    expect(winChances({ mate: 3 }, 'black')).toBeGreaterThan(0.99)
-    expect(winChances({ mate: 0 }, 'white')).toBe(-1)
-    expect(winChances({ mate: 0 }, 'black')).toBe(1)
-  })
-})
-
-describe('judging a move', () => {
-  it('labels by the drop in the mover’s winning chances', () => {
-    expect(judge({ cp: 0 }, { cp: -20 }, 'white')).toBeUndefined()
-    expect(judge({ cp: 0 }, { cp: -60 }, 'white')).toBe('inaccuracy')
-    expect(judge({ cp: 0 }, { cp: -120 }, 'white')).toBe('mistake')
-    expect(judge({ cp: 0 }, { cp: -300 }, 'white')).toBe('blunder')
-    // The same for Black, whose losses are White's gains.
-    expect(judge({ cp: 0 }, { cp: 60 }, 'black')).toBe('inaccuracy')
-    expect(judge({ cp: 0 }, { cp: -300 }, 'black')).toBeUndefined()
-  })
-  it('hardly minds a lost position getting more lost', () => {
-    expect(judge({ cp: -900 }, { cp: -1100 }, 'white')).toBeUndefined()
-  })
-  it('judges walking into mate by how good the position still was', () => {
-    expect(judge({ cp: 50 }, { mate: -3 }, 'white')).toBe('blunder')
-    expect(judge({ cp: -800 }, { mate: -3 }, 'white')).toBe('mistake')
-    expect(judge({ cp: -1200 }, { mate: -3 }, 'white')).toBe('inaccuracy')
-    expect(judge({ cp: -50 }, { mate: 3 }, 'black')).toBe('blunder')
-  })
-  it('judges missing a forced mate by what is left', () => {
-    expect(judge({ mate: 2 }, { cp: 1500 }, 'white')).toBe('inaccuracy')
-    expect(judge({ mate: 2 }, { cp: 800 }, 'white')).toBe('mistake')
-    expect(judge({ mate: 2 }, { cp: 300 }, 'white')).toBe('blunder')
-    expect(judge({ mate: 2 }, { mate: -4 }, 'white')).toBe('blunder')
-    // A slower mate is not a mistake.
-    expect(judge({ mate: 2 }, { mate: 4 }, 'white')).toBeUndefined()
-  })
-  it('never judges the mating move', () => {
-    expect(judge({ mate: -1 }, { mate: 0 }, 'black')).toBeUndefined()
-  })
-})
-
-describe('move accuracy', () => {
-  it('is full for a move that keeps the winning chances, and falls with the loss', () => {
-    expect(moveAccuracy(50, 50)).toBe(100)
-    expect(moveAccuracy(50, 60)).toBe(100)
-    expect(moveAccuracy(50, 30)).toBeCloseTo(41.0, 0)
-    expect(moveAccuracy(100, 0)).toBe(0)
   })
 })
 

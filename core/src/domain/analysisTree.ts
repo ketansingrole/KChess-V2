@@ -1,19 +1,6 @@
-import { Chess, normalizeMove, type Position } from 'chessops/chess'
-import { INITIAL_FEN, makeFen } from 'chessops/fen'
-import {
-  ChildNode,
-  defaultGame,
-  makePgn,
-  parsePgn,
-  setStartingPosition,
-  startingPosition,
-  type Node,
-  type PgnNodeData,
-} from 'chessops/pgn'
-import { makeSanAndPlay, parseSan } from 'chessops/san'
-import { makeUci, parseUci } from 'chessops/util'
+import { INITIAL_FEN } from 'chessops/fen'
 import type { EngineLine } from '../contracts/types'
-import { positionFromFen } from './chess'
+import { rules } from './engine.ts'
 
 /**
  * The analysis board's move tree, like Lichess's: every position reached keeps the moves tried
@@ -59,13 +46,10 @@ export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
 export const pathOf = (moves: readonly string[]): string => moves.join(' ')
 export const movesOf = (path: string): string[] => (path ? path.split(' ') : [])
 
-function plyOf(pos: Position): number {
-  return (pos.fullmoves - 1) * 2 + (pos.turn === 'white' ? 0 : 1)
-}
-
 export function newTree(fen = INITIAL_FEN): TreeNode {
-  const pos = positionFromFen(fen) ?? Chess.default()
-  return { uci: '', san: '', fen: makeFen(pos.toSetup()), ply: plyOf(pos), children: [] }
+  // An unusable FEN starts from the usual position.
+  const start = rules<{ fen: string; ply: number }>('startNode', fen)
+  return { uci: '', san: '', fen: start.fen, ply: start.ply, children: [] }
 }
 
 /** The nodes from the root to `path`, as far as the path exists. */
@@ -84,17 +68,16 @@ export const nodeAt = (root: TreeNode, path: string): TreeNode => nodesAlong(roo
 /** Play `uci` after `path`, re-using the node when that move was already tried. */
 export function addMove(root: TreeNode, path: string, uci: string): string | undefined {
   const parent = nodeAt(root, path)
-  const pos = positionFromFen(parent.fen)
-  const parsed = parseUci(uci)
-  if (!pos || !parsed) return undefined
-  const move = normalizeMove(pos, parsed)
-  if (!pos.isLegal(move)) return undefined
-  uci = makeUci(move)
-  const existing = parent.children.find((child) => child.uci === uci)
-  const childPath = pathOf([...movesOf(path), uci])
-  if (existing) return childPath
-  const san = makeSanAndPlay(pos, move)
-  parent.children.push({ uci, san, fen: makeFen(pos.toSetup()), ply: parent.ply + 1, children: [] })
+  // Castling comes back as king-takes-rook, so a move has one spelling in the tree.
+  const played = rules<{ uci: string; san: string; fen: string } | null>(
+    'playMove',
+    parent.fen,
+    uci,
+  )
+  if (!played) return undefined
+  const childPath = pathOf([...movesOf(path), played.uci])
+  if (parent.children.some((child) => child.uci === played.uci)) return childPath
+  parent.children.push({ ...played, ply: parent.ply + 1, children: [] })
   return childPath
 }
 
@@ -149,74 +132,12 @@ export function treeToPgn(
   root: TreeNode,
   headers: Record<string, string> = root.headers ?? {},
 ): string {
-  const game = defaultGame<PgnNodeData>()
-  for (const [key, value] of Object.entries(headers)) game.headers.set(key, value)
-  game.comments = root.comments
-  const pos = positionFromFen(root.fen)
-  if (pos && root.fen !== INITIAL_FEN) setStartingPosition(game.headers, pos)
-  const copy = (from: TreeNode, to: Node<PgnNodeData>): void => {
-    for (const child of from.children) {
-      const node = new ChildNode<PgnNodeData>({
-        san: child.san,
-        comments: child.comments,
-        startingComments: child.startingComments,
-        nags: child.nags,
-      })
-      to.children.push(node)
-      copy(child, node)
-    }
-  }
-  copy(root, game.moves)
-  return makePgn(game)
+  return rules<string>('treeToPgn', root, headers)
 }
 
 /** One bounded PGN document, or undefined when it cannot be imported without loss. */
 export function treeFromPgn(text: string): TreeNode | undefined {
-  if (text.length > 2_000_000) return undefined
-  const games = parsePgn(text)
-  if (games.length !== 1) return undefined
-  const game = games[0]!
-  const start = startingPosition(game.headers)
-  if (start.isErr) return undefined
-  const root = newTree(makeFen(start.value.toSetup()))
-  root.headers = Object.fromEntries(game.headers)
-  root.comments = game.comments
-  let invalid = false
-  let count = 0
-  const walk = (from: Node<PgnNodeData>, to: TreeNode, pos: Position, depth = 0): void => {
-    if (depth > 1024) {
-      invalid = true
-      return
-    }
-    for (const child of from.children) {
-      if (++count > 10_000) {
-        invalid = true
-        return
-      }
-      const position = pos.clone()
-      const move = parseSan(position, child.data.san)
-      if (!move) {
-        invalid = true
-        continue
-      }
-      const uci = makeUci(move)
-      const san = makeSanAndPlay(position, move)
-      const node: TreeNode = {
-        uci,
-        san,
-        fen: makeFen(position.toSetup()),
-        ply: to.ply + 1,
-        children: [],
-        comments: child.data.comments,
-        startingComments: child.data.startingComments,
-        nags: child.data.nags,
-      }
-      to.children.push(node)
-      walk(child, node, position, depth + 1)
-    }
-  }
-  walk(game.moves, root, start.value)
-  return invalid ? undefined : root
+  return rules<TreeNode | null>('treeFromPgn', text) ?? undefined
 }
 
 /* ── Engine output ───────────────────────────────────────────────────── */
@@ -261,20 +182,12 @@ export function pvSan(
     pvSanCache.set(key, hit)
     return hit
   }
-  const pos = positionFromFen(fen)
-  if (!pos) return []
-  const moves: { san: string; uci: string; label: string; fen: string }[] = []
-  let ply = plyOf(pos)
-  for (const uci of normalized) {
-    const parsed = parseUci(uci)
-    if (!parsed) break
-    const move = normalizeMove(pos, parsed)
-    if (!pos.isLegal(move)) break
-    const number = moveNumber(ply, moves.length === 0)
-    const san = makeSanAndPlay(pos, move)
-    moves.push({ san, uci, label: number ? `${number} ${san}` : san, fen: makeFen(pos.toSetup()) })
-    ply++
-  }
+  const moves = rules<{ san: string; uci: string; label: string; fen: string }[]>(
+    'pvSan',
+    fen,
+    normalized,
+    normalized.length,
+  )
   pvSanCache.set(key, moves)
   if (pvSanCache.size > PV_SAN_CACHE_LIMIT) pvSanCache.delete(pvSanCache.keys().next().value!)
   return moves

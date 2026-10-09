@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-node"]
+members = ["crates/kchess-domain", "crates/kchess-node", "crates/kchess-wasm"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,7 +11,7 @@ publish = false
 [workspace.dependencies]
 shakmaty = { version = "0.30", features = ["variant"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "unbounded_depth"] }
 memchr = "2"
 
 [profile.release]
@@ -19,3 +19,8 @@ lto = "fat"
 codegen-units = 1
 panic = "unwind"
 strip = "symbols"
+
+# WebAssembly cannot unwind; a panic traps and the host reports it.
+[profile.wasm]
+inherits = "release"
+panic = "abort"

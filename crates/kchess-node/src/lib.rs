@@ -1,7 +1,7 @@
 //! `@kchess/native`: the Rust rules for Node and Electron hosts. Values cross as JSON text
 //! (see `core/src/services/native.ts`); `null` stands for the TypeScript `undefined`.
 
-use kchess_domain::{library, pgn, puzzle, replay, review, tree};
+use kchess_domain::{api, library, pgn, puzzle, replay, review, tree};
 use napi_derive::napi;
 use serde_json::Value;
 
@@ -12,6 +12,12 @@ fn to_json<T: serde::Serialize>(value: &T) -> napi::Result<String> {
 /// Parse a stored document; text that is not JSON decodes to nothing, as in the core.
 fn parse(json: &str) -> Option<Value> {
     serde_json::from_str(json).ok()
+}
+
+/// `api::call`: any rules method by name, with a JSON array of arguments and a JSON result.
+#[napi(catch_unwind)]
+pub fn invoke(method: String, args: String) -> napi::Result<String> {
+    api::call(&method, &args).map_err(napi::Error::from_reason)
 }
 
 #[napi]

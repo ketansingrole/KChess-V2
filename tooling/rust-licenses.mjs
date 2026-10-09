@@ -97,7 +97,7 @@ export function writeRustLicenses() {
   )
   writeFileSync(
     join(root, 'crates/kchess-node/THIRD_PARTY_LICENSES.txt'),
-    `Rust crates compiled into the KChess native rules (kchess-native.*.node):\n\n${index}\n\n${sections.join('\n')}`,
+    `Rust crates compiled into the KChess rules: kchess-native.*.node, and the renderer's kchess.wasm (a subset):\n\n${index}\n\n${sections.join('\n')}`,
   )
   console.info(`[kchess] Collected licenses for ${crates.length} Rust crates.`)
 }

@@ -5,6 +5,10 @@ import { usePuzzleStore } from '../../app/stores/puzzles'
 import { useUsageStore } from '../../app/stores/usage'
 import type { DesktopApi } from '../../contracts/types'
 import { detachedLibraryApi, resetLibrary } from './testLibrary'
+import { installRules } from '../../../../core/src/services/rules'
+
+// The renderer loads the rules as WebAssembly; tests use the same rules as a Node module.
+installRules()
 
 vi.mock('../../app/utils/sound', () => ({
   configure: vi.fn(),

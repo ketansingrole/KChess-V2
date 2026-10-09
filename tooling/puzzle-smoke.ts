@@ -10,8 +10,7 @@ import {
 } from '../core/src/domain/puzzle.ts'
 import { FEN, PUZZLE_ANGLE } from '../core/src/domain/patterns.ts'
 import { sampleZstdCsv, type ChunkSampler } from '../core/src/services/puzzleSampler.ts'
-import type { NativeRules } from '../core/src/services/native.ts'
-import { createRequire } from 'node:module'
+import { installNativeRules } from './native-rules.ts'
 import {
   queryLadder,
   queryPuzzles,
@@ -197,9 +196,7 @@ assert(
 
 // Sampler (the native rules, resolved as the core resolves them): parses the CSV, keeps solid
 // puzzles, skips the header.
-const native = createRequire(new URL('../core/src/services/native.ts', import.meta.url))(
-  '@kchess/native',
-) as NativeRules
+const native = installNativeRules()
 function nativeSampler(): ChunkSampler {
   const inner = new native.PuzzleSampler(1)
   return {

@@ -26,3 +26,4 @@ export class PuzzleSampler {
   release(): void
 }
 export function jsExp(x: number): number
+export function invoke(method: string, args: string): string

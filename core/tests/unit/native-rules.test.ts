@@ -10,7 +10,26 @@ import { makeUci } from 'chessops/util'
 import { defaultPosition, setupPosition } from 'chessops/variant'
 import type { Position } from 'chessops/chess'
 import type { Role } from 'chessops/types'
-import { treeFromPgn, treeToPgn, type TreeNode } from '../../src/domain/analysisTree'
+import {
+  addMove,
+  newTree,
+  pvSan,
+  setMoveGlyph,
+  treeFromPgn,
+  treeToPgn,
+  type TreeNode,
+} from '../../src/domain/analysisTree'
+import {
+  drawReason,
+  pgnFromMoves,
+  pgnFromSan,
+  pgnFromUci,
+  sanHistory,
+  setupDrawReason,
+  setupPgn,
+  setupSanHistory,
+} from '../../src/domain/chess'
+import { wasmBinding, type RulesBinding } from '../../src/domain/engine'
 import { studyDocumentPgn } from '../../src/domain/library'
 import { analyseReview, replay } from '../../src/domain/review'
 import type { StoredReview } from '../../src/contracts/types'
@@ -583,6 +602,182 @@ describe('native phase 2 rules match the TypeScript rules', { timeout: TIMEOUT }
     expect(facade.count).toBe(count)
     const long = Buffer.from(`abc,${'x'.repeat(17_000)}`)
     expect(() => new native.PuzzleSampler(1).push(long)).toThrow('oversized CSV line')
+  })
+})
+
+/** The renderer's WebAssembly module, run here in Node. */
+const WASM_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../apps/desktop/app/assets/rules/kchess.wasm',
+)
+const wasm: RulesBinding = wasmBinding(
+  new WebAssembly.Instance(new WebAssembly.Module(readFileSync(WASM_PATH))).exports,
+)
+/** One rules call through both runtimes, which must agree; returns the parsed result. */
+function both(method: string, ...args: unknown[]): unknown {
+  const json = JSON.stringify(args)
+  const fromNode = native.invoke(method, json)
+  expect(wasm.invoke(method, json), `${method} in WebAssembly`).toBe(fromNode)
+  return JSON.parse(fromNode)
+}
+const orNull = <T>(value: T | undefined): T | null => (value === undefined ? null : value)
+
+describe('the renderer rules match recorded outputs in both runtimes', { timeout: TIMEOUT }, () => {
+  it('builds, edits and writes analysis trees identically (seed 7201)', () => {
+    const random = rng(7201)
+    for (let i = 0; i < 80; i++) {
+      const pgn =
+        random() < 0.15
+          ? PGN_CASES[i % PGN_CASES.length]!
+          : randomStudy(random, 20 + Math.floor(random() * 60))
+      const tree = treeFromPgn(pgn)
+      expect(both('treeFromPgn', pgn), `#${i}`).toEqual(orNull(plain(tree)))
+      golden('treeFromPgn', i, both('treeFromPgn', pgn))
+      if (!tree) continue
+      // Edit the tree the way the analysis board does, then write it out.
+      let path = ''
+      for (let step = 0; step < 6; step++) {
+        const node = path ? tree.children[0] : tree
+        const fen = (node ?? tree).fen
+        const pos = setupPosition('chess', parseFen(fen).unwrap()).unwrap()
+        const [uci] = randomLine(random, pos, 1)
+        if (!uci) break
+        const played = addMove(tree, path, random() < 0.1 ? 'e2e5' : uci)
+        if (played) {
+          path = played
+          if (random() < 0.3) setMoveGlyph(tree.children[0] ?? tree, 1 + Math.floor(random() * 6))
+        }
+      }
+      golden('addMove', i, plain(tree))
+      const headers =
+        random() < 0.3 ? { Event: 'Edited "study"', Custom: 'x\\y' } : (tree.headers ?? {})
+      expect(both('treeToPgn', tree, headers), `#${i}`).toBe(treeToPgn(tree, headers))
+      golden('treeToPgn', i, both('treeToPgn', tree, headers))
+    }
+  })
+
+  it('starts and extends trees from any position (seed 7202)', () => {
+    const random = rng(7202)
+    for (let i = 0; i < 300; i++) {
+      const start =
+        random() < 0.2
+          ? setupPosition('chess', parseFen(CHESS960[i % CHESS960.length]!).unwrap()).unwrap()
+          : Chess.default()
+      const line = randomLine(random, start, Math.floor(random() * 60))
+      const fen =
+        random() < 0.05
+          ? 'not a fen'
+          : (replay(makeFen(start.toSetup()), line).at(-1)?.fen ?? makeFen(start.toSetup()))
+      const root = newTree(fen)
+      expect(both('startNode', fen), `#${i} ${fen}`).toEqual({ fen: root.fen, ply: root.ply })
+      golden('startNode', i, both('startNode', fen))
+      const pos = setupPosition('chess', parseFen(root.fen).unwrap()).unwrap()
+      const next = randomLine(random, pos, 1)[0] ?? 'e2e4'
+      const tries = [next, 'e1g1', 'e1h1', 'a7a8q', 'e2e5', next.toUpperCase()]
+      for (const [k, uci] of tries.entries()) {
+        const tree = newTree(fen)
+        const path = addMove(tree, '', uci)
+        const child = path === undefined ? null : tree.children[0]
+        const expected = child ? { uci: child.uci, san: child.san, fen: child.fen } : null
+        expect(both('playMove', root.fen, uci), `#${i} ${root.fen} ${uci}`).toEqual(expected)
+        golden('playMove', i * 6 + k, both('playMove', root.fen, uci))
+      }
+      const pv = damage(random, randomLine(random, pos, 1 + Math.floor(random() * 16)))
+      const max = random() < 0.5 ? 12 : 1 + Math.floor(random() * 20)
+      expect(both('pvSan', root.fen, pv, max), `#${i}`).toEqual(pvSan(root.fen, pv, max))
+      golden('pvSan', i, both('pvSan', root.fen, pv, max))
+    }
+  })
+
+  it('writes move lists, PGN and draw claims identically (seed 7203)', () => {
+    const random = rng(7203)
+    for (let i = 0; i < 300; i++) {
+      const variant = VARIANTS[i % VARIANTS.length] as Variant
+      const start =
+        variant === 'chess960'
+          ? setupPosition('chess', parseFen(CHESS960[i % CHESS960.length]!).unwrap()).unwrap()
+          : defaultPosition(rulesOf(variant))
+      const setup = { variant, fen: makeFen(start.toSetup()) }
+      // Shuffle knights back and forth now and then, so repetitions happen.
+      const line =
+        random() < 0.2
+          ? ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8', 'b1c3']
+          : damage(random, randomLine(random, start, Math.floor(random() * 200)))
+      const standard = random() < 0.5 ? line : randomLine(random, Chess.default(), 120)
+      const headers: Record<string, string> =
+        random() < 0.5 ? {} : { White: 'Me', Result: random() < 0.5 ? '1-0' : '*', Site: '?' }
+      const context = `seed 7203 #${i} ${variant}`
+      expect(both('sanHistory', standard), context).toEqual(sanHistory(standard))
+      // replaySetup keeps a TypeScript twin (its positions are chessops objects).
+      const ts = replaySetup(setup, line)
+      expect(both('setupReplay', setup, line), context).toEqual(
+        ts ? plain({ played: ts.played, fen: makeFen(ts.position.toSetup()) }) : null,
+      )
+      expect(setupSanHistory(setup, line), context).toEqual(ts?.played.map((m) => m.san) ?? [])
+      const sans = sanHistory(standard)
+      if (random() < 0.2) sans.push('Zz9', 'O-O-O-O-O-O-O-O-O')
+      expect(both('pgnFromSan', sans), context).toBe(pgnFromSan(sans))
+      expect(both('pgnFromUci', standard), context).toBe(pgnFromUci(standard))
+      const tokens = random() < 0.5 ? [...standard, ' 1-0 ', ''] : [...sans, '*']
+      if (random() < 0.1) tokens.push('E2E4')
+      expect(both('pgnFromMoves', tokens), context).toBe(pgnFromMoves(tokens))
+      expect(both('setupPgn', setup, line, headers), context).toBe(setupPgn(setup, line, headers))
+      expect(both('drawReason', standard), context).toEqual(orNull(drawReason(standard)))
+      const padded = random() < 0.1 ? line.map((m, k) => (k === 3 ? ` ${m} ` : m)) : line
+      expect(both('setupDrawReason', setup, padded), context).toEqual(
+        orNull(setupDrawReason(setup, padded)),
+      )
+      for (const [suite, value] of [
+        ['sanHistory', both('sanHistory', standard)],
+        ['setupReplay', both('setupReplay', setup, line)],
+        ['pgnFromSan', both('pgnFromSan', sans)],
+        ['pgnFromUci', both('pgnFromUci', standard)],
+        ['pgnFromMoves', both('pgnFromMoves', tokens)],
+        ['setupPgn', both('setupPgn', setup, line, headers)],
+        ['drawReason', both('drawReason', standard)],
+        ['setupDrawReason', both('setupDrawReason', setup, padded)],
+      ] as const)
+        golden(suite, i, value)
+    }
+  })
+
+  it('has an exp in WebAssembly that matches Math.exp to the bit on this CPU (seed 7205)', () => {
+    // The loader keeps whichever variant agrees with Math.exp; one of them must agree always.
+    const exports = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(WASM_PATH)))
+      .exports as unknown as { kc_exp(x: number, fused: number): number }
+    const random = rng(7205)
+    let fused = 0
+    let plain = 0
+    const total = 200_000
+    for (let i = 0; i < total; i++) {
+      const x = i % 2 ? -0.00368208 * Math.round((random() - 0.5) * 2400) : -4.354 * random()
+      if (Object.is(exports.kc_exp(x, 1), Math.exp(x))) fused++
+      if (Object.is(exports.kc_exp(x, 0), Math.exp(x))) plain++
+    }
+    expect(Math.max(fused, plain)).toBe(total)
+  })
+
+  it('replays, reviews and exports studies identically in both runtimes (seed 7204)', () => {
+    const random = rng(7204)
+    for (let i = 0; i < 150; i++) {
+      const review = randomReview(random, i)
+      expect(both('replay', review.fen, review.moves), `#${i}`).toEqual(
+        plain(replay(review.fen, review.moves)),
+      )
+      golden('replay', i, both('replay', review.fen, review.moves))
+      expect(both('analyseReview', review), `#${i}`).toEqual(plain(analyseReview(review)))
+      golden('analyseReview', i, both('analyseReview', review))
+      const chapters = Array.from({ length: 1 + Math.floor(random() * 3) }, (_, c) => ({
+        id: `c${c}`,
+        name: `Chapter ${c}`,
+        pgn: randomStudy(random, 10 + Math.floor(random() * 30)),
+      }))
+      expect(both('studyDocumentPgn', chapters), `#${i}`).toBe(studyDocumentPgn({ chapters }))
+      golden('studyDocumentPgn', i, both('studyDocumentPgn', chapters))
+    }
+    expect(() => native.invoke('replay', '[1]')).toThrow('fen must be a string')
+    expect(() => wasm.invoke('replay', '[1]')).toThrow('fen must be a string')
+    expect(() => wasm.invoke('nope', '[]')).toThrow('unknown rules method')
   })
 })
 

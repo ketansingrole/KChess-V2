@@ -4,24 +4,37 @@
 use crate::js;
 use crate::rules;
 
-/// A move token kept inline: tokens are at most ten bytes, so no node allocates for its move.
-#[derive(Clone, Copy, Default)]
-pub struct San {
-    bytes: [u8; 16],
-    len: u8,
+/// A move's text. Lexed tokens are at most ten bytes and stay inline, so parsing allocates
+/// nothing per move; text supplied whole (a SAN list to write out) may be longer.
+#[derive(Clone)]
+pub enum San {
+    Inline([u8; 15], u8),
+    Heap(Box<str>),
+}
+
+impl Default for San {
+    fn default() -> San {
+        San::Inline([0; 15], 0)
+    }
 }
 
 impl San {
-    fn new(text: &str) -> San {
-        let mut san = San::default();
-        let len = text.len().min(16);
-        san.bytes[..len].copy_from_slice(&text.as_bytes()[..len]);
-        san.len = len as u8;
-        san
+    pub fn new(text: &str) -> San {
+        if text.len() > 15 {
+            return San::Heap(text.into());
+        }
+        let mut bytes = [0; 15];
+        bytes[..text.len()].copy_from_slice(text.as_bytes());
+        San::Inline(bytes, text.len() as u8)
     }
 
     pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes[..usize::from(self.len)]).unwrap_or_default()
+        match self {
+            San::Inline(bytes, len) => {
+                std::str::from_utf8(&bytes[..usize::from(*len)]).unwrap_or_default()
+            }
+            San::Heap(text) => text,
+        }
     }
 }
 
@@ -53,6 +66,24 @@ pub struct Game {
     pub nodes: Vec<PgnNode>,
 }
 
+impl PgnNode {
+    /// A move with its annotations, not yet linked into a game.
+    pub fn with(
+        san: &str,
+        comments: Option<Vec<String>>,
+        starting_comments: Option<Vec<String>>,
+        nags: Option<Vec<u32>>,
+    ) -> PgnNode {
+        PgnNode {
+            san: San::new(san),
+            comments,
+            starting_comments,
+            nags,
+            ..PgnNode::default()
+        }
+    }
+}
+
 impl Game {
     fn new() -> Game {
         Game {
@@ -71,6 +102,19 @@ impl Game {
             comments: None,
             nodes: vec![PgnNode::default()],
         }
+    }
+
+    /// A game with chessops's default headers and no moves (`defaultGame()`).
+    pub fn empty() -> Game {
+        Game::new()
+    }
+
+    /// Add a move after `parent` (0 is the start) and return its index.
+    pub fn add_move(&mut self, parent: usize, node: PgnNode) -> usize {
+        let index = self.nodes.len();
+        self.nodes.push(node);
+        self.append_child(parent, index);
+        index
     }
 
     /// The moves played from `node`, main line first.
@@ -108,7 +152,8 @@ impl Game {
         self.headers.retain(|(k, _)| k != name);
     }
 
-    fn set_header(&mut self, name: &str, value: String) {
+    /// A parsed header: `Result` is normalized as chessops does.
+    pub fn set_header(&mut self, name: &str, value: String) {
         let value = if name == "Result" {
             outcome(&value).to_string()
         } else {

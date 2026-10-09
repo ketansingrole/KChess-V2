@@ -9,6 +9,7 @@ import type {
 } from '../domain/library'
 import type { DbPuzzle } from '../domain/puzzle'
 import type { GameAnalysis, ReplayedPosition } from '../domain/review'
+import { setRulesBinding } from '../domain/engine'
 import { logWarn } from './logger'
 import { nativeRules, type NativeRules } from './native'
 import type { ChunkSampler } from './puzzleSampler'
@@ -28,6 +29,15 @@ function rules(): NativeRules {
     )
   return loaded
 }
+
+/**
+ * The domain rules (`core/src/domain/engine.ts`) run on the native module wherever the core
+ * runs: the Electron main process, the Node host and the CLI. The module loads on first use.
+ */
+export function installRules(): void {
+  setRulesBinding({ invoke: (method, args) => rules().invoke(method, args) })
+}
+installRules()
 
 const parsed = <T>(json: string | null): T | undefined =>
   json === null ? undefined : (JSON.parse(json) as T)

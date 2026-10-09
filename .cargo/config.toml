@@ -1,0 +1,4 @@
+# The renderer's rules module: analysis trees up to 1024 moves deep are read and written
+# recursively, which needs more than WebAssembly's default 1 MiB stack.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=8388608"]

@@ -35,6 +35,8 @@ export interface NativeRules {
   PuzzleSampler: new (seed: number) => NativePuzzleSampler
   /** The `Math.exp` the review rules use (compared with V8's in tests). */
   jsExp(x: number): number
+  /** Any rules method by name (`core/src/domain/engine.ts`). */
+  invoke(method: string, args: string): string
   version(): string
 }
 

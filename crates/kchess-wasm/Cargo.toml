@@ -1,0 +1,13 @@
+[package]
+name = "kchess-wasm"
+description = "The KChess Rust rules as WebAssembly for the renderer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kchess-domain = { path = "../kchess-domain" }

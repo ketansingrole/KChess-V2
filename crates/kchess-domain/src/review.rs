@@ -12,6 +12,19 @@ use crate::rules;
 
 /* ── JavaScript arithmetic ── */
 
+/// Whether `exp` fuses its multiply-adds. Native builds know their CPU; WebAssembly runs on
+/// either, so its host measures `Math.exp` and sets this (see `set_fused_exp`).
+#[cfg(target_arch = "wasm32")]
+static FUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Make `exp` fuse multiply-adds (WebAssembly only; native builds follow their CPU).
+pub fn set_fused_exp(fused: bool) {
+    #[cfg(target_arch = "wasm32")]
+    FUSED.store(fused, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = fused;
+}
+
 /// `a * b + c` as V8's C++ computes it: clang contracts it into one fused multiply-add on
 /// arm64 builds, while x86-64 builds (no FMA in the baseline instruction set) round twice.
 #[inline]
@@ -20,7 +33,15 @@ fn madd(a: f64, b: f64, c: f64) -> f64 {
     {
         a.mul_add(b, c)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        if FUSED.load(std::sync::atomic::Ordering::Relaxed) {
+            a.mul_add(b, c)
+        } else {
+            a * b + c
+        }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "wasm32")))]
     {
         a * b + c
     }
@@ -649,5 +670,75 @@ mod tests {
         let (fen, moves) = lichess_line("e4 e5 Nf3", None, None);
         assert_eq!(fen, INITIAL_FEN);
         assert_eq!(moves, ["e2e4", "e7e5", "g1f3"]);
+    }
+
+    fn cp(value: f64) -> Score {
+        Score {
+            cp: Some(value),
+            mate: None,
+        }
+    }
+
+    fn mate(value: f64) -> Score {
+        Score {
+            cp: None,
+            mate: Some(value),
+        }
+    }
+
+    #[test]
+    fn winning_chances_follow_lichess_curve_and_treat_checkmate_as_lost_for_side_to_move() {
+        assert_eq!(win_chances(cp(0.0), true), 0.0);
+        assert!((win_chances(cp(5000.0), true) - win_chances(cp(1000.0), true)).abs() < 0.005);
+        assert!(win_chances(mate(3.0), false) > 0.99);
+        assert_eq!(win_chances(mate(0.0), true), -1.0);
+        assert_eq!(win_chances(mate(0.0), false), 1.0);
+    }
+
+    #[test]
+    fn labels_by_the_drop_in_movers_winning_chances() {
+        assert_eq!(judge(cp(0.0), cp(-20.0), true), None);
+        assert_eq!(judge(cp(0.0), cp(-60.0), true), Some("inaccuracy"));
+        assert_eq!(judge(cp(0.0), cp(-120.0), true), Some("mistake"));
+        assert_eq!(judge(cp(0.0), cp(-300.0), true), Some("blunder"));
+        // The same for Black, whose losses are White's gains.
+        assert_eq!(judge(cp(0.0), cp(60.0), false), Some("inaccuracy"));
+        assert_eq!(judge(cp(0.0), cp(-300.0), false), None);
+    }
+
+    #[test]
+    fn hardly_minds_a_lost_position_getting_more_lost() {
+        assert_eq!(judge(cp(-900.0), cp(-1100.0), true), None);
+    }
+
+    #[test]
+    fn judges_walking_into_mate_by_how_good_the_position_still_was() {
+        assert_eq!(judge(cp(50.0), mate(-3.0), true), Some("blunder"));
+        assert_eq!(judge(cp(-800.0), mate(-3.0), true), Some("mistake"));
+        assert_eq!(judge(cp(-1200.0), mate(-3.0), true), Some("inaccuracy"));
+        assert_eq!(judge(cp(-50.0), mate(3.0), false), Some("blunder"));
+    }
+
+    #[test]
+    fn judges_missing_a_forced_mate_by_what_is_left() {
+        assert_eq!(judge(mate(2.0), cp(1500.0), true), Some("inaccuracy"));
+        assert_eq!(judge(mate(2.0), cp(800.0), true), Some("mistake"));
+        assert_eq!(judge(mate(2.0), cp(300.0), true), Some("blunder"));
+        assert_eq!(judge(mate(2.0), mate(-4.0), true), Some("blunder"));
+        // A slower mate is not a mistake.
+        assert_eq!(judge(mate(2.0), mate(4.0), true), None);
+    }
+
+    #[test]
+    fn never_judges_the_mating_move() {
+        assert_eq!(judge(mate(-1.0), mate(0.0), false), None);
+    }
+
+    #[test]
+    fn is_full_for_a_move_that_keeps_the_winning_chances_and_falls_with_the_loss() {
+        assert_eq!(move_accuracy(50.0, 50.0), 100.0);
+        assert_eq!(move_accuracy(50.0, 60.0), 100.0);
+        assert!((move_accuracy(50.0, 30.0) - 41.0).abs() < 0.5);
+        assert_eq!(move_accuracy(100.0, 0.0), 0.0);
     }
 }

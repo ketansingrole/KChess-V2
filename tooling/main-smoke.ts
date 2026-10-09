@@ -47,6 +47,9 @@ import {
 } from '../core/src/services/managedEngine.ts'
 import { MIGRATIONS, migrate } from '../core/src/services/migrations.ts'
 import { pickMacAsset } from '../core/src/services/stockfishAsset.ts'
+import { installNativeRules } from './native-rules.ts'
+
+installNativeRules()
 
 const assert = (label: string, actual: unknown, expected: unknown): void => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)

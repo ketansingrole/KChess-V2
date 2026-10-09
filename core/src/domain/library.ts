@@ -1,9 +1,9 @@
 import * as v from 'valibot'
-import { makePgn, parsePgn } from 'chessops/pgn'
 import { nodesAlong, pathOf, treeFromPgn } from './analysisTree'
 import { UCI_MOVE } from './patterns'
 import { ENGINE_LEVELS, type EngineLevel, type TournamentSystem } from '../contracts/types'
-import { engineSupports, isVariant, replaySetup, STANDARD_SETUP, type GameSetup } from './variant'
+import { engineSupports, isVariant, STANDARD_SETUP, type GameSetup } from './variant'
+import { rules } from './engine.ts'
 
 /**
  * The local library: bounded, versioned documents the core keeps for every frontend
@@ -211,7 +211,7 @@ const playable = (setup: GameSetup, moves: unknown): moves is string[] =>
   Array.isArray(moves) &&
   moves.length <= 1024 &&
   moves.every((m) => typeof m === 'string' && UCI_MOVE.test(m)) &&
-  replaySetup(setup, moves)?.played.length === moves.length
+  rules<{ played: unknown[] } | null>('setupReplay', setup, moves)?.played.length === moves.length
 
 export function decodeLocalSession(raw: unknown): LocalSession | undefined {
   const value = raw as {
@@ -385,13 +385,13 @@ export function decodeRepertoireMisses(raw: unknown): RepertoireMisses {
 
 /** Every chapter as one PGN, each named by a `ChapterName` header. */
 export function studyDocumentPgn(study: Pick<SavedStudy, 'chapters'>): string {
-  return study.chapters
-    .map((c) => {
-      const game = parsePgn(c.pgn)[0]!
-      game.headers.set('ChapterName', c.name)
-      return makePgn(game)
-    })
-    .join('\n\n')
+  const pgn = rules<string | null>(
+    'studyDocumentPgn',
+    study.chapters.map((c) => ({ name: c.name, pgn: c.pgn })),
+  )
+  // Saved chapters are valid PGN documents, so each holds a game.
+  if (pgn === null) throw new Error('A study chapter holds no game.')
+  return pgn
 }
 
 /* ── Study commands a frontend sends to the core ── */
