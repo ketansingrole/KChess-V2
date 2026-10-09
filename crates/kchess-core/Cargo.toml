@@ -35,8 +35,6 @@ tokio-util = "0.7"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-[dev-dependencies]
-
 # A scripted UCI engine for the engine tests (see tests/support/fake_uci.rs).
 [[bin]]
 name = "kchess-fake-uci"
