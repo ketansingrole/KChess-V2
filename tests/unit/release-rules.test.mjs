@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,9 +6,9 @@ import {
   nextReleaseVersion,
   parseReleaseVersion,
   validateReleaseVersion,
-} from '../../scripts/release-rules.mjs'
-import { attachDraftRelease } from '../../scripts/attach-draft-release.mjs'
-import { prepareNextVersion, writeVersion } from '../../scripts/next-version.mjs'
+} from '../../tooling/release-rules.mjs'
+import { attachDraftRelease } from '../../tooling/attach-draft-release.mjs'
+import { prepareNextVersion, writeVersion } from '../../tooling/next-version.mjs'
 
 const pkg = {
   version: '2026.10.1',
@@ -161,4 +161,27 @@ describe('draft release uploads', () => {
     )
     expect(invalid).toHaveBeenCalledOnce()
   })
+})
+
+it('synchronizes release versions across all workspace manifests', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'kchess-workspace-version-'))
+  const paths = ['.', 'core', 'hosts/node', 'apps/cli', 'apps/desktop']
+  try {
+    for (const path of paths) {
+      mkdirSync(join(directory, path), { recursive: true })
+      writeFileSync(
+        join(directory, path, 'package.json'),
+        JSON.stringify({ name: path, version: '2026.10.1' }),
+      )
+    }
+    writeVersion('2026.10.2', directory)
+    for (const path of paths) {
+      expect(JSON.parse(readFileSync(join(directory, path, 'package.json'), 'utf8'))).toEqual({
+        name: path,
+        version: '2026.10.2',
+      })
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

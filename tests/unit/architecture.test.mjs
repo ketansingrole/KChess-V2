@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { Linter } from 'eslint'
-import architecture from '../../scripts/eslint/architecture.mjs'
+import architecture from '../../tooling/eslint/architecture.mjs'
 import { resolve } from 'node:path'
 
 function lint(code, filename) {
@@ -17,39 +17,56 @@ function lint(code, filename) {
   )
 }
 it.each([
-  ['app/page.js', "import { getDb } from '../src/core/db'"],
-  ['app/page.js', "export * from '../src/core/store'"],
-  ['app/page.js', "const main = import('../src/core/db')"],
-  ['app/page.js', "const fs = require('fs')"],
-  ['app/page.js', "import { getDb } from '@@/src/core/db'"],
-  ['app/page.js', "import { getDb } from '~/../src/core/db'"],
-  ['src/main/test.js', "const electron = require('electron')"],
-  ['src/main/test.js', "const sqlite = import('node:sqlite')"],
-  ['src/shared/test.js', "import fs from 'node:fs'"],
-  ['src/main/test.js', "import { ipcMain as ipc } from 'electron'"],
-  ['src/main/test.js', "import * as electron from 'electron'"],
-  ['src/main/test.js', "import { queryPuzzles } from '../core/puzzleQueries'"],
-  ['src/main/test.js', "import { getSettings } from '../core/store'"],
-  ['src/main/test.js', "import { DatabaseSync } from 'node:sqlite'"],
-  ['src/preload/test.js', "import { getDb } from '../main/db'"],
-  ['src/main/test.js', "import { view } from '../../app/view'"],
-  ['app/page.js', "import { createKChessCore } from '../src/core'"],
-  ['src/shared/test.js', "import { loadData } from '../core/store'"],
-  ['src/core/test.js', "import { app } from 'electron'"],
-  ['src/core/test.js', "const updater = import('electron-updater')"],
-  ['src/core/test.js', "import { send } from '../main/ipc'"],
-  ['src/core/test.js', "import { view } from '../../app/view'"],
-  ['src/core/test.js', "import { queryPuzzles } from './puzzleQueries'"],
-  ['src/core/test.js', "import { DatabaseSync } from 'node:sqlite'"],
+  ['apps/desktop/app/page.js', "import { createKChessCore } from '@kchess/core'"],
+  ['core/src/contracts/test.js', "import typeOnly from '../../../apps/desktop/contracts/types'"],
+  ['core/src/services/test.js', "import { createNodeCore } from '@kchess/node'"],
+  ['apps/desktop/app/page.js', "import { getDb } from '../../../core/src/services/db'"],
+  ['apps/desktop/app/page.js', "export * from '../../../core/src/services/store'"],
+  ['apps/desktop/app/page.js', "const main = import('../../../core/src/services/db')"],
+  ['apps/desktop/app/page.js', "const fs = require('fs')"],
+  ['apps/desktop/app/page.js', "import { getDb } from '@@/../../core/src/services/db'"],
+  ['apps/desktop/app/page.js', "import { getDb } from '~/../../../core/src/services/db'"],
+  ['apps/desktop/electron/main/test.js', "const electron = require('electron')"],
+  ['apps/desktop/electron/main/test.js', "const sqlite = import('node:sqlite')"],
+  ['core/src/domain/test.js', "import fs from 'node:fs'"],
+  ['core/src/domain/test.js', "import { ref } from 'vue'"],
+  ['core/src/domain/test.js', "import { useIntervalFn } from '@vueuse/core'"],
+  ['core/src/services/test.js', "import { useNuxtApp } from '@nuxt/core'"],
+  ['apps/desktop/electron/main/test.js', "import { ipcMain as ipc } from 'electron'"],
+  ['apps/desktop/electron/main/test.js', "import * as electron from 'electron'"],
+  [
+    'apps/desktop/electron/main/test.js',
+    "import { queryPuzzles } from '../../../../core/src/services/puzzleQueries'",
+  ],
+  [
+    'apps/desktop/electron/main/test.js',
+    "import { getSettings } from '../../../../core/src/services/store'",
+  ],
+  ['apps/desktop/electron/main/test.js', "import { DatabaseSync } from 'node:sqlite'"],
+  ['apps/desktop/electron/preload/test.js', "import { getDb } from '../main/db'"],
+  ['apps/desktop/electron/main/test.js', "import { view } from '../../app/view'"],
+  ['apps/desktop/app/page.js', "import { createKChessCore } from '../../../core/src/services'"],
+  ['core/src/domain/test.js', "import { loadData } from '../services/store'"],
+  ['core/src/services/test.js', "import { app } from 'electron'"],
+  ['core/src/services/test.js', "import { createNodeCore } from '../../../hosts/node/src'"],
+  ['core/src/services/test.js', "import { computed } from 'vue'"],
+  ['hosts/node/src/test.js', "import { getDb } from '../../../core/src/services/db'"],
+  ['apps/cli/src/test.js', "import { useKChessStore } from '../../desktop/app/stores/kchess'"],
+  ['apps/desktop/app/page.js', "import { createNodeCore } from '../../../hosts/node/src'"],
+  ['core/src/services/test.js', "const updater = import('electron-updater')"],
+  ['core/src/services/test.js', "import { send } from '../../../apps/desktop/electron/main/ipc'"],
+  ['core/src/services/test.js', "import { view } from '../../../apps/desktop/app/view'"],
+  ['core/src/services/test.js', "import { queryPuzzles } from './puzzleQueries'"],
+  ['core/src/services/test.js', "import { DatabaseSync } from 'node:sqlite'"],
 ])('rejects forbidden dependency in %s: %s', (filename, code) => {
   expect(lint(code, filename)).toHaveLength(1)
 })
 it.each([
-  ['app/page.js', "import { INITIAL_FEN } from 'chessops/fen'"],
-  ['app/page.js', "import { IPC_CHANNELS } from '../src/shared/ipc'"],
-  ['src/preload/index.js', "import { ipcRenderer } from 'electron'"],
-  ['src/main/ipc.ts', "import { ipcMain } from 'electron'"],
-  ['src/core/puzzleWorker.ts', "import { queryPuzzles } from './puzzleQueries'"],
+  ['apps/desktop/app/page.js', "import { INITIAL_FEN } from 'chessops/fen'"],
+  ['apps/desktop/app/page.js', "import { IPC_CHANNELS } from '../contracts/ipc'"],
+  ['apps/desktop/electron/preload/index.js', "import { ipcRenderer } from 'electron'"],
+  ['apps/desktop/electron/main/ipc.ts', "import { ipcMain } from 'electron'"],
+  ['core/src/services/puzzleWorker.ts', "import { queryPuzzles } from './puzzleQueries'"],
 ])('allows owned dependency in %s', (filename, code) => {
   // Rule ownership uses the actual TS path while ESLint parses plain JS test snippets.
   const messages = new Linter().verify(

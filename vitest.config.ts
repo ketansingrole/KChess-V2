@@ -4,9 +4,14 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   test: {
-    include: ['tests/unit/**/*.test.{ts,mjs}'],
+    include: [
+      'tests/unit/**/*.test.{ts,mjs}',
+      'core/tests/unit/**/*.test.{ts,mjs}',
+      'hosts/node/tests/unit/**/*.test.{ts,mjs}',
+      'apps/*/tests/unit/**/*.test.{ts,mjs}',
+    ],
     environment: 'happy-dom',
-    setupFiles: ['tests/unit/setup.ts'],
+    setupFiles: ['apps/desktop/tests/unit/setup.ts'],
     reporters: process.env.CI ? ['default', 'junit'] : ['default'],
     outputFile: { junit: 'test-results/unit.xml' },
     restoreMocks: true,
@@ -16,13 +21,22 @@ export default defineConfig({
       reporter: ['text', 'json-summary'],
       reportsDirectory: 'test-results/coverage',
       include: [
-        'app/**/*.ts',
-        'app/**/*.vue',
-        'src/core/**/*.ts',
-        'src/main/**/*.ts',
-        'src/shared/**/*.ts',
+        'apps/desktop/app/**/*.ts',
+        'apps/desktop/app/**/*.vue',
+        'core/src/services/**/*.ts',
+        'apps/desktop/electron/main/**/*.ts',
+        'core/src/domain/**/*.ts',
+        'core/src/contracts/**/*.ts',
+        'hosts/node/src/**/*.ts',
+        'apps/cli/src/**/*.ts',
+        'apps/desktop/contracts/**/*.ts',
       ],
-      exclude: ['src/core/appIconSvg.ts', 'src/renderer/**', '**/*.d.ts', 'tests/**'],
+      exclude: [
+        'core/src/services/appIconSvg.ts',
+        'apps/desktop/electron/renderer/**',
+        '**/*.d.ts',
+        '**/tests/**',
+      ],
       thresholds: {
         // Baseline from 2026-10-06 (48% lines). Ratchet upward as suites grow;
         // these fail the run on real regressions, not on noise.

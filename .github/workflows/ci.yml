@@ -101,7 +101,7 @@ jobs:
       - run: xvfb-run --auto-servernum pnpm run test:e2e
         if: runner.os == 'Linux'
       - name: Package and verify contents
-        run: pnpm exec electron-builder --dir --publish never
+        run: pnpm exec electron-builder --projectDir apps/desktop --dir --publish never
       - run: pnpm run test:packaged
         if: runner.os != 'Linux'
       - run: xvfb-run --auto-servernum pnpm run test:packaged

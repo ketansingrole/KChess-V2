@@ -1,28 +1,41 @@
-import withNuxt from './.nuxt/eslint.config.mjs'
+import withNuxt from './apps/desktop/.nuxt/eslint.config.mjs'
 import prettier from 'eslint-config-prettier'
-import architecture from './scripts/eslint/architecture.mjs'
-import logging from './scripts/eslint/logging.mjs'
+import architecture from './tooling/eslint/architecture.mjs'
+import logging from './tooling/eslint/logging.mjs'
 
 export default withNuxt(
   {
     ignores: [
       '.dev/**',
-      'out/**',
-      'dist/**',
-      '.output/**',
-      '.nuxt/**',
+      '**/out/**',
+      '**/dist/**',
+      '**/.output/**',
+      '**/.nuxt/**',
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
-      'src/renderer/*.d.ts',
+      'apps/desktop/electron/renderer/*.d.ts',
     ],
   },
   {
-    files: ['app/**/*.{ts,vue}', 'src/**/*.ts'],
+    files: [
+      'apps/desktop/app/**/*.{ts,vue}',
+      'core/src/**/*.ts',
+      'hosts/node/src/**/*.ts',
+      'apps/cli/src/**/*.ts',
+      'apps/desktop/electron/**/*.ts',
+      'apps/desktop/contracts/**/*.ts',
+    ],
     plugins: { architecture, logging },
     languageOptions: {
       parserOptions: {
-        project: ['./.nuxt/tsconfig.app.json', './tsconfig.electron.json'],
+        project: [
+          './apps/desktop/.nuxt/tsconfig.app.json',
+          './apps/desktop/tsconfig.electron.json',
+          './core/tsconfig.json',
+          './hosts/node/tsconfig.json',
+          './apps/cli/tsconfig.json',
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -50,7 +63,7 @@ export default withNuxt(
     },
   },
   {
-    files: ['**/*.ts', 'app/**/*.vue'],
+    files: ['**/*.ts', 'apps/desktop/app/**/*.vue'],
     // TypeScript checks names, including generated Nuxt auto-imports.
     rules: { 'no-undef': 'off' },
   },

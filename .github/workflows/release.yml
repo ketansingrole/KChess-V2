@@ -69,7 +69,7 @@ jobs:
       - run: pnpm run build
       # afterPack rejects nested installers/apps, redundant dependencies, and oversized payloads.
       - name: Build installers and verify package contents
-        run: pnpm exec electron-builder ${{ matrix.platform }} --config scripts/release-config.cjs --publish never
+        run: pnpm exec electron-builder --projectDir apps/desktop ${{ matrix.platform }} --config ../../tooling/release-config.cjs --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
           CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
@@ -142,4 +142,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: node scripts/attach-draft-release.mjs packages
+        run: node tooling/attach-draft-release.mjs packages

@@ -1,9 +1,37 @@
 # KChess
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the core, Node host, desktop and CLI workspace layout.
+
 [![CI](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml/badge.svg)](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules use [`chessops`](https://github.com/niklasf/chessops), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay built on `chessops` and the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. The rating chart uses [Unovis](https://unovis.dev), and IPC input is validated with [Valibot](https://valibot.dev). The Electron main process handles Stockfish, Lichess, local storage, and OAuth.
+KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules use [`chessops`](https://github.com/niklasf/chessops), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay built on `chessops` and the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. The rating chart uses [Unovis](https://unovis.dev), and IPC input is validated with [Valibot](https://valibot.dev). A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
+
+## Core and frontends
+
+Desktop and CLI share `core/src/services` services and framework-independent game controllers in
+`core/src/domain`. Electron is one host adapter; the Node host runs each profile in an isolated
+worker, allowing several independent clients in the same process.
+
+```bash
+pnpm run cli -- --help
+pnpm run cli -- library
+pnpm run cli -- play beginner
+pnpm run cli -- local
+pnpm run cli -- call studyCommand '[{"op":"save","name":"Opening","pgn":"1. e4 e5 *"}]'
+```
+
+The CLI uses a separate profile at `~/.kchess/node`. Select another with `--data-dir`.
+`login` opens Lichess OAuth; `--browser print` prints the URL for a headless host.
+Credentials use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows DPAPI.
+`--no-credentials` disables credential storage. Desktop and Node ciphertext formats differ,
+so use separate profiles rather than pointing the CLI at Electron's profile.
+
+`pnpm run build:core` builds the Node library, CLI and puzzle worker under `core/dist`.
+`pnpm run test:core` verifies the direct core, concurrent Node hosts and CLI in temporary
+profiles without accessing your accounts or keychain. See
+[core/frontend architecture](CORE_FRONTENDS.md) for host contracts,
+shutdown ownership and examples.
 
 ## Run
 
@@ -78,9 +106,9 @@ UI tests launch through the branded wrapper, use a separate `.dev/automation` co
 
 CI runs `pnpm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
 
-Settings → Data & storage → **Export diagnostics** saves a JSON report containing app/runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
+Settings → Data & storage → **Export diagnostics** saves a JSON report containing apps/desktop/app/runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
 
-On macOS, dev and local runs launch through `scripts/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `build/icon.icns` changes; quit any running dev session first.
+On macOS, dev and local runs launch through `tooling/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `apps/desktop/build/icon.icns` changes; quit any running dev session first.
 
 On macOS, `pnpm run pack:mac` creates an unsigned local Apple Silicon `.app` in `dist/mac-arm64/`.
 
@@ -122,7 +150,7 @@ rerunning its original tag-push workflow.
 | Windows  | `.exe` installer (x64)                        |
 | Linux    | `.AppImage` and `.deb` (x64)                  |
 
-Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`scripts/release-config.cjs`), so on
+Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`tooling/release-config.cjs`), so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
 and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).
 
@@ -206,17 +234,17 @@ Puzzle access needs the `puzzle:read` and `puzzle:write` permissions. Accounts c
 
 Storm, Streak, Rush and offline puzzles play from Lichess's public puzzle database (CC0). It is an opt-in download of about 300 MB from `database.lichess.org` (Settings → Data & storage, or the Rush tab). The file is streamed and decompressed without being saved: KChess keeps a random sample of around a hundred thousand well-tested puzzles, spread evenly over ratings and themes, in `kchess.db` (a few tens of MB), and can delete it again at any time. Local scores live in the same file and can be cleared separately.
 
-On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. New app data is stored in SQLite (`kchess.db` in Electron's user-data directory, via Node's built-in `node:sqlite`; schema changes are ordered migrations in `src/core/migrations.ts`, tracked with `PRAGMA user_version`); existing `kchess-data.json` / `lichess-tokens.json` files are imported once and archived as `.bak`. OAuth tokens are encrypted with Electron `safeStorage`.
+On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. New app data is stored in SQLite (`kchess.db` in Electron's user-data directory, via Node's built-in `node:sqlite`; schema changes are ordered migrations in `core/src/services/migrations.ts`, tracked with `PRAGMA user_version`); existing `kchess-data.json` / `lichess-tokens.json` files are imported once and archived as `.bak`. OAuth tokens are encrypted with Electron `safeStorage`.
 
 ## Structure
 
-- `app/pages/` contains separate Dashboard, Online, Computer, Puzzles, Practice, History, Friends, and Settings routes (Settings shows one category at a time, chosen from the sidebar).
-- `app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (navigation, accounts, settings), with `kchess/computerGame.ts`, `onlineGame.ts` and `gameHistory.ts` owning their respective game state, `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `app/components/` holds reusable board, game row, and page header components.
-- `app/assets/` and `app/utils/` hold styles, media and presentation helpers (board pieces, sounds, image export, swipe navigation), and `utils/library.ts`, which loads the core's library before the app mounts.
-- `src/core/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:core` builds it as a plain Node library in `out/core`.
-- `src/main/` and `src/preload/` are the Electron desktop shell. Main configures the core with an Electron platform, serves every `CoreApi` method and event over IPC, and adds the window, updater, dialogs, notifications, themes and voice model.
-- `src/shared/` contains types and pure domain code shared by every layer: chess rules, the PGN analysis tree, board editing, the rules of the timed runs (`rush.ts`) and drills (`coordinates.ts`, `knight.ts`, `endgames.ts`), library documents and their validation, and `core.ts`, the core method list and event map, `ipc.ts`, the typed request channel and event definitions shared by main and preload, and `validate.ts`, which checks every value the renderer sends over IPC, and `puzzle.ts`, which turns Lichess puzzles into one shape and holds the rules of solving them.
-- `nuxt.config.ts` enables client rendering and hash routing, so the generated app works from Electron's local file URL without a running server. Nuxt's generated files live in `.output/public/` and are included in the macOS package.
+- `apps/desktop/app/pages/` contains separate Dashboard, Online, Computer, Puzzles, Practice, History, Friends, and Settings routes (Settings shows one category at a time, chosen from the sidebar).
+- `apps/desktop/app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (navigation, accounts, settings), with `kchess/computerGame.ts`, `onlineGame.ts` and `gameHistory.ts` owning their respective game state, `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `apps/desktop/app/components/` holds reusable board, game row, and page header components.
+- `apps/desktop/app/assets/` and `apps/desktop/app/utils/` hold styles, media and presentation helpers (board pieces, sounds, image export, swipe navigation), and `utils/library.ts`, which loads the core's library before the app mounts.
+- `core/src/services/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:core` builds it as a plain Node library in `core/dist`.
+- `apps/desktop/electron/main/` and `apps/desktop/electron/preload/` are the Electron desktop shell. Main configures the core with an Electron platform, serves every `CoreApi` method and event over IPC, and adds the window, updater, dialogs, notifications, themes and voice model.
+- `core/src/domain/` contains pure chess, training and document rules. `core/src/contracts/` owns the headless API, events, types and validation tuples. Desktop IPC and diagnostics contracts live in `apps/desktop/contracts/`.
+- `apps/desktop/nuxt.config.ts` enables client rendering and hash routing, so the generated app works from Electron's local file URL without a running server. Nuxt's generated files live in `apps/desktop/.output/public/` and are included in the macOS package.
 
 Nuxt UI is loaded as a Nuxt module. Desktop APIs remain exposed through Electron's preload bridge at `window.kchess`.
 
@@ -239,7 +267,7 @@ This is required, not just chosen: the app builds on copyleft code and assets fr
 - Lichess board themes, sound effects and some piece sets — AGPLv3+ (other piece sets are GPL, MIT, Apache-2.0 or CC0; see the attribution file)
 - The rest are permissively licensed (MIT, ISC, Apache-2.0, BlueOak).
 
-The full list, with what each part is used for, is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); asset credits are in [`app/assets/ATTRIBUTION.md`](app/assets/ATTRIBUTION.md). The app icon is original artwork drawn by [`scripts/make-icons.py`](scripts/make-icons.py) and covered by the same license.
+The full list, with what each part is used for, is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); asset credits are in [`apps/desktop/app/assets/ATTRIBUTION.md`](apps/desktop/app/assets/ATTRIBUTION.md). The app icon is original artwork drawn by [`tooling/make-icons.py`](tooling/make-icons.py) and covered by the same license.
 
 ## Not affiliated
 

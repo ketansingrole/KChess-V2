@@ -1,0 +1,60 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { formatGameDate } from '../utils/games'
+import { gameResult } from '../../../../core/src/domain/gameStatus'
+import { judgmentCounts } from '../utils/review'
+import type { LichessGame, ReviewSummary } from '../../../../core/src/contracts/types'
+
+const props = defineProps<{ game: LichessGame; detailed?: boolean; review?: ReviewSummary }>()
+const emit = defineEmits<{ select: [] }>()
+const result = computed(() => gameResult(props.game))
+const badge = computed(
+  () =>
+    ({
+      win: { label: 'Win', color: 'success' },
+      loss: { label: 'Loss', color: 'error' },
+      draw: { label: 'Draw', color: 'neutral' },
+    })[result.value] as { label: string; color: 'success' | 'error' | 'neutral' },
+)
+const diff = computed(() => props.game.ratingDiff)
+/** The player's side of the game's review. */
+const side = computed(() => props.review?.[props.game.color])
+/** The player's worst kind of move in the game, counted (“2 blunders”). */
+const worst = computed(() => (side.value ? judgmentCounts(side.value)[0] : undefined))
+</script>
+
+<template>
+  <button
+    type="button"
+    class="game-row"
+    :aria-label="`${badge.label} against ${game.opponent}, ${formatGameDate(game.createdAt)}. Open game`"
+    @click="emit('select')"
+  >
+    <span
+      ><UBadge :color="badge.color" variant="soft" class="w-11 justify-center">{{
+        badge.label
+      }}</UBadge></span
+    >
+    <span class="opponent">
+      <strong>{{ game.opponent }}</strong>
+      <span v-if="detailed" class="sub">
+        {{ game.opening ?? game.account
+        }}<template v-if="game.opponentRating"> · {{ game.opponentRating }}</template>
+      </span>
+    </span>
+    <span class="opponent">
+      <span class="capitalize-first">{{ game.speed }}</span>
+      <span v-if="detailed" class="sub">{{ game.rated ? 'Rated' : 'Casual' }}</span>
+    </span>
+    <span v-if="detailed" class="rating-diff" :class="diff ? (diff > 0 ? 'up' : 'down') : 'muted'">
+      {{ diff ? (diff > 0 ? `+${diff}` : diff) : '—' }}
+    </span>
+    <span v-if="detailed" class="opponent tabular">
+      <span :class="{ muted: !side }">{{
+        side?.accuracy !== undefined ? `${side.accuracy}%` : side ? 'Reviewed' : '—'
+      }}</span>
+      <span v-if="worst" class="sub" :class="worst.judgment">{{ worst.text }}</span>
+    </span>
+    <span class="muted">{{ formatGameDate(game.createdAt) }}</span>
+  </button>
+</template>

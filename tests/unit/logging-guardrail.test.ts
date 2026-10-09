@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { rules } from '../../scripts/eslint/logging.mjs'
+import { rules } from '../../tooling/eslint/logging.mjs'
 
 // Regression for silent error swallowing: every catch and every inline
 // `.catch()` must log or rethrow so production logs can explain any failure.
@@ -31,7 +31,15 @@ describe('logging guardrails', () => {
   })
 
   it('has no silent inline promise catches in shipped sources', () => {
-    const roots = ['src/core', 'src/main', 'src/shared', 'src/preload', 'app']
+    const roots = [
+      'core/src/services',
+      'apps/desktop/electron/main',
+      'core/src/domain',
+      'core/src/contracts',
+      'apps/desktop/contracts',
+      'apps/desktop/electron/preload',
+      'apps/desktop/app',
+    ]
     const silent: string[] = []
     for (const root of roots) {
       for (const file of sources(root)) {
@@ -54,7 +62,15 @@ describe('logging guardrails', () => {
   })
 
   it('has no empty catch blocks in shipped sources', () => {
-    const roots = ['src/core', 'src/main', 'src/shared', 'src/preload', 'app']
+    const roots = [
+      'core/src/services',
+      'apps/desktop/electron/main',
+      'core/src/domain',
+      'core/src/contracts',
+      'apps/desktop/contracts',
+      'apps/desktop/electron/preload',
+      'apps/desktop/app',
+    ]
     const silent: string[] = []
     for (const root of roots) {
       for (const file of sources(root)) {

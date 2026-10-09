@@ -2,12 +2,12 @@
 node_modules/
 .pnpm-store/
 out/
-dist/
+**/dist
 .dev/
 .nuxt/
 .output/
 .data/
-public/voice/model.tar.gz*
+apps/desktop/public/voice/model.tar.gz*
 *.tsbuildinfo
 
 # OS
@@ -23,7 +23,7 @@ Desktop.ini
 .env.*
 !.env.example
 
-# Electron-builder installers that can land outside dist/
+# Electron-builder installers that can land outside **/dist
 *.dmg
 *.exe
 *.AppImage

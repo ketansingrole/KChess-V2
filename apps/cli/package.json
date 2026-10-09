@@ -1,0 +1,20 @@
+{
+  "name": "@kchess/cli",
+  "version": "2026.10.4",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "main": "./dist/cli.js",
+  "scripts": {
+    "build": "pnpm -w exec vite build -c apps/cli/vite.config.ts --logLevel warn",
+    "typecheck": "pnpm -w exec tsc --noEmit -p apps/cli/tsconfig.json"
+  },
+  "dependencies": {
+    "@kchess/core": "workspace:*",
+    "@kchess/node": "workspace:*",
+    "chessops": "^0.15.1"
+  },
+  "bin": {
+    "kchess": "./dist/cli.js"
+  }
+}

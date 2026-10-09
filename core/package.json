@@ -1,0 +1,50 @@
+{
+  "name": "@kchess/core",
+  "version": "2026.10.4",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "pnpm -w exec vite build -c core/vite.config.ts --logLevel warn && pnpm -w exec tsc -p core/tsconfig.build.json && node ../tooling/core-declarations.mjs core",
+    "typecheck": "pnpm -w exec tsc --noEmit -p core/tsconfig.json",
+    "test": "pnpm -w exec vitest run core/tests/unit"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "lru-cache": "^11.5.3",
+    "openapi-fetch": "^0.17.0",
+    "stockfish": "^19.0.0",
+    "tar": "7.5.22",
+    "valibot": "^1.5.0",
+    "chessops": "^0.15.1",
+    "@lichess-org/types": "^2.0.176"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./gameSession": {
+      "types": "./dist/gameSession.d.ts",
+      "import": "./dist/gameSession.js"
+    },
+    "./gameArchive": {
+      "types": "./dist/gameArchive.d.ts",
+      "import": "./dist/gameArchive.js"
+    },
+    "./onlineGame": {
+      "types": "./dist/onlineGame.d.ts",
+      "import": "./dist/onlineGame.js"
+    },
+    "./puzzleSession": {
+      "types": "./dist/puzzleSession.d.ts",
+      "import": "./dist/puzzleSession.js"
+    },
+    "./logger": {
+      "types": "./dist/logger.d.ts",
+      "import": "./dist/logger.js"
+    }
+  }
+}

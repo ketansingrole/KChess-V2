@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: './apps/desktop/tests/e2e',
   outputDir: process.env.KCHESS_PACKAGED_EXEC_PATH
     ? 'test-results/packaged-artifacts'
     : 'test-results/desktop-artifacts',

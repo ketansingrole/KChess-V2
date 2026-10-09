@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "paths": {
+      "@kchess/core": ["./src/index.ts"],
+      "@kchess/core/logger": ["./src/services/logger.ts"],
+      "@kchess/core/gameArchive": ["./src/domain/gameArchive.ts"],
+      "@kchess/core/gameSession": ["./src/domain/gameSession.ts"],
+      "@kchess/node": ["../hosts/node/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

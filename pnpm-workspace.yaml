@@ -1,5 +1,11 @@
+packages:
+  - core
+  - hosts/*
+  - apps/*
+
 # Keep dependency boundaries isolated, including Electron packaging.
 nodeLinker: isolated
+enableGlobalVirtualStore: false
 strictDepBuilds: true
 verifyDepsBeforeRun: error
 allowBuilds:

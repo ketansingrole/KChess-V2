@@ -1,5 +1,5 @@
 {
-  "name": "kchess-electron",
+  "name": "kchess",
   "version": "2026.10.4",
   "description": "A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.",
   "license": "GPL-3.0-or-later",
@@ -14,51 +14,42 @@
   },
   "private": true,
   "type": "module",
-  "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "app": "pnpm run build && node scripts/with-branded-electron.mjs electron .",
-    "build": "node scripts/build.mjs",
-    "typecheck": "nuxt typecheck && tsc --noEmit -p tsconfig.core.json && tsc --noEmit -p tsconfig.electron.json && vue-tsc --noEmit -p tsconfig.tests.json",
-    "prepare:voice": "node scripts/prepare-voice-model.mjs",
+    "dev": "node tooling/dev.mjs",
+    "app": "pnpm run build && node tooling/with-branded-electron.mjs electron apps/desktop",
+    "build": "node tooling/build.mjs",
+    "typecheck": "pnpm --filter kchess-electron typecheck && pnpm --filter @kchess/core typecheck && pnpm --filter @kchess/node typecheck && pnpm --filter @kchess/cli typecheck && tsc --noEmit -p apps/desktop/tsconfig.electron.json && vue-tsc --noEmit -p tsconfig.tests.json",
+    "prepare:voice": "node tooling/prepare-voice-model.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:chess": "node --experimental-strip-types scripts/chess-smoke.ts",
-    "test:puzzles": "node --experimental-strip-types scripts/puzzle-smoke.ts",
-    "test:puzzle-worker": "node scripts/puzzle-worker-smoke.mjs",
-    "benchmark:library": "node scripts/library-benchmark.mjs",
-    "test:lifecycle": "vitest run tests/unit/lifecycle.test.ts tests/unit/online-session.test.ts",
+    "test:chess": "node --experimental-strip-types tooling/chess-smoke.ts",
+    "test:puzzles": "node --experimental-strip-types tooling/puzzle-smoke.ts",
+    "test:puzzle-worker": "node tooling/puzzle-worker-smoke.mjs",
+    "benchmark:library": "node tooling/library-benchmark.mjs",
+    "test:lifecycle": "vitest run apps/desktop/tests/unit/lifecycle.test.ts core/tests/unit/online-session.test.ts",
     "test": "pnpm run test:smoke && pnpm run test:unit",
-    "start": "node scripts/with-branded-electron.mjs electron .",
-    "pack:mac": "pnpm run build && electron-builder --mac dir --arm64",
-    "postinstall": "install-electron && nuxt prepare",
+    "start": "node tooling/with-branded-electron.mjs electron apps/desktop",
+    "pack:mac": "pnpm run build && electron-builder --projectDir apps/desktop --mac dir --arm64",
+    "postinstall": "install-electron",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types scripts/main-smoke.ts",
-    "build:core": "vite build -c vite.core.config.ts --logLevel warn",
-    "test:core": "pnpm run build:core && node scripts/core-smoke.mjs",
+    "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types tooling/main-smoke.ts",
+    "build:core": "pnpm --filter @kchess/core build && pnpm --filter @kchess/node build && pnpm --filter @kchess/cli build",
+    "test:core": "pnpm run build:core && node tooling/core-smoke.mjs && node tooling/node-core-smoke.mjs && node tooling/core-types-smoke.mjs",
     "test:unit": "vitest run --coverage",
     "test:watch": "vitest",
-    "check": "node scripts/run-checks.mjs",
-    "check:notices": "node scripts/check-notices.mjs",
-    "test:e2e": "node scripts/e2e.mjs",
-    "test:packaged": "node scripts/e2e.mjs --packaged",
-    "pack": "pnpm run build && electron-builder --dir",
-    "release:version": "node scripts/next-version.mjs",
-    "release:verify": "node scripts/release-rules.mjs",
-    "verify:package": "node scripts/verify-package.mjs",
-    "check:fast": "node scripts/check-fast.mjs",
-    "check:performance": "node scripts/library-benchmark.mjs --check",
-    "check:report": "node scripts/guardrail-report.mjs"
-  },
-  "dependencies": {
-    "electron-updater": "^6.8.9",
-    "fflate": "0.8.3",
-    "lru-cache": "^11.5.3",
-    "openapi-fetch": "^0.17.0",
-    "stockfish": "^19.0.0",
-    "tar": "7.5.22",
-    "valibot": "^1.5.0"
+    "check": "node tooling/run-checks.mjs",
+    "check:notices": "node tooling/check-notices.mjs",
+    "test:e2e": "node tooling/e2e.mjs",
+    "test:packaged": "node tooling/e2e.mjs --packaged",
+    "pack": "pnpm run build && electron-builder --projectDir apps/desktop --dir",
+    "release:version": "node tooling/next-version.mjs",
+    "release:verify": "node tooling/release-rules.mjs",
+    "verify:package": "node tooling/verify-package.mjs",
+    "check:fast": "node tooling/check-fast.mjs",
+    "check:performance": "node tooling/library-benchmark.mjs --check",
+    "check:report": "node tooling/guardrail-report.mjs",
+    "cli": "pnpm run build:core && node apps/cli/dist/cli.js"
   },
   "devDependencies": {
     "@electron/asar": "^4.3.1",
@@ -76,7 +67,6 @@
     "@vitest/coverage-v8": "^4.1.11",
     "@vue/test-utils": "^2.5.1",
     "@vueuse/core": "^15.0.0",
-    "chessops": "^0.15.1",
     "electron": "^44.5.1",
     "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
@@ -95,99 +85,15 @@
     "vue": "^3.5.0",
     "vue-router": "^5.3.1",
     "vue-tsc": "^3.3.12",
-    "yaml": "2.9.1"
-  },
-  "build": {
-    "appId": "com.kchess.electron",
-    "productName": "KChess",
-    "copyright": "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "files": [
-      "out/main/**/*",
-      "out/preload/**/*",
-      ".output/public/**/*",
-      "!.output/public/voice/model.tar.gz*",
-      "package.json",
-      "node_modules/stockfish/bin/stockfish-19-lite.js",
-      "node_modules/stockfish/bin/stockfish-19-lite.wasm",
-      "!node_modules/stockfish/bin/stockfish.*",
-      "!node_modules/stockfish/bin/stockfish-19.*",
-      "!node_modules/stockfish/bin/stockfish-19-single.*",
-      "!node_modules/stockfish/bin/stockfish-19-lite-single.*",
-      "!node_modules/stockfish/bin/stockfish-19-asm.js"
-    ],
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "build/icon.icns",
-      "identity": null,
-      "extendInfo": {
-        "NSMicrophoneUsageDescription": "KChess uses your microphone to recognize spoken chess moves and square names on this device."
-      },
-      "category": "public.app-category.board-games"
-    },
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "linux": {
-      "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "category": "Game",
-      "synopsis": "Desktop chess: Stockfish, Lichess, puzzles and training",
-      "maintainer": "Ketan Singrole"
-    },
-    "asarUnpack": [
-      "node_modules/stockfish/bin/**"
-    ],
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "ketansingrole",
-      "repo": "KChess-V2",
-      "releaseType": "release"
-    },
-    "afterPack": "scripts/after-pack.cjs"
+    "yaml": "2.9.1",
+    "electron-updater": "^6.8.9",
+    "fflate": "0.8.3",
+    "lru-cache": "^11.5.3",
+    "openapi-fetch": "^0.17.0",
+    "stockfish": "^19.0.0",
+    "tar": "7.5.22",
+    "valibot": "^1.5.0",
+    "chessops": "^0.15.1"
   },
   "engines": {
     "node": ">=24.21.0 <25",

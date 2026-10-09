@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { regressionMetrics } from '../../scripts/regression-metrics.mjs'
+import { regressionMetrics } from '../../tooling/regression-metrics.mjs'
 
 it('counts confirmed released regressions across open and closed issues', () => {
   const execute = vi

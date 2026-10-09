@@ -1,14 +1,24 @@
 {
-  "extends": "./tsconfig.electron.json",
+  "extends": "./apps/desktop/tsconfig.electron.json",
   "compilerOptions": {
     "types": ["vite/client", "node"],
-    "lib": ["ES2023", "DOM"]
+    "lib": ["ES2023", "DOM"],
+    "paths": {
+      "@kchess/core": ["./core/src/index.ts"],
+      "@kchess/core/logger": ["./core/src/services/logger.ts"],
+      "@kchess/core/gameArchive": ["./core/src/domain/gameArchive.ts"],
+      "@kchess/core/gameSession": ["./core/src/domain/gameSession.ts"],
+      "@kchess/node": ["./hosts/node/src/index.ts"]
+    }
   },
   "include": [
     "tests/**/*.ts",
+    "core/tests/**/*.ts",
+    "hosts/node/tests/**/*.ts",
+    "apps/*/tests/**/*.ts",
     "vitest.config.ts",
     "playwright.config.ts",
-    "app/env.d.ts",
-    ".nuxt/types/imports.d.ts"
+    "apps/desktop/app/env.d.ts",
+    "apps/desktop/.nuxt/types/imports.d.ts"
   ]
 }
