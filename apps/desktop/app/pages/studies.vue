@@ -6,7 +6,7 @@ import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore, type SavedStudy } from '../stores/studies'
 import { treeFromPgn } from '@kchess/core/domain/analysisTree'
 import { summarizeStudy } from '@kchess/core/domain/studies'
-import { parsePgn, makePgn } from 'chessops/pgn'
+import { pgnGames } from '@kchess/core/domain/pgn'
 import StudyCard from '../components/StudyCard.vue'
 import { useLichessStudiesStore } from '../stores/lichessStudies'
 
@@ -184,10 +184,10 @@ function startImport(): void {
   importOpen.value = true
 }
 async function runImport(): Promise<void> {
-  const games = parsePgn(importText.value.trim())
+  const games = pgnGames(importText.value.trim())
   const chapters = games.map((game, index) => ({
-    name: game.headers.get('ChapterName') ?? `Chapter ${index + 1}`,
-    pgn: makePgn(game),
+    name: game.headers.find(([key]) => key === 'ChapterName')?.[1] ?? `Chapter ${index + 1}`,
+    pgn: game.pgn,
   }))
   const tree = chapters[0] ? treeFromPgn(chapters[0].pgn) : undefined
   if (

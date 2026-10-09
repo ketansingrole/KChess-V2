@@ -132,7 +132,7 @@ assert(
 assert('takeback (black) to start', takebackMoves(['e2e4'], 'black'), [])
 assert('takeback on empty game', takebackMoves([], 'white'), [])
 
-// Draws chessops' isEnd() does not report.
+// Draws that isEnd() does not report.
 const shuffle = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8']
 assert('no draw after one repetition', drawReason(shuffle.slice(0, 4)), undefined)
 assert('threefold repetition', drawReason(shuffle), 'Threefold repetition')

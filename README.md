@@ -5,7 +5,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the core, Node host, desktop and CLI 
 [![CI](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml/badge.svg)](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules use [`chessops`](https://github.com/niklasf/chessops), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay built on `chessops` and the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. The rating chart uses [Unovis](https://unovis.dev), and IPC input is validated with [Valibot](https://valibot.dev). A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
+KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules run in Rust (`crates/kchess-domain`, on [`shakmaty`](https://github.com/niklasf/shakmaty), with the semantics of [`chessops`](https://github.com/niklasf/chessops)), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay on the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. The rating chart uses [Unovis](https://unovis.dev), and IPC input is validated with [Valibot](https://valibot.dev). A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
 
 ## Core and frontends
 
@@ -261,7 +261,7 @@ KChess is free software, released under the **GNU General Public License v3.0 or
 
 This is required, not just chosen: the app builds on copyleft code and assets from the Lichess and Stockfish projects.
 
-- `@lichess-org/chessground` and `chessops` — GPL-3.0-or-later
+- `@lichess-org/chessground`, `shakmaty` and the parts of `chessops` ported to Rust — GPL-3.0-or-later
 - `stockfish` (the bundled WASM engine) — GPL-3.0
 - `@lichess-org/types` (type definitions only, nothing of it ships at runtime) — AGPL-3.0-or-later
 - Lichess board themes, sound effects and some piece sets — AGPLv3+ (other piece sets are GPL, MIT, Apache-2.0 or CC0; see the attribution file)

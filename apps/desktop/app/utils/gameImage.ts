@@ -1,6 +1,5 @@
-import { parseUci } from 'chessops/util'
-import { normalizeMove, type Position } from 'chessops/chess'
-import { replaySetup, type GameSetup } from '@kchess/core/domain/variant'
+import { setupStart, type GameSetup } from '@kchess/core/domain/variant'
+import { Position, uciSquares, type SquareName } from '@kchess/core/domain/position'
 import { GifWorkerClient } from './gifWorkerClient'
 import { pieceUrl } from './pieces'
 
@@ -71,9 +70,9 @@ async function painter(options: ImageOptions): Promise<Painter> {
   const flipped = options.orientation === 'black'
   const top = flipped ? options.white : options.black
   const bottom = flipped ? options.black : options.white
-  const at = (sq: number): [number, number] => {
-    const file = sq % 8,
-      rank = Math.floor(sq / 8)
+  const at = (sq: SquareName): [number, number] => {
+    const file = sq.charCodeAt(0) - 97,
+      rank = Number(sq[1]) - 1
     return flipped
       ? [(7 - file) * square, rank * square + BAR]
       : [file * square, (7 - rank) * square + BAR]
@@ -90,15 +89,15 @@ async function painter(options: ImageOptions): Promise<Painter> {
       context.fillText(top, 8, BAR / 2, size - 16)
       context.fillText(bottom, 8, size + BAR + BAR / 2, size - 16)
       context.drawImage(board, 0, BAR, size, size)
-      const move = lastMove ? parseUci(lastMove) : undefined
-      if (move && 'from' in move) {
+      const squares = lastMove ? uciSquares(lastMove) : undefined
+      if (squares) {
         context.fillStyle = 'rgba(155, 199, 0, 0.41)'
-        for (const sq of [move.from, move.to]) {
+        for (const sq of squares) {
           const [x, y] = at(sq)
           context.fillRect(x, y, square, square)
         }
       }
-      for (const [sq, piece] of pos.board) {
+      for (const [sq, piece] of pos.board()) {
         const image = pieces.get(`${piece.color === 'white' ? 'w' : 'b'}${ROLE_LETTER[piece.role]}`)
         const [x, y] = at(sq)
         if (image) context.drawImage(image, x, y, square, square)
@@ -112,16 +111,17 @@ function positions(
   options: ImageOptions,
   upTo = options.moves.length,
 ): { pos: Position; move?: string }[] {
-  const replayed = replaySetup(options.setup, options.moves.slice(0, upTo))
-  if (!replayed) throw new Error('That game cannot be replayed.')
-  const pos = replayed.start.clone()
-  const list: { pos: Position; move?: string }[] = [{ pos: pos.clone() }]
-  for (const move of replayed.played) {
-    const parsed = parseUci(move.uci)
-    if (!parsed) break
-    pos.play(normalizeMove(pos, parsed))
-    list.push({ pos: pos.clone(), move: move.uci })
-  }
+  const start = setupStart(options.setup)
+  if (!start) throw new Error('That game cannot be replayed.')
+  // The line stops at the first illegal move, so each entry pairs with the move given at its index.
+  const line = start.line(options.moves.slice(0, upTo))
+  const list: { pos: Position; move?: string }[] = [{ pos: start }]
+  line.forEach((step, index) => {
+    list.push({
+      pos: Position.from({ variant: start.variant, fen: step.fen })!,
+      move: options.moves[index],
+    })
+  })
   return list
 }
 

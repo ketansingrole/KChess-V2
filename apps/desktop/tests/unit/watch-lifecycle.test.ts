@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import { desktop, deferred } from './fixtures'
 import { useWatchStore } from '../../app/stores/watch'
 import type { BroadcastTourDetail, WatchFrame, WatchState } from '@kchess/core/contracts/types'

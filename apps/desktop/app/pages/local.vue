@@ -2,7 +2,7 @@
 import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import {
   VARIANT_HINTS,
   VARIANT_LABELS,

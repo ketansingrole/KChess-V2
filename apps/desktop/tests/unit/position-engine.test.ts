@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { usePositionEngine } from '../../app/composables/usePositionEngine'
 import type { AnalysisRequest, AnalysisUpdate } from '@kchess/core/contracts/types'
 import { analysisContext } from '@kchess/core/domain/analysisContext'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import { desktop, deferred } from './fixtures'
 
 it('cancels real searches on change/off and rejects late updates and acknowledgements', async () => {

@@ -47,15 +47,16 @@ domain functions (`treeFromPgn`, `addMove`, `replay`, `analyseReview`, `setupPgn
 wrappers over it. Core services use `core/src/services/rules.ts`, which also covers the
 library decoders, review summaries, Lichess lines and the puzzle sampler.
 
-chessops remains only where code holds positions as objects: the board's legal moves,
-`replaySetup`'s positions, game sessions and the board editor. `replaySetup` is the one rule
-with a TypeScript twin, kept identical by the seeded differential tests in
-`core/tests/unit/native-rules.test.ts` (`KCHESS_FUZZ_SCALE=20` searches deeper). Rules that
-exist only in Rust are pinned to `core/tests/unit/native-golden.json`, the outputs of the
-TypeScript rules they replaced; the same tests run the WebAssembly module against the Node
-module. Contracts check the shape of a saved game or study command; the core service
-validates it in Rust. The one deliberate difference from chessops: an en passant square that a
-piece occupies (reachable only from a typed FEN) is dropped rather than kept. Review figures go
+Frontends hold positions as `Position` values (`core/src/domain/position.ts`): a variant and a
+FEN, immutable, with every question (destinations, check, outcome, playing a move) answered by
+the Rust rules. Positions can live in reactive state and cross IPC as plain setups. Every rule,
+positions included, is pinned to `core/tests/unit/native-golden.json`: the outputs of the
+chessops-based TypeScript rules they replaced, for seeded cases that the tests generate with the
+Rust rules themselves (`KCHESS_FUZZ_SCALE=20` searches deeper, beyond the recorded cases); the
+same tests run the WebAssembly module against the Node module. Contracts check the shape of a saved game or study command; the core service
+validates it in Rust. The deliberate differences from chessops, both reachable only from a typed FEN: an en
+passant square that a piece occupies is dropped rather than kept, and Racing Kings refuses both
+kings on the goal with Black to move. Review figures go
 through `exp`, which the Rust rules compute as V8 does (fdlibm, with the multiply-adds V8's
 compiler fuses on arm64); the WebAssembly loader compares both variants with `Math.exp` and
 keeps the one that matches.

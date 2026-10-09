@@ -95,8 +95,7 @@
     "openapi-fetch": "^0.17.0",
     "stockfish": "^19.0.0",
     "tar": "7.5.22",
-    "valibot": "^1.5.0",
-    "chessops": "^0.15.1"
+    "valibot": "^1.5.0"
   },
   "engines": {
     "node": ">=24.21.0 <25",

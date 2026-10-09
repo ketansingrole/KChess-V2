@@ -1,7 +1,4 @@
-import { Chess, type Position } from 'chessops/chess'
-import { makeFen, parseFen } from 'chessops/fen'
-import { makeSanAndPlay } from 'chessops/san'
-import { parseUci } from 'chessops/util'
+import { Position, repetitionKey } from './position.ts'
 
 export type DrillGoal = 'win' | 'draw'
 
@@ -123,9 +120,6 @@ export interface EndgameStatus {
   detail?: string
 }
 
-const positionKey = (pos: Position): string =>
-  makeFen(pos.toSetup()).split(' ').slice(0, 4).join(' ')
-
 /** Where the drill stands after `moves` (UCI, from `fen`), judged for `player` and the drill's goal. */
 export function evaluateEndgame(
   fen: string,
@@ -133,22 +127,19 @@ export function evaluateEndgame(
   player: 'white' | 'black',
   goal: DrillGoal,
 ): EndgameStatus & { turn: 'white' | 'black'; fen: string } {
-  const setup = parseFen(fen)
-  const created = setup.isOk ? Chess.fromSetup(setup.value) : undefined
-  if (!created?.isOk) throw new Error('Invalid drill position.')
-  const pos = created.value
-  const seen = new Map<string, number>([[positionKey(pos), 1]])
+  const start = Position.fromFen(fen)
+  if (!start) throw new Error('Invalid drill position.')
+  const line = start.line(moves)
+  const pos = start.after(line)
+  const seen = new Map<string, number>([[repetitionKey(start.fen), 1]])
   let repeated = false
-  for (const uci of moves) {
-    const move = parseUci(uci)
-    if (!move || !pos.isLegal(move)) break
-    pos.play(move)
-    const key = positionKey(pos)
+  for (const move of line) {
+    const key = repetitionKey(move.fen)
     const count = (seen.get(key) ?? 0) + 1
     seen.set(key, count)
     if (count >= 3) repeated = true
   }
-  const base = { turn: pos.turn, fen: makeFen(pos.toSetup()) }
+  const base = { turn: pos.turn, fen: pos.fen }
   if (pos.isCheckmate()) {
     const won = pos.turn !== player
     return {
@@ -189,15 +180,9 @@ export function evaluateEndgame(
 
 /** SAN of a UCI move list played from `fen`. */
 export function sanFrom(fen: string, moves: readonly string[]): string[] {
-  const setup = parseFen(fen)
-  const created = setup.isOk ? Chess.fromSetup(setup.value) : undefined
-  if (!created?.isOk) return []
-  const pos = created.value
-  const sans: string[] = []
-  for (const uci of moves) {
-    const move = parseUci(uci)
-    if (!move || !pos.isLegal(move)) break
-    sans.push(makeSanAndPlay(pos, move))
-  }
-  return sans
+  return (
+    Position.fromFen(fen)
+      ?.line(moves)
+      .map((move) => move.san) ?? []
+  )
 }

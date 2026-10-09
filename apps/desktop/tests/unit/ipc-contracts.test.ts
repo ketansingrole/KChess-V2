@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS, type InvokeMethod } from '../../contracts/ipc'
 import { IPC_CONTRACTS, validateIpcArguments } from '../../electron/main/ipcContracts'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 
 const mocks = vi.hoisted(() => ({ handle: vi.fn() }))
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }))

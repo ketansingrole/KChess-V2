@@ -1,8 +1,5 @@
 import * as v from 'valibot'
-import { makeFen } from 'chessops/fen'
-import { makeUci } from 'chessops/util'
-import { parseComment, parsePgn, startingPosition } from 'chessops/pgn'
-import { parseSan } from 'chessops/san'
+import { pgnMainline } from '../domain/pgn'
 import type {
   BroadcastGame,
   BroadcastSummary,
@@ -152,16 +149,10 @@ export function alignTvMoves(
 ): string[] | undefined {
   const start = setupStart(setup)
   if (!start || !feed.length) return undefined
-  const position = start.clone()
-  const exported: string[] = []
-  const keys = [positionKey(makeFen(position.toSetup()))]
-  for (const token of san) {
-    const move = parseSan(position, token)
-    if (!move) return undefined
-    exported.push(makeUci(move))
-    position.play(move)
-    keys.push(positionKey(makeFen(position.toSetup())))
-  }
+  const line = start.line(san, { san: true })
+  if (line.length < san.length) return undefined
+  const exported = line.map((move) => move.uci)
+  const keys = [start.fen, ...line.map((move) => move.fen)].map(positionKey)
   const target = positionKey(feed.at(-1)!)
   for (let ply = keys.length - 1; ply >= 0; ply--) {
     const seen = feed.lastIndexOf(keys[ply]!)
@@ -171,7 +162,7 @@ export function alignTvMoves(
     const moves = [...exported.slice(0, ply), ...(since as string[])]
     const replayed = replaySetup(setup, moves)
     if (replayed?.played.length !== moves.length) return undefined
-    return positionKey(makeFen(replayed.position.toSetup())) === target ? moves : undefined
+    return positionKey(replayed.position.fen) === target ? moves : undefined
   }
   return undefined
 }
@@ -513,36 +504,20 @@ async function readPgnStream(
   }
 }
 
-const clockOf = (comment: string | undefined): number | undefined => {
-  if (!comment) return undefined
-  const clock = parseComment(comment).clock
-  return clock === undefined ? undefined : Math.round(clock)
-}
-
 /** One broadcast game from its PGN, with the main line replayed and checked. */
 export function broadcastGame(pgn: string): BroadcastGame | undefined {
-  const game = parsePgn(pgn.slice(0, 200_000))[0]
-  if (!game) return undefined
-  const headers = game.headers
-  const start = startingPosition(headers)
-  if (start.isErr) return undefined
-  const pos = start.value
-  const startFen = makeFen(pos.toSetup())
-  const moves: string[] = []
+  // At most 1001 moves are read.
+  const game = pgnMainline(pgn.slice(0, 200_000), 1001)
+  if (!game?.start) return undefined
+  const headers = new Map(game.headers)
+  const startFen = game.start
+  const moves = game.moves.map((move) => move.uci)
   let whiteClock: number | undefined
   let blackClock: number | undefined
-  for (const node of game.moves.mainline()) {
-    const move = parseSan(pos, node.san)
-    if (!move) break
-    const mover = pos.turn
-    pos.play(move)
-    moves.push(makeUci(move))
-    const clock = clockOf(node.comments?.join(' '))
-    if (clock !== undefined) {
-      if (mover === 'white') whiteClock = clock
-      else blackClock = clock
-    }
-    if (moves.length > 1000) break
+  for (const move of game.moves) {
+    if (move.clock === undefined) continue
+    if (move.mover === 'white') whiteClock = Math.round(move.clock)
+    else blackClock = Math.round(move.clock)
   }
   const chapter =
     /\/([a-zA-Z0-9]{8})$/.exec(headers.get('ChapterURL') ?? '')?.[1] ??
@@ -569,7 +544,7 @@ export function broadcastGame(pgn: string): BroadcastGame | undefined {
     result,
     startFen,
     moves,
-    fen: makeFen(pos.toSetup()),
+    fen: game.moves.at(-1)?.fen ?? startFen,
     lastMove: moves.at(-1),
     whiteClock,
     blackClock,

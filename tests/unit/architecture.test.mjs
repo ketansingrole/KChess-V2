@@ -69,7 +69,7 @@ it.each([
   expect(lint(code, filename)).toHaveLength(1)
 })
 it.each([
-  ['apps/desktop/app/page.js', "import { INITIAL_FEN } from 'chessops/fen'"],
+  ['apps/desktop/app/page.js', "import { INITIAL_FEN } from '@kchess/core/domain/position'"],
   ['apps/desktop/app/page.js', "import { IPC_CHANNELS } from '../contracts/ipc'"],
   ['apps/desktop/electron/preload/index.js', "import { ipcRenderer } from 'electron'"],
   ['apps/desktop/electron/main/ipc.ts', "import { ipcMain } from 'electron'"],

@@ -3,13 +3,6 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { Chess } from 'chessops/chess'
-import { makeFen, parseFen } from 'chessops/fen'
-import { makeSanAndPlay } from 'chessops/san'
-import { makeUci } from 'chessops/util'
-import { defaultPosition, setupPosition } from 'chessops/variant'
-import type { Position } from 'chessops/chess'
-import type { Role } from 'chessops/types'
 import {
   addMove,
   newTree,
@@ -40,7 +33,8 @@ import {
   studyMatchesCloud,
   summarizeReview,
 } from '../../src/services/rules'
-import { chess960Fen, replaySetup, rulesOf, VARIANTS, type Variant } from '../../src/domain/variant'
+import { INITIAL_FEN, pieceOn, Position, type Role } from '../../src/domain/position'
+import { chess960Fen, defaultFen, VARIANTS, type Variant } from '../../src/domain/variant'
 import { nativeRules } from '../../src/services/native'
 
 const loaded = nativeRules()
@@ -48,10 +42,11 @@ if (!loaded) throw new Error('The native rules are not built (pnpm run build:nat
 const native = loaded
 
 /**
- * The Rust rules must be indistinguishable from the TypeScript ones: rules the renderer still
- * shares run both and compare; Rust-only rules compare with outputs recorded from the TypeScript
- * rules they replaced (`native-golden.json`). Cases are generated from fixed seeds; a failure names its seed and
- * index so the exact input can be replayed.
+ * The Rust rules must be indistinguishable from the TypeScript (chessops) rules they replaced:
+ * they are compared with outputs recorded from those rules (`native-golden.json`), and the
+ * renderer's WebAssembly build with the Node module. Cases are generated from fixed seeds with
+ * the Rust rules themselves (drawing moves in chessops's order, so the inputs are the recorded
+ * ones); a failure names its seed and index so the exact input can be replayed.
  */
 
 /** `KCHESS_FUZZ_SCALE=20` multiplies every generated case count for a deeper local search. */
@@ -118,32 +113,54 @@ const parse = <T>(json: string | null): T | undefined =>
 /** Compare as values cross the boundary: `undefined` properties are simply absent. */
 const plain = <T>(value: T): T => (value === undefined ? value : JSON.parse(JSON.stringify(value)))
 
-/** A random legal line, with castling written both ways and some promotions under-promoted. */
+/** The standard start of a variant, or the Chess960 start `fen`. */
+const variantStart = (variant: Variant, fen = defaultFen(variant)): Position =>
+  Position.from({ variant, fen })!
+
+const squareIndex = (square: string): number =>
+  square.charCodeAt(0) - 97 + 8 * (Number(square[1]) - 1)
+const squareName = (index: number): string => `${'abcdefgh'[index & 7]}${(index >> 3) + 1}`
+const PROMOTION_LETTER: Record<Role, string> = {
+  pawn: 'p',
+  knight: 'n',
+  bishop: 'b',
+  rook: 'r',
+  queen: 'q',
+  king: 'k',
+}
+const lastRank = (square: string): boolean => square[1] === '1' || square[1] === '8'
+
+/**
+ * A random legal line, with castling written both ways and some promotions under-promoted.
+ * Moves are drawn from `dests('rules')` (chessops `allDests()` order), so the seeded lines are
+ * the ones the recorded outputs were generated from.
+ */
 function randomLine(random: () => number, start: Position, plies: number): string[] {
-  const pos = start.clone()
+  let pos = start
   const moves: string[] = []
   for (let i = 0; i < plies && !pos.isEnd(); i++) {
-    const legal = [...pos.allDests()].flatMap(([from, dests]) =>
-      [...dests].map((to) => ({ from, to })),
+    const legal = [...pos.dests('rules')].flatMap(([from, dests]) =>
+      dests.map((to) => ({ from, to })),
     )
     if (!legal.length) break
     const move = legal[Math.floor(random() * legal.length)]!
-    const piece = pos.board.get(move.from)
+    const piece = pos.pieceAt(move.from)
     const roles: Role[] = ['queen', 'rook', 'bishop', 'knight']
-    if (pos.rules === 'antichess') roles.push('king')
+    if (pos.variant === 'antichess') roles.push('king')
     const promotion =
-      piece?.role === 'pawn' && (move.to >> 3 === 7 || move.to >> 3 === 0)
+      piece?.role === 'pawn' && lastRank(move.to)
         ? roles[Math.floor(random() * roles.length)]
         : undefined
-    const full = promotion ? { ...move, promotion } : move
-    let uci = makeUci(full)
-    // chessops writes castling king-to-rook; Lichess also sends king-two-squares.
-    if (piece?.role === 'king' && pos.board[pos.turn].has(move.to) && random() < 0.5) {
-      const kingTo = (move.from & ~7) + (move.to > move.from ? 6 : 2)
-      if (Math.abs(kingTo - move.from) === 2) uci = makeUci({ from: move.from, to: kingTo })
+    const full = `${move.from}${move.to}${promotion ? PROMOTION_LETTER[promotion] : ''}`
+    let uci = full
+    // The rules write castling king-to-rook; Lichess also sends king-two-squares.
+    if (piece?.role === 'king' && pos.pieceAt(move.to)?.color === pos.turn && random() < 0.5) {
+      const from = squareIndex(move.from)
+      const kingTo = (from & ~7) + (squareIndex(move.to) > from ? 6 : 2)
+      if (Math.abs(kingTo - from) === 2) uci = `${move.from}${squareName(kingTo)}`
     }
     moves.push(uci)
-    pos.play(full)
+    pos = pos.play(full)!.position
   }
   return moves
 }
@@ -167,27 +184,24 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
       const variant = VARIANTS[i % VARIANTS.length] as Variant
       const start =
         variant === 'chess960'
-          ? setupPosition('chess', parseFen(CHESS960[i % CHESS960.length]!).unwrap()).unwrap()
-          : defaultPosition(rulesOf(variant))
-      const fen = makeFen(start.toSetup())
+          ? variantStart(variant, CHESS960[i % CHESS960.length]!)
+          : variantStart(variant)
+      const fen = start.fen
       const moves = damage(random, randomLine(random, start, 40 + Math.floor(random() * 160)))
-      const ts = replaySetup({ variant, fen }, moves)
       const rust = parse<{ played: unknown[]; fen: string }>(
         native.replaySetup(variant, fen, moves),
       )
-      const context = `seed 7001 #${i} ${variant} ${fen} ${moves.join(' ')}`
-      expect(rust?.played, context).toEqual(ts?.played)
-      expect(rust?.fen, context).toBe(ts && makeFen(ts.position.toSetup()))
+      golden('replaySetup', i, rust ?? null)
     }
   })
 
   it('replays positions for reviews identically (seed 7002)', () => {
     const random = rng(7002)
     for (let i = 0; i < 400 * SCALE; i++) {
-      const line = randomLine(random, Chess.default(), 30 + Math.floor(random() * 120))
+      const line = randomLine(random, Position.initial(), 30 + Math.floor(random() * 120))
       const cut = Math.floor(random() * line.length)
       // Start mid-game so castling rights, en passant and counters vary.
-      const at = replay(makeFen(Chess.default().toSetup()), line.slice(0, cut)).at(-1)!.fen
+      const at = replay(INITIAL_FEN, line.slice(0, cut)).at(-1)!.fen
       const moves = damage(random, line.slice(cut))
       expect(JSON.parse(native.replayPositions(at, moves)), `seed 7002 #${i}`).toEqual(
         plain(replay(at, moves)),
@@ -198,7 +212,7 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
   it('accepts and rejects the same FENs', () => {
     const fens = [
       ...CHESS960,
-      ...VARIANTS.map((v) => makeFen(defaultPosition(rulesOf(v)).toSetup())),
+      ...VARIANTS.map((v) => defaultFen(v)),
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR',
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w',
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 ',
@@ -234,17 +248,13 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
       'r1k1r3/8/8/8/8/8/8/R1K1R3 w AEae - 0 1',
       '',
     ]
+    let index = 0
     for (const variant of VARIANTS)
       for (const fen of fens) {
-        const ts = replaySetup({ variant, fen }, ['e2e4', 'e7e5'])
         const rust = parse<{ played: unknown[]; fen: string }>(
           native.replaySetup(variant, fen, ['e2e4', 'e7e5']),
         )
-        expect(rust === undefined, `${variant} ${JSON.stringify(fen)}`).toBe(ts === undefined)
-        if (ts) {
-          expect(rust?.fen, `${variant} ${fen}`).toBe(makeFen(ts.position.toSetup()))
-          expect(rust?.played, `${variant} ${fen}`).toEqual(ts.played)
-        }
+        golden('setupFens', index++, rust ?? null)
         expect(JSON.parse(native.replayPositions(fen, ['e2e4'])), fen).toEqual(
           plain(replay(fen, ['e2e4'])),
         )
@@ -258,14 +268,10 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
       const variant = pick(VARIANTS)
       const start =
         variant === 'chess960'
-          ? setupPosition(
-              'chess',
-              parseFen(chess960Fen(Math.floor(random() * 960))).unwrap(),
-            ).unwrap()
-          : defaultPosition(rulesOf(variant))
+          ? variantStart(variant, chess960Fen(Math.floor(random() * 960)))
+          : variantStart(variant)
       const line = randomLine(random, start, Math.floor(random() * 80))
-      const reached = replaySetup({ variant, fen: makeFen(start.toSetup()) }, line)!.position
-      const fields = makeFen(reached.toSetup()).split(' ')
+      const fields = start.after(start.line(line)).fen.split(' ')
       // Rewrite one field with something plausible but possibly wrong.
       const field = Math.floor(random() * 6)
       if (field === 1) fields[1] = pick(['w', 'b'])
@@ -275,27 +281,15 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
       if (field === 4) fields[4] = pick(['0', '99', '150', '151', '9999'])
       if (field === 5) fields[5] = pick(['1', '0', '9999', '120'])
       const fen = fields.join(' ')
-      // The one deliberate difference: chessops keeps an en passant square that a piece
+      // The one deliberate difference: chessops kept an en passant square that a piece
       // occupies (impossible after a double push) and would capture two pieces there.
       // The Rust rules drop such a square. Typed FENs are the only way to reach it.
-      const ep = parseFen(fen)
-      if (
-        ep.isOk &&
-        ep.value.epSquare !== undefined &&
-        ep.value.board.occupied.has(ep.value.epSquare)
-      )
-        continue
+      if (both('fenSetup', fen) && fields[3] !== '-' && pieceOn(fields[0]!, fields[3]!)) continue
       const replayed = ['e2e4', 'e7e5', 'g1f3', 'e1g1', 'e8c8'].concat(line.slice(0, 4))
-      const ts = replaySetup({ variant, fen }, replayed)
       const rust = parse<{ played: unknown[]; fen: string }>(
         native.replaySetup(variant, fen, replayed),
       )
-      const context = `seed 7006 #${i} ${variant} ${fen}`
-      expect(rust === undefined, context).toBe(ts === undefined)
-      if (ts) {
-        expect(rust?.fen, context).toBe(makeFen(ts.position.toSetup()))
-        expect(rust?.played, context).toEqual(ts.played)
-      }
+      golden('generatedFens', i, rust ?? null)
     }
   })
 
@@ -321,7 +315,7 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
     const random = rng(7004)
     for (let i = 0; i < 300 * SCALE; i++) {
       const variant = VARIANTS[i % VARIANTS.length] as Variant
-      const start = defaultPosition(rulesOf(variant))
+      const start = variantStart(variant)
       const game: Record<string, unknown> = {
         id: `g${i}`,
         source: 'board',
@@ -332,7 +326,7 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
         result: '*',
         reason: 'r',
         finished: random() < 0.5,
-        setup: { variant, fen: makeFen(start.toSetup()) },
+        setup: { variant, fen: start.fen },
         moves: randomLine(random, start, 20 + Math.floor(random() * 60)),
         timeControl: '3+2',
         ...(random() < 0.3 ? { clockSummary: '1:00 – 0:59' } : {}),
@@ -346,7 +340,7 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
     const random = rng(7008)
     for (let i = 0; i < 60; i++) {
       const games = Array.from({ length: Math.floor(random() * 6) }, (_, g) => {
-        const start = defaultPosition(rulesOf(VARIANTS[g % VARIANTS.length] as Variant))
+        const start = variantStart(VARIANTS[g % VARIANTS.length] as Variant)
         return mutate(random, {
           id: random() < 0.1 ? 'same' : `g${i}-${g}`,
           source: 'computer',
@@ -357,7 +351,7 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
           result: '*',
           reason: '',
           finished: true,
-          setup: { variant: VARIANTS[g % VARIANTS.length], fen: makeFen(start.toSetup()) },
+          setup: { variant: VARIANTS[g % VARIANTS.length], fen: start.fen },
           moves: randomLine(random, start, 10 + Math.floor(random() * 30)),
           timeControl: '-',
         })
@@ -411,8 +405,8 @@ describe('native rules match the TypeScript rules', { timeout: TIMEOUT }, () => 
       const doc = JSON.stringify(mutate(random, { version: random() < 0.5 ? 2 : '1', items }))
       golden('studies', i, parse(native.decodeStudies(doc)))
       const mistakes = Array.from({ length: 1 + Math.floor(random() * 5) }, (_, m) => {
-        const line = randomLine(random, Chess.default(), 12)
-        const fen = replay(makeFen(Chess.default().toSetup()), line.slice(0, 8)).at(-1)!.fen
+        const line = randomLine(random, Position.initial(), 12)
+        const fen = replay(INITIAL_FEN, line.slice(0, 8)).at(-1)!.fen
         return mutate(random, {
           id: `m${m}`,
           fen,
@@ -520,12 +514,10 @@ describe('native phase 2 rules match the TypeScript rules', { timeout: TIMEOUT }
     const random = rng(7102)
     for (let i = 0; i < 300 * SCALE; i++) {
       const start = random() < 0.2 ? CHESS960[i % CHESS960.length]! : undefined
-      const pos = start
-        ? setupPosition('chess', parseFen(start).unwrap()).unwrap()
-        : Chess.default()
-      const fen = makeFen(pos.toSetup())
+      const pos = start ? Position.fromFen(start)! : Position.initial()
+      const fen = pos.fen
       const line = randomLine(random, pos, 20 + Math.floor(random() * 100))
-      const sans = replaySetup({ variant: 'standard', fen }, line)!.played.map((m) => m.san)
+      const sans = pos.line(line, { trim: true }).map((m) => m.san)
       if (random() < 0.15) sans.splice(Math.floor(random() * sans.length), 0, 'Qxz9')
       const moves = sans.join(random() < 0.2 ? '  \n ' : ' ')
       const roll = random()
@@ -646,7 +638,7 @@ describe('the renderer rules match recorded outputs in both runtimes', { timeout
       for (let step = 0; step < 6; step++) {
         const node = path ? tree.children[0] : tree
         const fen = (node ?? tree).fen
-        const pos = setupPosition('chess', parseFen(fen).unwrap()).unwrap()
+        const pos = Position.fromFen(fen)!
         const [uci] = randomLine(random, pos, 1)
         if (!uci) break
         const played = addMove(tree, path, random() < 0.1 ? 'e2e5' : uci)
@@ -667,18 +659,13 @@ describe('the renderer rules match recorded outputs in both runtimes', { timeout
     const random = rng(7202)
     for (let i = 0; i < 300; i++) {
       const start =
-        random() < 0.2
-          ? setupPosition('chess', parseFen(CHESS960[i % CHESS960.length]!).unwrap()).unwrap()
-          : Chess.default()
+        random() < 0.2 ? Position.fromFen(CHESS960[i % CHESS960.length]!)! : Position.initial()
       const line = randomLine(random, start, Math.floor(random() * 60))
-      const fen =
-        random() < 0.05
-          ? 'not a fen'
-          : (replay(makeFen(start.toSetup()), line).at(-1)?.fen ?? makeFen(start.toSetup()))
+      const fen = random() < 0.05 ? 'not a fen' : (replay(start.fen, line).at(-1)?.fen ?? start.fen)
       const root = newTree(fen)
       expect(both('startNode', fen), `#${i} ${fen}`).toEqual({ fen: root.fen, ply: root.ply })
       golden('startNode', i, both('startNode', fen))
-      const pos = setupPosition('chess', parseFen(root.fen).unwrap()).unwrap()
+      const pos = Position.fromFen(root.fen)!
       const next = randomLine(random, pos, 1)[0] ?? 'e2e4'
       const tries = [next, 'e1g1', 'e1h1', 'a7a8q', 'e2e5', next.toUpperCase()]
       for (const [k, uci] of tries.entries()) {
@@ -702,25 +689,23 @@ describe('the renderer rules match recorded outputs in both runtimes', { timeout
       const variant = VARIANTS[i % VARIANTS.length] as Variant
       const start =
         variant === 'chess960'
-          ? setupPosition('chess', parseFen(CHESS960[i % CHESS960.length]!).unwrap()).unwrap()
-          : defaultPosition(rulesOf(variant))
-      const setup = { variant, fen: makeFen(start.toSetup()) }
+          ? variantStart(variant, CHESS960[i % CHESS960.length]!)
+          : variantStart(variant)
+      const setup = { variant, fen: start.fen }
       // Shuffle knights back and forth now and then, so repetitions happen.
       const line =
         random() < 0.2
           ? ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8', 'b1c3']
           : damage(random, randomLine(random, start, Math.floor(random() * 200)))
-      const standard = random() < 0.5 ? line : randomLine(random, Chess.default(), 120)
+      const standard = random() < 0.5 ? line : randomLine(random, Position.initial(), 120)
       const headers: Record<string, string> =
         random() < 0.5 ? {} : { White: 'Me', Result: random() < 0.5 ? '1-0' : '*', Site: '?' }
       const context = `seed 7203 #${i} ${variant}`
       expect(both('sanHistory', standard), context).toEqual(sanHistory(standard))
-      // replaySetup keeps a TypeScript twin (its positions are chessops objects).
-      const ts = replaySetup(setup, line)
-      expect(both('setupReplay', setup, line), context).toEqual(
-        ts ? plain({ played: ts.played, fen: makeFen(ts.position.toSetup()) }) : null,
+      const replayed = both('setupReplay', setup, line) as { played: { san: string }[] } | null
+      expect(setupSanHistory(setup, line), context).toEqual(
+        replayed?.played.map((m) => m.san) ?? [],
       )
-      expect(setupSanHistory(setup, line), context).toEqual(ts?.played.map((m) => m.san) ?? [])
       const sans = sanHistory(standard)
       if (random() < 0.2) sans.push('Zz9', 'O-O-O-O-O-O-O-O-O')
       expect(both('pgnFromSan', sans), context).toBe(pgnFromSan(sans))
@@ -788,12 +773,152 @@ describe('the renderer rules match recorded outputs in both runtimes', { timeout
   })
 })
 
+const EDGE_FENS = [
+  'k7/1Q6/1K6/8/8/8/8/8 b - - 0 1',
+  'k7/8/1QK5/8/8/8/8/8 b - - 0 1',
+  '8/8/8/8/8/8/8/K6k w - - 0 1',
+  '8/8/8/8/8/8/8/K5Bk w - - 0 1',
+  '8/8/8/8/8/2b5/8/K5Bk w - - 0 1',
+  '8/8/8/8/8/8/8/K5Nk b - - 0 1',
+  '8/8/8/3K4/8/8/8/7k w - - 0 1',
+  '8/8/8/8/8/8/8/8 w - - 0 1',
+  '8/8/8/8/8/8/8/K7 b - - 0 1',
+  '8/8/8/8/8/8/8/K7 w - - 0 1',
+  '8/8/8/8/8/8/1p6/K7 w - - 0 1',
+  'b7/8/8/8/8/8/8/1B6 w - - 0 1',
+  'k7/8/8/8/8/8/8/n6N b - - 0 1',
+  'k6K/8/8/8/8/8/8/8 b - - 0 1',
+  '7K/k7/8/8/8/8/8/8 b - - 0 1',
+  'K6k/8/8/8/8/8/8/8 w - - 0 1',
+  '4k3/8/8/8/8/8/PPPPPPPP/8 w - - 0 1',
+  '4k3/8/8/8/8/8/8/P7 b - - 0 1',
+  '4k3/8/8/8/8/8/8/1B6 b - - 0 1',
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 +3+0',
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0+2 1',
+  '8/8/8/8/8/8/krbnNBRK/qrbnNBRQ w - - 0 1',
+  '4k3/8/8/8/8/8/8/4K2R w K - 120 70',
+  '7k/8/8/8/8/8/8/R3K2R b KQ - 0 1',
+  'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1',
+  'r1k1r3/8/8/8/8/8/8/R1K1R3 w AEae - 0 1',
+  '1r2k1r1/8/8/8/8/8/8/1R2K1R1 w GBgb - 0 1',
+  'rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3',
+]
+
+describe('positions held by the frontends match recorded outputs', { timeout: TIMEOUT }, () => {
+  it('describes, lists and plays generated positions identically (seed 7301)', () => {
+    const random = rng(7301)
+    for (let i = 0; i < 400 * SCALE; i++) {
+      const variant = VARIANTS[i % VARIANTS.length] as Variant
+      const start =
+        variant === 'chess960'
+          ? variantStart(variant, CHESS960[i % CHESS960.length]!)
+          : variantStart(variant)
+      const line = randomLine(random, start, Math.floor(random() * 160))
+      const pos = start.after(start.line(line))
+      const setup = pos.setup
+      const info = both('position', setup)
+      golden('position', i, info)
+      golden('dests', i, [
+        both('dests', setup, 'rules'),
+        both('dests', setup, 'board'),
+        both('dests', setup, 'board960'),
+      ])
+      const legal = both('legalMoves', setup) as { san: string }[]
+      golden('legalMoves', i, legal)
+      const [next] = randomLine(random, pos, 1)
+      const tries = [
+        next ?? 'e2e4',
+        'e1g1',
+        'e1c1',
+        'e8g8',
+        'e8h8',
+        'a7a8q',
+        'a2a1k',
+        'e2e5',
+        'P@e4',
+      ]
+      for (const [k, uci] of tries.entries())
+        golden('play', i * tries.length + k, both('play', setup, uci))
+      const sans = legal.map((m) => m.san)
+      const sanTries = [
+        sans[Math.floor(random() * sans.length)] ?? 'e4',
+        'O-O',
+        'O-O-O',
+        'Nf3',
+        'exd6',
+        'Qxx9',
+      ]
+      for (const [k, san] of sanTries.entries())
+        golden('playSan', i * sanTries.length + k, both('playSan', setup, san))
+      const moves = damage(random, randomLine(random, pos, Math.floor(random() * 40)))
+      const trim = random() < 0.5
+      golden('line', i, both('line', start.setup, [...line, ...moves], { trim }))
+    }
+  })
+
+  it('describes hand-picked endings identically in every variant', () => {
+    let index = 0
+    for (const variant of VARIANTS)
+      for (const fen of EDGE_FENS) {
+        // A second known difference: shakmaty refuses Racing Kings with both kings on the goal
+        // and Black to move, which play cannot reach (Black would already have won).
+        if (variant === 'racingKings' && fen === 'k6K/8/8/8/8/8/8/8 b - - 0 1') continue
+        const setup = { variant, fen }
+        const info = both('position', setup)
+        golden('edgePosition', index, info)
+        if (info)
+          golden('edgeMoves', index, [both('dests', setup, 'board'), both('legalMoves', setup)])
+        index++
+      }
+  })
+
+  it('reads typed FENs as the board editor did (seed 7302)', () => {
+    const random = rng(7302)
+    const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
+    const fens = [...EDGE_FENS, 'nonsense', '', '4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1']
+    for (let i = 0; i < 300; i++) {
+      const start = Position.initial()
+      const pos = start.after(start.line(randomLine(random, start, Math.floor(random() * 60))))
+      const fields = pos.fen.split(' ')
+      const rows = fields[0]!.split('/')
+      const row = Math.floor(random() * 8)
+      rows[row] = pick(['8', 'K7', 'k7', 'P7', '7p', 'Q6q', '1K6', '44', '9', 'x7'])
+      fields[0] = rows.join('/')
+      if (random() < 0.3) fields[1] = pick(['w', 'b', 'x'])
+      fens.push(fields.join(' '))
+    }
+    for (const [i, fen] of fens.entries())
+      golden('fenProblem', i, [both('fenProblem', fen), both('fenSetup', fen)])
+  })
+
+  it('reads PGN games and main lines identically (seed 7303)', () => {
+    const random = rng(7303)
+    const clocks = ['[%clk 0:03:00]', '[%clk 1:02:03.5]', 'text [%clk 0:00:09.]', '[%clk 0:0:1]']
+    for (let i = 0; i < 120; i++) {
+      let pgn =
+        random() < 0.3
+          ? PGN_CASES[i % PGN_CASES.length]!
+          : randomStudy(random, 10 + Math.floor(random() * 60))
+      if (random() < 0.4)
+        pgn = pgn.replace(/(\s)([a-hKQRBNO][^\s(){}]*)(\s)/g, (all, a, san, b) =>
+          random() < 0.2
+            ? `${a}${san} { ${clocks[Math.floor(random() * clocks.length)]} }${b}`
+            : all,
+        )
+      if (random() < 0.3) pgn = `${pgn}\n\n${randomStudy(random, 8)}`
+      golden('pgnGames', i, both('pgnGames', pgn))
+      const limit = random() < 0.3 ? Math.floor(random() * 20) : undefined
+      golden('pgnMainline', i, both('pgnMainline', pgn, limit))
+    }
+  })
+})
+
 function randomReview(random: () => number, i: number): StoredReview {
   const fen =
     random() < 0.15
       ? CHESS960[i % CHESS960.length]!
       : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-  const pos = setupPosition('chess', parseFen(fen).unwrap()).unwrap()
+  const pos = Position.fromFen(fen)!
   const moves = damage(random, randomLine(random, pos, Math.floor(random() * 140)))
   let cp = Math.round((random() - 0.5) * 100)
   const evals = Array.from({ length: moves.length + 1 - Math.floor(random() * 3) }, () => {
@@ -873,33 +998,30 @@ function randomStudy(random: () => number, plies: number): string {
   const root: TreeNode = {
     uci: '',
     san: '',
-    fen: makeFen(Chess.default().toSetup()),
+    fen: INITIAL_FEN,
     ply: 0,
     children: [],
   }
   const grow = (node: TreeNode, pos: Position, depth: number, length: number): void => {
     let current = node
     for (let i = 0; i < length && !pos.isEnd(); i++) {
-      const legal = [...pos.allDests()].flatMap(([from, dests]) =>
-        [...dests].map((to) => ({ from, to })),
+      const legal = [...pos.dests('rules')].flatMap(([from, dests]) =>
+        dests.map((to) => ({ from, to })),
       )
-      const before = pos.clone()
+      const before = pos
       let next: { node: TreeNode; pos: Position } | undefined
       for (let b = 0; b < (depth < 3 && random() < 0.2 ? 3 : 1); b++) {
-        const position = before.clone()
         const move = legal[Math.floor(random() * legal.length)]!
-        const piece = position.board.get(move.from)
-        const full =
-          piece?.role === 'pawn' && (move.to >> 3 === 7 || move.to >> 3 === 0)
-            ? { ...move, promotion: random() < 0.7 ? ('queen' as const) : ('knight' as const) }
-            : move
-        const uci = makeUci(full)
+        const piece = before.pieceAt(move.from)
+        const promotion =
+          piece?.role === 'pawn' && lastRank(move.to) ? (random() < 0.7 ? 'q' : 'n') : ''
+        const uci = `${move.from}${move.to}${promotion}`
         if (current.children.some((c) => c.uci === uci)) continue
-        const san = makeSanAndPlay(position, full)
+        const { san, position } = before.play(uci)!
         const child: TreeNode = {
           uci,
           san,
-          fen: makeFen(position.toSetup()),
+          fen: position.fen,
           ply: current.ply + 1,
           children: [],
           ...(random() < 0.2 ? { comments: [`Note ${i}: ${san} {braces} [%eval 0.3]`] } : {}),
@@ -915,7 +1037,7 @@ function randomStudy(random: () => number, plies: number): string {
       pos = next.pos
     }
   }
-  grow(root, Chess.default(), 0, plies)
+  grow(root, Position.initial(), 0, plies)
   return treeToPgn(root, { Event: 'Fuzz', Annotator: 'Seed "quoted" \\ backslash' })
 }
 

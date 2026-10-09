@@ -1,4 +1,4 @@
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from './position.ts'
 import type { EngineLine } from '../contracts/types'
 import { rules } from './engine.ts'
 

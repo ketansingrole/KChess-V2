@@ -143,7 +143,7 @@ describe('analysis move tree', () => {
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
     const pv = ['e7e5', 'g1f3']
     const first = pvSan(fen, pv)
-    // Live engine ticks resend the same PV at deeper depths: no new chessops replay.
+    // Live engine ticks resend the same PV at deeper depths: no new replay.
     expect(pvSan(fen, [...pv])).toBe(first)
     expect(pvSan(fen, [...pv, 'b8c6'], 2)).toBe(first)
     expect(pvSan(fen, [...pv, 'b8c6'])).not.toBe(first)

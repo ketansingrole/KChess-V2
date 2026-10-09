@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { client } from '../../src/services/lichess'
-import { INITIAL_FEN, makeFen } from 'chessops/fen'
+import { INITIAL_FEN } from '../../src/domain/position'
 import {
   alignTvMoves,
   broadcastGame,
@@ -252,10 +252,7 @@ describe('TV move list', () => {
   const uci = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5']
   const san = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5']
   const key = (ply: number) =>
-    makeFen(replaySetup(STANDARD_SETUP, uci.slice(0, ply))!.position.toSetup())
-      .split(' ')
-      .slice(0, 2)
-      .join(' ')
+    replaySetup(STANDARD_SETUP, uci.slice(0, ply))!.position.fen.split(' ').slice(0, 2).join(' ')
 
   it('joins a lagging export to the moves the feed sent after it', () => {
     // The feed joined after Nf3 and has since seen Nc6, Bc4 and Bc5; the export stops at Nc6.

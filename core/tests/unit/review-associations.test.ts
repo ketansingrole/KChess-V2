@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { afterAll, beforeEach, expect, it, vi } from 'vitest'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '../../src/domain/position'
 import { migrate, MIGRATIONS } from '../../src/services/migrations'
 import {
   writeReview,

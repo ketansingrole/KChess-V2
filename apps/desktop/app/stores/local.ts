@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch, onScopeDispose } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import { initialLibrary, persistSession } from '../utils/library'
 import type { LocalClock } from '@kchess/core/domain/library'
 import {

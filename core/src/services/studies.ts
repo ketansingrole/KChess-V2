@@ -1,8 +1,5 @@
 import * as v from 'valibot'
-import { parsePgn, makePgn, startingPosition } from 'chessops/pgn'
-import { parseSan } from 'chessops/san'
-import type { Position } from 'chessops/chess'
-import type { ChildNode, PgnNodeData } from 'chessops/pgn'
+import { pgnGames } from '../domain/pgn'
 import type { LichessStudy, LichessStudyChapter, NeedsReconnect } from '../contracts/types'
 import { asAccount, authorize, client, unwrap, urlencoded } from './lichess'
 import { readLines } from './ndjson'
@@ -147,7 +144,7 @@ export async function syncLichessStudy(
   const remote = validChapters(current.map((c) => c.pgn).join('\n\n'))
   if (
     remote.length !== before.length ||
-    remote.some((game, index) => makePgn(game) !== makePgn(before[index]!))
+    remote.some((game, index) => game.pgn !== before[index]!.pgn)
   )
     throw new Error(
       'The cloud study changed. Download its latest copy before uploading; your offline edits are kept.',
@@ -164,7 +161,7 @@ export async function syncLichessStudy(
     async (token) => {
       for (let index = 0; index < before.length; index++) {
         const game = after[index]!
-        if (makePgn(game) === makePgn(before[index]!)) continue
+        if (game.pgn === before[index]!.pgn) continue
         const params = { path: { studyId: request.studyId, chapterId: ids[index]! } }
         const headers = { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' }
         await unwrap(
@@ -172,7 +169,7 @@ export async function syncLichessStudy(
             params,
             headers,
             bodySerializer: urlencoded,
-            body: { pgn: makePgn(game) },
+            body: { pgn: game.pgn },
           }),
         )
         const tags = new Map(game.headers)
@@ -199,7 +196,7 @@ export async function syncLichessStudy(
             headers: { ...authorize(token), 'Content-Type': 'application/x-www-form-urlencoded' },
             bodySerializer: urlencoded,
             body: {
-              pgn: makePgn(game),
+              pgn: game.pgn,
               name: game.headers.get('ChapterName') ?? game.headers.get('Event') ?? 'New chapter',
             },
           }),
@@ -213,22 +210,12 @@ export async function syncLichessStudy(
   return lichessStudyChapters(request.account, request.studyId)
 }
 
-function validChapters(pgn: string) {
-  const games = parsePgn(pgn)
+function validChapters(pgn: string): { headers: Map<string, string>; pgn: string }[] {
+  const games = pgnGames(pgn)
   if (!games.length || games.length > 64) throw new Error('Use up to 64 valid chapters.')
   for (const game of games) {
-    const start = startingPosition(game.headers)
-    if (start.isErr) throw new Error('Invalid chapter starting position.')
-    const stack: { node: ChildNode<PgnNodeData>; pos: Position }[] = game.moves.children.map(
-      (node) => ({ node, pos: start.value.clone() }),
-    )
-    while (stack.length) {
-      const { node, pos } = stack.pop()!
-      const move = parseSan(pos, node.data.san)
-      if (!move) throw new Error('The chapter contains an illegal move.')
-      pos.play(move)
-      for (const child of node.children) stack.push({ node: child, pos: pos.clone() })
-    }
+    if (game.problem === 'start') throw new Error('Invalid chapter starting position.')
+    if (game.problem === 'move') throw new Error('The chapter contains an illegal move.')
   }
-  return games
+  return games.map((game) => ({ headers: new Map(game.headers), pgn: game.pgn }))
 }

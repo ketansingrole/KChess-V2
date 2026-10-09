@@ -1,6 +1,4 @@
-import { normalizeMove, type Position } from 'chessops/chess'
-import { makeFen } from 'chessops/fen'
-import { parseUci } from 'chessops/util'
+import { repetitionKey } from './position.ts'
 import { setupStart, type GameSetup } from './variant.ts'
 
 export interface OpeningName {
@@ -17,8 +15,6 @@ export function loadOpenings(): Promise<Map<string, string>> {
   return table
 }
 
-const epd = (pos: Position): string => makeFen(pos.toSetup()).split(' ').slice(0, 4).join(' ')
-
 /**
  * The name of the opening reached after `ply` moves. As Lichess suggests, step back from the
  * position until a named one is found. Only games under standard rules have opening names.
@@ -32,15 +28,10 @@ export function openingAt(
   if (setup.variant !== 'standard') return undefined
   const pos = setupStart(setup)
   if (!pos) return undefined
-  const seen = [epd(pos)]
-  for (const uci of moves.slice(0, ply)) {
-    const parsed = parseUci(uci)
-    if (!parsed) break
-    const move = normalizeMove(pos, parsed)
-    if (!pos.isLegal(move)) break
-    pos.play(move)
-    seen.push(epd(pos))
-  }
+  // EPD: placement, side, castling and en passant.
+  const seen = [pos.fen, ...pos.line(moves.slice(0, ply)).map((move) => move.fen)].map(
+    repetitionKey,
+  )
   for (let i = seen.length - 1; i >= 0; i--) {
     const hit = openings.get(seen[i]!)
     if (!hit) continue

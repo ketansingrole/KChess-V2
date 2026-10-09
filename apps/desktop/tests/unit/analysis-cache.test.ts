@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import { analysisContext } from '@kchess/core/domain/analysisContext'
 import type { AnalysisRequest, AnalysisUpdate } from '@kchess/core/contracts/types'
 import { useAnalysisStore } from '../../app/stores/analysis'

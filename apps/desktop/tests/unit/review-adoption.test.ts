@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { seedSaved } from './libraryBackend'
 import { flushPromises } from '@vue/test-utils'
 import * as fc from 'fast-check'
-import { Chess } from 'chessops/chess'
-import { makeUci } from 'chessops/util'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN, Position } from '@kchess/core/domain/position'
 import { addMove, newTree, nodeAt, treeFromPgn, treeToPgn } from '@kchess/core/domain/analysisTree'
 import { assertAnalysisRequest } from '@kchess/core/domain/validate'
 import { isAppUrl, APP_CSP } from '../../electron/main/appOrigin'
@@ -19,28 +17,24 @@ describe('PGN preservation over generated legal games', () => {
   it('round trips legal positions, headers, variations and annotations', () => {
     fc.assert(
       fc.property(fc.array(fc.nat(), { maxLength: 60 }), (choices) => {
-        const position = Chess.default()
+        let position = Position.initial()
         const root = newTree()
         root.headers = { White: 'Alice', Black: 'ボブ', Result: '1/2-1/2', Event: 'Study' }
         let path = ''
         for (const choice of choices) {
-          const moves = [...position.allDests()]
-            .flatMap(([from, dests]) =>
-              [...dests].map((to) => ({
-                from,
-                to,
-                ...(position.board.get(from)?.role === 'pawn' && [0, 7].includes(to >> 3)
-                  ? { promotion: 'queen' as const }
-                  : {}),
-              })),
-            )
-            .filter((move) => position.isLegal(move))
+          const moves = [...position.dests('rules')].flatMap(([from, dests]) =>
+            dests.map((to) => {
+              const promotes =
+                position.pieceAt(from)?.role === 'pawn' && (to.endsWith('1') || to.endsWith('8'))
+              return `${from}${to}${promotes ? 'q' : ''}`
+            }),
+          )
           if (!moves.length) break
-          const move = moves[choice % moves.length]!
-          path = addMove(root, path, makeUci(move))!
+          const uci = moves[choice % moves.length]!
+          path = addMove(root, path, uci)!
           nodeAt(root, path).comments = ['Comment [%clk 0:10:00]']
           nodeAt(root, path).nags = [1]
-          position.play(move)
+          position = position.play(uci)!.position
         }
         addMove(root, '', 'd2d4')
         const exported = treeToPgn(root)

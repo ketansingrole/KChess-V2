@@ -4,7 +4,7 @@ import { nextTick } from 'vue'
 import { useStudyStore } from '../../app/stores/studies'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { treeFromPgn } from '@kchess/core/domain/analysisTree'
-import { parsePgn } from 'chessops/pgn'
+import { pgnGames } from '@kchess/core/domain/pgn'
 import { desktop } from './fixtures'
 
 // Every test here keeps its studies in the core's library.
@@ -49,8 +49,11 @@ it('keeps all chapters together and edits the selected chapter without overwriti
   await library.rename(id, 'Renamed')
   const duplicate = (await library.duplicate(id))!
   expect(library.items.find((s) => s.id === duplicate)!.chapters).toHaveLength(2)
-  const exported = parsePgn(library.documentPgn(library.items.find((s) => s.id === id)!))
-  expect(exported.map((g) => g.headers.get('ChapterName'))).toEqual(['King pawn', 'Queen pawn'])
+  const exported = pgnGames(library.documentPgn(library.items.find((s) => s.id === id)!))
+  expect(exported.map((g) => new Map(g.headers).get('ChapterName'))).toEqual([
+    'King pawn',
+    'Queen pawn',
+  ])
 })
 
 it('updates an unchanged offline copy without duplicates and keeps edited copies on download conflicts', async () => {

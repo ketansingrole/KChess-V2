@@ -1,7 +1,4 @@
-import type { Position } from 'chessops/chess'
-import { makeSan } from 'chessops/san'
-import { makeSquare, makeUci } from 'chessops/util'
-import type { Role } from 'chessops/types'
+import type { Position, Role } from './position.ts'
 import { ALL_SQUARES, type Square } from './coordinates'
 
 const fileWords: Record<string, string> = {
@@ -211,6 +208,13 @@ export function spokenMove(text: string, pos: Position): VoiceMoveResult {
   return choices.length ? { kind: 'move', choices } : { kind: 'invalid' }
 }
 
+const PROMOTION_LETTER: Partial<Record<Role, string>> = {
+  queen: 'q',
+  rook: 'r',
+  bishop: 'b',
+  knight: 'n',
+}
+
 function matchingMoves(
   pos: Position,
   spoken: {
@@ -224,36 +228,24 @@ function matchingMoves(
 ): VoiceMoveChoice[] {
   const { castleSide, dest, role, source, capture, promotion } = spoken
   const choices: VoiceMoveChoice[] = []
-  for (const [from, dests] of pos.allDests()) {
-    const piece = pos.board.get(from)!
-    for (const to of dests) {
-      const promotes = piece.role === 'pawn' && (to >> 3 === 0 || to >> 3 === 7)
-      const promotions: (Role | undefined)[] = promotes
-        ? ['queen', 'rook', 'bishop', 'knight']
-        : [undefined]
-      for (const promoted of promotions) {
-        const move = { from, to, ...(promoted ? { promotion: promoted } : {}) }
-        if (!pos.isLegal(move)) continue
-        const san = makeSan(pos, move)
-        if (castleSide) {
-          if (san.replace(/[+#]$/, '') !== (castleSide === 'king' ? 'O-O' : 'O-O-O')) continue
-        } else {
-          const castleDest = san.startsWith('O-O')
-            ? `${san.startsWith('O-O-O') ? 'c' : 'g'}${pos.turn === 'white' ? '1' : '8'}`
-            : undefined
-          if ((makeSquare(to) !== dest && castleDest !== dest) || (role && piece.role !== role))
-            continue
-          if (source && !makeSquare(from).includes(source)) continue
-          if (capture && !san.includes('x')) continue
-          if (promotion && promoted !== promotion) continue
-        }
-        // chessops encodes castling as king-takes-rook (e1h1); engines expect standard UCI (e1g1).
-        const uci = san.startsWith('O-O')
-          ? `${makeSquare(from)}${san.startsWith('O-O-O') ? 'c' : 'g'}${makeSquare(from)[1]}`
-          : makeUci(move)
-        if (!choices.some((choice) => choice.uci === uci)) choices.push({ uci, san })
-      }
+  for (const move of pos.legalMoves()) {
+    const { from, to, san, promotion: promoted } = move
+    if (castleSide) {
+      if (san.replace(/[+#]$/, '') !== (castleSide === 'king' ? 'O-O' : 'O-O-O')) continue
+    } else {
+      const castleDest = san.startsWith('O-O')
+        ? `${san.startsWith('O-O-O') ? 'c' : 'g'}${pos.turn === 'white' ? '1' : '8'}`
+        : undefined
+      if ((to !== dest && castleDest !== dest) || (role && move.role !== role)) continue
+      if (source && !from.includes(source)) continue
+      if (capture && !san.includes('x')) continue
+      if (promotion && promoted !== promotion) continue
     }
+    // The rules write castling king-takes-rook (e1h1); engines expect standard UCI (e1g1).
+    const uci = san.startsWith('O-O')
+      ? `${from}${san.startsWith('O-O-O') ? 'c' : 'g'}${from[1]}`
+      : `${from}${to}${promoted ? PROMOTION_LETTER[promoted] : ''}`
+    if (!choices.some((choice) => choice.uci === uci)) choices.push({ uci, san })
   }
   return choices
 }

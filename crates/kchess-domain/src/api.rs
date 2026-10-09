@@ -7,6 +7,7 @@ use shakmaty::Position;
 use std::collections::HashMap;
 
 use crate::pgn::{Game, PgnNode, make_pgn, study_document_pgn};
+use crate::position::{self, DestMode};
 use crate::replay::{replay_positions, replay_setup};
 use crate::review::analyse_review;
 use crate::rules;
@@ -43,6 +44,12 @@ fn setup(args: &[Value], i: usize) -> Result<(&str, &str)> {
         field("variant").ok_or("setup.variant")?,
         field("fen").ok_or("setup.fen")?,
     ))
+}
+
+/// The legal position a `{ variant, fen }` setup describes; an error when it is not one.
+fn setup_position(args: &[Value]) -> Result<shakmaty::variant::VariantPosition> {
+    let (variant, fen) = setup(args, 0)?;
+    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".into())
 }
 
 /// Dispatch one call. Unknown methods and malformed arguments are errors.
@@ -97,6 +104,68 @@ pub fn call(method: &str, args: &str) -> Result<String> {
         "setupDrawReason" => {
             let (variant, fen) = setup(&args, 0)?;
             to_value(setup_draw_reason(variant, fen, &texts(&args, 1, "moves")?))?
+        }
+        "position" => {
+            let (variant, fen) = setup(&args, 0)?;
+            to_value(rules::setup_start(variant, fen).map(|pos| position::info(&pos)))?
+        }
+        "dests" => {
+            let pos = setup_position(&args)?;
+            let mode = match arg(&args, 1).and_then(Value::as_str) {
+                Some("board") => DestMode::Board,
+                Some("board960") => DestMode::Board960,
+                _ => DestMode::Rules,
+            };
+            Value::Array(
+                position::dests(&pos, mode)
+                    .into_iter()
+                    .map(|(from, to)| {
+                        json!([
+                            from.to_string(),
+                            to.iter().map(ToString::to_string).collect::<Vec<_>>()
+                        ])
+                    })
+                    .collect(),
+            )
+        }
+        "legalMoves" => to_value(position::legal_moves(&setup_position(&args)?))?,
+        "play" => to_value(position::play_uci(
+            &setup_position(&args)?,
+            text(&args, 1, "uci")?,
+        ))?,
+        "playSan" => to_value(position::play_san(
+            &setup_position(&args)?,
+            text(&args, 1, "san")?,
+        ))?,
+        "line" => {
+            let (variant, fen) = setup(&args, 0)?;
+            let moves = texts(&args, 1, "moves")?;
+            let options = arg(&args, 2);
+            let flag = |key| {
+                options
+                    .and_then(|o| o.get(key))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            };
+            match rules::setup_start(variant, fen) {
+                None => Value::Null,
+                Some(start) => {
+                    let start_fen = rules::make_fen(&start);
+                    let (_, played) = position::line(start, &moves, flag("san"), flag("trim"));
+                    json!({ "start": start_fen, "moves": to_value(played)? })
+                }
+            }
+        }
+        "defaultFen" => {
+            let variant = rules::lichess_variant(text(&args, 0, "variant")?).ok_or("variant")?;
+            Value::String(rules::make_fen(&rules::default_position(variant)))
+        }
+        "fenSetup" => position::fen_setup(text(&args, 0, "fen")?).unwrap_or(Value::Null),
+        "fenProblem" => to_value(position::fen_problem(text(&args, 0, "fen")?))?,
+        "pgnGames" => position::pgn_games(text(&args, 0, "pgn")?),
+        "pgnMainline" => {
+            let limit = arg(&args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);
+            position::pgn_mainline(text(&args, 0, "pgn")?, limit as usize)
         }
         _ => return Err(format!("unknown rules method {method}")),
     };

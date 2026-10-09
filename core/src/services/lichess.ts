@@ -8,7 +8,7 @@ import { createServer } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { LRUCache } from 'lru-cache'
 import createClient from 'openapi-fetch'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '../domain/position'
 import type { components, paths } from '@lichess-org/types'
 import type {
   AppData,

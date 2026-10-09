@@ -1,4 +1,4 @@
-import type { Color } from 'chessops/types'
+import type { Color } from './position.ts'
 
 /**
  * Client clock modelled on lila's `ui/lib/src/game/clock/clockCtrl.ts`:

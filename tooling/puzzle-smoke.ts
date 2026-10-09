@@ -44,6 +44,9 @@ import { ALL_SQUARES, randomSquare, squareColor } from '../core/src/domain/coord
 import { ENDGAME_DRILLS, evaluateEndgame } from '../core/src/domain/endgames.ts'
 import { themeName } from '../apps/desktop/app/utils/puzzleThemes.ts'
 
+// The native rules, resolved as the core resolves them; puzzle moves are played through them.
+const native = installNativeRules()
+
 const assert = (label: string, actual: unknown, expected: unknown): void => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)
   console.log(
@@ -194,9 +197,7 @@ assert(
   undefined,
 )
 
-// Sampler (the native rules, resolved as the core resolves them): parses the CSV, keeps solid
-// puzzles, skips the header.
-const native = installNativeRules()
+// Sampler (the native rules): parses the CSV, keeps solid puzzles, skips the header.
 function nativeSampler(): ChunkSampler {
   const inner = new native.PuzzleSampler(1)
   return {

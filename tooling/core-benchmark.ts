@@ -7,11 +7,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { Chess } from 'chessops/chess'
-import { makeFen } from 'chessops/fen'
-import { makeSanAndPlay } from 'chessops/san'
-import { makeUci } from 'chessops/util'
-import { defaultPosition } from 'chessops/variant'
 import { treeToPgn, type TreeNode } from '../core/src/domain/analysisTree.ts'
 import { replay, reviewKey } from '../core/src/domain/review.ts'
 import type { ReviewSummary, StoredReview } from '../core/src/contracts/types.ts'
@@ -21,7 +16,13 @@ import {
   type SavedStudy,
   type MistakeExercise,
 } from '../core/src/domain/library.ts'
-import { replaySetup, rulesOf, type GameSetup, type Variant } from '../core/src/domain/variant.ts'
+import { INITIAL_FEN, Position, type SquareName } from '../core/src/domain/position.ts'
+import {
+  defaultFen,
+  replaySetup,
+  type GameSetup,
+  type Variant,
+} from '../core/src/domain/variant.ts'
 import { nativeRules, type NativeRules } from '../core/src/services/native.ts'
 import {
   createPuzzleSampler,
@@ -45,21 +46,24 @@ const random = (): number => {
 }
 const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
 
+/** A UCI move from `pos`, promoting to a queen when a pawn reaches the last rank. */
+function moveUci(pos: Position, from: SquareName, to: SquareName): string {
+  const promotes = pos.pieceAt(from)?.role === 'pawn' && (to[1] === '1' || to[1] === '8')
+  return `${from}${to}${promotes ? 'q' : ''}`
+}
+
 function randomGame(variant: Variant, plies: number): { setup: GameSetup; moves: string[] } {
-  const pos = defaultPosition(rulesOf(variant))
-  const setup = { variant, fen: makeFen(pos.toSetup()) }
+  const setup = { variant, fen: defaultFen(variant) }
+  let pos = Position.from(setup)!
   const moves: string[] = []
   for (let i = 0; i < plies && !pos.isEnd(); i++) {
-    const legal = [...pos.allDests()].flatMap(([from, dests]) =>
+    const legal = [...pos.dests('rules')].flatMap(([from, dests]) =>
       [...dests].map((to) => ({ from, to })),
     )
     const move = pick(legal)
-    const piece = pos.board.get(move.from)
-    const promotion =
-      piece?.role === 'pawn' && (move.to >> 3 === 7 || move.to >> 3 === 0) ? 'queen' : undefined
-    const full = promotion ? { ...move, promotion: promotion as 'queen' } : move
-    moves.push(makeUci(full))
-    pos.play(full)
+    const played = pos.play(moveUci(pos, move.from, move.to))!
+    moves.push(played.uci)
+    pos = played.position
   }
   return { setup, moves }
 }
@@ -69,49 +73,42 @@ function randomStudyTree(plies: number, branching = 0.12): string {
   const root: TreeNode = {
     uci: '',
     san: '',
-    fen: makeFen(Chess.default().toSetup()),
+    fen: INITIAL_FEN,
     ply: 0,
     children: [],
   }
-  const grow = (node: TreeNode, pos: Chess, depth: number, length: number): void => {
+  const grow = (node: TreeNode, pos: Position, depth: number, length: number): void => {
     let current = node
     for (let i = 0; i < length && !pos.isEnd(); i++) {
-      const legal = [...pos.allDests()].flatMap(([from, dests]) =>
+      const legal = [...pos.dests('rules')].flatMap(([from, dests]) =>
         [...dests].map((to) => ({ from, to })),
       )
       const branches = depth < 2 && random() < branching ? 2 : 1
-      const before = pos.clone()
-      let next: { node: TreeNode; pos: Chess } | undefined
+      let next: { node: TreeNode; pos: Position } | undefined
       for (let b = 0; b < branches; b++) {
-        const position = before.clone()
         const move = pick(legal)
-        const piece = position.board.get(move.from)
-        const full =
-          piece?.role === 'pawn' && (move.to >> 3 === 7 || move.to >> 3 === 0)
-            ? { ...move, promotion: 'queen' as const }
-            : move
-        const uci = makeUci(full)
+        const played = pos.play(moveUci(pos, move.from, move.to))!
+        const { uci, san } = played
         if (current.children.some((c) => c.uci === uci)) continue
-        const san = makeSanAndPlay(position, full)
         const child: TreeNode = {
           uci,
           san,
-          fen: makeFen(position.toSetup()),
+          fen: played.position.fen,
           ply: current.ply + 1,
           children: [],
           ...(random() < 0.15 ? { comments: ['Idea: ' + san + ' keeps the tension.'] } : {}),
           ...(random() < 0.1 ? { nags: [pick([1, 2, 3, 4, 5, 6])] } : {}),
         }
         current.children.push(child)
-        if (b === 0) next = { node: child, pos: position }
-        else grow(child, position, depth + 1, Math.floor(4 + random() * 8))
+        if (b === 0) next = { node: child, pos: played.position }
+        else grow(child, played.position, depth + 1, Math.floor(4 + random() * 8))
       }
       if (!next) break
       current = next.node
       pos = next.pos
     }
   }
-  grow(root, Chess.default(), 0, plies)
+  grow(root, Position.initial(), 0, plies)
   return treeToPgn(root, { Event: 'Benchmark study', White: 'Seed', Black: 'Fixture' })
 }
 

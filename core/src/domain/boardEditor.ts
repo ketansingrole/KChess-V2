@@ -1,5 +1,5 @@
-import { Chess, IllegalSetup } from 'chessops/chess'
-import { INITIAL_BOARD_FEN, makeFen, parseFen } from 'chessops/fen'
+import { rules } from './engine.ts'
+import { INITIAL_BOARD_FEN } from './position.ts'
 
 /** What the editor knows besides where the pieces stand. */
 export interface EditorSetup {
@@ -90,14 +90,13 @@ export function setupFen(setup: EditorSetup): string {
 /** Read a FEN typed or pasted into the editor; undefined when it is not one. */
 export function setupFromFen(text: string): EditorSetup | undefined {
   const trimmed = text.trim()
-  const parsed = parseFen(trimmed)
-  if (parsed.isErr) return undefined
+  const parsed = rules<{ board: string; turn: EditorSetup['turn'] } | null>('fenSetup', trimmed)
+  if (!parsed) return undefined
   const fields = trimmed.split(/\s+/)
-  const board = makeFen(parsed.value).split(' ')[0]!
   const rights = fields[2] ?? '-'
   return {
-    board,
-    turn: parsed.value.turn,
+    board: parsed.board,
+    turn: parsed.turn,
     castling: {
       K: rights.includes('K'),
       Q: rights.includes('Q'),
@@ -109,17 +108,15 @@ export function setupFromFen(text: string): EditorSetup | undefined {
 }
 
 const PROBLEMS: Record<string, string> = {
-  [IllegalSetup.Empty]: 'The board is empty.',
-  [IllegalSetup.Kings]: 'Each side needs exactly one king.',
-  [IllegalSetup.PawnsOnBackrank]: 'Pawns can’t stand on the first or last rank.',
-  [IllegalSetup.OppositeCheck]: 'The side not to move is in check.',
+  fen: 'That is not a valid FEN.',
+  empty: 'The board is empty.',
+  kings: 'Each side needs exactly one king.',
+  pawnsOnBackrank: 'Pawns can’t stand on the first or last rank.',
+  oppositeCheck: 'The side not to move is in check.',
 }
 
 /** Why this position can’t be played or analysed, or undefined when it can. */
 export function positionProblem(fen: string): string | undefined {
-  const setup = parseFen(fen)
-  if (setup.isErr) return 'That is not a valid FEN.'
-  const pos = Chess.fromSetup(setup.value)
-  if (pos.isErr) return PROBLEMS[pos.error.message] ?? 'This position is not legal.'
-  return undefined
+  const problem = rules<string | null>('fenProblem', fen)
+  return problem ? (PROBLEMS[problem] ?? 'This position is not legal.') : undefined
 }

@@ -1,8 +1,5 @@
 import * as v from 'valibot'
-import { Chess } from 'chessops/chess'
-import { parseFen } from 'chessops/fen'
-import { parseUci } from 'chessops/util'
-import { makeSan } from 'chessops/san'
+import { Position } from '../domain/position'
 import {
   EXPLORER_RATINGS,
   EXPLORER_SPEEDS,
@@ -167,11 +164,9 @@ export class PositionLookupService {
     const kind = v.parse(v.picklist(POSITION_LOOKUP_KINDS), rawKind)
     const fen = assertAnalysisRequest({ fen: rawFen, lines: 1 }).fen
     const options = normalizeOptions(kind, assertLookupOptions(rawOptions))
-    const position = Chess.fromSetup(parseFen(fen).unwrap()).unwrap()
-    if (
-      kind === 'tablebase' &&
-      (position.board.occupied.size() > 7 || position.castles.castlingRights.nonEmpty())
-    )
+    const position = Position.fromFen(fen)
+    if (!position) throw new Error('That position is not legal.')
+    if (kind === 'tablebase' && (position.pieceCount > 7 || position.hasCastlingRights()))
       throw new Error('Tablebases cover positions with up to seven pieces and no castling rights.')
     const filters = JSON.stringify(options)
     // The original keys stay readable for lookups saved before filters existed.
@@ -183,10 +178,7 @@ export class PositionLookupService {
     const saved =
       candidate?.fen === fen &&
       candidate.kind === kind &&
-      candidate.moves.every((entry) => {
-        const move = parseUci(entry.uci)
-        return move && position.isLegal(move) && entry.san === makeSan(position, move)
-      })
+      candidate.moves.every((entry) => position.play(entry.uci)?.san === entry.san)
         ? candidate
         : undefined
     if (saved && this.now() - saved.fetchedAt < FRESH_MS[kind])
@@ -207,7 +199,7 @@ export class PositionLookupService {
     kind: PositionLookupKind,
     fen: string,
     options: LookupOptions,
-    position: Chess,
+    position: Position,
     key: string,
     saved?: Cached,
   ): Promise<PositionLookup> {
@@ -276,10 +268,9 @@ export class PositionLookupService {
           : text
       const raw: unknown = JSON.parse(body)
       const legalSan = (uci: string): string => {
-        const move = parseUci(uci)
-        if (!move || !position.isLegal(move))
-          throw new Error('Position lookup returned an illegal move.')
-        return makeSan(position, move)
+        const played = position.play(uci)
+        if (!played) throw new Error('Position lookup returned an illegal move.')
+        return played.san
       }
       let result: Cached
       if (kind === 'tablebase') {
@@ -309,7 +300,6 @@ export class PositionLookupService {
             san: legalSan(entry.uci),
           })),
           games: listed.map((game) => {
-            const parsed = game.uci ? parseUci(game.uci) : undefined
             return {
               id: game.id,
               white: game.white.name,
@@ -319,7 +309,7 @@ export class PositionLookupService {
               winner: game.winner ?? undefined,
               year: game.year ?? undefined,
               month: game.month ?? undefined,
-              san: parsed && position.isLegal(parsed) ? makeSan(position, parsed) : undefined,
+              san: game.uci ? position.play(game.uci)?.san : undefined,
             }
           }),
         }

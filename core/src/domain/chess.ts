@@ -1,42 +1,34 @@
-import { Chess, type Position } from 'chessops/chess'
 import { rules } from './engine.ts'
-import { chessgroundDests } from 'chessops/compat'
-import { makeFen, parseFen } from 'chessops/fen'
-import { makeSanAndPlay } from 'chessops/san'
-import { makeSquare, parseSquare, parseUci } from 'chessops/util'
-import type { Color, SquareName } from 'chessops/types'
-import { isChess960, replaySetup, setupStart, STANDARD_SETUP, type GameSetup } from './variant.ts'
+import {
+  pieceOn,
+  Position,
+  uciSquares,
+  type Color,
+  type Dests,
+  type SquareName,
+} from './position.ts'
+import { isChess960, replaySetup, STANDARD_SETUP, type GameSetup } from './variant.ts'
 
-export type Dests = Map<SquareName, SquareName[]>
+export type { Dests }
 
 export function fen(pos: Position): string {
-  return makeFen(pos.toSetup())
+  return pos.fen
 }
 
 /** Replay a list of UCI moves from the standard starting position. */
 export function positionAfter(moves: readonly string[]): Position {
-  const pos = Chess.default()
-  for (const uci of moves) {
-    const move = parseUci(uci.trim())
-    if (!move || !pos.isLegal(move)) break
-    pos.play(move)
-  }
-  return pos
+  const start = Position.initial()
+  return start.after(start.line(moves, { trim: true }))
 }
 
 /** The position a FEN describes, or undefined when it is not a playable one. */
 export function positionFromFen(text: string): Position | undefined {
-  const setup = parseFen(text)
-  if (setup.isErr) return undefined
-  const pos = Chess.fromSetup(setup.value)
-  return pos.isOk ? pos.value : undefined
+  return Position.fromFen(text)
 }
 
-/** Play a single UCI move on a position; returns the SAN, or false when illegal. */
+/** The SAN of a UCI move from a position, or false when illegal. The position is unchanged. */
 export function playUci(pos: Position, uci: string): string | false {
-  const move = parseUci(uci.trim())
-  if (!move || !pos.isLegal(move)) return false
-  return makeSanAndPlay(pos, move)
+  return pos.play(uci.trim())?.san ?? false
 }
 
 /** SAN move list for a game, used by the move list UI. */
@@ -55,14 +47,13 @@ export function navigatePly(key: string, ply: number, max: number): number | und
 
 /** Legal destinations in the format chessground expects. */
 export function destsFor(pos: Position): Dests {
-  return chessgroundDests(pos) as Dests
+  return pos.dests('board')
 }
 
 /** Last move as squares, for the board highlight. */
 export function lastMoveKeys(moves: readonly string[]): SquareName[] | undefined {
   const last = moves.at(-1)
-  const move = last && parseUci(last.trim())
-  return move && 'from' in move ? [makeSquare(move.from), makeSquare(move.to)] : undefined
+  return last === undefined ? undefined : uciSquares(last.trim())
 }
 
 /** Color of the king in check, or false. */
@@ -85,11 +76,8 @@ export function statusText(pos: Position): string {
 
 /** True when moving `orig`→`dest` on this FEN is a pawn reaching the last rank. */
 export function isPromotionMove(fen: string, orig: string, dest: string): boolean {
-  const setup = parseFen(fen)
-  if (setup.isErr) return false
-  const from = parseSquare(orig)
-  if (from === undefined) return false
-  const piece = setup.value.board.get(from)
+  const setup = rules<{ board: string } | null>('fenSetup', fen)
+  const piece = setup && pieceOn(setup.board, orig)
   return piece?.role === 'pawn' && dest[1] === (piece.color === 'white' ? '8' : '1')
 }
 
@@ -105,7 +93,7 @@ export function takebackMoves(moves: readonly string[], userColor: Color): strin
 
 export type DrawReason = 'Threefold repetition' | 'Fifty-move rule'
 
-/** Draws chessops' `isEnd()` does not cover: repetition and the 50-move rule. */
+/** Draws `isEnd()` does not cover: repetition and the 50-move rule. */
 export function drawReason(moves: readonly string[]): DrawReason | undefined {
   return rules<DrawReason | null>('drawReason', moves) ?? undefined
 }
@@ -133,7 +121,7 @@ export function pgnFromUci(moves: readonly string[]): string {
 
 /** The position after `moves` from `setup` (illegal moves end the replay). */
 export function setupPositionAfter(setup: GameSetup, moves: readonly string[]): Position {
-  return replaySetup(setup, moves)?.position ?? setupStart(STANDARD_SETUP)!
+  return replaySetup(setup, moves)?.position ?? Position.from(STANDARD_SETUP)!
 }
 
 /** SAN of each move from `setup`. */
@@ -147,7 +135,7 @@ export function setupSanHistory(setup: GameSetup, moves: readonly string[]): str
 
 /** Chessground destinations under the setup's rules (Chess960 castles king onto rook). */
 export function setupDests(setup: GameSetup, pos: Position): Dests {
-  return chessgroundDests(pos, { chess960: isChess960(setup.variant) }) as Dests
+  return pos.dests(isChess960(setup.variant) ? 'board960' : 'board')
 }
 
 /** Draws by repetition and the fifty-move rule, counted from the setup's start. */

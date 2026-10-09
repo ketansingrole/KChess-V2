@@ -8,7 +8,6 @@ import { useStudyStore } from '../../app/stores/studies'
 import { useKChessStore } from '../../app/stores/kchess'
 import * as tree from '@kchess/core/domain/analysisTree'
 import AnalysisPage from '../../app/pages/analysis.vue'
-import { makeUci } from 'chessops/util'
 import { positionFromFen } from '@kchess/core/domain/chess'
 
 it('hides cloud scores, variations, arrows and playable suggestions during live play and remount', async () => {
@@ -189,8 +188,8 @@ it('reuses the document PGN while navigating and debounces serialization of edit
   const branch = (path: string, depth: number): void => {
     if (!depth) return
     const pos = positionFromFen(tree.nodeAt(branching, path).fen)!
-    const moves = [...pos.allDests()]
-      .flatMap(([from, squares]) => [...squares].map((to) => makeUci({ from, to })))
+    const moves = [...pos.dests('rules')]
+      .flatMap(([from, squares]) => squares.map((to) => `${from}${to}`))
       .slice(0, 6)
     for (const uci of moves) {
       nodes++

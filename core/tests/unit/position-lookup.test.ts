@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '../../src/domain/position'
 import { PositionLookupService } from '../../src/services/positionLookup'
 import type { PositionLookup } from '../../src/contracts/types'
 import { deferred } from '../../../tests/fixtures/deferred'

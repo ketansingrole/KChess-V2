@@ -18,7 +18,6 @@
     "stockfish": "^19.0.0",
     "tar": "7.5.22",
     "valibot": "^1.5.0",
-    "chessops": "^0.15.1",
     "@lichess-org/types": "^2.0.176",
     "@kchess/native": "workspace:*"
   },

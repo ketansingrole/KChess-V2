@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { parseSan } from 'chessops/san'
-import { makeUci, parseUci } from 'chessops/util'
 import { usePreferredReducedMotion } from '@vueuse/core'
 import { Chessground } from '@lichess-org/chessground'
 import type { Api } from '@lichess-org/chessground/api'
 import type { Config } from '@lichess-org/chessground/config'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { DrawShape } from '@lichess-org/chessground/draw'
-import type { SquareName } from 'chessops/types'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isPromotionMove, type Dests } from '@kchess/core/domain/chess'
+import type { SquareName } from '@kchess/core/domain/position'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '@kchess/core/contracts/types'
 import { setupStart, type Variant } from '@kchess/core/domain/variant'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
@@ -72,19 +70,19 @@ function submitMove(uci: string): void {
 function keyboardMove(): void {
   const pos = setupStart({ variant: props.variant ?? 'standard', fen: props.fen })
   const text = moveInput.value.trim()
-  const move = pos && (parseUci(text) ?? parseSan(pos, text))
+  const isUci =
+    /^[a-h][1-8][a-h][1-8][pnbrqkPNBRQK]?$/.test(text) || /^[pnbrqkPNBRQK]@[a-h][1-8]$/.test(text)
+  const played = pos && (isUci ? pos.play(text) : pos.playSan(text))
+  // A typed UCI move is submitted as typed (castling stays e1g1); SAN as the rules write it.
+  const uci = played && (isUci ? text.slice(0, 4) + (text[4]?.toLowerCase() ?? '') : played.uci)
   if (
-    !pos ||
-    !move ||
-    !pos.isLegal(move) ||
-    !props.dests
-      ?.get(makeUci(move).slice(0, 2) as SquareName)
-      ?.includes(makeUci(move).slice(2, 4) as SquareName)
+    !played ||
+    !uci ||
+    !props.dests?.get(uci.slice(0, 2) as SquareName)?.includes(uci.slice(2, 4) as SquareName)
   ) {
     moveMessage.value = 'Enter a legal move, such as Nf3 or g1f3.'
     return
   }
-  const uci = makeUci(move)
   moveMessage.value = `Move submitted: ${text}`
   moveInput.value = ''
   if (uci.length === 4) put(uci.slice(0, 2) as Key, uci.slice(2, 4) as Key)

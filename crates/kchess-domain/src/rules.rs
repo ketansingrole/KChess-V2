@@ -552,7 +552,7 @@ fn utf16_len_chars(chars: &[char]) -> usize {
 }
 
 /// Where chessops's `dests` puts a legal move: castling lands on the rook.
-fn dest(m: &Move) -> Option<Square> {
+pub(crate) fn dest(m: &Move) -> Option<Square> {
     match *m {
         Move::Castle { rook, .. } => Some(rook),
         Move::Put { .. } => None,

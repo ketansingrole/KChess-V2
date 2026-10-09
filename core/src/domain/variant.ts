@@ -1,14 +1,9 @@
 /**
  * Chess variants shared by the renderer (boards, move lists) and main (validation).
- * Rules come from chessops; Lichess names variants by its own keys.
+ * Rules come from Rust (`position.ts`); Lichess names variants by its own keys.
  */
-import { Chess, normalizeMove, type Position } from 'chessops/chess'
-import { lichessRules } from 'chessops/compat'
-import { INITIAL_FEN, makeFen, parseFen } from 'chessops/fen'
-import { makeSanAndPlay } from 'chessops/san'
-import { defaultPosition, setupPosition } from 'chessops/variant'
-import { parseUci } from 'chessops/util'
-import type { Rules } from 'chessops/types'
+import { rules } from './engine.ts'
+import { INITIAL_FEN, Position } from './position.ts'
 
 /** Lichess variant keys KChess can play. Crazyhouse is missing: its pocket needs a drop UI. */
 export const VARIANTS = [
@@ -66,25 +61,18 @@ export function variantFromLichess(key: string | undefined): Variant | undefined
   return isVariant(key) ? key : undefined
 }
 
-export function rulesOf(variant: Variant): Rules {
-  return lichessRules(variant)
-}
-
 /** Chess960 needs king-takes-rook castling in UCI and on the board. */
 export const isChess960 = (variant: Variant): boolean => variant === 'chess960'
 
 /** The position a setup describes, or undefined when its FEN is not legal under its rules. */
 export function setupStart(setup: GameSetup): Position | undefined {
-  const parsed = parseFen(setup.fen)
-  if (parsed.isErr) return undefined
-  const pos = setupPosition(rulesOf(setup.variant), parsed.value)
-  return pos.isOk ? pos.value : undefined
+  return Position.from(setup)
 }
 
 /** Lichess's standard start for each variant (Chess960 has no single one). */
 export function defaultFen(variant: Variant): string {
   if (variant === 'chess960') return chess960Fen(518)
-  return makeFen(defaultPosition(rulesOf(variant)).toSetup())
+  return rules<string>('defaultFen', variant)
 }
 
 /**
@@ -148,17 +136,13 @@ export function replaySetup(
   moves: readonly string[],
 ): { position: Position; played: ReplayedMove[]; start: Position } | undefined {
   const start = setupStart(setup)
-  if (!start) return undefined
-  const position = start.clone()
-  const played: ReplayedMove[] = []
-  for (const uci of moves) {
-    const parsed = parseUci(uci.trim())
-    if (!parsed) break
-    const move = normalizeMove(position, parsed)
-    if (!position.isLegal(move)) break
-    played.push({ uci, san: makeSanAndPlay(position, move) })
-  }
-  return { position, played, start }
+  const replayed =
+    start && rules<{ played: ReplayedMove[]; fen: string } | null>('setupReplay', setup, moves)
+  if (!start || !replayed) return undefined
+  const position = replayed.played.length
+    ? Position.from({ variant: setup.variant, fen: replayed.fen })!
+    : start
+  return { position, played: replayed.played, start }
 }
 
 /** True when the setup is the ordinary standard game (so Stockfish, the explorer and reviews apply). */
@@ -170,5 +154,3 @@ export function isStandardStart(setup: GameSetup): boolean {
 export function engineSupports(variant: Variant): boolean {
   return variant === 'standard' || variant === 'chess960'
 }
-
-export { Chess }

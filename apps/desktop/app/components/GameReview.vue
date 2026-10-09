@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import type { Color, Key } from '@lichess-org/chessground/types'
-import { Chess, type Position } from 'chessops/chess'
-import { makeFen } from 'chessops/fen'
-import { parsePgn, startingPosition } from 'chessops/pgn'
-import { parseSan } from 'chessops/san'
-import { makeSquare } from 'chessops/util'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { CoordinateMode, PieceAnimation } from '@kchess/core/contracts/types'
+import { INITIAL_FEN, uciSquares } from '@kchess/core/domain/position'
+import { pgnMainline } from '@kchess/core/domain/pgn'
 
 const props = defineProps<{
   pgn: string
@@ -21,27 +18,21 @@ const props = defineProps<{
   linkNames?: boolean
 }>()
 
-type ReviewStep = { position: Position; lastMove?: Key[] }
+type ReviewStep = { fen: string; check: boolean; lastMove?: Key[] }
 
 const replay = computed(() => {
-  const game = parsePgn(props.pgn)[0]
-  const starting = game && startingPosition(game.headers)
-  const position = starting && starting.isOk ? starting.value : Chess.default()
-  const steps: ReviewStep[] = [{ position: position.clone() }]
-  const moves: string[] = []
-
-  if (game) {
-    for (const node of game.moves.mainlineNodes()) {
-      const move = parseSan(position, node.data.san)
-      if (!move || !position.isLegal(move)) break
-      moves.push(node.data.san)
-      const lastMove =
-        'from' in move ? ([makeSquare(move.from), makeSquare(move.to)] as Key[]) : undefined
-      position.play(move)
-      steps.push({ position: position.clone(), lastMove })
-    }
+  const game = pgnMainline(props.pgn)
+  if (!game)
+    return { steps: [{ fen: INITIAL_FEN, check: false }] as ReviewStep[], moves: [] as string[] }
+  const steps: ReviewStep[] = [{ fen: game.start ?? INITIAL_FEN, check: game.startCheck }]
+  for (const move of game.moves) {
+    steps.push({
+      fen: move.fen,
+      check: move.check,
+      lastMove: uciSquares(move.uci) as Key[] | undefined,
+    })
   }
-  return { steps, moves }
+  return { steps, moves: game.moves.map((move) => move.san) }
 })
 
 const ply = ref(0)
@@ -71,9 +62,8 @@ const topName = computed(() =>
 const bottomName = computed(() =>
   orientation.value === props.orientation ? props.playerName : props.opponentName,
 )
-const check = computed<Color | false>(() =>
-  step.value.position.isCheck() ? step.value.position.turn : false,
-)
+const turn = computed<Color>(() => (step.value.fen.split(' ')[1] === 'w' ? 'white' : 'black'))
+const check = computed<Color | false>(() => (step.value.check ? turn.value : false))
 
 function keydown(event: KeyboardEvent): void {
   if (
@@ -106,7 +96,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 <template>
   <div class="play-layout review">
     <PlayBoard
-      :fen="makeFen(step.position.toSetup())"
+      :fen="step.fen"
       :orientation="orientation"
       :theme="theme ?? 'brown'"
       :coordinates="coordinates ?? 'inside'"
@@ -117,7 +107,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       :movable-color="orientation"
       :last-move="step.lastMove"
       :check="check"
-      :turn-color="step.position.turn"
+      :turn-color="turn"
       :live="false"
       :top="{
         name: topName ?? 'Opponent',

@@ -6,25 +6,25 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 
 ## Code that ships in the app
 
-| Project                                                                     | License           | Used for                                                                        |
-| --------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------- |
-| [`@lichess-org/chessground`](https://github.com/lichess-org/chessground)    | GPL-3.0-or-later  | The interactive chess board                                                     |
-| [`chessops`](https://github.com/niklasf/chessops)                           | GPL-3.0-or-later  | Chess rules, FEN, PGN, SAN                                                      |
-| [`stockfish`](https://www.npmjs.com/package/stockfish) (WASM build, "lite") | GPL-3.0           | The bundled computer opponent, run as a separate UCI process                    |
-| [`electron-updater`](https://github.com/electron-userland/electron-builder) | MIT               | Checks, verifies and installs desktop app updates                               |
-| [Electron](https://www.electronjs.org)                                      | MIT               | Desktop shell (includes Chromium and other components under their own licenses) |
-| [Nuxt](https://nuxt.com), [Vue](https://vuejs.org), Vue Router              | MIT               | Application framework                                                           |
-| [Nuxt UI](https://ui.nuxt.com), [Tailwind CSS](https://tailwindcss.com)     | MIT               | Interface components and styling                                                |
-| [Pinia](https://pinia.vuejs.org), [VueUse](https://vueuse.org)              | MIT               | State and utilities                                                             |
-| [`@unovis/ts`](https://unovis.dev), `@unovis/vue`                           | Apache-2.0        | The rating chart                                                                |
-| [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/)                    | MIT               | Typed Lichess API client                                                        |
-| [Valibot](https://valibot.dev)                                              | MIT               | Validating values that cross the Electron IPC boundary                          |
-| [`lru-cache`](https://github.com/isaacs/node-lru-cache)                     | BlueOak-1.0.0     | In-memory cache for profile requests                                            |
-| [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                 | ISC               | Interface icons                                                                 |
-| [`shakmaty`](https://github.com/niklasf/shakmaty)                           | GPL-3.0-or-later  | Chess and variant rules in the core's native rules (`crates/kchess-domain`)     |
-| [`serde`](https://serde.rs), `serde_json`                                   | MIT OR Apache-2.0 | Documents passed between the core and its native rules                          |
-| [`memchr`](https://github.com/BurntSushi/memchr)                            | MIT OR Unlicense  | Scanning the puzzle database CSV in the native rules                            |
-| [napi-rs](https://napi.rs) (`napi`, `napi-derive`)                          | MIT               | Loading the native rules into Node and Electron                                 |
+| Project                                                                     | License           | Used for                                                                          |
+| --------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------- |
+| [`@lichess-org/chessground`](https://github.com/lichess-org/chessground)    | GPL-3.0-or-later  | The interactive chess board                                                       |
+| [`chessops`](https://github.com/niklasf/chessops)                           | GPL-3.0-or-later  | Chess rules, FEN, PGN and SAN semantics, ported to Rust in `crates/kchess-domain` |
+| [`stockfish`](https://www.npmjs.com/package/stockfish) (WASM build, "lite") | GPL-3.0           | The bundled computer opponent, run as a separate UCI process                      |
+| [`electron-updater`](https://github.com/electron-userland/electron-builder) | MIT               | Checks, verifies and installs desktop app updates                                 |
+| [Electron](https://www.electronjs.org)                                      | MIT               | Desktop shell (includes Chromium and other components under their own licenses)   |
+| [Nuxt](https://nuxt.com), [Vue](https://vuejs.org), Vue Router              | MIT               | Application framework                                                             |
+| [Nuxt UI](https://ui.nuxt.com), [Tailwind CSS](https://tailwindcss.com)     | MIT               | Interface components and styling                                                  |
+| [Pinia](https://pinia.vuejs.org), [VueUse](https://vueuse.org)              | MIT               | State and utilities                                                               |
+| [`@unovis/ts`](https://unovis.dev), `@unovis/vue`                           | Apache-2.0        | The rating chart                                                                  |
+| [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/)                    | MIT               | Typed Lichess API client                                                          |
+| [Valibot](https://valibot.dev)                                              | MIT               | Validating values that cross the Electron IPC boundary                            |
+| [`lru-cache`](https://github.com/isaacs/node-lru-cache)                     | BlueOak-1.0.0     | In-memory cache for profile requests                                              |
+| [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                 | ISC               | Interface icons                                                                   |
+| [`shakmaty`](https://github.com/niklasf/shakmaty)                           | GPL-3.0-or-later  | Chess and variant rules in the core's native rules (`crates/kchess-domain`)       |
+| [`serde`](https://serde.rs), `serde_json`                                   | MIT OR Apache-2.0 | Documents passed between the core and its native rules                            |
+| [`memchr`](https://github.com/BurntSushi/memchr)                            | MIT OR Unlicense  | Scanning the puzzle database CSV in the native rules                              |
+| [napi-rs](https://napi.rs) (`napi`, `napi-derive`)                          | MIT               | Loading the native rules into Node and Electron                                   |
 
 The native rules (`@kchess/native`) are compiled Rust. The license text of every crate compiled
 into them, including indirect dependencies, ships beside the module as `THIRD_PARTY_LICENSES.txt`

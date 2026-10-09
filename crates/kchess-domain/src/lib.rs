@@ -5,6 +5,7 @@ pub mod api;
 pub mod js;
 pub mod library;
 pub mod pgn;
+pub mod position;
 pub mod puzzle;
 pub mod replay;
 pub mod review;

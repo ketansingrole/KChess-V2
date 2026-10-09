@@ -53,9 +53,6 @@ importers:
       '@vueuse/core':
         specifier: ^15.0.0
         version: 15.0.0(vue@3.5.43(typescript@6.0.3))
-      chessops:
-        specifier: ^0.15.1
-        version: 0.15.1
       electron:
         specifier: ^44.5.1
         version: 44.5.1(supports-color@10.2.2)
@@ -143,9 +140,6 @@ importers:
       '@kchess/node':
         specifier: workspace:*
         version: link:../../hosts/node
-      chessops:
-        specifier: ^0.15.1
-        version: 0.15.1
 
   apps/desktop:
     dependencies:
@@ -155,9 +149,6 @@ importers:
       '@kchess/native':
         specifier: workspace:*
         version: link:../../crates/kchess-node
-      chessops:
-        specifier: ^0.15.1
-        version: 0.15.1
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9(supports-color@10.2.2)
@@ -249,9 +240,6 @@ importers:
       '@lichess-org/types':
         specifier: ^2.0.176
         version: 2.0.176
-      chessops:
-        specifier: ^0.15.1
-        version: 0.15.1
       fflate:
         specifier: 0.8.3
         version: 0.8.3
@@ -423,10 +411,6 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
-
-  '@badrap/result@0.3.1':
-    resolution: {integrity: sha512-ECvpsyZYknoRD0peG1K+UkX5llld3TyK1Ot9Cq2epSoWK19nyzpGKVl98sadSmohu5wHNuiDl+Ex9SVdcIjiFg==}
-    engines: {node: '>= 22'}
 
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
@@ -3315,9 +3299,6 @@ packages:
 
   change-case@5.4.4:
     resolution: {integrity: sha512-HRQyTk2/YPEkt9TnUPbOpr64Uw3KOicFWPVBb+xiHvd6eBx/qPr9xqfBFDT8P2vWsvvz4jbEkfDe71W3VyNu2w==}
-
-  chessops@0.15.1:
-    resolution: {integrity: sha512-hQDwv90AFkrPEsRJBebh3ZE+xDga25TCCv4lavNT2plZmd33UKNFYaZsE+7rafMbnBRrDEWUVsSYFqY3qCIGZw==}
 
   chokidar@5.0.0:
     resolution: {integrity: sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==}
@@ -7540,8 +7521,6 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@badrap/result@0.3.1': {}
-
   '@bcoe/v8-coverage@1.0.2': {}
 
   '@cacheable/memory@2.2.0':
@@ -11070,10 +11049,6 @@ snapshots:
       supports-color: 7.2.0
 
   change-case@5.4.4: {}
-
-  chessops@0.15.1:
-    dependencies:
-      '@badrap/result': 0.3.1
 
   chokidar@5.0.0:
     dependencies:

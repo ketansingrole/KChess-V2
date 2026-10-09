@@ -6,7 +6,6 @@ import { stdin, stdout, stderr } from 'node:process'
 import { createNodeCore, type NodeCore, type NodeCoreOptions } from '@kchess/node'
 import { CORE_METHODS, assertLevel } from '@kchess/core'
 import { ComputerGame, computerState, LocalGame, localState } from '@kchess/core/gameSession'
-import { makeFen } from 'chessops/fen'
 import { errorSummary, logWarn } from '@kchess/core/logger'
 
 const HELP = `KChess CLI
@@ -145,7 +144,7 @@ async function interactive(
     archiveHost,
   )
   const show = (): void =>
-    json({ fen: makeFen(game.position.toSetup()), moves: game.state.moves, result: game.result })
+    json({ fen: game.position.fen, moves: game.state.moves, result: game.result })
   const timer = setInterval(() => {
     if (game.expire()) {
       persist()

@@ -1,4 +1,4 @@
-import type { Position } from 'chessops/chess'
+import type { Position } from './position.ts'
 import type { Variant } from './variant'
 
 type Color = 'white' | 'black'

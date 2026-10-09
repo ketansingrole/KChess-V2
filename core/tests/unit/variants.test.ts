@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '../../src/domain/position'
 import {
   chess960Fen,
   defaultFen,

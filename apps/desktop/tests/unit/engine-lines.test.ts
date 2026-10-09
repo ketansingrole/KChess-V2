@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import EngineLines from '../../app/components/EngineLines.vue'
 import { addMove, newTree, pvSan } from '@kchess/core/domain/analysisTree'
 import type { EngineLine } from '@kchess/core/contracts/types'

@@ -1,7 +1,7 @@
 import { effectScope, nextTick, ref } from 'vue'
 import { expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import { analysisContext } from '@kchess/core/domain/analysisContext'
 import type { AnalysisRequest, AnalysisUpdate, BroadcastGame } from '@kchess/core/contracts/types'
 import { useBroadcastEvaluations } from '../../app/composables/useBroadcastEvaluations'

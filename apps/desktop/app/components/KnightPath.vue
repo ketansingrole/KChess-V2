@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
-import type { SquareName } from 'chessops/types'
+import type { SquareName } from '@kchess/core/domain/position'
 import type { RunSaved, RunSummary } from '@kchess/core/contracts/types'
 import { knightChallenge, knightFen, knightMoves } from '@kchess/core/domain/knight'
 import type { Square } from '@kchess/core/domain/coordinates'

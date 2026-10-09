@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { INITIAL_FEN } from 'chessops/fen'
+import { INITIAL_FEN } from '@kchess/core/domain/position'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import ChessBoard from '../../app/components/ChessBoard.vue'
