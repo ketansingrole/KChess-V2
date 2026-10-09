@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { VoiceModelCache, VOICE_MODEL } from '../apps/desktop/electron/main/voiceModel.ts'
+import { VoiceModelCache, VOICE_MODEL } from '../core/src/services/voiceModel.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 export const voiceFixtureDirectory = join(root, '.data', 'voice', 'cache')

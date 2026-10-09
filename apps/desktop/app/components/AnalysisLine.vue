@@ -6,9 +6,9 @@ import {
   pathOf,
   movesOf,
   type TreeNode,
-} from '../../../../core/src/domain/analysisTree'
+} from '@kchess/core/domain/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
-import type { Judgment } from '../../../../core/src/contracts/types'
+import type { Judgment } from '@kchess/core/contracts/types'
 
 /**
  * One line of the analysis tree, Lichess-style: the moves of a line run on, and the alternatives

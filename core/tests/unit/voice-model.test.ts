@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { zipSync } from 'fflate'
-import { VoiceModelCache } from '../../electron/main/voiceModel'
+import { VoiceModelCache } from '../../src/services/voiceModel'
 
 let directory: string
 const zip = zipSync({ 'test-model/am/final.mdl': new TextEncoder().encode('test model') })

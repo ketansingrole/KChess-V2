@@ -1,7 +1,7 @@
 import { app, powerMonitor, safeStorage, shell } from 'electron'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { BUNDLED_ENGINE_SCRIPT, type CorePlatform } from '../../../../core/src'
+import { BUNDLED_ENGINE_SCRIPT, type CorePlatform } from '@kchess/core'
 
 /** The core's host capabilities, backed by Electron. */
 export function electronPlatform(focus: () => void): CorePlatform {

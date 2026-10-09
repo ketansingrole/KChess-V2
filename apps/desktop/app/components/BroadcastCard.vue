@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
-import type { BroadcastSummary } from '../../../../core/src/contracts/types'
+import type { BroadcastSummary } from '@kchess/core/contracts/types'
 
 const props = defineProps<{ item: BroadcastSummary; disabled?: boolean }>()
 defineEmits<{ select: [] }>()

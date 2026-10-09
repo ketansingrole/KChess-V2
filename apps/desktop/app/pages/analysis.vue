@@ -4,8 +4,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { ContextMenuItem, DropdownMenuItem } from '@nuxt/ui'
-import type { EngineLine } from '../../../../core/src/contracts/types'
-import { checkColor, destsFor } from '../../../../core/src/domain/chess'
+import type { EngineLine } from '@kchess/core/contracts/types'
+import { checkColor, destsFor } from '@kchess/core/domain/chess'
 import {
   formatEval,
   MOVE_GLYPHS,
@@ -14,15 +14,15 @@ import {
   onMainline,
   pvSan,
   setMoveGlyph,
-} from '../../../../core/src/domain/analysisTree'
-import { positionProblem, setupFromFen, setupFen } from '../../../../core/src/domain/boardEditor'
+} from '@kchess/core/domain/analysisTree'
+import { positionProblem, setupFromFen, setupFen } from '@kchess/core/domain/boardEditor'
 import {
   ANALYSIS_GRAMMAR,
   spokenAnalysisCommand,
   spokenChoice,
   spokenMove,
   type VoiceMoveChoice,
-} from '../../../../core/src/domain/voiceCommands'
+} from '@kchess/core/domain/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'

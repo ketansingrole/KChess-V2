@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useDocumentVisibility, useIntervalFn, useOnline, useWindowFocus } from '@vueuse/core'
-import { RequestScope } from '../../../../core/src/domain/requestScope'
+import { RequestScope } from '@kchess/core/domain/requestScope'
 import StudyCard from './StudyCard.vue'
 import { useLichessStudiesStore } from '../stores/lichessStudies'
 import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore } from '../stores/studies'
-import type { LichessStudyChapter } from '../../../../core/src/contracts/types'
+import type { LichessStudyChapter } from '@kchess/core/contracts/types'
 
 /** Studies on the player's Lichess accounts: open or keep their chapters, or send the board to one. */
 const analysis = useAnalysisStore()

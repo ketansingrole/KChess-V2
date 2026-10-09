@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { GameRecord } from '../../../../core/src/contracts/types'
+import type { GameRecord } from '@kchess/core/contracts/types'
 import { formatCount } from '../utils/format'
 
 const props = defineProps<{ label: string; record: GameRecord; hint?: string }>()

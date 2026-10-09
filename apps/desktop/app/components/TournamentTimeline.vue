@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import LichessIcon from './LichessIcon.vue'
-import type { TournamentSummary } from '../../../../core/src/contracts/types'
+import type { TournamentSummary } from '@kchess/core/contracts/types'
 
 /** Lichess's arena schedule as a timeline: one row per series, a bar per arena, a line for now. */
 const props = defineProps<{

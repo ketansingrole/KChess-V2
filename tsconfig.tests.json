@@ -6,6 +6,8 @@
     "paths": {
       "@kchess/core": ["./core/src/index.ts"],
       "@kchess/core/logger": ["./core/src/services/logger.ts"],
+      "@kchess/core/domain/*": ["./core/src/domain/*"],
+      "@kchess/core/contracts/*": ["./core/src/contracts/*"],
       "@kchess/core/gameArchive": ["./core/src/domain/gameArchive.ts"],
       "@kchess/core/gameSession": ["./core/src/domain/gameSession.ts"],
       "@kchess/node": ["./hosts/node/src/index.ts"]

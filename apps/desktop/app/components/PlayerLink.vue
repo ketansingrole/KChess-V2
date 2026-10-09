@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { USERNAME } from '../../../../core/src/domain/patterns'
+import { USERNAME } from '@kchess/core/domain/patterns'
 
 /** A Lichess username that opens the player's profile; anything else (Anonymous, AI) is plain. */
 const props = defineProps<{ username: string }>()

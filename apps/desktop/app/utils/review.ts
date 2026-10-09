@@ -1,4 +1,4 @@
-import type { Judgment, ReviewSide } from '../../../../core/src/contracts/types'
+import type { Judgment, ReviewSide } from '@kchess/core/contracts/types'
 
 const WORDS: Record<Judgment, [string, string]> = {
   blunder: ['blunder', 'blunders'],

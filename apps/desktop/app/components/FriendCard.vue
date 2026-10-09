@@ -7,7 +7,7 @@ import type {
   LichessAccount,
   LichessUser,
   UserPresence,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import { formatBytes, formatCount, timeAgo } from '../utils/format'
 import { useWatchStore } from '../stores/watch'
 

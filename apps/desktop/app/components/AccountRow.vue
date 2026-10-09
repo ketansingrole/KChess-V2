@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { formatGameDate } from '../utils/games'
 import { formatBytes, formatCount } from '../utils/format'
-import type { LichessAccount } from '../../../../core/src/contracts/types'
+import type { LichessAccount } from '@kchess/core/contracts/types'
 
 const usage = useUsageStore()
 

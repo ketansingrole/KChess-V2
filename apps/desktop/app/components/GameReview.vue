@@ -6,7 +6,7 @@ import { parsePgn, startingPosition } from 'chessops/pgn'
 import { parseSan } from 'chessops/san'
 import { makeSquare } from 'chessops/util'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { CoordinateMode, PieceAnimation } from '../../../../core/src/contracts/types'
+import type { CoordinateMode, PieceAnimation } from '@kchess/core/contracts/types'
 
 const props = defineProps<{
   pgn: string

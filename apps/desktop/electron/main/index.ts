@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { PERFORMANCE_NAMES, type PerformanceName } from '../../contracts/rendererDiagnostics'
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
-import { VoiceModelCache } from './voiceModel'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle, setIpcOwner, assertIpcComplete } from './ipc'
 import { isAppUrl } from './appOrigin'
@@ -27,12 +26,13 @@ import {
   logError,
   logWarn,
   recordTiming,
+  VoiceModelCache,
   type CoreMethod,
   type KChessCore,
-} from '../../../../core/src'
+} from '@kchess/core'
 import { electronPlatform } from './platform'
 import { saveWithDialog } from './saveDialog'
-import { assertExport, assertNotification } from '../../../../core/src/domain/validate'
+import { assertExport, assertNotification } from '@kchess/core/domain/validate'
 import type { ChallengeInfo } from '../../contracts/types'
 
 let window: BrowserWindow | null = null

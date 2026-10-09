@@ -2,8 +2,8 @@ import { expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { useKChessStore } from '../../app/stores/kchess'
 import { desktop } from './fixtures'
-import { chess960Fen } from '../../../../core/src/domain/variant'
-import type { OnlineEvent } from '../../../../core/src/contracts/types'
+import { chess960Fen } from '@kchess/core/domain/variant'
+import type { OnlineEvent } from '@kchess/core/contracts/types'
 
 const full = (overrides: Record<string, unknown> = {}, state: Record<string, unknown> = {}) =>
   ({

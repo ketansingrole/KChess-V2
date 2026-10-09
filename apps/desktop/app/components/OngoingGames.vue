@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Key } from '@lichess-org/chessground/types'
-import type { OngoingGame } from '../../../../core/src/contracts/types'
+import type { OngoingGame } from '@kchess/core/contracts/types'
 import { useChallengeStore } from '../stores/challenges'
 
 const challenges = useChallengeStore()

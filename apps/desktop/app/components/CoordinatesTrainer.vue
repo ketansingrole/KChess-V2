@@ -2,19 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import type { RunSaved, RunSummary, VoiceOutcome } from '../../../../core/src/contracts/types'
+import type { RunSaved, RunSummary, VoiceOutcome } from '@kchess/core/contracts/types'
 import { INITIAL_FEN } from 'chessops/fen'
-import {
-  EMPTY_FEN,
-  FILES,
-  RANKS,
-  randomSquare,
-  type Square,
-} from '../../../../core/src/domain/coordinates'
+import { EMPTY_FEN, FILES, RANKS, randomSquare, type Square } from '@kchess/core/domain/coordinates'
 import { useCountdown } from '../utils/countdown'
 import { play } from '../utils/sound'
-import { formatRunClock } from '../../../../core/src/domain/rush'
-import { COORDINATE_GRAMMAR, spokenSquare } from '../../../../core/src/domain/voiceCommands'
+import { formatRunClock } from '@kchess/core/domain/rush'
+import { COORDINATE_GRAMMAR, spokenSquare } from '@kchess/core/domain/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import VoiceInput from './VoiceInput.vue'

@@ -5,7 +5,7 @@ import type { Config } from '@lichess-org/chessground/config'
 import { dragNewPiece } from '@lichess-org/chessground/drag'
 import type { Color, Key, MouchEvent, Piece, Role } from '@lichess-org/chessground/types'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { CoordinateMode, PieceAnimation } from '../../../../core/src/contracts/types'
+import type { CoordinateMode, PieceAnimation } from '@kchess/core/contracts/types'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
 
 /**

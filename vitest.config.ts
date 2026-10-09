@@ -1,8 +1,10 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import { coreAliases } from './tooling/core-aliases.ts'
 
 export default defineConfig({
   plugins: [vue()],
+  resolve: { alias: coreAliases },
   test: {
     include: [
       'tests/unit/**/*.test.{ts,mjs}',

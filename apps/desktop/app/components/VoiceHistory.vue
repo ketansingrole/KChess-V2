@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { VoiceAttempt, VoiceOutcome } from '../../../../core/src/contracts/types'
+import type { VoiceAttempt, VoiceOutcome } from '@kchess/core/contracts/types'
 
 /**
  * Settings › Voice: what voice input heard, how it was read and what the player meant. The point

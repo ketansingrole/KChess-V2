@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { APP_CSP, VOICE_WORKER_CSP } from './appOrigin'
-import { logDebug } from '../../../../core/src/services/logger'
+import { logDebug } from '@kchess/core/logger'
 import { app, net, protocol } from 'electron'
 import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'

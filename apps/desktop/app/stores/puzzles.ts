@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch, onScopeDispose } from 'vue'
 import { useLocalStorage, useOnline } from '@vueuse/core'
-import { pickConnectedAccount } from '../../../../core/src/domain/accounts'
+import { pickConnectedAccount } from '@kchess/core/domain/accounts'
 import type {
   LichessRatingHistory,
   LichessUser,
@@ -12,15 +12,15 @@ import type {
   PuzzleDbStatus,
   PuzzleDifficulty,
   StormDashboard,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import {
   PuzzleSession,
   puzzleSessionState,
   isReconnect,
   type TrainMode,
-} from '../../../../core/src/domain/puzzleSession'
+} from '@kchess/core/domain/puzzleSession'
 import { useKChessStore } from './kchess'
-export type { TrainMode, TrainPhase } from '../../../../core/src/domain/puzzleSession'
+export type { TrainMode, TrainPhase } from '@kchess/core/domain/puzzleSession'
 
 export type PuzzleTab = 'train' | 'daily' | 'rush' | 'stats' | 'history'
 

@@ -2,12 +2,8 @@ import { effectScope, nextTick, ref } from 'vue'
 import { expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { INITIAL_FEN } from 'chessops/fen'
-import { analysisContext } from '../../../../core/src/domain/analysisContext'
-import type {
-  AnalysisRequest,
-  AnalysisUpdate,
-  BroadcastGame,
-} from '../../../../core/src/contracts/types'
+import { analysisContext } from '@kchess/core/domain/analysisContext'
+import type { AnalysisRequest, AnalysisUpdate, BroadcastGame } from '@kchess/core/contracts/types'
 import { useBroadcastEvaluations } from '../../app/composables/useBroadcastEvaluations'
 import EvalBar from '../../app/components/EvalBar.vue'
 import { desktop } from './fixtures'

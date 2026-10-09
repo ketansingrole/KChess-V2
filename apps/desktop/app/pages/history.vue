@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useOnline } from '@vueuse/core'
-import { gameResult } from '../../../../core/src/domain/gameStatus'
+import { gameResult } from '@kchess/core/domain/gameStatus'
 import { useSwipeBack } from '../composables/useSwipeBack'
-import type { LichessGame } from '../../../../core/src/contracts/types'
+import type { LichessGame } from '@kchess/core/contracts/types'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import { judgmentCounts } from '../utils/review'

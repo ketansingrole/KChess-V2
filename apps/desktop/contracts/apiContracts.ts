@@ -1,10 +1,6 @@
 import * as v from 'valibot'
-import {
-  CORE_CONTRACTS,
-  validateArguments,
-  type Checks,
-} from '../../../core/src/contracts/apiContracts'
-import { assertExport, assertNotification, assertSettings } from '../../../core/src/domain/validate'
+import { CORE_CONTRACTS, validateArguments, type Checks } from '@kchess/core/contracts/apiContracts'
+import { assertExport, assertNotification, assertSettings } from '@kchess/core/domain/validate'
 import { PERFORMANCE_NAMES, RENDERER_ROUTES } from './rendererDiagnostics'
 import type { InvokeMethod, IpcArguments } from './ipc'
 

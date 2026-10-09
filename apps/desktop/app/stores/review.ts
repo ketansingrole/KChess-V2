@@ -6,7 +6,7 @@ import type {
   ReviewSummary,
   ReviewUpdate,
   StoredReview,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 
 /**
  * Game reviews, as the main process works them out: reviews already seen, the summaries the game

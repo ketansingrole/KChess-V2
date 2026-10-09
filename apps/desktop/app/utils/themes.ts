@@ -4,7 +4,7 @@ import type {
   OAuthPageColors,
   OAuthPageLook,
   ThemePalette,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import { presetThemes } from './themePresets'
 
 export const DEFAULT_THEME_ID = 'kchess'

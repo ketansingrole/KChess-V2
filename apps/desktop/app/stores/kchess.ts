@@ -2,12 +2,12 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useLocalStorage, useMediaQuery } from '@vueuse/core'
 import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
-import { pickConnectedAccount } from '../../../../core/src/domain/accounts'
-import { nearestEngineLevel } from '../../../../core/src/domain/engineLevels'
-import { canPlayOnline } from '../../../../core/src/domain/timeControl'
+import { pickConnectedAccount } from '@kchess/core/domain/accounts'
+import { nearestEngineLevel } from '@kchess/core/domain/engineLevels'
+import { canPlayOnline } from '@kchess/core/domain/timeControl'
 import { boardThemes } from '../utils/boards'
 import { allThemes, applyTheme, findTheme, oauthPageLook } from '../utils/themes'
-import { fen, navigatePly } from '../../../../core/src/domain/chess'
+import { fen, navigatePly } from '@kchess/core/domain/chess'
 import { configure } from '../utils/sound'
 import { formatGameDate } from '../utils/games'
 import { useOnlineGame } from './kchess/onlineGame'
@@ -19,14 +19,14 @@ import { useAccountProfile } from './kchess/accountProfile'
 import { formatBytes } from '../utils/format'
 import { useUsageStore } from './usage'
 import { useAppUpdatesStore } from './appUpdates'
-import type { GameSetup } from '../../../../core/src/domain/variant'
+import type { GameSetup } from '@kchess/core/domain/variant'
 import type {
   AppData,
   EngineLevel,
   AppTheme,
   NotificationKind,
   Settings,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 
 export type Page =
   | 'dashboard'

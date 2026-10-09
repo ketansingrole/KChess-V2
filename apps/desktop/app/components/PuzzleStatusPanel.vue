@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Puzzle } from '../../../../core/src/contracts/types'
-import { playerColor } from '../../../../core/src/domain/puzzle'
+import type { Puzzle } from '@kchess/core/contracts/types'
+import { playerColor } from '@kchess/core/domain/puzzle'
 import { themeName } from '../utils/puzzleThemes'
 
 /** The words beside a puzzle board: what to do, how it went, and the buttons that help. */

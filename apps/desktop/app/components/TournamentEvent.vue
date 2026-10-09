@@ -2,8 +2,8 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
 import type { Key } from '@lichess-org/chessground/types'
-import type { TournamentGame, TournamentSystem } from '../../../../core/src/contracts/types'
-import { formatClock } from '../../../../core/src/domain/clock'
+import type { TournamentGame, TournamentSystem } from '@kchess/core/contracts/types'
+import { formatClock } from '@kchess/core/domain/clock'
 import { useTournamentStore } from '../stores/tournaments'
 import { useWatchStore } from '../stores/watch'
 

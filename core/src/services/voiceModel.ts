@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { logDebug } from '../../../../core/src/services/logger.ts'
-import type { VoiceModelProgress, VoiceModelStatus } from '../../../../core/src/contracts/types'
+import { logDebug } from './logger.ts'
+import type { VoiceModelProgress, VoiceModelStatus } from '../contracts/types'
 
 export const VOICE_MODEL = {
   name: 'vosk-model-small-en-us-0.15',

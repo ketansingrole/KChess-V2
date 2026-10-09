@@ -1,7 +1,7 @@
 // Generated from OpenChamber's built-in themes (MIT, https://github.com/openchamber/openchamber),
 // reduced to the colors this app uses. Alpha colors are flattened over the theme's own background.
 // Names and palettes belong to their original authors; see apps/desktop/app/assets/ATTRIBUTION.md.
-import type { AppTheme } from '../../../../core/src/contracts/types'
+import type { AppTheme } from '@kchess/core/contracts/types'
 
 export const presetThemes: AppTheme[] = [
   {

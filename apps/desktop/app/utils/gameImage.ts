@@ -1,6 +1,6 @@
 import { parseUci } from 'chessops/util'
 import { normalizeMove, type Position } from 'chessops/chess'
-import { replaySetup, type GameSetup } from '../../../../core/src/domain/variant'
+import { replaySetup, type GameSetup } from '@kchess/core/domain/variant'
 import { GifWorkerClient } from './gifWorkerClient'
 import { pieceUrl } from './pieces'
 

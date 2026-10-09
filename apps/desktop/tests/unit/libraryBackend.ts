@@ -14,8 +14,8 @@ import {
   assertSessionKind,
   assertStudyCommand,
   type LegacyDocuments,
-} from '../../../../core/src/domain/library'
-import type { CoreApi } from '../../../../core/src/contracts/types'
+} from '@kchess/core/domain/library'
+import type { CoreApi } from '@kchess/core/contracts/types'
 import { setInitialLibrary } from '../../app/utils/library'
 import { testPlatform } from '../../../../tests/fixtures/corePlatform'
 import { testGeneration, type LibraryMethod } from './testLibrary'

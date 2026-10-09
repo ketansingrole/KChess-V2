@@ -2,11 +2,7 @@ import { app, dialog } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  DiagnosticLog,
-  performanceSnapshot,
-  startPerformanceMonitoring,
-} from '../../../../core/src'
+import { DiagnosticLog, performanceSnapshot, startPerformanceMonitoring } from '@kchess/core'
 
 let log: DiagnosticLog | undefined
 

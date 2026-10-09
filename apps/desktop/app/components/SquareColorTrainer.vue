@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { RunSaved, RunSummary } from '../../../../core/src/contracts/types'
-import { randomSquare, squareColor, type Square } from '../../../../core/src/domain/coordinates'
+import type { RunSaved, RunSummary } from '@kchess/core/contracts/types'
+import { randomSquare, squareColor, type Square } from '@kchess/core/domain/coordinates'
 import { useCountdown } from '../utils/countdown'
-import { formatRunClock } from '../../../../core/src/domain/rush'
+import { formatRunClock } from '@kchess/core/domain/rush'
 import { play } from '../utils/sound'
 
 /** Is this square light or dark? Thirty seconds; the best score stays on this computer. */

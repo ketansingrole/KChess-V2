@@ -5,9 +5,9 @@ import { defineComponent } from 'vue'
 import ChessBoard from '../../app/components/ChessBoard.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
-import { EMPTY_FEN } from '../../../../core/src/domain/coordinates'
+import { EMPTY_FEN } from '@kchess/core/domain/coordinates'
 import { desktop, componentStubs } from './fixtures'
-import type { RunInput } from '../../../../core/src/contracts/types'
+import type { RunInput } from '@kchess/core/contracts/types'
 
 const BoardStub = defineComponent({
   name: 'ChessBoard',

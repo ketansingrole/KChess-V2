@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Puzzle, StoredReview } from '../../../../core/src/contracts/types'
-import type { MistakeExercise } from '../../../../core/src/domain/library'
+import type { Puzzle, StoredReview } from '@kchess/core/contracts/types'
+import type { MistakeExercise } from '@kchess/core/domain/library'
 import { initialLibrary } from '../utils/library'
 
 /** Drills made from reviewed mistakes, scheduled and kept by the core. */

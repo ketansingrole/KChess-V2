@@ -24,7 +24,9 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
   in plain Node (bundled engine, puzzle worker, library, concurrent isolated Node hosts and CLI).
 - Node and CLI hosts use only the core entry and logger; core cannot import either host or
   Vue/Pinia/Nuxt. Game sessions and archive rules in `core/src/domain` have no UI dependency.
-- Main imports the core only through `core/src` (its entry) and `core/src/services/logger`.
+- Main imports the core only through `@kchess/core`, `@kchess/core/logger`, `@kchess/core/domain/*`
+  and `@kchess/core/contracts/*`; the renderer only through the last two. Desktop bundles the core
+  from source via `tooling/core-aliases.ts`; Node frontends use the package's built exports.
 - Main, core, shared and preload cannot import renderer code.
 - Register IPC through apps/desktop/electron/main/ipc.ts; it authenticates the owned top-level frame
   before validating input and invoking a handler.

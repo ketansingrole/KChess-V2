@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { ChallengeInfo, DeclineReason } from '../../../../core/src/contracts/types'
+import type { ChallengeInfo, DeclineReason } from '@kchess/core/contracts/types'
 import { describeControl, useChallengeStore } from '../stores/challenges'
 
 const challenges = useChallengeStore()

@@ -5,8 +5,8 @@ import type {
   LichessAccount,
   MicrophoneStatus,
   NotificationSkip,
-} from '../../../../core/src/contracts/types'
-import { DEFAULT_ENGINE_LEVELS, ENGINE_LADDER } from '../../../../core/src/domain/engineLevels'
+} from '@kchess/core/contracts/types'
+import { DEFAULT_ENGINE_LEVELS, ENGINE_LADDER } from '@kchess/core/domain/engineLevels'
 import { LAUNCHER_PERMISSION_HINT, useMicrophoneAccess } from '../utils/microphone'
 import { describeMicError } from '../utils/voiceCapture'
 import { formatBytes, formatCount } from '../utils/format'

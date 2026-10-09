@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { GameSetup } from '../../../../core/src/domain/variant'
-import { setupPgn } from '../../../../core/src/domain/chess'
+import type { GameSetup } from '@kchess/core/domain/variant'
+import { setupPgn } from '@kchess/core/domain/chess'
 
 const props = defineProps<{
   setup: GameSetup

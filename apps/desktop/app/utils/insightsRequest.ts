@@ -1,5 +1,5 @@
-import type { RequestScope } from '../../../../core/src/domain/requestScope'
-import type { InsightsQuery, InsightsReport } from '../../../../core/src/contracts/types'
+import type { RequestScope } from '@kchess/core/domain/requestScope'
+import type { InsightsQuery, InsightsReport } from '@kchess/core/contracts/types'
 
 /** Insights is a bounded synchronous SQLite read in main, with no remote work to cancel. */
 export async function requestInsights(

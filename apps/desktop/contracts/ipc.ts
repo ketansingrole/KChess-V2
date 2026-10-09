@@ -1,4 +1,4 @@
-import type { CoreEvents } from '../../../core/src/contracts/core'
+import type { CoreEvents } from '@kchess/core/contracts/core'
 import type { AppUpdateStatus, DesktopApi, VoiceModelProgress } from './types'
 
 /** Core events the shell handles itself instead of forwarding. */

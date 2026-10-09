@@ -9,12 +9,12 @@ import type {
   PerfStats,
   PerfType,
   UserPresence,
-} from '../../../../core/src/contracts/types'
-import { PERF_TYPES } from '../../../../core/src/contracts/types'
-import { USERNAME } from '../../../../core/src/domain/patterns'
+} from '@kchess/core/contracts/types'
+import { PERF_TYPES } from '@kchess/core/contracts/types'
+import { USERNAME } from '@kchess/core/domain/patterns'
 import { useWatchStore } from '../stores/watch'
 import { useAnalysisStore } from '../stores/analysis'
-import { mergeRatingHistories, ratingHistoryFromGames } from '../../../../core/src/domain/ratings'
+import { mergeRatingHistories, ratingHistoryFromGames } from '@kchess/core/domain/ratings'
 
 const online = useOnline()
 const store = useKChessStore()

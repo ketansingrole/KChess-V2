@@ -10,7 +10,13 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "types": ["vite/client", "electron-vite/node"]
+    "types": ["vite/client", "electron-vite/node"],
+    "paths": {
+      "@kchess/core": ["../../core/src/index.ts"],
+      "@kchess/core/logger": ["../../core/src/services/logger.ts"],
+      "@kchess/core/domain/*": ["../../core/src/domain/*"],
+      "@kchess/core/contracts/*": ["../../core/src/contracts/*"]
+    }
   },
   "include": ["electron/**/*.ts", "contracts/**/*.ts", "electron.vite.config.ts"]
 }

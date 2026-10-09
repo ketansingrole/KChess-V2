@@ -40,11 +40,13 @@ export const boundaries = {
             ? 'core/src'
             : source === '@kchess/core/logger'
               ? 'core/src/services/logger'
-              : source.startsWith('@kchess/core/')
-                ? 'core/src/domain/' + source.slice('@kchess/core/'.length)
-                : source === '@kchess/node'
-                  ? 'hosts/node/src'
-                  : source
+              : /^@kchess\/core\/(?:domain|contracts)\//.test(source)
+                ? 'core/src/' + source.slice('@kchess/core/'.length)
+                : source.startsWith('@kchess/core/')
+                  ? 'core/src/domain/' + source.slice('@kchess/core/'.length)
+                  : source === '@kchess/node'
+                    ? 'hosts/node/src'
+                    : source
       const renderer =
         file.startsWith('apps/desktop/app/') || file.startsWith('apps/desktop/electron/renderer/')
       const shared =
@@ -100,6 +102,13 @@ export const boundaries = {
         !PUBLIC_CORE.includes(imported.replace(/\.ts$/, ''))
       )
         reason = 'Hosts use only the core entry (core/src) and its logger.'
+      else if (
+        (main || preload || renderer || nodeHost || file.startsWith('apps/desktop/contracts/')) &&
+        !source.startsWith('@kchess/') &&
+        within(imported, 'core/src')
+      )
+        reason =
+          'Import the core by its public names: @kchess/core, @kchess/core/logger, @kchess/core/domain/*, @kchess/core/contracts/*.'
       else if (
         (main || core) &&
         /(?:^|\/)puzzle(?:Queries|Worker)(?:\.ts)?$/.test(imported) &&

@@ -9,13 +9,9 @@ import type { Color, Key } from '@lichess-org/chessground/types'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { SquareName } from 'chessops/types'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { isPromotionMove, type Dests } from '../../../../core/src/domain/chess'
-import type {
-  CoordinateMode,
-  PieceAnimation,
-  PromotionMode,
-} from '../../../../core/src/contracts/types'
-import { setupStart, type Variant } from '../../../../core/src/domain/variant'
+import { isPromotionMove, type Dests } from '@kchess/core/domain/chess'
+import type { CoordinateMode, PieceAnimation, PromotionMode } from '@kchess/core/contracts/types'
+import { setupStart, type Variant } from '@kchess/core/domain/variant'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
 
 const props = defineProps<{

@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted } from 'vue'
-import { SubscriptionScope } from '../../../../core/src/domain/requestScope'
+import { SubscriptionScope } from '@kchess/core/domain/requestScope'
 import { activeSwipeBackStep, activeSwipeForwardStep } from '../utils/swipeBack'
 import { installPageSwipeNavigation } from '../utils/pageSwipe'
 import { useKChessStore } from '../stores/kchess'

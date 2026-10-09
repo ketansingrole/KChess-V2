@@ -58,6 +58,13 @@ it.each([
   ['core/src/services/test.js', "import { view } from '../../../apps/desktop/app/view'"],
   ['core/src/services/test.js', "import { queryPuzzles } from './puzzleQueries'"],
   ['core/src/services/test.js', "import { DatabaseSync } from 'node:sqlite'"],
+  ['apps/desktop/app/page.js', "import { logDebug } from '@kchess/core/logger'"],
+  ['apps/desktop/app/page.js', "import { parseFen } from '../../../core/src/domain/chess'"],
+  [
+    'apps/desktop/electron/main/test.js',
+    "import { assertTheme } from '../../../../core/src/domain/validate'",
+  ],
+  ['apps/desktop/contracts/test.js', "import typeOnly from '../../../core/src/contracts/types'"],
 ])('rejects forbidden dependency in %s: %s', (filename, code) => {
   expect(lint(code, filename)).toHaveLength(1)
 })
@@ -67,6 +74,15 @@ it.each([
   ['apps/desktop/electron/preload/index.js', "import { ipcRenderer } from 'electron'"],
   ['apps/desktop/electron/main/ipc.ts', "import { ipcMain } from 'electron'"],
   ['core/src/services/puzzleWorker.ts', "import { queryPuzzles } from './puzzleQueries'"],
+  ['apps/desktop/app/page.js', "import { parseFen } from '@kchess/core/domain/chess'"],
+  ['apps/desktop/app/page.js', "import typeOnly from '@kchess/core/contracts/types'"],
+  ['apps/desktop/electron/main/test.js', "import { createKChessCore } from '@kchess/core'"],
+  ['apps/desktop/electron/main/test.js', "import { logDebug } from '@kchess/core/logger'"],
+  [
+    'apps/desktop/electron/main/test.js',
+    "import { assertTheme } from '@kchess/core/domain/validate'",
+  ],
+  ['apps/desktop/electron/main/test.js', "import typeOnly from '@kchess/core/contracts/types'"],
 ])('allows owned dependency in %s', (filename, code) => {
   // Rule ownership uses the actual TS path while ESLint parses plain JS test snippets.
   const messages = new Linter().verify(

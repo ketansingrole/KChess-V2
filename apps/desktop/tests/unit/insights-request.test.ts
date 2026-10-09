@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
-import { RequestScope } from '../../../../core/src/domain/requestScope'
+import { RequestScope } from '@kchess/core/domain/requestScope'
 import { requestInsights } from '../../app/utils/insightsRequest'
-import type { InsightsReport } from '../../../../core/src/contracts/types'
+import type { InsightsReport } from '@kchess/core/contracts/types'
 import { deferred } from './fixtures'
 
 const report = (total: number) => ({ total }) as InsightsReport

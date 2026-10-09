@@ -1,4 +1,4 @@
-import type { PieceAnimation } from '../../../../core/src/contracts/types'
+import type { PieceAnimation } from '@kchess/core/contracts/types'
 
 /**
  * Lichess piece sets whose licenses are compatible with this project's GPL-3.0-or-later

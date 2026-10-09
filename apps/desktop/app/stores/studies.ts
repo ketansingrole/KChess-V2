@@ -8,8 +8,8 @@ import {
   type StudyChapter,
   type StudyCommand,
   type StudyCommandResult,
-} from '../../../../core/src/domain/library'
-import type { LichessStudyChapter } from '../../../../core/src/contracts/types'
+} from '@kchess/core/domain/library'
+import type { LichessStudyChapter } from '@kchess/core/contracts/types'
 
 export type { SavedStudy, StudyChapter }
 

@@ -9,14 +9,14 @@ import {
   spokenMove,
   type GameCommand,
   type VoiceMoveChoice,
-} from '../../../../core/src/domain/voiceCommands'
-import { setupPgn } from '../../../../core/src/domain/chess'
-import { VARIANT_LABELS } from '../../../../core/src/domain/variant'
+} from '@kchess/core/domain/voiceCommands'
+import { setupPgn } from '@kchess/core/domain/chess'
+import { VARIANT_LABELS } from '@kchess/core/domain/variant'
 import { useAnalysisStore } from '../stores/analysis'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
-import type { VoiceOutcome } from '../../../../core/src/contracts/types'
-import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '../../../../core/src/domain/engineLevels'
+import type { VoiceOutcome } from '@kchess/core/contracts/types'
+import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/core/domain/engineLevels'
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()

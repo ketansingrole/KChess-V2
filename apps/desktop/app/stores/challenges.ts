@@ -6,7 +6,7 @@ import type {
   DeclineReason,
   LobbyState,
   OngoingGame,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import { useKChessStore } from './kchess'
 import { useTournamentStore } from './tournaments'
 

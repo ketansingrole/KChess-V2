@@ -10,8 +10,8 @@ import {
   activeSwipeForwardStep,
   registerSwipeBackStep,
 } from '../../app/utils/swipeBack'
-import { DEFAULT_SETTINGS } from '../../../../core/src/contracts/defaultSettings'
-import { assertSettings } from '../../../../core/src/domain/validate'
+import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
+import { assertSettings } from '@kchess/core/domain/validate'
 import { migrate, MIGRATIONS } from '../../../../core/src/services/migrations'
 
 describe('trackpad page history', () => {

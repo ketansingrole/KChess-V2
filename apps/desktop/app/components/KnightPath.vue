@@ -2,11 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { SquareName } from 'chessops/types'
-import type { RunSaved, RunSummary } from '../../../../core/src/contracts/types'
-import { knightChallenge, knightFen, knightMoves } from '../../../../core/src/domain/knight'
-import type { Square } from '../../../../core/src/domain/coordinates'
+import type { RunSaved, RunSummary } from '@kchess/core/contracts/types'
+import { knightChallenge, knightFen, knightMoves } from '@kchess/core/domain/knight'
+import type { Square } from '@kchess/core/domain/coordinates'
 import { useCountdown } from '../utils/countdown'
-import { formatRunClock } from '../../../../core/src/domain/rush'
+import { formatRunClock } from '@kchess/core/domain/rush'
 import { playMoveSound } from '../utils/sound'
 
 /**

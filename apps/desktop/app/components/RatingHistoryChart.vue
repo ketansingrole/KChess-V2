@@ -1,12 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
-import type { LichessRatingHistory } from '../../../../core/src/contracts/types'
-import {
-  isPuzzleHistory,
-  normalizeRatingKey,
-  ratingDisplayName,
-} from '../../../../core/src/domain/ratings'
+import type { LichessRatingHistory } from '@kchess/core/contracts/types'
+import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '@kchess/core/domain/ratings'
 
 /** Current rating per Lichess history name ("Blitz"), shown on the toggle chips. */
 export interface CurrentRating {

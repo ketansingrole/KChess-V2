@@ -6,8 +6,8 @@ import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useReviewStore } from '../../app/stores/review'
-import { analysisContext } from '../../../../core/src/domain/analysisContext'
-import { DEFAULT_SETTINGS } from '../../../../core/src/contracts/defaultSettings'
+import { analysisContext } from '@kchess/core/domain/analysisContext'
+import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
 import type {
   AnalysisRequest,
   AnalysisUpdate,
@@ -18,7 +18,7 @@ import type {
   LichessRatingHistory,
   ReviewSummary,
   ReviewUpdate,
-} from '../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import { deferred, desktop } from './fixtures'
 
 const row = (id: string): LichessGame => ({

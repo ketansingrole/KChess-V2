@@ -5,17 +5,11 @@ import * as fc from 'fast-check'
 import { Chess } from 'chessops/chess'
 import { makeUci } from 'chessops/util'
 import { INITIAL_FEN } from 'chessops/fen'
-import {
-  addMove,
-  newTree,
-  nodeAt,
-  treeFromPgn,
-  treeToPgn,
-} from '../../../../core/src/domain/analysisTree'
-import { assertAnalysisRequest } from '../../../../core/src/domain/validate'
+import { addMove, newTree, nodeAt, treeFromPgn, treeToPgn } from '@kchess/core/domain/analysisTree'
+import { assertAnalysisRequest } from '@kchess/core/domain/validate'
 import { isAppUrl, APP_CSP } from '../../electron/main/appOrigin'
 import { readLines } from '../../../../core/src/services/ndjson'
-import { validateOnlineEvent } from '../../../../core/src/domain/onlineEvent'
+import { validateOnlineEvent } from '@kchess/core/domain/onlineEvent'
 import { pickStockfishAsset } from '../../../../core/src/services/stockfishAsset'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'

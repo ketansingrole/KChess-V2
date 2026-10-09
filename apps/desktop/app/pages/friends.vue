@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
-import type { LichessAccount } from '../../../../core/src/contracts/types'
+import type { LichessAccount } from '@kchess/core/contracts/types'
 import { formatBytes, formatCount } from '../utils/format'
 
 const online = useOnline()

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
-import type { Puzzle, RunSaved, RunSummary } from '../../../../core/src/contracts/types'
+import type { Puzzle, RunSaved, RunSummary } from '@kchess/core/contracts/types'
 import {
   RUSH_CHOICES,
   RUSH_CONFIGS,
@@ -16,7 +16,7 @@ import {
   skip,
   tick,
   type RushState,
-} from '../../../../core/src/domain/rush'
+} from '@kchess/core/domain/rush'
 import { play } from '../utils/sound'
 import type PuzzleBoard from './PuzzleBoard.vue'
 

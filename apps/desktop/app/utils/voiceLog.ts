@@ -1,4 +1,4 @@
-import type { VoiceAttemptInput, VoiceAttemptUpdate } from '../../../../core/src/contracts/types'
+import type { VoiceAttemptInput, VoiceAttemptUpdate } from '@kchess/core/contracts/types'
 import { useKChessStore } from '../stores/kchess'
 import type { VoiceResult } from './voiceCapture'
 

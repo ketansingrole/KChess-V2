@@ -1,9 +1,11 @@
 import { localIcons, voskWorkerPlugin } from '../../tooling/vosk-worker-plugin.ts'
+import { rendererCoreAliases } from '../../tooling/core-aliases.ts'
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
   future: { compatibilityVersion: 5 },
   ssr: false,
+  alias: rendererCoreAliases,
   // Nitro leaves the Nuxt renderer external on Windows (backslash paths miss
   // its `nuxt/dist` inline rule), so every prerendered route 500s with
   // "Either manifest or precomputed data must be provided"

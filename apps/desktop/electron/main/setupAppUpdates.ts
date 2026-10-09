@@ -3,8 +3,8 @@ import updaterPackage from 'electron-updater'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AppUpdates } from './appUpdates'
-import { logDebug, logError, logWarn } from '../../../../core/src/services/logger'
-import type { AppUpdateStatus, Settings } from '../../../../core/src/contracts/types'
+import { logDebug, logError, logWarn } from '@kchess/core/logger'
+import type { AppUpdateStatus, Settings } from '@kchess/core/contracts/types'
 
 export const APP_RELEASES_URL = 'https://github.com/ketansingrole/KChess-V2/releases'
 

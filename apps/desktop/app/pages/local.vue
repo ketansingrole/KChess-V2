@@ -12,10 +12,10 @@ import {
   setupStart,
   type GameSetup,
   type Variant,
-} from '../../../../core/src/domain/variant'
-import { formatClock } from '../../../../core/src/domain/clock'
-import { fen as fenOf, navigatePly, setupPgn } from '../../../../core/src/domain/chess'
-import { positionProblem } from '../../../../core/src/domain/boardEditor'
+} from '@kchess/core/domain/variant'
+import { formatClock } from '@kchess/core/domain/clock'
+import { fen as fenOf, navigatePly, setupPgn } from '@kchess/core/domain/chess'
+import { positionProblem } from '@kchess/core/domain/boardEditor'
 import { useLocalGameStore, type LocalClock } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import {
@@ -23,10 +23,10 @@ import {
   spokenChoice,
   spokenMove,
   type VoiceMoveChoice,
-} from '../../../../core/src/domain/voiceCommands'
+} from '@kchess/core/domain/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
-import type { VoiceOutcome } from '../../../../core/src/contracts/types'
+import type { VoiceOutcome } from '@kchess/core/contracts/types'
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()

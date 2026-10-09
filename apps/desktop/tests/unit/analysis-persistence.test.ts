@@ -6,10 +6,10 @@ import { desktop, deferred } from './fixtures'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useStudyStore } from '../../app/stores/studies'
 import { useKChessStore } from '../../app/stores/kchess'
-import * as tree from '../../../../core/src/domain/analysisTree'
+import * as tree from '@kchess/core/domain/analysisTree'
 import AnalysisPage from '../../app/pages/analysis.vue'
 import { makeUci } from 'chessops/util'
-import { positionFromFen } from '../../../../core/src/domain/chess'
+import { positionFromFen } from '@kchess/core/domain/chess'
 
 it('hides cloud scores, variations, arrows and playable suggestions during live play and remount', async () => {
   desktop({ reviewGet: async () => null, onAnalysis: () => () => {}, stopAnalysis: async () => {} })

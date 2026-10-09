@@ -1,7 +1,7 @@
 import { onScopeDispose, ref, shallowRef, watch } from 'vue'
-import type { AnalysisRequest, AnalysisUpdate } from '../../../../core/src/contracts/types'
-import { analysisContext } from '../../../../core/src/domain/analysisContext'
-import { RequestScope } from '../../../../core/src/domain/requestScope'
+import type { AnalysisRequest, AnalysisUpdate } from '@kchess/core/contracts/types'
+import { analysisContext } from '@kchess/core/domain/analysisContext'
+import { RequestScope } from '@kchess/core/domain/requestScope'
 
 let nextClient = Date.now()
 

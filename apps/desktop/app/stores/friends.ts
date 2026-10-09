@@ -1,11 +1,7 @@
 import { defineStore } from 'pinia'
 import { useOnline } from '@vueuse/core'
 import { computed, ref } from 'vue'
-import type {
-  FollowingReport,
-  LichessUser,
-  UserPresence,
-} from '../../../../core/src/contracts/types'
+import type { FollowingReport, LichessUser, UserPresence } from '@kchess/core/contracts/types'
 import { useKChessStore } from './kchess'
 import { useUsageStore } from './usage'
 

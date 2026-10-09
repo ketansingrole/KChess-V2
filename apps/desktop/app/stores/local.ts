@@ -3,20 +3,20 @@ import { computed, reactive, ref, toRefs, watch, onScopeDispose } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { INITIAL_FEN } from 'chessops/fen'
 import { initialLibrary, persistSession } from '../utils/library'
-import type { LocalClock } from '../../../../core/src/domain/library'
+import type { LocalClock } from '@kchess/core/domain/library'
 import {
   checkColor,
   lastMoveKeys,
   setupDests,
   setupPositionAfter,
   setupSanHistory,
-} from '../../../../core/src/domain/chess'
-import { STANDARD_SETUP, type GameSetup } from '../../../../core/src/domain/variant'
+} from '@kchess/core/domain/chess'
+import { STANDARD_SETUP, type GameSetup } from '@kchess/core/domain/variant'
 import { play, playMoveSound } from '../utils/sound'
 
 import { useGameArchive } from './gameArchive'
 
-import { LocalGame, localState, type Color } from '../../../../core/src/domain/gameSession'
+import { LocalGame, localState, type Color } from '@kchess/core/domain/gameSession'
 export type { LocalClock }
 
 /** Two people at one computer, and a stand-alone chess clock for a real board. */

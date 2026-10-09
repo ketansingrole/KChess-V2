@@ -1,9 +1,9 @@
 import { app } from 'electron'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { logDebug, logWarn } from '../../../../core/src/services/logger'
-import { assertTheme } from '../../../../core/src/domain/validate'
-import type { AppTheme, CustomThemeReport } from '../../../../core/src/contracts/types'
+import { logDebug, logWarn } from '@kchess/core/logger'
+import { assertTheme } from '@kchess/core/domain/validate'
+import type { AppTheme, CustomThemeReport } from '@kchess/core/contracts/types'
 
 const MAX_FILES = 100
 const MAX_BYTES = 64 * 1024

@@ -1,7 +1,7 @@
 import { vi } from 'vitest'
 import { defineComponent } from 'vue'
 import type { DesktopApi, OnlineEvent, Puzzle } from '../../contracts/types'
-import { DEFAULT_SETTINGS } from '../../../../core/src/contracts/defaultSettings'
+import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
 import { libraryApi } from './libraryBackend'
 
 export const puzzle: Puzzle = {

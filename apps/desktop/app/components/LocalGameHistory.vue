@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useGameArchiveStore, type ArchivedGame } from '../stores/gameArchive'
 import { useAnalysisStore } from '../stores/analysis'
-import { setupPgn } from '../../../../core/src/domain/chess'
+import { setupPgn } from '@kchess/core/domain/chess'
 
 const props = defineProps<{ source: 'computer' | 'board' }>()
 const archive = useGameArchiveStore()

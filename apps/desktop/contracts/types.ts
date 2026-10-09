@@ -22,9 +22,9 @@ import type {
   VoiceModelStatus,
   WatchFrame,
   WatchState,
-} from '../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import type { PerformanceName, RendererErrorReport } from './rendererDiagnostics'
-export * from '../../../core/src/contracts/types'
+export * from '@kchess/core/contracts/types'
 
 /** The desktop frontend: the core plus window, OS integration and event subscriptions. */
 export interface DesktopApi extends CoreApi {

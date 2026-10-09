@@ -6,9 +6,9 @@ import SquareColorTrainer from '../../app/components/SquareColorTrainer.vue'
 import { useLocalGameStore } from '../../app/stores/local'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useKChessStore } from '../../app/stores/kchess'
-import { squareColor, type Square } from '../../../../core/src/domain/coordinates'
+import { squareColor, type Square } from '@kchess/core/domain/coordinates'
 import { desktop, componentStubs } from './fixtures'
-import type { RunInput } from '../../../../core/src/contracts/types'
+import type { RunInput } from '@kchess/core/contracts/types'
 
 const InputStub = defineComponent({
   name: 'UInput',

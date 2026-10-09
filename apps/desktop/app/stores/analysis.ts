@@ -11,9 +11,9 @@ import {
 import { initialLibrary, persistSession } from '../utils/library'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
-import type { AnalysisUpdate, CloudEval, Judgment } from '../../../../core/src/contracts/types'
-import { analysisContext } from '../../../../core/src/domain/analysisContext'
-import { analyseReview, reviewKey, type GameAnalysis } from '../../../../core/src/domain/review'
+import type { AnalysisUpdate, CloudEval, Judgment } from '@kchess/core/contracts/types'
+import { analysisContext } from '@kchess/core/domain/analysisContext'
+import { analyseReview, reviewKey, type GameAnalysis } from '@kchess/core/domain/review'
 import { useKChessStore } from './kchess'
 import { useReviewStore } from './review'
 import { useStudyStore } from './studies'
@@ -29,13 +29,9 @@ import {
   treeFromPgn,
   treeToPgn,
   type TreeNode,
-} from '../../../../core/src/domain/analysisTree'
-import { playUci, positionFromFen } from '../../../../core/src/domain/chess'
-import {
-  setupFromFen,
-  START_SETUP,
-  type EditorSetup,
-} from '../../../../core/src/domain/boardEditor'
+} from '@kchess/core/domain/analysisTree'
+import { playUci, positionFromFen } from '@kchess/core/domain/chess'
+import { setupFromFen, START_SETUP, type EditorSetup } from '@kchess/core/domain/boardEditor'
 
 /** Evaluations kept per position, so stepping back and forth shows them at once. */
 const CACHE_SIZE = 600

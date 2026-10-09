@@ -46,6 +46,10 @@ Each owns its database, caches, queues, engine scheduler and workers. A second c
 the same profile is rejected until the first has finished `close()`. Calls retain the original platform through
 an async scope so a stale callback cannot access another profile.
 
+`VoiceModelCache` (from the same entry) downloads, verifies and caches the offline Vosk model
+in a directory the host chooses. Speech recognition and microphone capture stay in the frontend:
+desktop runs `vosk-browser` in the renderer and maps spoken text with `core/src/domain/voiceCommands`.
+
 ## Game controllers
 
 `core/dist/gameSession.js` exports `ComputerGame`, `LocalGame`, and their state factories.

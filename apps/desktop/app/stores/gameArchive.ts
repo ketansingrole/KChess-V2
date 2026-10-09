@@ -1,8 +1,8 @@
-import { GameArchive, archiveState } from '../../../../core/src/domain/gameArchive'
+import { GameArchive, archiveState } from '@kchess/core/domain/gameArchive'
 import { defineStore } from 'pinia'
 import { onScopeDispose, reactive, ref, shallowRef, watch, toRef, type Ref } from 'vue'
 import { initialLibrary, persistSession, plain, registerPersistenceFlush } from '../utils/library'
-import type { ArchivedGame, GameSnapshot } from '../../../../core/src/domain/library'
+import type { ArchivedGame, GameSnapshot } from '@kchess/core/domain/library'
 
 export type { ArchivedGame, GameSnapshot }
 

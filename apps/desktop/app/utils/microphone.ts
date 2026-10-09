@@ -1,5 +1,5 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import type { MicrophoneAccess } from '../../../../core/src/contracts/types'
+import type { MicrophoneAccess } from '@kchess/core/contracts/types'
 
 /** The OS microphone permission, re-checked whenever the window regains focus (e.g. back from System Settings). */
 export function useMicrophoneAccess(onFocus?: (access: MicrophoneAccess) => void) {

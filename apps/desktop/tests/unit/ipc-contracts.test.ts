@@ -6,7 +6,7 @@ import { INITIAL_FEN } from 'chessops/fen'
 
 const mocks = vi.hoisted(() => ({ handle: vi.fn() }))
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }))
-vi.mock('../../../../core/src/domain/tvChannels', () => ({ TV_CHANNEL_KEYS: ['rapid', 'blitz'] }))
+vi.mock('@kchess/core/domain/tvChannels', () => ({ TV_CHANNEL_KEYS: ['rapid', 'blitz'] }))
 
 beforeEach(() => {
   mocks.handle.mockClear()

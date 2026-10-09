@@ -4,19 +4,19 @@ import { flushPromises } from '@vue/test-utils'
 import { useLocalGameStore } from '../../app/stores/local'
 import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { desktop } from './fixtures'
-import { DEFAULT_SETTINGS } from '../../../../core/src/contracts/defaultSettings'
-import type { AppData, LichessRatingHistory } from '../../../../core/src/contracts/types'
+import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
+import type { AppData, LichessRatingHistory } from '@kchess/core/contracts/types'
 import {
   useGameArchiveStore,
   useGameArchive,
   type GameSnapshot,
   type ArchivedGame,
 } from '../../app/stores/gameArchive'
-import { decodeArchive } from '../../../../core/src/domain/library'
+import { decodeArchive } from '@kchess/core/domain/library'
 import { restart, storedLibrary } from './libraryBackend'
-import { STANDARD_SETUP } from '../../../../core/src/domain/variant'
-import { setupPgn } from '../../../../core/src/domain/chess'
-import { DEFAULT_OAUTH_LOOK, oauthLook } from '../../../../core/src/domain/oauthLook'
+import { STANDARD_SETUP } from '@kchess/core/domain/variant'
+import { setupPgn } from '@kchess/core/domain/chess'
+import { DEFAULT_OAUTH_LOOK, oauthLook } from '@kchess/core/domain/oauthLook'
 import { oauthPage } from '../../../../core/src/services/oauthPage'
 
 // Every test here keeps its games in the core's library.

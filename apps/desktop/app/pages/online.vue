@@ -7,10 +7,10 @@ import {
   canPlayOnline,
   perfFor,
   totalSeconds,
-} from '../../../../core/src/domain/timeControl'
-import { CORRESPONDENCE_DAYS } from '../../../../core/src/contracts/types'
-import { VARIANT_HINTS, VARIANT_LABELS, VARIANTS } from '../../../../core/src/domain/variant'
-import { setupPgn } from '../../../../core/src/domain/chess'
+} from '@kchess/core/domain/timeControl'
+import { CORRESPONDENCE_DAYS } from '@kchess/core/contracts/types'
+import { VARIANT_HINTS, VARIANT_LABELS, VARIANTS } from '@kchess/core/domain/variant'
+import { setupPgn } from '@kchess/core/domain/chess'
 import { useChallengeStore } from '../stores/challenges'
 import { useAnalysisStore } from '../stores/analysis'
 import { useTournamentStore } from '../stores/tournaments'

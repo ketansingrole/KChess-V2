@@ -3,7 +3,7 @@ import { seedSaved, storedLibrary } from './libraryBackend'
 import { nextTick } from 'vue'
 import { useStudyStore } from '../../app/stores/studies'
 import { useAnalysisStore } from '../../app/stores/analysis'
-import { treeFromPgn } from '../../../../core/src/domain/analysisTree'
+import { treeFromPgn } from '@kchess/core/domain/analysisTree'
 import { parsePgn } from 'chessops/pgn'
 import { desktop } from './fixtures'
 

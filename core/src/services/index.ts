@@ -15,3 +15,4 @@ export {
 } from './logger'
 export { performanceSnapshot, recordTiming, startPerformanceMonitoring } from './performance'
 export { DiagnosticLog } from './diagnosticLog'
+export { VOICE_MODEL, VoiceModelCache } from './voiceModel'

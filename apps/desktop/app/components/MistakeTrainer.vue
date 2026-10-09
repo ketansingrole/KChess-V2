@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useMistakeStore } from '../stores/mistakes'
-import type { Puzzle } from '../../../../core/src/contracts/types'
+import type { Puzzle } from '@kchess/core/contracts/types'
 const app = useKChessStore()
 const practice = useMistakeStore()
 const current = ref<Puzzle | null>(null)

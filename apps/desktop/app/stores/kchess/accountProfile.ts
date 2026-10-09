@@ -1,5 +1,5 @@
 import { ref, watch, type Ref } from 'vue'
-import type { LichessUser, LichessRatingHistory } from '../../../../../core/src/contracts/types'
+import type { LichessUser, LichessRatingHistory } from '@kchess/core/contracts/types'
 
 /** Cached profile refresh with account/request ownership; stale responses cannot replace newer data. */
 export function useAccountProfile(selectedAccount: Ref<string>, fail: (cause: unknown) => void) {

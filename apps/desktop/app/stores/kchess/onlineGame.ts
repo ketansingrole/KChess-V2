@@ -10,10 +10,10 @@ import type {
   OnlineConnection,
   OnlineOptions,
   PresenceReport,
-} from '../../../../../core/src/contracts/types'
+} from '@kchess/core/contracts/types'
 import type { PlayerPresence } from '../../components/PlayerLine.vue'
-import { OnlineGame, onlineGameState } from '../../../../../core/src/domain/onlineGame'
-import type { Variant } from '../../../../../core/src/domain/variant'
+import { OnlineGame, onlineGameState } from '@kchess/core/domain/onlineGame'
+import type { Variant } from '@kchess/core/domain/variant'
 import {
   checkColor,
   lastMoveKeys,
@@ -21,11 +21,11 @@ import {
   setupPositionAfter,
   setupSanHistory,
   turnColor,
-} from '../../../../../core/src/domain/chess'
-import { formatClock } from '../../../../../core/src/domain/clock'
+} from '@kchess/core/domain/chess'
+import { formatClock } from '@kchess/core/domain/clock'
 import { signalFromLatency } from '../../utils/format'
 import { play, playMoveSound } from '../../utils/sound'
-export type { FinishedGame } from '../../../../../core/src/domain/onlineGame'
+export type { FinishedGame } from '@kchess/core/domain/onlineGame'
 
 /** Live game, stream lifecycle, presence and clocks share a single owner across routes. */
 export function useOnlineGame(options: {
