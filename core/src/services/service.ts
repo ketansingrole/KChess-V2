@@ -57,16 +57,17 @@ import {
   assertWatchTarget,
 } from '../domain/validate'
 import {
-  assertArchivedGame,
+  assertArchivedGameShape,
   assertLegacyDocuments,
   assertLibraryId,
   assertRepertoireKey,
   assertSession,
   assertSessionKind,
   assertSide,
-  assertStudyCommand,
+  assertStudyCommandShape,
 } from '../domain/library'
 import { logWarn } from './logger'
+import { assertArchivedGame, assertStudyCommand } from './rules'
 import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
 import { ChallengeInbox } from './challenges'
 import { cloudEval, clearCloudEval } from './cloudEval'
@@ -673,8 +674,10 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
     clearVoiceHistory: async () => clearVoiceHistory(),
     library: async () => library(),
     importLibrary: async (documents) => importLibrary(assertLegacyDocuments(documents)),
-    studyCommand: async (command) => studyCommand(assertStudyCommand(command)),
-    saveArchivedGame: async (game) => saveArchivedGame(assertArchivedGame(game)),
+    studyCommand: async (command) =>
+      studyCommand(assertStudyCommand(assertStudyCommandShape(command))),
+    saveArchivedGame: async (game) =>
+      saveArchivedGame(assertArchivedGame(assertArchivedGameShape(game))),
     removeArchivedGame: async (id) => removeArchivedGame(assertLibraryId(id)),
     addMistakes: async (key, color) =>
       addMistakes(assertReviewKey(key), color === undefined ? undefined : assertSide(color)),

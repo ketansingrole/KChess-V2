@@ -1,0 +1,18 @@
+{
+  "name": "@kchess/native",
+  "version": "2026.10.4",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "description": "The KChess Rust rules as an N-API module for Node and Electron hosts.",
+  "main": "./index.cjs",
+  "types": "./index.d.ts",
+  "files": [
+    "index.cjs",
+    "index.d.ts",
+    "*.node",
+    "THIRD_PARTY_LICENSES.txt"
+  ],
+  "scripts": {
+    "build": "node ../../tooling/build-native.mjs"
+  }
+}

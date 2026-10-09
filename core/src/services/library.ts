@@ -1,24 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { analyseReview, replay } from '../domain/review'
-import { treeFromPgn } from '../domain/analysisTree'
 import {
   LEGACY_DOCUMENT_KEYS,
   MAX_ARCHIVED_GAMES,
-  decodeArchivedGame,
   MAX_CHAPTERS,
   MAX_DOCUMENT,
   MAX_MISTAKES,
   MAX_STUDIES,
   SESSION_KINDS,
-  decodeArchive,
   decodeJoinedTournaments,
-  decodeMistakes,
   decodeRepertoireMisses,
   decodeStoredSession,
-  decodeStudies,
   encodeSession,
-  studyContent,
-  studyDocumentPgn,
   type ArchivedGame,
   type JoinedTournament,
   type LegacyDocuments,
@@ -35,15 +27,30 @@ import type { TournamentSystem } from '../contracts/types'
 import { getDb } from './db'
 import { logDebug, logWarn } from './logger'
 import { readReview } from './reviewStore'
+import {
+  analyseStoredReview,
+  decodeArchiveText,
+  decodeArchivedGameText,
+  decodeMistakesText,
+  decodeStudiesText,
+  replayPositions,
+  studyMatchesCloud,
+  validPgn,
+} from './rules'
 
 /* ── Documents: one bounded JSON value per key ── */
 
-function readDocument(key: string): unknown {
+function readDocumentText(key: string): string | undefined {
   const row = getDb().prepare('SELECT body FROM documents WHERE key = ?').get(key) as
     { body: string } | undefined
-  if (!row) return undefined
+  return row?.body
+}
+
+function readDocument(key: string): unknown {
+  const body = readDocumentText(key)
+  if (body === undefined) return undefined
   try {
-    return JSON.parse(row.body)
+    return JSON.parse(body)
   } catch (cause) {
     logWarn('library', 'Stored document is not valid JSON:', `key=${key}`, cause)
     return undefined
@@ -78,8 +85,12 @@ function stored(key: string): boolean {
   return readDocument(key) !== undefined
 }
 
-const readStudies = (): SavedStudy[] => decodeStudies(readDocument(STUDIES)) ?? []
-const readMistakes = (): MistakeExercise[] => decodeMistakes(readDocument(MISTAKES)) ?? []
+function readDecoded<T>(key: string, decode: (json: string) => T[] | undefined): T[] {
+  const body = readDocumentText(key)
+  return (body !== undefined && decode(body)) || []
+}
+const readStudies = (): SavedStudy[] => readDecoded(STUDIES, decodeStudiesText)
+const readMistakes = (): MistakeExercise[] => readDecoded(MISTAKES, decodeMistakesText)
 const readMisses = (): RepertoireMisses => decodeRepertoireMisses(readDocument(MISSES))
 const readJoined = (): JoinedTournament[] => decodeJoinedTournaments(readDocument(JOINED))
 
@@ -117,14 +128,15 @@ const LEGACY_TARGETS: Record<(typeof LEGACY_DOCUMENT_KEYS)[number], string> = {
   'kchess:tournaments-joined': JOINED,
   'kchess:repertoire-misses': MISSES,
 }
-const LEGACY_DECODERS: Record<string, (raw: unknown) => unknown> = {
-  [STUDIES]: (raw) => {
-    const studies = decodeStudies(raw)
+/** Each decoder gets the parsed document and its text, which the native decoders read. */
+const LEGACY_DECODERS: Record<string, (raw: unknown, text: string) => unknown> = {
+  [STUDIES]: (_raw, text) => {
+    const studies = decodeStudiesText(text)
     return studies && { version: 2, items: studies }
   },
-  [GAMES]: (raw) => decodeArchive(raw),
-  [MISTAKES]: (raw) => {
-    const items = decodeMistakes(raw)
+  [GAMES]: (_raw, text) => decodeArchiveText(text),
+  [MISTAKES]: (_raw, text) => {
+    const items = decodeMistakesText(text)
     return items && { version: 1, items }
   },
   [JOINED]: (raw) => decodeJoinedTournaments(raw),
@@ -155,7 +167,7 @@ export function importLibrary(documents: LegacyDocuments): LibrarySnapshot {
       if (typeof text !== 'string' || text.length > MAX_DOCUMENT || stored(key)) continue
       let value: unknown
       try {
-        value = LEGACY_DECODERS[key]!(JSON.parse(text))
+        value = LEGACY_DECODERS[key]!(JSON.parse(text), text)
       } catch (cause) {
         logWarn('library', 'Skipped an unreadable saved document:', `key=${legacyKey}`, cause)
         continue
@@ -183,7 +195,7 @@ export function importLibrary(documents: LegacyDocuments): LibrarySnapshot {
 /* ── Studies ── */
 
 const clean = (name: string) => name.trim().slice(0, 120)
-const valid = (pgn: string) => Boolean(treeFromPgn(pgn))
+const valid = validPgn
 
 function writeStudies(studies: SavedStudy[]): void {
   writeDocument(
@@ -327,9 +339,7 @@ export function studyCommand(command: StudyCommand, now = Date.now()): StudyComm
         (s) => s.cloud?.account.toLowerCase() === account.toLowerCase() && s.cloud.id === remote.id,
       )
       // A changed device copy is kept; the cloud version then becomes a separate copy.
-      const conflict = Boolean(
-        old && studyContent(studyDocumentPgn(old)) !== studyContent(old.cloud?.downloadedPgn ?? ''),
-      )
+      const conflict = Boolean(old && !studyMatchesCloud(old, old.cloud?.downloadedPgn ?? ''))
       const id = saveChapters(
         conflict ? `${remote.name} (cloud copy)` : remote.name,
         chapters,
@@ -379,13 +389,9 @@ function readGames(): ArchivedGame[] {
     .prepare('SELECT id, body FROM archived_games ORDER BY seq DESC')
     .all() as unknown as { id: string; body: string }[]
   return rows.flatMap((row) => {
-    try {
-      const game = decodeArchivedGame(JSON.parse(row.body))
-      if (game) return [game]
-    } catch (cause) {
-      logWarn('library', 'Archived game is not valid JSON:', `id=${row.id}`, cause)
-    }
-    return []
+    const game = decodeArchivedGameText(row.body)
+    if (!game) logDebug('library', 'Skipped an archived game that does not replay:', `id=${row.id}`)
+    return game ? [game] : []
   })
 }
 
@@ -436,8 +442,8 @@ export function addMistakes(
   const review = readReview(reviewKey)
   let items = readMistakes()
   if (!review?.complete) return { added: 0, items }
-  const positions = replay(review.fen, review.moves)
-  const analysis = analyseReview(review)
+  const positions = replayPositions(review.fen, review.moves)
+  const analysis = analyseStoredReview(review)
   let added = 0
   for (const [index, move] of analysis.moves.entries()) {
     if (!move.judgment || (color && move.color !== color)) continue
@@ -452,7 +458,7 @@ export function addMistakes(
     )
       continue
     let solution = evaluation.pv?.[0] === best ? evaluation.pv.slice(0, 7) : [best]
-    solution = solution.slice(0, replay(fen, solution).length - 1)
+    solution = solution.slice(0, replayPositions(fen, solution).length - 1)
     if (solution.length % 2 === 0) solution.pop()
     if (!solution.length) continue
     const id = `${review.key}:${index}`

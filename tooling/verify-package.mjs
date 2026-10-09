@@ -23,6 +23,13 @@ export function verifyEntries(entries, label = 'package') {
         !/^node_modules\/stockfish\/bin\/stockfish-19-lite\.(?:js|wasm)$/.test(path)
       )
         throw new Error(`${label} contains an unused Stockfish build: ${path}`)
+      if (
+        path.startsWith('node_modules/@kchess/native/') &&
+        !/^node_modules\/@kchess\/native\/(?:package\.json|index\.cjs|THIRD_PARTY_LICENSES\.txt|kchess-native\.[a-z0-9]+-[a-z0-9]+\.node)$/.test(
+          path,
+        )
+      )
+        throw new Error(`${label} contains native rules sources or extra files: ${path}`)
     }
     if (size > PERFORMANCE_BUDGETS.individualFileBytes)
       throw new Error(`${label} contains an unexpectedly large file: ${path}`)
@@ -89,6 +96,19 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
     if (!(await stat(join(resources, 'app.asar.unpacked', path))).size)
       throw new Error(`Bundled engine is empty: ${path}`)
   }
+  // The Rust rules for this platform, unpacked so the OS can load the module.
+  const native = entries.find((entry) =>
+    new RegExp(`^node_modules/@kchess/native/kchess-native\\.${platform}-[a-z0-9]+\\.node$`).test(
+      entry.path,
+    ),
+  )
+  if (!native) throw new Error(`Missing native rules for ${platform}.`)
+  if (
+    !entries.some((entry) => entry.path === 'node_modules/@kchess/native/THIRD_PARTY_LICENSES.txt')
+  )
+    throw new Error('Missing license texts for the Rust crates in the native rules.')
+  if (!(await stat(join(resources, 'app.asar.unpacked', native.path))).size)
+    throw new Error(`Native rules are empty: ${native.path}`)
   if ((await stat(archive)).size > 32 * MiB) throw new Error('app.asar exceeds the 32 MiB budget.')
   console.info(
     `[kchess] Package verified: ${(bytes / MiB).toFixed(1)} MiB of app payload (excluding Electron).`,

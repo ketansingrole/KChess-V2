@@ -8,13 +8,14 @@ import * as library from '../../../../core/src/services/library'
 import { closeDb, getDb } from '../../../../core/src/services/db'
 import { setPlatform } from '../../../../core/src/services/platform'
 import {
-  assertArchivedGame,
+  assertArchivedGameShape,
   assertLegacyDocuments,
   assertSession,
   assertSessionKind,
-  assertStudyCommand,
+  assertStudyCommandShape,
   type LegacyDocuments,
 } from '@kchess/core/domain/library'
+import { assertArchivedGame, assertStudyCommand } from '../../../../core/src/services/rules'
 import type { CoreApi } from '@kchess/core/contracts/types'
 import { setInitialLibrary } from '../../app/utils/library'
 import { testPlatform } from '../../../../tests/fixtures/corePlatform'
@@ -58,8 +59,10 @@ export function libraryApi(): Pick<CoreApi, LibraryMethod> {
     library: () => run(() => library.library()),
     importLibrary: (documents) =>
       run(() => library.importLibrary(assertLegacyDocuments(documents))),
-    studyCommand: (command) => run(() => library.studyCommand(assertStudyCommand(command))),
-    saveArchivedGame: (game) => run(() => library.saveArchivedGame(assertArchivedGame(game))),
+    studyCommand: (command) =>
+      run(() => library.studyCommand(assertStudyCommand(assertStudyCommandShape(command)))),
+    saveArchivedGame: (game) =>
+      run(() => library.saveArchivedGame(assertArchivedGame(assertArchivedGameShape(game)))),
     removeArchivedGame: (id) => run(() => library.removeArchivedGame(id)),
     addMistakes: (key, color) => run(() => library.addMistakes(key, color)),
     answerMistake: (id, solved) => run(() => library.answerMistake(id, solved)),

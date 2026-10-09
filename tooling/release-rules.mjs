@@ -63,7 +63,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ? process.env.GITHUB_REF_NAME
     : undefined
   const desktop = JSON.parse(readFileSync(new URL('apps/desktop/package.json', root), 'utf8'))
-  for (const name of ['.', 'core', 'hosts/node', 'apps/cli', 'apps/desktop']) {
+  for (const name of [
+    '.',
+    'core',
+    'hosts/node',
+    'apps/cli',
+    'apps/desktop',
+    'crates/kchess-node',
+  ]) {
     const workspace = JSON.parse(readFileSync(new URL(name + '/package.json', root), 'utf8'))
     if (workspace.version !== pkg.version) throw new Error('Workspace release versions must match.')
     validateReleaseVersion(workspace, lock, tag, name, desktop)

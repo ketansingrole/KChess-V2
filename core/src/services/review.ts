@@ -3,8 +3,6 @@ import {
   endEval,
   hasScore,
   isReviewablePerf,
-  lichessLine,
-  replay,
   reviewKey,
   type ReplayedPosition,
 } from '../domain/review'
@@ -22,6 +20,7 @@ import { withEngineLease, searchThreads } from './engineScheduler'
 import { engineIdentity, engineStatus, spawnEngine } from './engine'
 import { gamesToReview, hasAccount, markChecked, readReview, writeReview } from './reviewStore'
 import { logDebug, logWarn } from './logger'
+import { lichessGameLine, replayPositions } from './rules'
 
 /**
  * Game review: Stockfish scores every position of a game, one after another, in its own process
@@ -168,7 +167,7 @@ function closeEngine(): void {
 /* ── The queue ────────────────────────────────────────────────────── */
 
 function jobFor(request: ReviewRequest, background: boolean): Job | null {
-  const positions = replay(request.fen, request.moves)
+  const positions = replayPositions(request.fen, request.moves)
   if (positions.length < 2) return null
   const moves = request.moves.slice(0, positions.length - 1)
   const fen = positions[0]!.fen
@@ -219,7 +218,7 @@ export function reviewStatus(): ReviewStatus {
 
 /** The stored review of these moves, if any (`fen` and moves as the caller has them). */
 export function getReview(fen: string, moves: string[]): StoredReview | null {
-  const positions = replay(fen, moves)
+  const positions = replayPositions(fen, moves)
   if (!positions.length) return null
   return readReview(reviewKey(positions[0]!.fen, moves.slice(0, positions.length - 1)))
 }
@@ -357,7 +356,7 @@ async function nextBackgroundJob(): Promise<Job | null> {
     return nextBackgroundJob()
   }
   for (const game of games) {
-    const line = lichessLine(game)
+    const line = lichessGameLine(game)
     const job = jobFor({ ...line, gameId: game.id, account: game.account }, true)
     if (job && readReview(job.key)?.complete) {
       // Reviewed already (opened from the analysis board): just link it to the game.

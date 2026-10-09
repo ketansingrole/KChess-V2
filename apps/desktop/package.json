@@ -24,7 +24,8 @@
     "tar": "7.5.22",
     "valibot": "^1.5.0",
     "chessops": "^0.15.1",
-    "@kchess/core": "workspace:*"
+    "@kchess/core": "workspace:*",
+    "@kchess/native": "workspace:*"
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.139",
@@ -62,6 +63,12 @@
       ".output/public/**/*",
       "!.output/public/voice/model.tar.gz*",
       "package.json",
+      "node_modules/@kchess/native/package.json",
+      "node_modules/@kchess/native/index.cjs",
+      "node_modules/@kchess/native/kchess-native.*.node",
+      "node_modules/@kchess/native/THIRD_PARTY_LICENSES.txt",
+      "!node_modules/@kchess/native/{src,examples,target}/**",
+      "!node_modules/@kchess/native/{Cargo.toml,build.rs,index.d.ts}",
       "node_modules/stockfish/bin/stockfish-19-lite.js",
       "node_modules/stockfish/bin/stockfish-19-lite.wasm",
       "!node_modules/stockfish/bin/stockfish.*",
@@ -124,7 +131,8 @@
       "maintainer": "Ketan Singrole"
     },
     "asarUnpack": [
-      "node_modules/stockfish/bin/**"
+      "node_modules/stockfish/bin/**",
+      "node_modules/@kchess/native/*.node"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "nsis": {

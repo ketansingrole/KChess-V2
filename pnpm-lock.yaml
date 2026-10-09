@@ -152,6 +152,9 @@ importers:
       '@kchess/core':
         specifier: workspace:*
         version: link:../../core
+      '@kchess/native':
+        specifier: workspace:*
+        version: link:../../crates/kchess-node
       chessops:
         specifier: ^0.15.1
         version: 0.15.1
@@ -240,6 +243,9 @@ importers:
 
   core:
     dependencies:
+      '@kchess/native':
+        specifier: workspace:*
+        version: link:../crates/kchess-node
       '@lichess-org/types':
         specifier: ^2.0.176
         version: 2.0.176
@@ -264,6 +270,8 @@ importers:
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@6.0.3)
+
+  crates/kchess-node: {}
 
   hosts/node:
     dependencies:

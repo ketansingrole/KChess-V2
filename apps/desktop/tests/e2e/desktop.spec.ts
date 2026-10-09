@@ -14,7 +14,8 @@ import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
 import { migrate } from '../../../../core/src/services/migrations'
 import { storeSample } from '../../../../core/src/services/puzzleQueries'
-import { reviewKey, summarize } from '@kchess/core/domain/review'
+import { reviewKey } from '@kchess/core/domain/review'
+import { summarizeReview } from '../../../../core/src/services/rules'
 import type { StoredReview } from '@kchess/core/contracts/types'
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -58,7 +59,7 @@ function seedReviewedGame(db: DatabaseSync): void {
   db.prepare(
     `INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
      VALUES (?, ?, 'local', 1, 18, ?, ?, 0)`,
-  ).run(review.key, 'scholar1', JSON.stringify(review), JSON.stringify(summarize(review)))
+  ).run(review.key, 'scholar1', JSON.stringify(review), JSON.stringify(summarizeReview(review)))
   db.prepare('INSERT INTO game_reviews (gameId, reviewKey) VALUES (?, ?)').run(
     'scholar1',
     review.key,
@@ -1219,6 +1220,8 @@ test('recovers a failed reviewed game Insights page and records route diagnostic
   expect(report.logs.join('')).toContain('Renderer page error:')
   expect(report.logs.join('')).toContain('/insights')
   expect(report.performance.operations).toHaveProperty(['page.navigation:/insights'])
+  // The build packages the Rust rules; the core must be running them, not the fallback.
+  expect(report.performance.rules).toMatch(/^native \d/)
 })
 
 test('quick pick switches modes, runs commands and remembers them', async ({

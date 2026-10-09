@@ -2,7 +2,6 @@ import * as v from 'valibot'
 import { makePgn, parsePgn } from 'chessops/pgn'
 import { nodesAlong, pathOf, treeFromPgn } from './analysisTree'
 import { UCI_MOVE } from './patterns'
-import { replay } from './review'
 import { ENGINE_LEVELS, type EngineLevel, type TournamentSystem } from '../contracts/types'
 import { engineSupports, isVariant, replaySetup, STANDARD_SETUP, type GameSetup } from './variant'
 
@@ -162,166 +161,6 @@ export type LegacyDocuments = Partial<Record<(typeof LEGACY_DOCUMENT_KEYS)[numbe
 
 const text = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.length <= max
-
-function decodeChapters(raw: unknown, fallback: StudyChapter): StudyChapter[] | undefined {
-  const chapters = raw ?? [fallback]
-  if (
-    !Array.isArray(chapters) ||
-    !chapters.length ||
-    chapters.length > MAX_CHAPTERS ||
-    chapters.some(
-      (c) =>
-        !c ||
-        typeof c.id !== 'string' ||
-        typeof c.name !== 'string' ||
-        typeof c.pgn !== 'string' ||
-        !treeFromPgn(c.pgn),
-    )
-  )
-    return undefined
-  return chapters.map((c: StudyChapter) => ({ id: c.id, name: c.name, pgn: c.pgn }))
-}
-
-/** One saved study, or undefined when any chapter is not a valid PGN document. */
-export function decodeStudy(raw: unknown): SavedStudy | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const item = raw as Record<string, unknown> & Partial<SavedStudy>
-  if (
-    typeof item.id !== 'string' ||
-    typeof item.name !== 'string' ||
-    typeof item.pgn !== 'string' ||
-    !Number.isFinite(item.updatedAt)
-  )
-    return undefined
-  const chapters = decodeChapters(item.chapters, { id: item.id, name: item.name, pgn: item.pgn })
-  if (!chapters) return undefined
-  const cloud =
-    item.cloud &&
-    typeof item.cloud.account === 'string' &&
-    typeof item.cloud.id === 'string' &&
-    /^[a-zA-Z0-9]{8}$/.test(item.cloud.id) &&
-    typeof item.cloud.downloadedPgn === 'string'
-      ? {
-          account: item.cloud.account,
-          id: item.cloud.id,
-          downloadedPgn: item.cloud.downloadedPgn,
-          ...(item.cloud.structureChanged === true ? { structureChanged: true } : {}),
-        }
-      : undefined
-  return {
-    id: item.id,
-    name: item.name,
-    pgn: chapters[0]!.pgn,
-    chapters,
-    updatedAt: item.updatedAt as number,
-    ...(cloud ? { cloud } : {}),
-  }
-}
-
-/** The study library; invalid studies are left out rather than failing the whole library. */
-export function decodeStudies(raw: unknown): SavedStudy[] | undefined {
-  if (
-    !raw ||
-    typeof raw !== 'object' ||
-    !('version' in raw) ||
-    ![1, 2].includes(Number(raw.version)) ||
-    !('items' in raw) ||
-    !Array.isArray(raw.items)
-  )
-    return undefined
-  return raw.items.slice(0, MAX_STUDIES).flatMap((item) => decodeStudy(item) ?? [])
-}
-
-export function decodeArchivedGame(raw: unknown): ArchivedGame | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const g = raw as ArchivedGame
-  if (
-    typeof g.id !== 'string' ||
-    g.id.length > 80 ||
-    !['computer', 'board', 'clock'].includes(g.source) ||
-    !Number.isFinite(g.startedAt) ||
-    !Number.isFinite(g.updatedAt) ||
-    !['*', '1-0', '0-1', '1/2-1/2'].includes(g.result) ||
-    typeof g.finished !== 'boolean' ||
-    ![g.white, g.black, g.reason, g.timeControl].every((s) => text(s, 200)) ||
-    (g.clockSummary !== undefined && !text(g.clockSummary, 200)) ||
-    !g.setup ||
-    !isVariant(g.setup.variant) ||
-    !text(g.setup.fen, 120) ||
-    !Array.isArray(g.moves) ||
-    g.moves.length > 1024 ||
-    !g.moves.every((m) => text(m, 10)) ||
-    replaySetup(g.setup, g.moves)?.played.length !== g.moves.length
-  )
-    return undefined
-  return {
-    id: g.id,
-    source: g.source,
-    startedAt: g.startedAt,
-    updatedAt: g.updatedAt,
-    white: g.white,
-    black: g.black,
-    result: g.result,
-    reason: g.reason,
-    finished: g.finished,
-    setup: { variant: g.setup.variant, fen: g.setup.fen },
-    moves: [...g.moves],
-    timeControl: g.timeControl,
-    ...(g.clockSummary !== undefined ? { clockSummary: g.clockSummary } : {}),
-  }
-}
-
-/** Played games; any invalid or duplicated game rejects the document. */
-export function decodeArchive(raw: unknown): ArchivedGame[] | undefined {
-  if (!raw || typeof raw !== 'object') return
-  const doc = raw as { version?: unknown; games?: unknown }
-  if (doc.version !== 1 || !Array.isArray(doc.games) || doc.games.length > MAX_ARCHIVED_GAMES)
-    return
-  const games: ArchivedGame[] = []
-  const ids = new Set<string>()
-  for (const rawGame of doc.games) {
-    const game = decodeArchivedGame(rawGame)
-    if (!game || ids.has(game.id)) return
-    ids.add(game.id)
-    games.push(game)
-  }
-  return games
-}
-
-export function decodeMistakes(raw: unknown): MistakeExercise[] | undefined {
-  if (
-    !raw ||
-    typeof raw !== 'object' ||
-    !('version' in raw) ||
-    raw.version !== 1 ||
-    !('items' in raw) ||
-    !Array.isArray(raw.items)
-  )
-    return undefined
-  return raw.items.slice(0, MAX_MISTAKES).flatMap((item: MistakeExercise) =>
-    item &&
-    typeof item.id === 'string' &&
-    typeof item.fen === 'string' &&
-    Array.isArray(item.solution) &&
-    item.solution.every((move: unknown) => typeof move === 'string') &&
-    replay(item.fen, item.solution).length === item.solution.length + 1 &&
-    Number.isFinite(item.dueAt) &&
-    Number.isInteger(item.streak) &&
-    Number.isInteger(item.attempts)
-      ? [
-          {
-            id: item.id,
-            fen: item.fen,
-            solution: [...item.solution],
-            judgment: String(item.judgment),
-            dueAt: item.dueAt,
-            streak: item.streak,
-            attempts: item.attempts,
-          },
-        ]
-      : [],
-  )
-}
 
 /**
  * The last document parsed: sessions are saved after every move along the board as well as after
@@ -555,17 +394,6 @@ export function studyDocumentPgn(study: Pick<SavedStudy, 'chapters'>): string {
     .join('\n\n')
 }
 
-/** The moves and annotations of a study, ignoring headers Lichess adds or rewrites. */
-export function studyContent(pgn: string): string {
-  return parsePgn(pgn)
-    .map((game) => {
-      game.headers.delete('Site')
-      game.headers.delete('ChapterName')
-      return makePgn(game)
-    })
-    .join('\n\n')
-}
-
 /* ── Study commands a frontend sends to the core ── */
 
 const studyName = v.pipe(v.string(), v.maxLength(200))
@@ -628,18 +456,20 @@ export interface StudyCommandResult {
   removed?: SavedStudy
 }
 
-export function assertStudyCommand(value: unknown): StudyCommand {
-  const command = v.parse(studyCommandSchema, value)
-  if (command.op !== 'restore') return command
-  const study = decodeStudy(command.study)
-  if (!study) throw new Error('That study cannot be restored.')
-  return { op: 'restore', study }
+/**
+ * A study command's shape, as a frontend sends it. A study to restore is checked by the core
+ * service, whose rules replay every chapter (`assertStudyCommand` in `services/rules.ts`).
+ */
+export type StudyCommandInput =
+  Exclude<StudyCommand, { op: 'restore' }> | { op: 'restore'; study: unknown }
+export function assertStudyCommandShape(value: unknown): StudyCommandInput {
+  return v.parse(studyCommandSchema, value)
 }
 
-export function assertArchivedGame(value: unknown): ArchivedGame {
-  const game = decodeArchivedGame(value)
-  if (!game) throw new Error('This game cannot be saved.')
-  return game
+/** An archived game is an object; the core service checks its fields and replays its moves. */
+export function assertArchivedGameShape(value: unknown): object {
+  if (!value || typeof value !== 'object') throw new Error('This game cannot be saved.')
+  return value
 }
 
 const shortText = (max: number) => v.pipe(v.string(), v.minLength(1), v.maxLength(max))

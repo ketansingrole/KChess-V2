@@ -2,7 +2,8 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync, chmodSync } from 'node:fs'
 import { Readable } from 'node:stream'
-import { PuzzleSampler, sampleZstdCsv } from './puzzleSampler'
+import { sampleZstdCsv } from './puzzleSampler'
+import { createPuzzleSampler } from './rules'
 import { logDebug, logWarn } from './logger'
 import { clearStored, queryLadder, queryPuzzles, readStatus, storeSample } from './puzzleQueries'
 import type { LocalLadderQuery, LocalPuzzleQuery, PuzzleDbProgress } from '../contracts/types'
@@ -37,7 +38,7 @@ async function install(url: string, cancelled: Int32Array): Promise<unknown> {
   if (running) throw new Error('The puzzle database is already downloading.')
   const controller = new AbortController()
   running = controller
-  const sampler = new PuzzleSampler()
+  const sampler = createPuzzleSampler()
   let received = 0
   let total: number | undefined
   let lastReport = 0

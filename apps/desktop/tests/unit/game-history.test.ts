@@ -12,7 +12,7 @@ import {
   type GameSnapshot,
   type ArchivedGame,
 } from '../../app/stores/gameArchive'
-import { decodeArchive } from '@kchess/core/domain/library'
+import { decodeArchiveText } from '../../../../core/src/services/rules'
 import { restart, storedLibrary } from './libraryBackend'
 import { STANDARD_SETUP } from '@kchess/core/domain/variant'
 import { setupPgn } from '@kchess/core/domain/chess'
@@ -93,9 +93,11 @@ describe('local game history', () => {
     const pgn = setupPgn(game.setup, game.moves, { Result: game.result })
     expect(pgn).toContain('[FEN "7k/8/8/8/8/8/8/KR6 w - - 0 1"]')
     expect(pgn).toContain('[Result "1/2-1/2"]')
-    expect(decodeArchive({ version: 1, games: [game] })).toHaveLength(1)
+    expect(decodeArchiveText(JSON.stringify({ version: 1, games: [game] }))).toHaveLength(1)
     expect(
-      decodeArchive({ version: 1, games: [{ ...game, moves: ['b1b8', 'b1b2'] }] }),
+      decodeArchiveText(
+        JSON.stringify({ version: 1, games: [{ ...game, moves: ['b1b8', 'b1b2'] }] }),
+      ),
     ).toBeUndefined()
   })
   it('keeps clock-only sessions separate without inventing chess moves or results', async () => {

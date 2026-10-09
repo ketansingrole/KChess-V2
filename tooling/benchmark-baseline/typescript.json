@@ -1,0 +1,70 @@
+{
+  "note": "TypeScript rules measured on 2026-10-09 (Apple Silicon, Node 24.21.0) before the Rust rules replaced them. They can no longer be re-run: tooling/core-benchmark.mjs compares the Rust rules with these numbers.",
+  "fixtures": {
+    "games": 500,
+    "plies": 50984,
+    "studies": 50,
+    "chapters": 400,
+    "mistakes": 500,
+    "bigPgnKiB": 87.8,
+    "bigPgnNodes": 6996
+  },
+  "coldLibraryLoadMs": 315.586,
+  "results": {
+    "libraryLoad": {
+      "medianMs": 305.061,
+      "result": 1050
+    },
+    "loadArchive": {
+      "medianMs": 78.895,
+      "result": 500
+    },
+    "loadStudies": {
+      "medianMs": 216.853,
+      "result": 50
+    },
+    "loadMistakes": {
+      "medianMs": 7.633,
+      "result": 500
+    },
+    "replayGames": {
+      "medianMs": 75.015,
+      "result": 50984
+    },
+    "reviewReplay": {
+      "medianMs": 117.63,
+      "result": 49967
+    },
+    "treeFromPgn": {
+      "medianMs": 21.225,
+      "result": 6996
+    },
+    "puzzleSample": {
+      "medianMs": 130.656,
+      "result": 321329
+    },
+    "lichessLines": {
+      "medianMs": 17.646,
+      "result": 26785
+    },
+    "reviewSummaries": {
+      "medianMs": 75.503,
+      "result": 69209
+    },
+    "studySyncCheck": {
+      "medianMs": 43.136,
+      "result": 50
+    }
+  },
+  "rssBytes": 731037696,
+  "api": {
+    "counts": {
+      "games": 500,
+      "studies": 50,
+      "mistakes": 500
+    },
+    "libraryFirstMs": 303.27,
+    "libraryMs": 296.94,
+    "studyRenameMs": 209.27
+  }
+}

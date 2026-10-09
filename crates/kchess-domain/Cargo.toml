@@ -1,0 +1,16 @@
+[package]
+name = "kchess-domain"
+description = "KChess chess and library rules, shared by every frontend through the core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+shakmaty.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+memchr.workspace = true
+
+[dev-dependencies]
+regex = { version = "1" }

@@ -14,3 +14,4 @@ pnpm-lock.yaml
 apps/desktop/electron/renderer/auto-imports.d.ts
 apps/desktop/electron/renderer/components.d.ts
 core/src/domain/data/openings.json
+core/tests/unit/native-golden.json

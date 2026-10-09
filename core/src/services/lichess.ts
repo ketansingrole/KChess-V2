@@ -2,6 +2,7 @@ import { scopedState, coreSignal, platform } from './platform'
 import { DEFAULT_OAUTH_LOOK } from '../domain/oauthLook'
 import { oauthPage } from './oauthPage'
 import { errorSummary, logDebug, logInfo, logWarn } from './logger'
+import { lichessGameLine, replayPositions, sanLineToUci } from './rules'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -47,7 +48,7 @@ import type {
   StoredReview,
 } from '../contracts/types'
 import { puzzleFromApi, type ApiPuzzle } from '../domain/puzzle'
-import { lichessLine, replay, reviewKey, sanToUci } from '../domain/review'
+import { reviewKey } from '../domain/review'
 import { markChecked, writeReview } from './reviewStore'
 import { LichessError, throwLichessErrors } from '../domain/lichessError'
 import { isGameInProgress } from '../domain/gameStatus'
@@ -503,25 +504,26 @@ export function reviewFromLichess(
 ): StoredReview | undefined {
   if (isGameInProgress(raw.status) || !raw.analysis?.length) return undefined
   if (raw.variant !== 'standard' && raw.variant !== 'fromPosition') return undefined
-  const { fen, moves } = lichessLine({ moves: raw.moves ?? '', initialFen: raw.initialFen })
+  const { fen, moves } = lichessGameLine({ moves: raw.moves ?? '', initialFen: raw.initialFen })
   if (!moves.length) return undefined
-  const positions = replay(fen, moves)
+  const positions = replayPositions(fen, moves)
   const evals: (ReviewEval | null)[] = Array.from({ length: moves.length + 1 }, () => null)
   // Lichess scores the standard start as +0.15 when it works out accuracy.
   if (fen === INITIAL_FEN) evals[0] = { cp: 15 }
   const judgments: (Judgment | null)[] = moves.map(() => null)
   raw.analysis.slice(0, moves.length).forEach((entry, i) => {
     // Entry i scores the position after move i+1; its `best` is what should have been played.
+    // Only numbers are scores: a review is stored as Lichess sent it, and read by the rules.
     const score =
-      entry.mate !== undefined
+      typeof entry.mate === 'number'
         ? { mate: entry.mate }
-        : entry.eval !== undefined
+        : typeof entry.eval === 'number'
           ? { cp: entry.eval }
           : null
     if (score) evals[i + 1] = { ...evals[i + 1], ...score }
     if (entry.best) {
       const pv = entry.variation
-        ? sanToUci(positions[i]?.fen ?? fen, entry.variation.split(/\s+/))
+        ? sanLineToUci(positions[i]?.fen ?? fen, entry.variation.split(/\s+/))
         : [entry.best]
       evals[i] = { ...(evals[i] ?? {}), best: entry.best, pv: pv.length ? pv : [entry.best] }
     }

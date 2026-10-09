@@ -2,9 +2,9 @@ import { scopedState } from './platform'
 import * as v from 'valibot'
 import { LRUCache } from 'lru-cache'
 import type { CloudEval } from '../contracts/types'
-import { replay } from '../domain/review'
 import { LichessError } from '../domain/lichessError'
 import { client, unwrap } from './lichess'
+import { replayPositions } from './rules'
 import { withUsage } from './usage'
 
 const pvSchema = v.union([
@@ -45,7 +45,7 @@ export async function cloudEval(fen: string, lines: number): Promise<CloudEval |
       lines: data.pvs.flatMap((pv, index) => {
         const moves = pv.moves.trim().split(/\s+/).slice(0, 30)
         // Keep the legal prefix; an illegal first move drops the line.
-        const legal = replay(fen, moves).length - 1
+        const legal = replayPositions(fen, moves).length - 1
         if (legal < 1) return []
         return [
           {

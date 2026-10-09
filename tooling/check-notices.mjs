@@ -20,6 +20,19 @@ const dependencies = Object.assign(
   }),
 )
 
+// Rust crates the native rules depend on directly (path crates are KChess's own).
+const cargo = [
+  '../Cargo.toml',
+  '../crates/kchess-domain/Cargo.toml',
+  '../crates/kchess-node/Cargo.toml',
+]
+for (const path of cargo) {
+  const manifest = readFileSync(new URL(path, import.meta.url), 'utf8')
+  for (const section of manifest.matchAll(/^\[(workspace\.)?dependencies\]\n([^[]*)/gm))
+    for (const [, name] of section[2].matchAll(/^([A-Za-z0-9_-]+)\s*(?:\.workspace)?\s*=/gm))
+      if (!name.startsWith('kchess-')) dependencies[name] = 'cargo'
+}
+
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const missing = Object.keys(dependencies).filter(
   (name) => !new RegExp(`(?<![\\w@/-])${escape(name)}(?![\\w-])`, 'i').test(notices),

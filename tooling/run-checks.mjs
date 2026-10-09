@@ -69,6 +69,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ['lint', ['run', 'lint']],
     ['notices', ['run', 'check:notices']],
     ['types', ['run', 'typecheck']],
+    ['rust', ['run', 'check:rust']],
+    ['native', ['run', 'build:native']],
     ['smoke', ['run', 'test:smoke']],
     ['core', ['run', 'test:core']],
     ['unit', ['run', 'test:unit']],

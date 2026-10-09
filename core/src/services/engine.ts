@@ -8,10 +8,10 @@ import type { BestMoveOptions, EngineStatus } from '../contracts/types'
 import { managedEngine, managedPath } from './managedEngine'
 import { UciController, SearchCancelled, assertEngineAvailable, ensureEngineOptions } from './uci'
 import { withEngineLease, searchThreads } from './engineScheduler'
-import { replay } from '../domain/review'
 import { INITIAL_FEN } from 'chessops/fen'
 import { engineLevelInfo } from '../domain/engineLevels'
 import { errorSummary, logDebug, logWarn, truncateForLog } from './logger'
+import { replayPositions } from './rules'
 
 /**
  * Stockfish ships with the app as the `stockfish` npm package's lite
@@ -99,7 +99,7 @@ export async function bestMove(
 ): Promise<string> {
   const moves = assertMoves(moveList)
   const { fen, movetime, chess960 } = assertBestMoveOptions(options)
-  if (replay(fen ?? INITIAL_FEN, moves).length !== moves.length + 1)
+  if (replayPositions(fen ?? INITIAL_FEN, moves).length !== moves.length + 1)
     throw new Error('Invalid computer position or move history.')
   stopEngine()
   const epoch = serviceState.generation

@@ -1,14 +1,7 @@
 import { Chess } from 'chessops/chess'
-import { INITIAL_FEN, makeFen, parseFen } from 'chessops/fen'
-import { parseSan } from 'chessops/san'
-import { makeUci, parseUci } from 'chessops/util'
-import type {
-  Judgment,
-  ReviewEval,
-  ReviewSide,
-  ReviewSummary,
-  StoredReview,
-} from '../contracts/types.ts'
+import { makeFen, parseFen } from 'chessops/fen'
+import { parseUci } from 'chessops/util'
+import type { Judgment, ReviewEval, ReviewSide, StoredReview } from '../contracts/types.ts'
 
 /**
  * Game review, worked out the way Lichess does it (lila's `Advice`, `WinPercent` and
@@ -293,11 +286,6 @@ function gameAccuracy(
   return result
 }
 
-export function summarize(review: StoredReview): ReviewSummary {
-  const { white, black } = analyseReview(review)
-  return { key: review.key, source: review.source, complete: review.complete, white, black }
-}
-
 /* ── Games as start position + UCI moves ─────────────────────────── */
 
 /** Lichess speeds of standard chess; variants (Chess960, Crazyhouse …) are not reviewed. */
@@ -310,32 +298,3 @@ const STANDARD_PERFS = new Set([
   'correspondence',
 ])
 export const isReviewablePerf = (perf: string): boolean => STANDARD_PERFS.has(perf)
-
-/** SAN moves played from `fen`, as UCI, as far as they are legal. */
-export function sanToUci(fen: string, sans: readonly string[]): string[] {
-  const setup = parseFen(fen)
-  if (setup.isErr) return []
-  const created = Chess.fromSetup(setup.value)
-  if (created.isErr) return []
-  const pos = created.value
-  const moves: string[] = []
-  for (const san of sans) {
-    const move = parseSan(pos, san)
-    if (!move) break
-    moves.push(makeUci(move))
-    pos.play(move)
-  }
-  return moves
-}
-
-/** A synced Lichess game's start position (from its PGN's FEN tag) and UCI moves. */
-export function lichessLine(game: { moves: string; pgn?: string | null; initialFen?: string }): {
-  fen: string
-  moves: string[]
-} {
-  const tagged = game.pgn ? /\[FEN "([^"]+)"\]/.exec(game.pgn)?.[1] : undefined
-  const start = game.initialFen ?? tagged ?? INITIAL_FEN
-  const setup = parseFen(start)
-  const fen = setup.isErr ? INITIAL_FEN : makeFen(setup.value)
-  return { fen, moves: sanToUci(fen, game.moves.split(/\s+/).filter(Boolean)) }
-}

@@ -5,10 +5,13 @@ import {
   puzzleFromApi,
   puzzleFromDb,
   startPuzzle,
+  type DbPuzzle,
   type PuzzleState,
 } from '../core/src/domain/puzzle.ts'
 import { FEN, PUZZLE_ANGLE } from '../core/src/domain/patterns.ts'
-import { PuzzleSampler, sampleZstdCsv } from '../core/src/services/puzzleSampler.ts'
+import { sampleZstdCsv, type ChunkSampler } from '../core/src/services/puzzleSampler.ts'
+import type { NativeRules } from '../core/src/services/native.ts'
+import { createRequire } from 'node:module'
 import {
   queryLadder,
   queryPuzzles,
@@ -192,18 +195,37 @@ assert(
   undefined,
 )
 
-// Sampler: parses the CSV, keeps solid puzzles, skips the header.
-const sampler = new PuzzleSampler()
-sampler.add(
-  'PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags',
+// Sampler (the native rules, resolved as the core resolves them): parses the CSV, keeps solid
+// puzzles, skips the header.
+const native = createRequire(new URL('../core/src/services/native.ts', import.meta.url))(
+  '@kchess/native',
+) as NativeRules
+function nativeSampler(): ChunkSampler {
+  const inner = new native.PuzzleSampler(1)
+  return {
+    push: (chunk) => inner.push(chunk),
+    finish: () => inner.finish(),
+    get count() {
+      return inner.count
+    },
+    get lines() {
+      return inner.lines
+    },
+    kept: () => JSON.parse(inner.kept()) as DbPuzzle[],
+  }
+}
+const sampler = nativeSampler()
+sampler.push(
+  Buffer.from(
+    [
+      'PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags',
+      '00sHx,q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17,e8d7 a2e6 d7d8 f7f8,1760,80,90,5000,mate mateIn2 middlegame short,https://lichess.org/yyznGmXs/black#34,Italian_Game',
+      '00sJ9,r3r1k1/p4ppp/2p2n2/1p6/3P1qb1/2P1R3/PPB2PP1/RN1Q2K1 b - - 5 18,f4g4 d1g4 f6g4 e3e8,1490,74,82,1234,mate short,https://lichess.org/x,',
+      'bad,short',
+    ].join('\n'),
+  ),
 )
-sampler.add(
-  '00sHx,q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17,e8d7 a2e6 d7d8 f7f8,1760,80,90,5000,mate mateIn2 middlegame short,https://lichess.org/yyznGmXs/black#34,Italian_Game',
-)
-sampler.add(
-  '00sJ9,r3r1k1/p4ppp/2p2n2/1p6/3P1qb1/2P1R3/PPB2PP1/RN1Q2K1 b - - 5 18,f4g4 d1g4 f6g4 e3e8,1490,74,82,1234,mate short,https://lichess.org/x,',
-)
-sampler.add('bad,short')
+sampler.finish()
 assert(
   'sampler keeps solid puzzles only',
   sampler
@@ -333,7 +355,7 @@ for (let i = 0; i < 6000; i++)
   )
 csvRows.push('broken,line')
 const compressed = zstdCompressSync(Buffer.from(csvRows.join('\n')))
-const streamed = new PuzzleSampler()
+const streamed = nativeSampler()
 // Deliver it in small pieces, as a network would, to exercise chunk boundaries inside lines.
 const pieces: Buffer[] = []
 for (let at = 0; at < compressed.length; at += 997) pieces.push(compressed.subarray(at, at + 997))

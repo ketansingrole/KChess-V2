@@ -13,11 +13,21 @@ export function selectChecks(files) {
   const code = relevant.filter((file) => /\.(?:[cm]?[jt]s|vue)$/.test(file))
   const tests = code.filter((file) => /^(?:.*\/)?tests\/unit\/.*\.test\./.test(file))
   const sources = code.filter((file) => /^(?:apps|core|hosts)\//.test(file))
+  const rust = relevant.some((file) =>
+    /^(?:crates\/|Cargo\.(?:toml|lock)$|rust(?:-toolchain|fmt)\.toml$)/.test(file),
+  )
   const steps = []
   if (relevant.length)
     steps.push(['format', ['exec', 'prettier', '--check', '--ignore-unknown', ...relevant]])
   if (code.length)
     steps.push(['lint', ['exec', 'eslint', '--no-warn-ignored', '--max-warnings', '0', ...code]])
+  // The Rust rules must keep matching the TypeScript ones they replace.
+  if (rust) steps.push(['rust', ['run', 'check:rust']], ['native', ['run', 'build:native']])
+  if (rust && !full)
+    steps.push(['unit-native', ['exec', 'vitest', 'run', 'core/tests/unit/native-rules.test.ts']])
+  // Unit tests load the core, which requires the native rules for this host.
+  const unit = full || code.some((file) => /^(?:apps|core|hosts)\/|tests\//.test(file))
+  if (!rust && unit) steps.push(['native', ['run', 'build:native']])
   if (full) {
     steps.push(['types', ['run', 'typecheck']], ['unit', ['run', 'test:unit']])
   } else {

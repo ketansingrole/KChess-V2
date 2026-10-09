@@ -35,7 +35,7 @@ shutdown ownership and examples.
 
 ## Run
 
-Requires Node.js **24.21.0** (Node 24 LTS) and pnpm 11.19.0. The runtime is pinned in `.nvmrc` and `.node-version`; use `nvm install && nvm use` if you use nvm.
+Requires Node.js **24.21.0** (Node 24 LTS), pnpm 11.19.0 and [Rust](https://rustup.rs) via rustup. The runtime is pinned in `.nvmrc` and `.node-version`; use `nvm install && nvm use` if you use nvm. `rust-toolchain.toml` pins the Rust toolchain, which rustup installs on first use.
 
 ```bash
 npm install --global pnpm@11.19.0

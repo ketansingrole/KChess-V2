@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned so local builds, CI and release packages compile the native rules identically.
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

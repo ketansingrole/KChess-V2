@@ -165,7 +165,7 @@ describe('draft release uploads', () => {
 
 it('synchronizes release versions across all workspace manifests', () => {
   const directory = mkdtempSync(join(tmpdir(), 'kchess-workspace-version-'))
-  const paths = ['.', 'core', 'hosts/node', 'apps/cli', 'apps/desktop']
+  const paths = ['.', 'core', 'hosts/node', 'apps/cli', 'apps/desktop', 'crates/kchess-node']
   try {
     for (const path of paths) {
       mkdirSync(join(directory, path), { recursive: true })

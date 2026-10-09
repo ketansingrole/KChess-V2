@@ -1,4 +1,5 @@
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
+import { rulesEngine } from './native'
 const samples = new Map<string, number[]>()
 const delay = monitorEventLoopDelay({ resolution: 20 })
 export function startPerformanceMonitoring(): void {
@@ -16,6 +17,7 @@ export const timed = (name: string): (() => void) => {
 }
 export function performanceSnapshot(): object {
   return {
+    rules: rulesEngine(),
     eventLoopMs: {
       mean: Number.isFinite(delay.mean) ? Math.round(delay.mean / 1e6) : 0,
       p99: Math.round(delay.percentile(99) / 1e6),

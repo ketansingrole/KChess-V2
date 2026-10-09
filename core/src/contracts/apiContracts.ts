@@ -47,13 +47,13 @@ import {
   assertLookupOptions,
 } from '../domain/validate'
 import {
-  assertArchivedGame,
+  assertArchivedGameShape,
   assertLegacyDocuments,
   assertLibraryId,
   assertRepertoireKey,
   assertSessionKind,
   assertSide,
-  assertStudyCommand,
+  assertStudyCommandShape,
 } from '../domain/library'
 import { oauthLook } from '../domain/oauthLook'
 import { TV_CHANNEL_KEYS } from '../domain/tvChannels'
@@ -191,8 +191,8 @@ export const CORE_CONTRACTS = {
   clearVoiceHistory: { min: 0, checks: [] },
   library: { min: 0, checks: [] },
   importLibrary: { min: 1, checks: [assertLegacyDocuments] },
-  studyCommand: { min: 1, checks: [assertStudyCommand] },
-  saveArchivedGame: { min: 1, checks: [assertArchivedGame] },
+  studyCommand: { min: 1, checks: [assertStudyCommandShape] },
+  saveArchivedGame: { min: 1, checks: [assertArchivedGameShape] },
   removeArchivedGame: { min: 1, checks: [assertLibraryId] },
   addMistakes: { min: 1, checks: [assertReviewKey, optional(assertSide)] },
   answerMistake: { min: 2, checks: [assertLibraryId, boolean] },

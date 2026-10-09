@@ -4,7 +4,7 @@ Thanks for helping! Bug reports, fixes, and ideas are all welcome.
 
 ## Getting started
 
-Requires Node.js 24.21.0 (pinned in `.nvmrc`) and pnpm 11.19.0 (see the [README](README.md#run) for details).
+Requires Node.js 24.21.0 (pinned in `.nvmrc`), pnpm 11.19.0 and Rust through rustup (pinned in `rust-toolchain.toml`); see the [README](README.md#run) for details.
 
 ```bash
 pnpm install --frozen-lockfile

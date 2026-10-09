@@ -17,6 +17,7 @@ export function writeVersion(version, directory = root) {
     'hosts/node/package.json',
     'apps/cli/package.json',
     'apps/desktop/package.json',
+    'crates/kchess-node/package.json',
   ]) {
     const path = join(directory, packagePath)
     if (!existsSync(path) && packagePath !== 'package.json') continue

@@ -141,6 +141,18 @@ try {
     })
     return child
   }
+  // The core runs the Rust rules when they are built for this host (incremental, seconds).
+  try {
+    execFileSync(process.execPath, [join(root, 'tooling/build-native.mjs')], {
+      cwd: root,
+      stdio: 'inherit',
+    })
+  } catch (error) {
+    console.warn(
+      '[kchess] Native rules did not build; the core cannot start without them.',
+      error.message,
+    )
+  }
   launch([
     join(root, 'node_modules/nuxt/bin/nuxt.mjs'),
     'dev',

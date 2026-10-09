@@ -26,6 +26,7 @@
     "test:puzzles": "node --experimental-strip-types tooling/puzzle-smoke.ts",
     "test:puzzle-worker": "node tooling/puzzle-worker-smoke.mjs",
     "benchmark:library": "node tooling/library-benchmark.mjs",
+    "benchmark:core": "node tooling/core-benchmark.mjs",
     "test:lifecycle": "vitest run apps/desktop/tests/unit/lifecycle.test.ts core/tests/unit/online-session.test.ts",
     "test": "pnpm run test:smoke && pnpm run test:unit",
     "start": "node tooling/with-branded-electron.mjs electron apps/desktop",
@@ -35,6 +36,7 @@
     "lint:fix": "eslint . --fix",
     "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types tooling/main-smoke.ts",
     "build:core": "pnpm --filter @kchess/core build && pnpm --filter @kchess/node build && pnpm --filter @kchess/cli build",
+    "build:native": "node tooling/build-native.mjs",
     "test:core": "pnpm run build:core && node tooling/core-smoke.mjs && node tooling/node-core-smoke.mjs && node tooling/core-types-smoke.mjs",
     "test:unit": "vitest run --coverage",
     "test:watch": "vitest",
@@ -47,6 +49,7 @@
     "release:verify": "node tooling/release-rules.mjs",
     "verify:package": "node tooling/verify-package.mjs",
     "check:fast": "node tooling/check-fast.mjs",
+    "check:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
     "check:performance": "node tooling/library-benchmark.mjs --check",
     "check:report": "node tooling/guardrail-report.mjs",
     "cli": "pnpm run build:core && node apps/cli/dist/cli.js"

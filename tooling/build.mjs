@@ -37,6 +37,8 @@ async function run(cli, args, env = process.env, cwd = root) {
   })
   if (code) process.exit(code)
 }
+// The core loads the Rust rules from @kchess/native; package them for this host.
+await run('build-native.mjs', [])
 await run('../node_modules/nuxt/bin/nuxt.mjs', ['typecheck', 'apps/desktop'])
 await run('../node_modules/typescript/bin/tsc', [
   '--noEmit',

@@ -1,6 +1,6 @@
 import { getDb } from './db'
 import { logDebug } from './logger'
-import { summarize } from '../domain/review'
+import { summarizeReview } from './rules'
 import type { ReviewSummary, StoredReview } from '../contracts/types'
 
 /**
@@ -59,7 +59,7 @@ export function writeReview(review: StoredReview): {
     link()
     return {
       review: { ...existing.review, gameId: review.gameId ?? existing.review.gameId },
-      summary: existing.summary ?? summarize(existing.review),
+      summary: existing.summary ?? summarizeReview(existing.review),
     }
   }
   const merged: StoredReview = {
@@ -68,7 +68,7 @@ export function writeReview(review: StoredReview): {
     gameId: review.gameId ?? existing?.review.gameId,
     updatedAt: Date.now(),
   }
-  const summary = summarize(merged)
+  const summary = summarizeReview(merged)
   getDb()
     .prepare(
       `INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)

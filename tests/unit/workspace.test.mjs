@@ -12,7 +12,14 @@ it('verifies every shipped package against its own lockfile importer and release
   const lock = parse(readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8'))
   const desktop = readPackage('apps/desktop')
   const version = readPackage('.').version
-  for (const directory of ['.', 'core', 'hosts/node', 'apps/cli', 'apps/desktop']) {
+  for (const directory of [
+    '.',
+    'core',
+    'hosts/node',
+    'apps/cli',
+    'apps/desktop',
+    'crates/kchess-node',
+  ]) {
     const pkg = readPackage(directory)
     expect(pkg.version).toBe(version)
     expect(validateReleaseVersion(pkg, lock, `v${version}`, directory, desktop)).toBe(`v${version}`)

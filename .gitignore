@@ -63,3 +63,8 @@ test-results/
 
 # Local docs / review notes
 docs/
+
+# Rust build output
+target/
+*.node
+crates/kchess-node/THIRD_PARTY_LICENSES.txt
