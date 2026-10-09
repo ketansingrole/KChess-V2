@@ -167,7 +167,19 @@ pub fn call(method: &str, args: &str) -> Result<String> {
             let limit = arg(&args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);
             position::pgn_mainline(text(&args, 0, "pgn")?, limit as usize)
         }
-        _ => return Err(format!("unknown rules method {method}")),
+        _ => {
+            // Each group of moved rules dispatches its own methods.
+            let moved = [
+                crate::voice::call,
+                crate::training::call,
+                crate::records::call,
+                crate::misc::call,
+            ];
+            return match moved.iter().find_map(|call| call(method, &args)) {
+                Some(result) => serde_json::to_string(&result?).map_err(|e| e.to_string()),
+                None => Err(format!("unknown rules method {method}")),
+            };
+        }
     };
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
