@@ -35,7 +35,10 @@ function rules(): NativeRules {
  * runs: the Electron main process, the Node host and the CLI. The module loads on first use.
  */
 export function installRules(): void {
-  setRulesBinding({ invoke: (method, args) => rules().invoke(method, args) })
+  // Load now, not on first use: the module is chosen by platform and architecture, which tests
+  // may stub later.
+  const native = rules()
+  setRulesBinding({ invoke: (method, args) => native.invoke(method, args) })
 }
 installRules()
 

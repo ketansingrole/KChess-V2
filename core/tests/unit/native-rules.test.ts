@@ -69,11 +69,18 @@ const goldenFile: Record<string, string[]> = existsSync(GOLDEN_PATH)
   ? JSON.parse(readFileSync(GOLDEN_PATH, 'utf8'))
   : {}
 const recorded: Record<string, string[]> = {}
+/**
+ * Sorted keys, and fractions to 9 significant digits: V8's Math.exp, and so review figures,
+ * differ in the last bit between CPUs. Bit-exactness on each CPU is checked against Math.exp
+ * itself (seeds 7105 and 7205); recorded outputs are shared by every platform.
+ */
 const canonical = (value: unknown): string =>
   JSON.stringify(value, (_key, inner: unknown) =>
-    inner && typeof inner === 'object' && !Array.isArray(inner)
-      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => a.localeCompare(b)))
-      : inner,
+    typeof inner === 'number' && !Number.isInteger(inner)
+      ? Number(inner.toPrecision(9))
+      : inner && typeof inner === 'object' && !Array.isArray(inner)
+        ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => a.localeCompare(b)))
+        : inner,
   ) ?? 'undefined'
 const digest = (value: unknown): string =>
   createHash('sha256').update(canonical(value)).digest('hex').slice(0, 16)

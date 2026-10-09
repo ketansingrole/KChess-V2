@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { logDebug, logError } from './logger'
+import { logError } from './logger'
 
 /**
  * The Rust rules engine (`crates/kchess-domain` through the `@kchess/native` N-API binding).
@@ -65,7 +65,6 @@ export function nativeRules(): NativeRules | undefined {
   loaded = null
   try {
     loaded = createRequire(import.meta.url)('@kchess/native') as NativeRules
-    logDebug('native', `Loaded rules ${loaded.version()}.`)
   } catch (cause) {
     logError('native', 'Native rules could not be loaded:', cause)
   }
