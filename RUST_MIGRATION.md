@@ -59,15 +59,16 @@ services only through the bridge's host callbacks; TypeScript reaches Rust only 
 
 ## Phases
 
-| #   | Scope                                                                                                                                 | Status |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 0   | Rules, documents, positions, PGN (`kchess-domain`)                                                                                    | done   |
-| 1   | Bridge (`kchess-core`, `NativeCore`), puzzle database and queries                                                                     | done   |
-| 2   | Pure domain left in TS: sessions, rush, puzzle sessions, clocks, voice, board editor, validation, UCI info, ratings, studies, coach … |        |
-| 3   | Storage: settings, accounts, game store, library, review store, migrations                                                            |        |
-| 4   | Engines: UCI controller, scheduler, managed Stockfish, analysis, reviews                                                              |        |
-| 5   | Lichess: client, OAuth, usage/request policy, online games, challenges, tournaments, spectate, studies, cloud eval, explorer          |        |
-| 6   | Facade (`service.ts`), contracts and logging to Rust; generated types; delete `core/`                                                 |        |
+| #   | Scope                                                                                                                                                                                                                                                                        | Status |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 0   | Rules, documents, positions, PGN (`kchess-domain`)                                                                                                                                                                                                                           | done   |
+| 1   | Bridge (`kchess-core`, `NativeCore`), puzzle database and queries                                                                                                                                                                                                            | done   |
+| 2a  | Pure domain: voice, board editor, coordinates, training (rush, puzzles, endgames, openings, clock, engine levels, UCI info, coach), records (reviews, ratings, studies, results, time controls, online events, Lichess errors, OAuth look), validation and library documents | done   |
+| 2b  | Stateful domain: game sessions and archive, online game, puzzle sessions, analysis-tree edits; remaining TS constants (`patterns.ts`, `tvChannels.ts`, grammar and data constants pinned by golden suites)                                                                   |        |
+| 3   | Storage: settings, accounts, game store, library, review store, migrations                                                                                                                                                                                                   |        |
+| 4   | Engines: UCI controller, scheduler, managed Stockfish, analysis, reviews                                                                                                                                                                                                     |        |
+| 5   | Lichess: client, OAuth, usage/request policy, online games, challenges, tournaments, spectate, studies, cloud eval, explorer                                                                                                                                                 |        |
+| 6   | Facade (`service.ts`), contracts and logging to Rust; generated types; delete `core/`                                                                                                                                                                                        |        |
 
 ## Porting a domain module (phase 2 procedure)
 
