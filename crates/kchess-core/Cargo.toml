@@ -17,6 +17,18 @@ futures-util = "0.3"
 zstd = "0.13"
 # `crypto.randomUUID()` for study and chapter ids (already in Cargo.lock through rustls and tempfile).
 getrandom = "0.2"
+# `CancellationToken`: the AbortSignal of the engine controllers and scheduler. Already in
+# Cargo.lock through reqwest; no new code is pulled in.
+tokio-util = "0.7"
+
+# SIGTERM before SIGKILL, as Node's `ChildProcess.kill()` does. Tokio can only send SIGKILL.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+
+# A scripted UCI engine for the engine tests (see tests/support/fake_uci.rs).
+[[bin]]
+name = "kchess-fake-uci"
+path = "tests/support/fake_uci.rs"

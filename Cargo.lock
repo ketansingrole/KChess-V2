@@ -611,12 +611,14 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "kchess-domain",
+ "libc",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "zstd",
 ]
 
