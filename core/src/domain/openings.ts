@@ -1,5 +1,5 @@
-import { repetitionKey } from './position.ts'
-import { setupStart, type GameSetup } from './variant.ts'
+import { rules } from './engine.ts'
+import type { GameSetup } from './variant.ts'
 
 export interface OpeningName {
   eco: string
@@ -18,25 +18,16 @@ export function loadOpenings(): Promise<Map<string, string>> {
 /**
  * The name of the opening reached after `ply` moves. As Lichess suggests, step back from the
  * position until a named one is found. Only games under standard rules have opening names.
+ * The Rust rules read the same table (`crates/kchess-domain/src/training/openings.rs`), so the
+ * `openings` argument is not needed here; callers may still pass the loaded table.
  */
 export function openingAt(
-  openings: Map<string, string>,
+  _openings: Map<string, string>,
   setup: GameSetup,
   moves: readonly string[],
   ply = moves.length,
 ): OpeningName | undefined {
-  if (setup.variant !== 'standard') return undefined
-  const pos = setupStart(setup)
-  if (!pos) return undefined
-  // EPD: placement, side, castling and en passant.
-  const seen = [pos.fen, ...pos.line(moves.slice(0, ply)).map((move) => move.fen)].map(
-    repetitionKey,
-  )
-  for (let i = seen.length - 1; i >= 0; i--) {
-    const hit = openings.get(seen[i]!)
-    if (!hit) continue
-    const split = hit.indexOf('|')
-    return { eco: hit.slice(0, split), name: hit.slice(split + 1) }
-  }
-  return undefined
+  // A non-finite `ply` travels as its text, which the rules read as the number it stands for.
+  const wire = Number.isFinite(ply) ? ply : String(ply)
+  return rules<OpeningName | null>('openingAt', setup, [...moves], wire) ?? undefined
 }

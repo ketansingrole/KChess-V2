@@ -8,7 +8,7 @@ import {
   variantFromLichess,
 } from '../../src/domain/variant'
 import { setupDrawReason, setupPgn, setupSanHistory } from '../../src/domain/chess'
-import { openingAt } from '../../src/domain/openings'
+import { loadOpenings, openingAt } from '../../src/domain/openings'
 
 describe('variants', () => {
   it('numbers Chess960 starts as the Scharnagl scheme does', () => {
@@ -67,15 +67,20 @@ describe('variants', () => {
     expect(setupSanHistory(STANDARD_SETUP, ['e2e4', 'e7e5'])).toEqual(['e4', 'e5'])
   })
 
-  it('names openings by stepping back to the last named position', () => {
-    const table = new Map([
-      ['rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -', 'B00|King’s Pawn Game'],
-    ])
+  it('names openings by stepping back to the last named position', async () => {
+    const table = await loadOpenings()
     expect(openingAt(table, STANDARD_SETUP, ['e2e4', 'a7a6', 'h2h3'])).toEqual({
       eco: 'B00',
-      name: 'King’s Pawn Game',
+      name: 'St. George Defense',
     })
-    expect(openingAt(table, STANDARD_SETUP, ['d2d4'])).toBeUndefined()
+    expect(openingAt(table, STANDARD_SETUP, ['e2e4'])).toEqual({
+      eco: 'B00',
+      name: "King's Pawn Game",
+    })
+    expect(openingAt(table, STANDARD_SETUP, ['d2d4'])).toEqual({
+      eco: 'A40',
+      name: "Queen's Pawn Game",
+    })
     expect(openingAt(table, { variant: 'chess960', fen: INITIAL_FEN }, ['e2e4'])).toBeUndefined()
   })
 })

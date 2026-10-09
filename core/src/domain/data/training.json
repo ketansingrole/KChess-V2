@@ -1,0 +1,262 @@
+{
+  "rushConfigs": {
+    "storm": {
+      "mode": "storm",
+      "variant": "standard",
+      "title": "Storm",
+      "rules": "Three minutes. Solve as many puzzles as you can. A run of correct moves earns bonus time; a mistake costs 10 seconds and breaks the run.",
+      "durationMs": 180000,
+      "skips": 0,
+      "penaltyMs": 10000,
+      "combo": true,
+      "ladder": {
+        "from": 800,
+        "to": 2600,
+        "count": 100
+      }
+    },
+    "streak": {
+      "mode": "streak",
+      "variant": "standard",
+      "title": "Streak",
+      "rules": "No clock. Every puzzle is harder than the last and the first mistake ends the run. You may skip one puzzle.",
+      "strikes": 1,
+      "skips": 1,
+      "penaltyMs": 0,
+      "combo": false,
+      "ladder": {
+        "from": 600,
+        "to": 2700,
+        "count": 100
+      }
+    },
+    "3min": {
+      "mode": "rush",
+      "variant": "3min",
+      "title": "Rush · 3 minutes",
+      "rules": "Three minutes and three strikes. A wrong move is a strike and moves you on.",
+      "durationMs": 180000,
+      "strikes": 3,
+      "skips": 0,
+      "penaltyMs": 0,
+      "combo": false,
+      "ladder": {
+        "from": 600,
+        "to": 2600,
+        "count": 100
+      }
+    },
+    "5min": {
+      "mode": "rush",
+      "variant": "5min",
+      "title": "Rush · 5 minutes",
+      "rules": "Five minutes and three strikes. A wrong move is a strike and moves you on.",
+      "durationMs": 300000,
+      "strikes": 3,
+      "skips": 0,
+      "penaltyMs": 0,
+      "combo": false,
+      "ladder": {
+        "from": 600,
+        "to": 2700,
+        "count": 150
+      }
+    },
+    "survival": {
+      "mode": "rush",
+      "variant": "survival",
+      "title": "Rush · Survival",
+      "rules": "No clock, three strikes. How far up the difficulty ladder can you get?",
+      "strikes": 3,
+      "skips": 0,
+      "penaltyMs": 0,
+      "combo": false,
+      "ladder": {
+        "from": 600,
+        "to": 2800,
+        "count": 150
+      }
+    }
+  },
+  "rushChoices": ["storm", "streak", "3min", "5min", "survival"],
+  "endgameDrills": [
+    {
+      "id": "kq-vs-k",
+      "title": "King and queen vs king",
+      "group": "Basic mates",
+      "fen": "4k3/8/8/8/8/8/8/3QK3 w - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Easy",
+      "idea": "Box the king in with the queen, bring your king up, then mate. Watch out for stalemate."
+    },
+    {
+      "id": "kr-vs-k",
+      "title": "King and rook vs king",
+      "group": "Basic mates",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Medium",
+      "idea": "Cut the king off with the rook and push it to the edge with your king’s help."
+    },
+    {
+      "id": "kbb-vs-k",
+      "title": "Two bishops vs king",
+      "group": "Basic mates",
+      "fen": "4k3/8/8/8/8/8/8/2B1KB2 w - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Medium",
+      "idea": "The bishops cover neighbouring diagonals; walk them and your king toward a corner."
+    },
+    {
+      "id": "kbn-vs-k",
+      "title": "Bishop and knight vs king",
+      "group": "Basic mates",
+      "fen": "4k3/8/8/8/8/8/8/2B1K1N1 w - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Hard",
+      "idea": "Drive the king to a corner of the bishop’s colour. It has to happen inside 50 moves."
+    },
+    {
+      "id": "kp-key-squares",
+      "title": "King in front of the pawn",
+      "group": "Pawn endings",
+      "fen": "4k3/8/4K3/4P3/8/8/8/8 w - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Easy",
+      "idea": "Your king is on the key square in front of the pawn: lead the pawn home with it."
+    },
+    {
+      "id": "kp-opposition",
+      "title": "Win the opposition",
+      "group": "Pawn endings",
+      "fen": "8/8/8/3k4/8/3K4/3P4/8 b - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Medium",
+      "idea": "Black has to give way. Take the opposition at the right moment and the pawn queens."
+    },
+    {
+      "id": "kp-hold",
+      "title": "Hold the draw against a pawn",
+      "group": "Pawn endings",
+      "fen": "8/8/3k4/3P4/3K4/8/8/8 b - - 0 1",
+      "player": "black",
+      "goal": "draw",
+      "level": "Medium",
+      "idea": "You defend: keep the opposition and never let the white king in front of its pawn."
+    },
+    {
+      "id": "lucena",
+      "title": "Lucena position",
+      "group": "Rook endings",
+      "fen": "1K1k4/1P6/8/8/8/8/r7/2R5 w - - 0 1",
+      "player": "white",
+      "goal": "win",
+      "level": "Hard",
+      "idea": "Build a bridge: get the rook to the fourth rank and shelter the king from the checks."
+    },
+    {
+      "id": "philidor",
+      "title": "Philidor position",
+      "group": "Rook endings",
+      "fen": "4k3/8/r7/3KP3/8/8/8/7R b - - 0 1",
+      "player": "black",
+      "goal": "draw",
+      "level": "Hard",
+      "idea": "Keep your rook on the sixth rank until the pawn advances, then check from behind."
+    }
+  ],
+  "engineLadder": [
+    {
+      "id": "beginner",
+      "label": "Beginner",
+      "elo": 800,
+      "skill": 0,
+      "randomMove": 0.4,
+      "time": 300
+    },
+    {
+      "id": "novice",
+      "label": "Novice",
+      "elo": 1100,
+      "skill": 0,
+      "randomMove": 0.15,
+      "time": 500
+    },
+    {
+      "id": "casual",
+      "label": "Casual",
+      "elo": 1350,
+      "uciElo": 1350,
+      "time": 700
+    },
+    {
+      "id": "club",
+      "label": "Club Player",
+      "elo": 1600,
+      "uciElo": 1600,
+      "time": 1000
+    },
+    {
+      "id": "strong-club",
+      "label": "Strong Club Player",
+      "elo": 1800,
+      "uciElo": 1800,
+      "time": 1400
+    },
+    {
+      "id": "expert",
+      "label": "Expert",
+      "elo": 2000,
+      "uciElo": 2000,
+      "time": 1600
+    },
+    {
+      "id": "cm",
+      "label": "Candidate Master",
+      "elo": 2200,
+      "uciElo": 2200,
+      "time": 1800
+    },
+    {
+      "id": "fm",
+      "label": "FIDE Master",
+      "elo": 2300,
+      "uciElo": 2300,
+      "time": 2000
+    },
+    {
+      "id": "im",
+      "label": "International Master",
+      "elo": 2400,
+      "uciElo": 2400,
+      "time": 2000
+    },
+    {
+      "id": "gm",
+      "label": "Grandmaster",
+      "elo": 2550,
+      "uciElo": 2550,
+      "time": 2200
+    },
+    {
+      "id": "super-gm",
+      "label": "Super Grandmaster",
+      "elo": 2750,
+      "uciElo": 2750,
+      "time": 2500
+    },
+    {
+      "id": "max",
+      "label": "Stockfish Max",
+      "elo": null,
+      "time": 2500
+    }
+  ],
+  "defaultEngineLevels": ["beginner", "club", "expert", "fm", "im", "gm", "max"]
+}

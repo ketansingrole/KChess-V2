@@ -1,4 +1,17 @@
+import { rules } from './engine.ts'
 import type { Color } from './position.ts'
+
+/** The clock's plain state; every transition is computed by the Rust rules from the time given. */
+interface ClockState {
+  times: Record<Color, number>
+  ticking?: Color
+  lastUpdate: number
+  emergMs: number
+  alerted: Record<Color, boolean>
+}
+
+/** A number argument as the rules take it: non-finite values travel as their text. */
+const wire = (value: number): number | string => (Number.isFinite(value) ? value : String(value))
 
 /**
  * Client clock modelled on lila's `ui/lib/src/game/clock/clockCtrl.ts`:
@@ -6,22 +19,17 @@ import type { Color } from './position.ts'
  * them, optionally delaying the countdown to compensate network lag.
  */
 export class Clock {
-  private times: Record<Color, number> = { white: 0, black: 0 }
-  private ticking: Color | undefined
-  private lastUpdate = 0
-  private emergMs = 20_000
-  private alerted: Record<Color, boolean> = { white: false, black: false }
+  /** Created on first use, so the clock needs no rules binding until it is read. */
+  private state?: ClockState
 
   private now: () => number
   constructor(now: () => number = () => performance.now()) {
     this.now = now
   }
 
-  /** lila's low-time threshold: min(60, 12.5% of initial), at least 10s (2s for short games). */
-  private static threshold(initial: number): number {
-    return (
-      1000 * Math.min(60, initial < 60 ? Math.max(2, initial * 0.2) : Math.max(10, initial * 0.125))
-    )
+  private current(): ClockState {
+    this.state ??= rules<ClockState>('clockInitial')
+    return this.state
   }
 
   set(data: {
@@ -31,44 +39,35 @@ export class Clock {
     initialSeconds?: number
     delayCentis?: number
   }): void {
-    this.times = { white: Math.max(0, data.white), black: Math.max(0, data.black) }
-    this.ticking = data.ticking
-    this.lastUpdate = this.now() + (data.delayCentis ?? 0) * 10
-    if (data.initialSeconds) this.emergMs = Clock.threshold(data.initialSeconds)
-    if (data.ticking) this.alerted[data.ticking] = false
+    this.state = rules<ClockState>('clockSet', this.current(), data, wire(this.now()))
   }
 
   pause(): void {
-    this.times = { white: this.remaining('white'), black: this.remaining('black') }
-    this.ticking = undefined
+    this.state = rules<ClockState>('clockPause', this.current(), wire(this.now()))
   }
 
   get running(): Color | undefined {
-    return this.ticking
+    return this.current().ticking
   }
 
   remaining(color: Color, now = this.now()): number {
-    const elapsed = this.ticking === color ? Math.max(0, now - this.lastUpdate) : 0
-    return Math.max(0, this.times[color] - elapsed)
+    return rules<number>('clockRemaining', this.current(), color, wire(now))
   }
 
   /** True once per player, when that player's clock drops below the low-time threshold. */
   lowTimeAlert(color: Color, now = this.now()): boolean {
-    if (this.alerted[color] || this.remaining(color, now) > this.emergMs) return false
-    this.alerted[color] = true
-    return true
+    const next = rules<{ state: ClockState; result: boolean }>(
+      'clockLowTimeAlert',
+      this.current(),
+      color,
+      wire(now),
+    )
+    this.state = next.state
+    return next.result
   }
 }
 
 /** m:ss, h:mm:ss past an hour, and days plus hours for correspondence clocks. */
 export function formatClock(millis: number): string {
-  const seconds = Math.max(0, Math.floor(millis / 1000))
-  if (seconds >= 86_400) {
-    const days = Math.floor(seconds / 86_400)
-    const hours = Math.floor((seconds % 86_400) / 3600)
-    return `${days}d ${hours}h`
-  }
-  if (seconds >= 3600)
-    return `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  return rules<string>('formatClock', wire(millis))
 }
