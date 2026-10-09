@@ -1,17 +1,14 @@
-import * as v from 'valibot'
-import { nodesAlong, pathOf, treeFromPgn } from './analysisTree'
-import { UCI_MOVE } from './patterns'
-import { ENGINE_LEVELS, type EngineLevel, type TournamentSystem } from '../contracts/types'
-import { engineSupports, isVariant, STANDARD_SETUP, type GameSetup } from './variant'
-import { rules } from './engine.ts'
+import type { EngineLevel, TournamentSystem } from '../contracts/types'
+import type { GameSetup } from './variant'
+import { rules, rulesLossless } from './engine.ts'
 
 /**
  * The local library: bounded, versioned documents the core keeps for every frontend
- * (studies, played games, mistake drills, unfinished sessions and training notes).
+ * (studies, played games, mistake drills, unfinished sessions and training notes). The decoders
+ * and checks are the Rust validators in `crates/kchess-domain/src/misc/documents.rs`.
  */
 
 type Color = 'white' | 'black'
-const TOURNAMENT_SYSTEMS: readonly TournamentSystem[] = ['arena', 'swiss']
 
 /** Largest serialized document the core stores. */
 export const MAX_DOCUMENT = 2_000_000
@@ -159,226 +156,52 @@ export type LegacyDocuments = Partial<Record<(typeof LEGACY_DOCUMENT_KEYS)[numbe
 
 /* ── Decoders: semantic validation before a document reaches the library or a board ── */
 
-const text = (value: unknown, max: number): value is string =>
-  typeof value === 'string' && value.length <= max
-
-/**
- * The last document parsed: sessions are saved after every move along the board as well as after
- * edits, and moving changes only the path.
- */
-let parsed: { pgn: string; root: ReturnType<typeof treeFromPgn> } | undefined
-
 export function decodeAnalysisSession(raw: unknown): AnalysisSession | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const value = raw as Record<string, unknown>
-  if (value.version !== 1 || typeof value.pgn !== 'string') return undefined
-  if (parsed?.pgn !== value.pgn) parsed = { pgn: value.pgn, root: treeFromPgn(value.pgn) }
-  const root = parsed.root
-  if (!root) return undefined
-  // A path the document no longer contains ends where the document does.
-  const path =
-    typeof value.path === 'string'
-      ? pathOf(
-          nodesAlong(root, value.path)
-            .slice(1)
-            .map((n) => n.uci),
-        )
-      : ''
-  return {
-    pgn: value.pgn,
-    path,
-    orientation: value.orientation === 'black' ? 'black' : 'white',
-    study: typeof value.study === 'string' ? value.study : '',
-    chapter: typeof value.chapter === 'string' ? value.chapter : '',
-  }
+  return rulesLossless<AnalysisSession | null>('decodeAnalysisSession', raw) ?? undefined
 }
-
-const ms = (n: unknown): number =>
-  typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0
-const clockSide = (raw: unknown): { minutes: number; increment: number } | undefined => {
-  if (!raw || typeof raw !== 'object') return undefined
-  const { minutes, increment } = raw as Record<string, unknown>
-  return Number.isInteger(minutes) &&
-    Number.isInteger(increment) &&
-    (minutes as number) >= 0 &&
-    (minutes as number) <= 180 &&
-    (increment as number) >= 0 &&
-    (increment as number) <= 180
-    ? { minutes: minutes as number, increment: increment as number }
-    : undefined
-}
-const playable = (setup: GameSetup, moves: unknown): moves is string[] =>
-  Array.isArray(moves) &&
-  moves.length <= 1024 &&
-  moves.every((m) => typeof m === 'string' && UCI_MOVE.test(m)) &&
-  rules<{ played: unknown[] } | null>('setupReplay', setup, moves)?.played.length === moves.length
 
 export function decodeLocalSession(raw: unknown): LocalSession | undefined {
-  const value = raw as {
-    version?: unknown
-    setup?: { variant?: unknown; fen?: unknown }
-    moves?: unknown
-    clock?: { white?: unknown; black?: unknown } | null
-    times?: { white?: unknown; black?: unknown } | null
-    result?: { winner?: unknown; reason?: unknown } | null
-  }
-  if (!value || value.version !== 1 || !value.setup || !isVariant(value.setup.variant)) return
-  if (!text(value.setup.fen, 120)) return
-  const setup = { variant: value.setup.variant, fen: value.setup.fen }
-  if (!playable(setup, value.moves)) return
-  const white = clockSide(value.clock?.white)
-  const black = clockSide(value.clock?.black)
-  return {
-    setup,
-    moves: [...value.moves],
-    clock: white && black ? { white, black } : null,
-    times: value.times ? { white: ms(value.times.white), black: ms(value.times.black) } : null,
-    result:
-      value.result && typeof value.result.reason === 'string'
-        ? {
-            ...(value.result.winner === 'white' || value.result.winner === 'black'
-              ? { winner: value.result.winner }
-              : {}),
-            reason: value.result.reason.slice(0, 80),
-          }
-        : null,
-  }
+  return rulesLossless<LocalSession | null>('decodeLocalSession', raw) ?? undefined
 }
 
 export function decodeComputerSession(raw: unknown): ComputerSession | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const value = raw as {
-    version?: unknown
-    moves?: unknown
-    ply?: unknown
-    level?: unknown
-    color?: unknown
-    resigned?: unknown
-    setup?: { variant?: unknown; fen?: unknown }
-    clock?: unknown
-    times?: { white?: unknown; black?: unknown }
-    flagged?: unknown
-  }
-  // Version 1 games began at the standard start and had no clock.
-  const setup: GameSetup =
-    value.version === 2 &&
-    value.setup &&
-    isVariant(value.setup.variant) &&
-    text(value.setup.fen, 100)
-      ? { variant: value.setup.variant, fen: value.setup.fen }
-      : STANDARD_SETUP
-  if (
-    (value.version !== 1 && value.version !== 2) ||
-    !engineSupports(setup.variant) ||
-    !playable(setup, value.moves) ||
-    !ENGINE_LEVELS.includes(value.level as EngineLevel) ||
-    !['white', 'black'].includes(String(value.color))
-  )
-    return undefined
-  const clock = clockSide(value.clock) ?? null
-  return {
-    moves: [...value.moves],
-    ply:
-      typeof value.ply === 'number'
-        ? Math.max(0, Math.min(value.moves.length, Math.floor(value.ply)))
-        : value.moves.length,
-    level: value.level as EngineLevel,
-    color: value.color as Color,
-    resigned: value.resigned === true,
-    setup,
-    clock,
-    times: clock ? { white: ms(value.times?.white), black: ms(value.times?.black) } : null,
-    flagged: value.flagged === 'white' || value.flagged === 'black' ? value.flagged : null,
-  }
+  return rulesLossless<ComputerSession | null>('decodeComputerSession', raw) ?? undefined
 }
 
 export function decodeArchiveIdentity(raw: unknown): ArchiveIdentity | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const { id, startedAt } = raw as Record<string, unknown>
-  return text(id, 80) && id && Number.isFinite(startedAt)
-    ? { id, startedAt: startedAt as number }
-    : undefined
+  return rulesLossless<ArchiveIdentity | null>('decodeArchiveIdentity', raw) ?? undefined
 }
 
-/** Session documents carry their version on disk; frontends exchange the decoded shape. */
-const SESSION_VERSION: Record<SessionKind, number | undefined> = {
-  analysis: 1,
-  local: 1,
-  computer: 2,
-  'archive:computer': undefined,
-  'archive:board': undefined,
-  'archive:clock': undefined,
-}
-const SESSION_DECODERS: { [K in SessionKind]: (raw: unknown) => SessionDocuments[K] | undefined } =
-  {
-    analysis: decodeAnalysisSession,
-    local: decodeLocalSession,
-    computer: decodeComputerSession,
-    'archive:computer': decodeArchiveIdentity,
-    'archive:board': decodeArchiveIdentity,
-    'archive:clock': decodeArchiveIdentity,
-  }
 /** A stored (versioned) session document. */
 export function decodeStoredSession<K extends SessionKind>(
   kind: K,
   raw: unknown,
 ): SessionDocuments[K] | undefined {
-  return SESSION_DECODERS[kind](raw) as SessionDocuments[K] | undefined
+  return rulesLossless<SessionDocuments[K] | null>('decodeStoredSession', kind, raw) ?? undefined
 }
+
 /** Add the on-disk version to a decoded session. */
 export function encodeSession<K extends SessionKind>(
   kind: K,
   session: SessionDocuments[K],
 ): object {
-  const version = SESSION_VERSION[kind]
-  return version === undefined ? session : { version, ...session }
+  return rulesLossless<object>('encodeSession', kind, session)
 }
+
 export const isSessionKind = (value: unknown): value is SessionKind =>
-  SESSION_KINDS.includes(value as SessionKind)
+  rulesLossless<boolean>('isSessionKind', value)
+
 /** A session a frontend sends; throws when it is not valid for its kind. */
 export function assertSession<K extends SessionKind>(kind: K, value: unknown): SessionDocuments[K] {
-  const decoded =
-    value && typeof value === 'object'
-      ? decodeStoredSession(kind, encodeSession(kind, value as SessionDocuments[K]))
-      : undefined
-  if (!decoded) throw new Error('This session cannot be saved.')
-  return decoded
+  return rulesLossless<SessionDocuments[K]>('assertSession', kind, value)
 }
 
 export function decodeJoinedTournaments(raw: unknown): JoinedTournament[] {
-  if (!Array.isArray(raw)) return []
-  return raw.slice(0, 100).flatMap((entry: Partial<JoinedTournament>) =>
-    entry &&
-    TOURNAMENT_SYSTEMS.includes(entry.system as TournamentSystem) &&
-    text(entry.id, 20) &&
-    text(entry.account, 40) &&
-    text(entry.name, 200) &&
-    Number.isFinite(entry.until)
-      ? [
-          {
-            system: entry.system as TournamentSystem,
-            id: entry.id as string,
-            account: entry.account as string,
-            name: entry.name as string,
-            until: entry.until as number,
-          },
-        ]
-      : [],
-  )
+  return rulesLossless<JoinedTournament[]>('decodeJoinedTournaments', raw)
 }
 
 export function decodeRepertoireMisses(raw: unknown): RepertoireMisses {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
-  const result: RepertoireMisses = {}
-  for (const [key, table] of Object.entries(raw).slice(0, 200)) {
-    if (!text(key, 200) || !table || typeof table !== 'object') continue
-    const counts: Record<string, number> = {}
-    for (const [fen, count] of Object.entries(table).slice(0, 2000))
-      if (text(fen, 100) && Number.isInteger(count) && (count as number) > 0)
-        counts[fen] = count as number
-    result[key] = counts
-  }
-  return result
+  return rulesLossless<RepertoireMisses>('decodeRepertoireMisses', raw)
 }
 
 /* ── Studies: whole-document PGN, as exported and compared with the cloud copy ── */
@@ -396,55 +219,8 @@ export function studyDocumentPgn(study: Pick<SavedStudy, 'chapters'>): string {
 
 /* ── Study commands a frontend sends to the core ── */
 
-const studyName = v.pipe(v.string(), v.maxLength(200))
-const localId = v.pipe(v.string(), v.minLength(1), v.maxLength(80))
-const studyPgn = v.pipe(v.string(), v.maxLength(MAX_DOCUMENT))
-const lichessId = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9]{8}$/))
-const account = v.pipe(v.string(), v.maxLength(40))
-const chapterInput = v.pipe(
-  v.array(v.object({ name: studyName, pgn: studyPgn })),
-  v.minLength(1),
-  v.maxLength(MAX_CHAPTERS),
-)
-const studyCommandSchema = v.variant('op', [
-  v.object({
-    op: v.literal('save'),
-    name: studyName,
-    pgn: studyPgn,
-    id: v.optional(localId),
-    chapterId: v.optional(localId),
-  }),
-  v.object({
-    op: v.literal('saveChapters'),
-    name: studyName,
-    chapters: chapterInput,
-    id: v.optional(localId),
-  }),
-  v.object({ op: v.literal('addChapter'), id: localId, name: studyName }),
-  v.object({ op: v.literal('renameChapter'), id: localId, chapterId: localId, name: studyName }),
-  v.object({ op: v.literal('duplicateChapter'), id: localId, chapterId: localId }),
-  v.object({ op: v.literal('removeChapter'), id: localId, chapterId: localId }),
-  v.object({
-    op: v.literal('markCloud'),
-    id: localId,
-    account,
-    remoteId: lichessId,
-    baseline: studyPgn,
-  }),
-  v.object({
-    op: v.literal('offline'),
-    account,
-    remote: v.object({ id: lichessId, name: studyName }),
-    chapters: chapterInput,
-  }),
-  v.object({ op: v.literal('remove'), id: localId }),
-  v.object({ op: v.literal('restore'), study: v.unknown() }),
-  v.object({ op: v.literal('rename'), id: localId, name: studyName }),
-  v.object({ op: v.literal('duplicate'), id: localId }),
-])
 export type StudyCommand =
-  | Exclude<v.InferOutput<typeof studyCommandSchema>, { op: 'restore' }>
-  | { op: 'restore'; study: SavedStudy }
+  Exclude<StudyCommandInput, { op: 'restore' }> | { op: 'restore'; study: SavedStudy }
 
 export interface StudyCommandResult {
   studies: SavedStudy[]
@@ -461,30 +237,45 @@ export interface StudyCommandResult {
  * service, whose rules replay every chapter (`assertStudyCommand` in `services/rules.ts`).
  */
 export type StudyCommandInput =
-  Exclude<StudyCommand, { op: 'restore' }> | { op: 'restore'; study: unknown }
+  | { op: 'save'; name: string; pgn: string; id?: string; chapterId?: string }
+  | { op: 'saveChapters'; name: string; chapters: { name: string; pgn: string }[]; id?: string }
+  | { op: 'addChapter'; id: string; name: string }
+  | { op: 'renameChapter'; id: string; chapterId: string; name: string }
+  | { op: 'duplicateChapter'; id: string; chapterId: string }
+  | { op: 'removeChapter'; id: string; chapterId: string }
+  | {
+      op: 'markCloud'
+      id: string
+      account: string
+      remoteId: string
+      baseline: string
+    }
+  | {
+      op: 'offline'
+      account: string
+      remote: { id: string; name: string }
+      chapters: { name: string; pgn: string }[]
+    }
+  | { op: 'remove'; id: string }
+  | { op: 'restore'; study: unknown }
+  | { op: 'rename'; id: string; name: string }
+  | { op: 'duplicate'; id: string }
 export function assertStudyCommandShape(value: unknown): StudyCommandInput {
-  return v.parse(studyCommandSchema, value)
+  return rulesLossless<StudyCommandInput>('assertStudyCommandShape', value)
 }
 
 /** An archived game is an object; the core service checks its fields and replays its moves. */
 export function assertArchivedGameShape(value: unknown): object {
-  if (!value || typeof value !== 'object') throw new Error('This game cannot be saved.')
-  return value
+  rulesLossless<unknown>('assertArchivedGameShape', value)
+  return value as object
 }
 
-const shortText = (max: number) => v.pipe(v.string(), v.minLength(1), v.maxLength(max))
-export const assertLibraryId = (value: unknown): string => v.parse(shortText(80), value)
-export const assertRepertoireKey = (value: unknown): string => v.parse(shortText(200), value)
+export const assertLibraryId = (value: unknown): string =>
+  rulesLossless<string>('assertLibraryId', value)
+export const assertRepertoireKey = (value: unknown): string =>
+  rulesLossless<string>('assertRepertoireKey', value)
 export const assertSessionKind = (value: unknown): SessionKind =>
-  v.parse(v.picklist(SESSION_KINDS), value)
-export const assertSide = (value: unknown): Color => v.parse(v.picklist(['white', 'black']), value)
-const legacyDocumentsSchema = v.strictObject(
-  Object.fromEntries(
-    LEGACY_DOCUMENT_KEYS.map((key) => [
-      key,
-      v.optional(v.pipe(v.string(), v.maxLength(MAX_DOCUMENT))),
-    ]),
-  ),
-)
+  rulesLossless<SessionKind>('assertSessionKind', value)
+export const assertSide = (value: unknown): Color => rulesLossless<Color>('assertSide', value)
 export const assertLegacyDocuments = (value: unknown): LegacyDocuments =>
-  v.parse(legacyDocumentsSchema, value) as LegacyDocuments
+  rulesLossless<LegacyDocuments>('assertLegacyDocuments', value)

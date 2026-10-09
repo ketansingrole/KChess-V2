@@ -625,6 +625,7 @@ version = "0.1.0"
 dependencies = [
  "memchr",
  "regex",
+ "regex-syntax",
  "serde",
  "serde_json",
  "shakmaty",
