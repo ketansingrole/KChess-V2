@@ -47,6 +47,13 @@ impl Core {
         }
     }
 
+    /// Run one synchronous method: storage that TypeScript callers still use synchronously.
+    /// Unknown methods and malformed arguments are errors.
+    pub fn call_sync(&self, method: &str, args: Vec<Value>) -> Result<Value> {
+        let _ = args;
+        Err(CoreError::new(format!("Unknown core method {method}.")))
+    }
+
     /// Cancel running work and release files; later calls fail.
     pub async fn close(&self) {
         self.puzzles.close().await;

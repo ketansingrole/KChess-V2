@@ -64,6 +64,11 @@ export async function nativeCall<T>(method: string, ...args: unknown[]): Promise
   }
 }
 
+/** Call a synchronous Rust core method (storage); throws its message. */
+export function nativeCallSync<T>(method: string, ...args: unknown[]): T {
+  return JSON.parse(core().callSync(method, JSON.stringify(args))) as T
+}
+
 /** Receive a Rust core event until the returned function is called. */
 export function onNativeEvent<T>(event: string, handler: (payload: T) => void): () => void {
   const handlers = state.handlers.get(event) ?? new Set()

@@ -50,6 +50,8 @@ export interface NativeRules {
 export interface NativeCoreHandle {
   /** Rejects with the core's message; cancellations start with `AbortError: `. */
   call(method: string, args: string): Promise<string>
+  /** Synchronous methods (storage); throws the core's message. */
+  callSync(method: string, args: string): string
   close(): Promise<void>
 }
 

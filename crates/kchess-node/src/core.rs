@@ -75,6 +75,17 @@ impl NativeCore {
         }
     }
 
+    /// Run a synchronous core method (storage); returns its JSON result or throws its message.
+    #[napi(catch_unwind)]
+    pub fn call_sync(&self, method: String, args: String) -> napi::Result<String> {
+        let args: Vec<Value> = serde_json::from_str(&args)
+            .map_err(|e| napi::Error::from_reason(format!("Invalid arguments: {e}")))?;
+        self.core
+            .call_sync(&method, args)
+            .map(|value| value.to_string())
+            .map_err(|error| napi::Error::from_reason(error.message))
+    }
+
     /// Cancel running work and release the core's files.
     #[napi]
     pub async fn close(&self) {
