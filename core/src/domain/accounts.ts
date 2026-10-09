@@ -1,4 +1,5 @@
 /** Choosing which connected Lichess account plays online; shared by the UI and Electron main. */
+import { rules } from './engine.ts'
 
 interface AccountLike {
   username: string
@@ -7,16 +8,17 @@ interface AccountLike {
 
 /**
  * The connected account matching `preferred` (case-insensitive), or the first
- * connected one when `preferred` is empty or no longer connected.
+ * connected one when `preferred` is empty or no longer connected. The rules choose the
+ * position in `accounts` (`records/accounts.rs`), so the caller gets its own object back.
  */
 export function pickConnectedAccount<T extends AccountLike>(
   accounts: readonly T[],
   preferred?: string,
 ): T | undefined {
-  const connected = accounts.filter((account) => account.connected)
-  const wanted = preferred?.toLowerCase()
-  return (
-    (wanted ? connected.find((account) => account.username.toLowerCase() === wanted) : undefined) ??
-    connected[0]
+  const index = rules<number | null>(
+    'connectedAccountIndex',
+    accounts.map(({ username, connected }) => ({ username, connected })),
+    preferred ?? null,
   )
+  return index === null ? undefined : accounts[index]
 }

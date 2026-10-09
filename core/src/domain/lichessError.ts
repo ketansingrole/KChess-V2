@@ -1,4 +1,5 @@
 import type { Middleware } from 'openapi-fetch'
+import { rules } from './engine.ts'
 
 /** Error thrown for failed Lichess API calls. The message is UI-safe. */
 export class LichessError extends Error {
@@ -20,18 +21,20 @@ export class LichessError extends Error {
  * Build a UI-safe error for a failed Lichess API call.
  * Lichess serves its website HTML 404 page (instead of API JSON) when a
  * username-based route doesn't resolve, so raw bodies must never be shown.
+ * The rules choose the detail (`records/lichess.rs`); the message is built here.
  */
 export function lichessError(
   response: { status: number },
   error: unknown,
   endpoint: string,
 ): LichessError {
-  if (typeof error === 'string' && error.trimStart().startsWith('<')) {
-    if (response.status === 404) return new LichessError(404, endpoint, 'not found')
-    return new LichessError(response.status, endpoint, 'unexpected page response')
-  }
-  const detail = error === undefined || error === null ? '' : JSON.stringify(error).slice(0, 250)
-  return new LichessError(response.status, endpoint, detail)
+  const fields = rules<{ status: number; endpoint: string; detail: string }>(
+    'lichessError',
+    { status: response.status },
+    error,
+    endpoint,
+  )
+  return new LichessError(fields.status, fields.endpoint, fields.detail)
 }
 
 /**
