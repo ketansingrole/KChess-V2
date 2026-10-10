@@ -36,6 +36,7 @@
     "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types tooling/main-smoke.ts",
     "build:core": "pnpm --filter @kchess/core build && pnpm --filter @kchess/node build && pnpm --filter @kchess/cli build",
     "build:native": "node tooling/build-native.mjs",
+    "check:contracts": "cargo run -q -p kchess-contracts --bin export-types --locked -- --check",
     "test:core": "pnpm run build:core && node tooling/core-smoke.mjs && node tooling/node-core-smoke.mjs && node tooling/core-types-smoke.mjs",
     "test:unit": "vitest run --coverage",
     "test:watch": "vitest",

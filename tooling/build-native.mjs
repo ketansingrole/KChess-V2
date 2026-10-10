@@ -48,4 +48,10 @@ if (!existsSync(wasm)) throw new Error(`Cargo did not produce ${wasm}.`)
 mkdirSync(`${root}apps/desktop/app/assets/rules`, { recursive: true })
 copyFileSync(wasm, `${root}apps/desktop/app/assets/rules/kchess.wasm`)
 console.info(`[kchess] Built apps/desktop/app/assets/rules/kchess.wasm (${wasmProfile}).`)
+// The contract types (core/src/contracts/generated) are rendered from the Rust contracts.
+execFileSync(
+  'cargo',
+  ['run', '-q', '-p', 'kchess-contracts', '--bin', 'export-types', '--locked'],
+  { cwd: root, stdio: 'inherit' },
+)
 writeRustLicenses()

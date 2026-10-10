@@ -5,18 +5,11 @@
 import { rules } from './engine.ts'
 import { INITIAL_FEN, Position } from './position.ts'
 
-/** Lichess variant keys KChess can play. Crazyhouse is missing: its pocket needs a drop UI. */
-export const VARIANTS = [
-  'standard',
-  'chess960',
-  'kingOfTheHill',
-  'threeCheck',
-  'antichess',
-  'atomic',
-  'horde',
-  'racingKings',
-] as const
-export type Variant = (typeof VARIANTS)[number]
+import { VARIANTS } from '../contracts/generated/variant.ts'
+import type { GameSetup, Variant } from '../contracts/generated/variant.ts'
+export { VARIANTS }
+export type { GameSetup, Variant } from '../contracts/generated/variant.ts'
+
 /** Every key Lichess uses, including the ones KChess cannot play. */
 export type LichessVariantKey = Variant | 'fromPosition' | 'crazyhouse'
 
@@ -40,13 +33,6 @@ export const VARIANT_HINTS: Record<Variant, string> = {
   atomic: 'Captures explode, removing every piece next to them except pawns.',
   horde: 'White has 36 pawns and must checkmate; Black must capture them all.',
   racingKings: 'No checks allowed; the first king to reach the eighth rank wins.',
-}
-
-/** A game's starting point: the rules and the position before the first move. */
-export interface GameSetup {
-  variant: Variant
-  /** FEN before the first move; for standard games, the usual start. */
-  fen: string
 }
 
 export const STANDARD_SETUP: GameSetup = { variant: 'standard', fen: INITIAL_FEN }

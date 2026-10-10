@@ -1,6 +1,41 @@
-import type { EngineLevel, TournamentSystem } from '../contracts/types'
-import type { GameSetup } from './variant'
 import { rules, rulesLossless } from './engine.ts'
+import type {
+  Color,
+  SavedStudy,
+  JoinedTournament,
+  RepertoireMisses,
+  AnalysisSession,
+  LocalSession,
+  ComputerSession,
+  ArchiveIdentity,
+  SessionDocuments,
+  SessionKind,
+  LegacyDocuments,
+  StudyCommandInput,
+} from '../contracts/generated/library.ts'
+export { SESSION_KINDS, LEGACY_DOCUMENT_KEYS } from '../contracts/generated/library.ts'
+export type {
+  Color,
+  StudyChapter,
+  SavedStudy,
+  ArchivedGame,
+  GameSnapshot,
+  MistakeExercise,
+  JoinedTournament,
+  RepertoireMisses,
+  LocalClock,
+  AnalysisSession,
+  LocalSession,
+  ComputerSession,
+  ArchiveIdentity,
+  SessionDocuments,
+  SessionKind,
+  LibrarySnapshot,
+  LegacyDocuments,
+  StudyCommand,
+  StudyCommandResult,
+  StudyCommandInput,
+} from '../contracts/generated/library.ts'
 
 /**
  * The local library: bounded, versioned documents the core keeps for every frontend
@@ -8,151 +43,12 @@ import { rules, rulesLossless } from './engine.ts'
  * and checks are the Rust validators in `crates/kchess-domain/src/misc/documents.rs`.
  */
 
-type Color = 'white' | 'black'
-
 /** Largest serialized document the core stores. */
 export const MAX_DOCUMENT = 2_000_000
 export const MAX_STUDIES = 50
 export const MAX_CHAPTERS = 64
 export const MAX_ARCHIVED_GAMES = 500
 export const MAX_MISTAKES = 500
-
-export interface StudyChapter {
-  id: string
-  name: string
-  pgn: string
-}
-export interface SavedStudy {
-  id: string
-  name: string
-  /** First chapter, retained for existing repertoire and preview consumers. */
-  pgn: string
-  chapters: StudyChapter[]
-  updatedAt: number
-  cloud?: { account: string; id: string; downloadedPgn: string; structureChanged?: boolean }
-}
-
-export interface ArchivedGame {
-  id: string
-  source: 'computer' | 'board' | 'clock'
-  startedAt: number
-  updatedAt: number
-  white: string
-  black: string
-  result: '*' | '1-0' | '0-1' | '1/2-1/2'
-  reason: string
-  finished: boolean
-  setup: GameSetup
-  moves: string[]
-  timeControl: string
-  clockSummary?: string
-}
-export type GameSnapshot = Omit<ArchivedGame, 'id' | 'startedAt' | 'updatedAt' | 'finished'>
-
-export interface MistakeExercise {
-  id: string
-  fen: string
-  solution: string[]
-  judgment: string
-  dueAt: number
-  streak: number
-  attempts: number
-}
-
-/** A tournament joined from KChess; its pairings arrive on the account's event stream. */
-export interface JoinedTournament {
-  system: TournamentSystem
-  id: string
-  account: string
-  name: string
-  /** Stop keeping the event stream open for it after this time. */
-  until: number
-}
-
-/** Missed repertoire moves by `studyId:color`, then by FEN. */
-export type RepertoireMisses = Record<string, Record<string, number>>
-
-/** Each side's clock: minutes and seconds added after every move (sides may differ, for odds). */
-export interface LocalClock {
-  white: { minutes: number; increment: number }
-  black: { minutes: number; increment: number }
-}
-
-export interface AnalysisSession {
-  pgn: string
-  path: string
-  orientation: Color
-  study: string
-  chapter: string
-}
-export interface LocalSession {
-  setup: GameSetup
-  moves: string[]
-  clock: LocalClock | null
-  times: { white: number; black: number } | null
-  result: { winner?: Color; reason: string } | null
-}
-export interface ComputerSession {
-  moves: string[]
-  ply: number
-  level: EngineLevel
-  color: Color
-  resigned: boolean
-  setup: GameSetup
-  clock: { minutes: number; increment: number } | null
-  times: { white: number; black: number } | null
-  flagged: Color | null
-}
-/** Which archive entry an unfinished game updates, across reloads. */
-export interface ArchiveIdentity {
-  id: string
-  startedAt: number
-}
-
-export interface SessionDocuments {
-  analysis: AnalysisSession
-  local: LocalSession
-  computer: ComputerSession
-  'archive:computer': ArchiveIdentity
-  'archive:board': ArchiveIdentity
-  'archive:clock': ArchiveIdentity
-}
-export type SessionKind = keyof SessionDocuments
-export const SESSION_KINDS = [
-  'analysis',
-  'local',
-  'computer',
-  'archive:computer',
-  'archive:board',
-  'archive:clock',
-] as const satisfies readonly SessionKind[]
-
-export interface LibrarySnapshot {
-  studies: SavedStudy[]
-  games: ArchivedGame[]
-  mistakes: MistakeExercise[]
-  sessions: Partial<SessionDocuments>
-  joinedTournaments: JoinedTournament[]
-  repertoireMisses: RepertoireMisses
-  /** False until documents saved by an earlier release have been offered for import. */
-  imported: boolean
-}
-
-/** Where earlier releases kept each document in the renderer's local storage. */
-export const LEGACY_DOCUMENT_KEYS = [
-  'kchess:studies:v1',
-  'kchess:game-history:v1',
-  'kchess:mistakes:v1',
-  'kchess:analysis:v1',
-  'kchess:local:v1',
-  'kchess:computer:v1',
-  'kchess:history-session:computer',
-  'kchess:history-session:board',
-  'kchess:history-session:clock',
-  'kchess:tournaments-joined',
-  'kchess:repertoire-misses',
-] as const
-export type LegacyDocuments = Partial<Record<(typeof LEGACY_DOCUMENT_KEYS)[number], string>>
 
 /* ── Decoders: semantic validation before a document reaches the library or a board ── */
 
@@ -217,49 +113,6 @@ export function studyDocumentPgn(study: Pick<SavedStudy, 'chapters'>): string {
   return pgn
 }
 
-/* ── Study commands a frontend sends to the core ── */
-
-export type StudyCommand =
-  Exclude<StudyCommandInput, { op: 'restore' }> | { op: 'restore'; study: SavedStudy }
-
-export interface StudyCommandResult {
-  studies: SavedStudy[]
-  /** The study or chapter the command created or selected. */
-  id?: string
-  /** `offline`: the device copy had local edits, so the cloud version became a new copy. */
-  conflict?: boolean
-  /** `remove`: what was removed, for undo. */
-  removed?: SavedStudy
-}
-
-/**
- * A study command's shape, as a frontend sends it. A study to restore is checked by the core
- * service, whose rules replay every chapter (`assertStudyCommand` in `services/rules.ts`).
- */
-export type StudyCommandInput =
-  | { op: 'save'; name: string; pgn: string; id?: string; chapterId?: string }
-  | { op: 'saveChapters'; name: string; chapters: { name: string; pgn: string }[]; id?: string }
-  | { op: 'addChapter'; id: string; name: string }
-  | { op: 'renameChapter'; id: string; chapterId: string; name: string }
-  | { op: 'duplicateChapter'; id: string; chapterId: string }
-  | { op: 'removeChapter'; id: string; chapterId: string }
-  | {
-      op: 'markCloud'
-      id: string
-      account: string
-      remoteId: string
-      baseline: string
-    }
-  | {
-      op: 'offline'
-      account: string
-      remote: { id: string; name: string }
-      chapters: { name: string; pgn: string }[]
-    }
-  | { op: 'remove'; id: string }
-  | { op: 'restore'; study: unknown }
-  | { op: 'rename'; id: string; name: string }
-  | { op: 'duplicate'; id: string }
 export function assertStudyCommandShape(value: unknown): StudyCommandInput {
   return rulesLossless<StudyCommandInput>('assertStudyCommandShape', value)
 }

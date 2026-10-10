@@ -1,15 +1,8 @@
 import type { CoreSettings, CoreData, AppData } from './types'
-export const CORE_SETTINGS_KEYS = [
-  'enginePath',
-  'engineLevels',
-  'reviewAuto',
-  'reviewOnBattery',
-  'receiveChallenges',
-  'onlineChat',
-  'correspondencePoll',
-  'cloudEval',
-  'voiceHistory',
-] as const satisfies readonly (keyof CoreSettings)[]
+import { CORE_SETTINGS_KEYS } from './generated/settings.ts'
+
+export * from './generated/settings.ts'
+
 export function coreSettings(settings: CoreSettings): CoreSettings {
   return Object.fromEntries(
     CORE_SETTINGS_KEYS.map((key) => [
