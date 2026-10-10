@@ -10,7 +10,6 @@ use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::{Failure, authorize};
-use super::reviews::collect_lines;
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, position};
 
@@ -57,25 +56,27 @@ pub async fn lichess_studies(
         .as_account(account, "study", |token| async move {
             let auth = authorize(&token);
             let path = format!("/api/study/by/{}", path_segment(account));
-            let lines = collect_lines(
-                lichess.client(),
-                reqwest::Method::GET,
-                &path,
-                &[],
-                None,
-                Some(auth.as_str()),
-                &cancel,
-            )
-            .await?;
+            // Each record is read as it arrives: a malformed one ends the listing at once.
             let mut studies = Vec::new();
-            for line in &lines {
-                let Some(study) = study_metadata(line)? else {
-                    continue;
-                };
-                if studies.len() < MAX_STUDIES {
-                    studies.push(study);
-                }
-            }
+            lichess
+                .client()
+                .ndjson(
+                    reqwest::Method::GET,
+                    &path,
+                    &[],
+                    None,
+                    Some(auth.as_str()),
+                    &cancel,
+                    |line| {
+                        if let Some(study) = study_metadata(line)?
+                            && studies.len() < MAX_STUDIES
+                        {
+                            studies.push(study);
+                        }
+                        Ok(())
+                    },
+                )
+                .await?;
             studies.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
             Ok(studies)
         })

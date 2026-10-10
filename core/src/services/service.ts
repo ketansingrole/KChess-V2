@@ -69,7 +69,7 @@ import {
 import { logWarn } from './logger'
 import { assertArchivedGame, assertStudyCommand } from './rules'
 import { startAnalysis, stopAnalysis } from './analysis'
-import { provideLichessReviews } from './nativeCore'
+import { onNativeEvent } from './nativeCore'
 import { ChallengeInbox } from './challenges'
 import { cloudEval, clearCloudEval } from './cloudEval'
 import {
@@ -107,7 +107,6 @@ import {
   connectLichess,
   crosstable,
   exportGame,
-  fetchLichessReviews,
   followedUsers,
   forgetProfile,
   invalidateLogin,
@@ -256,7 +255,14 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
     }
   }
 
-  const challengeInbox = new ChallengeInbox((list) => emit('challenges:update', list))
+  const challengeInbox = new ChallengeInbox()
+  // The Rust core keeps the inbox and reports every change with the whole list.
+  const unsubscribeInbox = [
+    onNativeEvent<ChallengeInfo[]>('challenges:update', (list) => emit('challenges:update', list)),
+    onNativeEvent<ChallengeInfo>('challenge:received', (fresh) =>
+      emit('challenge:received', fresh),
+    ),
+  ]
   let ongoingTimer: ReturnType<typeof setTimeout> | undefined
   /** Several games start and end together when a stream (re)connects; report them once. */
   function ongoingChanged(): void {
@@ -279,10 +285,6 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       emit('online:state', state)
     },
     {
-      challenge: (account, event) => {
-        const fresh = challengeInbox.ingest(account, event)
-        if (fresh) emit('challenge:received', fresh)
-      },
       ongoingChanged,
       lobbyState: (state) => emit('online:lobby', state),
     },
@@ -309,7 +311,7 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       )
       .map((a) => a.username)
     invalidateLogin(accounts)
-    online.logout(username === undefined ? undefined : accounts)
+    await online.logout(username === undefined ? undefined : accounts)
     discardAccountReviews(accounts)
     flushUsage()
     forgetUsage(accounts)
@@ -324,7 +326,6 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
     reviewsChanged()
     return data
   }
-  provideLichessReviews(fetchLichessReviews)
   bindPlatform(() =>
     setupReviews({
       update: (update) => emit('review:update', update),
@@ -367,7 +368,9 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       cancelPuzzleDb()
       spectator.stop()
       // Nothing can answer a challenge without a frontend; it asks to stay connected again.
-      online.close()
+      void online
+        .close()
+        .catch((cause: unknown) => logWarn('core', 'Online session close failed:', cause))
       stopEngine(true)
       stopAnalysis(true)
     },
@@ -376,7 +379,7 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       closed = true
       clearTimeout(ongoingTimer)
       spectator.stop()
-      online.close()
+      const sessions = online.close()
       stopEngine(true)
       stopAnalysis(true)
       resetEngine()
@@ -389,14 +392,20 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       abortPlatform()
       closePlatform()
       listeners.clear()
-      const puzzles = closePuzzleDb()
       closing = (async () => {
-        await Promise.allSettled([...pending, reviews, engines, puzzles])
+        await Promise.allSettled([...pending, reviews, engines, sessions])
+        for (const stop of unsubscribeInbox) stop()
         resetStore()
-        resetLichess()
-        clearCloudEval()
-        closeUsage()
-        profiles.delete(profileDirectory)
+        // The native core is still open until the puzzle database closes it: the Lichess and
+        // usage state is cleared through it first.
+        try {
+          await resetLichess()
+          clearCloudEval()
+          closeUsage()
+        } finally {
+          await closePuzzleDb()
+          profiles.delete(profileDirectory)
+        }
       })()
       return closing
     },
@@ -452,7 +461,7 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
     profile: async (username) => profile(assertUsername(username)),
     ratingHistory: async (username) => ratingHistory(assertUsername(username)),
     async connectLichess(look) {
-      const connected = await connectLichess(oauthLook(look), () => platform.focus?.())
+      const connected = await connectLichess(oauthLook(look))
       platform.focus?.()
       return connected
     },
@@ -525,7 +534,7 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       const connected = (await loadData()).accounts.some(
         (entry) => entry.connected && entry.username.toLowerCase() === name.toLowerCase(),
       )
-      online.stayConnected(connected ? name : '')
+      await online.stayConnected(connected ? name : '')
     },
     challenges: async () => challengeInbox.list(),
     async acceptChallenge(id) {
@@ -589,7 +598,7 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       const result = await joinTournament(system, id, name, assertTournamentPassword(password))
       if (result !== true) return result
       // Pairings arrive on the event stream: keep it open while in the tournament.
-      online.stayConnected(name)
+      await online.stayConnected(name)
       // Arenas end at `finishesAt`; Swiss events have no fixed end, so allow a day.
       let entry = { system, id, account: name, name: id, until: Date.now() + 86_400_000 }
       try {

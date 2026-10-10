@@ -32,7 +32,6 @@ use crate::store::Database;
 /// How often the battery reading is refreshed while the core runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
 /// How long a Lichess review lookup may take on the host (it fetches a batch of games).
-const LICHESS_DEADLINE: Duration = Duration::from_secs(300);
 /// Games a review pass looks at (the store's `gamesToReview` limit).
 const REVIEW_LIMIT: usize = 300;
 
@@ -166,6 +165,8 @@ pub struct ReviewBridge {
     pub database: Arc<Database>,
     pub host: Arc<dyn Host>,
     pub capabilities: Arc<Capabilities>,
+    /// The Lichess service, which fetches the analysis of games to review.
+    pub lichess: Arc<crate::lichess::accounts::Lichess>,
     pub search: Search,
     pub analysis: Analysis,
     /// `engine.setBusy`: a live online game (or its recovery) is in progress.
@@ -227,13 +228,13 @@ impl ReviewHost for ReviewBridge {
         account: &str,
         ids: &[String],
     ) -> BoxFuture<'_, Result<Vec<StoredReview>>> {
-        let payload = json!({ "account": account, "ids": ids });
+        let account = account.to_string();
+        let ids = ids.to_vec();
         Box::pin(async move {
-            let value = self
-                .capabilities
-                .request_within("lichess.reviews", payload, LICHESS_DEADLINE)
-                .await?;
-            parse(value)
+            let reviews =
+                crate::lichess::reviews::fetch_lichess_reviews(&self.lichess, &account, &ids)
+                    .await?;
+            parse(Value::Array(reviews))
         })
     }
 

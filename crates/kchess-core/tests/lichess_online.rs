@@ -317,14 +317,17 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
     let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
     wait_requests(&fixture, "/api/challenge/Bob", 1).await;
     online.cancel();
+    // Lichess answers after the cancel: the late challenge is still cancelled, once.
+    let _ = gate_tx.send(true);
     let outcome = result.await.unwrap();
     assert!(outcome.as_ref().is_err_and(|cause| cause.is_aborted()));
-    // The creation was cut short, so no id is known and nothing else is posted for it.
-    let _ = gate_tx.send(true);
+    wait_requests(&fixture, "/api/challenge/AbCd1234/cancel", 1).await;
+    assert_eq!(fixture.to("/api/challenge/Bob").len(), 1);
+    assert_eq!(fixture.to("/api/challenge/AbCd1234/cancel").len(), 1);
+    online.cancel();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(fixture.to("/api/challenge/Bob").len(), 1);
-    assert!(fixture.to("/api/challenge/AbCd1234/cancel").is_empty());
-    online.cancel();
+    assert_eq!(fixture.to("/api/challenge/AbCd1234/cancel").len(), 1);
     online.close();
 }
 
@@ -1195,4 +1198,37 @@ async fn a_tournament_join_and_withdrawal_use_the_accounts_login() {
         kchess_core::lichess::accounts::Reply::Done(())
     ));
     assert_eq!(fixture.to("/api/tournament/Abcd1234/withdraw").len(), 1);
+}
+
+/// A malformed record on the idle event stream is reported as it arrives: the stream counts as
+/// interrupted and the lobby says so while the stream is still open, as the TypeScript event stream
+/// did when its line callback threw (`core/src/services/lichess.ts`).
+#[tokio::test]
+async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
+    let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut lines = Some(lines_rx);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/stream/event") => match lines.take() {
+            Some(open) => Reply::Stream(open),
+            None => refuse(seen),
+        },
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+    lines_tx
+        .send("{\"type\": \"challenge\", \"challenge\": \n".to_string())
+        .expect("the stream is open");
+    until("the malformed record interrupts the stream", || {
+        emitted(&host, "online:lobby").iter().any(|state| {
+            state["phase"] == "reconnecting"
+                && state["message"] == "Connection interrupted. Reconnecting…"
+        })
+    })
+    .await;
+    drop(lines_tx);
+    online.close();
 }

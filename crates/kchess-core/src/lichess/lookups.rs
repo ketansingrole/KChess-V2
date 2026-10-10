@@ -406,6 +406,20 @@ pub struct Endpoints {
     pub masters_game: String,
 }
 
+impl Endpoints {
+    /// The explorer and tablebase endpoints under a test origin (`KCHESS_TEST_LICHESS_BASE`), with
+    /// the same paths as production.
+    pub fn at(origin: &str) -> Endpoints {
+        Endpoints {
+            opening: format!("{origin}/explorer/lichess"),
+            masters: format!("{origin}/explorer/masters"),
+            player: format!("{origin}/explorer/player"),
+            tablebase: format!("{origin}/tablebase/standard"),
+            masters_game: format!("{origin}/explorer/masters/pgn"),
+        }
+    }
+}
+
 impl Default for Endpoints {
     fn default() -> Endpoints {
         Endpoints {

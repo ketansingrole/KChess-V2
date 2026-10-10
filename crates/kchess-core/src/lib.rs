@@ -9,6 +9,7 @@ pub mod host;
 pub mod lichess;
 pub mod puzzles;
 pub mod store;
+pub mod usage;
 
 pub use crate::core::Core;
 pub use error::{CoreError, Result};

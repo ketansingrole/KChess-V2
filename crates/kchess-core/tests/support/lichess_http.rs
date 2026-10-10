@@ -378,6 +378,10 @@ pub struct MemoryStore {
     pub cache: Mutex<HashMap<String, CachedValue>>,
     pub logins: Mutex<Vec<(String, String)>>,
     pub dismissed: Mutex<Vec<String>>,
+    /// Reviews saved with their pages of games, or on their own (`save_reviews`).
+    pub reviews: Mutex<Vec<Value>>,
+    /// Games Lichess was asked about (`mark_checked`).
+    pub checked: Mutex<Vec<String>>,
 }
 
 impl MemoryStore {
@@ -418,6 +422,7 @@ impl LichessStore for MemoryStore {
         &self,
         account: &str,
         games: &[LichessGame],
+        reviews: &[Value],
         current: &(dyn Fn() -> bool + Sync),
     ) -> CoreResult<()> {
         if !current() {
@@ -432,6 +437,25 @@ impl LichessStore for MemoryStore {
                 stored.push(game.clone());
             }
         }
+        self.reviews.lock().unwrap().extend(reviews.iter().cloned());
+        Ok(())
+    }
+
+    fn save_reviews(
+        &self,
+        _account: &str,
+        reviews: &[Value],
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> CoreResult<Vec<Value>> {
+        if !current() {
+            return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+        }
+        self.reviews.lock().unwrap().extend(reviews.iter().cloned());
+        Ok(reviews.to_vec())
+    }
+
+    fn mark_checked(&self, ids: &[String]) -> CoreResult<()> {
+        self.checked.lock().unwrap().extend(ids.iter().cloned());
         Ok(())
     }
 

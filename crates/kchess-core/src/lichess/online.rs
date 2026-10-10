@@ -523,7 +523,7 @@ impl OnlineSession {
         request: &StreamRequest,
         cancel: &CancellationToken,
         on_open: &mut (dyn FnMut() + Send),
-        on_line: &mut (dyn FnMut(&str) + Send),
+        on_line: &mut (dyn FnMut(&str) -> Result<(), CoreError> + Send),
     ) -> Res<()> {
         let client = self.inner.lichess.client();
         let mut url = reqwest::Url::parse(&format!("{}{}", client.base(), request.path))
@@ -627,9 +627,9 @@ impl OnlineSession {
                     self.listen_state(&options, &cancel, "connected", None);
                 }
             };
-            let mut on_line = |line: &str| {
+            let mut on_line = |line: &str| -> Result<(), CoreError> {
                 if cancel.is_cancelled() || line_error.is_some() {
-                    return;
+                    return Ok(());
                 }
                 received = true;
                 let parsed = match serde_json::from_str::<Value>(line) {
@@ -647,6 +647,7 @@ impl OnlineSession {
                         line_cancel.cancel();
                     }
                 }
+                Ok(())
             };
             let outcome = self
                 .read_stream(&request, &line_cancel, &mut on_open, &mut on_line)
@@ -1611,11 +1612,18 @@ impl OnlineSession {
             ];
             form.extend(game_body(options));
             let path = format!("/api/challenge/{}", path_segment(target));
+            // Cancellation does not cut the creation short: Lichess may already have created the
+            // challenge, and its id is cancelled below once the answer arrives
+            // (`online-session.test.ts`, "cancels a late challenge creation").
+            let creation = CancellationToken::new();
             let reply = self
-                .post_form(&path, &refs(&form), &account, &token, &handle.token)
+                .post_form(&path, &refs(&form), &account, &token, &creation)
                 .await;
             let challenge = match reply {
                 Ok(challenge) => challenge,
+                Err(_) if handle.token.is_cancelled() => {
+                    return Err(aborted("This operation was aborted"));
+                }
                 Err(cause) => {
                     if matches!(cause.status(), Some(400)) {
                         return Err(core(format!(

@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::policy::{Admitted, Policy, is_stream};
-use super::stream::{LineOptions, read_lines};
+use super::stream::{LineOptions, read_chunks, read_lines};
 use crate::error::{CoreError, Result as CoreResult};
 
 /// `BASE` of `lichess.ts`.
@@ -259,7 +259,7 @@ impl LichessClient {
     /// An NDJSON response, read line by line as it arrives (`parseAs: 'stream'`). `body` is the
     /// comma-separated id list of the `_ids` exports, sent as `text/plain`.
     #[allow(clippy::too_many_arguments)]
-    pub async fn ndjson<F: FnMut(&str)>(
+    pub async fn ndjson<F: FnMut(&str) -> Result<()>>(
         &self,
         method: reqwest::Method,
         path: &str,
@@ -292,9 +292,36 @@ impl LichessClient {
             &LineOptions::default(),
             on_line,
         )
-        .await
-        .map_err(Failure::from);
+        .await;
         // The export lane (if any) is freed once the body is over, whatever its outcome.
+        drop(hold);
+        outcome
+    }
+
+    /// A GET response read in chunks as it arrives (a PGN feed, `parseAs: 'stream'` without
+    /// lines). Errors are the same as `ndjson`'s.
+    pub async fn stream_chunks<F: FnMut(&str) -> Result<()>>(
+        &self,
+        path: &str,
+        auth: Option<&str>,
+        cancel: &CancellationToken,
+        on_chunk: F,
+    ) -> Result<()> {
+        let headers = auth_header(auth);
+        let Admitted { response, hold } = self
+            .call(reqwest::Method::GET, path, &[], &headers, None, cancel)
+            .await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text = response.text().await.map_err(read_failure)?;
+            return Err(Failure::Lichess(lichess_error(
+                status,
+                body_value(&text),
+                &format!("GET {path}"),
+            )));
+        }
+        let body = self.policy.metered(response.bytes_stream());
+        let outcome = read_chunks(Box::pin(body), cancel, on_chunk).await;
         drop(hold);
         outcome
     }

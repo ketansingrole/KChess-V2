@@ -23,15 +23,7 @@ import {
   saveLogin,
   writeApiCache,
 } from '../../src/services/store'
-import {
-  cancelAccountSyncs,
-  fetchLichessReviews,
-  followedUsers,
-  invalidateLogin,
-  primeProfiles,
-  syncGames,
-} from '../../src/services/lichess'
-import { hasAccount, reviewSummaries } from '../../src/services/reviewStore'
+import { hasAccount } from '../../src/services/reviewStore'
 import { fakeSecrets } from '../../../tests/fixtures/corePlatform'
 
 const state = vi.hoisted(() => ({ db: null as TestDatabase | null, fetch: vi.fn() }))
@@ -66,46 +58,6 @@ function game(id: string, overrides: Partial<LichessGame> = {}): LichessGame {
     pgn: '1. e4 e5 *',
     ...overrides,
   }
-}
-function raw(status: string) {
-  return {
-    id: 'Pending1',
-    createdAt: Date.UTC(2026, 9, 3, 11, 40),
-    lastMoveAt: Date.now(),
-    rated: true,
-    speed: 'blitz',
-    perf: 'blitz',
-    status,
-    variant: 'standard',
-    winner: status === 'mate' ? 'white' : undefined,
-    players: {
-      white: {
-        user: { name: 'Alice' },
-        rating: 1500,
-        ratingDiff: status === 'mate' ? 8 : undefined,
-      },
-      black: { user: { name: 'Bob' }, rating: 1490 },
-    },
-    moves: status === 'mate' ? 'e4 e5 Nf3' : 'e4',
-  }
-}
-/** A finished game as Lichess exports it with its own computer analysis. */
-function analysed() {
-  const game = raw('mate')
-  const analysis = { inaccuracy: 0, mistake: 0, blunder: 0, acpl: 12, accuracy: 91 }
-  return {
-    ...game,
-    players: {
-      white: { ...game.players.white, analysis },
-      black: { ...game.players.black, analysis: { ...analysis, accuracy: 84 } },
-    },
-    analysis: [{ eval: 30 }, { eval: 25 }, { eval: 35 }],
-  }
-}
-function response(rows: unknown[]) {
-  return new Response(rows.map((row) => JSON.stringify(row)).join('\n') + '\n', {
-    headers: { 'Content-Type': 'application/x-ndjson' },
-  })
 }
 beforeEach(async () => {
   state.db = useTestDatabase({ secrets })
@@ -291,176 +243,6 @@ describe('SQLite game library', () => {
   })
 })
 
-describe('Lichess creation-time sync', () => {
-  it('recovers an older game that finishes after the cursor, retaining pending IDs through missing and failed exports', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 9, 3, 12))
-    // Initial/backfill sync includes ongoing games explicitly.
-    state.db!.exec('UPDATE accounts SET lastSyncedAt = NULL')
-    state.fetch.mockImplementation(async (request: Request) => {
-      expect(new URL(request.url).searchParams.get('ongoing')).toBe('true')
-      return response([raw('started')])
-    })
-    await syncGames('Alice')
-    const cursor = (await loadData()).accounts[0]!.lastSyncedAt
-    expect(await pendingGameIds('Alice')).toEqual(['Pending1'])
-    expect((await loadData()).gameCount).toBe(0)
-    state.fetch.mockImplementation(async (request: Request) =>
-      request.method === 'POST' ? response([]) : response([]),
-    )
-    await syncGames('Alice')
-    expect(await pendingGameIds('Alice')).toEqual(['Pending1'])
-    state.fetch.mockResolvedValue(new Response('unavailable', { status: 503 }))
-    await expect(syncGames('Alice')).rejects.toThrow()
-    expect((await loadData()).accounts[0]!.lastSyncedAt).toBe(cursor)
-    expect(await pendingGameIds('Alice')).toEqual(['Pending1'])
-    vi.mocked(Date.now).mockReturnValue(Date.UTC(2026, 9, 3, 12, 10))
-    state.fetch.mockImplementation(async (request: Request) => {
-      if (request.method === 'POST') {
-        expect(await request.text()).toBe('Pending1')
-        return response([raw('mate')])
-      }
-      expect(Number(new URL(request.url).searchParams.get('since'))).toBe(cursor! - 60_000)
-      return response([])
-    })
-    await syncGames('Alice')
-    expect(await pendingGameIds('Alice')).toEqual([])
-    const saved = (await gamePage({ offset: 0, limit: 20 })).games[0]!
-    expect(saved.status).toBe('mate')
-    expect(saved.moves).toBe('e4 e5 Nf3')
-  })
-})
-
-describe('Lichess analysis saved during sync', () => {
-  const checked = () =>
-    state
-      .db!.prepare('SELECT id FROM lichess_review_checks')
-      .all()
-      .map((row) => row.id)
-
-  it('saves the analysis with its page, so the list can show it straight away', async () => {
-    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(0)
-    state.fetch.mockImplementation(async () => response([analysed()]))
-    await syncGames('Alice')
-    // The cached count was dropped by the write rather than going stale.
-    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(1)
-    const summary = reviewSummaries(['Pending1', 'Missing1'])
-    expect(Object.keys(summary)).toEqual(['Pending1'])
-    expect(summary.Pending1).toMatchObject({ source: 'lichess', complete: true })
-    expect(summary.Pending1!.white.accuracy).toBe(91)
-    expect(checked()).toEqual(['Pending1'])
-  })
-  it('keeps neither the analysis nor the check when its page cannot be saved', async () => {
-    state.fetch.mockImplementation(async () => {
-      state.db!.exec("DELETE FROM accounts WHERE username = 'Alice'")
-      return response([analysed()])
-    })
-    await expect(syncGames('Alice')).rejects.toThrow('removed during sync')
-    expect(reviewSummaries(['Pending1'])).toEqual({})
-    expect(checked()).toEqual([])
-  })
-})
-
-describe('Sync cancelled by logout, removal or clearing', () => {
-  const checked = () =>
-    state
-      .db!.prepare('SELECT id FROM lichess_review_checks')
-      .all()
-      .map((row) => row.id)
-
-  it('stops the sync without saving the page it was downloading', async () => {
-    state.fetch.mockImplementation(async () => {
-      invalidateLogin(['Alice'])
-      return response([analysed()])
-    })
-    await expect(syncGames('Alice')).rejects.toThrow('Sync was cancelled')
-    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(0)
-    expect(checked()).toEqual([])
-  })
-  it('stops a sync for an account removed while its games download', async () => {
-    let started!: () => void
-    const downloading = new Promise<void>((resolve) => (started = resolve))
-    let release!: (value: Response) => void
-    state.fetch.mockImplementation(() => {
-      started()
-      return new Promise<Response>((resolve) => (release = resolve))
-    })
-    const sync = syncGames('Alice')
-    await downloading
-    cancelAccountSyncs(['Alice'])
-    await removeAccount('Alice')
-    release(response([analysed()]))
-    await expect(sync).rejects.toThrow('Sync was cancelled')
-    expect(state.db!.prepare('SELECT id FROM games').all()).toEqual([])
-    expect(checked()).toEqual([])
-  })
-  it('stops a sync for an account whose data is cleared while its games download', async () => {
-    let started!: () => void
-    const downloading = new Promise<void>((resolve) => (started = resolve))
-    let release!: (value: Response) => void
-    state.fetch.mockImplementation(() => {
-      started()
-      return new Promise<Response>((resolve) => (release = resolve))
-    })
-    const sync = syncGames('Alice')
-    await downloading
-    cancelAccountSyncs(['Alice'])
-    await clearAccountData('Alice')
-    release(response([analysed()]))
-    await expect(sync).rejects.toThrow('Sync was cancelled')
-    expect(state.db!.prepare('SELECT id FROM games').all()).toEqual([])
-    // The account stays, with its sync cursor reset so the next sync starts over.
-    const alice = (await loadData()).accounts.find((a) => a.username === 'Alice')
-    expect(alice).toBeDefined()
-    expect(alice?.lastSyncedAt).toBeUndefined()
-  })
-  it('re-checks the login after the last await before writing a page', async () => {
-    let current = true
-    const saving = saveGamesPage('Alice', [game('Late0001')], [], () => current)
-    // Logout lands while the save is waiting, after the caller's own check passed.
-    current = false
-    await expect(saving).rejects.toThrow('Sync was cancelled')
-    await expect(saveGames('Alice', [game('Late0002')], 2, () => current)).rejects.toThrow(
-      'Sync was cancelled',
-    )
-    expect((await gamePage({ offset: 0, limit: 20 })).total).toBe(0)
-  })
-})
-
-describe('Lichess export authentication', () => {
-  beforeEach(() => {
-    secrets.enabled = true
-    state.db!.exec(
-      `INSERT INTO tokens (username, encrypted) VALUES ('Alice', '${Buffer.from('lip_alice').toString('base64')}')`,
-    )
-  })
-  afterEach(() => {
-    secrets.enabled = false
-  })
-
-  it("sends the account's own token, and none for a friend without one", async () => {
-    const seen: { url: string; auth: string | null }[] = []
-    state.fetch.mockImplementation(async (request: Request) => {
-      seen.push({ url: request.url, auth: request.headers.get('authorization') })
-      return response([])
-    })
-    await syncGames()
-    expect(seen.find((r) => r.url.includes('/user/Alice'))?.auth).toBe('Bearer lip_alice')
-    expect(seen.find((r) => r.url.includes('/user/Bob'))?.auth).toBeNull()
-  })
-  it('falls back to an anonymous export when the token is rejected', async () => {
-    const auths: (string | null)[] = []
-    state.fetch.mockImplementation(async (request: Request) => {
-      auths.push(request.headers.get('authorization'))
-      return request.headers.has('authorization')
-        ? new Response('{"error":"No such token"}', { status: 401 })
-        : response([])
-    })
-    await syncGames('Alice')
-    expect(auths).toEqual(['Bearer lip_alice', null])
-    expect((await loadData()).accounts[0]!.lastSyncedAt).toBeGreaterThan(1)
-  })
-})
-
 describe('No account data comes back after logout, removal or clearing', () => {
   const rows = (sql: string) => state.db!.prepare(sql).all()
   /** Alice and Bob both played Shared01; Private1 is Alice's alone. */
@@ -511,15 +293,6 @@ describe('No account data comes back after logout, removal or clearing', () => {
     expect(rows("SELECT account FROM usage WHERE account = 'alice'")).toHaveLength(1)
     expect(hasAccount('Alice')).toBe(true)
   })
-  it('writes no Lichess analysis downloaded across a logout', async () => {
-    state.fetch.mockImplementation(async () => {
-      invalidateLogin(['Alice'])
-      return response([analysed()])
-    })
-    await expect(fetchLichessReviews('Alice', ['Pending1'])).rejects.toThrow('Sync was cancelled')
-    expect(rows('SELECT key FROM reviews')).toEqual([])
-    expect(rows('SELECT id FROM lichess_review_checks')).toEqual([])
-  })
   it('caches no profile data once its login has ended', async () => {
     await writeApiCache('alice:profile', { username: 'Alice' }, () => false)
     expect(rows('SELECT key FROM api_cache')).toEqual([])
@@ -540,18 +313,6 @@ describe('No account data comes back after logout, removal or clearing', () => {
       const data = await saveLogin('Carol', 'lip_carol', () => true)
       expect(data.accounts.find((a) => a.username === 'Carol')?.connected).toBe(true)
       expect(rows("SELECT username FROM tokens WHERE username = 'Carol'")).toHaveLength(1)
-    })
-    it('forgets who an account follows when it logs out during the download', async () => {
-      state.db!.exec(
-        `INSERT INTO tokens (username, encrypted) VALUES ('Alice', '${Buffer.from('lip_alice').toString('base64')}')`,
-      )
-      state.fetch.mockImplementation(async () => {
-        invalidateLogin(['Alice'])
-        return response([{ id: 'carol', username: 'Carol' }])
-      })
-      await expect(followedUsers()).rejects.toThrow('cancelled by logout')
-      await primeProfiles(['Carol'])
-      expect(rows("SELECT key FROM api_cache WHERE key LIKE 'carol:%'")).toEqual([])
     })
   })
 })

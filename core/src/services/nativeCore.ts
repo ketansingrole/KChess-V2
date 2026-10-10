@@ -1,20 +1,6 @@
 import { bindCoreCallback, platform, scopedState } from './platform.ts'
 import { nativeRules, type NativeCoreHandle } from './native.ts'
 import { logDebug, logError, logInfo, logWarn } from './logger.ts'
-import { recordUsage } from './usage.ts'
-import type { UsageKind, StoredReview } from '../contracts/types'
-
-type LichessReviews = (account: string, ids: string[]) => Promise<StoredReview[]>
-
-const providers = scopedState(() => ({ lichessReviews: undefined as LichessReviews | undefined }))
-
-/**
- * Provides Lichess analysis for reviews (`lichess.reviews`). Lichess is still TypeScript, so the
- * service registers it when the core opens.
- */
-export function provideLichessReviews(fetch: LichessReviews): void {
-  providers.lichessReviews = fetch
-}
 
 /**
  * The Rust core's services (`crates/kchess-core`), one instance per core scope, while the core
@@ -32,16 +18,6 @@ const state = scopedState(() => ({
 const LOG = { debug: logDebug, info: logInfo, warn: logWarn, error: logError } as const
 
 function handle(event: string, payload: unknown): void {
-  if (event === 'host:usage') {
-    const usage = payload as {
-      account: string
-      category: UsageKind
-      requests: number
-      bytes: number
-    }
-    recordUsage(usage.account, usage.category, usage.requests, usage.bytes)
-    return
-  }
   if (event === 'host:request') {
     void answer(payload as { id: number; kind: string; payload: unknown })
     return
@@ -65,13 +41,6 @@ async function capability(kind: string, payload: unknown): Promise<unknown> {
       return host.focus?.()
     case 'onBattery':
       return host.onBattery()
-    // Transitional: Lichess is still TypeScript, so the Rust review queue asks for its analysis here.
-    case 'lichess.reviews': {
-      const { account, ids } = payload as { account: string; ids: string[] }
-      const fetch = providers.lichessReviews
-      if (!fetch) throw new Error('Lichess review lookup is unavailable.')
-      return fetch(account, ids)
-    }
     default:
       throw new Error(`Unknown host capability ${kind}.`)
   }

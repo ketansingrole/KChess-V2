@@ -1,4 +1,4 @@
-import type { components, paths } from '@lichess-org/types'
+import type { components, paths } from './lichessApi'
 import type { Variant } from '../domain/variant'
 import type {
   ArchivedGame,

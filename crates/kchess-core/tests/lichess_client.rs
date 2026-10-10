@@ -173,6 +173,7 @@ async fn ndjson_lines_reach_the_caller_while_the_stream_is_open() {
                     &cancel,
                     |line| {
                         let _ = lines_out.send(line.to_string());
+                        Ok(())
                     },
                 )
                 .await
@@ -200,7 +201,7 @@ async fn an_ndjson_error_names_the_request() {
             None,
             None,
             &CancellationToken::new(),
-            |_| {},
+            |_| Ok(()),
         )
         .await
         .unwrap_err();
@@ -230,7 +231,7 @@ async fn cancelling_an_open_stream_ends_the_read_with_an_abort() {
             None,
             None,
             &cancel,
-            |_| {},
+            |_| Ok(()),
         )
         .await
         .unwrap_err();
@@ -259,7 +260,7 @@ async fn streamed_bytes_are_counted_for_the_account_that_read_them() {
                     None,
                     None,
                     &cancel,
-                    |_| {},
+                    |_| Ok(()),
                 )
                 .await
         }

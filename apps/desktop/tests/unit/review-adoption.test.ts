@@ -6,7 +6,6 @@ import { INITIAL_FEN, Position } from '@kchess/core/domain/position'
 import { addMove, newTree, nodeAt, treeFromPgn, treeToPgn } from '@kchess/core/domain/analysisTree'
 import { assertAnalysisRequest } from '@kchess/core/domain/validate'
 import { isAppUrl, APP_CSP } from '../../electron/main/appOrigin'
-import { readLines } from '../../../../core/src/services/ndjson'
 import { validateOnlineEvent } from '@kchess/core/domain/onlineEvent'
 import { pickStockfishAsset } from '../../../../core/src/services/stockfishAsset'
 import { useKChessStore } from '../../app/stores/kchess'
@@ -97,39 +96,6 @@ describe('origin and input boundaries', () => {
     expect(pickStockfishAsset(assets, 'win32', 'x64')?.name).toContain('windows-x86-64')
     expect(pickStockfishAsset(assets, 'linux', 'arm64')?.name).toContain('linux-arm64')
     expect(pickStockfishAsset(assets, 'linux', 'ia32')).toBeUndefined()
-  })
-})
-describe('bounded NDJSON streams', () => {
-  it('decodes split records, ignores heartbeats, and keeps the final line', async () => {
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (const chunk of ['\n{"x":', '1}\n\n{"x":2}'])
-          controller.enqueue(new TextEncoder().encode(chunk))
-        controller.close()
-      },
-    })
-    const lines: string[] = []
-    await readLines(stream, (line) => lines.push(line))
-    expect(lines).toEqual(['{"x":1}', '{"x":2}'])
-  })
-  it('rejects oversized lines before a newline arrives', async () => {
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('123456789'))
-        controller.close()
-      },
-    })
-    await expect(readLines(stream, () => {}, { maxLineBytes: 5 })).rejects.toThrow('oversized')
-  })
-  it('recovers stalled streams and honours cancellation', async () => {
-    await expect(readLines(new ReadableStream(), () => {}, { idleMs: 20 })).rejects.toThrow(
-      'stalled',
-    )
-    const controller = new AbortController()
-    const reading = readLines(new ReadableStream(), () => {}, { signal: controller.signal })
-    const rejected = expect(reading).rejects.toMatchObject({ name: 'AbortError' })
-    controller.abort()
-    await rejected
   })
 })
 describe('desktop recovery', () => {

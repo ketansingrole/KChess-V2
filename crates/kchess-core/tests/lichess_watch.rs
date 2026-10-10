@@ -475,3 +475,49 @@ fn refuses_a_list_with_a_gap_or_that_ends_somewhere_else_than_the_board() {
         .is_none()
     );
 }
+
+/// A round's PGN is split at the two blank lines that end each game, and each read sends the games
+/// that have arrived (`readPgnStream` in the TypeScript spectator): a game that is still arriving
+/// waits for its separator.
+#[tokio::test]
+async fn a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived() {
+    let (chunks_tx, chunks_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut chunks = Some(chunks_rx);
+    let fixture = serve(move |_| match chunks.take() {
+        Some(open) => Reply::Stream(open),
+        None => Reply::Hang,
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    spectator.watch_round("Round001");
+    // The first game is complete; the second has only its first headers.
+    chunks_tx
+        .send(format!(
+            "{PGN}\n\n\n[Event \"Test Open\"]\n[White \"Gamma\"]\n"
+        ))
+        .expect("the feed is open");
+    wait_until("the first game", || {
+        sink.broadcasts.lock().unwrap().len() == 1
+    })
+    .await;
+    // The rest of the second game arrives with its separator: one more update.
+    chunks_tx
+        .send("[Black \"Delta\"]\n\n1. d4 d5 *\n\n\n".to_string())
+        .expect("the feed is open");
+    wait_until("the second game", || {
+        sink.broadcasts.lock().unwrap().len() == 2
+    })
+    .await;
+    let updates = sink.broadcasts.lock().unwrap().clone();
+    assert_eq!(updates[0].games.len(), 1);
+    assert_eq!(updates[0].games[0].white.name, "Alpha");
+    assert_eq!(updates[1].games.len(), 1);
+    assert_eq!(updates[1].games[0].white.name, "Gamma");
+    assert_eq!(updates[1].games[0].black.name, "Delta");
+    spectator.stop();
+}

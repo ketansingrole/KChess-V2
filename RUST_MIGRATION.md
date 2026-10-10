@@ -67,7 +67,7 @@ services only through the bridge's host callbacks; TypeScript reaches Rust only 
 | 2b  | Stateful domain: game sessions and archive, online game, puzzle sessions, analysis-tree edits; remaining TS constants (`patterns.ts`, `tvChannels.ts`, grammar and data constants pinned by golden suites)                                                                   | done   |
 | 3   | Storage: settings, accounts, game store, library, review store, migrations                                                                                                                                                                                                   | done   |
 | 4   | Engines: UCI controller, scheduler, managed Stockfish, analysis, reviews. The core owns one engine context and the services; TypeScript wraps them (Lichess analysis for reviews is a transitional host request, `lichess.reviews`)                                          | done   |
-| 5   | Lichess: client, OAuth, usage/request policy, online games, challenges, tournaments, spectate, studies, cloud eval, explorer                                                                                                                                                 |        |
+| 5   | Lichess: client, OAuth, usage/request policy, online games, challenges, tournaments, spectate, studies, cloud eval, explorer                                                                                                                                                 | done   |
 | 6   | Facade (`service.ts`), contracts and logging to Rust; generated types; delete `core/`. Replace the TypeScript coverage floor (`vitest.config.ts`) with a Rust coverage gate (cargo-llvm-cov) once the core's TypeScript is gone                                              |        |
 
 ## Porting a domain module (phase 2 procedure)
@@ -128,22 +128,31 @@ their exported TypeScript API, but every decision moves to Rust:
   order). Record them from the TypeScript class, then check the Rust-backed class against them.
   Every existing test of the class must keep passing unchanged.
 
-## Phase 5 switch checklist (deviations found while porting, to fix when wiring)
+## Phase 5 switch checklist
 
-- Lichess reviews found during game sync must be written in the same transaction as their page
-  of games (`saveGamesPage` did both); implement `LichessStore::save_reviews`/`mark_checked`.
-- Broadcast round PGN must be split exactly as `spectate.ts` split it, emitting `watch:broadcast`
-  per chunk as before.
-- NDJSON parse errors in studies and TV lines must surface when the line arrives, as before.
-- Unreadable remote data and lookup transport failures should keep the TypeScript messages where
-  the UI shows them.
-- Add tests for `tv_channels`, `broadcast_tour`, `puzzle_daily`, `puzzle_dashboard`,
-  `puzzle_activity`, `storm_dashboard`.
-- **Must fix:** cancelling a challenge while its creation request is in flight must still await
-  Lichess's answer and cancel the late challenge id (as `online-actions.test.ts` asserted); the
-  Rust session drops the request, which can leave an open challenge on Lichess.
-- Move the challenge event reader (`lichess/challenges.rs` `read_challenge_event`) into
-  `kchess-domain` records, beside `validateOnlineEvent`.
-- A malformed line on the online event/game streams must be handled as the TypeScript did.
-- Usage: Rust emits `host:usage` per request/chunk; keep the TypeScript batching (or move it to
-  Rust) so the store sees the same rows.
+Done. Each item is fixed in Rust and pinned by the named test.
+
+- Reviews found during a game sync are saved with their page of games in one transaction
+  (`saveGamesPage`): `lichess_accounts::a_synced_page_saves_its_reviews_with_its_games`.
+  `LichessStore::save_reviews` serves the review queue's own fetch.
+- Broadcast round PGN is split at the two blank lines that end each game, as `readPgnStream`
+  split it, and one `watch:broadcast` is sent per chunk:
+  `lichess_watch::a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived`.
+- NDJSON parse errors surface when the line arrives (the line callback is fallible, so a failed
+  line ends the read): `stream::a_failed_line_ends_the_read_before_the_stream_does`,
+  `lichess_online::a_malformed_line_on_the_event_stream_is_reported_as_it_arrives`,
+  `lichess_studies::a_malformed_study_record_fails_the_listing_as_it_arrives`. TV feed records
+  are read the same way.
+- TypeScript messages the UI shows are kept (`Lichess sent a puzzle KChess could not read.`,
+  `Position lookup failed. Check your connection and retry.`, `Could not refresh. Showing the saved
+lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the Rust parser's
+  message, not V8's `JSON.parse` text.
+- Endpoint tests: `lichess_endpoints` covers `tv_channels`, `broadcast_tour`, `puzzle_daily`,
+  `puzzle_dashboard`, `puzzle_activity` and `storm_dashboard`.
+- **Must fix:** a challenge cancelled while its creation is in flight waits for Lichess's answer
+  and cancels the late challenge id: `lichess_online::aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled`.
+- The challenge event reader is in `kchess-domain` (`records/challenge.rs`, rule
+  `readChallengeEvent`), beside `validateOnlineEvent`; `lichess::challenges` tests cover it.
+- Usage: the core batches `host:usage` counters in `usage.rs` (flushed every five seconds, or
+  before a report) and writes the same rows through `store.usage.flushUsage`; the TypeScript
+  batching is gone: `usage::tests`.

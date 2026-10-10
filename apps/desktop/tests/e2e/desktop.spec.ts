@@ -10,6 +10,8 @@ import { cp, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
 import { nativeRules } from '../../../../core/src/services/native'
@@ -104,7 +106,61 @@ function seedReviewedGame(db: DatabaseSync): void {
   )
 }
 
-const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; profile: string } }>({
+/** How a test answers the app's Lichess requests: the Web `Request` in, a `Response` out. */
+type LichessRoute = (request: Request) => Promise<Response> | Response
+
+/**
+ * A local stand-in for Lichess. The core sends its Lichess requests here through
+ * `KCHESS_TEST_LICHESS_BASE`; a request with no route, or one whose route throws, is answered 503.
+ */
+interface LichessStand {
+  base: string
+  route: LichessRoute | undefined
+}
+
+async function startLichess(): Promise<{ stand: LichessStand; close: () => Promise<void> }> {
+  const stand: LichessStand = { base: '', route: undefined }
+  const server = createServer(async (incoming, outgoing) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of incoming) chunks.push(Buffer.from(chunk))
+    const headers = new Headers()
+    for (const [name, value] of Object.entries(incoming.headers))
+      if (typeof value === 'string' && !['host', 'connection', 'content-length'].includes(name))
+        headers.set(name, value)
+    const body = chunks.length ? Buffer.concat(chunks) : undefined
+    const url = new URL(incoming.url ?? '/', stand.base)
+    let response: Response
+    try {
+      response = stand.route
+        ? await stand.route(new Request(url, { method: incoming.method, headers, body }))
+        : new Response(null, { status: 503 })
+    } catch {
+      response = new Response(null, { status: 503 })
+    }
+    outgoing.writeHead(response.status, Object.fromEntries(response.headers))
+    const reader = response.body?.getReader()
+    for (;;) {
+      const next = await reader?.read()
+      if (!next || next.done) break
+      outgoing.write(next.value)
+    }
+    outgoing.end()
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  stand.base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  return {
+    stand,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections()
+        server.close(() => resolve())
+      }),
+  }
+}
+
+const test = base.extend<{
+  desktop: { app: ElectronApplication; page: Page; profile: string; lichess: LichessStand }
+}>({
   desktop: async ({ playwright: _playwright }, use, testInfo) => {
     const profile = await mkdtemp(join(tmpdir(), 'kchess-e2e-'))
     if (testInfo.title.includes('voice'))
@@ -167,6 +223,7 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
     db.close()
     let app: ElectronApplication | undefined
     let appClosed = false
+    const lichess = await startLichess()
     try {
       const executablePath = process.env.ELECTRON_EXEC_PATH
       if (!executablePath)
@@ -181,7 +238,14 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
             ? ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream']
             : []),
         ],
-        env: { ...process.env, KCHESS_NUXT_URL: '', KCHESS_USER_DATA_DIR: profile },
+        env: {
+          ...process.env,
+          KCHESS_NUXT_URL: '',
+          KCHESS_USER_DATA_DIR: profile,
+          // The test switch serves Lichess from the local stand-in (`crates/kchess-core/src/core.rs`).
+          KCHESS_STORE_DEBUG: '1',
+          KCHESS_TEST_LICHESS_BASE: lichess.stand.base,
+        },
       })
       app.once('close', () => {
         appClosed = true
@@ -194,8 +258,9 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       page.on('pageerror', (error) => console.error(`[renderer] ${error.message}`))
       await page.waitForSelector('.main-area')
       await expect(page.locator('aside').getByText('Home', { exact: true })).toBeAttached()
-      await use({ app, page, profile })
+      await use({ app, page, profile, lichess: lichess.stand })
     } finally {
+      await lichess.close()
       if (app && !appClosed) {
         if (testInfo.status !== testInfo.expectedStatus) {
           try {
@@ -254,35 +319,32 @@ test('starts without an account and keeps settings and downloaded puzzles access
 })
 
 test('browses public tournaments anonymously and asks to connect only when joining', async ({
-  desktop: { app, page },
+  desktop: { page, lichess },
 }) => {
-  await app.evaluate(() => {
-    globalThis.fetch = async (input, init) => {
-      const request = new Request(input, init)
-      if (request.method !== 'GET' || request.headers.has('authorization'))
-        throw new Error('Public browsing must be anonymous and read-only')
-      const path = new URL(request.url).pathname
-      const common = {
-        id: 'Public01',
-        fullName: 'Public rapid arena',
-        status: 20,
-        variant: 'standard',
-        rated: true,
-        clock: { limit: 600, increment: 0 },
-        minutes: 60,
-        nbPlayers: 12,
-        startsAt: Date.now(),
-      }
-      if (path === '/api/tournament') return Response.json({ started: [common], created: [] })
-      if (path === '/api/tournament/Public01')
-        return Response.json({
-          ...common,
-          secondsToFinish: 1200,
-          standing: { players: [{ rank: 1, name: 'TestPlayer', rating: 1800, score: 4 }] },
-        })
-      throw new Error('Unexpected request: ' + path)
+  lichess.route = async (request) => {
+    if (request.method !== 'GET' || request.headers.has('authorization'))
+      throw new Error('Public browsing must be anonymous and read-only')
+    const path = new URL(request.url).pathname
+    const common = {
+      id: 'Public01',
+      fullName: 'Public rapid arena',
+      status: 20,
+      variant: 'standard',
+      rated: true,
+      clock: { limit: 600, increment: 0 },
+      minutes: 60,
+      nbPlayers: 12,
+      startsAt: Date.now(),
     }
-  })
+    if (path === '/api/tournament') return Response.json({ started: [common], created: [] })
+    if (path === '/api/tournament/Public01')
+      return Response.json({
+        ...common,
+        secondsToFinish: 1200,
+        standing: { players: [{ rank: 1, name: 'TestPlayer', rating: 1800, score: 4 }] },
+      })
+    throw new Error('Unexpected request: ' + path)
+  }
   await navigate(page, 'Tournaments')
   await page
     .locator('.timeline')
@@ -529,13 +591,11 @@ test('turns a reviewed game mistake into a scheduled practice position @packaged
 })
 
 test('recovers a saved position lookup offline and rejects unsupported tablebases @packaged', async ({
-  desktop: { app, page },
+  desktop: { page, lichess },
 }) => {
-  await app.evaluate(() => {
-    globalThis.fetch = async () => {
-      throw new Error('offline')
-    }
-  })
+  lichess.route = async () => {
+    throw new Error('offline')
+  }
   await navigate(page, 'Analysis board')
   await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
   await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
@@ -1411,33 +1471,31 @@ test('keeps multi-chapter studies together and restores the selected chapter off
 })
 
 test('analyses a broadcast inline and explores lines without changing saved analysis', async ({
-  desktop: { app, page },
+  desktop: { app, page, lichess },
 }, testInfo) => {
-  await app.evaluate(() => {
-    globalThis.fetch = async (input, init) => {
-      const path = new URL(new Request(input, init).url).pathname
-      const tour = { id: 'Broad001', name: 'Training broadcast' }
-      const round = { id: 'Round001', name: 'Round 1', ongoing: true }
-      if (path === '/api/broadcast/top') return Response.json({ active: [{ tour, round }] })
-      if (path === '/api/broadcast/Broad001')
-        return Response.json({ tour, rounds: [round], defaultRoundId: round.id })
-      if (path === '/api/stream/broadcast/round/Round001.pgn')
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(
-                new TextEncoder().encode(
-                  '[Event "Training broadcast"]\n[White "Alpha"]\n[Black "Beta"]\n[GameURL "https://lichess.org/broadcast/training/round-1/Round001/Board001"]\n[Result "*"]\n\n1. e4 {[%clk 0:01:00]} e5 {[%clk 0:01:10]} *\n\n\n',
-                ),
-              )
-            },
-          }),
-          { headers: { 'Content-Type': 'application/x-chess-pgn' } },
-        )
-      if (path === '/api/tv/channels') return Response.json({})
-      throw new Error('Unexpected fixture request: ' + path)
-    }
-  })
+  lichess.route = async (request) => {
+    const path = new URL(request.url).pathname
+    const tour = { id: 'Broad001', name: 'Training broadcast' }
+    const round = { id: 'Round001', name: 'Round 1', ongoing: true }
+    if (path === '/api/broadcast/top') return Response.json({ active: [{ tour, round }] })
+    if (path === '/api/broadcast/Broad001')
+      return Response.json({ tour, rounds: [round], defaultRoundId: round.id })
+    if (path === '/api/stream/broadcast/round/Round001.pgn')
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                '[Event "Training broadcast"]\n[White "Alpha"]\n[Black "Beta"]\n[GameURL "https://lichess.org/broadcast/training/round-1/Round001/Board001"]\n[Result "*"]\n\n1. e4 {[%clk 0:01:00]} e5 {[%clk 0:01:10]} *\n\n\n',
+              ),
+            )
+          },
+        }),
+        { headers: { 'Content-Type': 'application/x-chess-pgn' } },
+      )
+    if (path === '/api/tv/channels') return Response.json({})
+    throw new Error('Unexpected fixture request: ' + path)
+  }
   await navigate(page, 'Watch')
   await page.getByRole('tab', { name: 'Broadcasts', exact: true }).click()
   // Failed verification without a game ID is uncertainty, not an active game.
@@ -1609,10 +1667,10 @@ test('starts a knight run and skips a round', async ({ desktop: { page } }) => {
   await expect(page.getByText(/shortest paths/)).toBeVisible()
 })
 
-test('browses puzzle tabs and shows offline account states', async ({ desktop: { app, page } }) => {
-  await app.evaluate(() => {
-    globalThis.fetch = () => Promise.reject(new Error('Offline puzzles test.'))
-  })
+test('browses puzzle tabs and shows offline account states', async ({
+  desktop: { page, lichess },
+}) => {
+  lichess.route = () => Promise.reject(new Error('Offline puzzles test.'))
   await navigate(page, 'Puzzles')
   await page.getByRole('tab', { name: 'Daily', exact: true }).click()
   await expect(page.getByText('Couldn’t get the daily puzzle', { exact: true })).toBeVisible()
@@ -1664,17 +1722,13 @@ test('watches TV channels and followed players without an account', async ({
 })
 
 test('filters tournaments and guards arena creation offline', async ({
-  desktop: { app, page },
+  desktop: { page, lichess },
 }) => {
-  await app.evaluate(() => {
-    const original = globalThis.fetch
-    globalThis.fetch = async (input, init) => {
-      const request = new Request(input, init)
-      if (new URL(request.url).pathname.startsWith('/api/tournament'))
-        return Response.json({ started: [], created: [] })
-      return original(input, init)
-    }
-  })
+  lichess.route = async (request) => {
+    if (new URL(request.url).pathname.startsWith('/api/tournament'))
+      return Response.json({ started: [], created: [] })
+    throw new Error('Unexpected request: ' + request.url)
+  }
   await navigate(page, 'Tournaments')
   await page.getByRole('tab', { name: 'Playable here', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'All', exact: true })).toBeVisible()

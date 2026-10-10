@@ -856,7 +856,7 @@ async fn swiss_of_teams(
         };
         let path = format!("/api/team/{}/swiss", path_segment(&team.id));
         let mut lines: Vec<Value> = Vec::new();
-        let mut line_error: Option<String> = None;
+        // A malformed line fails the team's read as it arrives (`JSON.parse` in `readLines`).
         let outcome = lichess
             .client()
             .policy()
@@ -870,21 +870,16 @@ async fn swiss_of_teams(
                         None,
                         None,
                         cancel,
-                        |line| match serde_json::from_str::<Value>(line) {
-                            Ok(value) => lines.push(value),
-                            Err(cause) => {
-                                line_error.get_or_insert(cause.to_string());
-                            }
+                        |line| {
+                            let value = serde_json::from_str::<Value>(line)
+                                .map_err(|cause| CoreError::new(cause.to_string()))?;
+                            lines.push(value);
+                            Ok(())
                         },
                     )
                     .await
             })
             .await;
-        let outcome = match (outcome, line_error) {
-            (Err(cause), _) => Err(cause),
-            (Ok(()), Some(message)) => Err(Failure::Core(CoreError::new(message))),
-            (Ok(()), None) => Ok(()),
-        };
         match outcome {
             Ok(()) => {
                 for raw in &lines {
@@ -1107,12 +1102,12 @@ async fn swiss_detail(
             auth,
             cancel,
             |line| {
-                if let Some(row) = serde_json::from_str::<Value>(line)
-                    .ok()
-                    .and_then(|value| standing_of(&value))
-                {
+                let value = serde_json::from_str::<Value>(line)
+                    .map_err(|cause| CoreError::new(cause.to_string()))?;
+                if let Some(row) = standing_of(&value) {
                     standing.push(row);
                 }
+                Ok(())
             },
         )
         .await?;

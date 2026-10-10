@@ -1280,12 +1280,10 @@ impl Inner {
     ) -> CoreResult<()> {
         let path = format!("/api/tv/{}/feed", path_segment(channel));
         let live = Arc::new(Mutex::new(TvLive::default()));
-        let failure: Arc<Mutex<Option<CoreError>>> = Arc::new(Mutex::new(None));
+        let live_for_lines = Arc::clone(&live);
+        let token_for_lines = token.clone();
         let inner = Arc::clone(self);
         let channel_owned = channel.to_string();
-        let live_for_lines = Arc::clone(&live);
-        let failure_for_lines = Arc::clone(&failure);
-        let token_for_lines = token.clone();
         self.lichess
             .client()
             .ndjson(
@@ -1297,28 +1295,21 @@ impl Inner {
                 token,
                 move |line| {
                     if token_for_lines.is_cancelled() || !inner.is_current(session) {
-                        return;
+                        return Ok(());
                     }
-                    if lock(&failure_for_lines).is_some() {
-                        return;
-                    }
-                    if let Err(cause) = inner.handle_tv_line(
+                    // A malformed record ends the feed as it arrives.
+                    inner.handle_tv_line(
                         &channel_owned,
                         session,
                         &token_for_lines,
                         &live_for_lines,
                         line,
-                    ) {
-                        *lock(&failure_for_lines) = Some(cause);
-                    }
+                    )?;
+                    Ok(())
                 },
             )
             .await?;
-        let failed = lock(&failure).take();
-        match failed {
-            Some(cause) => Err(cause),
-            None => Ok(()),
-        }
+        Ok(())
     }
 
     /// One line of a TV feed: a featured game (`featured`) or a move (`fen`).
@@ -1651,8 +1642,6 @@ impl Inner {
     ) -> CoreResult<()> {
         let path = format!("/api/stream/game/{}", path_segment(id));
         let mut current: Option<WatchFrame> = None;
-        let mut failure: Option<CoreError> = None;
-        let lines_error = &mut failure;
         self.lichess
             .client()
             .ndjson(
@@ -1663,22 +1652,17 @@ impl Inner {
                 None,
                 token,
                 |line| {
-                    if token.is_cancelled() || !self.is_current(session) || lines_error.is_some() {
-                        return;
+                    if token.is_cancelled() || !self.is_current(session) {
+                        return Ok(());
                     }
-                    let data: Value = match serde_json::from_str(line) {
-                        Ok(data) => data,
-                        Err(cause) => {
-                            *lines_error = Some(CoreError::new(format!(
-                                "Lichess sent an unreadable game record: {cause}"
-                            )));
-                            return;
-                        }
-                    };
+                    // A malformed record ends the game as it arrives.
+                    let data: Value = serde_json::from_str(line).map_err(|cause| {
+                        CoreError::new(format!("Lichess sent an unreadable game record: {cause}"))
+                    })?;
                     let Some(fen) =
                         display_fen(data.get("fen").and_then(Value::as_str).unwrap_or(""))
                     else {
-                        return;
+                        return Ok(());
                     };
                     if let Some(id) = data.get("id").and_then(Value::as_str) {
                         // The description of the game: first, and again when it ends.
@@ -1746,15 +1730,16 @@ impl Inner {
                         });
                         self.sink.frame(frame);
                     }
+                    Ok(())
                 },
             )
             .await?;
-        match failure {
-            Some(cause) => Err(cause),
-            None => Ok(()),
-        }
+        Ok(())
     }
 
+    /// `watchRound`'s feed (`readPgnStream`): the PGN text is read as it arrives and split at the
+    /// two blank lines Lichess ends every game with. Each read hands over the games that parsed,
+    /// so the sink gets one batch per chunk; the last part of the feed is taken at its end.
     async fn follow_round(
         &self,
         round_id: &str,
@@ -1763,18 +1748,12 @@ impl Inner {
     ) -> CoreResult<()> {
         let path = format!("/api/stream/broadcast/round/{}.pgn", path_segment(round_id));
         let mut buffer = String::new();
-        let mut games: Vec<BroadcastGame> = Vec::new();
-        let emit = |games: &mut Vec<BroadcastGame>, buffer: &mut String| {
-            if let Some(game) = broadcast_game(buffer) {
-                games.push(game);
-            }
-            buffer.clear();
+        let deliver = |games: Vec<BroadcastGame>| {
             if !games.is_empty() && self.is_current(session) && !token.is_cancelled() {
-                let batch = std::mem::take(games);
                 self.sink.broadcast(BroadcastUpdate {
                     session,
                     round_id: round_id.to_string(),
-                    games: batch,
+                    games,
                     ended: None,
                     error: None,
                 });
@@ -1782,44 +1761,39 @@ impl Inner {
         };
         self.lichess
             .client()
-            .ndjson(
-                reqwest::Method::GET,
-                &path,
-                &[],
-                None,
-                None,
-                token,
-                |line| {
-                    if token.is_cancelled() || !self.is_current(session) {
-                        return;
-                    }
-                    if !buffer.is_empty() {
-                        buffer.push('\n');
-                    }
-                    buffer.push_str(line);
-                    if buffer.len() > MAX_PGN {
-                        let cut = buffer.len() - MAX_PGN;
-                        let cut = (cut..buffer.len())
-                            .find(|i| buffer.is_char_boundary(*i))
-                            .unwrap_or(buffer.len());
-                        buffer.drain(..cut);
-                    }
-                    // A game ends with its result, which the movetext closes with.
-                    let ends_game = !line.starts_with('[')
-                        && ["1-0", "0-1", "1/2-1/2", "*"]
-                            .iter()
-                            .any(|result| line.ends_with(result));
-                    if ends_game {
-                        emit(&mut games, &mut buffer);
-                    }
-                },
-            )
+            .stream_chunks(&path, None, token, |chunk| {
+                if token.is_cancelled() || !self.is_current(session) {
+                    return Ok(());
+                }
+                buffer.push_str(chunk);
+                if buffer.len() > MAX_PGN {
+                    let cut = buffer.len() - MAX_PGN;
+                    let cut = (cut..buffer.len())
+                        .find(|i| buffer.is_char_boundary(*i))
+                        .unwrap_or(buffer.len());
+                    buffer.drain(..cut);
+                }
+                deliver(take_pgn_games(&mut buffer, false));
+                Ok(())
+            })
             .await?;
-        if !buffer.trim().is_empty() {
-            emit(&mut games, &mut buffer);
-        }
+        deliver(take_pgn_games(&mut buffer, true));
         Ok(())
     }
+}
+
+/// The games of a PGN buffer (`flush` in `readPgnStream`): every part before the last two-blank-line
+/// separator parses into a game; the last part stays in the buffer until more text arrives, unless
+/// the feed has ended, when it is parsed too.
+fn take_pgn_games(buffer: &mut String, finished: bool) -> Vec<BroadcastGame> {
+    let text = std::mem::take(buffer);
+    let mut parts: Vec<&str> = text.split("\n\n\n").collect();
+    let rest = if finished { None } else { parts.pop() };
+    let games = parts.into_iter().filter_map(broadcast_game).collect();
+    if let Some(rest) = rest {
+        buffer.push_str(rest);
+    }
+    games
 }
 
 #[cfg(test)]

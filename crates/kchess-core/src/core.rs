@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 use crate::capabilities::Capabilities;
 use crate::engine::EngineContext;
@@ -29,9 +30,11 @@ use crate::engine::status::{EngineLocations, EngineStatus, engine_identity, engi
 use crate::engine::uci::EngineHub;
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
+use crate::lichess::services::Services;
 use crate::puzzles::PuzzleService;
 use crate::store::Database;
 use crate::store::debug;
+use crate::usage::{UsageBatch, UsageHost};
 
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]
@@ -56,6 +59,10 @@ pub struct Core {
     search: Search,
     analysis: Analysis,
     reviews: Reviews,
+    /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
+    services: Services,
+    /// Network accounting counters, batched before they reach the database.
+    usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
     installs: Mutex<HashMap<u64, watch::Sender<bool>>>,
 }
@@ -108,6 +115,18 @@ fn location_override(args: &[Value], i: usize) -> Result<LocationOverride> {
     }
 }
 
+/// A test-only Lichess origin (`KCHESS_TEST_LICHESS_BASE`), honoured only when the test switch
+/// is on (`KCHESS_STORE_DEBUG=1`), so the end-to-end suite serves Lichess from a local fixture.
+fn test_lichess_origin() -> Option<String> {
+    if !debug::enabled() {
+        return None;
+    }
+    std::env::var("KCHESS_TEST_LICHESS_BASE")
+        .ok()
+        .map(|origin| origin.trim_end_matches('/').to_string())
+        .filter(|origin| !origin.is_empty())
+}
+
 fn engine_locations(config: &Config) -> EngineLocations {
     EngineLocations {
         managed_dir: default_dir(&config.data_dir, config.managed_engine_dir.as_deref()),
@@ -141,8 +160,26 @@ impl Core {
         let search = Search::new(ctx.clone());
         let analysis = Analysis::new(ctx.clone());
         let reviews = Reviews::new(ctx.clone(), Arc::new(ReviewRecords(Arc::clone(&database))));
+        // Usage events are counted in batches (`usage.ts`) before the services' host sees them.
+        let usage = UsageBatch::new(
+            Arc::clone(&database),
+            Arc::clone(&host),
+            config.data_dir.clone(),
+        );
+        let services_host: Arc<dyn Host> = Arc::new(UsageHost {
+            inner: Arc::clone(&host),
+            batch: Arc::clone(&usage),
+        });
+        let services = Services::new(
+            Arc::clone(&services_host),
+            Arc::clone(&database),
+            Arc::clone(&capabilities),
+            Arc::clone(&usage),
+            CancellationToken::new(),
+            test_lichess_origin(),
+        );
         Core {
-            puzzles: PuzzleService::new(config, Arc::clone(&host)),
+            puzzles: PuzzleService::new(config, services_host),
             host,
             capabilities,
             database,
@@ -153,6 +190,8 @@ impl Core {
             search,
             analysis,
             reviews,
+            services,
+            usage,
             installs: Mutex::new(HashMap::new()),
         }
     }
@@ -260,10 +299,21 @@ impl Core {
                 self.ctx.hub.close_engines().await?;
                 Ok(Value::Null)
             }
-            _ => match self.engine_sync(method, &args) {
-                Some(result) => result,
-                None => Err(CoreError::new(format!("Unknown core method {method}."))),
-            },
+            _ => {
+                if let Some(result) = self.services.call(method, &args).await {
+                    return result;
+                }
+                if let Some(result) = self.services.call_sync(method, &args) {
+                    return result;
+                }
+                if let Some(result) = self.usage_sync(method, &args) {
+                    return result;
+                }
+                match self.engine_sync(method, &args) {
+                    Some(result) => result,
+                    None => Err(CoreError::new(format!("Unknown core method {method}."))),
+                }
+            }
         }
     }
 
@@ -274,10 +324,38 @@ impl Core {
         if let Some(result) = self.engine_sync(method, &args) {
             return result;
         }
+        if let Some(result) = self.services.call_sync(method, &args) {
+            return result;
+        }
+        if let Some(result) = self.usage_sync(method, &args) {
+            return result;
+        }
         if !method.starts_with("store.") {
             return Err(CoreError::new(format!("Unknown core method {method}.")));
         }
         self.database.call(method, &args)
+    }
+
+    /// The network accounting methods (`usage.ts`).
+    fn usage_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
+            "usage.flush" => {
+                self.usage.flush();
+                Ok(Value::Null)
+            }
+            "usage.report" => self.usage.report(),
+            "usage.reset" => self.usage.reset(),
+            "usage.close" => {
+                self.usage.close();
+                Ok(Value::Null)
+            }
+            "usage.forget" => optional::<Vec<String>>(args, 0, "accounts").map(|accounts| {
+                self.services.forget_usage(&accounts);
+                Value::Null
+            }),
+            _ => return None,
+        };
+        Some(result)
     }
 
     /// The engine methods that start no work and need no runtime: safe from a synchronous caller.
@@ -362,6 +440,7 @@ impl Core {
             database: Arc::clone(&self.database),
             host: Arc::clone(&self.host),
             capabilities: Arc::clone(&self.capabilities),
+            lichess: Arc::clone(self.services.lichess()),
             search: self.search.clone(),
             analysis: self.analysis.clone(),
             online: Arc::clone(&self.online),
@@ -454,7 +533,9 @@ impl Core {
                 &format!("Engine shutdown failed: {}", cause.message),
             );
         }
+        self.services.close().await;
         self.puzzles.close().await;
+        self.usage.close();
         self.database.close();
     }
 }

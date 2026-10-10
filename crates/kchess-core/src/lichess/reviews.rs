@@ -213,6 +213,7 @@ pub(crate) async fn collect_lines(
     client
         .ndjson(method, path, query, body, auth, cancel, |line| {
             lines.push(line.to_string());
+            Ok(())
         })
         .await?;
     Ok(lines)

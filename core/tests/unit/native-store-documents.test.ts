@@ -6,7 +6,6 @@ import { afterAll, describe, expect, it } from 'vitest'
 import type { StoredReview } from '../../src/contracts/types'
 import { assertSession } from '../../src/domain/library'
 import { reviewKey } from '../../src/domain/review'
-import { decodeLookupCache } from '../../src/services/positionLookup'
 import { nativeRules, type NativeCoreHandle } from '../../src/services/native'
 import { goldenFile } from './golden'
 
@@ -160,10 +159,10 @@ function describeOutcome(outcome: Outcome, labels: Labels): string {
     : `error: ${outcome.error}`
 }
 
-/** The TypeScript-side decode of a position-lookup entry, which the service applies to the stored text. */
+/** A position-lookup entry is compared as the stored JSON it was written as; the core decodes it. */
 function fromRust(method: string, value: unknown): unknown {
   if (method === 'store.setupPositionLookup.read') {
-    return typeof value === 'string' ? (decodeLookupCache(JSON.parse(value)) ?? null) : null
+    return typeof value === 'string' ? JSON.parse(value) : null
   }
   return value
 }

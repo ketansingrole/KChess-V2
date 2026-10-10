@@ -1,4 +1,3 @@
-import type { Middleware } from 'openapi-fetch'
 import { rules } from './engine.ts'
 
 /** Error thrown for failed Lichess API calls. The message is UI-safe. */
@@ -35,24 +34,4 @@ export function lichessError(
     endpoint,
   )
   return new LichessError(fields.status, fields.endpoint, fields.detail)
-}
-
-/**
- * openapi-fetch middleware: every non-2xx response becomes a `LichessError`
- * (named after the request, e.g. `GET /api/user/magnus`), so call sites only
- * deal with successful data.
- */
-export const throwLichessErrors: Middleware = {
-  async onResponse({ request, response }) {
-    if (response.ok) return undefined
-    const text = await response.clone().text()
-    let body: unknown = text || undefined
-    try {
-      body = text ? JSON.parse(text) : undefined
-    } catch (cause) {
-      // Not JSON (Lichess serves its HTML 404 page for unknown users); `lichessError` handles that.
-      console.warn('[lichessError] Non-JSON error body, using raw text', cause)
-    }
-    throw lichessError(response, body, `${request.method} ${new URL(request.url).pathname}`)
-  },
 }

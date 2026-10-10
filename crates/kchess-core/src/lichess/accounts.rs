@@ -75,11 +75,13 @@ pub trait LichessStore: Send + Sync {
     fn dismissed_friends(&self) -> CoreResult<Vec<String>>;
     /// Games of `account` that were unfinished at the last sync (`pendingGameIds`).
     fn pending_game_ids(&self, account: &str) -> CoreResult<Vec<String>>;
-    /// Saves a page of games, unless `current` turned false (`saveGamesPage`).
+    /// Saves a page of games and the reviews Lichess returned with them, in one transaction, unless
+    /// `current` turned false (`saveGamesPage`).
     fn save_games_page(
         &self,
         account: &str,
         games: &[LichessGame],
+        reviews: &[Value],
         current: &(dyn Fn() -> bool + Sync),
     ) -> CoreResult<()>;
     /// Moves the sync cursor of `account` to `synced_at` (`saveGames(username, [], startedAt)`).
@@ -100,22 +102,16 @@ pub trait LichessStore: Send + Sync {
     ) -> CoreResult<()>;
     /// `saveLogin`'s write: the encrypted token and the connected account, together.
     fn save_login(&self, username: &str, ciphertext: &str) -> CoreResult<()>;
-    /// Lichess's analysis of synced games, saved as reviews (`saveGamesPage`'s reviews, written
-    /// after the page). Returns the stored reviews. Stores without a review table keep none.
+    /// Reviews without a page of games (the review queue's fetch): written, and the stored reviews
+    /// returned (`writeReview` for each).
     fn save_reviews(
         &self,
         account: &str,
         reviews: &[Value],
         current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<Vec<Value>> {
-        let _ = (account, current);
-        Ok(reviews.to_vec())
-    }
+    ) -> CoreResult<Vec<Value>>;
     /// Games Lichess was asked about, so they are not asked again soon (`markChecked`).
-    fn mark_checked(&self, ids: &[String]) -> CoreResult<()> {
-        let _ = ids;
-        Ok(())
-    }
+    fn mark_checked(&self, ids: &[String]) -> CoreResult<()>;
 }
 
 /// A game as the store keeps it and the UI shows it (`LichessGame` of `contracts/types.ts`).
@@ -389,6 +385,15 @@ impl Lichess {
         }
     }
 
+    /// `resetLichess`: ends every login epoch and running sync, and drops the in-memory profiles.
+    pub fn reset(&self) {
+        self.login_epoch.fetch_add(1, Ordering::SeqCst);
+        let running: Vec<String> = lock(&self.syncs).keys().cloned().collect();
+        self.cancel_account_syncs(&running);
+        lock(&self.profiles).clear();
+        lock(&self.last_following).clear();
+    }
+
     /// `forgetProfile`: the in-memory copies of an account's profile and rating history.
     pub fn forget_profile(&self, username: &str) {
         let mut profiles = lock(&self.profiles);
@@ -628,7 +633,10 @@ impl Lichess {
                             None,
                             Some(&authorize(&token)),
                             &self.lifetime,
-                            |line| lines.push(line.to_string()),
+                            |line| {
+                                lines.push(line.to_string());
+                                Ok(())
+                            },
                         )
                         .await
                 })
@@ -815,7 +823,10 @@ impl Lichess {
                             None,
                             auth.as_deref(),
                             &self.lifetime,
-                            |line| lines.push(line.to_string()),
+                            |line| {
+                                lines.push(line.to_string());
+                                Ok(())
+                            },
                         )
                         .await?;
                     Ok::<Vec<String>, Failure>(lines)
@@ -989,10 +1000,8 @@ impl Lichess {
                         return Err(sync_cancelled());
                     }
                     if !games.is_empty() {
-                        self.store.save_games_page(name, &games, &current)?;
-                    }
-                    if !reviews.is_empty() {
-                        self.store.save_reviews(name, &reviews, &current)?;
+                        self.store
+                            .save_games_page(name, &games, &reviews, &current)?;
                     }
                     if !current() {
                         return Err(sync_cancelled());
@@ -1107,10 +1116,8 @@ impl Lichess {
                 }
             }
             // A missing ID stays pending; a failed request never moves the cursor.
-            self.store.save_games_page(account, &games, current)?;
-            if !reviews.is_empty() {
-                self.store.save_reviews(account, &reviews, current)?;
-            }
+            self.store
+                .save_games_page(account, &games, &reviews, current)?;
         }
         Ok(())
     }
@@ -1141,7 +1148,10 @@ impl Lichess {
                                 body,
                                 auth.as_deref(),
                                 &self.lifetime,
-                                |line| lines.push(line.to_string()),
+                                |line| {
+                                    lines.push(line.to_string());
+                                    Ok(())
+                                },
                             )
                             .await?;
                         Ok::<Vec<String>, Failure>(lines)

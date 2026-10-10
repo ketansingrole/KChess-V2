@@ -1,8 +1,7 @@
 import { mergeRatingHistories, ratingHistoryFromGames } from '../core/src/domain/ratings.ts'
 import { isGameInProgress } from '../core/src/domain/gameStatus.ts'
 import { pickConnectedAccount } from '../core/src/domain/accounts.ts'
-import { LichessError, lichessError, throwLichessErrors } from '../core/src/domain/lichessError.ts'
-import { readLines } from '../core/src/services/ndjson.ts'
+import { LichessError, lichessError } from '../core/src/domain/lichessError.ts'
 import {
   canBoardSeek,
   canDirectChallenge,
@@ -25,7 +24,6 @@ import {
 } from '../core/src/domain/validate.ts'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import createClient from 'openapi-fetch'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -369,61 +367,6 @@ assert(
   ),
   [false, false, false, false, false, false, false],
 )
-
-// NDJSON streams: lines split across chunks, keep-alive blanks, and a final line without a newline.
-const encoder = new TextEncoder()
-const chunks = ['{"a":1}\n{"b"', ':2}\n\n\n', '  \r\n{"c":3}']
-const streamed: string[] = []
-await readLines(
-  new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
-      controller.close()
-    },
-  }),
-  (line) => streamed.push(line),
-)
-assert('ndjson lines', streamed, ['{"a":1}', '{"b":2}', '{"c":3}'])
-
-// The middleware turns non-2xx responses into LichessErrors and leaves successes alone.
-const server = createServer((request, response) => {
-  if (request.url === '/ok')
-    response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"n":1}')
-  else if (request.url === '/missing')
-    response.writeHead(404, { 'Content-Type': 'text/html' }).end('<html>Not found</html>')
-  else response.writeHead(400, { 'Content-Type': 'application/json' }).end('{"error":"bad seek"}')
-})
-await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-const api = createClient<Record<string, never>>({
-  baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-})
-api.use(throwLichessErrors)
-const call = (path: string): Promise<unknown> =>
-  (api as unknown as { GET: (p: string) => Promise<{ data: unknown }> }).GET(path)
-assert('middleware passes success through', ((await call('/ok')) as { data: unknown }).data, {
-  n: 1,
-})
-const failure = async (path: string): Promise<unknown> => {
-  try {
-    await call(path)
-    return 'no error'
-  } catch (cause) {
-    return cause instanceof LichessError
-      ? [cause.status, cause.endpoint, cause.message]
-      : String(cause)
-  }
-}
-assert('middleware hides html 404 bodies', await failure('/missing'), [
-  404,
-  'GET /missing',
-  'Lichess 404 from GET /missing: not found',
-])
-assert('middleware keeps json error detail', await failure('/bad'), [
-  400,
-  'GET /bad',
-  'Lichess 400 from GET /bad: {"error":"bad seek"}',
-])
-server.close()
 
 // Downloaded engine: install, verify, report, delete — against a fake GitHub release on a temp dir.
 const work = mkdtempSync(join(tmpdir(), 'kchess-managed-test-'))

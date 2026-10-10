@@ -19,7 +19,8 @@ use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::training;
 
 /// The request for a puzzle (`PuzzleRequest`). An empty account trains anonymously.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PuzzleRequest {
     pub account: String,
     pub angle: String,
@@ -28,14 +29,17 @@ pub struct PuzzleRequest {
 }
 
 /// A puzzle drawn for the user (`PuzzleDraw`): the puzzle and, for an account, its rating.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PuzzleDraw {
     pub puzzle: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub glicko: Option<Value>,
 }
 
 /// A puzzle result to report (`PuzzleSolveRequest`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PuzzleSolveRequest {
     pub account: String,
     pub angle: String,
@@ -45,13 +49,16 @@ pub struct PuzzleSolveRequest {
 }
 
 /// The rating change Lichess applied to a rated result (`PuzzleSolveResult`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PuzzleSolveResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rating_diff: Option<Value>,
 }
 
 /// One result of the activity feed (`PuzzleActivityEntry`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PuzzleActivityEntry {
     pub date: Value,
     pub win: bool,

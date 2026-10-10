@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it } from 'vitest'
 import { createKChessCore, type KChessCore } from '../../src/services'
 import { bindPlatform, platform } from '../../src/services/platform'
 import { testPlatform } from '../../../tests/fixtures/corePlatform'
@@ -39,53 +39,6 @@ it('binds late asynchronous work to the closed host, even after another profile 
   await core.close()
   core = createKChessCore(testPlatform())
   expect(late).toThrow('closed')
-})
-
-it('close aborts the spectator stream and remains idempotent', async () => {
-  let requestSignal: AbortSignal | undefined
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((request: Request) => {
-      requestSignal = request.signal
-      return new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener('abort', () => reject(request.signal.reason), {
-          once: true,
-        })
-      })
-    }),
-  )
-  core = createKChessCore(testPlatform())
-  await core.watch({ channel: 'blitz' })
-  await vi.waitFor(() => expect(requestSignal).toBeDefined())
-  const closing = core.close()
-  expect(core.close()).toBe(closing)
-  await closing
-  expect(requestSignal?.aborted).toBe(true)
-  await expect(core.library()).rejects.toThrow('closed')
-})
-
-it('close drains an interrupted request before allowing a new core', async () => {
-  let signal: AbortSignal | undefined
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((request: Request) => {
-      signal = request.signal
-      return new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener('abort', () => reject(request.signal.reason), {
-          once: true,
-        })
-      })
-    }),
-  )
-  core = createKChessCore(testPlatform())
-  const lookup = core.profile('TestPlayer')
-  const rejected = expect(lookup).rejects.toThrow()
-  await vi.waitFor(() => expect(signal).toBeDefined())
-  await core.close()
-  await rejected
-  expect(signal?.aborted).toBe(true)
-  core = createKChessCore(testPlatform())
-  expect((await core.loadData()).accounts).toEqual([])
 })
 
 it('direct core calls enforce argument tuples without relying on IPC', async () => {

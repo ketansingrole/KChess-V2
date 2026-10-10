@@ -13,7 +13,9 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, game_json, http_client, ndjson,
     serve,
 };
-use kchess_core::lichess::accounts::{Lichess, Reply as Outcome};
+use kchess_core::lichess::accounts::{
+    AccountRow, CachedValue, Lichess, LichessGame, LichessStore, Reply as Outcome,
+};
 use kchess_core::lichess::client::LichessClient;
 use kchess_core::lichess::policy::Policy;
 use serde_json::{Value, json};
@@ -519,4 +521,135 @@ async fn tokens_never_reach_the_host_log() {
     assert!(logged.contains("Game sync failed: Alice"));
     assert!(!logged.contains("lip_super_secret_token"));
     assert!(!logged.contains("Bearer"));
+}
+
+/// A store that saves reviews only with their page of games: its `save_reviews` refuses, so a sync
+/// that wrote reviews on its own would fail (`saveGamesPage` wrote both in one transaction).
+struct PageOnly(Arc<MemoryStore>);
+
+impl LichessStore for PageOnly {
+    fn accounts(&self) -> kchess_core::error::Result<Vec<AccountRow>> {
+        self.0.accounts()
+    }
+    fn dismissed_friends(&self) -> kchess_core::error::Result<Vec<String>> {
+        self.0.dismissed_friends()
+    }
+    fn pending_game_ids(&self, account: &str) -> kchess_core::error::Result<Vec<String>> {
+        self.0.pending_game_ids(account)
+    }
+    fn save_games_page(
+        &self,
+        account: &str,
+        games: &[LichessGame],
+        reviews: &[Value],
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> kchess_core::error::Result<()> {
+        self.0.save_games_page(account, games, reviews, current)
+    }
+    fn save_games_cursor(
+        &self,
+        account: &str,
+        synced_at: i64,
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> kchess_core::error::Result<()> {
+        self.0.save_games_cursor(account, synced_at, current)
+    }
+    fn read_api_cache(&self, key: &str) -> kchess_core::error::Result<Option<CachedValue>> {
+        self.0.read_api_cache(key)
+    }
+    fn write_api_cache(
+        &self,
+        key: &str,
+        value: &Value,
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> kchess_core::error::Result<()> {
+        self.0.write_api_cache(key, value, current)
+    }
+    fn save_login(&self, username: &str, ciphertext: &str) -> kchess_core::error::Result<()> {
+        self.0.save_login(username, ciphertext)
+    }
+    fn save_reviews(
+        &self,
+        _account: &str,
+        _reviews: &[Value],
+        _current: &(dyn Fn() -> bool + Sync),
+    ) -> kchess_core::error::Result<Vec<Value>> {
+        Err(kchess_core::error::CoreError::new(
+            "Reviews are saved with their page.",
+        ))
+    }
+    fn mark_checked(&self, ids: &[String]) -> kchess_core::error::Result<()> {
+        self.0.mark_checked(ids)
+    }
+}
+
+/// One player of an analysed game, as Lichess exports it.
+fn analysed_player(name: &str, accuracy: f64) -> Value {
+    json!({
+        "user": { "id": name, "name": name },
+        "rating": 1500,
+        "analysis": { "inaccuracy": 0, "mistake": 0, "blunder": 0, "acpl": 10, "accuracy": accuracy }
+    })
+}
+
+/// A finished game with Lichess's analysis: its page of games carries a review.
+fn analysed_game() -> Value {
+    let mut game = game_json("abcdefgh", 1_000, "alice", "bob");
+    game["players"] = json!({
+        "white": analysed_player("alice", 95.0),
+        "black": analysed_player("bob", 40.0),
+    });
+    game["moves"] = json!("e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#");
+    game["status"] = json!("mate");
+    game["variant"] = json!("standard");
+    game["speed"] = json!("blitz");
+    game["perf"] = json!("blitz");
+    game["analysis"] = json!([
+        { "eval": 30 },
+        { "eval": 40 },
+        { "eval": 20 },
+        { "eval": 30 },
+        { "eval": 50 },
+        { "mate": 1, "best": "g7g6", "variation": "g6 Qf3 Nf6", "judgment": { "name": "Blunder", "comment": "g6 was best." } }
+    ]);
+    game
+}
+
+/// A sync saves a page's reviews with its games, never on their own.
+#[tokio::test]
+async fn a_synced_page_saves_its_reviews_with_its_games() {
+    let fixture = serve(|seen| {
+        if seen.query("until").is_none() {
+            Reply::Text(200, "application/x-ndjson", ndjson(&[analysed_game()]))
+        } else {
+            Reply::Text(200, "application/x-ndjson", String::new())
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let tokens = MemoryTokens::with(&[("Alice", "lip_alice")]);
+    let client = LichessClient::with_base(
+        &fixture.base,
+        Policy::with_timeout(
+            Arc::clone(&host) as Arc<dyn kchess_core::host::Host>,
+            http_client(),
+            CancellationToken::new(),
+            Duration::from_secs(5),
+        ),
+        http_client(),
+    );
+    let lichess = Lichess::new(
+        client,
+        capabilities_for(&host),
+        Arc::new(PageOnly(Arc::clone(&store))),
+        tokens,
+        Arc::clone(&host) as Arc<dyn kchess_core::host::Host>,
+        CancellationToken::new(),
+    );
+    lichess.sync_games(Some("Alice")).await.unwrap();
+    assert_eq!(store.games.lock().unwrap().len(), 1);
+    let reviews = store.reviews.lock().unwrap().clone();
+    assert_eq!(reviews.len(), 1, "the page's review is saved with the page");
+    assert_eq!(reviews[0]["gameId"], "abcdefgh");
 }

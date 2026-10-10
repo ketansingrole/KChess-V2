@@ -3,10 +3,11 @@
 //! analysis contexts. Reached through `api::call`.
 
 mod accounts;
+pub mod challenge;
 mod context;
 mod games;
 mod lichess;
-mod oauth;
+pub mod oauth;
 mod online;
 mod ratings;
 mod review;
@@ -59,6 +60,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         .or_else(|| time_control::call(method, args))
         .or_else(|| accounts::call(method, args))
         .or_else(|| online::call(method, args))
+        .or_else(|| challenge::call(method, args))
         .or_else(|| lichess::call(method, args))
         .or_else(|| oauth::call(method, args))
         .or_else(|| context::call(method, args))

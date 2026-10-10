@@ -234,3 +234,33 @@ fn splits_a_study_into_chapters() {
     );
     assert_eq!(split_pgn(&two).len(), 2);
 }
+
+/// A malformed study record fails the listing as it arrives: the stream stays open, yet the
+/// listing ends with the record's error (`JSON.parse` in the TypeScript line callback).
+#[tokio::test]
+async fn a_malformed_study_record_fails_the_listing_as_it_arrives() {
+    let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut lines = Some(lines_rx);
+    let fixture = serve(move |_| match lines.take() {
+        Some(open) => Reply::Stream(open),
+        None => Reply::Hang,
+    })
+    .await;
+    let lichess = service(&fixture.base);
+    lines_tx
+        .send("{\"id\": \"Study001\", \"name\": \n".to_string())
+        .expect("the stream is open");
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        lichess_studies(&lichess, "Alice"),
+    )
+    .await
+    .expect("the listing ends without waiting for the stream to close");
+    let error = outcome.unwrap_err();
+    assert!(
+        error.message.contains("unreadable study record"),
+        "message was {}",
+        error.message
+    );
+    drop(lines_tx);
+}
