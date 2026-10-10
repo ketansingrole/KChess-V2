@@ -3,6 +3,7 @@
 //! callbacks given to the constructor. Errors reject with the core's message; cancellations
 //! carry `AbortError:` before it, which the host turns into an `AbortError`.
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -39,6 +40,14 @@ impl Host for JsHost {
 pub struct NativeCoreOptions {
     pub data_dir: String,
     pub legacy_database_path: Option<String>,
+    /// `CorePlatform.bundledEnginePath`: the bundled Stockfish script, run by `node_path`.
+    pub bundled_engine_path: Option<String>,
+    /// `process.execPath`, the Node executable that runs the bundled script.
+    pub node_path: Option<String>,
+    /// `CorePlatform.nodeEnv`: extra environment for the bundled script.
+    pub node_env: Option<HashMap<String, String>>,
+    /// `CorePlatform.managedEngineDir`: where the downloaded Stockfish is kept.
+    pub managed_engine_dir: Option<String>,
 }
 
 #[napi]
@@ -51,8 +60,16 @@ impl NativeCore {
     #[napi(constructor)]
     pub fn new(options: NativeCoreOptions, log: Callback, emit: Callback) -> NativeCore {
         let config = Config {
-            data_dir: PathBuf::from(options.data_dir),
             legacy_database_path: options.legacy_database_path.map(PathBuf::from),
+            bundled_engine_path: options.bundled_engine_path.map(PathBuf::from),
+            node_path: options.node_path.map(PathBuf::from),
+            node_env: options
+                .node_env
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<BTreeMap<_, _>>(),
+            managed_engine_dir: options.managed_engine_dir.map(PathBuf::from),
+            ..Config::new(PathBuf::from(options.data_dir))
         };
         NativeCore {
             core: Arc::new(Core::new(config, Arc::new(JsHost { log, emit }))),

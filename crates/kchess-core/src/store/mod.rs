@@ -18,9 +18,68 @@ pub mod voice_log;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
+
+/// `kchess.db` as the core shares it: one connection, opened and migrated on first use, behind a
+/// lock. The synchronous storage calls and the asynchronous services (the review queue) both
+/// reach it through `call`, so there is never a second copy of the database. Callers must not
+/// hold the lock across another `call`.
+pub struct Database {
+    connection: Mutex<Option<Connection>>,
+    host: Arc<dyn Host>,
+    config: Config,
+}
+
+impl Database {
+    pub fn new(config: Config, host: Arc<dyn Host>) -> Database {
+        Database {
+            connection: Mutex::new(None),
+            host,
+            config,
+        }
+    }
+
+    /// Runs one storage method (`store.<module>.<name>`) against the database, opening it first.
+    pub fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
+        let mut db = self
+            .connection
+            .lock()
+            .map_err(|_| CoreError::new("The database is unavailable."))?;
+        if method == "store.debug.historical" && debug::enabled() {
+            // Test-only: an earlier release's database, written before the store opens the file.
+            if db.is_some() {
+                return Err(CoreError::new("The database is already open."));
+            }
+            let path = self.config.data_dir.join("kchess.db");
+            return debug::historical(&path, args);
+        }
+        if db.is_none() {
+            let path = self.config.data_dir.join("kchess.db");
+            *db = Some(open(&path, self.host.as_ref())?);
+        }
+        match db.as_ref() {
+            Some(connection) => {
+                let ctx = StoreContext {
+                    db: connection,
+                    host: self.host.as_ref(),
+                    config: &self.config,
+                };
+                call(&ctx, method, args)
+            }
+            None => Err(CoreError::new("The database is unavailable.")),
+        }
+    }
+
+    /// Releases the file; the next `call` opens it again.
+    pub fn close(&self) {
+        if let Ok(mut db) = self.connection.lock() {
+            db.take();
+        }
+    }
+}
 
 /// What a storage method may use: the open database, the host (for logs) and the core's
 /// configuration (the data directory and an earlier release's database, for the one-time imports).

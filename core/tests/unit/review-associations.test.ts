@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeEach, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, expect, it } from 'vitest'
 import { INITIAL_FEN } from '../../src/domain/position'
 import { closeNativeCore } from '../../src/services/nativeCore'
 import { useTestDatabase, type TestDatabase } from '../../../tests/fixtures/nativeStore'
@@ -18,11 +18,6 @@ import { requestReview, stopReviews } from '../../src/services/review'
 
 const dataDir = mkdtempSync(join(tmpdir(), 'kchess-associations-'))
 let db: TestDatabase
-vi.mock('../../src/services/engine', () => ({
-  engineIdentity: vi.fn(),
-  engineStatus: vi.fn(),
-  spawnEngine: vi.fn(),
-}))
 const moves = ['e2e4', 'e7e5']
 const review: StoredReview = {
   key: reviewKey(INITIAL_FEN, moves),
@@ -36,11 +31,12 @@ const review: StoredReview = {
 }
 beforeEach(async () => {
   await closeNativeCore()
-  db = useTestDatabase({ dataDir })
+  // No engine: these tests only read and write associations, never a search.
+  db = useTestDatabase({ dataDir, bundledEnginePath: join(dataDir, 'no-engine.js') })
   db.exec('DELETE FROM game_reviews; DELETE FROM reviews; DELETE FROM games')
 })
 afterAll(async () => {
-  stopReviews()
+  await stopReviews()
   await closeNativeCore()
   rmSync(dataDir, { recursive: true, force: true })
 })
@@ -67,14 +63,16 @@ it('links a second game even when a stronger review prevents replacing its evalu
   expect(readReview(review.key)?.source).toBe('lichess')
   expect(reviewSummaries(['Game0001', 'Game0002']).Game0002?.complete).toBe(true)
 })
-it('links a requesting game before returning a cached Lichess review', () => {
+it('links a requesting game before returning a cached Lichess review', async () => {
   writeReview({ ...review, source: 'lichess', gameId: 'Game0001' })
-  expect(requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0002' })?.gameId).toBe('Game0002')
+  expect((await requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0002' }))?.gameId).toBe(
+    'Game0002',
+  )
   expect(Object.keys(reviewSummaries(['Game0001', 'Game0002']))).toHaveLength(2)
 })
-it('retains both associations when identical searches are queued before their first output', () => {
-  requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0001' })
-  requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0002' })
+it('retains both associations when identical searches are queued before their first output', async () => {
+  await requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0001' })
+  await requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0002' })
   writeReview({ ...review, gameId: 'Game0002' })
   expect(Object.keys(reviewSummaries(['Game0001', 'Game0002']))).toHaveLength(2)
 })

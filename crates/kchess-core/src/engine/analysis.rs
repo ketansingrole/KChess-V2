@@ -428,8 +428,7 @@ async fn analyse(
     let stop_token = token.clone();
     shared
         .ctx
-        .scheduler
-        .with_lease(2, move || stop_token.cancel(), token, async {
+        .lease(2, move || stop_token.cancel(), token, async {
             target.ready().await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());

@@ -20,6 +20,7 @@ use status::{EngineLocations, EngineStatus, engine_command};
 use uci::{EngineHub, UciController};
 
 pub mod analysis;
+pub mod bridge;
 pub mod managed;
 pub mod review;
 pub mod scheduler;
@@ -31,6 +32,10 @@ pub mod uci;
 /// `status` names; tests substitute a scripted engine.
 pub type CommandFactory = Arc<dyn Fn(&EngineStatus) -> Command + Send + Sync>;
 
+/// Runs before every engine lease. The core uses it to refresh the battery reading without
+/// making the lease wait for the host.
+pub type BeforeLease = Arc<dyn Fn() + Send + Sync>;
+
 /// What the engine services share with the core: the host, the process registry, the engine
 /// budget, and where engines are found.
 #[derive(Clone)]
@@ -40,6 +45,7 @@ pub struct EngineContext {
     pub scheduler: Arc<Scheduler>,
     pub locations: Arc<EngineLocations>,
     pub command: CommandFactory,
+    pub before_lease: BeforeLease,
 }
 
 impl EngineContext {
@@ -57,7 +63,21 @@ impl EngineContext {
             scheduler,
             locations,
             command: Arc::new(move |status| engine_command(&for_factory, status)),
+            before_lease: Arc::new(|| {}),
         }
+    }
+
+    /// `withEngineLease`: waits for the budget at `priority`, then runs `work` under it. The
+    /// budget is released on every exit path.
+    pub(crate) async fn lease<T>(
+        &self,
+        priority: i32,
+        stop: impl Fn() + Send + Sync + 'static,
+        token: &tokio_util::sync::CancellationToken,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        (self.before_lease)();
+        self.scheduler.with_lease(priority, stop, token, work).await
     }
 
     /// `spawnEngine`: refuses while an executable is being replaced, then starts the process.

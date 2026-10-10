@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { logError } from './logger'
+import { logError } from './logger.ts'
 
 /**
  * The Rust rules engine (`crates/kchess-domain` through the `@kchess/native` N-API binding).
@@ -40,7 +40,14 @@ export interface NativeRules {
   version(): string
   /** The core's services (`crates/kchess-node/src/core.rs`); see `nativeCore.ts`. */
   NativeCore: new (
-    options: { dataDir: string; legacyDatabasePath?: string },
+    options: {
+      dataDir: string
+      legacyDatabasePath?: string
+      bundledEnginePath?: string
+      nodePath?: string
+      nodeEnv?: Record<string, string>
+      managedEngineDir?: string
+    },
     log: (json: string) => void,
     emit: (json: string) => void,
   ) => NativeCoreHandle

@@ -147,7 +147,7 @@ pub trait EngineHandoff: Send + Sync {
 pub type EngineGuard = Box<dyn Send>;
 
 /// What the managed directory holds (`ManagedEngine` in the TypeScript contracts).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedEngine {
     pub installed: bool,
@@ -170,7 +170,7 @@ pub struct InstallResult {
 
 /// One asset of a GitHub release. Fields the install checks are optional so that a malformed
 /// entry is skipped rather than failing the whole release.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReleaseAsset {
     pub name: String,
     #[serde(default)]

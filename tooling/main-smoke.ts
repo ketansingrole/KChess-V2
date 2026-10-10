@@ -45,9 +45,25 @@ import {
   managedEngine,
 } from '../core/src/services/managedEngine.ts'
 import { pickMacAsset } from '../core/src/services/stockfishAsset.ts'
+import { setPlatform } from '../core/src/services/platform.ts'
 import { installNativeRules } from './native-rules.ts'
 
 installNativeRules()
+// The engine calls run through the Rust core: it needs a platform, and the test-only directory
+// and release overrides of the managed engine need the test switch. Handoff refusals are covered
+// by the Rust tests.
+process.env.KCHESS_STORE_DEBUG = '1'
+setPlatform({
+  dataDir: mkdtempSync(join(tmpdir(), 'kchess-smoke-')),
+  bundledEnginePath: '',
+  secrets: {
+    available: () => false,
+    encrypt: (plain: string) => plain,
+    decrypt: (text: string) => text,
+  },
+  openExternal: async () => {},
+  onBattery: () => false,
+})
 
 const assert = (label: string, actual: unknown, expected: unknown): void => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)
@@ -456,61 +472,31 @@ const engineServer = createServer((request, response) => {
 await new Promise<void>((resolve) => engineServer.listen(0, '127.0.0.1', resolve))
 const releaseUrl = `http://127.0.0.1:${(engineServer.address() as AddressInfo).port}/release`
 const engineDir = join(work, 'engine')
-assert('nothing installed at first', (await managedEngine(engineDir)).installed, false)
+assert('nothing installed at first', (await managedEngine({ dir: engineDir })).installed, false)
 const installed = await installManagedEngine({ dir: engineDir, releaseUrl })
 assert('install reports the release tag', installed.version, 'sf_test')
-assert('installed engine is found', (await managedEngine(engineDir)).version, 'sf_test')
+assert('installed engine is found', (await managedEngine({ dir: engineDir })).version, 'sf_test')
 assert('first install downloads', [installed.updated, assetDownloads], [true, 1])
 const again = await installManagedEngine({ dir: engineDir, releaseUrl })
 assert('already on latest: reports up to date', [again.updated, again.version], [false, 'sf_test'])
 assert('already on latest: downloads nothing', assetDownloads, 1)
 releaseTag = 'sf_next'
-let replacements = 0
-const location = {
-  dir: engineDir,
-  releaseUrl,
-  replace: async (commit: () => Promise<void>): Promise<void> => {
-    replacements++
-    assert(
-      'replacement sees the previous engine until publication',
-      (await managedEngine(engineDir)).version,
-      'sf_test',
-    )
-    await commit()
-  },
-}
+const location = { dir: engineDir, releaseUrl }
 const [upgraded, simultaneous] = await Promise.all([
   installManagedEngine(location),
   installManagedEngine(location),
 ])
 assert(
   'concurrent update downloads and replaces once',
-  [upgraded.updated, simultaneous.updated, replacements, assetDownloads],
-  [true, false, 1, 2],
+  [upgraded.updated, simultaneous.updated, assetDownloads],
+  [true, false, 2],
 )
-assert('newer release is recorded', (await managedEngine(engineDir)).version, 'sf_next')
-releaseTag = 'sf_failed'
-const retained = await installManagedEngine({
-  dir: engineDir,
-  releaseUrl,
-  replace: async () => {
-    throw new Error('Engine owners did not exit')
-  },
-}).then(
-  () => 'installed',
-  (cause: Error) => cause.message,
-)
-assert('failed handoff reports the failure', retained, 'Engine owners did not exit')
-assert(
-  'failed handoff retains the working version',
-  (await managedEngine(engineDir)).version,
-  'sf_next',
-)
+assert('newer release is recorded', (await managedEngine({ dir: engineDir })).version, 'sf_next')
 releaseTag = 'sf_next'
 // An install from before versions were recorded has no VERSION file and must update once.
 unlinkSync(join(engineDir, 'VERSION'))
 const legacy = await installManagedEngine({ dir: engineDir, releaseUrl })
-assert('unversioned install is refreshed', [legacy.updated, assetDownloads], [true, 4])
+assert('unversioned install is refreshed', [legacy.updated, assetDownloads], [true, 3])
 assert(
   'installed engine is executable',
   (statSync(join(engineDir, 'stockfish')).mode & 0o111) !== 0,
@@ -533,8 +519,12 @@ assert(
   unverifiable,
   'The Stockfish release has no SHA-256 digest, so it cannot be verified.',
 )
-await deleteManagedEngine(engineDir)
-assert('delete removes the downloaded engine', (await managedEngine(engineDir)).installed, false)
-await deleteManagedEngine(engineDir)
+await deleteManagedEngine({ dir: engineDir })
+assert(
+  'delete removes the downloaded engine',
+  (await managedEngine({ dir: engineDir })).installed,
+  false,
+)
+await deleteManagedEngine({ dir: engineDir })
 assert('deleting twice is harmless', existsSync(engineDir), false)
 engineServer.close()

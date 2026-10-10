@@ -68,20 +68,21 @@ import {
 } from '../domain/library'
 import { logWarn } from './logger'
 import { assertArchivedGame, assertStudyCommand } from './rules'
-import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
+import { startAnalysis, stopAnalysis } from './analysis'
+import { provideLichessReviews } from './nativeCore'
 import { ChallengeInbox } from './challenges'
 import { cloudEval, clearCloudEval } from './cloudEval'
 import {
   bestMove,
-  computerPlaying,
+  closeEngines,
   engineIdentity,
   engineStatus,
   isTrustedEnginePath,
+  setEngineBusy,
   stopEngine,
   trustEnginePath,
   resetEngine,
 } from './engine'
-import { configureEngineResources } from './engineScheduler'
 import { insights } from './insights'
 import {
   addMistakes,
@@ -187,7 +188,6 @@ import {
   tournament,
   tournaments,
 } from './tournaments'
-import { closeEngines, withEngineMaintenance } from './uci'
 import { closeUsage, flushUsage, forgetUsage, resetUsage, usageReport } from './usage'
 import {
   clearVoiceHistory,
@@ -240,7 +240,6 @@ export function createKChessCore(platform: CorePlatform): KChessCore {
 
 function createCore(platform: CorePlatform, profileDirectory: string): KChessCore {
   const inScope = bindPlatform(<T>(work: () => T): T => work())
-  configureEngineResources(() => platform.onBattery())
 
   let closed = false
   let closing: Promise<void> | undefined
@@ -275,6 +274,8 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
         // Your own game needs the connection more than someone else's.
         spectator.stop()
       }
+      // The Rust engine and review queue keep out of a live game's way while it is blocked.
+      setEngineBusy(online.assistanceBlocked)
       emit('online:state', state)
     },
     {
@@ -323,31 +324,9 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
     reviewsChanged()
     return data
   }
-  const replaceEngineFile = (commit: () => Promise<void>): Promise<void> =>
-    withEngineMaintenance(commit, () => {
-      stopEngine(true)
-      stopAnalysis(true)
-      restartReviewEngine()
-    })
-
+  provideLichessReviews(fetchLichessReviews)
   bindPlatform(() =>
     setupReviews({
-      settings: async () => coreSettings(await getSettings()),
-      accounts: async () => {
-        const { accounts } = await loadData()
-        // Your own accounts: the connected ones, or the first one added when none is.
-        const own = accounts.filter((account) => account.connected)
-        return (own.length ? own : accounts.slice(0, 1)).map((account) => account.username)
-      },
-      onBattery: () => platform.onBattery(),
-      // The computer opponent counts as busy for a minute after its move: the game goes on.
-      busy: () =>
-        online.assistanceBlocked
-          ? 'online'
-          : analysisRunning() || computerPlaying(60_000)
-            ? 'engine'
-            : undefined,
-      fetchLichess: fetchLichessReviews,
       update: (update) => emit('review:update', update),
       status: (status) => emit('review:status', status),
     }),
@@ -400,19 +379,22 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       online.close()
       stopEngine(true)
       stopAnalysis(true)
+      resetEngine()
       const reviews = stopReviews()
+      // Engine shutdown is requested before the core's native handle is released.
+      const engines = closeEngines().catch((cause: unknown) =>
+        logWarn('core', 'Engine shutdown failed:', cause),
+      )
       flushUsage()
       abortPlatform()
       closePlatform()
       listeners.clear()
       const puzzles = closePuzzleDb()
       closing = (async () => {
-        await Promise.allSettled([...pending, reviews, puzzles])
-        await closeEngines().catch((cause) => logWarn('core', 'Engine shutdown failed:', cause))
+        await Promise.allSettled([...pending, reviews, engines, puzzles])
         resetStore()
         resetLichess()
         clearCloudEval()
-        resetEngine()
         closeUsage()
         profiles.delete(profileDirectory)
       })()
@@ -479,12 +461,10 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       return { ...status, identity: status.ready ? await engineIdentity(status) : undefined }
     },
     async installEngine() {
-      const { path, version, updated } = await installManagedEngine({
-        replace: replaceEngineFile,
-      })
+      const { path, version, updated } = await installManagedEngine()
       return { path, version, updated }
     },
-    deleteEngine: async () => deleteManagedEngine(undefined, replaceEngineFile),
+    deleteEngine: async () => deleteManagedEngine(),
     stopEngine: async () => stopEngine(),
     async bestMove(moves, level, options) {
       assistanceAllowed('Engine assistance is unavailable during a live Lichess game.')
