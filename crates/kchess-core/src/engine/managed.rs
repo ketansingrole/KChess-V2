@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
 use std::io::{self, BufReader, Read};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -26,6 +26,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex as AsyncMutex, watch};
 
+use crate::archive::{self, Member, hex};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
@@ -565,10 +566,6 @@ fn expected_digest(digest: Option<&str>) -> Option<String> {
     (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then(|| hex.to_string())
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// A release asset name that is one path component, so it can name a file in the staging folder.
 fn is_plain_file_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\')
@@ -667,11 +664,7 @@ fn unpack_zip<R: Read + io::Seek>(reader: R, root: &Path, budget: &mut u64) -> R
         let mut entry = archive
             .by_index(index)
             .map_err(|cause| extract_error(&cause))?;
-        // S_IFLNK in the Unix mode bits marks a symbolic link.
-        if entry
-            .unix_mode()
-            .is_some_and(|mode| mode & 0o170000 == 0o120000)
-        {
+        if entry.unix_mode().is_some_and(archive::is_symlink_mode) {
             return Err(CoreError::new("Stockfish archive contains a link."));
         }
         let relative = safe_relative(entry.name())?;
@@ -684,22 +677,10 @@ fn unpack_zip<R: Read + io::Seek>(reader: R, root: &Path, budget: &mut u64) -> R
     Ok(())
 }
 
-/// A member name as a path inside the archive root. Absolute paths, `..`, drive prefixes and
-/// backslashes (a separator on Windows) are refused; `.` components are dropped.
+/// A member name as a path inside the archive root (see `archive::safe_relative`).
 fn safe_relative(name: &str) -> Result<PathBuf> {
-    let unsafe_path = || CoreError::new("Stockfish archive has an unsafe path.");
-    if name.contains('\\') {
-        return Err(unsafe_path());
-    }
-    let mut relative = PathBuf::new();
-    for component in Path::new(name).components() {
-        match component {
-            Component::Normal(part) => relative.push(part),
-            Component::CurDir => {}
-            _ => return Err(unsafe_path()),
-        }
-    }
-    Ok(relative)
+    archive::safe_relative(name)
+        .ok_or_else(|| CoreError::new("Stockfish archive has an unsafe path."))
 }
 
 fn create_dir(root: &Path, relative: &Path) -> Result<()> {
@@ -716,20 +697,12 @@ fn write_file(
     if relative.as_os_str().is_empty() {
         return Err(CoreError::new("Stockfish archive has an unsafe path."));
     }
-    let target = root.join(relative);
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?;
+    match archive::write_member(root, relative, reader, budget)
+        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?
+    {
+        Member::Written => Ok(()),
+        Member::OverBudget => Err(CoreError::new("Stockfish archive is unexpectedly large.")),
     }
-    let mut file = fs::File::create(&target)
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?;
-    let copied = io::copy(&mut reader.by_ref().take(*budget + 1), &mut file)
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?;
-    if copied > *budget {
-        return Err(CoreError::new("Stockfish archive is unexpectedly large."));
-    }
-    *budget -= copied;
-    Ok(())
 }
 
 fn extract_error(cause: &dyn std::fmt::Display) -> CoreError {

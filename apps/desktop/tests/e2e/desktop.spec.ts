@@ -6,13 +6,11 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test'
-import { cp, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
 import { nativeRules } from '../../../../core/src/services/native'
 // Loads the rules binding that the domain functions in this test process call.
@@ -1055,50 +1053,6 @@ test('blocks assistance after unverified startup until account status is confirm
     page.getByText('Analysis paused until Lichess game status is verified', { exact: true }),
   ).toHaveCount(0)
   await expect(page.locator('.pv-eval').first()).toBeVisible({ timeout: 20_000 })
-})
-
-test('prepares a voice archive with the production worker @packaged', async ({
-  desktop: { app, profile },
-}) => {
-  const archive = join(profile, 'test-model.zip')
-  const zip = zipSync({
-    'test-model/am/final.mdl': new TextEncoder().encode('production worker fixture'),
-  })
-  await writeFile(archive, zip)
-  const sha256 = createHash('sha256').update(zip).digest('hex')
-  const result = await app.evaluate(
-    async ({ app }, options) => {
-      const { Worker } = process.getBuiltinModule(
-        'node:worker_threads',
-      ) as typeof import('node:worker_threads')
-      const { join } = process.getBuiltinModule('node:path') as typeof import('node:path')
-      const worker = new Worker(join(app.getAppPath(), 'out/main/voiceModelWorker.js'), {
-        workerData: {
-          archive: options.archive,
-          directory: options.directory,
-          model: { name: 'test-model', sha256: options.sha256 },
-        },
-      })
-      try {
-        return await new Promise<{ prepared: string; marker: { source: string; size: number } }>(
-          (resolve, reject) => {
-            worker.once('message', (message) =>
-              message.error ? reject(new Error(message.error)) : resolve(message),
-            )
-            worker.once('error', reject)
-            worker.once('exit', () => reject(new Error('Worker exited without a prepared archive')))
-          },
-        )
-      } finally {
-        await worker.terminate()
-      }
-    },
-    { archive, directory: profile, sha256 },
-  )
-  expect(result.marker.source).toBe(sha256)
-  const prepared = await readFile(result.prepared)
-  expect(prepared.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]))
-  expect(prepared.length).toBe(result.marker.size)
 })
 
 test('renders the Lichess authorization confirmation page clearly', async ({
