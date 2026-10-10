@@ -73,6 +73,11 @@ impl Scheduler {
         }
     }
 
+    /// Whether the machine runs on battery power (`configureEngineResources`' battery callback).
+    pub fn on_battery(&self) -> bool {
+        (self.shared.on_battery)()
+    }
+
     /// `searchThreads`: the full budget, or at most two threads on battery power.
     pub fn search_threads(&self) -> usize {
         if (self.shared.on_battery)() {

@@ -641,7 +641,7 @@ async fn initialize(inner: Arc<Inner>) {
             format!("Engine init deferred: {}", error_summary(error)),
         );
     }
-    let _ = inner.ready_tx.send(Some(result));
+    inner.ready_tx.send_replace(Some(result));
 }
 
 async fn write_commands(
@@ -809,7 +809,7 @@ fn collapse_whitespace(text: &str) -> String {
 }
 
 /// `truncateForLog`: one line, at most `max` characters.
-fn truncate_for_log(text: &str, max: usize) -> String {
+pub(crate) fn truncate_for_log(text: &str, max: usize) -> String {
     let single = collapse_whitespace(text);
     let count = single.chars().count();
     if count <= max {
