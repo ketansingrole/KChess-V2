@@ -553,3 +553,49 @@ pub fn game_json(id: &str, created_at: i64, white: &str, black: &str) -> Value {
         "moves": "e4 c5"
     })
 }
+
+/// A `Lichess` service over `base` with the given storage and tokens, for the watch, lookup, study,
+/// puzzle and review tests.
+pub fn lichess_service(
+    base: &str,
+    host: &Arc<Recording>,
+    store: Arc<dyn LichessStore>,
+    tokens: Arc<dyn TokenSource>,
+) -> Arc<kchess_core::lichess::accounts::Lichess> {
+    use kchess_core::lichess::client::LichessClient;
+    use kchess_core::lichess::policy::Policy;
+    let policy = Policy::with_timeout(
+        Arc::clone(host) as Arc<dyn Host>,
+        http_client(),
+        tokio_util::sync::CancellationToken::new(),
+        Duration::from_secs(5),
+    );
+    let client = LichessClient::with_base(base, policy, http_client());
+    Arc::new(kchess_core::lichess::accounts::Lichess::new(
+        client,
+        capabilities_for(host),
+        store,
+        tokens,
+        Arc::clone(host) as Arc<dyn Host>,
+        tokio_util::sync::CancellationToken::new(),
+    ))
+}
+
+/// The fields of an `application/x-www-form-urlencoded` body, decoded.
+pub fn form_fields(body: &str) -> Vec<(String, String)> {
+    reqwest::Url::parse(&format!("http://fixture/?{body}"))
+        .map(|url| {
+            url.query_pairs()
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The value of one decoded form field.
+pub fn form_field(body: &str, name: &str) -> Option<String> {
+    form_fields(body)
+        .into_iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
+}

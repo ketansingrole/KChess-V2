@@ -4,10 +4,11 @@
 //! `sendMessage`, `crosstable`, `ratingHistory` and `syncGames`.
 //!
 //! Storage goes through `LichessStore`, which mirrors the store calls `lichess.ts` makes, and
-//! tokens through `TokenSource` (`client.rs`). Not ported yet: the Lichess analysis reviews
-//! (`reviewFromLichess`, `fetchLichessReviews`, which need the game-line helpers of the domain),
-//! puzzles and the storm dashboard, online sessions, challenges, tournaments, spectate, studies,
-//! cloud eval and the position explorer.
+//! tokens through `TokenSource` (`client.rs`). The sync also saves Lichess's analysis of each page
+//! (`review_from_lichess`, in `reviews.rs`) through the store's `save_reviews` and `mark_checked`,
+//! which default to no-ops until the store wiring implements them. Not in this module: online
+//! sessions and challenges (`online.rs`, `challenges.rs`), tournaments, and the puzzle, study,
+//! watch and lookup services in their own modules.
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -21,6 +22,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::client::{Failure, LichessClient, TokenSource, authorize};
+use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::{Host, Level};
@@ -98,6 +100,22 @@ pub trait LichessStore: Send + Sync {
     ) -> CoreResult<()>;
     /// `saveLogin`'s write: the encrypted token and the connected account, together.
     fn save_login(&self, username: &str, ciphertext: &str) -> CoreResult<()>;
+    /// Lichess's analysis of synced games, saved as reviews (`saveGamesPage`'s reviews, written
+    /// after the page). Returns the stored reviews. Stores without a review table keep none.
+    fn save_reviews(
+        &self,
+        account: &str,
+        reviews: &[Value],
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> CoreResult<Vec<Value>> {
+        let _ = (account, current);
+        Ok(reviews.to_vec())
+    }
+    /// Games Lichess was asked about, so they are not asked again soon (`markChecked`).
+    fn mark_checked(&self, ids: &[String]) -> CoreResult<()> {
+        let _ = ids;
+        Ok(())
+    }
 }
 
 /// A game as the store keeps it and the UI shows it (`LichessGame` of `contracts/types.ts`).
@@ -965,16 +983,21 @@ impl Lichess {
                 let mut fetched = 0usize;
                 let mut until: Option<i64> = None;
                 while fetched < MAX_GAMES {
-                    let games = self.fetch_games_page(name, since, until).await?;
+                    let (games, reviews, settled) =
+                        self.fetch_games_page(name, since, until).await?;
                     if !current() {
                         return Err(sync_cancelled());
                     }
                     if !games.is_empty() {
                         self.store.save_games_page(name, &games, &current)?;
                     }
+                    if !reviews.is_empty() {
+                        self.store.save_reviews(name, &reviews, &current)?;
+                    }
                     if !current() {
                         return Err(sync_cancelled());
                     }
+                    self.store.mark_checked(&settled)?;
                     fetched += games.len();
                     if games.len() < SYNC_PAGE {
                         break;
@@ -992,12 +1015,14 @@ impl Lichess {
             .await
     }
 
+    /// One page of the sync: its games, Lichess's reviews of them, and the finished games it
+    /// has settled (reviewed, or old enough that Lichess has had its chance to analyse them).
     async fn fetch_games_page(
         &self,
         account: &str,
         since: Option<i64>,
         until: Option<i64>,
-    ) -> CoreResult<Vec<LichessGame>> {
+    ) -> CoreResult<(Vec<LichessGame>, Vec<Value>, Vec<String>)> {
         let mut query = vec![
             ("max", SYNC_PAGE.to_string()),
             ("ongoing", "true".to_string()),
@@ -1023,11 +1048,22 @@ impl Lichess {
             .collect_lines(account, reqwest::Method::GET, &path, &query, None)
             .await?;
         let mut games = Vec::with_capacity(lines.len());
+        let mut reviews = Vec::new();
+        let mut settled = Vec::new();
+        let now = now_ms();
         for line in &lines {
             let raw = parse_game(line)?;
             games.push(normalize_game(&raw, account));
+            let value: Value = serde_json::from_str(line).unwrap_or(Value::Null);
+            let review = review_from_lichess(&value);
+            if !is_game_in_progress(&value)
+                && (review.is_some() || now - raw.last_move_at > ANALYSIS_SETTLED_MS)
+            {
+                settled.push(raw.id.clone());
+            }
+            reviews.extend(review);
         }
-        Ok(games)
+        Ok((games, reviews, settled))
     }
 
     /// Unfinished games are re-fetched by ID, even when their creation predates the next window.
@@ -1061,14 +1097,20 @@ impl Lichess {
                 )
                 .await?;
             let mut games = Vec::new();
+            let mut reviews = Vec::new();
             for line in &lines {
                 let raw = parse_game(line)?;
                 if requested.contains(raw.id.as_str()) {
                     games.push(normalize_game(&raw, account));
+                    let value: Value = serde_json::from_str(line).unwrap_or(Value::Null);
+                    reviews.extend(review_from_lichess(&value));
                 }
             }
             // A missing ID stays pending; a failed request never moves the cursor.
             self.store.save_games_page(account, &games, current)?;
+            if !reviews.is_empty() {
+                self.store.save_reviews(account, &reviews, current)?;
+            }
         }
         Ok(())
     }
@@ -1131,6 +1173,18 @@ async fn wait_for(mut outcome: SyncOutcome) -> CoreResult<usize> {
 fn parse_game(line: &str) -> CoreResult<GameJson> {
     serde_json::from_str(line)
         .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
+}
+
+/// Games that ended this long ago have had their chance to be analysed on Lichess.
+const ANALYSIS_SETTLED_MS: i64 = 86_400_000;
+
+/// `isGameInProgress(raw.status)` for a game record.
+fn is_game_in_progress(raw: &Value) -> bool {
+    let status = raw.get("status").cloned().unwrap_or(Value::Null);
+    kchess_domain::records::call("isGameInProgress", &[status])
+        .and_then(Result::ok)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
 }
 
 /// `noSuchUser`: Lichess's generic 404 becomes a message that names the user.
