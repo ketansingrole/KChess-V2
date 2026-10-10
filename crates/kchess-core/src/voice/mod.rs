@@ -55,6 +55,41 @@ impl VoiceModel {
     }
 }
 
+/// Test-only overrides, honoured only while the store's test switch is on (`KCHESS_STORE_DEBUG=1`):
+/// a local zip, and the folder name and SHA-256 it must have in place of the official model.
+pub const TEST_ARCHIVE_VAR: &str = "KCHESS_TEST_VOICE_ARCHIVE";
+pub const TEST_NAME_VAR: &str = "KCHESS_TEST_VOICE_NAME";
+pub const TEST_SHA256_VAR: &str = "KCHESS_TEST_VOICE_SHA256";
+
+/// The archive and model this process prepares: the official download, unless the test override
+/// is in force. Without the test switch the override variables are ignored entirely.
+pub fn active_model() -> (Archive, VoiceModel) {
+    active_model_with(crate::store::debug::enabled(), |name| {
+        std::env::var(name).ok().filter(|value| !value.is_empty())
+    })
+}
+
+fn active_model_with(
+    test_switch: bool,
+    var: impl Fn(&str) -> Option<String>,
+) -> (Archive, VoiceModel) {
+    if test_switch {
+        let archive = var(TEST_ARCHIVE_VAR);
+        let name = var(TEST_NAME_VAR);
+        let sha256 = var(TEST_SHA256_VAR);
+        if let (Some(archive), Some(name), Some(sha256)) = (archive, name, sha256) {
+            let model = VoiceModel {
+                name,
+                url: archive.clone(),
+                sha256,
+            };
+            return (Archive::File(PathBuf::from(archive)), model);
+        }
+    }
+    let model = VoiceModel::official();
+    (Archive::Url(model.url.clone()), model)
+}
+
 /// Where the zip comes from: the model's URL, or a local file (the e2e fixture, which
 /// `tooling/prepare-voice-model.mjs` supplies so the tests need no network).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -619,4 +654,59 @@ fn pack(extracted: &Path, name: &str, prepared: &Path) -> Result<()> {
         .finish()
         .map(drop)
         .map_err(|cause| io_error("Could not record the voice model", cause))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    const OVERRIDE: [(&str, &str); 3] = [
+        (TEST_ARCHIVE_VAR, "/profile/test-model.zip"),
+        (TEST_NAME_VAR, "test-model"),
+        (TEST_SHA256_VAR, "abc123"),
+    ];
+
+    #[test]
+    fn the_override_is_refused_without_the_test_switch() {
+        let (archive, model) = active_model_with(false, env(&OVERRIDE));
+        assert_eq!(model, VoiceModel::official());
+        assert_eq!(archive, Archive::Url(VoiceModel::official().url));
+    }
+
+    #[test]
+    fn the_override_needs_the_archive_name_and_digest_together() {
+        for missing in [TEST_ARCHIVE_VAR, TEST_NAME_VAR, TEST_SHA256_VAR] {
+            let pairs: Vec<(&str, &str)> = OVERRIDE
+                .iter()
+                .copied()
+                .filter(|(name, _)| *name != missing)
+                .collect();
+            let (_, model) = active_model_with(true, env(&pairs));
+            assert_eq!(model, VoiceModel::official(), "without {missing}");
+        }
+    }
+
+    #[test]
+    fn the_override_replaces_the_model_with_the_test_switch() {
+        let (archive, model) = active_model_with(true, env(&OVERRIDE));
+        assert_eq!(
+            archive,
+            Archive::File(PathBuf::from("/profile/test-model.zip"))
+        );
+        assert_eq!(model.name, "test-model");
+        assert_eq!(model.sha256, "abc123");
+    }
 }

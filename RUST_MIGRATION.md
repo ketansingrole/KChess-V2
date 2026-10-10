@@ -172,8 +172,10 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
 
 ## Final cleanup checklist
 
-- Restore a packaged end-to-end check of voice model preparation (the worker test was removed
-  with the worker): e.g. a debug-gated archive path and digest override for the native cache.
+- ~~Restore a packaged end-to-end check of voice model preparation~~ (done: `KCHESS_TEST_VOICE_ARCHIVE`,
+  `KCHESS_TEST_VOICE_NAME` and `KCHESS_TEST_VOICE_SHA256` replace the official model only under
+  `KCHESS_STORE_DEBUG=1`, refused otherwise; the `@packaged` test prepares a generated archive through
+  the packaged main process).
 - ~~Remove npm dependencies the TypeScript no longer uses~~ (done: `fflate`, `lru-cache`, `tar`
   removed; packaged type declarations and source maps excluded; package 28.9 MiB of 32).
 - Check that the Rust core's dispatch covers exactly `kchess-contracts` `core_api::methods()`

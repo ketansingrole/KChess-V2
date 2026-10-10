@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kchess_core::host::{Host, Level};
-use kchess_core::voice::{Archive, Listener, Progress, VoiceModel, VoiceModelCache};
+use kchess_core::voice::{Archive, Listener, Progress, VoiceModel, VoiceModelCache, active_model};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use serde_json::{Value, json};
@@ -50,15 +50,17 @@ impl NativeVoiceModel {
         options: Option<NativeVoiceModelOptions>,
         log: Callback,
     ) -> NativeVoiceModel {
-        let archive = match options.and_then(|options| options.archive_path) {
-            Some(path) => Archive::File(PathBuf::from(path)),
-            None => Archive::Url(VoiceModel::official().url),
+        // The explicit archive is the tooling's fixture (the official model's zip). Otherwise the
+        // active model applies, which the test switch may override (`kchess_core::voice`).
+        let (archive, model) = match options.and_then(|options| options.archive_path) {
+            Some(path) => (Archive::File(PathBuf::from(path)), VoiceModel::official()),
+            None => active_model(),
         };
         let cache = VoiceModelCache::new(
             Arc::new(LogHost { log }),
             PathBuf::from(directory),
             archive,
-            VoiceModel::official(),
+            model,
         );
         NativeVoiceModel { cache }
     }

@@ -6,11 +6,13 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test'
-import { cp, mkdtemp, rm, readFile } from 'node:fs/promises'
+import { cp, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { crc32 } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 import { nativeRules } from '../../../../crates/kchess-node/js/native'
 import { setRulesBinding } from '@kchess/rules/engine'
@@ -166,10 +168,24 @@ const test = base.extend<{
 }>({
   desktop: async ({ playwright: _playwright }, use, testInfo) => {
     const profile = await mkdtemp(join(tmpdir(), 'kchess-e2e-'))
-    if (testInfo.title.includes('voice'))
+    // The archive test prepares its own generated model, so it starts with no voice cache.
+    const archiveTest = testInfo.title.includes('prepares a voice archive')
+    if (testInfo.title.includes('voice') && !archiveTest)
       await cp(join(process.cwd(), '.data', 'voice', 'cache'), join(profile, 'voice'), {
         recursive: true,
       })
+    // The test-only voice override (`KCHESS_TEST_VOICE_*`, honoured under KCHESS_STORE_DEBUG=1).
+    const voiceOverride: Record<string, string> = {}
+    if (archiveTest) {
+      const archive = join(profile, 'test-model.zip')
+      const zip = storedZip({
+        'test-model/am/final.mdl': new TextEncoder().encode('packaged native module fixture'),
+      })
+      await writeFile(archive, zip)
+      voiceOverride.KCHESS_TEST_VOICE_ARCHIVE = archive
+      voiceOverride.KCHESS_TEST_VOICE_NAME = 'test-model'
+      voiceOverride.KCHESS_TEST_VOICE_SHA256 = createHash('sha256').update(zip).digest('hex')
+    }
     await createSchema(profile)
     const db = new DatabaseSync(join(profile, 'kchess.db'))
     // The legacy puzzle tables; the Rust core imports them into puzzles.db on first open.
@@ -248,6 +264,7 @@ const test = base.extend<{
           // The test switch serves Lichess from the local stand-in (`crates/kchess-core/src/core.rs`).
           KCHESS_STORE_DEBUG: '1',
           KCHESS_TEST_LICHESS_BASE: lichess.stand.base,
+          ...voiceOverride,
         },
       })
       app.once('close', () => {
@@ -1059,6 +1076,68 @@ test('blocks assistance after unverified startup until account status is confirm
   ).toHaveCount(0)
   await expect(page.locator('.pv-eval').first()).toBeVisible({ timeout: 20_000 })
 })
+
+test('prepares a voice archive with the packaged native module @packaged', async ({
+  desktop: { page, profile },
+}) => {
+  const zip = await readFile(join(profile, 'test-model.zip'))
+  const sha256 = createHash('sha256').update(zip).digest('hex')
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
+  await navigate(page, 'Offline downloads')
+  await expect(page.getByText('Download needed', { exact: true })).toBeVisible()
+  // The packaged main process prepares the override archive; nothing is downloaded.
+  await page.getByRole('button', { name: 'Download voice model', exact: true }).click()
+  await expect(page.getByText(/^Installed ·/)).toBeVisible({ timeout: 60_000 })
+  const marker = JSON.parse(
+    await readFile(join(profile, 'voice', 'model.tar.gz.json'), 'utf8'),
+  ) as { source: string; sha256: string; size: number }
+  expect(marker.source).toBe(sha256)
+  const prepared = await readFile(join(profile, 'voice', 'model.tar.gz'))
+  expect(prepared.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]))
+  expect(prepared.length).toBe(marker.size)
+})
+
+/** A zip of stored (uncompressed) entries, so the test archive needs no compression library. */
+function storedZip(entries: Record<string, Uint8Array>): Buffer {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  const names = Object.keys(entries)
+  for (const name of names) {
+    const body = Buffer.from(entries[name]!)
+    const nameBytes = Buffer.from(name, 'utf8')
+    const crc = crc32(body)
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(0x0800, 6)
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(body.length, 18)
+    local.writeUInt32LE(body.length, 22)
+    local.writeUInt16LE(nameBytes.length, 26)
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0x0800, 8)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(body.length, 20)
+    central.writeUInt32LE(body.length, 24)
+    central.writeUInt16LE(nameBytes.length, 28)
+    central.writeUInt32LE(offset, 42)
+    locals.push(local, nameBytes, body)
+    centrals.push(central, nameBytes)
+    offset += local.length + nameBytes.length + body.length
+  }
+  const directory = Buffer.concat(centrals)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(names.length, 8)
+  end.writeUInt16LE(names.length, 10)
+  end.writeUInt32LE(directory.length, 12)
+  end.writeUInt32LE(offset, 16)
+  return Buffer.concat([...locals, directory, end])
+}
 
 test('renders the Lichess authorization confirmation page clearly', async ({
   desktop: { page },
