@@ -1,9 +1,11 @@
-//! KChess's main database (`kchess.db`), migrating from `core/src/services/{db,migrations,store,
-//! library,reviewStore,runs,insights,usage,voiceLog,setupPositionLookup}.ts`. Until every
-//! module has moved, TypeScript keeps owning the file; the switch happens in one commit, since
-//! two SQLite copies in one process must never hold the same file (POSIX locks are per process).
+//! KChess's main database (`kchess.db`), the storage the TypeScript services used to own
+//! (`core/src/services/{db,migrations,store,library,reviewStore,runs,insights,usage,voiceLog,
+//! setupPositionLookup}.ts`, now removed). The Rust core is its only owner: one connection, opened
+//! and migrated on first use, with every storage method dispatched from here.
 
+pub mod debug;
 pub mod games;
+pub mod import;
 pub mod insights;
 pub mod library;
 pub mod lookups;
@@ -18,7 +20,15 @@ use serde_json::Value;
 use std::path::Path;
 
 use crate::error::{CoreError, Result};
-use crate::host::{Host, Level};
+use crate::host::{Config, Host, Level};
+
+/// What a storage method may use: the open database, the host (for logs) and the core's
+/// configuration (the data directory and an earlier release's database, for the one-time imports).
+pub struct StoreContext<'a> {
+    pub db: &'a Connection,
+    pub host: &'a dyn Host,
+    pub config: &'a Config,
+}
 
 /// Open `kchess.db` as `db.ts` did: WAL, foreign keys, NORMAL sync, memory temp store, a 20 MB
 /// cache, migrations, then 0600 permissions.
@@ -48,10 +58,18 @@ fn restrict(path: &Path, host: &dyn Host) {
 #[cfg(not(unix))]
 fn restrict(_path: &Path, _host: &dyn Host) {}
 
-type Dispatch = fn(&Connection, &str, &[Value]) -> Option<Result<Value>>;
+type Dispatch = fn(&StoreContext, &str, &[Value]) -> Option<Result<Value>>;
 
 /// Every storage method, `store.<module>.<name>`: each module dispatches its own.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Result<Value> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
+    match method {
+        // The database is opened and migrated before any call reaches this dispatch.
+        "store.open" => return Ok(Value::Null),
+        "store.debug.tables" if debug::enabled() => return debug::tables(ctx.db, args),
+        "store.debug.exec" if debug::enabled() => return debug::exec(ctx.db, args),
+        "store.debug.query" if debug::enabled() => return debug::query(ctx.db, args),
+        _ => {}
+    }
     let modules: [Dispatch; 9] = [
         migrations::call,
         games::call,
@@ -65,6 +83,6 @@ pub fn call(db: &Connection, method: &str, args: &[Value]) -> Result<Value> {
     ];
     modules
         .iter()
-        .find_map(|call| call(db, method, args))
+        .find_map(|call| call(ctx, method, args))
         .unwrap_or_else(|| Err(CoreError::new(format!("Unknown core method {method}."))))
 }

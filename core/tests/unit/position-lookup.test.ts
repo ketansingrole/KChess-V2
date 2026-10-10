@@ -71,3 +71,42 @@ describe('position lookup service', () => {
     })
   })
 })
+
+describe('master games and tablebase limits', () => {
+  it('loads a master game, and refuses a refused, failed or non-PGN answer', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('[Event "x"]\n1. e4 *', { status: 200 }))
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+      .mockResolvedValueOnce(new Response('', { status: 500 }))
+      .mockResolvedValueOnce(new Response('no headers here', { status: 200 }))
+    const { service } = fixture(fetcher)
+    expect(await service.mastersGame('abcdefgh')).toContain('[Event')
+    await expect(service.mastersGame('abcdefgh')).rejects.toThrow('Connect a Lichess account')
+    await expect(service.mastersGame('abcdefgh')).rejects.toThrow('could not be loaded (500)')
+    await expect(service.mastersGame('abcdefgh')).rejects.toThrow('not a PGN')
+    await expect(service.mastersGame('not an id')).rejects.toThrow()
+  })
+
+  it('refuses a tablebase lookup for a position with more than seven pieces', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+    const { service } = fixture(fetcher)
+    await expect(service.lookup('tablebase', INITIAL_FEN)).rejects.toThrow('seven pieces')
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+})
+
+describe('tablebase answers', () => {
+  it('saves a tablebase answer and serves it again while fresh', async () => {
+    const tablebase = { category: 'unknown', dtz: null, moves: [] }
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(tablebase))
+    const { service, values } = fixture(fetcher)
+    const kings = '7k/8/8/8/8/8/8/K7 w - - 0 1'
+    const first = await service.lookup('tablebase', kings)
+    expect(first).toMatchObject({ kind: 'tablebase', category: 'unknown', cached: false })
+    expect([...values.keys()]).toHaveLength(1)
+    const again = await service.lookup('tablebase', kings)
+    expect(again).toMatchObject({ cached: true, stale: false })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+})

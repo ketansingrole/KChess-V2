@@ -4,17 +4,23 @@
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
+use super::StoreContext;
 use super::library::{db_err, js_json, now_ms, num, object, opt_str, str_arg};
 use crate::error::Result;
+use crate::host::{Host, Level};
 
 /// The most recent runs a summary lists.
 const RECENT: i64 = 20;
 
 /// This module's storage methods; None when the method is not one of them.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
+    let host = ctx.host;
     let result = match method {
-        "store.runs.runSummary" => str_arg(args, 0, "kind").and_then(|kind| run_summary(db, kind)),
-        "store.runs.saveRun" => save_run(db, args.first().unwrap_or(&Value::Null)),
+        "store.runs.runSummary" => {
+            str_arg(args, 0, "kind").and_then(|kind| run_summary(host, db, kind))
+        }
+        "store.runs.saveRun" => save_run(host, db, args.first().unwrap_or(&Value::Null)),
         "store.runs.clearRuns" => clear_runs(db, opt_str(args, 0)).map(|()| Value::Null),
         _ => return None,
     };
@@ -22,7 +28,7 @@ pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Valu
 }
 
 /// `runSummary(kind)`: the best score per variant, the recent runs and the total.
-fn run_summary(db: &Connection, kind: &str) -> Result<Value> {
+fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
     let mut best = Map::new();
     let mut statement = db
         .prepare(
@@ -68,7 +74,17 @@ fn run_summary(db: &Connection, kind: &str) -> Result<Value> {
     for row in rows {
         let (id, kind, variant, score, detail, played_at) = row.map_err(db_err)?;
         // A detail that is not JSON reads as an empty object.
-        let detail = serde_json::from_str::<Value>(&detail).unwrap_or_else(|_| json!({}));
+        let detail = match serde_json::from_str::<Value>(&detail) {
+            Ok(detail) => detail,
+            Err(cause) => {
+                host.log(
+                    Level::Debug,
+                    "runs",
+                    &format!("Run row has invalid detail JSON: {cause}"),
+                );
+                json!({})
+            }
+        };
         recent.push(json!({
             "id": id,
             "kind": kind,
@@ -95,7 +111,7 @@ fn run_summary(db: &Connection, kind: &str) -> Result<Value> {
 }
 
 /// `saveRun(run)`: record a run; `isBest` when it beats every earlier score of its variant.
-fn save_run(db: &Connection, run: &Value) -> Result<Value> {
+fn save_run(host: &dyn Host, db: &Connection, run: &Value) -> Result<Value> {
     let run = object(run, "run")?;
     let kind = run.get("kind").and_then(Value::as_str).unwrap_or_default();
     let variant = run
@@ -117,7 +133,7 @@ fn save_run(db: &Connection, run: &Value) -> Result<Value> {
     )
     .map_err(db_err)?;
     let is_best = score > 0.0 && previous.is_none_or(|best| score > best);
-    Ok(json!({ "summary": run_summary(db, kind)?, "isBest": is_best }))
+    Ok(json!({ "summary": run_summary(host, db, kind)?, "isBest": is_best }))
 }
 
 /// `clearRuns(kind?)`: forget the local scores of one kind, or of all of them.

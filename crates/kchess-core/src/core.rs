@@ -64,12 +64,27 @@ impl Core {
             .db
             .lock()
             .map_err(|_| CoreError::new("The database is unavailable."))?;
+        if method == "store.debug.historical" && crate::store::debug::enabled() {
+            // Test-only: an earlier release's database, written before the store opens the file.
+            if db.is_some() {
+                return Err(CoreError::new("The database is already open."));
+            }
+            let path = self.config.data_dir.join("kchess.db");
+            return crate::store::debug::historical(&path, &args);
+        }
         if db.is_none() {
             let path = self.config.data_dir.join("kchess.db");
             *db = Some(crate::store::open(&path, self.host.as_ref())?);
         }
         match db.as_ref() {
-            Some(connection) => crate::store::call(connection, method, &args),
+            Some(connection) => {
+                let ctx = crate::store::StoreContext {
+                    db: connection,
+                    host: self.host.as_ref(),
+                    config: &self.config,
+                };
+                crate::store::call(&ctx, method, &args)
+            }
             None => Err(CoreError::new("The database is unavailable.")),
         }
     }

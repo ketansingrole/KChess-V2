@@ -1,6 +1,5 @@
-import { getDb } from './db'
 import { errorSummary, logWarn } from './logger'
-import { closeNativeCore, nativeCall, onNativeEvent } from './nativeCore'
+import { closeNativeCore, nativeCall, nativeCallSync, onNativeEvent } from './nativeCore'
 import type {
   LocalLadderQuery,
   LocalPuzzleQuery,
@@ -12,7 +11,8 @@ export const PUZZLE_DB_URL = 'https://database.lichess.org/lichess_db_puzzle.csv
 
 /** `puzzles.db` belongs to the Rust core's puzzle service (`crates/kchess-core/src/puzzles`). */
 async function call<T>(method: string, ...args: unknown[]): Promise<T> {
-  getDb() // Ensure legacy schema/migrations are ready before the service reads it.
+  // The main database is migrated before the service reads its legacy puzzle tables.
+  nativeCallSync('store.open')
   try {
     return await nativeCall<T>(`puzzles.${method}`, ...args)
   } catch (cause) {

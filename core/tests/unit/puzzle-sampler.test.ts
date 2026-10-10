@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createPuzzleSampler } from '../../src/services/rules'
+import { nativeRules } from '../../src/services/native'
 
 const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const MOVES = 'e2e4 e7e5'
@@ -25,7 +25,8 @@ function themeOnly(id: string, theme: string): string {
 
 /** The core's sampler, fed whole lines as a download delivers them. */
 function sampler() {
-  const inner = createPuzzleSampler()
+  const Sampler = nativeRules()!.PuzzleSampler
+  const inner = new Sampler(1)
   return {
     add: (line: string) => inner.push(Buffer.from(line + '\n')),
     get lines() {
@@ -34,7 +35,7 @@ function sampler() {
     get count() {
       return inner.count
     },
-    kept: () => inner.kept(),
+    kept: () => JSON.parse(inner.kept()) as { id: string }[],
   }
 }
 

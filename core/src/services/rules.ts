@@ -1,18 +1,8 @@
-import { randomInt } from 'node:crypto'
-import type { ReviewSummary, StoredReview } from '../contracts/types'
-import type {
-  ArchivedGame,
-  MistakeExercise,
-  SavedStudy,
-  StudyCommand,
-  StudyCommandInput,
-} from '../domain/library'
-import type { DbPuzzle } from '../domain/puzzle'
-import type { GameAnalysis, ReplayedPosition } from '../domain/review'
+import type { ArchivedGame, SavedStudy, StudyCommand, StudyCommandInput } from '../domain/library'
+import type { ReplayedPosition } from '../domain/review'
 import { setRulesBinding } from '../domain/engine'
 import { logWarn } from './logger'
 import { nativeRules, type NativeRules } from './native'
-import type { ChunkSampler } from './puzzleSampler'
 
 /**
  * The core's chess and document rules, implemented in Rust (`crates/kchess-domain`) and loaded
@@ -34,7 +24,7 @@ function rules(): NativeRules {
  * The domain rules (`core/src/domain/engine.ts`) run on the native module wherever the core
  * runs: the Electron main process, the Node host and the CLI. The module loads on first use.
  */
-export function installRules(): void {
+function installRules(): void {
   // Load now, not on first use: the module is chosen by platform and architecture, which tests
   // may stub later.
   const native = rules()
@@ -44,16 +34,6 @@ installRules()
 
 const parsed = <T>(json: string | null): T | undefined =>
   json === null ? undefined : (JSON.parse(json) as T)
-
-/** Report stored text that is not JSON at all; the decoders only say it was rejected. */
-function rejected(scope: string, json: string): undefined {
-  try {
-    JSON.parse(json)
-  } catch (cause) {
-    logWarn('rules', 'Stored document is not valid JSON:', `document=${scope}`, cause)
-  }
-  return undefined
-}
 
 /* ── Games ── */
 
@@ -81,31 +61,6 @@ export function sanLineToUci(fen: string, sans: readonly string[]): string[] {
 
 /* ── Library documents ── */
 
-/** Whether a PGN is one bounded document that imports without loss. */
-export function validPgn(pgn: string): boolean {
-  return rules().validPgn(pgn)
-}
-
-/** One stored archived game, validated by replaying its moves. */
-export function decodeArchivedGameText(json: string): ArchivedGame | undefined {
-  return parsed<ArchivedGame>(rules().decodeArchivedGame(json)) ?? rejected('archived game', json)
-}
-
-/** The one-document game archive of earlier releases; any invalid game rejects it. */
-export function decodeArchiveText(json: string): ArchivedGame[] | undefined {
-  return parsed<ArchivedGame[]>(rules().decodeArchive(json)) ?? rejected('archive', json)
-}
-
-/** The stored study library; invalid studies are left out. */
-export function decodeStudiesText(json: string): SavedStudy[] | undefined {
-  return parsed<SavedStudy[]>(rules().decodeStudies(json)) ?? rejected('studies', json)
-}
-
-/** The stored mistake drills; each solution must be playable from its position. */
-export function decodeMistakesText(json: string): MistakeExercise[] | undefined {
-  return parsed<MistakeExercise[]>(rules().decodeMistakes(json)) ?? rejected('mistakes', json)
-}
-
 /** JSON for a value a frontend sent, which the native decoders read. */
 function sent(value: unknown, message: string): string {
   try {
@@ -131,73 +86,4 @@ export function assertStudyCommand(command: StudyCommandInput): StudyCommand {
   const study = parsed<SavedStudy>(rules().decodeStudy(sent(command.study, message)))
   if (!study) throw new Error(message)
   return { op: 'restore', study }
-}
-
-/** Whether a study's moves and annotations still match the copy downloaded from Lichess. */
-export function studyMatchesCloud(
-  study: Pick<SavedStudy, 'chapters'>,
-  downloaded: string,
-): boolean {
-  const matches = rules().studyMatchesCloud(
-    study.chapters.map((c) => [c.name, c.pgn]),
-    downloaded,
-  )
-  // Saved chapters are valid PGN, so each holds a game.
-  if (matches === null) throw new Error('A study chapter holds no game.')
-  return matches
-}
-
-/* ── Reviews ── */
-
-/** The fields the review analysis reads: scores without engine lines, most of a review's size. */
-function reviewInput(review: StoredReview): string {
-  return JSON.stringify({
-    key: review.key,
-    source: review.source,
-    complete: review.complete,
-    fen: review.fen,
-    moves: review.moves,
-    evals: review.evals.map((e) => (e && typeof e === 'object' ? { cp: e.cp, mate: e.mate } : e)),
-    judgments: review.judgments,
-    accuracy: review.accuracy,
-  })
-}
-
-/** Reviews are only written by the core, from legal games; anything else is a bug. */
-function reviewed<T>(json: string | null): T {
-  if (json === null) throw new Error('This review cannot be analysed.')
-  return JSON.parse(json) as T
-}
-
-/** `analyseReview`: labels, accuracy and chances for every move of a review. */
-export function analyseStoredReview(review: StoredReview): GameAnalysis {
-  return reviewed<GameAnalysis>(rules().analyseReview(reviewInput(review)))
-}
-
-/** What the game list shows for a review. */
-export function summarizeReview(review: StoredReview): ReviewSummary {
-  return reviewed<ReviewSummary>(rules().summarizeReview(reviewInput(review)))
-}
-
-/* ── Puzzle database ── */
-
-/** The sampler for a puzzle database download. */
-export function createPuzzleSampler(): ChunkSampler {
-  const sampler = new (rules().PuzzleSampler)(randomInt(2 ** 32))
-  return {
-    push: (chunk) => sampler.push(chunk),
-    finish: () => sampler.finish(),
-    get count() {
-      return sampler.count
-    },
-    get lines() {
-      return sampler.lines
-    },
-    kept: () => {
-      const rows = JSON.parse(sampler.kept()) as DbPuzzle[]
-      // The worker outlives the download; free the sample rather than wait for a collection.
-      sampler.release()
-      return rows
-    },
-  }
 }

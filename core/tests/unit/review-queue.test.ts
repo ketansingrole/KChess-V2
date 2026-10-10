@@ -9,11 +9,13 @@ import type { ReviewStatus, ReviewUpdate, Settings } from '../../src/contracts/t
 const userData = mkdtempSync(join(tmpdir(), 'kchess-review-queue-'))
 useTestPlatform({ dataDir: userData })
 const { reviewsChanged, setupReviews, stopReviews } = await import('../../src/services/review')
-const { closeDb, getDb } = await import('../../src/services/db')
+const { closeNativeCore } = await import('../../src/services/nativeCore')
+const { useTestDatabase } = await import('../../../tests/fixtures/nativeStore')
+const database = useTestDatabase()
 const { reviewSummaries } = await import('../../src/services/reviewStore')
 
 function addGame(id: string, moves: string, perf = 'blitz'): void {
-  getDb()
+  database
     .prepare(
       `INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, color,
         opponent, moves) VALUES ('tester', ?, ?, ?, 1, 'blitz', ?, 'mate', 'white', 'rival', ?)`,
@@ -41,9 +43,9 @@ setupReviews({
   status: (status) => void statuses.push(status),
 })
 
-afterAll(() => {
+afterAll(async () => {
   stopReviews()
-  closeDb()
+  await closeNativeCore()
   rmSync(userData, { recursive: true, force: true })
 })
 

@@ -26,7 +26,6 @@
     "test:puzzles": "node --experimental-strip-types tooling/puzzle-smoke.ts",
     "test:puzzle-worker": "node tooling/puzzle-worker-smoke.mjs",
     "benchmark:library": "node tooling/library-benchmark.mjs",
-    "benchmark:core": "node tooling/core-benchmark.mjs",
     "test:lifecycle": "vitest run apps/desktop/tests/unit/lifecycle.test.ts core/tests/unit/online-session.test.ts",
     "test": "pnpm run test:smoke && pnpm run test:unit",
     "start": "node tooling/with-branded-electron.mjs electron apps/desktop",

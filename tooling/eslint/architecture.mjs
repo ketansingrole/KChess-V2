@@ -7,8 +7,6 @@ const normalize = (path) => path.replaceAll('\\', '/')
 const within = (path, dir) => path === dir || path.startsWith(`${dir}/`)
 /** What a frontend may import from the core: its entry and the shared logger. */
 const PUBLIC_CORE = ['core/src', 'core/src/index', 'core/src/services/logger']
-const SQLITE_OWNERS = ['core/src/services/db.ts', 'core/src/services/store.ts']
-
 export const boundaries = {
   meta: {
     type: 'problem',
@@ -122,14 +120,13 @@ export const boundaries = {
         })
       if (
         source === 'node:sqlite' &&
-        (file.startsWith('apps/desktop/electron/main/') || file.startsWith('core/src/services/')) &&
-        !SQLITE_OWNERS.includes(file)
+        (file.startsWith('apps/desktop/electron/main/') || file.startsWith('core/'))
       )
         context.report({
           node,
           messageId: 'boundary',
           data: {
-            reason: 'Open SQLite only in its database owner.',
+            reason: 'The core and Electron main never open SQLite; the Rust core owns kchess.db.',
           },
         })
     }
@@ -150,7 +147,10 @@ export const boundaries = {
               })
           }
         }
-        if (node.source.value === 'node:sqlite' && !SQLITE_OWNERS.includes(file)) {
+        if (
+          node.source.value === 'node:sqlite' &&
+          (file.startsWith('apps/desktop/electron/main/') || file.startsWith('core/'))
+        ) {
           for (const specifier of node.specifiers) {
             if (node.importKind !== 'type' && specifier.importKind !== 'type')
               context.report({
@@ -158,7 +158,7 @@ export const boundaries = {
                 messageId: 'boundary',
                 data: {
                   reason:
-                    'Open SQLite only in its database owner (store retains the legacy migration).',
+                    'The core and Electron main never open SQLite; the Rust core owns kchess.db.',
                 },
               })
           }

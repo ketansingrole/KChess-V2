@@ -31,8 +31,8 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
 - Register IPC through apps/desktop/electron/main/ipc.ts; it authenticates the owned top-level frame
   before validating input and invoking a handler.
 - The Rust puzzle service is the only owner of `puzzles.db`; TypeScript reaches it through
-  `puzzleDb.ts`. Runtime SQLite imports belong in the
-  database owners; store.ts retains its existing legacy-database migration.
+  `puzzleDb.ts`. The Rust core is the only owner of `kchess.db` (`crates/kchess-core/src/store`):
+  `core/` never imports `node:sqlite`, and the one-time import from an earlier release runs in Rust.
 
 A headless capability belongs in `CoreApi`, `CORE_METHODS` and the core service, which
 validates its own input; main forwards every core method over IPC. Desktop-only methods

@@ -26,13 +26,7 @@ import { wasmBinding, type RulesBinding } from '../../src/domain/engine'
 import { studyDocumentPgn } from '../../src/domain/library'
 import { analyseReview, replay } from '../../src/domain/review'
 import type { StoredReview } from '../../src/contracts/types'
-import {
-  analyseStoredReview,
-  createPuzzleSampler,
-  lichessGameLine,
-  studyMatchesCloud,
-  summarizeReview,
-} from '../../src/services/rules'
+import { lichessGameLine } from '../../src/services/rules'
 import { INITIAL_FEN, pieceOn, Position, type Role } from '../../src/domain/position'
 import { chess960Fen, defaultFen, VARIANTS, type Variant } from '../../src/domain/variant'
 import { nativeRules } from '../../src/services/native'
@@ -457,18 +451,6 @@ describe('native phase 2 rules match the TypeScript rules', { timeout: TIMEOUT }
       expect(Object.is(native.jsExp(x), Math.exp(x)), String(x)).toBe(true)
   })
 
-  it('gives the same review figures through the core entry points (seed 7106)', () => {
-    // services/rules.ts sends only scores across; engine lines must not matter.
-    const random = rng(7106)
-    for (let i = 0; i < 200 * SCALE; i++) {
-      const review = randomReview(random, i)
-      golden('summaryFacade', i, plain(summarizeReview(review)))
-      expect(plain(analyseStoredReview(review)), `seed 7106 #${i}`).toEqual(
-        plain(analyseReview(review)),
-      )
-    }
-  })
-
   it('compares studies with their cloud copy identically (seed 7107)', () => {
     const random = rng(7107)
     for (let i = 0; i < 60 * SCALE; i++) {
@@ -487,15 +469,11 @@ describe('native phase 2 rules match the TypeScript rules', { timeout: TIMEOUT }
             : roll < 0.6
               ? ''
               : document
-      const matches = studyMatchesCloud({ chapters }, downloaded)
+      const matches = native.studyMatchesCloud(
+        chapters.map((c) => [c.name, c.pgn]),
+        downloaded,
+      )
       golden('cloudMatch', i, matches)
-      expect(
-        native.studyMatchesCloud(
-          chapters.map((c) => [c.name, c.pgn]),
-          downloaded,
-        ),
-        `seed 7107 #${i}`,
-      ).toBe(matches)
     }
   })
 
@@ -592,13 +570,6 @@ describe('native phase 2 rules match the TypeScript rules', { timeout: TIMEOUT }
     rustRepeat.push(repeated)
     rustRepeat.finish()
     golden('samplerRepeat', 0, JSON.parse(rustRepeat.kept()))
-    // The worker reports the kept count after storing the sample, which kept() frees.
-    const facade = createPuzzleSampler()
-    facade.push(repeated)
-    facade.finish()
-    const count = facade.count
-    expect(facade.kept().length).toBeGreaterThan(0)
-    expect(facade.count).toBe(count)
     const long = Buffer.from(`abc,${'x'.repeat(17_000)}`)
     expect(() => new native.PuzzleSampler(1).push(long)).toThrow('oversized CSV line')
   })

@@ -1,7 +1,10 @@
-import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, beforeEach, expect, it, vi } from 'vitest'
 import { INITIAL_FEN } from '../../src/domain/position'
-import { migrate, MIGRATIONS } from '../../src/services/migrations'
+import { closeNativeCore } from '../../src/services/nativeCore'
+import { useTestDatabase, type TestDatabase } from '../../../tests/fixtures/nativeStore'
 import {
   writeReview,
   readReview,
@@ -13,10 +16,8 @@ import { reviewKey } from '../../src/domain/review'
 import type { StoredReview } from '../../src/contracts/types'
 import { requestReview, stopReviews } from '../../src/services/review'
 
-const db = new DatabaseSync(':memory:')
-migrate(db)
-db.exec('PRAGMA foreign_keys=ON')
-vi.mock('../../src/services/db', () => ({ getDb: () => db }))
+const dataDir = mkdtempSync(join(tmpdir(), 'kchess-associations-'))
+let db: TestDatabase
 vi.mock('../../src/services/engine', () => ({
   engineIdentity: vi.fn(),
   engineStatus: vi.fn(),
@@ -33,10 +34,15 @@ const review: StoredReview = {
   updatedAt: 1,
   evals: [{ cp: 0 }, { cp: 0 }, { cp: 0 }],
 }
-beforeEach(() => db.exec('DELETE FROM game_reviews; DELETE FROM reviews; DELETE FROM games'))
-afterAll(() => {
+beforeEach(async () => {
+  await closeNativeCore()
+  db = useTestDatabase({ dataDir })
+  db.exec('DELETE FROM game_reviews; DELETE FROM reviews; DELETE FROM games')
+})
+afterAll(async () => {
   stopReviews()
-  db.close()
+  await closeNativeCore()
+  rmSync(dataDir, { recursive: true, force: true })
 })
 function game(id: string, account = 'Alice') {
   db.prepare(
@@ -71,20 +77,4 @@ it('retains both associations when identical searches are queued before their fi
   requestReview({ fen: INITIAL_FEN, moves, gameId: 'Game0002' })
   writeReview({ ...review, gameId: 'Game0002' })
   expect(Object.keys(reviewSummaries(['Game0001', 'Game0002']))).toHaveLength(2)
-})
-it('backfills associations from the preceding schema without discarding evaluations', () => {
-  const legacy = new DatabaseSync(':memory:')
-  const backfill = MIGRATIONS.findIndex((sql) => sql.includes('CREATE TABLE game_reviews'))
-  for (const sql of MIGRATIONS.slice(0, backfill)) legacy.exec(sql)
-  legacy.exec(`PRAGMA user_version=${backfill}`)
-  legacy
-    .prepare('INSERT INTO reviews VALUES (?,?,?,?,?,?,?,?)')
-    .run(review.key, 'Game0001', 'local', 1, 18, JSON.stringify(review), '{}', 1)
-  migrate(legacy)
-  expect(legacy.prepare('SELECT * FROM game_reviews').all()).toEqual([
-    { gameId: 'Game0001', reviewKey: review.key },
-  ])
-  expect(legacy.prepare('SELECT data FROM reviews').get()?.data).toBe(JSON.stringify(review))
-  migrate(legacy)
-  legacy.close()
 })

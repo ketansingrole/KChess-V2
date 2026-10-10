@@ -1,11 +1,16 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { PERFORMANCE_BUDGETS, assertLibraryBudget } from './performance-budgets.mjs'
 import { DatabaseSync } from 'node:sqlite'
-import { migrate } from '../core/src/services/migrations.ts'
 
 // Structural probe of list-row SQL/clone cost, not a renderer or full loadData benchmark.
 const db = new DatabaseSync(':memory:')
-migrate(db)
+for (const sql of JSON.parse(
+  readFileSync(
+    new URL('../core/tests/unit/fixtures/store-migrations.json', import.meta.url),
+    'utf8',
+  ),
+))
+  db.exec(sql)
 const insert = db.prepare(`INSERT INTO games
   (account, id, createdAt, lastMoveAt, rated, speed, perf, status, color, opponent, moves)
   VALUES (?, ?, ?, ?, 1, 'blitz', 'blitz', 'mate', 'white', 'rival', 'e4 e5 Nf3 Nc6 Bb5 a6')`)

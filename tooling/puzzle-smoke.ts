@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import {
   opponentReply,
   playerColor,
@@ -9,9 +10,7 @@ import {
   type PuzzleState,
 } from '../core/src/domain/puzzle.ts'
 import { FEN, PUZZLE_ANGLE } from '../core/src/domain/patterns.ts'
-import type { ChunkSampler } from '../core/src/services/puzzleSampler.ts'
 import { installNativeRules } from './native-rules.ts'
-import { MIGRATIONS } from '../core/src/services/migrations.ts'
 import {
   RUSH_CONFIGS,
   accuracy,
@@ -34,6 +33,21 @@ import {
 import { ALL_SQUARES, randomSquare, squareColor } from '../core/src/domain/coordinates.ts'
 import { ENDGAME_DRILLS, evaluateEndgame } from '../core/src/domain/endgames.ts'
 import { themeName } from '../apps/desktop/app/utils/puzzleThemes.ts'
+
+/** The native sampler, as the download feeds it. */
+interface ChunkSampler {
+  push(chunk: Uint8Array): void
+  finish(): void
+  readonly count: number
+  readonly lines: number
+  kept(): DbPuzzle[]
+}
+const MIGRATIONS = JSON.parse(
+  readFileSync(
+    new URL('../core/tests/unit/fixtures/store-migrations.json', import.meta.url),
+    'utf8',
+  ),
+) as string[]
 
 // The native rules, resolved as the core resolves them; puzzle moves are played through them.
 const native = installNativeRules()

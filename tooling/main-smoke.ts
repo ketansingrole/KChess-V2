@@ -25,7 +25,6 @@ import {
 } from '../core/src/domain/validate.ts'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { DatabaseSync } from 'node:sqlite'
 import createClient from 'openapi-fetch'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -45,7 +44,6 @@ import {
   installManagedEngine,
   managedEngine,
 } from '../core/src/services/managedEngine.ts'
-import { MIGRATIONS, migrate } from '../core/src/services/migrations.ts'
 import { pickMacAsset } from '../core/src/services/stockfishAsset.ts'
 import { installNativeRules } from './native-rules.ts'
 
@@ -355,48 +353,6 @@ assert(
   ),
   [false, false, false, false, false, false, false],
 )
-
-// Schema migrations track `PRAGMA user_version`.
-const version = (db: DatabaseSync): unknown =>
-  (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
-const fresh = new DatabaseSync(':memory:')
-migrate(fresh)
-assert('fresh database is at the latest version', version(fresh), MIGRATIONS.length)
-migrate(fresh)
-assert('migrating twice is a no-op', version(fresh), MIGRATIONS.length)
-// A database from before versioning: tables exist, user_version is 0, data must survive.
-const old = new DatabaseSync(':memory:')
-old.exec(MIGRATIONS[0]!)
-old.exec("INSERT INTO accounts (username, connected) VALUES ('magnus', 1)")
-assert('pre-versioning database starts at 0', version(old), 0)
-migrate(old)
-assert('pre-versioning database is upgraded', version(old), MIGRATIONS.length)
-assert(
-  'pre-versioning data survives',
-  (old.prepare('SELECT username FROM accounts').get() as { username: string }).username,
-  'magnus',
-)
-
-// Upgrade an existing settings row, preserving user preferences while enabling update defaults.
-const previous = new DatabaseSync(':memory:')
-for (const migration of MIGRATIONS.slice(0, -1)) previous.exec(migration)
-previous.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`)
-previous.exec(`INSERT INTO settings (id, appearance, boardTheme, coordinates, soundEnabled, soundVolume, enginePath)
-  VALUES (1, 'dark', 'brown', 'inside', 0, 0.3, '')`)
-migrate(previous)
-const updatedSettings = previous
-  .prepare(
-    'SELECT appearance, soundVolume, updateAutoCheck, updateAutoDownload, updateInstallOnQuit FROM settings',
-  )
-  .get()
-assert('existing settings survive the updater migration', updatedSettings, {
-  appearance: 'dark',
-  soundVolume: 0.3,
-  updateAutoCheck: 1,
-  updateAutoDownload: 1,
-  updateInstallOnQuit: 1,
-})
-previous.close()
 
 // NDJSON streams: lines split across chunks, keep-alive blanks, and a final line without a newline.
 const encoder = new TextEncoder()

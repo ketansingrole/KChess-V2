@@ -74,7 +74,6 @@ Run the existing root commands:
 - `pnpm --filter @kchess/node build`: build the reusable Node host and declarations.
 - `pnpm run build:native`: build the Rust rules (Node module and WebAssembly; part of `build` and `dev`).
 - `pnpm run check:rust`: rustfmt, clippy and Rust unit tests.
-- `pnpm run benchmark:core`: TypeScript vs Rust rules on seeded fixtures, in separate processes.
 - `pnpm run build`: typecheck and build desktop into `apps/desktop/out/` and `.output/`.
 - `pnpm run check:fast`: checks for editing; `pnpm run check`: full repository checks.
 - `pnpm run test:e2e`: production desktop regressions with isolated profiles.

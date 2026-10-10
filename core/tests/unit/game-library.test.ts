@@ -1,9 +1,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { migrate, MIGRATIONS } from '../../src/services/migrations'
+import { closeNativeCore } from '../../src/services/nativeCore'
+import { useTestDatabase, type TestDatabase } from '../../../tests/fixtures/nativeStore'
 import type { LichessGame } from '../../src/contracts/types'
 import { assertGamePageQuery } from '../../src/domain/validate'
 import { ratingHistoryFromGames } from '../../src/domain/ratings'
@@ -18,7 +18,6 @@ import {
   pendingGameIds,
   removeAccount,
   logoutAccounts,
-  RESULT_SQL,
   saveGames,
   saveGamesPage,
   saveLogin,
@@ -33,10 +32,12 @@ import {
   syncGames,
 } from '../../src/services/lichess'
 import { hasAccount, reviewSummaries } from '../../src/services/reviewStore'
-import { fakeSecrets, useTestPlatform } from '../../../tests/fixtures/corePlatform'
+import { fakeSecrets } from '../../../tests/fixtures/corePlatform'
 
-const state = vi.hoisted(() => ({ db: null as DatabaseSync | null, fetch: vi.fn() }))
-vi.mock('../../src/services/db', () => ({ getDb: () => state.db! }))
+const state = vi.hoisted(() => ({ db: null as TestDatabase | null, fetch: vi.fn() }))
+/** The result of a game, as the store's list filters compute it. */
+const RESULT_SQL =
+  "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END"
 vi.mock('../../src/services/usage', () => ({
   withUsage: (_account: string, _kind: string, fn: () => unknown) => fn(),
   attributeTo: () => {},
@@ -45,7 +46,6 @@ vi.mock('../../src/services/requestPolicy', () => ({
   lichessFetch: (request: Request) => state.fetch(request),
 }))
 const secrets = fakeSecrets()
-useTestPlatform({ secrets })
 
 function game(id: string, overrides: Partial<LichessGame> = {}): LichessGame {
   return {
@@ -108,14 +108,15 @@ function response(rows: unknown[]) {
   })
 }
 beforeEach(async () => {
-  state.db = new DatabaseSync(':memory:')
-  state.db.exec('PRAGMA foreign_keys = ON')
-  migrate(state.db)
+  state.db = useTestDatabase({ secrets })
   state.db.exec("INSERT INTO accounts (username, connected) VALUES ('Alice', 1), ('Bob', 0)")
   await saveGames('Alice', [], 1)
   state.fetch.mockReset()
 })
-afterEach(() => state.db?.close())
+afterEach(async () => {
+  state.db = null
+  await closeNativeCore()
+})
 
 describe('SQLite game library', () => {
   it('logs out every connected account and erases their data while preserving public following', async () => {
@@ -243,21 +244,19 @@ describe('SQLite game library', () => {
   })
   it('retains pending IDs when the database is closed and reopened', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'kchess-pending-'))
-    const path = join(directory, 'kchess.db')
-    state.db!.close()
-    state.db = new DatabaseSync(path)
     try {
-      migrate(state.db)
+      await closeNativeCore()
+      state.db = useTestDatabase({ dataDir: directory, secrets })
       state.db.exec("INSERT INTO accounts (username, connected) VALUES ('Alice', 1)")
       await saveGames('Alice', [game('Pending1', { status: 'started' })], 1000)
-      state.db.close()
-      state.db = new DatabaseSync(path)
+      await closeNativeCore()
+      state.db = useTestDatabase({ dataDir: directory, secrets })
       expect(await pendingGameIds('Alice')).toEqual(['Pending1'])
       await saveGames('Alice', [game('Pending1')], 2000)
       expect(await pendingGameIds('Alice')).toEqual([])
       expect((await gamePage({ offset: 0, limit: 20 })).games[0]?.id).toBe('Pending1')
     } finally {
-      state.db?.close()
+      await closeNativeCore()
       state.db = null
       rmSync(directory, { recursive: true, force: true })
     }
@@ -289,29 +288,6 @@ describe('SQLite game library', () => {
         'loss',
       ),
     ).toContain('idx_games_account_result_page')
-  })
-  it('appends a one-time backfill migration without losing completed games', () => {
-    const db = new DatabaseSync(':memory:')
-    try {
-      const backfill = MIGRATIONS.findIndex((sql) => sql.includes('CREATE TABLE pending_game_sync'))
-      for (const sql of MIGRATIONS.slice(0, backfill)) db.exec(sql)
-      db.exec(`PRAGMA user_version = ${backfill}`)
-      db.exec("INSERT INTO accounts (username, connected, lastSyncedAt) VALUES ('Alice', 1, 1000)")
-      const insert = db.prepare(
-        "INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, color, opponent, moves) VALUES ('Alice', ?, 1, 1, 1, 'blitz', 'blitz', ?, 'white', 'Bob', 'e4')",
-      )
-      insert.run('Pending1', 'started')
-      insert.run('Finished', 'mate')
-      migrate(db)
-      expect(db.prepare('SELECT lastSyncedAt FROM accounts').get()?.lastSyncedAt).toBeNull()
-      expect(db.prepare('SELECT id FROM pending_game_sync').get()?.id).toBe('Pending1')
-      expect(db.prepare('SELECT id FROM games').get()?.id).toBe('Finished')
-      db.exec('UPDATE accounts SET lastSyncedAt = 2000')
-      migrate(db)
-      expect(db.prepare('SELECT lastSyncedAt FROM accounts').get()?.lastSyncedAt).toBe(2000)
-    } finally {
-      db.close()
-    }
   })
 })
 

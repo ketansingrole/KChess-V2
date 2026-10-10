@@ -1,6 +1,5 @@
 import { bindCoreCallback, platform, scopedState } from './platform'
 import { nativeRules, type NativeCoreHandle } from './native'
-import { dbPath } from './db'
 import { logDebug, logError, logInfo, logWarn } from './logger'
 import { recordUsage } from './usage'
 import type { UsageKind } from '../contracts/types'
@@ -39,7 +38,7 @@ function core(): NativeCoreHandle {
   const rules = nativeRules()
   if (!rules) throw new Error('The native core is not built (pnpm run build:native).')
   state.core = new rules.NativeCore(
-    { dataDir: platform().dataDir, legacyDatabasePath: dbPath() },
+    { dataDir: platform().dataDir, legacyDatabasePath: platform().legacyDatabasePath },
     bindCoreCallback((json: string) => {
       const line = JSON.parse(json) as { level: keyof typeof LOG; scope: string; message: string }
       LOG[line.level](line.scope, line.message)

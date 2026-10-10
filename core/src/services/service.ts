@@ -71,7 +71,6 @@ import { assertArchivedGame, assertStudyCommand } from './rules'
 import { analysisRunning, startAnalysis, stopAnalysis } from './analysis'
 import { ChallengeInbox } from './challenges'
 import { cloudEval, clearCloudEval } from './cloudEval'
-import { closeDb } from './db'
 import {
   bestMove,
   computerPlaying,
@@ -410,7 +409,6 @@ function createCore(platform: CorePlatform, profileDirectory: string): KChessCor
       closing = (async () => {
         await Promise.allSettled([...pending, reviews, puzzles])
         await closeEngines().catch((cause) => logWarn('core', 'Engine shutdown failed:', cause))
-        closeDb()
         resetStore()
         resetLichess()
         clearCloudEval()

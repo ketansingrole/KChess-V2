@@ -2,38 +2,37 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { afterAll, describe, expect, it } from 'vitest'
-import { testPlatform } from '../../../tests/fixtures/corePlatform'
 import type { StoredReview } from '../../src/contracts/types'
 import { assertSession } from '../../src/domain/library'
 import { reviewKey } from '../../src/domain/review'
-import { closeDb, getDb } from '../../src/services/db'
 import { decodeLookupCache } from '../../src/services/positionLookup'
-import * as insights from '../../src/services/insights'
-import * as library from '../../src/services/library'
-import { migrate } from '../../src/services/migrations'
 import { nativeRules, type NativeCoreHandle } from '../../src/services/native'
-import { setPlatform } from '../../src/services/platform'
-import { positionLookups } from '../../src/services/setupPositionLookup'
-import * as reviews from '../../src/services/reviewStore'
-import { analyseStoredReview } from '../../src/services/rules'
-import * as runs from '../../src/services/runs'
-import * as usage from '../../src/services/usage'
-import * as voice from '../../src/services/voiceLog'
+import { goldenFile } from './golden'
 
 /**
- * The storage modules moved to Rust (`crates/kchess-core/src/store`) against their TypeScript
- * originals. Each case runs once on the TypeScript module, against a database in its own
- * temporary folder, and once through `NativeCore.callSync('store.<module>.<name>')`, against a
- * second folder. After every call the results and the contents of every table are compared, so
- * a difference in a stored byte, a row, or an error message fails at the step that caused it.
+ * The storage methods of `crates/kchess-core/src/store` (`library`, `reviewStore`, `runs`,
+ * `insights`, `usage`, `voiceLog`, `setupPositionLookup`), run against a native core in a
+ * temporary profile. Each step's result, and the contents of every table, is normalised and
+ * checked against the golden digests recorded from the TypeScript implementation before it was
+ * replaced (`golden/store-documents.json`). Seeding goes through `store.debug.exec`.
  *
  * Clock reads are normalised: a timestamp (an epoch-millisecond value in a time column or key)
- * matches any other timestamp, and each UUID is labelled by first appearance on its side, so both
- * sides agree whenever their ids agree. Explicit `now` arguments are small numbers and compare
- * exactly. Long cells compare by digest.
+ * matches any other timestamp, and each UUID is labelled by first appearance, so both sides agree
+ * whenever their ids agree. Explicit `now` arguments are small numbers and compare exactly. Long
+ * cells compare by digest.
  */
+
+const golden = goldenFile('store-documents')
+
+/** Golden checks are numbered per test, in the order the test makes them. */
+const checkCounts = new Map<string, number>()
+function nextCheck(): [string, number] {
+  const suite = expect.getState().currentTestName ?? 'setup'
+  const index = checkCounts.get(suite) ?? 0
+  checkCounts.set(suite, index + 1)
+  return [suite, index]
+}
 
 const NOW = 10_000
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -108,11 +107,14 @@ const TABLES: [string, string][] = [
   ['position_lookups', 'key'],
 ]
 
-function dump(db: DatabaseSync, labels: Labels): Record<string, string[]> {
+/** Rows of every table, in the order the TABLES list gives, read from the native core. */
+function dumpRows(core: NativeCoreHandle, labels: Labels): Record<string, string[]> {
+  const snapshot = JSON.parse(
+    core.callSync('store.debug.tables', JSON.stringify([Object.fromEntries(TABLES)])),
+  ) as { tables: Record<string, Record<string, unknown>[]> }
   const tables: Record<string, string[]> = {}
-  for (const [table, order] of TABLES) {
-    const rows = db.prepare(`SELECT * FROM ${table} ORDER BY ${order}`).all()
-    tables[table] = rows.map((row) =>
+  for (const [table] of TABLES) {
+    tables[table] = (snapshot.tables[table] ?? []).map((row) =>
       Object.entries(row)
         .map(([column, value]) => cell(column, value, labels))
         .join('\u0001'),
@@ -124,15 +126,11 @@ function dump(db: DatabaseSync, labels: Labels): Record<string, string[]> {
 /* ── Sessions ── */
 
 interface Session {
-  /** The TypeScript database (`getDb()` of its platform). */
-  readonly ts: DatabaseSync
-  /** The Rust core's database, read and seeded beside the native core. */
-  readonly rs: DatabaseSync
-  /** Call one method on both sides, compare the results and (unless told not to) every table. */
+  /** Call one method and check its result (and, unless told not to, every table). */
   run(method: string, args?: unknown[], compareTables?: boolean): Promise<Outcome>
-  /** Compare every table now. */
+  /** Check every table now. */
   compare(): void
-  /** Insert the same row on both sides, as an earlier release or a damaged file left it. */
+  /** Insert a row, as an earlier release left it. */
   seed(sql: string, params?: unknown[]): void
   close(): Promise<void>
 }
@@ -148,27 +146,6 @@ function temporary(): string {
   return directory
 }
 
-/** The JSON the bridge carries: `undefined` becomes `null`. */
-function plain(value: unknown): unknown[] {
-  return JSON.parse(JSON.stringify(value ?? null)) as unknown[]
-}
-
-/** The Rust side's UUIDs in place of the TypeScript side's, for ids that came back from earlier calls. */
-function translate(value: unknown, from: Labels, to: Labels): unknown {
-  if (typeof value === 'string') {
-    const label =
-      value.match(UUID)?.length === 1 && value.length === 36 ? from.labelOf(value) : undefined
-    return label === undefined ? value : (to.uuidOf(label) ?? value)
-  }
-  if (Array.isArray(value)) return value.map((item) => translate(item, from, to))
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, translate(item, from, to)]),
-    )
-  }
-  return value
-}
-
 async function attempt(work: () => unknown): Promise<Outcome> {
   try {
     return { value: await work() }
@@ -177,79 +154,13 @@ async function attempt(work: () => unknown): Promise<Outcome> {
   }
 }
 
-/* ── The TypeScript counterparts, by their Rust method names ── */
-
-/** Argument `index`, or undefined when the bridge sent null for it. */
-const opt = <T>(args: unknown[], index: number): T | undefined =>
-  (args[index] ?? undefined) as T | undefined
-/** Argument `index`, as sent. */
-const req = <T>(args: unknown[], index: number): T => args[index] as T
-
-const TS: Record<string, (args: unknown[]) => unknown> = {
-  'store.library.library': (args) => library.library(opt<number>(args, 0)),
-  'store.library.readSession': (args) => library.readSession(req<never>(args, 0)),
-  'store.library.importLibrary': (args) => library.importLibrary(req<never>(args, 0)),
-  'store.library.studyCommand': (args) =>
-    library.studyCommand(req<never>(args, 0), opt<number>(args, 1)),
-  'store.library.saveArchivedGame': (args) => void library.saveArchivedGame(req(args, 0)),
-  'store.library.removeArchivedGame': (args) => void library.removeArchivedGame(req(args, 0)),
-  'store.library.addMistakes': (args) =>
-    library.addMistakes(req(args, 0), opt<never>(args, 1), opt<number>(args, 2)),
-  'store.library.answerMistake': (args) =>
-    library.answerMistake(req(args, 0), req(args, 1), opt<number>(args, 2)),
-  'store.library.saveSession': (args) =>
-    void library.saveSession(req<never>(args, 0), req(args, 1)),
-  'store.library.joinedTournaments': (args) => library.joinedTournaments(opt<number>(args, 0)),
-  'store.library.rememberTournament': (args) =>
-    void library.rememberTournament(req(args, 0), opt<number>(args, 1)),
-  'store.library.forgetTournament': (args) =>
-    void library.forgetTournament(req<never>(args, 0), req(args, 1)),
-  'store.library.forgetTournamentsOf': (args) => void library.forgetTournamentsOf(req(args, 0)),
-  'store.library.recordRepertoireMiss': (args) =>
-    library.recordRepertoireMiss(req(args, 0), req(args, 1)),
-  'store.library.clearRepertoireMisses': (args) => library.clearRepertoireMisses(req(args, 0)),
-  'store.reviewStore.readReview': (args) => reviews.readReview(req(args, 0)),
-  'store.reviewStore.writeReview': (args) => reviews.writeReview(req<StoredReview>(args, 0)),
-  'store.reviewStore.reviewSummaries': (args) => reviews.reviewSummaries(req(args, 0)),
-  'store.reviewStore.hasAccount': (args) => reviews.hasAccount(req(args, 0)),
-  'store.reviewStore.markChecked': (args) =>
-    void reviews.markChecked(req(args, 0), opt<number>(args, 1)),
-  'store.reviewStore.gamesToReview': (args) =>
-    reviews.gamesToReview(req(args, 0), opt<number>(args, 1), opt<number>(args, 2)),
-  'store.reviewStore.reviewCount': () => reviews.reviewCount(),
-  'store.runs.runSummary': (args) => runs.runSummary(req<never>(args, 0)),
-  'store.runs.saveRun': (args) => runs.saveRun(req<never>(args, 0)),
-  'store.runs.clearRuns': (args) => void runs.clearRuns(opt<never>(args, 0)),
-  'store.insights.insights': (args) => insights.insights(req<never>(args, 0)),
-  // Rows go through the counters the TypeScript flush reads, then the flush writes them.
-  'store.usage.flushUsage': (args) => {
-    for (const row of req<{ account: string; kind: never; requests: number; bytesIn: number }[]>(
-      args,
-      0,
-    ))
-      usage.recordUsage(row.account, row.kind, row.requests, row.bytesIn)
-    usage.flushUsage()
-  },
-  'store.usage.resetUsage': () => usage.resetUsage(),
-  'store.usage.usageReport': () =>
-    usage.usageReport().then(({ dbBytes: _size, ...report }) => report),
-  'store.voiceLog.saveVoiceAttempt': (args) => voice.saveVoiceAttempt(req<never>(args, 0)),
-  'store.voiceLog.updateVoiceAttempt': (args) =>
-    void voice.updateVoiceAttempt(req(args, 0), req<never>(args, 1)),
-  'store.voiceLog.voiceHistory': (args) => voice.voiceHistory(req(args, 0)),
-  'store.voiceLog.clearVoiceHistory': () => void voice.clearVoiceHistory(),
-  'store.voiceLog.voiceHistoryDocument': () => voice.voiceHistoryDocument(),
-  'store.setupPositionLookup.read': (args) => lookupCache().read(req(args, 0)),
-  'store.setupPositionLookup.write': (args) =>
-    void lookupCache().write(req(args, 0), req<never>(args, 1)),
+function describeOutcome(outcome: Outcome, labels: Labels): string {
+  return outcome.error === undefined
+    ? canonical(outcome.value ?? null, labels)
+    : `error: ${outcome.error}`
 }
 
-/** The position-lookup cache the service reads and writes (its private storage). */
-function lookupCache(): { read(key: string): unknown; write(key: string, value: never): void } {
-  return (positionLookups as unknown as { cache: never }).cache
-}
-
-/** What the Rust side returns for a call: the lookup cache returns raw JSON, which the TypeScript decodes. */
+/** The TypeScript-side decode of a position-lookup entry, which the service applies to the stored text. */
 function fromRust(method: string, value: unknown): unknown {
   if (method === 'store.setupPositionLookup.read') {
     return typeof value === 'string' ? (decodeLookupCache(JSON.parse(value)) ?? null) : null
@@ -258,59 +169,34 @@ function fromRust(method: string, value: unknown): unknown {
 }
 
 async function open(): Promise<Session> {
-  const tsDirectory = temporary()
-  const rsDirectory = temporary()
-  setPlatform(testPlatform({ dataDir: tsDirectory }))
-  const ts = getDb()
-  // The Rust core opens `kchess.db` with the schema already present (its own migration is a stub).
-  const schema = new DatabaseSync(join(rsDirectory, 'kchess.db'))
-  migrate(schema)
-  schema.close()
   const native = nativeRules()
   if (!native) throw new Error('The native rules are not built (pnpm run build:native).')
   const core: NativeCoreHandle = new native.NativeCore(
-    { dataDir: rsDirectory },
+    { dataDir: temporary() },
     () => undefined,
     () => undefined,
   )
-  const rs = new DatabaseSync(join(rsDirectory, 'kchess.db'))
-  const tsLabels = new Labels()
-  const rsLabels = new Labels()
-
-  const compare = () => {
-    expect(dump(rs, rsLabels)).toEqual(dump(ts, tsLabels))
+  const labels = new Labels()
+  const call = (method: string, args: unknown[]): unknown =>
+    JSON.parse(core.callSync(method, JSON.stringify(args)))
+  const compare = (): void => {
+    const [suite, index] = nextCheck()
+    golden.check(suite, index, dumpRows(core, labels))
   }
   return {
-    ts,
-    rs,
     compare,
     async run(method, callArgs = [], compareTables = true) {
-      const args = callArgs
-      const handler = TS[method]
-      if (!handler) throw new Error(`No TypeScript counterpart for ${method}`)
-      const rsArgs = translate(args, tsLabels, rsLabels)
-      const tsOutcome = await attempt(() => handler(plain(args)))
-      const rsOutcome = await attempt(() =>
-        fromRust(method, JSON.parse(core.callSync(method, JSON.stringify(rsArgs)))),
-      )
-      const describe = (outcome: Outcome, labels: Labels) =>
-        outcome.error === undefined
-          ? canonical(outcome.value ?? null, labels)
-          : `error: ${outcome.error}`
-      expect(describe(rsOutcome, rsLabels), `${method} ${JSON.stringify(args)}`).toBe(
-        describe(tsOutcome, tsLabels),
-      )
+      const outcome = await attempt(() => fromRust(method, call(method, callArgs)))
+      const [suite, index] = nextCheck()
+      golden.check(suite, index, describeOutcome(outcome, labels))
       if (compareTables) compare()
-      return tsOutcome
+      return outcome
     },
     seed(sql, params = []) {
-      ts.prepare(sql).run(...(params as never[]))
-      rs.prepare(sql).run(...(params as never[]))
+      call('store.debug.exec', [sql, params])
     },
     async close() {
       await core.close()
-      rs.close()
-      closeDb()
     },
   }
 }
@@ -380,7 +266,23 @@ function mistakeReview(): StoredReview {
       return { cp, best, depth: 18, pv: random() < 0.5 ? [best, 'e7e5'] : undefined }
     })
     const candidate = review({ moves, evals })
-    const analysis = analyseStoredReview(candidate) as { moves: { judgment?: string }[] }
+    // The review analysis the core makes of the scores (engine lines do not count).
+    const analysis = JSON.parse(
+      nativeRules()!.analyseReview(
+        JSON.stringify({
+          key: candidate.key,
+          source: candidate.source,
+          complete: candidate.complete,
+          fen: candidate.fen,
+          moves: candidate.moves,
+          evals: candidate.evals.map((e) =>
+            e && typeof e === 'object' ? { cp: e.cp, mate: e.mate } : e,
+          ),
+          judgments: candidate.judgments,
+          accuracy: candidate.accuracy,
+        }),
+      ) as string,
+    ) as { moves: { judgment?: string }[] }
     const drillable = analysis.moves.some(
       (move, index) =>
         Boolean(move.judgment) &&
@@ -1384,7 +1286,9 @@ describe('insights', () => {
     try {
       const random = generator(42)
       const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
-      const now = Date.now()
+      // A fixed clock for the fixtures: rows stay byte-identical from run to run (the golden
+      // digests compare them), and every row is newer than any `days` window the queries use.
+      const now = 4_000_000_000_000
       const openings = [
         'Sicilian Defense: Najdorf',
         'Sicilian Defense',
@@ -1616,7 +1520,7 @@ describe('position lookup cache', () => {
 
 /* ── Coverage ── */
 
-it('has a counterpart for every method the Rust modules export', () => {
+it('names every method the Rust modules export once', () => {
   const methods = [
     'store.library.library',
     'store.library.readSession',
@@ -1655,6 +1559,5 @@ it('has a counterpart for every method the Rust modules export', () => {
     'store.setupPositionLookup.read',
     'store.setupPositionLookup.write',
   ]
-  for (const method of methods) expect(TS[method], method).toBeTypeOf('function')
-  expect(Object.keys(TS)).toHaveLength(methods.length)
+  expect(new Set(methods).size).toBe(methods.length)
 })

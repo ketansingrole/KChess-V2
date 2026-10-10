@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { useTestPlatform } from '../../../tests/fixtures/corePlatform'
-import { closeDb, getDb } from '../../src/services/db'
+import { closeNativeCore } from '../../src/services/nativeCore'
+import { useTestDatabase } from '../../../tests/fixtures/nativeStore'
 import {
   clearRepertoireMisses,
   forgetTournamentsOf,
@@ -18,9 +18,9 @@ import {
 import { assertSession, type ArchivedGame } from '../../src/domain/library'
 import { STANDARD_SETUP } from '../../src/domain/variant'
 
-useTestPlatform()
-afterAll(closeDb)
-beforeEach(() => getDb().exec('DELETE FROM documents; DELETE FROM archived_games;'))
+const database = useTestDatabase()
+afterAll(closeNativeCore)
+beforeEach(() => database.exec('DELETE FROM documents; DELETE FROM archived_games;'))
 
 const game = (id: string, moves = ['e2e4']): ArchivedGame => ({
   id,
@@ -119,7 +119,7 @@ describe('played games', () => {
         break
       }
     }
-    const { count, bytes } = getDb()
+    const { count, bytes } = database
       .prepare('SELECT COUNT(*) AS count, SUM(length(body)) AS bytes FROM archived_games')
       .get() as { count: number; bytes: number }
     expect(count).toBe(saved)
