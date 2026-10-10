@@ -139,5 +139,11 @@ their exported TypeScript API, but every decision moves to Rust:
   the UI shows them.
 - Add tests for `tv_channels`, `broadcast_tour`, `puzzle_daily`, `puzzle_dashboard`,
   `puzzle_activity`, `storm_dashboard`.
+- **Must fix:** cancelling a challenge while its creation request is in flight must still await
+  Lichess's answer and cancel the late challenge id (as `online-actions.test.ts` asserted); the
+  Rust session drops the request, which can leave an open challenge on Lichess.
+- Move the challenge event reader (`lichess/challenges.rs` `read_challenge_event`) into
+  `kchess-domain` records, beside `validateOnlineEvent`.
+- A malformed line on the online event/game streams must be handled as the TypeScript did.
 - Usage: Rust emits `host:usage` per request/chunk; keep the TypeScript batching (or move it to
   Rust) so the store sees the same rows.
