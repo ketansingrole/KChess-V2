@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::accounts::{AccountRow, CachedValue, LichessGame, LichessStore};
 use super::client::TokenSource;
-use super::lookups::LookupCache;
+use super::lookups::{ExplorerLogin, LookupCache};
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::store::Database;
@@ -199,6 +199,32 @@ impl TokenSource for DbTokens {
                 .call("store.games.tokenCiphertext", &[json!(account)])?;
             match ciphertext.as_str() {
                 Some(ciphertext) => self.capabilities.decrypt(ciphertext).await.map(Some),
+                None => Ok(None),
+            }
+        })
+    }
+}
+
+/// The explorer's login: the account `setupPositionLookup` is set to use, and its token.
+pub struct DbExplorerLogin {
+    database: Arc<Database>,
+    tokens: Arc<dyn TokenSource>,
+}
+
+impl DbExplorerLogin {
+    pub fn new(database: Arc<Database>, tokens: Arc<dyn TokenSource>) -> DbExplorerLogin {
+        DbExplorerLogin { database, tokens }
+    }
+}
+
+impl ExplorerLogin for DbExplorerLogin {
+    fn token(&self) -> BoxFuture<'_, CoreResult<Option<String>>> {
+        Box::pin(async move {
+            let account = self
+                .database
+                .call("store.setupPositionLookup.explorerAccount", &[])?;
+            match account.as_str() {
+                Some(account) => self.tokens.token(account).await,
                 None => Ok(None),
             }
         })

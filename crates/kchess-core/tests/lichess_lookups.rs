@@ -454,3 +454,75 @@ fn service(base: &str, host: &Arc<Recording>) -> Arc<Lichess> {
         MemoryTokens::with(&[]),
     )
 }
+
+/// The explorer's login: the token of the account it is set to use, or none.
+struct FixedLogin(Option<String>);
+
+impl kchess_core::lichess::lookups::ExplorerLogin for FixedLogin {
+    fn token(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, kchess_core::error::Result<Option<String>>> {
+        Box::pin(async move { Ok(self.0.clone()) })
+    }
+}
+
+/// The opening explorer is asked with the account's token; without one it is not asked at all
+/// (`setupPositionLookup.ts`), and the tablebase never carries a login.
+#[tokio::test]
+async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_is() {
+    let fixture = serve(|_| Reply::Json(200, opening_body().to_string())).await;
+    let with_login = lookups(&fixture.base, 1_000)
+        .service
+        .with_login(Arc::new(FixedLogin(Some("lip_alice".into()))));
+    with_login
+        .lookup(
+            &json!("opening"),
+            &json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+            None,
+        )
+        .await
+        .expect("the explorer answers");
+    let sent = fixture.requests();
+    assert_eq!(sent[0].header("authorization"), Some("Bearer lip_alice"));
+
+    let fixture = serve(|_| Reply::Json(200, opening_body().to_string())).await;
+    let signed_out = lookups(&fixture.base, 1_000)
+        .service
+        .with_login(Arc::new(FixedLogin(None)));
+    let error = signed_out
+        .lookup(
+            &json!("opening"),
+            &json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.message,
+        "Connect a Lichess account in Settings to use the opening explorer."
+    );
+    assert!(
+        fixture.requests().is_empty(),
+        "no request is sent without a login"
+    );
+
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({ "category": "win", "dtz": 1, "moves": [] }).to_string(),
+        )
+    })
+    .await;
+    let tablebase = lookups(&fixture.base, 1_000)
+        .service
+        .with_login(Arc::new(FixedLogin(Some("lip_alice".into()))));
+    tablebase
+        .lookup(
+            &json!("tablebase"),
+            &json!("8/8/8/8/8/8/8/k3K2R w - - 0 1"),
+            None,
+        )
+        .await
+        .expect("the tablebase answers");
+    assert_eq!(fixture.requests()[0].header("authorization"), None);
+}

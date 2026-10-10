@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::watch;
@@ -442,6 +443,15 @@ pub struct PositionLookups {
     cache: Arc<dyn LookupCache>,
     now: Arc<dyn Fn() -> i64 + Send + Sync>,
     pending: Mutex<HashMap<String, Pending>>,
+    /// The login the explorer is asked with; None sends no login (tests).
+    login: Option<Arc<dyn ExplorerLogin>>,
+}
+
+/// The login the opening explorer and master games are asked with: the account the explorer is set
+/// to use, and its token (`setupPositionLookup.ts`). Tablebase lookups never carry it.
+pub trait ExplorerLogin: Send + Sync {
+    /// The token of the explorer's account, or None when no account is set or it has no login.
+    fn token(&self) -> BoxFuture<'_, CoreResult<Option<String>>>;
 }
 
 impl PositionLookups {
@@ -458,7 +468,26 @@ impl PositionLookups {
             cache,
             now,
             pending: Mutex::new(HashMap::new()),
+            login: None,
         }
+    }
+
+    /// Asks the explorer and master games with `login`'s token. Without a token the explorer is
+    /// not asked at all: it requires a Lichess login.
+    pub fn with_login(mut self, login: Arc<dyn ExplorerLogin>) -> PositionLookups {
+        self.login = Some(login);
+        self
+    }
+
+    /// A request to the explorer (not the tablebase), with the explorer's login when one is set.
+    async fn explorer_request(&self, url: reqwest::Url) -> CoreResult<reqwest::RequestBuilder> {
+        let Some(login) = &self.login else {
+            return Ok(self.http.get(url));
+        };
+        let token = login.token().await?.ok_or_else(|| {
+            CoreError::new("Connect a Lichess account in Settings to use the opening explorer.")
+        })?;
+        Ok(self.http.get(url).bearer_auth(token))
     }
 
     /// `lookup(kind, fen, options)`.
@@ -662,7 +691,12 @@ impl PositionLookups {
     /// Requests a lookup and reads its body, bounded by the kind's size limit.
     async fn fetch(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<String> {
         let url = self.url(kind, fen, options)?;
-        let mut response = self.http.get(url).send().await.map_err(|_| {
+        let request = if kind == Kind::Tablebase {
+            self.http.get(url)
+        } else {
+            self.explorer_request(url).await?
+        };
+        let mut response = request.send().await.map_err(|_| {
             CoreError::new("Position lookup failed. Check your connection and retry.")
         })?;
         let status = response.status().as_u16();
@@ -706,8 +740,10 @@ impl PositionLookups {
         let url = format!("{}/{id}", self.endpoints.masters_game);
         let attempt = async {
             let response = self
-                .http
-                .get(url)
+                .explorer_request(
+                    reqwest::Url::parse(&url).map_err(|_| CoreError::new("Invalid id."))?,
+                )
+                .await?
                 .send()
                 .await
                 .map_err(|_| CoreError::new("The master game could not be loaded."))?;

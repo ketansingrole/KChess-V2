@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, Reply};
-use super::adapters::{DbLichessStore, DbLookups, DbTokens};
+use super::adapters::{DbExplorerLogin, DbLichessStore, DbLookups, DbTokens};
 use super::challenges::ChallengeInfo;
 use super::client::{LichessClient, TokenSource};
 use super::lookups::{CloudCache, Endpoints, PositionLookups, cloud_eval};
@@ -99,7 +99,11 @@ impl Services {
             endpoints,
             Arc::new(DbLookups::new(Arc::clone(&database))),
             Arc::new(super::accounts::now_ms),
-        );
+        )
+        .with_login(Arc::new(DbExplorerLogin::new(
+            Arc::clone(&database),
+            Arc::clone(&tokens),
+        )));
         Services {
             lichess,
             tokens,
