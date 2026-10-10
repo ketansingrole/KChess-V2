@@ -37,16 +37,30 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  deleteManagedEngine,
-  installManagedEngine,
-  managedEngine,
-} from '../core/src/services/managedEngine.ts'
+import { nativeCall } from '../core/src/services/nativeCore.ts'
 import { pickMacAsset } from '../core/src/services/stockfishAsset.ts'
 import { setPlatform } from '../core/src/services/platform.ts'
 import { installNativeRules } from './native-rules.ts'
 
 installNativeRules()
+
+// The managed engine's test locations (a directory and a release endpoint) reach the Rust core's
+// `managedEngine.*` methods directly; the core honours them only with its test switch on.
+interface TestLocation {
+  dir: string
+  releaseUrl?: string
+}
+let installRequests = 0
+const managedEngine = (location: TestLocation) =>
+  nativeCall<{ installed: boolean; version?: string }>('managedEngine.status', location)
+const installManagedEngine = (location: TestLocation) =>
+  nativeCall<{ path: string; version: string; updated: boolean }>(
+    'managedEngine.install',
+    ++installRequests,
+    location,
+  )
+const deleteManagedEngine = (location: TestLocation) =>
+  nativeCall<unknown>('managedEngine.delete', ++installRequests, location)
 // The engine calls run through the Rust core: it needs a platform, and the test-only directory
 // and release overrides of the managed engine need the test switch. Handoff refusals are covered
 // by the Rust tests.

@@ -4,8 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import * as library from '../../../../core/src/services/library'
-import { closeNativeCore } from '../../../../core/src/services/nativeCore'
+import { closeNativeCore, nativeCallSync } from '../../../../core/src/services/nativeCore'
 import { useTestDatabase, type TestDatabase } from '../../../../tests/fixtures/nativeStore'
 import {
   assertArchivedGameShape,
@@ -13,12 +12,56 @@ import {
   assertSession,
   assertSessionKind,
   assertStudyCommandShape,
+  type ArchivedGame,
+  type JoinedTournament,
   type LegacyDocuments,
+  type LibrarySnapshot,
+  type MistakeExercise,
+  type RepertoireMisses,
+  type SessionKind,
+  type StudyCommand,
+  type StudyCommandResult,
 } from '@kchess/core/domain/library'
 import { assertArchivedGame, assertStudyCommand } from '../../../../core/src/services/rules'
 import type { CoreApi } from '@kchess/core/contracts/types'
 import { setInitialLibrary } from '../../app/utils/library'
 import { testGeneration, type LibraryMethod } from './testLibrary'
+
+/**
+ * The Rust core's library storage (`store.library.*`), as the tests call it: the clock is passed
+ * in, as the app's frontends pass it.
+ */
+const library = {
+  library: (now = Date.now()) => nativeCallSync<LibrarySnapshot>('store.library.library', now),
+  importLibrary: (documents: LegacyDocuments) =>
+    nativeCallSync<LibrarySnapshot>('store.library.importLibrary', documents),
+  studyCommand: (command: StudyCommand, now = Date.now()) =>
+    nativeCallSync<StudyCommandResult>('store.library.studyCommand', command, now),
+  saveArchivedGame: (game: ArchivedGame): void => {
+    nativeCallSync('store.library.saveArchivedGame', game)
+  },
+  removeArchivedGame: (id: string): void => {
+    nativeCallSync('store.library.removeArchivedGame', id)
+  },
+  addMistakes: (key: string, color?: string, now = Date.now()) =>
+    nativeCallSync<{ added: number; items: MistakeExercise[] }>(
+      'store.library.addMistakes',
+      key,
+      color ?? null,
+      now,
+    ),
+  answerMistake: (id: string, solved: boolean, now = Date.now()) =>
+    nativeCallSync<MistakeExercise[]>('store.library.answerMistake', id, solved, now),
+  saveSession: (kind: SessionKind, session: unknown): void => {
+    nativeCallSync('store.library.saveSession', kind, session)
+  },
+  joinedTournaments: (now = Date.now()) =>
+    nativeCallSync<JoinedTournament[]>('store.library.joinedTournaments', now),
+  recordRepertoireMiss: (key: string, fen: string) =>
+    nativeCallSync<RepertoireMisses>('store.library.recordRepertoireMiss', key, fen),
+  clearRepertoireMisses: (key: string) =>
+    nativeCallSync<RepertoireMisses>('store.library.clearRepertoireMisses', key),
+}
 
 let directory: string | undefined
 let database: TestDatabase | undefined

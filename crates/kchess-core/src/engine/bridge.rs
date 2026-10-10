@@ -169,8 +169,8 @@ pub struct ReviewBridge {
     pub lichess: Arc<crate::lichess::accounts::Lichess>,
     pub search: Search,
     pub analysis: Analysis,
-    /// `engine.setBusy`: a live online game (or its recovery) is in progress.
-    pub online: Arc<AtomicBool>,
+    /// Whether a live online game (or its recovery) is in progress, read when the queue works.
+    pub online: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 #[derive(Deserialize)]
@@ -213,7 +213,7 @@ impl ReviewHost for ReviewBridge {
     }
 
     fn busy(&self) -> Option<Pause> {
-        if self.online.load(Ordering::SeqCst) {
+        if (self.online)() {
             Some(Pause::Online)
         } else if self.analysis.analysis_running() || self.search.computer_playing(60_000) {
             // The computer opponent counts as busy for a minute after its move: the game goes on.

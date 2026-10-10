@@ -78,7 +78,7 @@ fn profile() -> tempfile::TempDir {
 }
 
 fn core(host: &Arc<Wire>, dir: &Path) -> Core {
-    Core::new(Config::new(dir.to_path_buf()), host.clone())
+    Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens")
 }
 
 /// An executable that runs the scripted fake engine in `mode`, so a configured engine path can

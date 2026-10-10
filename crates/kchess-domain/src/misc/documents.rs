@@ -733,7 +733,7 @@ mod tests {
         )]);
         assert_eq!(
             decode_repertoire_misses(&raw).into_value(),
-            serde_json::json!({ "study:white": { "fen-a": 2.0 } })
+            serde_json::json!({ "study:white": { "fen-a": 2 } })
         );
     }
 

@@ -58,6 +58,13 @@ impl J {
         match self {
             J::Undef | J::Null | J::Bytes { .. } => Value::Null,
             J::Bool(b) => Value::Bool(b),
+            // Integral numbers go out as integers, as `JSON.stringify` writes them, so a consumer
+            // reading an integer (an id, a page) accepts the normalized value.
+            J::Num(n)
+                if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0 =>
+            {
+                Value::from(n as i64)
+            }
             J::Num(n) => serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number),
             J::Str(s) => Value::String(s),
             J::Arr(items) => Value::Array(items.into_iter().map(J::into_value).collect()),

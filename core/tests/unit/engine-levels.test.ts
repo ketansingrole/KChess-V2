@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { useTestPlatform } from '../../../tests/fixtures/corePlatform'
+import { testPlatform } from '../../../tests/fixtures/corePlatform'
+import { createKChessCore } from '../../src/services/service'
 import {
   DEFAULT_ENGINE_LEVELS,
   ENGINE_LADDER,
@@ -12,10 +13,11 @@ import { assertSettings } from '../../src/domain/validate'
 import { DEFAULT_SETTINGS } from '../../src/contracts/defaultSettings'
 
 // The bundled Stockfish is found relative to the app; here that is the repository.
-useTestPlatform()
-const { bestMove, stopEngine } = await import('../../src/services/engine')
+const core = createKChessCore(testPlatform())
+// Assistance waits until the core has confirmed there is no live game (as the desktop starts it).
+await core.resumeOnline()
 
-afterAll(() => stopEngine(true))
+afterAll(() => core.close())
 
 describe('engine level ladder', () => {
   it('covers every level, weakest to strongest', () => {
@@ -55,7 +57,7 @@ describe('engine levels (bundled Stockfish)', () => {
   it.each(['beginner', 'casual', 'max'] as const)(
     '%s plays a legal move',
     async (level) => {
-      const move = await bestMove(['e2e4'], level, '', { movetime: 100 })
+      const move = await core.bestMove(['e2e4'], level, { movetime: 100 })
       expect(move).toMatch(/^[a-h][1-8][a-h][1-8][nbrq]?$/)
       expect(move[1]).toMatch(/[78]/) // Black's piece or pawn
     },
@@ -66,7 +68,7 @@ describe('engine levels (bundled Stockfish)', () => {
     const random = vi.spyOn(Math, 'random').mockReturnValue(0)
     try {
       // The rook on a1 checks the king on h1; its only escape is h2.
-      const move = await bestMove([], 'beginner', '', { fen: '7k/8/8/8/8/8/6P1/r6K w - - 0 1' })
+      const move = await core.bestMove([], 'beginner', { fen: '7k/8/8/8/8/8/6P1/r6K w - - 0 1' })
       expect(move).toBe('h1h2')
     } finally {
       random.mockRestore()

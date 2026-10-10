@@ -3,18 +3,28 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeEach, expect, it } from 'vitest'
 import { INITIAL_FEN } from '../../src/domain/position'
-import { closeNativeCore } from '../../src/services/nativeCore'
+import { closeNativeCore, nativeCall, nativeCallSync } from '../../src/services/nativeCore'
 import { useTestDatabase, type TestDatabase } from '../../../tests/fixtures/nativeStore'
-import {
-  writeReview,
-  readReview,
-  reviewSummaries,
-  gamesToReview,
-} from '../../src/services/reviewStore'
-import { insights } from '../../src/services/insights'
 import { reviewKey } from '../../src/domain/review'
 import type { StoredReview } from '../../src/contracts/types'
-import { requestReview, stopReviews } from '../../src/services/review'
+
+// The review associations are the store's: these tests write and read them through the core's
+// storage methods, on one temporary profile with no engine (they never start a search).
+const writeReview = (review: StoredReview) =>
+  nativeCallSync<{ review: StoredReview; summary: { complete: boolean } }>(
+    'store.reviewStore.writeReview',
+    review,
+  )
+const readReview = (key: string) =>
+  nativeCallSync<StoredReview | null>('store.reviewStore.readReview', key)
+const reviewSummaries = (ids: string[]) =>
+  nativeCallSync<Record<string, { complete: boolean }>>('store.reviewStore.reviewSummaries', ids)
+const gamesToReview = (accounts: string[]) =>
+  nativeCallSync<unknown[]>('store.reviewStore.gamesToReview', accounts, 0, 300)
+const insights = (query: { account: string }) =>
+  nativeCallSync<{ accuracy?: { games: number } }>('store.insights.insights', query)
+const requestReview = (request: { fen: string; moves: string[]; gameId: string }) =>
+  nativeCall<StoredReview | null>('reviews.request', request)
 
 const dataDir = mkdtempSync(join(tmpdir(), 'kchess-associations-'))
 let db: TestDatabase
@@ -36,7 +46,7 @@ beforeEach(async () => {
   db.exec('DELETE FROM game_reviews; DELETE FROM reviews; DELETE FROM games')
 })
 afterAll(async () => {
-  await stopReviews()
+  await nativeCall('reviews.stop')
   await closeNativeCore()
   rmSync(dataDir, { recursive: true, force: true })
 })

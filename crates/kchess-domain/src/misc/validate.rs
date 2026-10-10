@@ -1163,6 +1163,92 @@ fn str_list(v: Option<&J>) -> Vec<&str> {
     }
 }
 
+// `CORE_CONTRACTS` `lines` (`cloudEval`): an integer from 1 to 5.
+schema_validator!(
+    assert_lines_v,
+    pipe(
+        Schema::Num(None),
+        vec![
+            Action::Integer(None),
+            Action::MinValue(1.0, None),
+            Action::MaxValue(5.0, None),
+        ],
+    )
+);
+
+// `CORE_CONTRACTS` `lookupKind`: one of the position lookups.
+schema_validator!(
+    assert_lookup_kind_v,
+    picklist_str(&["opening", "masters", "player", "tablebase"], None)
+);
+
+// `CORE_CONTRACTS` `optionalPage` (`tournament`): nothing, or a page from 1 to 200.
+schema_validator!(
+    assert_optional_page_v,
+    optional(pipe(
+        Schema::Num(None),
+        vec![
+            Action::Integer(None),
+            Action::MinValue(1.0, None),
+            Action::MaxValue(200.0, None),
+        ],
+    ))
+);
+
+// `CORE_CONTRACTS` `optionalFlag` (`recentGames`): nothing, or a boolean.
+schema_validator!(assert_optional_flag_v, optional(Schema::Bool(None)));
+
+// `CORE_CONTRACTS` `boolean` (`answerMistake`): a boolean.
+schema_validator!(assert_boolean_v, Schema::Bool(None));
+
+// `CORE_CONTRACTS` `chapterName`: a trimmed name of 1 to 100 characters.
+schema_validator!(
+    assert_chapter_name_v,
+    pipe(
+        Schema::Str(None),
+        vec![
+            Action::Trim,
+            Action::MinLength(1, None),
+            Action::MaxLength(100, None),
+        ],
+    )
+);
+
+// `CORE_CONTRACTS` `pgn` (`exportToLichessStudy`): 1 to 500,000 characters with some content.
+schema_validator!(
+    assert_pgn_text_v,
+    pipe(
+        Schema::Str(None),
+        vec![
+            Action::MinLength(1, None),
+            Action::MaxLength(500_000, None),
+            Action::Check {
+                check: |value| matches!(value, J::Str(text) if !text.trim().is_empty()),
+                msg: None,
+            },
+        ],
+    )
+);
+
+// `CORE_CONTRACTS` `sessionObject` (`saveSession`): any object; the session is checked after it.
+schema_validator!(
+    assert_session_object_v,
+    Schema::Object {
+        entries: Vec::new(),
+        msg: None,
+        strict: false,
+    }
+);
+
+// `CORE_CONTRACTS` `studyId` (`exportToLichessStudy`): nothing (a new study) or a Lichess id.
+fn assert_study_id_v(mut args: Vec<J>) -> Result<J, String> {
+    let value = take(&mut args, 0);
+    if matches!(&value, J::Str(text) if text.is_empty()) {
+        return Ok(value);
+    }
+    assert_lichess_id_v(vec![value])
+}
+
 /// The validators by their TypeScript names.
 pub fn validator(method: &str) -> Option<Validator> {
     Some(match method {
@@ -1214,6 +1300,15 @@ pub fn validator(method: &str) -> Option<Validator> {
         "assertStudySyncRequest" => assert_study_sync_request_v,
         "assertBroadcastQuery" => assert_broadcast_query_v,
         "assertLookupOptions" => assert_lookup_options_v,
+        "assertLines" => assert_lines_v,
+        "assertLookupKind" => assert_lookup_kind_v,
+        "assertOptionalPage" => assert_optional_page_v,
+        "assertOptionalFlag" => assert_optional_flag_v,
+        "assertBoolean" => assert_boolean_v,
+        "assertChapterName" => assert_chapter_name_v,
+        "assertPgnText" => assert_pgn_text_v,
+        "assertSessionObject" => assert_session_object_v,
+        "assertStudyId" => assert_study_id_v,
         _ => return None,
     })
 }

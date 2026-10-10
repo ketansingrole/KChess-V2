@@ -5,10 +5,13 @@
 //! exactly the values the TypeScript validator saw.
 
 mod constants;
+mod contracts;
 mod documents;
 mod engine;
 mod patterns;
 mod validate;
+
+pub use contracts::{TV_CHANNEL_KEYS, normalize, validate_arguments};
 
 use engine::J;
 use serde_json::Value;

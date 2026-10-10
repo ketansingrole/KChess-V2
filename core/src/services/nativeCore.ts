@@ -3,16 +3,18 @@ import { nativeRules, type NativeCoreHandle } from './native.ts'
 import { logDebug, logError, logInfo, logWarn } from './logger.ts'
 
 /**
- * The Rust core's services (`crates/kchess-core`), one instance per core scope, while the core
- * migrates to Rust (`RUST_MIGRATION.md`). Its logs go to the core logger; its events reach
- * the handlers registered with `onNativeEvent`, and `host:*` events ask TypeScript services
- * that have not moved yet to act.
+ * The Rust core (`crates/kchess-core`), one instance per core scope. Its logs go to the core
+ * logger; its events reach the handlers registered with `onNativeEvent` or `onNativeEvents`, and
+ * `host:request` asks the host for a capability (`capability` below).
  */
 type Handler = (payload: unknown) => void
+type Sink = (event: string, payload: unknown) => void
 
 const state = scopedState(() => ({
   core: undefined as NativeCoreHandle | undefined,
+  closed: false,
   handlers: new Map<string, Set<Handler>>(),
+  sinks: new Set<Sink>(),
 }))
 
 const LOG = { debug: logDebug, info: logInfo, warn: logWarn, error: logError } as const
@@ -22,6 +24,7 @@ function handle(event: string, payload: unknown): void {
     void answer(payload as { id: number; kind: string; payload: unknown })
     return
   }
+  for (const sink of state.sinks) sink(event, payload)
   for (const handler of state.handlers.get(event) ?? []) handler(payload)
 }
 
@@ -62,7 +65,12 @@ async function answer(request: { id: number; kind: string; payload: unknown }): 
   }
 }
 
+/**
+ * The scope's native core. Creating it claims the profile: a second live core for the same
+ * profile throws `A KChess core is already running for this profile.`
+ */
 function core(): NativeCoreHandle {
+  if (state.closed) throw new Error('The KChess core is closed.')
   if (state.core) return state.core
   const rules = nativeRules()
   if (!rules) throw new Error('The native core is not built (pnpm run build:native).')
@@ -86,6 +94,11 @@ function core(): NativeCoreHandle {
     }),
   )
   return state.core
+}
+
+/** Opens the scope's native core now, so a profile in use is reported at once. */
+export function openNativeCore(): void {
+  core()
 }
 
 /** Call a Rust core method; rejects with its message (an `AbortError` when cancelled). */
@@ -113,10 +126,18 @@ export function onNativeEvent<T>(event: string, handler: (payload: T) => void): 
   return () => handlers.delete(handler as Handler)
 }
 
+/** Receive every Rust core event (name and payload) until the returned function is called. */
+export function onNativeEvents(sink: Sink): () => void {
+  state.sinks.add(sink)
+  return () => state.sinks.delete(sink)
+}
+
 /** Cancel the Rust core's work and release its files. */
 export async function closeNativeCore(): Promise<void> {
   const previous = state.core
   state.core = undefined
+  state.closed = true
   state.handlers.clear()
+  state.sinks.clear()
   await previous?.close()
 }

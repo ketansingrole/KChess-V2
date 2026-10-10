@@ -32,7 +32,7 @@ base64 = "0.22"
 
 # `CancellationToken`: the AbortSignal of the engine controllers and scheduler. Already in
 # Cargo.lock through reqwest; no new code is pulled in.
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # libc: `access(2)` for engine/status.rs, and SIGTERM before SIGKILL as Node's
 # `ChildProcess.kill()` does (tokio can only send SIGKILL).

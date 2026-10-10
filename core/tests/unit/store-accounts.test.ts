@@ -28,7 +28,7 @@ import {
   saveLogin,
   saveSettings,
   writeApiCache,
-} from '../../src/services/store'
+} from '../../../tests/fixtures/nativeGames'
 import { fakeSecrets, testPlatform } from '../../../tests/fixtures/corePlatform'
 import type { SecretStore } from '../../src/services/platform'
 
@@ -101,6 +101,8 @@ describe('logins and tokens', () => {
         throw new Error('keychain locked')
       },
     }
+    // One live core per profile: the first one closes before the same profile opens again.
+    await closeNativeCore()
     setPlatform(testPlatform({ dataDir, secrets: broken }))
     expect(await getToken('Alice')).toBeNull()
     setPlatform(testPlatform({ dataDir, secrets }))

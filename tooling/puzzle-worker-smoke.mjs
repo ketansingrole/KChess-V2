@@ -39,7 +39,7 @@ const core = new native.NativeCore(
   },
   (json) => {
     const { event, payload: progress } = JSON.parse(json)
-    if (event !== 'puzzles:progress') return
+    if (event !== 'puzzledb:progress') return
     phases.push(progress.phase)
     if (progress.phase === 'importing' && cancelOnImport) {
       cancelOnImport = false
