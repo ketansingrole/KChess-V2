@@ -30,7 +30,48 @@ function handle(event: string, payload: unknown): void {
     recordUsage(usage.account, usage.category, usage.requests, usage.bytes)
     return
   }
+  if (event === 'host:request') {
+    void answer(payload as { id: number; kind: string; payload: unknown })
+    return
+  }
   for (const handler of state.handlers.get(event) ?? []) handler(payload)
+}
+
+/** What the Rust core may ask of the host platform (`crates/kchess-core/src/capabilities.rs`). */
+async function capability(kind: string, payload: unknown): Promise<unknown> {
+  const host = platform()
+  switch (kind) {
+    case 'secrets.available':
+      return host.secrets.available()
+    case 'secrets.encrypt':
+      return host.secrets.encrypt(String(payload))
+    case 'secrets.decrypt':
+      return host.secrets.decrypt(String(payload))
+    case 'openExternal':
+      return host.openExternal(String(payload))
+    case 'focus':
+      return host.focus?.()
+    case 'onBattery':
+      return host.onBattery()
+    default:
+      throw new Error(`Unknown host capability ${kind}.`)
+  }
+}
+
+/** Answer a `host:request`; the core bounds how long it waits. Never logs the payload. */
+async function answer(request: { id: number; kind: string; payload: unknown }): Promise<void> {
+  let reply: { value: unknown } | { error: string }
+  try {
+    reply = { value: (await capability(request.kind, request.payload)) ?? null }
+  } catch (cause) {
+    logWarn('native-core', 'Host capability failed:', request.kind, cause)
+    reply = { error: cause instanceof Error ? cause.message : String(cause) }
+  }
+  try {
+    await nativeCall('host.reply', request.id, reply)
+  } catch (cause) {
+    logDebug('native-core', 'Host reply was not delivered:', request.kind, cause)
+  }
 }
 
 function core(): NativeCoreHandle {

@@ -4,6 +4,7 @@
 use serde_json::Value;
 use std::sync::Arc;
 
+use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host};
 use crate::puzzles::PuzzleService;
@@ -12,6 +13,8 @@ pub struct Core {
     config: Config,
     host: Arc<dyn Host>,
     puzzles: PuzzleService,
+    /// What the core asks of its host (secrets, browser, focus, power).
+    capabilities: Arc<Capabilities>,
     /// `kchess.db`, opened on first use.
     db: std::sync::Mutex<Option<rusqlite::Connection>>,
 }
@@ -29,6 +32,7 @@ impl Core {
     pub fn new(config: Config, host: Arc<dyn Host>) -> Core {
         Core {
             puzzles: PuzzleService::new(config.clone(), Arc::clone(&host)),
+            capabilities: Arc::new(Capabilities::new(Arc::clone(&host))),
             config,
             host,
             db: std::sync::Mutex::new(None),
@@ -38,6 +42,19 @@ impl Core {
     /// Run one method. Unknown methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         match method {
+            "host.reply" => {
+                let id: u64 = arg(&args, 0, "id")?;
+                self.capabilities
+                    .reply(id, args.get(1).unwrap_or(&Value::Null));
+                Ok(Value::Null)
+            }
+            // Test-only: ask the host for a capability and return its answer.
+            "host.ask" if crate::store::debug::enabled() => {
+                let kind: String = arg(&args, 0, "kind")?;
+                self.capabilities
+                    .request(&kind, args.get(1).cloned().unwrap_or(Value::Null))
+                    .await
+            }
             "puzzles.status" => json(self.puzzles.status().await?),
             "puzzles.install" => {
                 let url: String = arg(&args, 0, "url")?;
@@ -90,7 +107,13 @@ impl Core {
     }
 
     /// Cancel running work and release files; later calls fail.
+    /// The host capabilities, for services that need them.
+    pub fn capabilities(&self) -> Arc<Capabilities> {
+        Arc::clone(&self.capabilities)
+    }
+
     pub async fn close(&self) {
+        self.capabilities.close();
         self.puzzles.close().await;
         if let Ok(mut db) = self.db.lock() {
             db.take();
