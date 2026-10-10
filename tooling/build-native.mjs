@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { writeRustLicenses } from './rust-licenses.mjs'
 
@@ -12,10 +12,22 @@ import { writeRustLicenses } from './rust-licenses.mjs'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const debug = process.argv.includes('--debug')
 const profile = debug ? 'debug' : 'release'
-execFileSync('cargo', ['build', '-p', 'kchess-node', '--locked', ...(debug ? [] : ['--release'])], {
-  cwd: root,
-  stdio: 'inherit',
-})
+execFileSync(
+  'cargo',
+  [
+    'build',
+    '-p',
+    'kchess-node',
+    '--locked',
+    ...(debug ? [] : ['--release']),
+    // MSVC's DLL carries more code/unwind data than the other hosts. Optimize
+    // the shipped Windows core for size while retaining unwinding and N-API exports.
+    ...(!debug && process.platform === 'win32'
+      ? ['--config', 'profile.release.opt-level="z"']
+      : []),
+  ],
+  { cwd: root, stdio: 'inherit' },
+)
 const library = {
   darwin: 'libkchess_node.dylib',
   linux: 'libkchess_node.so',
@@ -26,7 +38,9 @@ const source = `${root}target/${profile}/${library}`
 if (!existsSync(source)) throw new Error(`Cargo did not produce ${source}.`)
 const target = `${root}crates/kchess-node/kchess-native.${process.platform}-${process.arch}.node`
 copyFileSync(source, target)
-console.info(`[kchess] Built ${target.slice(root.length)} (${profile}).`)
+console.info(
+  `[kchess] Built ${target.slice(root.length)} (${profile}, ${(statSync(target).size / 1024 / 1024).toFixed(2)} MiB).`,
+)
 
 const wasmProfile = debug ? 'dev' : 'wasm'
 execFileSync(
