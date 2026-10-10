@@ -83,8 +83,9 @@ current() after every await before committing state. Across IPC, explicitly stop
 the main service as Watch does; rejecting a late reply alone does not stop work.
 
 Use SubscriptionScope for one listener set per owner and detach it on teardown.
-Use withEngineLease for engine configuration/search; it releases scheduler
-ownership in finally on success, failure and cancellation. UciController still
+Use `EngineContext::lease` (`crates/kchess-core/src/engine/mod.rs`) for engine configuration/search;
+it releases scheduler ownership in finally on success, failure and cancellation. `UciController`
+(`engine/uci.rs`) still
 owns process deadlines and UCI pipes.
 
 For each escaped regression, preserve the reproducer and test its sequence:

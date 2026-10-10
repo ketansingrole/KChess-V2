@@ -72,14 +72,15 @@ fn stopped_unexpectedly() -> CoreError {
 pub struct EngineHub {
     host: Arc<dyn Host>,
     exit_deadline: Duration,
-    maintenance: AtomicBool,
+    maintenance: Arc<AtomicBool>,
     controllers: Mutex<Vec<Weak<Inner>>>,
 }
 
-/// Clears the maintenance flag on every exit path.
-struct MaintenanceFlag<'a>(&'a AtomicBool);
+/// Holds the maintenance flag: no engine may start while it lives. Dropping it clears the flag
+/// on every exit path.
+pub struct MaintenanceHold(Arc<AtomicBool>);
 
-impl Drop for MaintenanceFlag<'_> {
+impl Drop for MaintenanceHold {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
     }
@@ -90,9 +91,21 @@ impl EngineHub {
         EngineHub {
             host,
             exit_deadline: EXIT_DEADLINE,
-            maintenance: AtomicBool::new(false),
+            maintenance: Arc::new(AtomicBool::new(false)),
             controllers: Mutex::new(Vec::new()),
         }
+    }
+
+    /// `withEngineMaintenance`'s first half: refuses new engines, runs `stop_owners`, and waits
+    /// for every engine to exit. The returned hold keeps engines refused until it is dropped.
+    pub async fn suspend(&self, stop_owners: impl FnOnce()) -> Result<MaintenanceHold> {
+        self.assert_available()?;
+        self.maintenance.store(true, Ordering::SeqCst);
+        let hold = MaintenanceHold(Arc::clone(&self.maintenance));
+        stop_owners();
+        self.close_all("Stockfish did not exit. The previous engine was retained.")
+            .await?;
+        Ok(hold)
     }
 
     /// Replaces the 4 s exit deadline; tests use it to reach the retained-executable path quickly.
@@ -119,12 +132,7 @@ impl EngineHub {
     where
         Fut: Future<Output = Result<T>>,
     {
-        self.assert_available()?;
-        self.maintenance.store(true, Ordering::SeqCst);
-        let _flag = MaintenanceFlag(&self.maintenance);
-        stop_owners();
-        self.close_all("Stockfish did not exit. The previous engine was retained.")
-            .await?;
+        let _hold = self.suspend(stop_owners).await?;
         action().await
     }
 

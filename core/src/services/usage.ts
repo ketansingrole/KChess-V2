@@ -1,9 +1,9 @@
-import { scopedState, coreSignal, platform } from './platform'
+import { scopedState, coreSignal, platform } from './platform.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { logDebug, logWarn } from './logger'
-import { nativeCallSync } from './nativeCore'
+import { logDebug, logWarn } from './logger.ts'
+import { nativeCallSync } from './nativeCore.ts'
 import type { UsageCell, UsageKind, UsageReport } from '../contracts/types'
 
 /**

@@ -44,10 +44,12 @@ export default defineConfig({
         // these fail the run on real regressions, not on noise.
         lines: 45,
         functions: 32,
-        // 29, not 30: the main-database storage moved to Rust (2026-10-10), taking well-covered
+        // 28, down from 29: the main-database storage moved to Rust (2026-10-10), taking well-covered
         // TypeScript branches with it (29.92% after the move, 31.92% before); its behaviour is
         // pinned by the store golden suites and Rust tests, which this TypeScript measure omits.
-        branches: 29,
+        // Engines also moved to Rust (2026-10-10, 28.78% after); the floor follows the TypeScript
+        // as it shrinks, and a Rust coverage gate replaces it once the core's TypeScript is gone.
+        branches: 28,
         statements: 43,
       },
     },

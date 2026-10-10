@@ -34,6 +34,16 @@ impl Capabilities {
 
     /// Ask the host; its error message becomes the error.
     pub async fn request(&self, kind: &str, payload: Value) -> Result<Value> {
+        self.request_within(kind, payload, DEADLINE).await
+    }
+
+    /// `request` with its own bound, for host work that legitimately takes longer (Lichess).
+    pub async fn request_within(
+        &self,
+        kind: &str,
+        payload: Value,
+        deadline: Duration,
+    ) -> Result<Value> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = oneshot::channel();
         self.pending
@@ -44,7 +54,7 @@ impl Capabilities {
             "host:request",
             json!({ "id": id, "kind": kind, "payload": payload }),
         );
-        let answer = tokio::time::timeout(DEADLINE, receive).await;
+        let answer = tokio::time::timeout(deadline, receive).await;
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(&id);
         }

@@ -403,8 +403,7 @@ async fn attempt(
     let stop_token = token.clone();
     shared
         .ctx
-        .scheduler
-        .with_lease(3, move || stop_token.cancel(), token, async {
+        .lease(3, move || stop_token.cancel(), token, async {
             target.ready().await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());

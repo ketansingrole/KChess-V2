@@ -115,7 +115,7 @@ pub struct StoredReview {
 }
 
 /// What a store answers when it saves a review: the review kept and its summary.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReviewUpdate {
     pub review: StoredReview,
     /// `ReviewSummary`, as the store computes it.
@@ -1136,8 +1136,7 @@ async fn search_once(
     let score = Arc::new(Mutex::new(ReviewEval::default()));
     let stop_token = token.clone();
     s.ctx
-        .scheduler
-        .with_lease(1, move || stop_token.cancel(), token, async {
+        .lease(1, move || stop_token.cancel(), token, async {
             let host = host_of(s);
             if job.cancelled.load(Ordering::SeqCst)
                 || host

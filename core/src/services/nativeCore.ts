@@ -1,8 +1,20 @@
-import { bindCoreCallback, platform, scopedState } from './platform'
-import { nativeRules, type NativeCoreHandle } from './native'
-import { logDebug, logError, logInfo, logWarn } from './logger'
-import { recordUsage } from './usage'
-import type { UsageKind } from '../contracts/types'
+import { bindCoreCallback, platform, scopedState } from './platform.ts'
+import { nativeRules, type NativeCoreHandle } from './native.ts'
+import { logDebug, logError, logInfo, logWarn } from './logger.ts'
+import { recordUsage } from './usage.ts'
+import type { UsageKind, StoredReview } from '../contracts/types'
+
+type LichessReviews = (account: string, ids: string[]) => Promise<StoredReview[]>
+
+const providers = scopedState(() => ({ lichessReviews: undefined as LichessReviews | undefined }))
+
+/**
+ * Provides Lichess analysis for reviews (`lichess.reviews`). Lichess is still TypeScript, so the
+ * service registers it when the core opens.
+ */
+export function provideLichessReviews(fetch: LichessReviews): void {
+  providers.lichessReviews = fetch
+}
 
 /**
  * The Rust core's services (`crates/kchess-core`), one instance per core scope, while the core
@@ -53,6 +65,13 @@ async function capability(kind: string, payload: unknown): Promise<unknown> {
       return host.focus?.()
     case 'onBattery':
       return host.onBattery()
+    // Transitional: Lichess is still TypeScript, so the Rust review queue asks for its analysis here.
+    case 'lichess.reviews': {
+      const { account, ids } = payload as { account: string; ids: string[] }
+      const fetch = providers.lichessReviews
+      if (!fetch) throw new Error('Lichess review lookup is unavailable.')
+      return fetch(account, ids)
+    }
     default:
       throw new Error(`Unknown host capability ${kind}.`)
   }
@@ -78,8 +97,16 @@ function core(): NativeCoreHandle {
   if (state.core) return state.core
   const rules = nativeRules()
   if (!rules) throw new Error('The native core is not built (pnpm run build:native).')
+  const host = platform()
   state.core = new rules.NativeCore(
-    { dataDir: platform().dataDir, legacyDatabasePath: platform().legacyDatabasePath },
+    {
+      dataDir: host.dataDir,
+      legacyDatabasePath: host.legacyDatabasePath,
+      bundledEnginePath: host.bundledEnginePath,
+      nodePath: process.execPath,
+      nodeEnv: host.nodeEnv,
+      managedEngineDir: host.managedEngineDir,
+    },
     bindCoreCallback((json: string) => {
       const line = JSON.parse(json) as { level: keyof typeof LOG; scope: string; message: string }
       LOG[line.level](line.scope, line.message)

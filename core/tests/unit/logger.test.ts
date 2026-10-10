@@ -10,7 +10,7 @@ import {
   uciCommandName,
 } from '../../src/services/logger'
 import { LichessError } from '../../src/domain/lichessError'
-import { SearchCancelled } from '../../src/services/uci'
+import { SearchCancelled } from '../../src/services/engine'
 
 afterEach(() => {
   vi.restoreAllMocks()

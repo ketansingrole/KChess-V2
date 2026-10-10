@@ -12,6 +12,10 @@ import { pickStockfishAsset } from '../../../../core/src/services/stockfishAsset
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { desktop, deferred } from './fixtures'
+import { useTestPlatform } from '../../../../tests/fixtures/corePlatform'
+
+// The release asset rules run in the Rust core, which needs a platform to exist.
+useTestPlatform()
 
 describe('PGN preservation over generated legal games', () => {
   it('round trips legal positions, headers, variations and annotations', () => {

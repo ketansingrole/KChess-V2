@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use super::managed::{ManagedEngine, Target, can_download, executable_name, managed_engine};
@@ -39,7 +39,7 @@ pub struct EngineLocations {
 }
 
 /// What `engine_status` reports (`EngineStatus` in the TypeScript contracts).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineStatus {
     pub ready: bool,
