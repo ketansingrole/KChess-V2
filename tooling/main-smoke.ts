@@ -443,10 +443,11 @@ const [upgraded, simultaneous] = await Promise.all([
   installManagedEngine(location),
   installManagedEngine(location),
 ])
+// Exactly one of the simultaneous installs replaces the engine; which one wins is not ordered.
 assert(
   'concurrent update downloads and replaces once',
-  [upgraded.updated, simultaneous.updated, assetDownloads],
-  [true, false, 2],
+  [[upgraded.updated, simultaneous.updated].filter(Boolean).length, assetDownloads],
+  [1, 2],
 )
 assert('newer release is recorded', (await managedEngine({ dir: engineDir })).version, 'sf_next')
 releaseTag = 'sf_next'
