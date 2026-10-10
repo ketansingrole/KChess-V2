@@ -291,7 +291,7 @@ impl PuzzleService {
         .await;
     }
 
-    /// Download, sample and store the puzzle database, reporting `puzzles:progress`.
+    /// Download, sample and store the puzzle database, reporting `puzzledb:progress`.
     pub async fn install(&self, url: String) -> Result<PuzzleDbStatus> {
         let download = {
             let mut running = self
@@ -486,6 +486,6 @@ impl Progress {
         if let Some(message) = message {
             payload["message"] = json!(message);
         }
-        self.host.emit("puzzles:progress", payload);
+        self.host.emit("puzzledb:progress", payload);
     }
 }

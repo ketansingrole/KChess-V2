@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { closeNativeCore, nativeCallSync } from '../../src/services/nativeCore'
 import { nativeRules } from '../../src/services/native'
 import { setPlatform } from '../../src/services/platform'
-import { getToken, getSettings, loadData, gamePage } from '../../src/services/store'
+import { getToken, getSettings, loadData, gamePage } from '../../../tests/fixtures/nativeGames'
 import { fakeSecrets, testPlatform } from '../../../tests/fixtures/corePlatform'
 
 /**

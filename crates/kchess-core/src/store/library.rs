@@ -1450,6 +1450,60 @@ mod tests {
         assert_eq!(keep_last(vec![1], 5), vec![1]);
     }
 
+    /// A host that records nothing: the store's logs are not under test here.
+    struct Quiet;
+
+    impl Host for Quiet {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _: &str, _: Value) {}
+    }
+
+    /// `library.test.ts`: an arena that has ended is dropped when the next one is remembered, and
+    /// forgetting an account drops its tournaments whatever the case of its name.
+    #[test]
+    fn ended_tournaments_and_those_of_signed_out_accounts_are_forgotten() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::store::migrations::migrate(&db).unwrap();
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let ctx = crate::store::StoreContext {
+            db: &db,
+            host: &Quiet,
+            config: &config,
+        };
+        let now = 1_700_000_000_000.0;
+        let entry = |system: &str, id: &str, account: &str, name: &str, until: f64| json!({ "system": system, "id": id, "account": account, "name": name, "until": until });
+        let remember = |item: Value| {
+            crate::store::call(
+                &ctx,
+                "store.library.rememberTournament",
+                &[item, json!(now)],
+            )
+            .unwrap()
+        };
+        remember(entry("arena", "ended", "Alice", "Old", now - 1.0));
+        remember(entry("arena", "live", "Alice", "Live", now + 60_000.0));
+        remember(entry("swiss", "other", "Bob", "Swiss", now + 60_000.0));
+        let ids = |value: Value| -> Vec<String> {
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let joined = |ctx: &crate::store::StoreContext| {
+            crate::store::call(ctx, "store.library.joinedTournaments", &[json!(now)]).unwrap()
+        };
+        assert_eq!(ids(joined(&ctx)), ["live", "other"]);
+        crate::store::call(
+            &ctx,
+            "store.library.forgetTournamentsOf",
+            &[json!(["alice"])],
+        )
+        .unwrap();
+        assert_eq!(ids(joined(&ctx)), ["other"]);
+    }
+
     #[test]
     fn spreads_keep_key_order_and_add_new_keys_last() {
         let base = json!({ "id": "s", "name": "old", "pgn": "p" });

@@ -242,6 +242,10 @@ struct Handle {
     token: CancellationToken,
 }
 
+/// What runs before each state is reported: given whether a live game (or the startup check) is in
+/// progress and whether assistance is blocked.
+type StateHook = Arc<dyn Fn(bool, bool) + Send + Sync>;
+
 struct Inner {
     lichess: Arc<Lichess>,
     tokens: Arc<dyn TokenSource>,
@@ -249,6 +253,9 @@ struct Inner {
     host: Arc<dyn Host>,
     challenges: ChallengeInbox,
     state: Mutex<State>,
+    /// Run before each state is reported: a live game stops the engines and the watch, and the
+    /// engines' busy state is refreshed.
+    state_hook: Mutex<Option<StateHook>>,
 }
 
 /// An online session. Cheap to clone; clones share the state and the streams.
@@ -415,6 +422,7 @@ impl OnlineSession {
                 host,
                 challenges,
                 state: Mutex::new(State::new()),
+                state_hook: Mutex::new(None),
             }),
         }
     }
@@ -460,6 +468,8 @@ impl OnlineSession {
         if let Some(message) = message {
             payload["message"] = json!(message);
         }
+        let live_game = phase == "checking" || (!game_id.is_empty() && phase != "idle");
+        self.run_state_hook(live_game, self.assistance_blocked());
         self.emit("online:state", payload);
     }
 
@@ -1934,6 +1944,27 @@ impl OnlineSession {
         let mut payload = event;
         payload["id"] = json!(game_id);
         self.emit("online:event", payload);
+    }
+
+    /// Sets the hook run before each state is reported, given whether a live game is in progress
+    /// and whether assistance is blocked (see `Inner::state_hook`).
+    pub fn set_state_hook(&self, hook: Arc<dyn Fn(bool, bool) + Send + Sync>) {
+        if let Ok(mut slot) = self.inner.state_hook.lock() {
+            *slot = Some(hook);
+        }
+    }
+
+    /// Runs the state hook, if any; called without the state lock held.
+    fn run_state_hook(&self, live_game: bool, blocked: bool) {
+        let hook = self
+            .inner
+            .state_hook
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook(live_game, blocked);
+        }
     }
 
     /// Whether a game is being played: the board, or a protected game not yet verified gone.

@@ -10,10 +10,11 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::watch;
+use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use crate::capabilities::Capabilities;
 use crate::engine::EngineContext;
@@ -29,8 +30,9 @@ use crate::engine::search::Search;
 use crate::engine::status::{EngineLocations, EngineStatus, engine_identity, engine_status};
 use crate::engine::uci::EngineHub;
 use crate::error::{CoreError, Result};
-use crate::host::{Config, Host, Level};
-use crate::lichess::services::Services;
+use crate::facade::{GatedHost, ProfileClaim};
+use crate::host::{Config, Host};
+use crate::lichess::services::{LiveGame, Services};
 use crate::puzzles::PuzzleService;
 use crate::store::Database;
 use crate::store::debug;
@@ -44,27 +46,39 @@ enum Mutation {
 }
 
 pub struct Core {
-    host: Arc<dyn Host>,
-    puzzles: PuzzleService,
+    pub(crate) host: Arc<dyn Host>,
+    pub(crate) puzzles: PuzzleService,
     /// What the core asks of its host (secrets, browser, focus, power).
-    capabilities: Arc<Capabilities>,
+    pub(crate) capabilities: Arc<Capabilities>,
     /// `kchess.db`, shared by the storage calls and the review queue.
-    database: Arc<Database>,
+    pub(crate) database: Arc<Database>,
     /// The battery reading the engine scheduler consults.
-    battery: Arc<Battery>,
+    pub(crate) battery: Arc<Battery>,
     battery_started: AtomicBool,
-    /// `engine.setBusy`: a live online game, or its recovery, is in progress.
-    online: Arc<AtomicBool>,
-    ctx: EngineContext,
-    search: Search,
-    analysis: Analysis,
-    reviews: Reviews,
+    pub(crate) ctx: EngineContext,
+    pub(crate) search: Search,
+    pub(crate) analysis: Analysis,
+    pub(crate) reviews: Reviews,
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
-    services: Services,
+    pub(crate) services: Services,
     /// Network accounting counters, batched before they reach the database.
-    usage: Arc<UsageBatch>,
+    pub(crate) usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
     installs: Mutex<HashMap<u64, watch::Sender<bool>>>,
+    /// Whether a live online game (or its recovery) blocks the engines, as of the last state.
+    busy: Arc<AtomicBool>,
+    /// Set when `close` starts: later facade calls fail and events stop.
+    pub(crate) closed: Arc<AtomicBool>,
+    /// The facade calls in flight; closing waits for them.
+    pub(crate) tracker: TaskTracker,
+    /// The one-time import of an earlier release (`ensureMigrated`).
+    pub(crate) migrated: OnceCell<()>,
+    /// The close in progress, shared by every `close` call.
+    pub(crate) closing: OnceCell<()>,
+    /// Ids for the managed engine requests the facade starts.
+    pub(crate) requests: AtomicU64,
+    /// This core's claim on its profile directory, released when it closes.
+    pub(crate) claim: ProfileClaim,
 }
 
 fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -141,7 +155,11 @@ fn engine_locations(config: &Config) -> EngineLocations {
 }
 
 impl Core {
-    pub fn new(config: Config, host: Arc<dyn Host>) -> Core {
+    /// Opens the core over `config`'s profile. Fails when a live core already owns that profile.
+    pub fn open(config: Config, host: Arc<dyn Host>) -> Result<Core> {
+        let claim = ProfileClaim::claim(&config.data_dir)?;
+        let closed = Arc::new(AtomicBool::new(false));
+        let host: Arc<dyn Host> = Arc::new(GatedHost::new(host, Arc::clone(&closed)));
         let database = Arc::new(Database::new(config.clone(), Arc::clone(&host)));
         let capabilities = Arc::new(Capabilities::new(Arc::clone(&host)));
         let battery = Battery::new(Arc::clone(&host));
@@ -160,6 +178,16 @@ impl Core {
         let search = Search::new(ctx.clone());
         let analysis = Analysis::new(ctx.clone());
         let reviews = Reviews::new(ctx.clone(), Arc::new(ReviewRecords(Arc::clone(&database))));
+        let busy = Arc::new(AtomicBool::new(false));
+        // A live game stops the computer, the analysis and the review engine before it is reported.
+        let game_stops: Arc<dyn Fn() + Send + Sync> = {
+            let (search, analysis, reviews) = (search.clone(), analysis.clone(), reviews.clone());
+            Arc::new(move || {
+                search.stop_engine(false);
+                analysis.stop_analysis(false);
+                reviews.restart_review_engine();
+            })
+        };
         // Usage events are counted in batches (`usage.ts`) before the services' host sees them.
         let usage = UsageBatch::new(
             Arc::clone(&database),
@@ -177,15 +205,18 @@ impl Core {
             Arc::clone(&usage),
             CancellationToken::new(),
             test_lichess_origin(),
+            LiveGame {
+                stops: game_stops,
+                busy: Arc::clone(&busy),
+            },
         );
-        Core {
+        Ok(Core {
             puzzles: PuzzleService::new(config, services_host),
             host,
             capabilities,
             database,
             battery,
             battery_started: AtomicBool::new(false),
-            online: Arc::new(AtomicBool::new(false)),
             ctx,
             search,
             analysis,
@@ -193,12 +224,28 @@ impl Core {
             services,
             usage,
             installs: Mutex::new(HashMap::new()),
-        }
+            busy,
+            closed,
+            tracker: TaskTracker::new(),
+            migrated: OnceCell::new(),
+            closing: OnceCell::new(),
+            requests: AtomicU64::new(0),
+            claim,
+        })
     }
 
-    /// Run one method. Unknown methods and malformed arguments are errors.
+    /// Run one method: a facade method (`CoreApi`) or an internal service method. Unknown
+    /// methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        self.start_battery();
+        self.start();
+        if crate::facade::is_facade_method(method) {
+            return Box::pin(self.facade(method, args)).await;
+        }
+        Box::pin(self.dispatch(method, args)).await
+    }
+
+    /// The internal service methods, by their service names.
+    pub(crate) async fn dispatch(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         match method {
             "host.reply" => {
                 let id: u64 = arg(&args, 0, "id")?;
@@ -300,19 +347,10 @@ impl Core {
                 Ok(Value::Null)
             }
             _ => {
-                if let Some(result) = self.services.call(method, &args).await {
+                if let Some(result) = Box::pin(self.services.call(method, &args)).await {
                     return result;
                 }
-                if let Some(result) = self.services.call_sync(method, &args) {
-                    return result;
-                }
-                if let Some(result) = self.usage_sync(method, &args) {
-                    return result;
-                }
-                match self.engine_sync(method, &args) {
-                    Some(result) => result,
-                    None => Err(CoreError::new(format!("Unknown core method {method}."))),
-                }
+                self.call_sync(method, args)
             }
         }
     }
@@ -328,6 +366,9 @@ impl Core {
             return result;
         }
         if let Some(result) = self.usage_sync(method, &args) {
+            return result;
+        }
+        if let Some(result) = self.facade_sync(method, &args) {
             return result;
         }
         if !method.starts_with("store.") {
@@ -378,13 +419,14 @@ impl Core {
             }),
             "engine.isTrusted" => arg::<String>(args, 0, "path")
                 .and_then(|path| json(self.search.is_trusted_engine_path(&PathBuf::from(path)))),
-            "engine.setBusy" => arg::<bool>(args, 0, "online").map(|online| {
-                self.online.store(online, Ordering::SeqCst);
-                Value::Null
-            }),
             "analysis.running" => json(self.analysis.analysis_running()),
             "analysis.stop" => optional::<bool>(args, 0, "kill").map(|kill| {
                 self.analysis.stop_analysis(kill);
+                Value::Null
+            }),
+            // Test-only: a live online game blocks the engines (`online:state` sets it in service).
+            "engine.setBusy" if debug::enabled() => arg::<bool>(args, 0, "online").map(|online| {
+                self.busy.store(online, Ordering::SeqCst);
                 Value::Null
             }),
             "managedEngine.pickMacAsset" => {
@@ -424,13 +466,14 @@ impl Core {
         Some(result)
     }
 
-    /// Starts the background battery refresh, once, on the first call (which is always in a
-    /// runtime).
-    fn start_battery(&self) {
+    /// Starts the background work once, on the first call (which is always in a runtime): the
+    /// battery refresh, and the review queue, which looks for work as soon as it starts.
+    fn start(&self) {
         if !self.battery_started.swap(true, Ordering::SeqCst) {
             self.battery.refresh(&self.capabilities);
             self.battery
                 .start_refreshing(Arc::clone(&self.capabilities));
+            self.reviews.setup_reviews(Arc::new(self.review_bridge()));
         }
     }
 
@@ -443,7 +486,10 @@ impl Core {
             lichess: Arc::clone(self.services.lichess()),
             search: self.search.clone(),
             analysis: self.analysis.clone(),
-            online: Arc::clone(&self.online),
+            online: {
+                let busy = Arc::clone(&self.busy);
+                Arc::new(move || busy.load(Ordering::SeqCst))
+            },
         }
     }
 
@@ -509,33 +555,17 @@ impl Core {
         self.reviews.restart_review_engine();
     }
 
-    /// Cancel running work and release files; later calls fail.
     /// The host capabilities, for services that need them.
     pub fn capabilities(&self) -> Arc<Capabilities> {
         Arc::clone(&self.capabilities)
     }
 
-    pub async fn close(&self) {
-        self.capabilities.close();
-        self.battery.close();
+    /// Cancels the managed engine installs in progress.
+    pub(crate) fn cancel_installs(&self) {
         if let Ok(installs) = self.installs.lock() {
             for sender in installs.values() {
                 sender.send_replace(true);
             }
         }
-        self.search.stop_engine(true);
-        self.analysis.stop_analysis(true);
-        self.reviews.stop_reviews().await;
-        if let Err(cause) = self.ctx.hub.close_engines().await {
-            self.host.log(
-                Level::Warn,
-                "core",
-                &format!("Engine shutdown failed: {}", cause.message),
-            );
-        }
-        self.services.close().await;
-        self.puzzles.close().await;
-        self.usage.close();
-        self.database.close();
     }
 }

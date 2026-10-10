@@ -9,19 +9,11 @@ import {
   nativeCallSync,
   onNativeEvent,
 } from '../../src/services/nativeCore'
-import { cancelPuzzleDb, installPuzzleDb } from '../../src/services/puzzleDb'
 import { setPlatform } from '../../src/services/platform'
-import { clearRuns, runSummary, saveRun } from '../../src/services/runs'
-import {
-  clearVoiceHistory,
-  saveVoiceAttempt,
-  updateVoiceAttempt,
-  voiceHistory,
-  voiceHistoryDocument,
-} from '../../src/services/voiceLog'
+import { createKChessCore, type KChessCore } from '../../src/services/service'
 import { fakeSecrets, testPlatform } from '../../../tests/fixtures/corePlatform'
 
-/** The storage wrappers' behaviour through the native core, on one temporary profile. */
+/** The storage behaviour through the native core, on temporary profiles. */
 
 const dataDir = mkdtempSync(join(tmpdir(), 'kchess-wrappers-'))
 beforeEach(async () => {
@@ -33,37 +25,76 @@ afterAll(async () => {
   rmSync(dataDir, { recursive: true, force: true })
 })
 
+/** A core on its own fresh profile, closed with `done`. */
+async function withCore(work: (core: KChessCore) => Promise<void>): Promise<void> {
+  const profile = mkdtempSync(join(tmpdir(), 'kchess-core-'))
+  const core = createKChessCore(testPlatform({ dataDir: profile, secrets: fakeSecrets(false) }))
+  try {
+    await work(core)
+  } finally {
+    await core.close()
+    rmSync(profile, { recursive: true, force: true })
+  }
+}
+
 describe('played-game runs', () => {
-  it('saves runs, reports the best of each variant, and clears one kind', () => {
-    const first = saveRun({ kind: 'rush', variant: 'easy', score: 4, detail: { moves: 9 } })
-    expect(first.isBest).toBe(true)
-    expect(saveRun({ kind: 'rush', variant: 'easy', score: 2, detail: {} }).isBest).toBe(false)
-    const summary = runSummary('rush')
-    expect(summary.total).toBe(2)
-    expect(summary.best.easy?.score).toBe(4)
-    expect(summary.recent[0]?.score).toBe(2)
-    clearRuns('rush')
-    expect(runSummary('rush').total).toBe(0)
-  })
+  it('saves runs, reports the best of each variant, and clears one kind', () =>
+    withCore(async (core) => {
+      const first = await core.saveRun({
+        kind: 'rush',
+        variant: 'easy',
+        score: 4,
+        detail: { moves: 9 },
+      })
+      expect(first.isBest).toBe(true)
+      expect(
+        (await core.saveRun({ kind: 'rush', variant: 'easy', score: 2, detail: {} })).isBest,
+      ).toBe(false)
+      const summary = await core.runSummary('rush')
+      expect(summary.total).toBe(2)
+      expect(summary.best.easy?.score).toBe(4)
+      expect(summary.recent[0]?.score).toBe(2)
+      await core.clearRuns('rush')
+      expect((await core.runSummary('rush')).total).toBe(0)
+    }))
 })
 
 describe('voice log', () => {
-  it('saves, updates, lists, exports and clears attempts', () => {
-    const id = saveVoiceAttempt({
-      source: 'computer',
-      heard: 'knight f three',
-      confidence: 0.9,
-      words: [{ word: 'knight', conf: 0.95 }],
-      outcome: 'played',
-    })
-    updateVoiceAttempt(id, { outcome: 'invalid', expected: 'Nf3' })
-    const [entry] = voiceHistory(10)
-    expect(entry).toMatchObject({ id, outcome: 'invalid', expected: 'Nf3' })
-    const document = JSON.parse(voiceHistoryDocument()) as { entries: { time: string }[] }
-    expect(document.entries[0]?.time).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-    clearVoiceHistory()
-    expect(voiceHistory(10)).toEqual([])
-  })
+  it('saves, updates, lists, exports and clears attempts', () =>
+    withCore(async (core) => {
+      const id = await core.saveVoiceAttempt({
+        source: 'computer',
+        heard: 'knight f three',
+        confidence: 0.9,
+        words: [{ word: 'knight', conf: 0.95 }],
+        outcome: 'played',
+      })
+      await core.updateVoiceAttempt(id, { outcome: 'invalid', expected: 'Nf3' })
+      const [entry] = await core.voiceHistory(10)
+      expect(entry).toMatchObject({ id, outcome: 'invalid', expected: 'Nf3' })
+      const document = JSON.parse(core.voiceHistoryDocument()) as { entries: { time: string }[] }
+      expect(document.entries[0]?.time).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+      await core.clearVoiceHistory()
+      expect(await core.voiceHistory(10)).toEqual([])
+    }))
+
+  it('leaves an attempt alone when a correction names nothing to change', () =>
+    withCore(async (core) => {
+      const id = await core.saveVoiceAttempt({
+        source: 'computer',
+        heard: 'e four',
+        confidence: 0.7,
+        words: [],
+        outcome: 'played',
+      })
+      await core.updateVoiceAttempt(id, {})
+      await core.updateVoiceAttempt(id, { expected: 'e4' })
+      expect((await core.voiceHistory(1))[0]).toMatchObject({
+        id,
+        expected: 'e4',
+        outcome: 'played',
+      })
+    }))
 })
 
 describe('native core calls', () => {
@@ -87,29 +118,21 @@ describe('native core calls', () => {
   })
 })
 
-describe('voice log corrections', () => {
-  it('leaves an attempt alone when a correction names nothing to change', () => {
-    const id = saveVoiceAttempt({
-      source: 'computer',
-      heard: 'e four',
-      confidence: 0.7,
-      words: [],
-      outcome: 'played',
-    })
-    updateVoiceAttempt(id, {})
-    updateVoiceAttempt(id, { expected: 'e4' })
-    expect(voiceHistory(1)[0]).toMatchObject({ id, expected: 'e4', outcome: 'played' })
-  })
-})
-
 describe('puzzle database download', () => {
   it('reports progress to its listener and rejects a download that cannot connect', async () => {
     const progress: string[] = []
-    await expect(
-      installPuzzleDb((event) => progress.push(event.phase), 'http://127.0.0.1:9/puzzles.csv.zst'),
-    ).rejects.toThrow()
-    expect(progress.length).toBeGreaterThanOrEqual(0)
-    cancelPuzzleDb()
+    const stop = onNativeEvent<{ phase: string }>('puzzledb:progress', (event) =>
+      progress.push(event.phase),
+    )
+    try {
+      await expect(
+        nativeCall('puzzles.install', 'http://127.0.0.1:9/puzzles.csv.zst'),
+      ).rejects.toThrow()
+      expect(progress.length).toBeGreaterThanOrEqual(0)
+    } finally {
+      stop()
+      await nativeCall('puzzles.cancel')
+    }
   })
 })
 
@@ -120,9 +143,12 @@ describe('a cancelled puzzle download', () => {
     const address = silent.address()
     const port = typeof address === 'object' && address ? address.port : 0
     try {
-      const download = installPuzzleDb(() => {}, `http://127.0.0.1:${port}/puzzles.csv.zst`)
+      const download = nativeCall<{ installed: boolean }>(
+        'puzzles.install',
+        `http://127.0.0.1:${port}/puzzles.csv.zst`,
+      )
       await new Promise((resolve) => setTimeout(resolve, 100))
-      cancelPuzzleDb()
+      await nativeCall('puzzles.cancel')
       expect(await download).toMatchObject({ installed: false })
     } finally {
       silent.closeAllConnections()

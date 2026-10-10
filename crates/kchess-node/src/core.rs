@@ -57,8 +57,13 @@ pub struct NativeCore {
 
 #[napi]
 impl NativeCore {
+    /// Opens the core over a profile; throws when a live core already runs there.
     #[napi(constructor)]
-    pub fn new(options: NativeCoreOptions, log: Callback, emit: Callback) -> NativeCore {
+    pub fn new(
+        options: NativeCoreOptions,
+        log: Callback,
+        emit: Callback,
+    ) -> napi::Result<NativeCore> {
         let config = Config {
             legacy_database_path: options.legacy_database_path.map(PathBuf::from),
             bundled_engine_path: options.bundled_engine_path.map(PathBuf::from),
@@ -71,9 +76,11 @@ impl NativeCore {
             managed_engine_dir: options.managed_engine_dir.map(PathBuf::from),
             ..Config::new(PathBuf::from(options.data_dir))
         };
-        NativeCore {
-            core: Arc::new(Core::new(config, Arc::new(JsHost { log, emit }))),
-        }
+        let core = Core::open(config, Arc::new(JsHost { log, emit }))
+            .map_err(|error| napi::Error::from_reason(error.message))?;
+        Ok(NativeCore {
+            core: Arc::new(core),
+        })
     }
 
     /// Run a core method with a JSON array of arguments; resolves with its JSON result.

@@ -5,6 +5,7 @@ pub mod capabilities;
 pub mod core;
 pub mod engine;
 pub mod error;
+pub mod facade;
 pub mod host;
 pub mod lichess;
 pub mod puzzles;

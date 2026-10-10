@@ -22,8 +22,8 @@ import {
   saveGamesPage,
   saveLogin,
   writeApiCache,
-} from '../../src/services/store'
-import { hasAccount } from '../../src/services/reviewStore'
+  hasAccount,
+} from '../../../tests/fixtures/nativeGames'
 import { fakeSecrets } from '../../../tests/fixtures/corePlatform'
 
 const state = vi.hoisted(() => ({ db: null as TestDatabase | null, fetch: vi.fn() }))

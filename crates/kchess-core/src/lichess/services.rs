@@ -52,6 +52,13 @@ struct AccountDays {
     days: u32,
 }
 
+/// What the engines do with a live online game: `stops` ends the computer, the analysis and the
+/// review engine; `busy` is set while assistance is blocked (read by the review queue).
+pub struct LiveGame {
+    pub stops: Arc<dyn Fn() + Send + Sync>,
+    pub busy: Arc<std::sync::atomic::AtomicBool>,
+}
+
 impl Services {
     /// The services over the core's database, capabilities and host (`host` is the usage-batching
     /// host, so the policy's counters reach `kchess.db` through the batch).
@@ -62,7 +69,12 @@ impl Services {
         usage: Arc<UsageBatch>,
         lifetime: CancellationToken,
         origin: Option<String>,
+        live: LiveGame,
     ) -> Services {
+        let LiveGame {
+            stops: game_stops,
+            busy,
+        } = live;
         let http = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .build()
@@ -94,6 +106,18 @@ impl Services {
         ));
         let online = OnlineSession::new(Arc::clone(&lichess), Arc::clone(&tokens), http.clone());
         let spectator = Spectator::new(Arc::clone(&lichess), Arc::new(HostSink::new(host.clone())));
+        // Before each state is reported: a live game (or the startup check) stops the engines and the
+        // watch, and the engines' busy state is taken from the session as it now is.
+        {
+            let watch = spectator.clone();
+            online.set_state_hook(Arc::new(move |live_game, blocked| {
+                if live_game {
+                    game_stops();
+                    watch.stop();
+                }
+                busy.store(blocked, std::sync::atomic::Ordering::SeqCst);
+            }));
+        }
         let lookups = PositionLookups::new(
             http,
             endpoints,
@@ -121,6 +145,22 @@ impl Services {
     /// The Lichess service, for the review queue's analysis fetch.
     pub fn lichess(&self) -> &Arc<Lichess> {
         &self.lichess
+    }
+
+    /// The online session, for the engines' busy check and the facade.
+    pub fn online(&self) -> &OnlineSession {
+        &self.online
+    }
+
+    /// The spectator (the watch of a TV channel, a game or a broadcast round).
+    pub fn spectator(&self) -> &Spectator {
+        &self.spectator
+    }
+
+    /// Cancels the requests and streams in flight: Lichess calls, the usage counters' pending
+    /// writes are kept for the core to flush. Called when the core closes.
+    pub fn abort(&self) {
+        self.lifetime.cancel();
     }
 
     /// Runs one asynchronous method. `None` when the method is not one of these services'.
