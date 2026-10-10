@@ -50,6 +50,7 @@
     "verify:package": "node tooling/verify-package.mjs",
     "check:fast": "node tooling/check-fast.mjs",
     "check:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo clippy -p kchess-wasm --target wasm32-unknown-unknown --locked -- -D warnings && cargo test --workspace --locked",
+    "check:rust-coverage": "node tooling/check-rust-coverage.mjs",
     "check:performance": "node tooling/library-benchmark.mjs --check",
     "check:report": "node tooling/guardrail-report.mjs",
     "cli": "pnpm run build:packages && node apps/cli/dist/cli.js"

@@ -94,6 +94,20 @@ live-game recovery, alongside existing PGN preservation, study conflict, worker
 rollback and engine lifecycle tests. Fast-check prints replay seeds and paths on
 failure; keep a concrete reproducer when a generated case finds a defect.
 
+## Coverage gates
+
+- Rust: `pnpm run check:rust-coverage` runs `cargo llvm-cov --workspace --locked` (the same
+  tests as `check:rust`) and fails below the floors in `tooling/check-rust-coverage.mjs`, which
+  are rounded down from the measured totals and dated there. It runs inside `pnpm run check`
+  (about a minute and a half locally) and in CI after `taiki-e/install-action@cargo-llvm-cov`
+  and `llvm-tools-preview`. Its summary is kept in `test-results/rust-coverage/summary.json`
+  and uploaded with the CI measurements; nothing is sent elsewhere.
+- TypeScript: `vitest.config.ts` gates the TypeScript that remains (apps, bindings, hosts) at
+  the floors dated there. Ratchet both gates up when the measured totals rise; lower them only
+  with a measurement that explains the drop.
+- The internal tests of the storage (`crates/kchess-core/tests/store_*.rs`) run in Rust against
+  the database itself; the TypeScript suites keep the public-API and golden parity checks.
+
 ## Budgets and measurements
 
 tooling/performance-budgets.mjs owns the blocking limits: 12 MiB renderer payload,

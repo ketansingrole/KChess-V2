@@ -39,24 +39,16 @@ export default defineConfig({
         '**/*.d.ts',
         '**/tests/**',
       ],
+      // Floors are whole percentages rounded down from the measured totals of `pnpm run test:unit`
+      // (2026-10-10, after the storage tests moved to Rust: lines 41.50%, functions 32.84%, branches
+      // 25.06%, statements 40.34%; a run before the Rust-side rebuild measured 42.17% lines, so the
+      // measure moves by about a point between runs). They gate the TypeScript that remains (apps,
+      // bindings, hosts); the Rust workspace has its own gate, `pnpm run check:rust-coverage`.
+      // Ratchet them up as the measured totals rise.
       thresholds: {
-        // Baseline from 2026-10-06 (48% lines). Ratchet upward as suites grow;
-        // these fail the run on real regressions, not on noise.
-        // 42, down from 45: the Lichess services moved to Rust (2026-10-10, 42.64% lines after the
-        // move); the floor follows the TypeScript as it shrinks.
-        // 41, down from 42: the core facade moved to Rust (2026-10-10, 41.77% lines after it).
         lines: 41,
         functions: 32,
-        // 28, down from 29: the main-database storage moved to Rust (2026-10-10), taking well-covered
-        // TypeScript branches with it (29.92% after the move, 31.92% before); its behaviour is
-        // pinned by the store golden suites and Rust tests, which this TypeScript measure omits.
-        // Engines also moved to Rust (2026-10-10, 28.78% after); the floor follows the TypeScript
-        // as it shrinks, and a Rust coverage gate replaces it once the core's TypeScript is gone.
-        // 25, down from 28: the Lichess services moved to Rust (2026-10-10, 25.73% branches after the
-        // move); their behaviour is pinned by the Rust `lichess_*` integration tests.
         branches: 25,
-        // 41, down from 43: the same move (2026-10-10, 41.57% statements after it).
-        // 40, down from 41: the core facade moved to Rust (2026-10-10, 40.63% statements after it).
         statements: 40,
       },
     },

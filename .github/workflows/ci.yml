@@ -25,6 +25,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The Rust coverage gate (`check:rust-coverage`) runs inside `pnpm run check`.
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: rustup component add llvm-tools-preview
       - run: pnpm run check
       - name: Report guardrail measurements
         if: always()
@@ -39,6 +42,7 @@ jobs:
             test-results/guardrails/
             test-results/unit.xml
             test-results/coverage/coverage-summary.json
+            test-results/rust-coverage/summary.json
           if-no-files-found: ignore
           retention-days: 30
 
