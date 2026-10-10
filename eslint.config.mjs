@@ -15,6 +15,7 @@ export default withNuxt(
       'test-results/**',
       'playwright-report/**',
       'apps/desktop/electron/renderer/*.d.ts',
+      'core/src/contracts/generated/**',
     ],
   },
   {
