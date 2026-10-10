@@ -172,5 +172,11 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
   with the worker): e.g. a debug-gated archive path and digest override for the native cache.
 - Remove npm dependencies the TypeScript no longer uses (`fflate`, `tar`, …) and update the
   lockfile; keep `pnpm run check:notices` green.
+- Check that the Rust core's dispatch covers exactly `kchess-contracts` `core_api::methods()`
+  (a Rust test), once the facade runs in Rust.
+- Replace the hand-written valibot IPC validators (`core/src/contracts/apiContracts.ts`) with the
+  Rust validators (`kchess-domain` misc `assert*`), tied to the method table.
+- Use the `kchess-contracts` types in `kchess-core`/`kchess-node` instead of untyped JSON where
+  they cross the bridge.
 - Replace the TypeScript coverage floor (vitest.config.ts) with a Rust coverage gate
   (cargo-llvm-cov) once the core's TypeScript is gone.
