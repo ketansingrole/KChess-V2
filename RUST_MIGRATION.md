@@ -165,3 +165,12 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
 - Usage: the core batches `host:usage` counters in `usage.rs` (flushed every five seconds, or
   before a report) and writes the same rows through `store.usage.flushUsage`; the TypeScript
   batching is gone: `usage::tests`.
+
+## Final cleanup checklist
+
+- Restore a packaged end-to-end check of voice model preparation (the worker test was removed
+  with the worker): e.g. a debug-gated archive path and digest override for the native cache.
+- Remove npm dependencies the TypeScript no longer uses (`fflate`, `tar`, …) and update the
+  lockfile; keep `pnpm run check:notices` green.
+- Replace the TypeScript coverage floor (vitest.config.ts) with a Rust coverage gate
+  (cargo-llvm-cov) once the core's TypeScript is gone.
