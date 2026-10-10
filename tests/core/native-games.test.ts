@@ -694,7 +694,10 @@ function statesRun(seed: number): unknown {
   }
 }
 
-describe('game sessions (Rust-backed rules)', () => {
+// The seeded traces take ~3 s alone and several times that under coverage in `pnpm run check`.
+const TIMEOUT = 60_000
+
+describe('game sessions (Rust-backed rules)', { timeout: TIMEOUT }, () => {
   afterEach(() => vi.restoreAllMocks())
 
   it('computer games: scripted engine replies, stops, clocks, takebacks and disposal', async () => {
