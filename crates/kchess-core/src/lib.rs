@@ -6,6 +6,7 @@ pub mod core;
 pub mod engine;
 pub mod error;
 pub mod host;
+pub mod lichess;
 pub mod puzzles;
 pub mod store;
 
