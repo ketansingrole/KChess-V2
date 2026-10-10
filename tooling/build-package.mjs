@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { rewriteDeclarationSpecifiers } from './declarations.mjs'
+import { isPackageExternal, isPackageSource } from './package-paths.mjs'
 
 /**
  * Build one workspace package to `dist/`: each TypeScript module of its source directory becomes
@@ -22,8 +23,7 @@ const sourceDir = resolve(packageDir, sourceArg)
 const outDir = join(packageDir, 'dist')
 
 const inputs = readdirSync(sourceDir, { recursive: true })
-  .filter((file) => file.endsWith('.ts') && !file.endsWith('.d.ts'))
-  .filter((file) => !/(^|\/)(dist|node_modules)\//.test(file))
+  .filter(isPackageSource)
   .map((file) => join(sourceDir, file))
 
 rmSync(outDir, { recursive: true, force: true })
@@ -38,7 +38,7 @@ await build({
     emptyOutDir: true,
     rollupOptions: {
       input: inputs,
-      external: (id) => !id.startsWith('.') && !id.startsWith('/'),
+      external: isPackageExternal,
       output: {
         format: 'es',
         preserveModules: true,

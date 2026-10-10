@@ -9,6 +9,15 @@ import { reviewKey } from '@kchess/rules/review'
 import { nativeRules, type NativeCoreHandle } from '@kchess/native/native'
 import { goldenFile } from './golden'
 
+// Insights groups games by local weekday/hour. These golden fixtures were recorded
+// in Tokyo; pin the same timezone even when the test runner starts in UTC.
+const previousTimezone = process.env.TZ
+process.env.TZ = 'Asia/Tokyo'
+afterAll(() => {
+  if (previousTimezone === undefined) delete process.env.TZ
+  else process.env.TZ = previousTimezone
+})
+
 /**
  * The storage methods of `crates/kchess-core/src/store` (`library`, `reviewStore`, `runs`,
  * `insights`, `usage`, `voiceLog`, `setupPositionLookup`), run against a native core in a

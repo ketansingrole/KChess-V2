@@ -18,7 +18,7 @@ memchr = "2"
 lto = "fat"
 codegen-units = 1
 panic = "unwind"
-# Not "symbols": see .cargo/config.toml (macOS strips at link time; elsewhere sizes are similar).
+# Not "symbols": see .cargo/config.toml for platform-specific linker stripping.
 strip = "none"
 
 # WebAssembly cannot unwind; a panic traps and the host reports it.
