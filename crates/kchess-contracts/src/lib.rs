@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use ts_rs::Config;
 
+pub mod arity;
 pub mod core_api;
 pub mod defaults;
 pub mod generate;
@@ -76,6 +77,11 @@ pub fn modules() -> Vec<Module> {
         Module {
             stem: "defaultSettings",
             items: defaults::items(&cfg),
+            reexports: vec![],
+        },
+        Module {
+            stem: "arity",
+            items: arity::items(),
             reexports: vec![],
         },
     ]

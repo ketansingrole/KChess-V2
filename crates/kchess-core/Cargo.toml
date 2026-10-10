@@ -39,6 +39,10 @@ tokio-util = { version = "0.7", features = ["rt"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+# The method table the facade's dispatch is checked against (tests/facade_dispatch.rs).
+kchess-contracts = { path = "../kchess-contracts" }
+
 # A scripted UCI engine for the engine tests (see tests/support/fake_uci.rs).
 [[bin]]
 name = "kchess-fake-uci"

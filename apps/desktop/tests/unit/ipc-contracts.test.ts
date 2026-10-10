@@ -2,11 +2,11 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS, type InvokeMethod } from '../../contracts/ipc'
 import { IPC_CONTRACTS, validateIpcArguments } from '../../electron/main/ipcContracts'
+import { PERFORMANCE_NAMES, RENDERER_ROUTES } from '../../contracts/rendererDiagnostics'
 import { INITIAL_FEN } from '@kchess/rules/position'
 
 const mocks = vi.hoisted(() => ({ handle: vi.fn() }))
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }))
-vi.mock('@kchess/rules/tvChannels', () => ({ TV_CHANNEL_KEYS: ['rapid', 'blitz'] }))
 
 beforeEach(() => {
   mocks.handle.mockClear()
@@ -16,11 +16,17 @@ it('requires an explicit contract for every invocation and rejects excess argume
   expect(Object.keys(IPC_CONTRACTS).sort()).toEqual(Object.keys(IPC_CHANNELS).sort())
   for (const method of Object.keys(IPC_CHANNELS) as InvokeMethod[]) {
     const contract = IPC_CONTRACTS[method]
-    expect(() => validateIpcArguments(method, Array(contract.checks.length + 1))).toThrow(
-      'argument count',
-    )
+    expect(() => validateIpcArguments(method, Array(contract.max + 1))).toThrow('argument count')
     if (contract.min > 0) expect(() => validateIpcArguments(method, [])).toThrow('argument count')
   }
+})
+it('accepts every renderer timing and route the diagnostics can name', () => {
+  for (const name of PERFORMANCE_NAMES)
+    expect(() => validateIpcArguments('recordPerformance', [name, 1])).not.toThrow()
+  for (const route of RENDERER_ROUTES)
+    expect(() =>
+      validateIpcArguments('reportRendererError', [{ route, message: 'm', info: 'i' }]),
+    ).not.toThrow()
 })
 it.each([
   ['addAccount', ['../tokens']],

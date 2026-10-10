@@ -10,8 +10,7 @@
     "typecheck": "pnpm -w exec tsc --noEmit -p crates/kchess-contracts/ts/tsconfig.json"
   },
   "dependencies": {
-    "@kchess/rules": "workspace:*",
-    "valibot": "^1.5.0"
+    "@kchess/rules": "workspace:*"
   },
   "exports": {
     "./types": {
