@@ -25,6 +25,15 @@ crates/
   typed wrappers (`Position`, `rules()`) move next to their binding as generated or binding
   code, not core code.
 
+## End-state decision (2026-10-10)
+
+`core/` is deleted. Contract types are generated from Rust. The only hand-written TypeScript left
+for the core is binding glue inside the binding packages (`crates/kchess-node` for Node/Electron
+main, `crates/kchess-wasm` for the renderer): forwarding calls, answering host capability
+requests, running effects returned by Rust transitions, and keeping state reactive for Vue. Glue
+makes no decisions; any conditional about chess, games, storage, engines or Lichess belongs in
+Rust. Rust frontends (GPUI, CLI, TUI, MCP) use the crates directly and need no glue.
+
 ## How each piece moves (the strangler pattern)
 
 The app must work and `pnpm run check` must pass after every step. A TypeScript service is
