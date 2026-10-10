@@ -51,6 +51,21 @@ export interface NativeRules {
     log: (json: string) => void,
     emit: (json: string) => void,
   ) => NativeCoreHandle
+  /** The offline voice model cache (`crates/kchess-node/src/voice.rs`). */
+  NativeVoiceModel: new (
+    directory: string,
+    options: { archivePath?: string },
+    log: (json: string) => void,
+  ) => NativeVoiceModelHandle
+  /** `VOICE_MODEL` as JSON: `{ name, url, sha256 }`. */
+  voiceModelMetadata(): string
+}
+
+/** The voice model cache: status and progress are JSON (`VoiceModelStatus`, `VoiceModelProgress`). */
+export interface NativeVoiceModelHandle {
+  readonly path: string
+  status(): Promise<string>
+  ensure(progress: (json: string) => void): Promise<string>
 }
 
 /** One instance of the Rust core's services. */

@@ -81,7 +81,6 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
   const bytes = verifyEntries(entries)
   for (const path of [
     'out/main/index.js',
-    'out/main/voiceModelWorker.js',
     'out/preload/index.cjs',
     '.output/public/_nuxt/vosk-worker.js',
   ]) {

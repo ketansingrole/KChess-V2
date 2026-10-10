@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { VoiceModelCache, VOICE_MODEL } from '../core/src/services/voiceModel.ts'
@@ -8,14 +8,12 @@ export const voiceFixtureDirectory = join(root, '.data', 'voice', 'cache')
 
 /** Prepare a verified local fixture for voice e2e tests, outside all packaged assets. */
 export async function prepareVoiceModel() {
-  const cache = new VoiceModelCache(voiceFixtureDirectory, async (url, options) => {
-    try {
-      const zip = await readFile(join(root, '.data', 'voice', `${VOICE_MODEL.name}.zip`))
-      return new Response(zip)
-    } catch {
-      return fetch(url, options)
-    }
-  })
+  // A zip beside the repository's test data is used instead of the download, when present.
+  const fixture = join(root, '.data', 'voice', `${VOICE_MODEL.name}.zip`)
+  const cache = new VoiceModelCache(
+    voiceFixtureDirectory,
+    existsSync(fixture) ? { archivePath: fixture } : {},
+  )
   return cache.ensure()
 }
 
