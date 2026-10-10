@@ -1249,9 +1249,69 @@ fn assert_study_id_v(mut args: Vec<J>) -> Result<J, String> {
     assert_lichess_id_v(vec![value])
 }
 
+// `apps/desktop/contracts/apiContracts.ts` `completeQuit`: a request id (`v.pipe(v.string(), v.uuid())`).
+schema_validator!(
+    assert_uuid_v,
+    pipe(Schema::Str(None), vec![Action::Uuid(None)])
+);
+
+// `recordPerformance` name: one of the renderer's timings (`PERFORMANCE_NAMES`).
+schema_validator!(
+    assert_performance_name_v,
+    Schema::Picklist {
+        options: performance_names().into_iter().map(J::Str).collect(),
+        msg: None,
+    }
+);
+
+// `recordPerformance` value: a finite duration from 0 to 300,000 ms.
+schema_validator!(
+    assert_timing_value_v,
+    pipe(
+        Schema::Num(None),
+        vec![
+            Action::Finite(None),
+            Action::MinValue(0.0, None),
+            Action::MaxValue(300_000.0, None),
+        ],
+    )
+);
+
+// `reportRendererError`: a fixed page route, a message and a short info string, and no other keys.
+schema_validator!(
+    assert_renderer_error_v,
+    strict_object(
+        vec![
+            (
+                "route",
+                Schema::Picklist {
+                    options: RENDERER_ROUTES
+                        .iter()
+                        .map(|route| J::Str((*route).into()))
+                        .collect(),
+                    msg: None,
+                },
+            ),
+            (
+                "message",
+                pipe(Schema::Str(None), vec![Action::MaxLength(1000, None)]),
+            ),
+            (
+                "info",
+                pipe(Schema::Str(None), vec![Action::MaxLength(160, None)]),
+            ),
+        ],
+        None,
+    )
+);
+
 /// The validators by their TypeScript names.
 pub fn validator(method: &str) -> Option<Validator> {
     Some(match method {
+        "assertUuid" => assert_uuid_v,
+        "assertPerformanceName" => assert_performance_name_v,
+        "assertTimingValue" => assert_timing_value_v,
+        "assertRendererError" => assert_renderer_error_v,
         "assertUsername" => assert_username_v,
         "assertGameId" => assert_game_id_v,
         "assertGameIds" => assert_game_ids_v,

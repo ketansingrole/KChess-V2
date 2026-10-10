@@ -11,19 +11,32 @@ mod engine;
 mod patterns;
 mod validate;
 
-pub use contracts::{TV_CHANNEL_KEYS, normalize, validate_arguments};
+pub use contracts::{Scope, TV_CHANNEL_KEYS, arities, normalize, validate_arguments};
 
 use engine::J;
 use serde_json::Value;
 
 /// This module's methods for `api::call`; None when the method is not one of them.
 pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
-    let run = validate::validator(method).or_else(|| documents::handler(method))?;
+    let is_check = contracts::is_call(method);
+    let run = if is_check {
+        None
+    } else {
+        Some(validate::validator(method).or_else(|| documents::handler(method))?)
+    };
     let Some((sidecar, user)) = args.split_first() else {
         return Some(Err(format!(
             "{method} was called without its lossless arguments"
         )));
     };
+    if is_check {
+        return Some(
+            inputs(user, sidecar)
+                .and_then(|values| contracts::argument_call(method, &values))
+                .map(J::into_value),
+        );
+    }
+    let run = run?;
     Some(inputs(user, sidecar).and_then(run).map(J::into_value))
 }
 

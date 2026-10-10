@@ -35,10 +35,13 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
 
 A headless capability belongs in `CoreApi`, `CORE_METHODS` and the core service, which
 validates its own input; main forwards every core method over IPC. Desktop-only methods
-extend `DesktopApi` and register in main. Add every invocation to IPC_CHANNELS,
-IPC_CONTRACTS and preload. The shared `apiContracts.ts` tuples validate direct core calls too. Contract tuples require a validator for every argument, including
-optional arguments. Declare minimum arity, reject excess arguments and retain
-domain/service validation. Startup refuses duplicate or missing handlers.
+extend `DesktopApi` and register in main. Add every invocation to IPC_CHANNELS, the Rust
+argument table (`crates/kchess-domain/src/misc/contracts.rs`: its `DESKTOP` rows for desktop
+methods, `CORE` rows for core methods, which also validate direct core calls) and preload.
+Each row names a validator for every argument, including optional arguments; it declares the
+minimum arity and rejects excess arguments before any check runs. The TypeScript arities are
+generated from those rows (`crates/kchess-contracts/ts/generated/arity.ts`). Domain/service
+validation still runs after. Startup refuses duplicate or missing handlers.
 The OAuth appearance parser deliberately falls back to safe default colors.
 
 ## Logging: never swallow errors

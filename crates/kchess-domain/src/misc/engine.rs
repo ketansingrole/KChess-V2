@@ -142,6 +142,16 @@ pub fn message(msg: Msg, label: &str, expected: Option<&str>, received: &str) ->
     }
 }
 
+/// valibot's `uuid` requirement: `/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu`.
+fn is_uuid(text: &str) -> bool {
+    let groups: Vec<&str> = text.split('-').collect();
+    const LENGTHS: [usize; 5] = [8, 4, 4, 4, 12];
+    groups.len() == LENGTHS.len()
+        && groups.iter().zip(LENGTHS).all(|(group, length)| {
+            group.len() == length && group.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+}
+
 /// valibot's `_joinExpects`: distinct expectations, parenthesised when there are several.
 fn join_expects(list: Vec<String>, separator: &str) -> String {
     let mut distinct: Vec<String> = Vec::with_capacity(list.len());
@@ -198,6 +208,8 @@ pub enum Action {
     MaxValue(f64, Msg),
     Integer(Msg),
     Finite(Msg),
+    /// valibot's `uuid()`: the 8-4-4-4-12 hexadecimal form, in either case.
+    Uuid(Msg),
     Regex {
         source: &'static str,
         test: fn(&str) -> bool,
@@ -538,6 +550,15 @@ impl Action {
                 {
                     ds.issues
                         .push(message(*msg, "finite", None, &number_text(n)));
+                }
+            }
+            Action::Uuid(msg) => {
+                if let J::Str(s) = &ds.value
+                    && ds.typed
+                    && !is_uuid(s)
+                {
+                    ds.issues
+                        .push(message(*msg, "UUID", None, &stringify(&ds.value)));
                 }
             }
             Action::Regex { source, test, msg } => {

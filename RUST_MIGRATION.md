@@ -178,10 +178,16 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
   the packaged main process).
 - ~~Remove npm dependencies the TypeScript no longer uses~~ (done: `fflate`, `lru-cache`, `tar`
   removed; packaged type declarations and source maps excluded; package 28.9 MiB of 32).
-- Check that the Rust core's dispatch covers exactly `kchess-contracts` `core_api::methods()`
-  (a Rust test), once the facade runs in Rust.
-- Replace the hand-written valibot IPC validators (`crates/kchess-contracts/ts/apiContracts.ts`) with the
-  Rust validators (`kchess-domain` misc `assert*`), tied to the method table.
+- ~~Check that the Rust core's dispatch covers exactly `kchess-contracts` `core_api::methods()`
+  (a Rust test), once the facade runs in Rust.~~ (done: `crates/kchess-core/tests/facade_dispatch.rs`
+  compares the facade's list with `core_api::methods()` and the extras, checks every `run_facade`
+  arm against that list, and calls each listed name on a live core.)
+- ~~Replace the hand-written valibot IPC validators (`crates/kchess-contracts/ts/apiContracts.ts`) with the
+  Rust validators (`kchess-domain` misc `assert*`), tied to the method table.~~ (done: the argument
+  tables in `kchess-domain` `misc/contracts.rs` (`CORE` and `DESKTOP` rows) check every core and IPC
+  argument through `validateCoreArguments` / `validateIpcArguments` on the rules binding; the
+  TypeScript arities are generated (`ts/generated/arity.ts`). valibot is no longer a direct dependency
+  of any package.)
 - Use the `kchess-contracts` types in `kchess-core`/`kchess-node` instead of untyped JSON where
   they cross the bridge.
 - Replace the TypeScript coverage floor (vitest.config.ts) with a Rust coverage gate
@@ -210,5 +216,6 @@ and the event sink), `service.ts` (the forwarder), `platform.ts` (the host scope
 `diagnosticLog.ts`, `performance.ts` (the diagnostics the desktop shell and the hosts use), `rules.ts`
 and `native.ts` (the rules binding), `oauthPage.ts` and `stockfishAsset.ts` (pure helpers the desktop
 tests use), `appIconSvg.ts`, `engine.ts` (the bundled engine's path and `SearchCancelled`), and the
-voice model modules (not part of this phase). `crates/kchess-contracts/ts/apiContracts.ts` stays for the
-desktop's IPC contract. Phase 6b deleted `core/`; its TypeScript now lives in the three packages above.
+voice model modules (not part of this phase). `crates/kchess-contracts/ts/apiContracts.ts` and
+`apps/desktop/contracts/apiContracts.ts` only forward argument checks to Rust (`validateCoreArguments`,
+`validateIpcArguments`). Phase 6b deleted `core/`; its TypeScript now lives in the three packages above.

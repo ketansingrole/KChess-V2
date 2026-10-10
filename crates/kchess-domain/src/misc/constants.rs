@@ -176,6 +176,39 @@ pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
     "kchess:repertoire-misses",
 ];
 pub const TOURNAMENT_SYSTEMS: &[&str] = &["arena", "swiss"];
+
+/// The renderer pages diagnostics may name (`RENDERER_ROUTES`, `apps/desktop/contracts/rendererDiagnostics.ts`).
+pub const RENDERER_ROUTES: &[&str] = &[
+    "/",
+    "/online",
+    "/tournaments",
+    "/watch",
+    "/local",
+    "/computer",
+    "/analysis",
+    "/studies",
+    "/editor",
+    "/puzzles",
+    "/practice",
+    "/history",
+    "/insights",
+    "/friends",
+    "/players",
+    "/settings",
+];
+
+/// The timings the renderer may record (`PERFORMANCE_NAMES`): fixed names, then one per route.
+pub fn performance_names() -> Vec<String> {
+    ["app.ready", "board.frame", "voice.activation"]
+        .into_iter()
+        .map(String::from)
+        .chain(
+            RENDERER_ROUTES
+                .iter()
+                .map(|route| format!("page.navigation:{route}")),
+        )
+        .collect()
+}
 /// Largest serialized document the core stores (`MAX_DOCUMENT`).
 pub const MAX_DOCUMENT: usize = 2_000_000;
 pub const MAX_CHAPTERS: usize = 64;

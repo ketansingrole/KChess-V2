@@ -54,7 +54,9 @@ export default defineConfig({
         // as it shrinks, and a Rust coverage gate replaces it once the core's TypeScript is gone.
         // 25, down from 28: the Lichess services moved to Rust (2026-10-10, 25.73% branches after the
         // move); their behaviour is pinned by the Rust `lichess_*` integration tests.
-        branches: 25,
+        // 24, down from 25: the IPC and core argument checks moved to Rust (2026-10-10, 24.99%
+        // branches after the move); the TypeScript left is forwarding glue.
+        branches: 24,
         // 41, down from 43: the same move (2026-10-10, 41.57% statements after it).
         // 40, down from 41: the core facade moved to Rust (2026-10-10, 40.63% statements after it).
         statements: 40,
