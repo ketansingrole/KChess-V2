@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 use crate::js;
 use model::{Call, Ctx, Model, Run, at, js_round, string_or, text_of, truthy};
 
+/// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
+pub use model::variant_from_lichess;
+
 type Out = Result<Value, String>;
 
 static NULL: Value = Value::Null;
