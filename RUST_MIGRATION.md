@@ -174,8 +174,8 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
 
 - Restore a packaged end-to-end check of voice model preparation (the worker test was removed
   with the worker): e.g. a debug-gated archive path and digest override for the native cache.
-- Remove npm dependencies the TypeScript no longer uses (`fflate`, `tar`, …) and update the
-  lockfile; keep `pnpm run check:notices` green.
+- ~~Remove npm dependencies the TypeScript no longer uses~~ (done: `fflate`, `lru-cache`, `tar`
+  removed; packaged type declarations and source maps excluded; package 28.9 MiB of 32).
 - Check that the Rust core's dispatch covers exactly `kchess-contracts` `core_api::methods()`
   (a Rust test), once the facade runs in Rust.
 - Replace the hand-written valibot IPC validators (`crates/kchess-contracts/ts/apiContracts.ts`) with the
