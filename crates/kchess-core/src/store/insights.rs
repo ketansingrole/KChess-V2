@@ -1,4 +1,4 @@
-//! Patterns in the games synced to this computer (`core/src/services/insights.ts`): results by
+//! Patterns in the games synced to this computer (`crates/kchess-node/js/insights.ts`): results by
 //! colour, speed, opening, time of day, opponent strength and game length, and accuracy where
 //! games were reviewed. Everything is read locally; nothing is sent to Lichess.
 

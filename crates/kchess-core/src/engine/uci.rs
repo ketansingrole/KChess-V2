@@ -1,4 +1,4 @@
-//! UCI engine processes (`core/src/services/uci.ts`). A controller owns the process, its pipes,
+//! UCI engine processes (`crates/kchess-node/js/uci.ts`). A controller owns the process, its pipes,
 //! every deadline, termination and the option cache; consumers own positions and the meaning of
 //! `info` lines. Cancellation flows through `CancellationToken`s. Dropping a controller
 //! terminates its process; a dropped future never leaves a search running unobserved.

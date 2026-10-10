@@ -1,4 +1,4 @@
-//! The online-play session (`OnlineSession` in `core/src/services/lichess.ts`): the account's
+//! The online-play session (`OnlineSession` in `crates/kchess-node/js/lichess.ts`): the account's
 //! event stream (challenges and pairings), the game stream of the board, the idle lobby stream,
 //! seeks and challenge creation, recovery after a restart, and the moves and actions of the live
 //! game.

@@ -1,4 +1,4 @@
-//! `core/src/domain/oauthLook.ts`: the theme of the OAuth callback page. Anything malformed
+//! `crates/kchess-wasm/js/oauthLook.ts`: the theme of the OAuth callback page. Anything malformed
 //! falls back to the default look, so the page never takes a colour it cannot trust.
 
 use serde_json::{Map, Value, json};
@@ -9,7 +9,7 @@ use crate::js;
 /// The colour keys of one scheme, in their order.
 const COLOR_KEYS: &[&str] = &["bg", "elevated", "text", "textMuted", "primary", "border"];
 
-/// `APPEARANCES` (`core/src/contracts/types.ts`).
+/// `APPEARANCES` (`crates/kchess-contracts/ts/types.ts`).
 const APPEARANCES: &[&str] = &["system", "light", "dark"];
 
 /// `DEFAULT_OAUTH_LOOK`: KChess's default look, used until the app sends its own colours.

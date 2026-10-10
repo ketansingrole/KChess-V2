@@ -6,13 +6,14 @@ import { runChecks } from './run-checks.mjs'
 export function selectChecks(files) {
   const relevant = files.filter((file) => !file.startsWith('docs/'))
   const full = relevant.some((file) =>
-    /^(?:(?:.*\/)?package\.json|core\/src\/index\.ts|pnpm-(?:lock|workspace)\.yaml|\.npmrc|.*config\.[^/]+|\.github\/|tooling\/|core\/src\/contracts\/|apps\/desktop\/contracts\/|core\/src\/domain\/|core\/src\/services\/(?:index|platform|service)\.ts$|AGENTS\.md)/.test(
+    /^(?:(?:.*\/)?package\.json|pnpm-(?:lock|workspace)\.yaml|\.npmrc|.*config\.[^/]+|\.github\/|tooling\/|crates\/kchess-contracts\/ts\/|apps\/desktop\/contracts\/|crates\/kchess-wasm\/js\/|crates\/kchess-node\/js\/(?:index|platform|service)\.ts$|AGENTS\.md)/.test(
       file,
     ),
   )
   const code = relevant.filter((file) => /\.(?:[cm]?[jt]s|vue)$/.test(file))
   const tests = code.filter((file) => /^(?:.*\/)?tests\/unit\/.*\.test\./.test(file))
-  const sources = code.filter((file) => /^(?:apps|core|hosts)\//.test(file))
+  const packages = /^(?:apps|hosts|crates\/kchess-(?:node\/js|wasm\/js|contracts\/ts))\//
+  const sources = code.filter((file) => packages.test(file))
   const rust = relevant.some((file) =>
     /^(?:crates\/|Cargo\.(?:toml|lock)$|rust(?:-toolchain|fmt)\.toml$)/.test(file),
   )
@@ -24,9 +25,9 @@ export function selectChecks(files) {
   // The Rust rules must keep matching the TypeScript ones they replace.
   if (rust) steps.push(['rust', ['run', 'check:rust']], ['native', ['run', 'build:native']])
   if (rust && !full)
-    steps.push(['unit-native', ['exec', 'vitest', 'run', 'core/tests/unit/native-rules.test.ts']])
+    steps.push(['unit-native', ['exec', 'vitest', 'run', 'tests/core/native-rules.test.ts']])
   // Unit tests load the core, which requires the native rules for this host.
-  const unit = full || code.some((file) => /^(?:apps|core|hosts)\/|tests\//.test(file))
+  const unit = full || code.some((file) => packages.test(file) || /tests\//.test(file))
   if (!rust && unit) steps.push(['native', ['run', 'build:native']])
   if (full) {
     steps.push(['types', ['run', 'typecheck']], ['unit', ['run', 'test:unit']])

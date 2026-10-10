@@ -1,0 +1,54 @@
+{
+  "name": "@kchess/contracts",
+  "version": "2026.10.4",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "description": "The KChess contract types, generated from the Rust contracts, and the IPC validators.",
+  "scripts": {
+    "build": "node ../../../tooling/build-package.mjs crates/kchess-contracts/ts",
+    "typecheck": "pnpm -w exec tsc --noEmit -p crates/kchess-contracts/ts/tsconfig.json"
+  },
+  "dependencies": {
+    "@kchess/rules": "workspace:*",
+    "valibot": "^1.5.0"
+  },
+  "exports": {
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./settings": {
+      "types": "./dist/settings.d.ts",
+      "import": "./dist/settings.js"
+    },
+    "./defaultSettings": {
+      "types": "./dist/defaultSettings.d.ts",
+      "import": "./dist/defaultSettings.js"
+    },
+    "./lichessApi": {
+      "types": "./dist/lichessApi.d.ts",
+      "import": "./dist/lichessApi.js"
+    },
+    "./library": {
+      "types": "./dist/library.d.ts",
+      "import": "./dist/library.js"
+    },
+    "./variant": {
+      "types": "./dist/variant.d.ts",
+      "import": "./dist/variant.js"
+    },
+    "./apiContracts": {
+      "types": "./dist/apiContracts.d.ts",
+      "import": "./dist/apiContracts.js"
+    },
+    "./generated/*": {
+      "types": "./dist/generated/*.d.ts",
+      "import": "./dist/generated/*.js"
+    }
+  }
+}

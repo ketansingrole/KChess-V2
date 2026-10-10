@@ -1,4 +1,4 @@
-//! The Stockfish KChess downloads and owns (formerly `core/src/services/managedEngine.ts` and
+//! The Stockfish KChess downloads and owns (formerly `crates/kchess-node/js/managedEngine.ts` and
 //! `stockfishAsset.ts`): install state, the verified download of the latest official release,
 //! and the atomic replacement of the working engine.
 //!

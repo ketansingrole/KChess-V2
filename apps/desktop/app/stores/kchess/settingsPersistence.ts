@@ -1,6 +1,6 @@
 import { registerPersistenceFlush } from '../../utils/library'
 import { computed, watch, onScopeDispose, type Ref } from 'vue'
-import type { AppData, Settings } from '@kchess/core/contracts/types'
+import type { AppData, Settings } from '@kchess/contracts/types'
 
 /** Serialize settings writes and keep edits made while a prior write is pending. */
 export function useSettingsPersistence(options: {

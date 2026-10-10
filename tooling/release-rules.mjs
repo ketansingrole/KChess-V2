@@ -65,7 +65,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const desktop = JSON.parse(readFileSync(new URL('apps/desktop/package.json', root), 'utf8'))
   for (const name of [
     '.',
-    'core',
+    'crates/kchess-contracts/ts',
+    'crates/kchess-wasm/js',
     'hosts/node',
     'apps/cli',
     'apps/desktop',

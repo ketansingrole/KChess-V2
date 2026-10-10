@@ -11,9 +11,9 @@ import {
 import { initialLibrary, persistSession } from '../utils/library'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
-import type { AnalysisUpdate, CloudEval, Judgment } from '@kchess/core/contracts/types'
-import { analysisContext } from '@kchess/core/domain/analysisContext'
-import { analyseReview, reviewKey, type GameAnalysis } from '@kchess/core/domain/review'
+import type { AnalysisUpdate, CloudEval, Judgment } from '@kchess/contracts/types'
+import { analysisContext } from '@kchess/rules/analysisContext'
+import { analyseReview, reviewKey, type GameAnalysis } from '@kchess/rules/review'
 import { useKChessStore } from './kchess'
 import { useReviewStore } from './review'
 import { useStudyStore } from './studies'
@@ -29,9 +29,9 @@ import {
   treeFromPgn,
   treeToPgn,
   type TreeNode,
-} from '@kchess/core/domain/analysisTree'
-import { playUci, positionFromFen } from '@kchess/core/domain/chess'
-import { setupFromFen, START_SETUP, type EditorSetup } from '@kchess/core/domain/boardEditor'
+} from '@kchess/rules/analysisTree'
+import { playUci, positionFromFen } from '@kchess/rules/chess'
+import { setupFromFen, START_SETUP, type EditorSetup } from '@kchess/rules/boardEditor'
 
 /** Evaluations kept per position, so stepping back and forth shows them at once. */
 const CACHE_SIZE = 600

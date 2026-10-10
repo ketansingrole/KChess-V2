@@ -1,4 +1,4 @@
-//! What voice input heard and what came of it (`core/src/services/voiceLog.ts`), kept to see which
+//! What voice input heard and what came of it (`crates/kchess-node/js/voiceLog.ts`), kept to see which
 //! words it mishears. Oldest entries beyond `MAX_ENTRIES` are dropped.
 
 use rusqlite::{Connection, params};

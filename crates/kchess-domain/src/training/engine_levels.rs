@@ -1,4 +1,4 @@
-//! Engine strength levels (`core/src/domain/engineLevels.ts`): the ladder from weakest to
+//! Engine strength levels (`crates/kchess-wasm/js/engineLevels.ts`): the ladder from weakest to
 //! strongest, and how a chosen set of levels is kept and substituted.
 
 use serde::{Deserialize, Serialize};

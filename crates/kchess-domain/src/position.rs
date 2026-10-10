@@ -1,4 +1,4 @@
-//! Positions as the frontends hold them (`core/src/domain/position.ts`): a variant and a FEN,
+//! Positions as the frontends hold them (`crates/kchess-wasm/js/position.ts`): a variant and a FEN,
 //! with every question about them answered here, as chessops answered it on its `Position`.
 
 use serde::Serialize;

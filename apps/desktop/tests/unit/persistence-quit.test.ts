@@ -8,7 +8,7 @@ import {
   persistSession,
   registerPersistenceFlush,
 } from '../../app/utils/library'
-import type { Settings } from '@kchess/core/contracts/types'
+import type { Settings } from '@kchess/contracts/types'
 
 it('flushes the latest game, archive and identity before their debounce fires', async () => {
   desktop()

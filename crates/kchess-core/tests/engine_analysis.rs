@@ -1,4 +1,4 @@
-//! Analysis through the scripted engine (`core/tests/unit/analysis-engine.test.ts`): streamed
+//! Analysis through the scripted engine (`tests/core/analysis-engine.test.ts`): streamed
 //! lines, MultiPV, the repetition context, superseded requests, interrupted and completed output,
 //! and the payload shape of `engine:analysis`.
 

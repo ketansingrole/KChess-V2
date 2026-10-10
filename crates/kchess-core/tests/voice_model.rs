@@ -1,4 +1,4 @@
-//! Ports `core/tests/unit/voice-model.test.ts`: the cache's install check, shared preparation,
+//! Ports `tests/core/voice-model.test.ts`: the cache's install check, shared preparation,
 //! offline reuse, checksum and corruption handling, failed and interrupted downloads, unsafe
 //! archives, and responsiveness while a large model is prepared. A local HTTP server stands in
 //! for the model's host, and archives are generated in the test.

@@ -6,8 +6,8 @@ import {
   ARENA_INCREMENTS,
   ARENA_WAIT_MINUTES,
   type NewArena,
-} from '@kchess/core/contracts/types'
-import { canBoardSeek } from '@kchess/core/domain/timeControl'
+} from '@kchess/contracts/types'
+import { canBoardSeek } from '@kchess/rules/timeControl'
 import { useTournamentStore } from '../stores/tournaments'
 
 /** Creates a Lichess arena run by the active account. */

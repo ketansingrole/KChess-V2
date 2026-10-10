@@ -1,4 +1,4 @@
-//! `LocalGame` (`core/src/domain/gameSession.ts`): two people at one board, with optional clocks
+//! `LocalGame` (`crates/kchess-wasm/js/gameSession.ts`): two people at one board, with optional clocks
 //! and a stand-alone chess clock for a real board.
 
 use serde::{Deserialize, Serialize};

@@ -1,13 +1,4 @@
 {
-  "extends": "../../core/tsconfig.json",
-  "include": ["src/**/*.ts"],
-  "compilerOptions": {
-    "paths": {
-      "@kchess/core": ["../../core/src/index.ts"],
-      "@kchess/core/logger": ["../../core/src/services/logger.ts"],
-      "@kchess/core/gameArchive": ["../../core/src/domain/gameArchive.ts"],
-      "@kchess/core/gameSession": ["../../core/src/domain/gameSession.ts"],
-      "@kchess/node": ["./src/index.ts"]
-    }
-  }
+  "extends": "../../tsconfig.packages.json",
+  "include": ["src/**/*.ts"]
 }

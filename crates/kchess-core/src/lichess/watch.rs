@@ -1,4 +1,4 @@
-//! Watching Lichess games (`core/src/services/spectate.ts`): TV channels and the games they show,
+//! Watching Lichess games (`crates/kchess-node/js/spectate.ts`): TV channels and the games they show,
 //! a game by id, broadcast rounds and the broadcast listings.
 //!
 //! One watch runs at a time. Starting another stops the last, and frames or states of a stopped
@@ -20,7 +20,7 @@ use crate::error::{CoreError, Result as CoreResult};
 use crate::host::{Host, Level};
 use kchess_domain::{api, js, position, review};
 
-/// `TV_CHANNELS` of `core/src/domain/tvChannels.ts`: key and label, in display order.
+/// `TV_CHANNELS` of `crates/kchess-wasm/js/tvChannels.ts`: key and label, in display order.
 pub const TV_CHANNELS: [(&str, &str); 16] = [
     ("best", "Top rated"),
     ("bullet", "Bullet"),

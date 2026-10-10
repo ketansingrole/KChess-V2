@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
-import type { EngineLine, Settings } from '@kchess/core/contracts/types'
-import { formatEval, pvSan } from '@kchess/core/domain/analysisTree'
+import type { EngineLine, Settings } from '@kchess/contracts/types'
+import { formatEval, pvSan } from '@kchess/rules/analysisTree'
 
 const props = withDefaults(
   defineProps<{

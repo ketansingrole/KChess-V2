@@ -1,4 +1,4 @@
-//! Lichess studies (`core/src/services/studies.ts`): the study list of an account, the chapters of
+//! Lichess studies (`crates/kchess-node/js/studies.ts`): the study list of an account, the chapters of
 //! a study, export of a game into a study, and the explicit cloud sync that refuses to overwrite
 //! concurrent cloud edits.
 //!

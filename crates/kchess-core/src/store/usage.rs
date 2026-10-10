@@ -1,4 +1,4 @@
-//! Network accounting in the database (`core/src/services/usage.ts`): the counters `flushUsage`
+//! Network accounting in the database (`crates/kchess-node/js/usage.ts`): the counters `flushUsage`
 //! writes, `resetUsage` clears and `usageReport` reads. The in-memory batching, the flush timer,
 //! the request contexts and the database file sizes stay in TypeScript.
 

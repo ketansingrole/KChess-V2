@@ -17,7 +17,7 @@ KChess is a desktop app that stores a Lichess login on the user's computer, so t
 - Leaking or mishandling Lichess OAuth tokens (they are encrypted with the operating
   system's credential storage and never leave the main process).
 - Ways for renderer content to run code or choose which executable the main process starts
-  (the renderer is sandboxed; all IPC input is validated in `core/src/domain/validate.ts`).
+  (the renderer is sandboxed; all IPC input is validated in `crates/kchess-wasm/js/validate.ts`).
 - Flaws in the OAuth loopback callback or in verifying downloaded Stockfish builds.
 
 Vulnerabilities in Electron, Chromium, or other dependencies should be reported to those

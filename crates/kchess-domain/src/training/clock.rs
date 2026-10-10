@@ -1,4 +1,4 @@
-//! The client clock (`core/src/domain/clock.ts`, modelled on lila's clockCtrl): the server sends
+//! The client clock (`crates/kchess-wasm/js/clock.ts`, modelled on lila's clockCtrl): the server sends
 //! authoritative times, and the client interpolates from them. Every transition takes `now`, so
 //! the state is plain data and the rules are deterministic.
 

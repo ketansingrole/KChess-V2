@@ -1,4 +1,4 @@
-//! Lichess accounts, profiles and game sync (the account half of `core/src/services/lichess.ts`):
+//! Lichess accounts, profiles and game sync (the account half of `crates/kchess-node/js/lichess.ts`):
 //! `asOwner`, `asAnyAccount`, `asAccount`, `cancelAccountSyncs`, `invalidateLogin`, the profile
 //! cache, `followedUsers`, `primeProfiles`, `profile`, `playerPerf`, `exportGame`, `recentGames`,
 //! `sendMessage`, `crosstable`, `ratingHistory` and `syncGames`.

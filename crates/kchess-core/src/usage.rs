@@ -1,4 +1,4 @@
-//! Network accounting batches (`core/src/services/usage.ts`): the `host:usage` events the Lichess
+//! Network accounting batches (`crates/kchess-node/js/usage.ts`): the `host:usage` events the Lichess
 //! policy and the puzzle download emit accumulate in memory per account and kind, and reach
 //! `kchess.db` at most every five seconds (`flushUsage`), or on demand before a report. Traffic of
 //! an account whose epoch moved on is dropped by the policy before it is emitted; `forget` drops

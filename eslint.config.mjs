@@ -15,13 +15,15 @@ export default withNuxt(
       'test-results/**',
       'playwright-report/**',
       'apps/desktop/electron/renderer/*.d.ts',
-      'core/src/contracts/generated/**',
+      'crates/kchess-contracts/ts/generated/**',
     ],
   },
   {
     files: [
       'apps/desktop/app/**/*.{ts,vue}',
-      'core/src/**/*.ts',
+      'crates/kchess-node/js/**/*.ts',
+      'crates/kchess-wasm/js/**/*.ts',
+      'crates/kchess-contracts/ts/**/*.ts',
       'hosts/node/src/**/*.ts',
       'apps/cli/src/**/*.ts',
       'apps/desktop/electron/**/*.ts',
@@ -33,7 +35,9 @@ export default withNuxt(
         project: [
           './apps/desktop/.nuxt/tsconfig.app.json',
           './apps/desktop/tsconfig.electron.json',
-          './core/tsconfig.json',
+          './crates/kchess-node/tsconfig.json',
+          './crates/kchess-wasm/js/tsconfig.json',
+          './crates/kchess-contracts/ts/tsconfig.json',
           './hosts/node/tsconfig.json',
           './apps/cli/tsconfig.json',
         ],

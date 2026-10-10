@@ -6,7 +6,7 @@ import {
   DiagnosticLog,
   redactDiagnostics,
   registerDiagnosticSecret,
-} from '../../../../core/src/services/diagnosticLog'
+} from '@kchess/native/diagnosticLog'
 import { diagnosticSessionId } from '../../electron/main/diagnostics'
 
 it('redacts registered secrets, Lichess tokens, headers, query parameters and home paths', () => {

@@ -1,4 +1,4 @@
-//! `core/src/services/store.ts`: settings, accounts, the game library, the Lichess API cache and the
+//! `crates/kchess-node/js/store.ts`: settings, accounts, the game library, the Lichess API cache and the
 //! account lifecycle, as `store.games.<name>` methods over `kchess.db`.
 //!
 //! Each method takes the TypeScript arguments as a JSON array and returns the TypeScript result as
@@ -100,7 +100,7 @@ const LIST_COLUMNS: &str = "account, id, createdAt, lastMoveAt, rated, speed, pe
 const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
 const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
 
-/// `DEFAULT_SETTINGS` (`core/src/contracts/defaultSettings.ts`).
+/// `DEFAULT_SETTINGS` (`crates/kchess-contracts/ts/defaultSettings.ts`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {

@@ -1,4 +1,4 @@
-//! Lichess, migrating from `core/src/services/{lichess,requestPolicy,ndjson,oauthPage,usage,
+//! Lichess, migrating from `crates/kchess-node/js/{lichess,requestPolicy,ndjson,oauthPage,usage,
 //! challenges,tournaments,spectate,studies,cloudEval,positionLookup}.ts` (see RUST_MIGRATION.md).
 
 pub mod accounts;

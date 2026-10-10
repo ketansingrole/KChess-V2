@@ -14,7 +14,7 @@ use std::num::NonZeroU32;
 
 use crate::js;
 
-/// The Lichess variant keys KChess can play (`core/src/domain/variant.ts`).
+/// The Lichess variant keys KChess can play (`crates/kchess-wasm/js/variant.ts`).
 pub fn lichess_variant(key: &str) -> Option<Variant> {
     Some(match key {
         "standard" | "chess960" => Variant::Chess,

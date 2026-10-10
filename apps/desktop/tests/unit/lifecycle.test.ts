@@ -14,7 +14,7 @@ import type {
   RunSaved,
   PuzzleSolveRequest,
   LichessGameStateEvent,
-} from '@kchess/core/contracts/types'
+} from '@kchess/contracts/types'
 
 async function puzzleStore(overrides: Parameters<typeof desktop>[0] = {}) {
   const bridge = desktop(overrides)

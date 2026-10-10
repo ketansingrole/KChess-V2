@@ -8,7 +8,13 @@ import { readFileSync } from 'node:fs'
 const notices = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8')
 const dependencies = Object.assign(
   {},
-  ...['core', 'hosts/node', 'apps/cli', 'apps/desktop'].map((path) => {
+  ...[
+    'crates/kchess-contracts/ts',
+    'crates/kchess-wasm/js',
+    'hosts/node',
+    'apps/cli',
+    'apps/desktop',
+  ].map((path) => {
     const pkg = JSON.parse(
       readFileSync(new URL('../' + path + '/package.json', import.meta.url), 'utf8'),
     )

@@ -1,6 +1,6 @@
 import { onScopeDispose, type ComputedRef } from 'vue'
-import { RequestScope } from '@kchess/core/domain/requestScope'
-import type { InsightsQuery } from '@kchess/core/contracts/types'
+import { RequestScope } from '@kchess/rules/requestScope'
+import type { InsightsQuery } from '@kchess/contracts/types'
 import { requestInsights } from '../utils/insightsRequest'
 
 export function useInsightsReport(query: ComputedRef<InsightsQuery>) {

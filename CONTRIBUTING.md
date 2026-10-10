@@ -26,15 +26,15 @@ pnpm run test:e2e
 - Match the surrounding code: naming, comment density, and idiom. Prettier settings are in
   `.prettierrc.json`.
 - Add lifecycle regression cases under the owning package’s `tests/unit/` using Vitest, real Pinia stores and mounted Vue components. Put actual Electron integration checks under `apps/desktop/tests/e2e/`; these use temporary profiles and the branded launcher.
-- Put headless features in `core/src/services` behind `CoreApi`, and pure chess or training rules in `core/src/domain`; desktop-only features extend `DesktopApi`. Documents a user keeps belong in the core's library, not in renderer storage. Keep request channels in `apps/desktop/contracts/ipc.ts`. IPC handlers accept unknown inputs and must validate them before use.
+- Put headless features in `crates/kchess-node/js` behind `CoreApi`, and pure chess or training rules in `crates/kchess-wasm/js`; desktop-only features extend `DesktopApi`. Documents a user keeps belong in the core's library, not in renderer storage. Keep request channels in `apps/desktop/contracts/ipc.ts`. IPC handlers accept unknown inputs and must validate them before use.
 - Anything that crosses the Electron IPC boundary must be validated in
-  `core/src/domain/validate.ts`. The renderer is sandboxed and must never choose what the main
+  `crates/kchess-wasm/js/validate.ts`. The renderer is sandboxed and must never choose what the main
   process executes.
 - New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
-  `core/src/services/store.ts`, and a new entry at the end of `MIGRATIONS` in
-  `core/src/services/migrations.ts` (never edit an earlier migration).
+  `crates/kchess-core/src/store/mod.rs`, and a new entry at the end of `MIGRATIONS` in
+  `crates/kchess-core/src/store/migrations.rs` (never edit an earlier migration).
 - Be gentle with Lichess. Bulk downloads run one request at a time, and requests should be
-  attributed for the data-usage counters (`withUsage` in `core/src/services/usage.ts`).
+  attributed for the data-usage counters (`withUsage` in `crates/kchess-core/src/store/usage.rs`).
 
 ## Licensing of contributions
 

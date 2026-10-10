@@ -1,5 +1,5 @@
-import { nativeCallSync } from '../../core/src/services/nativeCore'
-import { setPlatform, type CorePlatform } from '../../core/src/services/platform'
+import { nativeCallSync } from '@kchess/native/nativeCore'
+import { setPlatform, type CorePlatform } from '@kchess/native/platform'
 import { testPlatform } from './corePlatform'
 
 /**

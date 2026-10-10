@@ -3,8 +3,8 @@ import { seedSaved, storedLibrary } from './libraryBackend'
 import { nextTick } from 'vue'
 import { useStudyStore } from '../../app/stores/studies'
 import { useAnalysisStore } from '../../app/stores/analysis'
-import { treeFromPgn } from '@kchess/core/domain/analysisTree'
-import { pgnGames } from '@kchess/core/domain/pgn'
+import { treeFromPgn } from '@kchess/rules/analysisTree'
+import { pgnGames } from '@kchess/rules/pgn'
 import { desktop } from './fixtures'
 
 // Every test here keeps its studies in the core's library.

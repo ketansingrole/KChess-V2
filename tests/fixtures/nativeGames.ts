@@ -1,7 +1,7 @@
-import { nativeCallSync } from '../../core/src/services/nativeCore'
-import { platform } from '../../core/src/services/platform'
-import { registerDiagnosticSecret } from '../../core/src/services/diagnosticLog'
-import { logDebug } from '../../core/src/services/logger'
+import { nativeCallSync } from '@kchess/native/nativeCore'
+import { platform } from '@kchess/native/platform'
+import { registerDiagnosticSecret } from '@kchess/native/diagnosticLog'
+import { logDebug } from '@kchess/native/logger'
 import type {
   AppData,
   GamePageQuery,
@@ -11,8 +11,8 @@ import type {
   LichessRatingHistory,
   Settings,
   StoredReview,
-} from '../../core/src/contracts/types'
-import { assertGamePageQuery, assertUsername } from '../../core/src/domain/validate'
+} from '@kchess/contracts/types'
+import { assertGamePageQuery, assertUsername } from '@kchess/rules/validate'
 
 /**
  * Test-only calls of the Rust core's storage methods (`store.games.*`), on the current native

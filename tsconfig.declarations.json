@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.packages.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "crates",
+    "outDir": "node_modules/.cache/kchess-declarations"
+  },
+  "include": [
+    "crates/kchess-contracts/ts/**/*.ts",
+    "crates/kchess-wasm/js/**/*.ts",
+    "crates/kchess-node/js/**/*.ts"
+  ],
+  "exclude": ["**/dist/**", "**/node_modules/**"]
+}

@@ -2,15 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
 import { formatBytes } from '../utils/format'
-import {
-  canDirectChallenge,
-  canPlayOnline,
-  perfFor,
-  totalSeconds,
-} from '@kchess/core/domain/timeControl'
-import { CORRESPONDENCE_DAYS } from '@kchess/core/contracts/types'
-import { VARIANT_HINTS, VARIANT_LABELS, VARIANTS } from '@kchess/core/domain/variant'
-import { setupPgn } from '@kchess/core/domain/chess'
+import { canDirectChallenge, canPlayOnline, perfFor, totalSeconds } from '@kchess/rules/timeControl'
+import { CORRESPONDENCE_DAYS } from '@kchess/contracts/types'
+import { VARIANT_HINTS, VARIANT_LABELS, VARIANTS } from '@kchess/rules/variant'
+import { setupPgn } from '@kchess/rules/chess'
 import { useChallengeStore } from '../stores/challenges'
 import { useAnalysisStore } from '../stores/analysis'
 import { useTournamentStore } from '../stores/tournaments'

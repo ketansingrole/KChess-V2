@@ -1,4 +1,4 @@
-//! Incoming and outgoing challenges (`core/src/services/challenges.ts`): the reader of a
+//! Incoming and outgoing challenges (`crates/kchess-node/js/challenges.ts`): the reader of a
 //! challenge event from an account's event stream, and the inbox of pending challenges that
 //! emits `challenges:update` whenever it changes.
 //!

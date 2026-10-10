@@ -8,7 +8,7 @@
  *   rethrow. Non-inline handlers (identifiers, `noSuchUser(x)`) are assumed to
  *   be named handlers that throw or log at their definition.
  * - `logging/no-raw-console`: main-process code must go through the scoped
- *   `core/src/services/logger.ts` so entries carry `[scope]` and pass through redacted
+ *   `crates/kchess-node/js/logger.ts` so entries carry `[scope]` and pass through redacted
  *   `DiagnosticLog`. Only `logger.ts` and `diagnostics.ts` may touch console.
  */
 
@@ -159,10 +159,10 @@ const noRawConsole = {
   create(context) {
     const file = context.filename.replaceAll('\\', '/')
     const allowed =
-      file.endsWith('core/src/services/logger.ts') ||
+      file.endsWith('crates/kchess-node/js/logger.ts') ||
       file.endsWith('apps/desktop/electron/main/diagnostics.ts')
     if (allowed) return {}
-    if (!file.includes('apps/desktop/electron/main/') && !file.includes('core/src/services/'))
+    if (!file.includes('apps/desktop/electron/main/') && !file.includes('crates/kchess-node/js/'))
       return {}
     return {
       MemberExpression(node) {

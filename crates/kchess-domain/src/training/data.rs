@@ -1,4 +1,4 @@
-//! The training constants shared with TypeScript (`core/src/domain/data/training.json`), parsed
+//! The training constants shared with TypeScript (`crates/kchess-wasm/js/data/training.json`), parsed
 //! once. TypeScript imports the same file, so the two cannot drift.
 
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use super::endgames::EndgameDrill;
 use super::engine_levels::EngineLevelInfo;
 use super::rush::RushConfig;
 
-const TRAINING_JSON: &str = include_str!("../../../../core/src/domain/data/training.json");
+const TRAINING_JSON: &str = include_str!("../../../../crates/kchess-wasm/js/data/training.json");
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

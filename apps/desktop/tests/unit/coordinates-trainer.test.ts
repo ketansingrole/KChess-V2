@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import ChessBoard from '../../app/components/ChessBoard.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
-import { EMPTY_FEN } from '@kchess/core/domain/coordinates'
+import { EMPTY_FEN } from '@kchess/rules/coordinates'
 import { desktop, componentStubs } from './fixtures'
-import type { RunInput } from '@kchess/core/contracts/types'
+import type { RunInput } from '@kchess/contracts/types'
 
 const BoardStub = defineComponent({
   name: 'ChessBoard',

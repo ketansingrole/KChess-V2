@@ -1,4 +1,4 @@
-//! The position-lookup cache table (`core/src/services/setupPositionLookup.ts`). The cache keeps
+//! The position-lookup cache table (`crates/kchess-node/js/setupPositionLookup.ts`). The cache keeps
 //! the newest 256 entries. Decoding a cached entry and the explorer requests stay in TypeScript.
 
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};

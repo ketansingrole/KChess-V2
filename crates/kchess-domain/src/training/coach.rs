@@ -1,4 +1,4 @@
-//! Review coaching (`core/src/domain/coach.ts`): a sentence about one reviewed move. Every claim
+//! Review coaching (`crates/kchess-wasm/js/coach.ts`): a sentence about one reviewed move. Every claim
 //! comes from a scored, legally replayed position.
 
 use serde::Deserialize;

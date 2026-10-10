@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useOnline } from '@vueuse/core'
-import { engineLevelLabel } from '@kchess/core/domain/engineLevels'
+import { engineLevelLabel } from '@kchess/rules/engineLevels'
 import { useGameArchiveStore } from '../stores/gameArchive'
 
 const online = useOnline()

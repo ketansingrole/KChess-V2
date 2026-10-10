@@ -1,6 +1,6 @@
 //! One entry point for every host: `call(method, args)` with a JSON array of arguments and a
 //! JSON result. The Node module and the renderer's WebAssembly module both expose it, and
-//! `core/src/domain/engine.ts` gives it typed TypeScript wrappers.
+//! `crates/kchess-wasm/js/engine.ts` gives it typed TypeScript wrappers.
 
 use serde_json::{Map, Value, json};
 use shakmaty::Position;

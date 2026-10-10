@@ -7,7 +7,7 @@ export default defineConfig({
     outDir: 'apps/cli/dist',
     emptyOutDir: true,
     rollupOptions: {
-      external: [/^@kchess\/(?:core|node)(?:\/|$)/],
+      external: [/^@kchess\/(?:native|rules|contracts|node)(?:\/|$)/],
       input: {
         cli: 'apps/cli/src/index.ts',
       },

@@ -1,4 +1,4 @@
-//! Local scores for Storm, Streak, Rush and the practice drills (`core/src/services/runs.ts`).
+//! Local scores for Storm, Streak, Rush and the practice drills (`crates/kchess-node/js/runs.ts`).
 //! Neither is ever sent anywhere.
 
 use rusqlite::{Connection, params};

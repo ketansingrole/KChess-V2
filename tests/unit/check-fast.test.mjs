@@ -9,8 +9,8 @@ it('runs only changed formatting, lint and related tests for renderer edits', ()
   expect(steps.at(-1)[1]).toContain('apps/desktop/app/stores/watch.ts')
 })
 it.each([
-  'core/src/contracts/types.ts',
-  'core/src/services/platform.ts',
+  'crates/kchess-contracts/ts/types.ts',
+  'crates/kchess-node/js/platform.ts',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
   'vitest.config.ts',

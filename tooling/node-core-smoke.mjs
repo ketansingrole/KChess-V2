@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { createNodeCore } from '../hosts/node/dist/node.js'
-import { OnlineGame, onlineGameState } from '../core/dist/onlineGame.js'
-import { PuzzleSession, puzzleSessionState } from '../core/dist/puzzleSession.js'
+import { OnlineGame, onlineGameState } from '../crates/kchess-wasm/js/dist/onlineGame.js'
+import { PuzzleSession, puzzleSessionState } from '../crates/kchess-wasm/js/dist/puzzleSession.js'
 
 const dirs = [
   await mkdtemp(join(tmpdir(), 'kchess-node-a-')),

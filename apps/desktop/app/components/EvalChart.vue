@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { Judgment } from '@kchess/core/contracts/types'
+import type { Judgment } from '@kchess/contracts/types'
 
 /**
  * The game's evaluation over time, Lichess-style: White's winning chances fill from the bottom,

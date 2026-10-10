@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatGameDate } from '../utils/games'
-import { gameResult } from '@kchess/core/domain/gameStatus'
+import { gameResult } from '@kchess/rules/gameStatus'
 import { judgmentCounts } from '../utils/review'
-import type { LichessGame, ReviewSummary } from '@kchess/core/contracts/types'
+import type { LichessGame, ReviewSummary } from '@kchess/contracts/types'
 
 const props = defineProps<{ game: LichessGame; detailed?: boolean; review?: ReviewSummary }>()
 const emit = defineEmits<{ select: [] }>()

@@ -1,10 +1,10 @@
-//! The checked-in `core/src/contracts/generated/*.ts` must be what the Rust contracts render.
+//! The checked-in `crates/kchess-contracts/ts/generated/*.ts` must be what the Rust contracts render.
 
 use std::fs;
 use std::path::PathBuf;
 
 fn generated_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../core/src/contracts/generated")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ts/generated")
 }
 
 #[test]

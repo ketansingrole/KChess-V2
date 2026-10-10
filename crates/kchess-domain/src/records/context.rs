@@ -1,4 +1,4 @@
-//! `core/src/domain/analysisContext.ts`: the key an analysis is cached under.
+//! `crates/kchess-wasm/js/analysisContext.ts`: the key an analysis is cached under.
 
 use serde_json::Value;
 

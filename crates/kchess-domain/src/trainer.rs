@@ -1,4 +1,4 @@
-//! Rules moved from `core/src/domain` (see RUST_MIGRATION.md); reached through `api::call`.
+//! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md); reached through `api::call`.
 //!
 //! Trainer: the puzzle training session's transitions (`puzzle_session`) and the analysis tree's
 //! edits and helpers (`analysis_tree`).

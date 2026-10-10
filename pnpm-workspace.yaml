@@ -1,5 +1,6 @@
 packages:
-  - core
+  - crates/kchess-contracts/ts
+  - crates/kchess-wasm/js
   - crates/kchess-node
   - hosts/*
   - apps/*

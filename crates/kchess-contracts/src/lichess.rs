@@ -1,4 +1,4 @@
-//! `core/src/contracts/lichessApi.ts`: the Lichess API shapes KChess reads, copied from
+//! `crates/kchess-contracts/ts/lichessApi.ts`: the Lichess API shapes KChess reads, copied from
 //! `@lichess-org/types` 2.0.176. Only the schemas the contracts and services reference are kept.
 //!
 //! The TypeScript exposes them as `components['schemas'][...]` and `paths[...]`. Here each

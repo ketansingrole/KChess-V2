@@ -1,5 +1,5 @@
-//! Tournaments (`core/src/services/tournaments.ts`) over local fixtures. Ports
-//! `core/tests/unit/tournament-create.test.ts`: the timeline's listing and its order, arena
+//! Tournaments (`crates/kchess-node/js/tournaments.ts`) over local fixtures. Ports
+//! `tests/core/tournament-create.test.ts`: the timeline's listing and its order, arena
 //! creation as the chosen account, the reconnect answer for a login without the permission, the
 //! signed-in team lookup with its short explanation, and an arena's featured game, duels, podium
 //! and totals.

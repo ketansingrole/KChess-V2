@@ -1,4 +1,4 @@
-//! `core/src/contracts/defaultSettings.ts`: the default preferences, as data.
+//! `crates/kchess-contracts/ts/defaultSettings.ts`: the default preferences, as data.
 
 use kchess_domain::training;
 use ts_rs::Config;

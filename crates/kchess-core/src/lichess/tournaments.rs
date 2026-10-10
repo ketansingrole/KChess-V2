@@ -1,4 +1,4 @@
-//! Arena and Swiss tournaments (`core/src/services/tournaments.ts`): the list the timeline shows,
+//! Arena and Swiss tournaments (`crates/kchess-node/js/tournaments.ts`): the list the timeline shows,
 //! one tournament with its leaderboard, joining and leaving, and creating an arena.
 //!
 //! Lichess's answers are read with the rules of the TypeScript schemas (valibot): a required key

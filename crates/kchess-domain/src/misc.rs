@@ -1,4 +1,4 @@
-//! Validation and library documents (`core/src/domain/validate.ts` and `library.ts`), reached
+//! Validation and library documents (`crates/kchess-wasm/js/validate.ts` and `library.ts`), reached
 //! through `api::call`. The TypeScript wrappers send their arguments through `rulesLossless`:
 //! the first argument is a sidecar listing where `undefined`, NaN, the infinities and binary data
 //! sat, since JSON cannot carry them. Those are rebuilt here before validation, so each check sees

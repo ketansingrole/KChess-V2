@@ -1,5 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
-import type { Settings, EngineStatus } from '@kchess/core/contracts/types'
+import type { Settings, EngineStatus } from '@kchess/contracts/types'
 
 /** Engine selection and installation state have one renderer owner across routes. */
 export function useEngineSettings(options: {

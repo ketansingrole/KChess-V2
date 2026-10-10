@@ -1,4 +1,4 @@
-//! The Lichess HTTP client (the client half of `core/src/services/lichess.ts`): the base URL,
+//! The Lichess HTTP client (the client half of `crates/kchess-node/js/lichess.ts`): the base URL,
 //! `authorize`, `urlencoded`, `unwrap` and the error mapping of `throwLichessErrors`, over the
 //! admission policy of `policy.rs`.
 //!

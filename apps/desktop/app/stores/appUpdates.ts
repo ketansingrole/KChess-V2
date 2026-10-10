@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { AppUpdateStatus } from '@kchess/core/contracts/types'
+import type { AppUpdateStatus } from '@kchess/contracts/types'
 
 export const useAppUpdatesStore = defineStore('appUpdates', () => {
   const status = ref<AppUpdateStatus | null>(null)

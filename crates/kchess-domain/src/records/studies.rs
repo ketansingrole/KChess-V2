@@ -1,4 +1,4 @@
-//! `core/src/domain/studies.ts`: what a study's card shows (`summarizeStudy`). The TypeScript
+//! `crates/kchess-wasm/js/studies.ts`: what a study's card shows (`summarizeStudy`). The TypeScript
 //! side remembers results per PGN; the summary itself is worked out here.
 
 use serde_json::{Value, json};

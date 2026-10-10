@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
-import type { SquareName } from '@kchess/core/domain/position'
-import type { RunSaved, RunSummary } from '@kchess/core/contracts/types'
-import { knightChallenge, knightFen, knightMoves } from '@kchess/core/domain/knight'
-import type { Square } from '@kchess/core/domain/coordinates'
+import type { SquareName } from '@kchess/rules/position'
+import type { RunSaved, RunSummary } from '@kchess/contracts/types'
+import { knightChallenge, knightFen, knightMoves } from '@kchess/rules/knight'
+import type { Square } from '@kchess/rules/coordinates'
 import { useCountdown } from '../utils/countdown'
-import { formatRunClock } from '@kchess/core/domain/rush'
+import { formatRunClock } from '@kchess/rules/rush'
 import { playMoveSound } from '../utils/sound'
 
 /**

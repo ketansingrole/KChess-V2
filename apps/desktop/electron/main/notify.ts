@@ -1,12 +1,12 @@
 import type { BrowserWindow } from 'electron'
 import { app, Notification } from 'electron'
-import { logError } from '@kchess/core/logger'
+import { logError } from '@kchess/native/logger'
 import type {
   NotificationKind,
   NotificationRequest,
   NotificationResult,
   Settings,
-} from '@kchess/core/contracts/types'
+} from '@kchess/contracts/types'
 
 /** The Settings switch that governs each kind; a test notification is always allowed. */
 const CATEGORY: Record<Exclude<NotificationKind, 'test'>, keyof Settings> = {

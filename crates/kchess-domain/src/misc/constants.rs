@@ -1,4 +1,4 @@
-//! Tables the validators check against, copied from `core/src/contracts/types.ts`,
+//! Tables the validators check against, copied from `crates/kchess-contracts/ts/types.ts`,
 //! `contracts/settings.ts`, `domain/variant.ts` and `domain/library.ts`.
 
 pub const APPEARANCES: &[&str] = &["system", "light", "dark"];

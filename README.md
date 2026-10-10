@@ -9,8 +9,8 @@ KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, a
 
 ## Core and frontends
 
-Desktop and CLI share `core/src/services` services and framework-independent game controllers in
-`core/src/domain`. Electron is one host adapter; the Node host runs each profile in an isolated
+Desktop and CLI share `crates/kchess-node/js` services and framework-independent game controllers in
+`crates/kchess-wasm/js`. Electron is one host adapter; the Node host runs each profile in an isolated
 worker, allowing several independent clients in the same process.
 
 ```bash
@@ -27,7 +27,7 @@ Credentials use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows
 `--no-credentials` disables credential storage. Desktop and Node ciphertext formats differ,
 so use separate profiles rather than pointing the CLI at Electron's profile.
 
-`pnpm run build:core` builds the Node library and CLI under `core/dist`.
+`pnpm run build:packages` builds the Node host and CLI under their `dist/` folders.
 `pnpm run test:core` verifies the direct core, concurrent Node hosts and CLI in temporary
 profiles without accessing your accounts or keychain. See
 [core/frontend architecture](CORE_FRONTENDS.md) for host contracts,
@@ -234,16 +234,16 @@ Puzzle access needs the `puzzle:read` and `puzzle:write` permissions. Accounts c
 
 Storm, Streak, Rush and offline puzzles play from Lichess's public puzzle database (CC0). It is an opt-in download of about 300 MB from `database.lichess.org` (Settings → Data & storage, or the Rush tab). The file is streamed and decompressed without being saved: KChess keeps a random sample of around a hundred thousand well-tested puzzles, spread evenly over ratings and themes, in `kchess.db` (a few tens of MB), and can delete it again at any time. Local scores live in the same file and can be cleared separately.
 
-On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. New app data is stored in SQLite (`kchess.db` in Electron's user-data directory, via Node's built-in `node:sqlite`; schema changes are ordered migrations in `core/src/services/migrations.ts`, tracked with `PRAGMA user_version`); existing `kchess-data.json` / `lichess-tokens.json` files are imported once and archived as `.bak`. OAuth tokens are encrypted with Electron `safeStorage`.
+On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. New app data is stored in SQLite (`kchess.db` in Electron's user-data directory, via Node's built-in `node:sqlite`; schema changes are ordered migrations in `crates/kchess-core/src/store/migrations.rs`, tracked with `PRAGMA user_version`); existing `kchess-data.json` / `lichess-tokens.json` files are imported once and archived as `.bak`. OAuth tokens are encrypted with Electron `safeStorage`.
 
 ## Structure
 
 - `apps/desktop/app/pages/` contains separate Dashboard, Online, Computer, Puzzles, Practice, History, Friends, and Settings routes (Settings shows one category at a time, chosen from the sidebar).
 - `apps/desktop/app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (navigation, accounts, settings), with `kchess/computerGame.ts`, `onlineGame.ts` and `gameHistory.ts` owning their respective game state, `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `apps/desktop/app/components/` holds reusable board, game row, and page header components.
 - `apps/desktop/app/assets/` and `apps/desktop/app/utils/` hold styles, media and presentation helpers (board pieces, sounds, image export, swipe navigation), and `utils/library.ts`, which loads the core's library before the app mounts.
-- `core/src/services/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:core` builds it as a plain Node library in `core/dist`.
+- `crates/kchess-node/js/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:packages` builds it as a plain Node library in `core/dist`.
 - `apps/desktop/electron/main/` and `apps/desktop/electron/preload/` are the Electron desktop shell. Main configures the core with an Electron platform, serves every `CoreApi` method and event over IPC, and adds the window, updater, dialogs, notifications, themes, microphone access and the `kchess://` route that serves the core's voice model.
-- `core/src/domain/` contains pure chess, training and document rules. `core/src/contracts/` owns the headless API, events, types and validation tuples. Desktop IPC and diagnostics contracts live in `apps/desktop/contracts/`.
+- `crates/kchess-wasm/js/` contains pure chess, training and document rules. `crates/kchess-contracts/ts/` owns the headless API, events, types and validation tuples. Desktop IPC and diagnostics contracts live in `apps/desktop/contracts/`.
 - `apps/desktop/nuxt.config.ts` enables client rendering and hash routing, so the generated app works from Electron's local file URL without a running server. Nuxt's generated files live in `apps/desktop/.output/public/` and are included in the macOS package.
 
 Nuxt UI is loaded as a Nuxt module. Desktop APIs remain exposed through Electron's preload bridge at `window.kchess`.

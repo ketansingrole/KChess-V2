@@ -1,5 +1,5 @@
 //! The argument contracts of the core's methods (`CORE_CONTRACTS` in
-//! `core/src/contracts/apiContracts.ts`): how many arguments a method takes, and one validator per
+//! `crates/kchess-contracts/ts/apiContracts.ts`): how many arguments a method takes, and one validator per
 //! argument, run before the method does anything. A JSON `null` stands for `undefined` here, as an
 //! absent argument does, since JSON cannot carry `undefined`.
 
@@ -24,7 +24,7 @@ enum Check {
 
 use Check::{Any, Optional, Position, Valid, WatchTarget};
 
-/// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`, `core/src/domain/tvChannels.ts`).
+/// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`, `crates/kchess-wasm/js/tvChannels.ts`).
 pub const TV_CHANNEL_KEYS: &[&str] = &[
     "best",
     "bullet",

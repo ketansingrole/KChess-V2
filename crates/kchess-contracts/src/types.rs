@@ -1,4 +1,4 @@
-//! `core/src/contracts/types.ts`: the shapes every frontend exchanges with the core.
+//! `crates/kchess-contracts/ts/types.ts`: the shapes every frontend exchanges with the core.
 //!
 //! Conventions (they reproduce the TypeScript exactly):
 //! - Field names are camelCase on the wire. `Option` fields are optional (`?:`); a field that is

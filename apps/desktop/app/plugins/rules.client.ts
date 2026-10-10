@@ -1,5 +1,5 @@
 import rulesUrl from '../assets/rules/kchess.wasm?url'
-import { setRulesBinding, wasmBinding } from '@kchess/core/domain/engine'
+import { setRulesBinding, wasmBinding } from '@kchess/rules/engine'
 
 /** The chess rules (Rust, as WebAssembly) load before anything that plays or reads a move. */
 export default defineNuxtPlugin({

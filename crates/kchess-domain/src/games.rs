@@ -1,4 +1,4 @@
-//! Game sessions (`core/src/domain/gameSession.ts`, `gameArchive.ts`): the computer game, the
+//! Game sessions (`crates/kchess-wasm/js/gameSession.ts`, `gameArchive.ts`): the computer game, the
 //! board game with clocks, and the archive identity and completion rules. The TypeScript
 //! classes keep their API and their host; every decision is made here.
 //!

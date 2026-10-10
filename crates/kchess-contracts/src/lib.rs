@@ -1,6 +1,6 @@
 //! The core's contract types, as Rust (serde) and as the TypeScript the frontends import.
 //!
-//! `cargo run -p kchess-contracts --bin export-types` writes `core/src/contracts/generated/`;
+//! `cargo run -p kchess-contracts --bin export-types` writes `crates/kchess-contracts/ts/generated/`;
 //! `-- --check` fails when those files are stale. See `generate.rs` for how modules are rendered.
 
 use std::collections::BTreeMap;

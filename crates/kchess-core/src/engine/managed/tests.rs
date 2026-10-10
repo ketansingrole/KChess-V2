@@ -1,4 +1,4 @@
-//! Ports `core/tests/unit/managed-engine.test.ts` and adds the install security cases: digest,
+//! Ports `tests/core/managed-engine.test.ts` and adds the install security cases: digest,
 //! archive traversal and links, failed handoff, failed probe, cancellation. A local HTTP server
 //! stands in for GitHub; archives are generated in the test.
 
@@ -265,7 +265,7 @@ impl EngineHandoff for TestHandoff {
     }
 }
 
-// --- Ported from core/tests/unit/managed-engine.test.ts ---
+// --- Ported from tests/core/managed-engine.test.ts ---
 
 #[tokio::test]
 async fn reports_missing_when_the_directory_or_binary_is_absent() {

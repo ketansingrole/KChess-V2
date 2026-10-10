@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { explainReviewedMove } from '@kchess/core/domain/coach'
+import { explainReviewedMove } from '@kchess/rules/coach'
 import { useMistakeStore } from '../stores/mistakes'
-import { movesOf, pathOf } from '@kchess/core/domain/analysisTree'
+import { movesOf, pathOf } from '@kchess/rules/analysisTree'
 import { useAnalysisStore, type ReviewMark } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
-import type { Judgment } from '@kchess/core/contracts/types'
+import type { Judgment } from '@kchess/contracts/types'
 
 /**
  * The analysis board's game review: each side's accuracy and labelled moves, the evaluation chart,

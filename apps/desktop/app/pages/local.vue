@@ -2,7 +2,7 @@
 import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import {
   VARIANT_HINTS,
   VARIANT_LABELS,
@@ -12,10 +12,10 @@ import {
   setupStart,
   type GameSetup,
   type Variant,
-} from '@kchess/core/domain/variant'
-import { formatClock } from '@kchess/core/domain/clock'
-import { fen as fenOf, navigatePly, setupPgn } from '@kchess/core/domain/chess'
-import { positionProblem } from '@kchess/core/domain/boardEditor'
+} from '@kchess/rules/variant'
+import { formatClock } from '@kchess/rules/clock'
+import { fen as fenOf, navigatePly, setupPgn } from '@kchess/rules/chess'
+import { positionProblem } from '@kchess/rules/boardEditor'
 import { useLocalGameStore, type LocalClock } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import {
@@ -23,10 +23,10 @@ import {
   spokenChoice,
   spokenMove,
   type VoiceMoveChoice,
-} from '@kchess/core/domain/voiceCommands'
+} from '@kchess/rules/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
-import type { VoiceOutcome } from '@kchess/core/contracts/types'
+import type { VoiceOutcome } from '@kchess/contracts/types'
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()

@@ -4,8 +4,13 @@
     "noEmit": false,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "rootDir": "../..",
-    "outDir": "dist/types"
-  },
-  "include": ["src/**/*.ts"]
+    "rootDir": "src",
+    "outDir": "dist",
+    "paths": {
+      "@kchess/native": ["../../crates/kchess-node/dist/index.d.ts"],
+      "@kchess/native/*": ["../../crates/kchess-node/dist/*"],
+      "@kchess/rules/*": ["../../crates/kchess-wasm/js/dist/*"],
+      "@kchess/contracts/*": ["../../crates/kchess-contracts/ts/dist/*"]
+    }
+  }
 }

@@ -1,5 +1,5 @@
-//! Ports `core/tests/unit/request-policy.test.ts` and adds the rate-limit, priority, deadline and
-//! accounting rules of `core/src/services/requestPolicy.ts` and `usage.ts`, over local fixtures.
+//! Ports `tests/core/request-policy.test.ts` and adds the rate-limit, priority, deadline and
+//! accounting rules of `crates/kchess-node/js/requestPolicy.ts` and `usage.ts`, over local fixtures.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;

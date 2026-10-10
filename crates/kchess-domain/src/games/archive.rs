@@ -1,4 +1,4 @@
-//! `GameArchive` (`core/src/domain/gameArchive.ts`): one stable identity per game session, and
+//! `GameArchive` (`crates/kchess-wasm/js/gameArchive.ts`): one stable identity per game session, and
 //! how the session's game is saved while it is played, when it is reset, and when it is stopped.
 
 use serde::{Deserialize, Serialize};

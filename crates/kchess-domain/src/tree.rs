@@ -1,4 +1,4 @@
-//! The analysis board's move tree (`core/src/domain/analysisTree.ts`).
+//! The analysis board's move tree (`crates/kchess-wasm/js/analysisTree.ts`).
 
 use serde::Serialize;
 use shakmaty::Position;

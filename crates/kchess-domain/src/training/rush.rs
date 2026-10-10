@@ -1,4 +1,4 @@
-//! Storm, Streak and Rush (`core/src/domain/rush.ts`): a run's state and the rules that change it.
+//! Storm, Streak and Rush (`crates/kchess-wasm/js/rush.ts`): a run's state and the rules that change it.
 //! Each transition takes the state and returns the next one; the TypeScript wrappers keep the
 //! mutating signatures their callers use.
 

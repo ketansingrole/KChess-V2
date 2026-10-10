@@ -6,8 +6,8 @@ import { useUsageStore } from '../../app/stores/usage'
 import type { DesktopApi } from '../../contracts/types'
 import { detachedLibraryApi, resetLibrary } from './testLibrary'
 // The renderer loads the rules as WebAssembly; tests use the same rules as a Node module
-// (core/src/services/rules.ts installs them when it loads).
-import '../../../../core/src/services/rules'
+// (crates/kchess-node/js/rules.ts installs them when it loads).
+import '@kchess/native/rules'
 process.env.KCHESS_STORE_DEBUG = '1'
 
 vi.mock('../../app/utils/sound', () => ({

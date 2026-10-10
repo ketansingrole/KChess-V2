@@ -9,8 +9,8 @@ import {
   activeSwipeForwardStep,
   registerSwipeBackStep,
 } from '../../app/utils/swipeBack'
-import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
-import { assertSettings } from '@kchess/core/domain/validate'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
+import { assertSettings } from '@kchess/rules/validate'
 
 describe('trackpad page history', () => {
   let dispose: () => void

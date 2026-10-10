@@ -5,8 +5,32 @@ const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/, '')
 const normalize = (path) => path.replaceAll('\\', '/')
 /** A path inside `dir`, including the directory's own index. */
 const within = (path, dir) => path === dir || path.startsWith(`${dir}/`)
-/** What a frontend may import from the core: its entry and the shared logger. */
-const PUBLIC_CORE = ['core/src', 'core/src/index', 'core/src/services/logger']
+
+/** The headless core's packages: the Node glue and services, the rules, and the contracts. */
+const NATIVE = 'crates/kchess-node/js'
+const RULES = 'crates/kchess-wasm/js'
+const CONTRACTS = 'crates/kchess-contracts/ts'
+const PACKAGES = [
+  ['@kchess/native', NATIVE],
+  ['@kchess/rules', RULES],
+  ['@kchess/contracts', CONTRACTS],
+]
+/** What a frontend may import from the core: the native entry and the shared logger. */
+const PUBLIC_CORE = [NATIVE, `${NATIVE}/index`, `${NATIVE}/logger`]
+/** Where the core and Electron main never open SQLite, and their tests. */
+const SQLITE_FREE = [NATIVE, RULES, CONTRACTS, 'tests/core']
+
+const inCore = (path) => [NATIVE, RULES, CONTRACTS].some((dir) => within(path, dir))
+
+/** The repository path a workspace package specifier names, or undefined for other specifiers. */
+function packagePath(source) {
+  for (const [name, dir] of PACKAGES) {
+    if (source === name) return dir
+    if (source.startsWith(`${name}/`)) return `${dir}/${source.slice(name.length + 1)}`
+  }
+  return undefined
+}
+
 export const boundaries = {
   meta: {
     type: 'problem',
@@ -30,39 +54,22 @@ export const boundaries = {
                 ),
               ),
             )
-          : source === '@kchess/core'
-            ? 'core/src'
-            : source === '@kchess/core/logger'
-              ? 'core/src/services/logger'
-              : /^@kchess\/core\/(?:domain|contracts)\//.test(source)
-                ? 'core/src/' + source.slice('@kchess/core/'.length)
-                : source.startsWith('@kchess/core/')
-                  ? 'core/src/domain/' + source.slice('@kchess/core/'.length)
-                  : source === '@kchess/node'
-                    ? 'hosts/node/src'
-                    : source
+          : (packagePath(source) ?? (source === '@kchess/node' ? 'hosts/node/src' : source))
       const renderer =
         file.startsWith('apps/desktop/app/') || file.startsWith('apps/desktop/electron/renderer/')
       const shared =
-        file.startsWith('core/src/domain/') ||
-        file.startsWith('core/src/contracts/') ||
-        file.startsWith('apps/desktop/contracts/')
+        within(file, RULES) || within(file, CONTRACTS) || file.startsWith('apps/desktop/contracts/')
       const preload = file.startsWith('apps/desktop/electron/preload/')
       const main = file.startsWith('apps/desktop/electron/main/')
-      const core = file.startsWith('core/src/services/')
+      const core = within(file, NATIVE)
       const nodeHost = file.startsWith('hosts/node/src/') || file.startsWith('apps/cli/src/')
       let reason
-      if (
-        file.startsWith('core/') &&
-        (imported.startsWith('apps/') || imported.startsWith('hosts/'))
-      )
+      if (inCore(file) && (imported.startsWith('apps/') || imported.startsWith('hosts/')))
         reason = 'The core cannot depend on an application or host.'
       else if (
         (renderer || shared || preload) &&
         (within(imported, 'apps/desktop/electron/main') ||
-          (within(imported, 'core/src') &&
-            !within(imported, 'core/src/domain') &&
-            !within(imported, 'core/src/contracts')) ||
+          within(imported, NATIVE) ||
           within(imported, 'hosts/node/src') ||
           within(imported, 'apps/cli/src'))
       )
@@ -92,17 +99,17 @@ export const boundaries = {
         reason = 'Renderer and shared code cannot import privileged Electron or Node APIs.'
       else if (
         (main || nodeHost) &&
-        within(imported, 'core/src/services') &&
+        within(imported, NATIVE) &&
         !PUBLIC_CORE.includes(imported.replace(/\.ts$/, ''))
       )
-        reason = 'Hosts use only the core entry (core/src) and its logger.'
+        reason = 'Hosts use only the native entry (@kchess/native) and its logger.'
       else if (
         (main || preload || renderer || nodeHost || file.startsWith('apps/desktop/contracts/')) &&
         !source.startsWith('@kchess/') &&
-        within(imported, 'core/src')
+        inCore(imported)
       )
         reason =
-          'Import the core by its public names: @kchess/core, @kchess/core/logger, @kchess/core/domain/*, @kchess/core/contracts/*.'
+          'Import the core by its public names: @kchess/native, @kchess/native/logger, @kchess/rules/*, @kchess/contracts/*.'
       if (reason) context.report({ node, messageId: 'boundary', data: { reason } })
     }
     function privilegedLoad(node, source) {
@@ -120,7 +127,8 @@ export const boundaries = {
         })
       if (
         source === 'node:sqlite' &&
-        (file.startsWith('apps/desktop/electron/main/') || file.startsWith('core/'))
+        (file.startsWith('apps/desktop/electron/main/') ||
+          SQLITE_FREE.some((dir) => within(file, dir)))
       )
         context.report({
           node,
@@ -149,7 +157,8 @@ export const boundaries = {
         }
         if (
           node.source.value === 'node:sqlite' &&
-          (file.startsWith('apps/desktop/electron/main/') || file.startsWith('core/'))
+          (file.startsWith('apps/desktop/electron/main/') ||
+            SQLITE_FREE.some((dir) => within(file, dir)))
         ) {
           for (const specifier of node.specifiers) {
             if (node.importKind !== 'type' && specifier.importKind !== 'type')

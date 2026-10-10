@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { SecretStore } from '@kchess/core'
-import { logDebug } from '@kchess/core/logger'
+import type { SecretStore } from '@kchess/native'
+import { logDebug } from '@kchess/native/logger'
 
 /** A separate Node profile uses its OS credential store; there is no plaintext fallback. */
 export function systemSecrets(dataDir: string, disabled = false): SecretStore {

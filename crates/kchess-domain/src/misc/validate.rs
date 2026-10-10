@@ -1,4 +1,4 @@
-//! The `assert*` validators of `core/src/domain/validate.ts`: each parses an untrusted IPC value
+//! The `assert*` validators of `crates/kchess-wasm/js/validate.ts`: each parses an untrusted IPC value
 //! with the same schema the TypeScript used (see `engine.rs`) and returns the normalized value,
 //! or the message the TypeScript threw.
 

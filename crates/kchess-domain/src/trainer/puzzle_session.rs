@@ -1,4 +1,4 @@
-//! `core/src/domain/puzzleSession.ts`: the training session's transitions.
+//! `crates/kchess-wasm/js/puzzleSession.ts`: the training session's transitions.
 //!
 //! The TypeScript class keeps its reactive state, runs the host call each transition returns
 //! (`call`), and reports the settled reply back with the `resume` token it was given. Every

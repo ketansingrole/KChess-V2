@@ -18,21 +18,20 @@ on macOS, Windows and Linux. All four CI jobs must pass on the current merge bas
 
 - Renderer and shared modules cannot import privileged Node/Electron APIs, core or
   main services. Use DesktopApi for privileged work.
-- Core (`core/src/services`) cannot import Electron, `apps/desktop/electron/main`, `apps/desktop/electron/preload` or renderer code.
-  Host capabilities go through `CorePlatform`; `core/tsconfig.json` typechecks core and
-  shared with Node types only, and `pnpm run test:core` builds `core/dist` and drives it
-  in plain Node (bundled engine, puzzle service, library, concurrent isolated Node hosts and CLI).
-- Node and CLI hosts use only the core entry and logger; core cannot import either host or
-  Vue/Pinia/Nuxt. Game sessions and archive rules in `core/src/domain` have no UI dependency.
-- Main imports the core only through `@kchess/core`, `@kchess/core/logger`, `@kchess/core/domain/*`
-  and `@kchess/core/contracts/*`; the renderer only through the last two. Desktop bundles the core
-  from source via `tooling/core-aliases.ts`; Node frontends use the package's built exports.
+- Core (`crates/kchess-node/js`) cannot import Electron, `apps/desktop/electron/main`, `apps/desktop/electron/preload` or renderer code.
+  Host capabilities go through `CorePlatform`; `tsconfig.packages.json` typechecks the packages with
+  Node types only, and `pnpm run test:core` builds their `dist/` and drives the native package in plain Node (bundled engine, puzzle service, library, concurrent isolated Node hosts and CLI).
+- Node and CLI hosts use only `@kchess/native` and `@kchess/native/logger`; the core cannot import either host or
+  Vue/Pinia/Nuxt. Game sessions and archive rules in `crates/kchess-wasm/js` have no UI dependency.
+- Main imports the core only through `@kchess/native`, `@kchess/native/logger`, `@kchess/rules/*`
+  and `@kchess/contracts/*`; the renderer only through the last two. Desktop bundles the packages
+  from source via `tooling/package-aliases.ts`; Node frontends use the packages' built exports.
 - Main, core, shared and preload cannot import renderer code.
 - Register IPC through apps/desktop/electron/main/ipc.ts; it authenticates the owned top-level frame
   before validating input and invoking a handler.
 - The Rust puzzle service is the only owner of `puzzles.db`; TypeScript reaches it through
   `puzzleDb.ts`. The Rust core is the only owner of `kchess.db` (`crates/kchess-core/src/store`):
-  `core/` never imports `node:sqlite`, and the one-time import from an earlier release runs in Rust.
+  The core packages (`crates/`) never import `node:sqlite`, and the one-time import from an earlier release runs in Rust.
 
 A headless capability belongs in `CoreApi`, `CORE_METHODS` and the core service, which
 validates its own input; main forwards every core method over IPC. Desktop-only methods
@@ -48,12 +47,12 @@ The OAuth appearance parser deliberately falls back to safe default colors.
   Silent fallbacks (`.catch(() => null)`, empty `catch {}`) fail lint
   (`logging/no-silent-catch`, `logging/no-silent-promise-catch`) and fail
   `tests/unit/logging-guardrail.test.ts`.
-- Core and main use `logDebug/logWarn/logError` from `core/src/services/logger.ts` with a
+- Core and main use `logDebug/logWarn/logError` from `crates/kchess-node/js/logger.ts` with a
   `[scope]` (file basename, e.g. `engine`, `lichess`): `logDebug` for
   expected/benign (cancel teardown, chain reset, cache miss), `logWarn` for
   recoverable (cache write, reconnect, throttle), `logError` for failures
   needing attention. `logInfo` is for operational milestones (sync completed,
-  update available/downloaded). Raw `console.*` in `core/src/services` and `apps/desktop/electron/main` fails
+  update available/downloaded). Raw `console.*` in `crates/kchess-node/js` and `apps/desktop/electron/main` fails
   (`logging/no-raw-console`); only `logger.ts` and `diagnostics.ts` may use it.
 - Production context: every failure log carries `method`/`account`/`gameId`/
   `durationMs`/`failures` as applicable, errors go through `errorSummary`
@@ -129,12 +128,12 @@ close cancels network/OAuth, streams, searches and workers, drains requests and 
 waits for engine process termination, and then drops profile caches. Closed references
 cannot target a subsequent profile. Async callbacks retain their original platform scope.
 
-For worker-isolated clients use `createNodeCore` from the built `core/dist/node.js`.
+For worker-isolated clients use `createNodeCore` from the built `hosts/node/dist/node.js`.
 Each client owns an isolated worker with its own direct core. Await its `close()` in `finally`.
 Events return an unsubscribe callback; close detaches subscribers. CLI signals follow the
 same shutdown path, with a bounded worker termination backstop.
 
-`ComputerGame`, `LocalGame` and `GameArchive` in `core/src/domain` own game transitions, clocks,
+`ComputerGame`, `LocalGame` and `GameArchive` in `crates/kchess-wasm/js` own game transitions, clocks,
 engine turn cancellation and archive identity. `OnlineGame` and `PuzzleSession` also own reusable online and training transitions.
 Vue adapters supply reactive state, timer
 presentation, sounds and notifications. CLI supplies plain state, terminal I/O and queued

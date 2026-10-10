@@ -1,4 +1,4 @@
-//! Chess engines, migrating from `core/src/services/{uci,engineScheduler,engine,managedEngine,
+//! Chess engines, migrating from `crates/kchess-node/js/{uci,engineScheduler,engine,managedEngine,
 //! stockfishAsset,analysis,review}.ts` (see RUST_MIGRATION.md).
 //!
 //! `search`, `analysis` and `review` each own their engine processes and their state (the

@@ -1,4 +1,4 @@
-//! Opening names (`core/src/domain/openings.ts`): Lichess's CC0 names keyed by the first four FEN
+//! Opening names (`crates/kchess-wasm/js/openings.ts`): Lichess's CC0 names keyed by the first four FEN
 //! fields, parsed once from the table `tooling/make-openings.mjs` writes.
 
 use serde::Serialize;
@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use super::{Out, js_slice_end, to_value, value_arg};
 use crate::{js, position, rules};
 
-const OPENINGS_JSON: &str = include_str!("../../../../core/src/domain/data/openings.json");
+const OPENINGS_JSON: &str = include_str!("../../../../crates/kchess-wasm/js/data/openings.json");
 
 /// `OpeningName`
 #[derive(Debug, Serialize)]

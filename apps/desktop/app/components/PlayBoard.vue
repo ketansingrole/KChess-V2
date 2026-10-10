@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
-import type { Dests } from '@kchess/core/domain/chess'
-import type { CoordinateMode, PieceAnimation, PromotionMode } from '@kchess/core/contracts/types'
+import type { Dests } from '@kchess/rules/chess'
+import type { CoordinateMode, PieceAnimation, PromotionMode } from '@kchess/contracts/types'
 import type { PlayerInfo } from './PlayerLine.vue'
-import type { Variant } from '@kchess/core/domain/variant'
+import type { Variant } from '@kchess/rules/variant'
 
 const props = withDefaults(
   defineProps<{

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { summarizeStudy } from '@kchess/core/domain/studies'
+import { summarizeStudy } from '@kchess/rules/studies'
 import { timeAgo } from '../utils/format'
 const app = useKChessStore()
 const props = defineProps<{

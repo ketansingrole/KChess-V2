@@ -1,4 +1,4 @@
-import type { CoreApi, KChessCore, CoreEvents } from '@kchess/core'
+import type { CoreApi, KChessCore, CoreEvents } from '@kchess/native'
 
 export type NodeMethods = CoreApi &
   Pick<KChessCore, 'settings' | 'trustEnginePath' | 'voiceHistoryDocument' | 'suspend'>

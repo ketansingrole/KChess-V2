@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { AppUpdates, type UpdatePreferences } from '../../electron/main/appUpdates'
 import { useAppUpdatesStore } from '../../app/stores/appUpdates'
-import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
-import type { AppUpdateStatus } from '@kchess/core/contracts/types'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
+import type { AppUpdateStatus } from '@kchess/contracts/types'
 import { deferred, desktop } from './fixtures'
 
 const capabilities = { currentVersion: '2026.10.0', canCheck: true, canInstall: true }

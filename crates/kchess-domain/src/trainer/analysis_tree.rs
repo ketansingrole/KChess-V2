@@ -1,4 +1,4 @@
-//! `core/src/domain/analysisTree.ts`: the move tree's edits and helpers.
+//! `crates/kchess-wasm/js/analysisTree.ts`: the move tree's edits and helpers.
 //!
 //! The TypeScript side holds the tree as mutable objects and walks it (a child is found by its
 //! `uci`); it sends the path and the few values a decision needs (the child ucis or indices along

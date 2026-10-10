@@ -1,4 +1,4 @@
-//! Puzzles (`core/src/domain/puzzle.ts`): turning Lichess puzzles from the API or the database
+//! Puzzles (`crates/kchess-wasm/js/puzzle.ts`): turning Lichess puzzles from the API or the database
 //! into one shape, and the move rules of solving them.
 
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,4 @@
-//! The KChess headless core's services, migrating from `core/src/services` (see
+//! The KChess headless core's services, migrating from `crates/kchess-node/js` (see
 //! `RUST_MIGRATION.md`). Hosts drive it through `kchess-node`'s `NativeCore`.
 
 pub mod archive;
