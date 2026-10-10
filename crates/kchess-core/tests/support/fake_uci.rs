@@ -184,6 +184,9 @@ fn lock(state: &Mutex<Search>) -> std::sync::MutexGuard<'_, Search> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let mode = args.next().unwrap_or_else(|| "handshake".to_string());
+    // `slow-review`: the review script, taking 20 ms per search so reviews overlap in tests.
+    let slow = mode == "slow-review";
+    let mode = if slow { "review".to_string() } else { mode };
     let log = args.next();
     let searching = matches!(mode.as_str(), "search" | "review" | "stall");
     let state = Mutex::new(Search {
@@ -214,6 +217,9 @@ fn main() {
             break;
         }
         if searching {
+            if slow && line.starts_with("go ") {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             search_command(&mode, &line, &state);
             continue;
         }

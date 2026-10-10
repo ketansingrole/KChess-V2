@@ -267,6 +267,49 @@ async fn the_most_recent_request_is_reviewed_first() {
     rig.reviews.stop_reviews().await;
 }
 
+/// Regression: the TypeScript queue yielded to *any* queued request, so a running review and a
+/// queued one gave way to each other forever and neither finished. A review now yields only to
+/// a request made after it.
+#[tokio::test]
+async fn two_requested_reviews_both_finish_instead_of_yielding_to_each_other() {
+    let rig = rig("slow-review", "no-livelock", false, "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .expect("first");
+    // The quick pass is published while the deep pass still runs: the second request overlaps it.
+    wait_until(WAIT, "the first review's quick pass", || {
+        updates_of(&rig)
+            .iter()
+            .any(|review| !review.complete)
+            .then_some(())
+    })
+    .await;
+    assert!(
+        rig.host.complete_updates().is_empty(),
+        "the first review is still running"
+    );
+    let second = ["e2e4", "e7e5", "g1f3"];
+    rig.reviews
+        .request_review(request(&second))
+        .expect("second");
+    wait_until(WAIT, "both reviews", || {
+        (rig.host.complete_updates().len() >= 2).then_some(())
+    })
+    .await;
+    let completed = rig.host.complete_updates();
+    assert_eq!(
+        completed[0].moves,
+        moves(&second),
+        "the newer request goes first"
+    );
+    assert_eq!(
+        completed[1].moves,
+        moves(&SCHOLARS),
+        "then the first one finishes"
+    );
+    rig.reviews.stop_reviews().await;
+}
+
 #[tokio::test]
 async fn discarding_an_account_drops_its_queued_reviews() {
     let rig = rig("review", "discard-queued", false, "off", true);
