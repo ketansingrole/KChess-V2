@@ -360,7 +360,13 @@ impl Core {
     }
 
     async fn migrate(&self) -> Result<()> {
-        let available = self.capabilities.secrets_available().await?;
+        // Asking the OS secret store can show a keychain prompt: only when tokens may be imported.
+        let pending = self
+            .database
+            .call("store.games.legacyImportPending", &[])?
+            .as_bool()
+            == Some(true);
+        let available = pending && self.capabilities.secrets_available().await?;
         let legacy = self
             .database
             .call("store.games.migrate", &[json!(available)])?;

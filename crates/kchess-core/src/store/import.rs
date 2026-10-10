@@ -39,22 +39,38 @@ fn log(ctx: &StoreContext, level: Level, message: &str) {
     ctx.host.log(level, "store", message);
 }
 
-/// Import from an earlier release if the profile is empty; a profile with anything in it is left
-/// alone. Returns the plaintext tokens of an earlier database that the caller must store.
-pub fn migrate(ctx: &StoreContext, encryption_available: bool) -> Result<Vec<PlainToken>> {
+/// Whether `migrate` could import an earlier database's tokens: the profile is empty and that
+/// database exists. Only then does the caller ask the OS secret store whether encryption is
+/// available (asking can show a keychain prompt), as `ensureMigrated` did.
+pub fn legacy_import_pending(ctx: &StoreContext) -> Result<bool> {
+    let exists = ctx
+        .config
+        .legacy_database_path
+        .as_deref()
+        .is_some_and(std::path::Path::exists);
+    Ok(exists && profile_empty(ctx)?)
+}
+
+fn profile_empty(ctx: &StoreContext) -> Result<bool> {
     let db = ctx.db;
     let count =
         |sql: &str| -> Result<i64> { db.query_row(sql, [], |row| row.get(0)).map_err(storage) };
-    let accounts = count("SELECT COUNT(*) AS n FROM accounts")?;
-    let games = count("SELECT COUNT(*) AS n FROM games")?;
-    let tokens = count("SELECT COUNT(*) AS n FROM tokens")?;
     let settings = db
         .query_row("SELECT id FROM settings WHERE id = 1", [], |row| {
             row.get::<_, i64>(0)
         })
         .optional()
         .map_err(storage)?;
-    if accounts > 0 || games > 0 || tokens > 0 || settings.is_some() {
+    Ok(count("SELECT COUNT(*) AS n FROM accounts")? == 0
+        && count("SELECT COUNT(*) AS n FROM games")? == 0
+        && count("SELECT COUNT(*) AS n FROM tokens")? == 0
+        && settings.is_none())
+}
+
+/// Import from an earlier release if the profile is empty; a profile with anything in it is left
+/// alone. Returns the plaintext tokens of an earlier database that the caller must store.
+pub fn migrate(ctx: &StoreContext, encryption_available: bool) -> Result<Vec<PlainToken>> {
+    if !profile_empty(ctx)? {
         return Ok(Vec::new());
     }
     if from_json(ctx)? {
