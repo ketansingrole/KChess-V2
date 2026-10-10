@@ -1,16 +1,13 @@
 import { it, expect, vi } from 'vitest'
-import { DatabaseSync } from 'node:sqlite'
+import { closeNativeCore } from '../../src/services/nativeCore'
+import { useTestDatabase, type TestDatabase } from '../../../tests/fixtures/nativeStore'
 import { deferred } from '../../../tests/fixtures/deferred'
 import { withUsage, meteredFetch, forgetUsage, flushUsage } from '../../src/services/usage'
 
-const state = vi.hoisted(() => ({ db: null as DatabaseSync | null }))
-vi.mock('../../src/services/db', () => ({ getDb: () => state.db, dbPath: () => '' }))
+const state = vi.hoisted(() => ({ db: null as TestDatabase | null }))
 
 it('does not restore account usage from a request that finishes after logout', async () => {
-  state.db = new DatabaseSync(':memory:')
-  state.db.exec(
-    'CREATE TABLE usage (account TEXT, kind TEXT, requests INTEGER, bytesIn INTEGER, since INTEGER, PRIMARY KEY(account, kind))',
-  )
+  state.db = useTestDatabase()
   const response = deferred<Response>()
   vi.stubGlobal(
     'fetch',
@@ -31,7 +28,7 @@ it('does not restore account usage from a request that finishes after logout', a
       { account: 'alice', requests: 1 },
     ])
   } finally {
-    state.db.close()
+    await closeNativeCore()
     state.db = null
   }
 })

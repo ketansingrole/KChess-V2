@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
-import { DatabaseSync } from 'node:sqlite'
 import { installPageSwipeNavigation } from '../../app/utils/pageSwipe'
 import { usePageSwipeNavigation } from '../../app/composables/usePageSwipeNavigation'
 import { useSwipeBack } from '../../app/composables/useSwipeBack'
@@ -12,7 +11,6 @@ import {
 } from '../../app/utils/swipeBack'
 import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
 import { assertSettings } from '@kchess/core/domain/validate'
-import { migrate, MIGRATIONS } from '../../../../core/src/services/migrations'
 
 describe('trackpad page history', () => {
   let dispose: () => void
@@ -415,20 +413,5 @@ describe('swipe settings', () => {
     )
     expect(assertSettings({ ...DEFAULT_SETTINGS }).swipeIndicator).toBe(true)
     expect(() => assertSettings({ ...DEFAULT_SETTINGS, swipeIndicator: 'yes' })).toThrow()
-  })
-
-  it('migrates the swipe columns onto older databases, on by default', () => {
-    const legacy = new DatabaseSync(':memory:')
-    for (const sql of MIGRATIONS.slice(0, -1)) legacy.exec(sql)
-    legacy.exec(`PRAGMA user_version=${MIGRATIONS.length - 1}`)
-    migrate(legacy)
-    const columns = legacy.prepare('PRAGMA table_info(settings)').all() as {
-      name: string
-      dflt_value: string | null
-    }[]
-    expect(columns.find((column) => column.name === 'swipeNavigation')?.dflt_value).toBe('1')
-    expect(columns.find((column) => column.name === 'swipeIndicator')?.dflt_value).toBe('1')
-    migrate(legacy)
-    legacy.close()
   })
 })

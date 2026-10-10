@@ -1,14 +1,16 @@
-import { scopedState, coreSignal } from './platform'
+import { scopedState, coreSignal, platform } from './platform'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { logDebug, logWarn } from './logger'
-import { dbPath, getDb } from './db'
+import { nativeCallSync } from './nativeCore'
 import type { UsageCell, UsageKind, UsageReport } from '../contracts/types'
 
 /**
  * Network accounting for everything KChess asks of Lichess. Requests carry the
  * account and purpose they were made for in an async context, so each byte can
- * be attributed; the totals are kept in SQLite so they survive restarts.
+ * be attributed. The counters are batched in memory here and written to the Rust
+ * core's `kchess.db` (`crates/kchess-core/src/store/usage.rs`), so they survive restarts.
  */
 interface Context {
   account: string
@@ -109,20 +111,7 @@ export function flushUsage(): void {
   const rows = [...serviceState.pending.values()]
   serviceState.pending.clear()
   try {
-    const database = getDb()
-    const upsert = database.prepare(
-      `INSERT INTO usage (account, kind, requests, bytesIn, since) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(account, kind) DO UPDATE SET requests = requests + excluded.requests, bytesIn = bytesIn + excluded.bytesIn`,
-    )
-    database.exec('BEGIN IMMEDIATE')
-    try {
-      const now = Date.now()
-      for (const row of rows) upsert.run(row.account, row.kind, row.requests, row.bytesIn, now)
-      database.exec('COMMIT')
-    } catch (cause) {
-      database.exec('ROLLBACK')
-      throw cause
-    }
+    nativeCallSync('store.usage.flushUsage', rows)
   } catch (cause) {
     logWarn('usage', 'Dropping usage batch:', rows.length, cause)
   }
@@ -140,7 +129,7 @@ export function forgetUsage(accounts: string[]): void {
 
 export function resetUsage(): void {
   serviceState.pending.clear()
-  getDb().exec('DELETE FROM usage')
+  nativeCallSync('store.usage.resetUsage')
 }
 
 async function fileSize(path: string): Promise<number> {
@@ -155,60 +144,14 @@ async function fileSize(path: string): Promise<number> {
 /** What each account has downloaded from Lichess and what it occupies on this computer. */
 export async function usageReport(): Promise<UsageReport> {
   flushUsage()
-  const database = getDb()
-  const report: UsageReport = { accounts: {}, storage: {}, dbBytes: 0 }
-
-  const usageRows = database
-    .prepare('SELECT account, kind, requests, bytesIn, since FROM usage')
-    .all() as unknown as {
-    account: string
-    kind: UsageKind
-    requests: number
-    bytesIn: number
-    since: number
-  }[]
-  for (const row of usageRows) {
-    const entry = (report.accounts[row.account] ??= {
-      total: { requests: 0, bytesIn: 0 },
-      byKind: {},
-    })
-    entry.byKind[row.kind] = { requests: row.requests, bytesIn: row.bytesIn }
-    entry.total.requests += row.requests
-    entry.total.bytesIn += row.bytesIn
-    report.since = Math.min(report.since ?? Infinity, row.since)
-  }
-
-  const gameRows = database
-    .prepare(
-      `SELECT account, COUNT(*) AS games,
-        SUM(LENGTH(id) + LENGTH(status) + LENGTH(speed) + LENGTH(perf) + LENGTH(opponent)
-          + COALESCE(LENGTH(opening), 0) + LENGTH(moves) + COALESCE(LENGTH(pgn), 0) + 64) AS bytes
-       FROM games GROUP BY account`,
-    )
-    .all() as unknown as { account: string; games: number; bytes: number }[]
-  for (const row of gameRows)
-    report.storage[row.account.toLowerCase()] = {
-      games: row.games,
-      bytes: row.bytes,
-      cacheBytes: 0,
-    }
-
-  const cacheRows = database
-    .prepare('SELECT key, LENGTH(value) AS bytes FROM api_cache')
-    .all() as unknown as { key: string; bytes: number }[]
-  for (const row of cacheRows) {
-    const account = row.key.split(':')[0] ?? ''
-    const entry = (report.storage[account] ??= { games: 0, bytes: 0, cacheBytes: 0 })
-    entry.cacheBytes += row.bytes
-  }
-
-  const path = dbPath()
-  report.dbBytes =
+  const report = nativeCallSync<Omit<UsageReport, 'dbBytes'>>('store.usage.usageReport')
+  const path = join(platform().dataDir, 'kchess.db')
+  const dbBytes =
     (await fileSize(path)) +
     (await fileSize(`${path}-wal`)) +
     (await fileSize(path.replace(/kchess\.db$/, 'puzzles.db'))) +
     (await fileSize(path.replace(/kchess\.db$/, 'puzzles.db-wal')))
-  return report
+  return { ...report, dbBytes }
 }
 
 export function closeUsage(): void {

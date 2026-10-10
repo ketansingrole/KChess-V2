@@ -44,7 +44,10 @@ export default defineConfig({
         // these fail the run on real regressions, not on noise.
         lines: 45,
         functions: 32,
-        branches: 30,
+        // 29, not 30: the main-database storage moved to Rust (2026-10-10), taking well-covered
+        // TypeScript branches with it (29.92% after the move, 31.92% before); its behaviour is
+        // pinned by the store golden suites and Rust tests, which this TypeScript measure omits.
+        branches: 29,
         statements: 43,
       },
     },

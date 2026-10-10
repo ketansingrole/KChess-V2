@@ -11,7 +11,7 @@ const userData = mkdtempSync(join(tmpdir(), 'kchess-review-'))
 useTestPlatform({ dataDir: userData })
 const { requestReview, setupReviews, stopReviews, FULL_DEPTH } =
   await import('../../src/services/review')
-const { closeDb } = await import('../../src/services/db')
+const { closeNativeCore } = await import('../../src/services/nativeCore')
 const { analyseReview } = await import('../../src/domain/review')
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -30,9 +30,9 @@ setupReviews({
   status: (status) => void statuses.push(status),
 })
 
-afterAll(() => {
+afterAll(async () => {
   stopReviews()
-  closeDb()
+  await closeNativeCore()
   rmSync(userData, { recursive: true, force: true })
 })
 

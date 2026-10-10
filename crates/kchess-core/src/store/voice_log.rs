@@ -4,14 +4,18 @@
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
+use super::StoreContext;
 use super::library::{db_err, js_json, now_ms, object};
 use crate::error::{CoreError, Result};
+use crate::host::{Host, Level};
 
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;
 
 /// This module's storage methods; None when the method is not one of them.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
+    let host = ctx.host;
     let result = match method {
         "store.voiceLog.saveVoiceAttempt" => {
             save_voice_attempt(db, args.first().unwrap_or(&Value::Null)).map(|id| json!(id))
@@ -25,14 +29,16 @@ pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Valu
             }
         }
         "store.voiceLog.voiceHistory" => match args.first().and_then(Value::as_i64) {
-            Some(limit) => voice_history(db, limit).map(Value::Array),
+            Some(limit) => voice_history(host, db, limit).map(Value::Array),
             None => Err(CoreError::new("limit must be a number")),
         },
         "store.voiceLog.clearVoiceHistory" => db
             .execute("DELETE FROM voice_log", [])
             .map(|_| Value::Null)
             .map_err(db_err),
-        "store.voiceLog.voiceHistoryDocument" => voice_history_document(db).map(Value::String),
+        "store.voiceLog.voiceHistoryDocument" => {
+            voice_history_document(host, db).map(Value::String)
+        }
         _ => return None,
     };
     Some(result)
@@ -119,7 +125,7 @@ fn update_voice_attempt(db: &Connection, id: i64, update: &Value) -> Result<()> 
 }
 
 /// `voiceHistory(limit)`: the newest entries first.
-fn voice_history(db: &Connection, limit: i64) -> Result<Vec<Value>> {
+fn voice_history(host: &dyn Host, db: &Connection, limit: i64) -> Result<Vec<Value>> {
     let mut statement = db
         .prepare("SELECT * FROM voice_log ORDER BY id DESC LIMIT ?1")
         .map_err(db_err)?;
@@ -145,7 +151,17 @@ fn voice_history(db: &Connection, limit: i64) -> Result<Vec<Value>> {
         let (id, at, source, heard, confidence, words, outcome, parsed, expected, fen, retry_of) =
             row.map_err(db_err)?;
         // Words that are not JSON read as none.
-        let words = serde_json::from_str::<Value>(&words).unwrap_or_else(|_| json!([]));
+        let words = match serde_json::from_str::<Value>(&words) {
+            Ok(words) => words,
+            Err(cause) => {
+                host.log(
+                    Level::Debug,
+                    "voice",
+                    &format!("Voice log row has invalid words JSON: {cause}"),
+                );
+                json!([])
+            }
+        };
         let mut entry = Map::new();
         entry.insert("id".into(), json!(id));
         entry.insert("at".into(), json!(at));
@@ -168,9 +184,9 @@ fn voice_history(db: &Connection, limit: i64) -> Result<Vec<Value>> {
 }
 
 /// `voiceHistoryDocument()`: the whole log as an indented JSON document for export.
-fn voice_history_document(db: &Connection) -> Result<String> {
+fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String> {
     let mut entries = Vec::new();
-    for mut entry in voice_history(db, MAX_ENTRIES)? {
+    for mut entry in voice_history(host, db, MAX_ENTRIES)? {
         let at = entry.get("at").and_then(Value::as_f64).unwrap_or(f64::NAN);
         let time = iso_time(at)?;
         if let Value::Object(map) = &mut entry {

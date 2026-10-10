@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseSync } from 'node:sqlite'
-import { migrate } from '../../src/services/migrations'
+import { closeNativeCore } from '../../src/services/nativeCore'
+import { useTestDatabase, type TestDatabase } from '../../../tests/fixtures/nativeStore'
 import type { VoiceAttemptInput } from '../../src/contracts/types'
 import {
   clearVoiceHistory,
@@ -10,8 +10,7 @@ import {
   voiceHistoryDocument,
 } from '../../src/services/voiceLog'
 
-const state = vi.hoisted(() => ({ db: null as DatabaseSync | null }))
-vi.mock('../../src/services/db', () => ({ getDb: () => state.db! }))
+const state = vi.hoisted(() => ({ db: null as TestDatabase | null }))
 
 const attempt = (overrides: Partial<VoiceAttemptInput> = {}): VoiceAttemptInput => ({
   source: 'computer',
@@ -23,12 +22,11 @@ const attempt = (overrides: Partial<VoiceAttemptInput> = {}): VoiceAttemptInput 
 })
 
 beforeEach(() => {
-  state.db = new DatabaseSync(':memory:')
-  migrate(state.db)
+  state.db = useTestDatabase()
 })
 
-afterEach(() => {
-  state.db?.close()
+afterEach(async () => {
+  await closeNativeCore()
   state.db = null
 })
 

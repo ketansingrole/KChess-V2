@@ -36,6 +36,7 @@ pub trait Host: Send + Sync + 'static {
 pub struct Config {
     /// KChess's data directory; it exists.
     pub data_dir: PathBuf,
-    /// The main database of earlier releases, which may still hold puzzles.
+    /// The main database of an earlier release, imported once into an empty profile
+    /// (`CorePlatform.legacyDatabasePath`).
     pub legacy_database_path: Option<PathBuf>,
 }

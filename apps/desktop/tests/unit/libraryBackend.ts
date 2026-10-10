@@ -5,8 +5,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as library from '../../../../core/src/services/library'
-import { closeDb, getDb } from '../../../../core/src/services/db'
-import { setPlatform } from '../../../../core/src/services/platform'
+import { closeNativeCore } from '../../../../core/src/services/nativeCore'
+import { useTestDatabase, type TestDatabase } from '../../../../tests/fixtures/nativeStore'
 import {
   assertArchivedGameShape,
   assertLegacyDocuments,
@@ -18,29 +18,29 @@ import {
 import { assertArchivedGame, assertStudyCommand } from '../../../../core/src/services/rules'
 import type { CoreApi } from '@kchess/core/contracts/types'
 import { setInitialLibrary } from '../../app/utils/library'
-import { testPlatform } from '../../../../tests/fixtures/corePlatform'
 import { testGeneration, type LibraryMethod } from './testLibrary'
 
 let directory: string | undefined
+let database: TestDatabase | undefined
 let cleared = -1
 
 /** Renderer tests talk to the real core library, on a temporary database cleared for each test. */
 function ready(): void {
   if (!directory) {
     directory = mkdtempSync(join(tmpdir(), 'kchess-library-'))
-    setPlatform(testPlatform({ dataDir: directory }))
+    database = useTestDatabase({ dataDir: directory })
   }
   if (cleared !== testGeneration()) {
-    getDb().exec('DELETE FROM documents; DELETE FROM archived_games;')
+    database!.exec('DELETE FROM documents; DELETE FROM archived_games;')
     cleared = testGeneration()
   }
 }
 
 afterAll(closeLibrary)
 
-function closeLibrary(): void {
+async function closeLibrary(): Promise<void> {
   if (!directory) return
-  closeDb()
+  await closeNativeCore()
   rmSync(directory, { recursive: true, force: true })
   directory = undefined
 }
@@ -89,7 +89,7 @@ export const storedLibrary = () => {
  */
 export function seedSaved(key: keyof LegacyDocuments, text: string): void {
   ready()
-  getDb().prepare('DELETE FROM documents WHERE key = ?').run('library:imported')
+  database!.prepare('DELETE FROM documents WHERE key = ?').run('library:imported')
   setInitialLibrary(library.importLibrary({ [key]: text }))
 }
 

@@ -11,7 +11,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::StoreContext;
 use crate::error::{CoreError, Result};
+use crate::host::{Host, Level};
 use kchess_domain::js;
 
 pub const MAX_DOCUMENT: usize = 2_000_000;
@@ -59,13 +61,15 @@ const GAMES_FULL: &str =
     "Game history is full. Export saved games before making room for new games.";
 
 /// This module's storage methods; None when the method is not one of them.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
+    let host = ctx.host;
     let result = match method {
-        "store.library.library" => now_arg(args, 0).and_then(|now| library(db, now)),
+        "store.library.library" => now_arg(args, 0).and_then(|now| library(host, db, now)),
         "store.library.readSession" => {
-            str_arg(args, 0, "kind").and_then(|kind| read_session(db, kind))
+            str_arg(args, 0, "kind").and_then(|kind| read_session(host, db, kind))
         }
-        "store.library.importLibrary" => import_library(db, args.first()),
+        "store.library.importLibrary" => import_library(host, db, args.first()),
         "store.library.studyCommand" => now_arg(args, 1)
             .and_then(|now| study_command(db, args.first().unwrap_or(&Value::Null), now)),
         "store.library.saveArchivedGame" => {
@@ -78,7 +82,7 @@ pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Valu
         }),
         "store.library.addMistakes" => str_arg(args, 0, "reviewKey").and_then(|key| {
             let color = opt_str(args, 1);
-            now_arg(args, 2).and_then(|now| add_mistakes(db, key, color, now))
+            now_arg(args, 2).and_then(|now| add_mistakes(host, db, key, color, now))
         }),
         "store.library.answerMistake" => str_arg(args, 0, "id").and_then(|id| {
             let solved = truthy(args.get(1));
@@ -95,21 +99,21 @@ pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Valu
             )
         }),
         "store.library.joinedTournaments" => {
-            now_arg(args, 0).and_then(|now| joined_tournaments(db, now))
+            now_arg(args, 0).and_then(|now| joined_tournaments(host, db, now))
         }
         "store.library.rememberTournament" => {
             let entry = args.first().cloned().unwrap_or(Value::Null);
-            now_arg(args, 1).and_then(|now| remember_tournament(db, &entry, now))
+            now_arg(args, 1).and_then(|now| remember_tournament(host, db, &entry, now))
         }
         "store.library.forgetTournament" => str_arg(args, 0, "system").and_then(|system| {
-            str_arg(args, 1, "id").and_then(|id| forget_tournament(db, system, id))
+            str_arg(args, 1, "id").and_then(|id| forget_tournament(host, db, system, id))
         }),
-        "store.library.forgetTournamentsOf" => forget_tournaments_of(db, args.first()),
+        "store.library.forgetTournamentsOf" => forget_tournaments_of(host, db, args.first()),
         "store.library.recordRepertoireMiss" => str_arg(args, 0, "key").and_then(|key| {
-            str_arg(args, 1, "fen").and_then(|fen| record_repertoire_miss(db, key, fen))
+            str_arg(args, 1, "fen").and_then(|fen| record_repertoire_miss(host, db, key, fen))
         }),
         "store.library.clearRepertoireMisses" => {
-            str_arg(args, 0, "key").and_then(|key| clear_repertoire_misses(db, key))
+            str_arg(args, 0, "key").and_then(|key| clear_repertoire_misses(host, db, key))
         }
         _ => return None,
     };
@@ -318,8 +322,21 @@ fn read_document_text(db: &Connection, key: &str) -> Result<Option<String>> {
 }
 
 /// The parsed document; None when it is missing or not JSON (`readDocument` in the TypeScript).
-pub fn read_document(db: &Connection, key: &str) -> Result<Option<Value>> {
-    Ok(read_document_text(db, key)?.and_then(|body| serde_json::from_str(&body).ok()))
+pub fn read_document(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Value>> {
+    let Some(body) = read_document_text(db, key)? else {
+        return Ok(None);
+    };
+    match serde_json::from_str(&body) {
+        Ok(value) => Ok(Some(value)),
+        Err(cause) => {
+            host.log(
+                Level::Warn,
+                "library",
+                &format!("Stored document is not valid JSON: key={key} {cause}"),
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// `writeDocument`: a document within its size limit, stored with its update time.
@@ -339,7 +356,7 @@ fn write_document(db: &Connection, key: &str, value: &Value, too_large: &str) ->
 }
 
 /// Whether the library already has this document (or, for games, any game).
-fn stored(db: &Connection, key: &str) -> Result<bool> {
+fn stored(host: &dyn Host, db: &Connection, key: &str) -> Result<bool> {
     if key == GAMES {
         let any = db
             .query_row("SELECT 1 FROM archived_games LIMIT 1", [], |_| Ok(()))
@@ -347,7 +364,7 @@ fn stored(db: &Connection, key: &str) -> Result<bool> {
             .map_err(db_err)?;
         return Ok(any.is_some());
     }
-    Ok(read_document(db, key)?.is_some())
+    Ok(read_document(host, db, key)?.is_some())
 }
 
 fn parse_text(text: &str) -> Option<Value> {
@@ -382,13 +399,13 @@ fn read_mistakes(db: &Connection) -> Result<Vec<Value>> {
         .unwrap_or_default())
 }
 
-fn read_misses(db: &Connection) -> Result<Value> {
-    let raw = read_document(db, MISSES)?.unwrap_or(Value::Null);
+fn read_misses(host: &dyn Host, db: &Connection) -> Result<Value> {
+    let raw = read_document(host, db, MISSES)?.unwrap_or(Value::Null);
     misc("decodeRepertoireMisses", vec![raw])
 }
 
-fn read_joined(db: &Connection) -> Result<Vec<Value>> {
-    let raw = read_document(db, JOINED)?.unwrap_or(Value::Null);
+fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
+    let raw = read_document(host, db, JOINED)?.unwrap_or(Value::Null);
     match misc("decodeJoinedTournaments", vec![raw])? {
         Value::Array(entries) => Ok(entries),
         _ => Ok(Vec::new()),
@@ -396,49 +413,57 @@ fn read_joined(db: &Connection) -> Result<Vec<Value>> {
 }
 
 /// `readSession(kind)`: the decoded session, or null.
-fn read_session(db: &Connection, kind: &str) -> Result<Value> {
-    let raw = read_document(db, &format!("session:{kind}"))?.unwrap_or(Value::Null);
+fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
+    let raw = read_document(host, db, &format!("session:{kind}"))?.unwrap_or(Value::Null);
     misc("decodeStoredSession", vec![json!(kind), raw])
 }
 
 /// The played games, newest first; a game that no longer replays is skipped.
-fn read_games(db: &Connection) -> Result<Vec<Value>> {
+fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
     let mut statement = db
-        .prepare("SELECT body FROM archived_games ORDER BY seq DESC")
+        .prepare("SELECT id, body FROM archived_games ORDER BY seq DESC")
         .map_err(db_err)?;
-    let bodies = statement
-        .query_map([], |row| row.get::<_, String>(0))
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(db_err)?;
     let mut games = Vec::new();
-    for body in bodies {
-        if let Some(game) = decode_archived_game_text(&body.map_err(db_err)?) {
-            games.push(game);
+    for row in rows {
+        let (id, body) = row.map_err(db_err)?;
+        match decode_archived_game_text(&body) {
+            Some(game) => games.push(game),
+            None => host.log(
+                Level::Debug,
+                "library",
+                &format!("Skipped an archived game that does not replay: id={id}"),
+            ),
         }
     }
     Ok(games)
 }
 
 /// `library(now)`: the whole snapshot.
-pub fn library(db: &Connection, now: f64) -> Result<Value> {
+pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
     let mut sessions = Map::new();
     for kind in SESSION_KINDS {
-        let value = read_session(db, kind)?;
+        let value = read_session(host, db, kind)?;
         if truthy(Some(&value)) {
             sessions.insert(kind.to_string(), value);
         }
     }
-    let joined: Vec<Value> = read_joined(db)?
+    let joined: Vec<Value> = read_joined(host, db)?
         .into_iter()
         .filter(|entry| until_after(entry, now))
         .collect();
     Ok(json!({
         "studies": read_studies(db)?,
-        "games": read_games(db)?,
+        "games": read_games(host, db)?,
         "mistakes": read_mistakes(db)?,
         "sessions": Value::Object(sessions),
         "joinedTournaments": joined,
-        "repertoireMisses": read_misses(db)?,
-        "imported": read_document(db, IMPORTED)? == Some(Value::Bool(true)),
+        "repertoireMisses": read_misses(host, db)?,
+        "imported": read_document(host, db, IMPORTED)? == Some(Value::Bool(true)),
     }))
 }
 
@@ -451,9 +476,9 @@ fn until_after(entry: &Value, now: f64) -> bool {
 }
 
 /// `importLibrary(documents)`: take over documents an earlier release kept, once.
-fn import_library(db: &Connection, documents: Option<&Value>) -> Result<Value> {
-    if read_document(db, IMPORTED)? == Some(Value::Bool(true)) {
-        return library(db, now_ms()?);
+fn import_library(host: &dyn Host, db: &Connection, documents: Option<&Value>) -> Result<Value> {
+    if read_document(host, db, IMPORTED)? == Some(Value::Bool(true)) {
+        return library(host, db, now_ms()?);
     }
     let documents = documents.and_then(Value::as_object);
     transaction(db, || {
@@ -464,13 +489,23 @@ fn import_library(db: &Connection, documents: Option<&Value>) -> Result<Value> {
             else {
                 continue;
             };
-            if utf16_len(text) > MAX_DOCUMENT || stored(db, key)? {
+            if utf16_len(text) > MAX_DOCUMENT || stored(host, db, key)? {
                 continue;
             }
             let Some(raw) = parse_text(text) else {
+                host.log(
+                    Level::Warn,
+                    "library",
+                    &format!("Skipped an unreadable saved document: key={legacy}"),
+                );
                 continue;
             };
             let Some(value) = legacy_value(key, &raw, text)? else {
+                host.log(
+                    Level::Warn,
+                    "library",
+                    &format!("Skipped an invalid saved document: key={legacy}"),
+                );
                 continue;
             };
             if key == GAMES {
@@ -487,7 +522,7 @@ fn import_library(db: &Connection, documents: Option<&Value>) -> Result<Value> {
         write_document(db, IMPORTED, &Value::Bool(true), "")?;
         Ok(())
     })?;
-    library(db, now_ms()?)
+    library(host, db, now_ms()?)
 }
 
 /// The value a legacy document becomes in the library, or None when it is invalid.
@@ -1131,9 +1166,15 @@ fn write_mistakes(db: &Connection, items: Vec<Value>) -> Result<()> {
 }
 
 /// `addMistakes(reviewKey, color, now)`: drills from a completed review's mistakes.
-fn add_mistakes(db: &Connection, review_key: &str, color: Option<&str>, now: f64) -> Result<Value> {
+fn add_mistakes(
+    host: &dyn Host,
+    db: &Connection,
+    review_key: &str,
+    color: Option<&str>,
+    now: f64,
+) -> Result<Value> {
     let mut items = read_mistakes(db)?;
-    let review = match super::reviews::read_review(db, review_key)? {
+    let review = match super::reviews::read_review(host, db, review_key)? {
         Some(review) if truthy(review.get("complete")) => review,
         _ => return Ok(json!({ "added": 0, "items": items })),
     };
@@ -1276,17 +1317,17 @@ fn write_joined(db: &Connection, entries: Vec<Value>) -> Result<()> {
     .map(|_| ())
 }
 
-fn joined_tournaments(db: &Connection, now: f64) -> Result<Value> {
+fn joined_tournaments(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
     Ok(Value::Array(
-        read_joined(db)?
+        read_joined(host, db)?
             .into_iter()
             .filter(|entry| until_after(entry, now))
             .collect(),
     ))
 }
 
-fn remember_tournament(db: &Connection, entry: &Value, now: f64) -> Result<Value> {
-    let mut entries: Vec<Value> = read_joined(db)?
+fn remember_tournament(host: &dyn Host, db: &Connection, entry: &Value, now: f64) -> Result<Value> {
+    let mut entries: Vec<Value> = read_joined(host, db)?
         .into_iter()
         .filter(|e| {
             until_after(e, now)
@@ -1298,8 +1339,8 @@ fn remember_tournament(db: &Connection, entry: &Value, now: f64) -> Result<Value
     Ok(Value::Null)
 }
 
-fn forget_tournament(db: &Connection, system: &str, id: &str) -> Result<Value> {
-    let kept: Vec<Value> = read_joined(db)?
+fn forget_tournament(host: &dyn Host, db: &Connection, system: &str, id: &str) -> Result<Value> {
+    let kept: Vec<Value> = read_joined(host, db)?
         .into_iter()
         .filter(|e| {
             !(e.get("system").and_then(Value::as_str) == Some(system)
@@ -1311,12 +1352,16 @@ fn forget_tournament(db: &Connection, system: &str, id: &str) -> Result<Value> {
 }
 
 /// Signed-out accounts must not reopen event streams for their tournaments.
-fn forget_tournaments_of(db: &Connection, accounts: Option<&Value>) -> Result<Value> {
+fn forget_tournaments_of(
+    host: &dyn Host,
+    db: &Connection,
+    accounts: Option<&Value>,
+) -> Result<Value> {
     let names: Vec<String> = string_list(accounts)
         .iter()
         .map(|name| name.to_lowercase())
         .collect();
-    let entries = read_joined(db)?;
+    let entries = read_joined(host, db)?;
     let total = entries.len();
     let kept: Vec<Value> = entries
         .into_iter()
@@ -1330,15 +1375,21 @@ fn forget_tournaments_of(db: &Connection, accounts: Option<&Value>) -> Result<Va
         })
         .collect();
     if kept.len() != total {
+        let removed = total - kept.len();
         write_joined(db, kept)?;
+        host.log(
+            Level::Debug,
+            "library",
+            &format!("Forgot joined tournaments of signed-out accounts: count={removed}"),
+        );
     }
     Ok(Value::Null)
 }
 
 /* ── Repertoire training ── */
 
-fn record_repertoire_miss(db: &Connection, key: &str, fen: &str) -> Result<Value> {
-    let mut misses = object(&read_misses(db)?, "repertoire misses")?.clone();
+fn record_repertoire_miss(host: &dyn Host, db: &Connection, key: &str, fen: &str) -> Result<Value> {
+    let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
     let table = misses
         .entry(key.to_string())
         .or_insert_with(|| json!({}))
@@ -1351,8 +1402,8 @@ fn record_repertoire_miss(db: &Connection, key: &str, fen: &str) -> Result<Value
     Ok(misses)
 }
 
-fn clear_repertoire_misses(db: &Connection, key: &str) -> Result<Value> {
-    let mut misses = object(&read_misses(db)?, "repertoire misses")?.clone();
+fn clear_repertoire_misses(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
+    let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
     misses.shift_remove(key);
     let misses = Value::Object(misses);
     write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;

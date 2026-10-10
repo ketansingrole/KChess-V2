@@ -12,14 +12,53 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { zipSync } from 'fflate'
 import { DatabaseSync } from 'node:sqlite'
-import { migrate } from '../../../../core/src/services/migrations'
+import { nativeRules } from '../../../../core/src/services/native'
+// Loads the rules binding that the domain functions in this test process call.
+import '../../../../core/src/services/rules'
 import { reviewKey } from '@kchess/core/domain/review'
-import { summarizeReview } from '../../../../core/src/services/rules'
 import type { StoredReview } from '@kchess/core/contracts/types'
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const SCHOLARS_PGN = '1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0'
 const SCHOLARS_UCI = ['e2e4', 'e7e5', 'd1h5', 'b8c6', 'f1c4', 'g8f6', 'h5f7']
+
+/**
+ * Create the profile's database as the core does: its first open migrates it. The test then seeds
+ * rows with node:sqlite in this process, before the app starts.
+ */
+async function createSchema(profile: string): Promise<void> {
+  const native = nativeRules()
+  if (!native) throw new Error('The native rules are not built (pnpm run build:native).')
+  const core = new native.NativeCore(
+    { dataDir: profile },
+    () => {},
+    () => {},
+  )
+  try {
+    core.callSync('store.open', '[]')
+  } finally {
+    await core.close()
+  }
+}
+
+/** The review's scores as the core's analysis reads them (engine lines do not count). */
+function reviewScores(review: StoredReview): string {
+  return JSON.stringify({
+    key: review.key,
+    source: review.source,
+    complete: review.complete,
+    fen: review.fen,
+    moves: review.moves,
+    evals: review.evals.map((e) => (e && typeof e === 'object' ? { cp: e.cp, mate: e.mate } : e)),
+    judgments: review.judgments,
+    accuracy: review.accuracy,
+  })
+}
+
+/** The stored summary of a review, computed by the native rules. */
+function summaryText(review: StoredReview): string {
+  return nativeRules()!.summarizeReview(reviewScores(review)) ?? 'null'
+}
 
 /** A synced Lichess game (old enough to stay out of automatic reviews) and its stored review. */
 function seedReviewedGame(db: DatabaseSync): void {
@@ -58,7 +97,7 @@ function seedReviewedGame(db: DatabaseSync): void {
   db.prepare(
     `INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
      VALUES (?, ?, 'local', 1, 18, ?, ?, 0)`,
-  ).run(review.key, 'scholar1', JSON.stringify(review), JSON.stringify(summarizeReview(review)))
+  ).run(review.key, 'scholar1', JSON.stringify(review), summaryText(review))
   db.prepare('INSERT INTO game_reviews (gameId, reviewKey) VALUES (?, ?)').run(
     'scholar1',
     review.key,
@@ -72,8 +111,8 @@ const test = base.extend<{ desktop: { app: ElectronApplication; page: Page; prof
       await cp(join(process.cwd(), '.data', 'voice', 'cache'), join(profile, 'voice'), {
         recursive: true,
       })
+    await createSchema(profile)
     const db = new DatabaseSync(join(profile, 'kchess.db'))
-    migrate(db)
     // The legacy puzzle tables; the Rust core imports them into puzzles.db on first open.
     const puzzle = {
       id: 'promo123',

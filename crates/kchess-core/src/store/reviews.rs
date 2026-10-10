@@ -4,21 +4,28 @@
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
+use super::StoreContext;
 use super::library::{
     db_err, js_json, now_arg, now_ms, num, str_arg, string_list, transaction, truthy,
 };
 use crate::error::{CoreError, Result};
+use crate::host::{Host, Level};
 
 const GAMES_TO_REVIEW_LIMIT: f64 = 300.0;
 
 /// This module's storage methods; None when the method is not one of them.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
     let result = match method {
         "store.reviewStore.readReview" => {
-            str_arg(args, 0, "key").and_then(|key| read_review(db, key).map(or_null))
+            str_arg(args, 0, "key").and_then(|key| read_review(ctx.host, db, key).map(or_null))
         }
-        "store.reviewStore.writeReview" => write_review(db, args.first().unwrap_or(&Value::Null)),
-        "store.reviewStore.reviewSummaries" => review_summaries(db, &string_list(args.first())),
+        "store.reviewStore.writeReview" => {
+            write_review(ctx.host, db, args.first().unwrap_or(&Value::Null))
+        }
+        "store.reviewStore.reviewSummaries" => {
+            review_summaries(ctx.host, db, &string_list(args.first()))
+        }
         "store.reviewStore.hasAccount" => str_arg(args, 0, "username")
             .and_then(|name| has_account(db, name))
             .map(Value::Bool),
@@ -42,9 +49,19 @@ fn or_null(value: Option<Value>) -> Value {
     value.unwrap_or(Value::Null)
 }
 
-/// `JSON.parse(text)` for a stored column; None when it is not JSON.
-fn parse(text: &str) -> Option<Value> {
-    serde_json::from_str(text).ok()
+/// `parse` for a stored review or summary: a failure is logged, as `reviewStore.ts` logged it.
+fn parse_logged(host: &dyn Host, text: &str) -> Option<Value> {
+    match serde_json::from_str(text) {
+        Ok(value) => Some(value),
+        Err(cause) => {
+            host.log(
+                Level::Debug,
+                "review-store",
+                &format!("Review parse failed: {cause}"),
+            );
+            None
+        }
+    }
 }
 
 /// A stored review's row: the review, and its summary when one is stored.
@@ -53,7 +70,7 @@ struct Stored {
     summary: Option<Value>,
 }
 
-fn read_stored(db: &Connection, key: &str) -> Result<Option<Stored>> {
+fn read_stored(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Stored>> {
     let row = db
         .query_row(
             "SELECT key, data, summary FROM reviews WHERE key = ?1",
@@ -66,16 +83,16 @@ fn read_stored(db: &Connection, key: &str) -> Result<Option<Stored>> {
         return Ok(None);
     };
     // A review that is not JSON, or is a falsy value, reads as no review (`!review`).
-    let Some(review) = parse(&data).filter(|review| truthy(Some(review))) else {
+    let Some(review) = parse_logged(host, &data).filter(|review| truthy(Some(review))) else {
         return Ok(None);
     };
-    let summary = parse(&summary).filter(|s| !s.is_null());
+    let summary = parse_logged(host, &summary).filter(|s| !s.is_null());
     Ok(Some(Stored { review, summary }))
 }
 
 /// `readReview(key)`: the stored review, or None.
-pub fn read_review(db: &Connection, key: &str) -> Result<Option<Value>> {
-    Ok(read_stored(db, key)?.map(|stored| stored.review))
+pub fn read_review(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Value>> {
+    Ok(read_stored(host, db, key)?.map(|stored| stored.review))
 }
 
 /// Which review to keep: Lichess's own beats ours, a finished one beats one in progress.
@@ -163,7 +180,7 @@ fn review_input(review: &Value) -> Result<Value> {
 }
 
 /// `writeReview(review)`: save `review` unless a better one is stored; returns what is stored.
-pub fn write_review(db: &Connection, input: &Value) -> Result<Value> {
+pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<Value> {
     let key = input
         .get("key")
         .and_then(Value::as_str)
@@ -180,7 +197,7 @@ pub fn write_review(db: &Connection, input: &Value) -> Result<Value> {
         }
         Ok(())
     };
-    let existing = read_stored(db, &key)?;
+    let existing = read_stored(host, db, &key)?;
     if let Some(existing) = existing.as_ref().filter(|e| rank(&e.review) > rank(input)) {
         link(db)?;
         let game_id = coalesce(input.get("gameId"), existing.review.get("gameId"));
@@ -240,7 +257,7 @@ fn sql_number(value: Option<&Value>) -> Sql {
 }
 
 /// `reviewSummaries(ids)`: the summaries of these Lichess games' reviews, by game id.
-pub fn review_summaries(db: &Connection, ids: &[String]) -> Result<Value> {
+pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Result<Value> {
     if ids.is_empty() {
         return Ok(json!({}));
     }
@@ -258,7 +275,7 @@ pub fn review_summaries(db: &Connection, ids: &[String]) -> Result<Value> {
     let mut result = Map::new();
     for row in rows {
         let (game, summary) = row.map_err(db_err)?;
-        if let Some(summary) = parse(&summary).filter(|s| truthy(Some(s))) {
+        if let Some(summary) = parse_logged(host, &summary).filter(|s| truthy(Some(s))) {
             result.insert(game, summary);
         }
     }

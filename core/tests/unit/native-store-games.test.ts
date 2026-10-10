@@ -1,22 +1,30 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { closeDb, getDb } from '../../src/services/db'
-import { MIGRATIONS, migrate } from '../../src/services/migrations'
 import { nativeRules, type NativeCoreHandle } from '../../src/services/native'
-import * as store from '../../src/services/store'
-import { fakeSecrets, useTestPlatform } from '../../../tests/fixtures/corePlatform'
+import { goldenFile } from './golden'
 
 /**
- * `store.ts` (`store.games.*` in Rust, `crates/kchess-core/src/store/games.rs`) and the schema
- * (`migrations.ts`, `crates/kchess-core/src/store/migrations.rs`), checked side by side. Each
- * step runs one call on the TypeScript store (its own temporary profile) and on the Rust core
- * (another), compares the results, then compares every table, the schema and `user_version`.
- * Timestamps the two sides stamp with their own clocks are masked after a check that they are
- * current; everything else must match exactly.
+ * `store.games` (`crates/kchess-core/src/store/games.rs`) and the schema
+ * (`crates/kchess-core/src/store/migrations.rs`), run against a native core with random sequences
+ * of calls. After each step the result and the contents of every table, the schema and
+ * `user_version` are normalised and checked against the golden digests recorded from the
+ * TypeScript store before it moved to Rust (`golden/store-games.json`). Timestamps written at the
+ * current moment read as `<now>`; everything else must match exactly.
  */
+
+const golden = goldenFile('store-games')
+/** The migration SQL of the TypeScript store, in order (test input, not code). */
+const MIGRATION_STEPS = (
+  JSON.parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'store-migrations.json'),
+      'utf8',
+    ),
+  ) as string[]
+).length
 
 const root = mkdtempSync(join(tmpdir(), 'kchess-store-parity-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
@@ -27,7 +35,7 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-/** Timestamps written by either side at the current moment read as `<now>`; any other value stays. */
+/** Timestamps written by the core at the current moment read as `<now>`; any other value stays. */
 function maskTimes(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(maskTimes)
   if (value && typeof value === 'object') {
@@ -43,22 +51,7 @@ function maskTimes(value: unknown): unknown {
   return value
 }
 
-/** The result as JSON, as a host would see it (`undefined` is `null`). */
-function asJson(value: unknown): unknown {
-  if (value instanceof Set) return [...value]
-  if (value === undefined) return null
-  return JSON.parse(JSON.stringify(value))
-}
-
 type Outcome = { ok: unknown } | { error: string }
-
-async function tsOutcome(run: () => unknown): Promise<Outcome> {
-  try {
-    return { ok: asJson(await run()) }
-  } catch (cause) {
-    return { error: messageOf(cause) }
-  }
-}
 
 function openRust(dataDir: string): NativeCoreHandle {
   const native = nativeRules()
@@ -70,15 +63,16 @@ function openRust(dataDir: string): NativeCoreHandle {
   )
 }
 
-/** One call on a freshly opened Rust core, closed again so its files can be read. */
-async function rustOutcome(dataDir: string, method: string, args: unknown[]): Promise<Outcome> {
-  const core = openRust(dataDir)
+/** One call on the core, as a host sees it: the JSON result, or the message it failed with. */
+async function rustOutcome(
+  core: NativeCoreHandle,
+  method: string,
+  args: unknown[],
+): Promise<Outcome> {
   try {
     return { ok: JSON.parse(core.callSync(method, JSON.stringify(args))) as unknown }
   } catch (cause) {
     return { error: messageOf(cause) }
-  } finally {
-    await core.close()
   }
 }
 
@@ -88,37 +82,13 @@ interface TableDump {
   tables: Record<string, unknown[]>
 }
 
-/** Every schema object, `user_version`, and every table's rows in a total order. */
-function dumpDatabase(db: DatabaseSync): TableDump {
-  const schema = db
-    .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name')
-    .all()
-  const userVersion = db.prepare('PRAGMA user_version').get()?.user_version
-  const tables: Record<string, unknown[]> = {}
-  for (const entry of schema) {
-    if (entry.type !== 'table' || String(entry.name).startsWith('sqlite_')) continue
-    const name = String(entry.name)
-    const columns = (db.prepare(`PRAGMA table_info("${name}")`).all() as { name: string }[]).map(
-      (column) => `"${column.name}"`,
-    )
-    tables[name] = maskTimes(
-      db.prepare(`SELECT * FROM "${name}" ORDER BY ${columns.join(', ')}`).all(),
-    ) as unknown[]
-  }
-  return { schema: asJson(schema) as unknown[], userVersion, tables }
-}
-
-/** The dump of the TypeScript profile's database, through the connection the store holds. */
-function dumpTs(): TableDump {
-  return dumpDatabase(getDb())
-}
-
-function dumpRust(dataDir: string): TableDump {
-  const db = new DatabaseSync(join(dataDir, 'kchess.db'))
-  try {
-    return dumpDatabase(db)
-  } finally {
-    db.close()
+/** Every schema object, `user_version`, and every table's rows in a total order (the core's snapshot). */
+function dumpRust(core: NativeCoreHandle): TableDump {
+  const snapshot = JSON.parse(core.callSync('store.debug.tables', '[]')) as TableDump
+  return {
+    schema: snapshot.schema,
+    userVersion: snapshot.userVersion,
+    tables: maskTimes(snapshot.tables) as Record<string, unknown[]>,
   }
 }
 
@@ -232,7 +202,6 @@ function randomQuery(random: Random): Record<string, unknown> {
 interface Operation {
   name: string
   args: unknown[]
-  run: () => unknown
 }
 
 function randomOperation(random: Random): Operation {
@@ -247,7 +216,6 @@ function randomOperation(random: Random): Operation {
         return {
           name: 'addAccount',
           args: [account, connected],
-          run: () => store.addAccount(account, connected),
         }
       },
     ],
@@ -255,13 +223,10 @@ function randomOperation(random: Random): Operation {
       'addFriends',
       () => {
         const names = Array.from({ length: int(random, 0, 3) }, () => pick(random, ACCOUNTS))
-        return { name: 'addFriends', args: [names], run: () => store.addFriends(names) }
+        return { name: 'addFriends', args: [names] }
       },
     ],
-    [
-      'removeAccount',
-      () => ({ name: 'removeAccount', args: [account], run: () => store.removeAccount(account) }),
-    ],
+    ['removeAccount', () => ({ name: 'removeAccount', args: [account] })],
     [
       'logoutAccounts',
       () => {
@@ -269,7 +234,6 @@ function randomOperation(random: Random): Operation {
         return {
           name: 'logoutAccounts',
           args: [scope ?? null],
-          run: () => store.logoutAccounts(scope),
         }
       },
     ],
@@ -278,14 +242,13 @@ function randomOperation(random: Random): Operation {
       () => ({
         name: 'clearAccountData',
         args: [account],
-        run: () => store.clearAccountData(account),
       }),
     ],
     [
       'saveSettings',
       () => {
         const settings = randomSettings(random) as never
-        return { name: 'saveSettings', args: [settings], run: () => store.saveSettings(settings) }
+        return { name: 'saveSettings', args: [settings] }
       },
     ],
     [
@@ -295,7 +258,6 @@ function randomOperation(random: Random): Operation {
         return {
           name: 'saveGames',
           args: [account, games, synced, current],
-          run: () => store.saveGames(account, games as never, synced, () => current),
         }
       },
     ],
@@ -304,7 +266,6 @@ function randomOperation(random: Random): Operation {
       () => ({
         name: 'saveGamesPage',
         args: [account, games, [], current],
-        run: () => store.saveGamesPage(account, games as never, [], () => current),
       }),
     ],
     [
@@ -315,7 +276,6 @@ function randomOperation(random: Random): Operation {
         return {
           name: 'writeApiCache',
           args: [key, value, current],
-          run: () => store.writeApiCache(key, value, () => current),
         }
       },
     ],
@@ -323,46 +283,36 @@ function randomOperation(random: Random): Operation {
       'readApiCache',
       () => {
         const key = pick(random, API_KEYS)
-        return { name: 'readApiCache', args: [key], run: () => store.readApiCache(key) }
+        return { name: 'readApiCache', args: [key] }
       },
     ],
     [
       'gamePage',
       () => {
         const query = randomQuery(random)
-        return { name: 'gamePage', args: [query], run: () => store.gamePage(query as never) }
+        return { name: 'gamePage', args: [query] }
       },
     ],
-    [
-      'gameLibraryOverview',
-      () => ({ name: 'gameLibraryOverview', args: [], run: () => store.gameLibraryOverview() }),
-    ],
+    ['gameLibraryOverview', () => ({ name: 'gameLibraryOverview', args: [] })],
     [
       'gameRatingHistory',
       () => ({
         name: 'gameRatingHistory',
         args: [account],
-        run: () => store.gameRatingHistory(account),
       }),
     ],
-    [
-      'pendingGameIds',
-      () => ({ name: 'pendingGameIds', args: [account], run: () => store.pendingGameIds(account) }),
-    ],
+    ['pendingGameIds', () => ({ name: 'pendingGameIds', args: [account] })],
     [
       'gamePgn',
       () => {
         const id = `G${String(int(random, 0, 40)).padStart(4, '0')}`
-        return { name: 'gamePgn', args: [account, id], run: () => store.gamePgn(account, id) }
+        return { name: 'gamePgn', args: [account, id] }
       },
     ],
-    ['getSettings', () => ({ name: 'getSettings', args: [], run: () => store.getSettings() })],
-    ['loadData', () => ({ name: 'loadData', args: [], run: () => store.loadData() })],
-    [
-      'dismissedFriends',
-      () => ({ name: 'dismissedFriends', args: [], run: () => store.dismissedFriends() }),
-    ],
-    ['resetStore', () => ({ name: 'resetStore', args: [], run: () => store.resetStore() })],
+    ['getSettings', () => ({ name: 'getSettings', args: [] })],
+    ['loadData', () => ({ name: 'loadData', args: [] })],
+    ['dismissedFriends', () => ({ name: 'dismissedFriends', args: [] })],
+    ['resetStore', () => ({ name: 'resetStore', args: [] })],
   ]
   // Writes dominate, as they do in a sync; each factory draws its own inputs from `random`.
   const writes = [6, 7, 8, 8, 2, 3].map((index) => weights[index]!)
@@ -373,7 +323,6 @@ function randomOperation(random: Random): Operation {
 
 const SEEDS = [11, 2024, 90210]
 const OPERATIONS_PER_SEED = 110
-const DATA = 'kchess.db'
 
 /** Calls compared per function: successful results and failing ones, across every seed. */
 const tally = new Map<string, { ok: number; error: Set<string> }>()
@@ -385,14 +334,11 @@ function record(name: string, outcome: Outcome): void {
   tally.set(name, entry)
 }
 
-describe('Rust store.games against the TypeScript store', () => {
+describe('Rust store.games', () => {
   for (const seed of SEEDS) {
     it(`matches every call and table after each step (seed ${seed}, ${OPERATIONS_PER_SEED} steps)`, async () => {
       const random = rng(seed)
-      const tsDir = mkdtempSync(join(root, 'ts-'))
-      const rustDir = mkdtempSync(join(root, 'rust-'))
-      closeDb()
-      useTestPlatform({ dataDir: tsDir, secrets: fakeSecrets(false) })
+      const core = openRust(mkdtempSync(join(root, 'rust-')))
       // Edge cases every seed reaches before the random sequence: a broken row (rejected by the
       // table, rolling back the whole page), a cancelled sync, a live game kept as pending, and
       // a removed account rejecting its sync.
@@ -425,47 +371,27 @@ describe('Rust store.games against the TypeScript store', () => {
         },
       ]
       const prelude: Operation[] = [
-        { name: 'addAccount', args: ['Alice', true], run: () => store.addAccount('Alice', true) },
-        {
-          name: 'saveGamesPage',
-          args: ['Alice', page, [], true],
-          run: () => store.saveGamesPage('Alice', page as never, [], () => true),
-        },
-        {
-          name: 'saveGames',
-          args: ['Alice', [], 500, false],
-          run: () => store.saveGames('Alice', [], 500, () => false),
-        },
-        {
-          name: 'saveGames',
-          args: ['Ghost', [], 500, true],
-          run: () => store.saveGames('Ghost', [], 500, () => true),
-        },
+        { name: 'addAccount', args: ['Alice', true] },
+        { name: 'saveGamesPage', args: ['Alice', page, [], true] },
+        { name: 'saveGames', args: ['Alice', [], 500, false] },
+        { name: 'saveGames', args: ['Ghost', [], 500, true] },
       ]
       try {
-        for (const operation of prelude) {
-          const expected = await tsOutcome(operation.run)
-          const actual = await rustOutcome(rustDir, `store.games.${operation.name}`, operation.args)
-          expect(maskTimes(actual), `${operation.name} (edge case)`).toEqual(maskTimes(expected))
-          expect(dumpRust(rustDir), `tables after ${operation.name} (edge case)`).toEqual(dumpTs())
-          record(operation.name, expected)
+        for (const [index, operation] of prelude.entries()) {
+          const actual = await rustOutcome(core, `store.games.${operation.name}`, operation.args)
+          golden.check('edge cases', index * 2, maskTimes(actual))
+          golden.check('edge cases', index * 2 + 1, dumpRust(core))
+          record(operation.name, actual)
         }
         for (let step = 0; step < OPERATIONS_PER_SEED; step++) {
           const operation = randomOperation(random)
-          const expected = await tsOutcome(operation.run)
-          const actual = await rustOutcome(rustDir, `store.games.${operation.name}`, operation.args)
-          expect(maskTimes(actual), `${operation.name} at step ${step}`).toEqual(
-            maskTimes(expected),
-          )
-          record(operation.name, expected)
-          expect(dumpRust(rustDir), `tables after ${operation.name} at step ${step}`).toEqual(
-            dumpTs(),
-          )
+          const actual = await rustOutcome(core, `store.games.${operation.name}`, operation.args)
+          golden.check(`seed ${seed}`, step * 2, maskTimes(actual))
+          record(operation.name, actual)
+          golden.check(`seed ${seed}`, step * 2 + 1, dumpRust(core))
         }
       } finally {
-        closeDb()
-        rmSync(tsDir, { recursive: true, force: true })
-        rmSync(rustDir, { recursive: true, force: true })
+        await core.close()
       }
     }, 120_000)
   }
@@ -504,18 +430,10 @@ describe('Rust store.games against the TypeScript store', () => {
 })
 
 /** Rows an earlier release would have written, inserted only into tables and columns that exist. */
-function seedHistory(db: DatabaseSync): void {
+function seedHistory(): [string, Record<string, string | number>][] {
+  const rows: [string, Record<string, string | number>][] = []
   const insert = (table: string, row: Record<string, string | number>): void => {
-    const columns = new Set(
-      (db.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]).map(
-        (column) => column.name,
-      ),
-    )
-    const names = Object.keys(row).filter((name) => columns.has(name))
-    if (names.length === 0) return
-    db.prepare(
-      `INSERT INTO "${table}" (${names.map((name) => `"${name}"`).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`,
-    ).run(...names.map((name) => row[name]!))
+    rows.push([table, row])
   }
   insert('settings', {
     id: 1,
@@ -613,54 +531,32 @@ function seedHistory(db: DatabaseSync): void {
   insert('position_lookups', { key: 'player:{"player":"Alice"}', data: '{}', fetchedAt: 1 })
   insert('documents', { key: 'study:1', body: '{}', updatedAt: 1 })
   insert('archived_games', { id: 'a1', body: '{}', seq: 1 })
+  return rows
 }
 
-/** A database as the release that wrote migration `steps` - 1 left it, with rows in it. */
-function historicalDatabase(path: string, steps: number): void {
-  const db = new DatabaseSync(path)
-  try {
-    db.exec('PRAGMA foreign_keys = ON')
-    for (let version = 0; version < steps; version++) {
-      db.exec('BEGIN IMMEDIATE')
-      db.exec(MIGRATIONS[version]!)
-      db.exec(`PRAGMA user_version = ${version + 1}`)
-      db.exec('COMMIT')
-    }
-    if (steps > 0) seedHistory(db)
-  } finally {
-    db.close()
-  }
-}
-
-describe('Rust migrations against the TypeScript migrations', () => {
-  for (let steps = 0; steps <= MIGRATIONS.length; steps++) {
+/** A database as the release that applied the first `steps` migrations left it, with rows in it. */
+describe('Rust migrations keep the schema and rows of every earlier release', () => {
+  for (let steps = 0; steps <= MIGRATION_STEPS; steps++) {
     it(`migrates a database from step ${steps} to the same schema and rows`, async () => {
-      const base = mkdtempSync(join(root, `history-${steps}-`))
-      const tsDir = join(base, 'ts')
-      const rustDir = join(base, 'rust')
-      mkdirSync(tsDir)
-      mkdirSync(rustDir)
+      const dataDir = mkdtempSync(join(root, `history-${steps}-`))
+      // The earlier database is written before the store opens it; the first read migrates it.
+      const earlier = openRust(dataDir)
       try {
-        historicalDatabase(join(base, DATA), steps)
-        copyFileSync(join(base, DATA), join(tsDir, DATA))
-        copyFileSync(join(base, DATA), join(rustDir, DATA))
-
-        const ts = new DatabaseSync(join(tsDir, DATA))
-        ts.exec('PRAGMA foreign_keys = ON')
-        try {
-          migrate(ts)
-          const expected = dumpDatabase(ts)
-          expect(expected.userVersion).toBe(MIGRATIONS.length)
-          // The Rust core migrates when it opens the database; a read is the first call.
-          const core = openRust(rustDir)
-          core.callSync('store.games.getSettings', '[]')
-          await core.close()
-          expect(dumpRust(rustDir)).toEqual(expected)
-        } finally {
-          ts.close()
-        }
+        earlier.callSync(
+          'store.debug.historical',
+          JSON.stringify([steps, steps > 0 ? seedHistory() : []]),
+        )
       } finally {
-        rmSync(base, { recursive: true, force: true })
+        await earlier.close()
+      }
+      const core = openRust(dataDir)
+      try {
+        core.callSync('store.games.getSettings', '[]')
+        const dump = dumpRust(core)
+        expect(dump.userVersion).toBe(MIGRATION_STEPS)
+        golden.check(`migration ${steps}`, 0, dump)
+      } finally {
+        await core.close()
       }
     })
   }

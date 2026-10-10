@@ -71,24 +71,40 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     let migrated = db
         .query_row("SELECT id FROM worker_meta WHERE id = 1", [], |_| Ok(()))
         .is_ok();
-    // The old database remains an intact fallback; all later puzzle writes have one owner.
-    if let Some(legacy) = config.legacy_database_path.as_deref().filter(|_| !migrated)
-        && legacy.exists()
-    {
+    // Earlier releases kept the puzzles in `kchess.db`, the main database. It stays an intact
+    // fallback; all later puzzle writes have one owner.
+    let legacy = config.data_dir.join("kchess.db");
+    if !migrated && legacy.exists() {
         db.execute(
             "ATTACH DATABASE ?1 AS legacy",
             [legacy.to_string_lossy().as_ref()],
         )
-        .and_then(|_| {
+        .map_err(|e| CoreError::new(e.to_string()))?;
+        // A main database the store has not migrated yet has no puzzle tables to read; leave the
+        // import for a later open rather than marking it done.
+        let has_tables: bool = db
+            .query_row(
+                "SELECT COUNT(*) = 2 FROM legacy.sqlite_master
+                 WHERE type = 'table' AND name IN ('puzzles', 'puzzle_meta')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| CoreError::new(e.to_string()))?;
+        if has_tables {
             db.execute_batch(
                 "BEGIN;
                 INSERT OR IGNORE INTO puzzles SELECT * FROM legacy.puzzles;
                 INSERT OR IGNORE INTO puzzle_meta SELECT id, importedAt, count, bytes FROM legacy.puzzle_meta;
                 INSERT OR REPLACE INTO worker_meta VALUES (1);
-                COMMIT; DETACH DATABASE legacy;",
+                COMMIT;",
             )
-        })
-        .map_err(|e| CoreError::new(e.to_string()))?;
+            .map_err(|e| {
+                let _ = db.execute_batch("ROLLBACK");
+                CoreError::new(e.to_string())
+            })?;
+        }
+        db.execute_batch("DETACH DATABASE legacy")
+            .map_err(|e| CoreError::new(e.to_string()))?;
     }
     db.execute_batch("INSERT OR IGNORE INTO worker_meta VALUES (1)")
         .map_err(|e| CoreError::new(e.to_string()))?;

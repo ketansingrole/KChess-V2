@@ -5,11 +5,13 @@
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
+use super::StoreContext;
 use super::library::{db_err, now_ms, transaction};
 use crate::error::Result;
 
 /// This module's storage methods; None when the method is not one of them.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
     let result = match method {
         "store.usage.flushUsage" => flush_usage(db, args.first().unwrap_or(&Value::Null)),
         "store.usage.resetUsage" => db

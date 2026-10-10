@@ -5,6 +5,7 @@
 use rusqlite::Connection;
 use serde_json::Value;
 
+use super::StoreContext;
 use crate::error::{CoreError, Result};
 
 /// Ordered schema migrations. Append only: an earlier entry is never edited.
@@ -234,18 +235,25 @@ fn storage_error(cause: rusqlite::Error) -> CoreError {
 }
 
 /// Migrations expose no storage methods; None for every method.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
     let _ = (db, method, args);
     None
 }
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
 pub fn migrate(db: &Connection) -> Result<()> {
+    migrate_to(db, MIGRATIONS.len())
+}
+
+/// Apply the migrations up to `steps` (the first `steps` of the list), as an earlier release
+/// would have left the database. Test-only callers pass fewer than all of them.
+pub fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
     let current: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(storage_error)?;
     let start = usize::try_from(current).unwrap_or(0);
-    for (index, sql) in MIGRATIONS.iter().enumerate().skip(start) {
+    for (index, sql) in MIGRATIONS.iter().enumerate().take(steps).skip(start) {
         db.execute_batch("BEGIN IMMEDIATE").map_err(storage_error)?;
         // `index` is a loop counter, not user input: PRAGMA takes no bound parameters.
         let applied = db

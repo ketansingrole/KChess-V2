@@ -5,8 +5,10 @@
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
+use super::StoreContext;
 use super::library::{db_err, now_ms, num, truthy};
 use crate::error::{CoreError, Result};
+use crate::host::{Host, Level};
 use kchess_domain::js;
 
 const NEG_INF: f64 = f64::NEG_INFINITY;
@@ -34,11 +36,13 @@ const ROW_LIMIT: i64 = 20_000;
 const REVIEW_LIMIT: i64 = 2_000;
 
 /// This module's storage methods; None when the method is not one of them.
-pub fn call(db: &Connection, method: &str, args: &[Value]) -> Option<Result<Value>> {
+pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
+    let db = ctx.db;
+    let host = ctx.host;
     let result = match method {
         "store.insights.insights" => {
             let query = args.first().unwrap_or(&Value::Null);
-            now_ms().and_then(|now| insights(db, query, now))
+            now_ms().and_then(|now| insights(host, db, query, now))
         }
         _ => return None,
     };
@@ -117,7 +121,7 @@ fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sq
 }
 
 /// `insights(query)`.
-fn insights(db: &Connection, query: &Value, now: f64) -> Result<Value> {
+fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result<Value> {
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -313,7 +317,7 @@ fn insights(db: &Connection, query: &Value, now: f64) -> Result<Value> {
         "streaks".into(),
         json!({ "longestWin": longest_win, "longestLoss": longest_loss, "current": current }),
     );
-    if let Some(accuracy) = accuracy_report(db, query, now)? {
+    if let Some(accuracy) = accuracy_report(host, db, query, now)? {
         report.insert("accuracy".into(), accuracy);
     }
     Ok(Value::Object(report))
@@ -335,7 +339,12 @@ struct Row {
 
 /// Accuracy and mistake counts of the reviewed games (by Lichess or locally), newest first.
 /// None when no game in the filter has a finished review.
-fn accuracy_report(db: &Connection, query: &Value, now: f64) -> Result<Option<Value>> {
+fn accuracy_report(
+    host: &dyn Host,
+    db: &Connection,
+    query: &Value,
+    now: f64,
+) -> Result<Option<Value>> {
     let (clauses, params) = clauses(query, "g.", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -365,8 +374,16 @@ fn accuracy_report(db: &Connection, query: &Value, now: f64) -> Result<Option<Va
     let (mut inaccuracy, mut mistake, mut blunder) = (0.0, 0.0, 0.0);
     for (color, text) in &reviewed {
         // A summary that is not JSON is left out; one that is null fails the side lookup, as before.
-        let Ok(summary) = serde_json::from_str::<Value>(text) else {
-            continue;
+        let summary = match serde_json::from_str::<Value>(text) {
+            Ok(summary) => summary,
+            Err(cause) => {
+                host.log(
+                    Level::Debug,
+                    "insights",
+                    &format!("Review summary has invalid JSON: {cause}"),
+                );
+                continue;
+            }
         };
         if summary.is_null() {
             return Err(CoreError::new(format!(
