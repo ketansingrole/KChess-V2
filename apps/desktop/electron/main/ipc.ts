@@ -3,7 +3,13 @@ import { IPC_CHANNELS, type InvokeMethod, type IpcInput, type IpcResult } from '
 
 import { isAppUrl } from './appOrigin'
 import { validateIpcArguments } from './ipcContracts'
-import { errorSummary, isExpectedCancellation, logDebug, logWarn, recordTiming } from '@kchess/core'
+import {
+  errorSummary,
+  isExpectedCancellation,
+  logDebug,
+  logWarn,
+  recordTiming,
+} from '@kchess/native'
 
 const registered = new Set<InvokeMethod>()
 

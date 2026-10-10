@@ -29,10 +29,10 @@ import {
   VoiceModelCache,
   type CoreMethod,
   type KChessCore,
-} from '@kchess/core'
+} from '@kchess/native'
 import { electronPlatform } from './platform'
 import { saveWithDialog } from './saveDialog'
-import { assertExport, assertNotification } from '@kchess/core/domain/validate'
+import { assertExport, assertNotification } from '@kchess/rules/validate'
 import type { ChallengeInfo } from '../../contracts/types'
 
 let window: BrowserWindow | null = null

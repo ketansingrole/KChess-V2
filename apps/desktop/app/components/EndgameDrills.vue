@@ -2,15 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import type { RunSummary } from '@kchess/core/contracts/types'
-import {
-  ENDGAME_DRILLS,
-  evaluateEndgame,
-  sanFrom,
-  type EndgameDrill,
-} from '@kchess/core/domain/endgames'
-import { checkColor, destsFor, positionFromFen } from '@kchess/core/domain/chess'
-import { moveSquares } from '@kchess/core/domain/puzzle'
+import type { RunSummary } from '@kchess/contracts/types'
+import { ENDGAME_DRILLS, evaluateEndgame, sanFrom, type EndgameDrill } from '@kchess/rules/endgames'
+import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
+import { moveSquares } from '@kchess/rules/puzzle'
 import { playMoveSound } from '../utils/sound'
 
 /**

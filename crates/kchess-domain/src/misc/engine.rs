@@ -1,6 +1,6 @@
 //! The schema engine the TypeScript validators used (valibot 1.5), ported over [`J`]: the same
 //! issue order, default messages, expectations and output shapes, so a rejected input reports the
-//! same text. Only the combinators `core/src/domain/validate.ts` and `library.ts` use exist here.
+//! same text. Only the combinators `crates/kchess-wasm/js/validate.ts` and `library.ts` use exist here.
 
 use crate::js;
 

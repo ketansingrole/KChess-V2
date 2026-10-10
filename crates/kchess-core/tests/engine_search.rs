@@ -1,4 +1,4 @@
-//! `bestMove` through the scripted engine (`core/tests/unit/engine-levels.test.ts`, and the search
+//! `bestMove` through the scripted engine (`tests/core/engine-levels.test.ts`, and the search
 //! parts of `engine.ts`): level options, the random-move path, invalid input, superseded
 //! searches reaching the engine, the warm process, and the computer-playing bookkeeping.
 

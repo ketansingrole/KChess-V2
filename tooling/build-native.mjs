@@ -48,10 +48,19 @@ if (!existsSync(wasm)) throw new Error(`Cargo did not produce ${wasm}.`)
 mkdirSync(`${root}apps/desktop/app/assets/rules`, { recursive: true })
 copyFileSync(wasm, `${root}apps/desktop/app/assets/rules/kchess.wasm`)
 console.info(`[kchess] Built apps/desktop/app/assets/rules/kchess.wasm (${wasmProfile}).`)
-// The contract types (core/src/contracts/generated) are rendered from the Rust contracts.
+// The contract types (crates/kchess-contracts/ts/generated) are rendered from the Rust contracts.
 execFileSync(
   'cargo',
   ['run', '-q', '-p', 'kchess-contracts', '--bin', 'export-types', '--locked'],
   { cwd: root, stdio: 'inherit' },
 )
+// The TypeScript packages that wrap the rules and contracts, built to their `dist/` for Node
+// consumers. Contracts first: the rules and the binding import them.
+const build = fileURLToPath(new URL('build-package.mjs', import.meta.url))
+for (const args of [
+  ['crates/kchess-contracts/ts'],
+  ['crates/kchess-wasm/js'],
+  ['crates/kchess-node', 'js'],
+])
+  execFileSync(process.execPath, [build, ...args], { cwd: root, stdio: 'inherit' })
 writeRustLicenses()

@@ -1,5 +1,5 @@
-//! Accounts, profiles and game sync (`core/src/services/lichess.ts`) over local fixtures. Ports the
-//! sync and export-authentication scenarios of `core/tests/unit/game-library.test.ts` (paging,
+//! Accounts, profiles and game sync (`crates/kchess-node/js/lichess.ts`) over local fixtures. Ports the
+//! sync and export-authentication scenarios of `tests/core/game-library.test.ts` (paging,
 //! cursor, pending games, sync cancelled by logout or removal, token fallback), plus the
 //! reconnect, stale-token, profile-cache and log-redaction rules.
 

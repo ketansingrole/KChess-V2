@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const directory = await mkdtemp(join(tmpdir(), 'kchess-types-'))
 try {
-  const core = JSON.stringify(join(root, 'core/dist/index.js'))
-  const node = JSON.stringify(join(root, 'hosts/node/dist/node.js'))
+  const core = JSON.stringify(join(root, 'crates/kchess-node/dist/index.js'))
+  const node = JSON.stringify(join(root, 'hosts/node/dist/index.js'))
   await writeFile(
     join(directory, 'consumer.mts'),
     `import { createKChessCore, type CorePlatform } from ${core}

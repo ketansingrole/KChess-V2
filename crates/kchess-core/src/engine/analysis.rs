@@ -1,4 +1,4 @@
-//! Infinite and bounded analysis (`core/src/services/analysis.ts`). A request streams
+//! Infinite and bounded analysis (`crates/kchess-node/js/analysis.ts`). A request streams
 //! `engine:analysis` updates as the engine's lines change (at most every 120 ms), and ends with
 //! exactly one final update: `completed` when the search finished, `interrupted` when it was
 //! superseded or stopped (never completed), or `failed` with the error.

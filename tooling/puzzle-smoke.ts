@@ -8,8 +8,8 @@ import {
   startPuzzle,
   type DbPuzzle,
   type PuzzleState,
-} from '../core/src/domain/puzzle.ts'
-import { FEN, PUZZLE_ANGLE } from '../core/src/domain/patterns.ts'
+} from '../crates/kchess-wasm/js/puzzle.ts'
+import { FEN, PUZZLE_ANGLE } from '../crates/kchess-wasm/js/patterns.ts'
 import { installNativeRules } from './native-rules.ts'
 import {
   RUSH_CONFIGS,
@@ -23,15 +23,15 @@ import {
   puzzleSolved,
   skip,
   tick,
-} from '../core/src/domain/rush.ts'
+} from '../crates/kchess-wasm/js/rush.ts'
 import {
   knightChallenge,
   knightDistance,
   knightFen,
   knightMoves,
-} from '../core/src/domain/knight.ts'
-import { ALL_SQUARES, randomSquare, squareColor } from '../core/src/domain/coordinates.ts'
-import { ENDGAME_DRILLS, evaluateEndgame } from '../core/src/domain/endgames.ts'
+} from '../crates/kchess-wasm/js/knight.ts'
+import { ALL_SQUARES, randomSquare, squareColor } from '../crates/kchess-wasm/js/coordinates.ts'
+import { ENDGAME_DRILLS, evaluateEndgame } from '../crates/kchess-wasm/js/endgames.ts'
 import { themeName } from '../apps/desktop/app/utils/puzzleThemes.ts'
 
 /** The native sampler, as the download feeds it. */
@@ -43,10 +43,7 @@ interface ChunkSampler {
   kept(): DbPuzzle[]
 }
 const MIGRATIONS = JSON.parse(
-  readFileSync(
-    new URL('../core/tests/unit/fixtures/store-migrations.json', import.meta.url),
-    'utf8',
-  ),
+  readFileSync(new URL('../tests/core/fixtures/store-migrations.json', import.meta.url), 'utf8'),
 ) as string[]
 
 // The native rules, resolved as the core resolves them; puzzle moves are played through them.

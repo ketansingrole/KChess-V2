@@ -1,22 +1,22 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch, onScopeDispose } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import { initialLibrary, persistSession } from '../utils/library'
-import type { LocalClock } from '@kchess/core/domain/library'
+import type { LocalClock } from '@kchess/rules/library'
 import {
   checkColor,
   lastMoveKeys,
   setupDests,
   setupPositionAfter,
   setupSanHistory,
-} from '@kchess/core/domain/chess'
-import { STANDARD_SETUP, type GameSetup } from '@kchess/core/domain/variant'
+} from '@kchess/rules/chess'
+import { STANDARD_SETUP, type GameSetup } from '@kchess/rules/variant'
 import { play, playMoveSound } from '../utils/sound'
 
 import { useGameArchive } from './gameArchive'
 
-import { LocalGame, localState, type Color } from '@kchess/core/domain/gameSession'
+import { LocalGame, localState, type Color } from '@kchess/rules/gameSession'
 export type { LocalClock }
 
 /** Two people at one computer, and a stand-alone chess clock for a real board. */

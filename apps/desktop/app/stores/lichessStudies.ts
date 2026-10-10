@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import type { LichessStudy } from '@kchess/core/contracts/types'
+import type { LichessStudy } from '@kchess/contracts/types'
 import { useKChessStore } from './kchess'
 
 const FRESH_FOR = 5 * 60_000

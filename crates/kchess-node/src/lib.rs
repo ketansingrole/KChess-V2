@@ -1,5 +1,5 @@
 //! `@kchess/native`: the Rust rules for Node and Electron hosts. Values cross as JSON text
-//! (see `core/src/services/native.ts`); `null` stands for the TypeScript `undefined`.
+//! (see `crates/kchess-node/js/native.ts`); `null` stands for the TypeScript `undefined`.
 
 mod core;
 pub mod voice;

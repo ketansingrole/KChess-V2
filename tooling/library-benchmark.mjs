@@ -5,10 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 // Structural probe of list-row SQL/clone cost, not a renderer or full loadData benchmark.
 const db = new DatabaseSync(':memory:')
 for (const sql of JSON.parse(
-  readFileSync(
-    new URL('../core/tests/unit/fixtures/store-migrations.json', import.meta.url),
-    'utf8',
-  ),
+  readFileSync(new URL('../tests/core/fixtures/store-migrations.json', import.meta.url), 'utf8'),
 ))
   db.exec(sql)
 const insert = db.prepare(`INSERT INTO games

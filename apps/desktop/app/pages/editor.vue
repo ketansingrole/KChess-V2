@@ -10,8 +10,8 @@ import {
   setupFromFen,
   START_SETUP,
   withPiece,
-} from '@kchess/core/domain/boardEditor'
-import { EDITOR_GRAMMAR, spokenEdit, type PieceColor } from '@kchess/core/domain/voiceCommands'
+} from '@kchess/rules/boardEditor'
+import { EDITOR_GRAMMAR, spokenEdit, type PieceColor } from '@kchess/rules/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'

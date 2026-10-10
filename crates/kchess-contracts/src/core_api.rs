@@ -1,4 +1,4 @@
-//! `core/src/contracts/core.ts`: the core's methods and events.
+//! `crates/kchess-contracts/ts/core.ts`: the core's methods and events.
 //!
 //! `METHODS` is the one table. `CoreApi` (the interface frontends call), `CoreMethod` and
 //! `CORE_METHODS` (the list a transport exposes) are all rendered from it, so they cannot drift

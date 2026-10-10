@@ -1,6 +1,6 @@
 //! A scripted UCI engine for the engine tests: `kchess-fake-uci <mode> [command-log]`.
 //!
-//! Handshake modes mirror the TypeScript fakes in `core/tests/unit/uci-lifecycle.test.ts`:
+//! Handshake modes mirror the TypeScript fakes in `tests/core/uci-lifecycle.test.ts`:
 //! - `handshake` (default): answers `uci` and `isready`, ignores everything else.
 //! - `silent`: answers nothing.
 //! - `no-readyok`: answers `uci` but never `isready`.

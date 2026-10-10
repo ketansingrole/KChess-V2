@@ -1,4 +1,4 @@
-//! Game reviews on disk (`core/src/services/reviewStore.ts`). A review is the scores of every
+//! Game reviews on disk (`crates/kchess-node/js/reviewStore.ts`). A review is the scores of every
 //! position; the summary beside it (accuracy and counts per side) is what the game list shows.
 
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};

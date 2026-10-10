@@ -5,7 +5,7 @@ import {
   type LibrarySnapshot,
   type SessionDocuments,
   type SessionKind,
-} from '@kchess/core/domain/library'
+} from '@kchess/rules/library'
 
 const EMPTY: LibrarySnapshot = {
   studies: [],

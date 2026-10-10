@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TournamentTimeline from '../../app/components/TournamentTimeline.vue'
-import type { TournamentSummary } from '@kchess/core/contracts/types'
+import type { TournamentSummary } from '@kchess/contracts/types'
 
 const MINUTE = 60_000
 const start = Date.UTC(2026, 9, 6, 14)

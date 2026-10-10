@@ -1,4 +1,4 @@
-//! UCI `info` lines (`core/src/domain/uciInfo.ts`): the scored principal variation a search
+//! UCI `info` lines (`crates/kchess-wasm/js/uciInfo.ts`): the scored principal variation a search
 //! reports, turned to White's point of view.
 
 use serde_json::{Map, Value, json};

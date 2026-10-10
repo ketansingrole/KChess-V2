@@ -7,7 +7,7 @@ const result = spawnSync(
     fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url)),
     'run',
     'apps/desktop/tests/unit/lifecycle.test.ts',
-    'core/tests/unit/online-session.test.ts',
+    'tests/core/online-session.test.ts',
   ],
   { stdio: 'inherit' },
 )

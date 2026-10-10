@@ -1,6 +1,6 @@
 import { app, session, shell, systemPreferences } from 'electron'
-import { logDebug } from '@kchess/core/logger'
-import type { MicrophoneAccess, MicrophoneStatus } from '@kchess/core/contracts/types'
+import { logDebug } from '@kchess/native/logger'
+import type { MicrophoneAccess, MicrophoneStatus } from '@kchess/contracts/types'
 
 function status(): MicrophoneStatus {
   if (process.platform !== 'darwin' && process.platform !== 'win32') return 'granted'

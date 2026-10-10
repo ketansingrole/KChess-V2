@@ -2,9 +2,9 @@ import { effectScope, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { expect, it, vi } from 'vitest'
 import { usePositionEngine } from '../../app/composables/usePositionEngine'
-import type { AnalysisRequest, AnalysisUpdate } from '@kchess/core/contracts/types'
-import { analysisContext } from '@kchess/core/domain/analysisContext'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import type { AnalysisRequest, AnalysisUpdate } from '@kchess/contracts/types'
+import { analysisContext } from '@kchess/rules/analysisContext'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import { desktop, deferred } from './fixtures'
 
 it('cancels real searches on change/off and rejects late updates and acknowledgements', async () => {

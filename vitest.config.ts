@@ -1,14 +1,14 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
-import { coreAliases } from './tooling/core-aliases.ts'
+import { packageAliases } from './tooling/package-aliases.ts'
 
 export default defineConfig({
   plugins: [vue()],
-  resolve: { alias: coreAliases },
+  resolve: { alias: packageAliases },
   test: {
     include: [
       'tests/unit/**/*.test.{ts,mjs}',
-      'core/tests/unit/**/*.test.{ts,mjs}',
+      'tests/core/**/*.test.{ts,mjs}',
       'hosts/node/tests/unit/**/*.test.{ts,mjs}',
       'apps/*/tests/unit/**/*.test.{ts,mjs}',
     ],
@@ -25,16 +25,16 @@ export default defineConfig({
       include: [
         'apps/desktop/app/**/*.ts',
         'apps/desktop/app/**/*.vue',
-        'core/src/services/**/*.ts',
+        'crates/kchess-node/js/**/*.ts',
         'apps/desktop/electron/main/**/*.ts',
-        'core/src/domain/**/*.ts',
-        'core/src/contracts/**/*.ts',
+        'crates/kchess-wasm/js/**/*.ts',
+        'crates/kchess-contracts/ts/**/*.ts',
         'hosts/node/src/**/*.ts',
         'apps/cli/src/**/*.ts',
         'apps/desktop/contracts/**/*.ts',
       ],
       exclude: [
-        'core/src/services/appIconSvg.ts',
+        'crates/kchess-node/js/appIconSvg.ts',
         'apps/desktop/electron/renderer/**',
         '**/*.d.ts',
         '**/tests/**',

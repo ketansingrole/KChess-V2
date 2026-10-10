@@ -4,9 +4,9 @@ import type {
   GameLibraryOverview,
   LichessGame,
   LichessRatingHistory,
-} from '@kchess/core/contracts/types'
-import { pgnFromMoves } from '@kchess/core/domain/chess'
-import { mergeRatingHistories, normalizeRatingKey } from '@kchess/core/domain/ratings'
+} from '@kchess/contracts/types'
+import { pgnFromMoves } from '@kchess/rules/chess'
+import { mergeRatingHistories, normalizeRatingKey } from '@kchess/rules/ratings'
 
 export function useGameHistory(options: {
   data: Ref<AppData | null>

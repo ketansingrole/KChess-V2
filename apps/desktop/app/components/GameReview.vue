@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type { Color, Key } from '@lichess-org/chessground/types'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { CoordinateMode, PieceAnimation } from '@kchess/core/contracts/types'
-import { INITIAL_FEN, uciSquares } from '@kchess/core/domain/position'
-import { pgnMainline } from '@kchess/core/domain/pgn'
+import type { CoordinateMode, PieceAnimation } from '@kchess/contracts/types'
+import { INITIAL_FEN, uciSquares } from '@kchess/rules/position'
+import { pgnMainline } from '@kchess/rules/pgn'
 
 const props = defineProps<{
   pgn: string

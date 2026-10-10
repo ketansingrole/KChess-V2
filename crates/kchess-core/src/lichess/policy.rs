@@ -1,5 +1,5 @@
-//! Lichess request admission (`core/src/services/requestPolicy.ts`) and the request accounting of
-//! `core/src/services/usage.ts` (`withUsage`, `attributeTo`, `meteredFetch`, `recordUsage`,
+//! Lichess request admission (`crates/kchess-node/js/requestPolicy.ts`) and the request accounting of
+//! `crates/kchess-node/js/usage.ts` (`withUsage`, `attributeTo`, `meteredFetch`, `recordUsage`,
 //! `forgetUsage`).
 //!
 //! Admission: at most two requests are in flight, interactive requests (game moves and their

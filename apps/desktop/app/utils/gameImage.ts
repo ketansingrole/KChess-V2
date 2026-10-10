@@ -1,5 +1,5 @@
-import { setupStart, type GameSetup } from '@kchess/core/domain/variant'
-import { Position, uciSquares, type SquareName } from '@kchess/core/domain/position'
+import { setupStart, type GameSetup } from '@kchess/rules/variant'
+import { Position, uciSquares, type SquareName } from '@kchess/rules/position'
 import { GifWorkerClient } from './gifWorkerClient'
 import { pieceUrl } from './pieces'
 

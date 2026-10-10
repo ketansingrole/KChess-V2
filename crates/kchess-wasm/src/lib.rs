@@ -1,6 +1,6 @@
 //! The rules for the renderer, as a WebAssembly module with a C ABI (no generated glue):
 //! the host copies UTF-8 into memory from `kc_alloc`, calls `kc_invoke`, reads the result and
-//! frees both. `core/src/domain/engine.ts` (`wasmBinding`) is the host side.
+//! frees both. `crates/kchess-wasm/js/engine.ts` (`wasmBinding`) is the host side.
 
 use kchess_domain::{api, review};
 

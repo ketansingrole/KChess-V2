@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useAnalysisStore } from '../stores/analysis'
-import { MOVE_GLYPHS, moveGlyph, moveNumber, setMoveGlyph } from '@kchess/core/domain/analysisTree'
+import { MOVE_GLYPHS, moveGlyph, moveNumber, setMoveGlyph } from '@kchess/rules/analysisTree'
 
 /**
  * Notes on the move shown: a comment and an annotation glyph, written right under the move list

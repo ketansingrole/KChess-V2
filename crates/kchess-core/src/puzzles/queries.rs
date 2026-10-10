@@ -1,5 +1,5 @@
-//! Queries over the offline puzzle database: the Rust port of `core/src/services/puzzleQueries.ts`
-//! and the schema of `core/src/services/puzzleWorker.ts`. Only the puzzle database's single owner
+//! Queries over the offline puzzle database: the Rust port of `crates/kchess-node/js/puzzleQueries.ts`
+//! and the schema of `crates/kchess-node/js/puzzleWorker.ts`. Only the puzzle database's single owner
 //! calls these; they take the connection, never open one.
 //!
 //! Randomness: the TypeScript uses `Math.random()`. Here the caller supplies the generator as

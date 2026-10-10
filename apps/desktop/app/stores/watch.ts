@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import { RequestScope, SubscriptionScope } from '@kchess/core/domain/requestScope'
-import { Clock } from '@kchess/core/domain/clock'
+import { RequestScope, SubscriptionScope } from '@kchess/rules/requestScope'
+import { Clock } from '@kchess/rules/clock'
 import type {
   BroadcastGame,
   BroadcastUpdate,
@@ -10,7 +10,7 @@ import type {
   TvChannel,
   WatchFrame,
   WatchState,
-} from '@kchess/core/contracts/types'
+} from '@kchess/contracts/types'
 
 /** What is being watched: one TV channel or game, or one broadcast round. */
 export const useWatchStore = defineStore('watch', () => {

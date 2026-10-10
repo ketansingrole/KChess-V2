@@ -1,4 +1,4 @@
-import { oauthPage } from '../../../../core/src/services/oauthPage'
+import { oauthPage } from '../../../../crates/kchess-node/js/oauthPage'
 import {
   test as base,
   expect,
@@ -12,11 +12,16 @@ import { join } from 'node:path'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
-import { nativeRules } from '../../../../core/src/services/native'
-// Loads the rules binding that the domain functions in this test process call.
-import '../../../../core/src/services/rules'
-import { reviewKey } from '@kchess/core/domain/review'
-import type { StoredReview } from '@kchess/core/contracts/types'
+import { nativeRules } from '../../../../crates/kchess-node/js/native'
+import { setRulesBinding } from '@kchess/rules/engine'
+import { reviewKey } from '@kchess/rules/review'
+import type { StoredReview } from '@kchess/contracts/types'
+
+// The domain rules this test process calls run on the native module. Bind them on the rules engine
+// the test imports (`@kchess/rules`), not through the native package's own copy of it.
+const nativeBinding = nativeRules()
+if (!nativeBinding) throw new Error('The native rules are not built (pnpm run build:native).')
+setRulesBinding({ invoke: (method, args) => nativeBinding.invoke(method, args) })
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const SCHOLARS_PGN = '1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
-import type { GameSetup } from '@kchess/core/domain/variant'
-import { loadOpenings, openingAt } from '@kchess/core/domain/openings'
+import type { GameSetup } from '@kchess/rules/variant'
+import { loadOpenings, openingAt } from '@kchess/rules/openings'
 
 const props = defineProps<{ setup: GameSetup; moves: readonly string[]; ply?: number }>()
 const store = useKChessStore()

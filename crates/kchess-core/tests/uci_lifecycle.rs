@@ -1,4 +1,4 @@
-//! Port of `core/tests/unit/uci-lifecycle.test.ts`: UCI failure recovery, maintenance and the
+//! Port of `tests/core/uci-lifecycle.test.ts`: UCI failure recovery, maintenance and the
 //! exit guarantees, against the scripted fake engine (`tests/support/fake_uci.rs`).
 
 mod support;

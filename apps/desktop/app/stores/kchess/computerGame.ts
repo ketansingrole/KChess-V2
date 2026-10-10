@@ -1,6 +1,6 @@
 import { computed, reactive, ref, toRefs, watch, onScopeDispose, type Ref } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
-import type { NotificationKind } from '@kchess/core/contracts/types'
+import type { NotificationKind } from '@kchess/contracts/types'
 import {
   checkColor,
   lastMoveKeys,
@@ -9,13 +9,13 @@ import {
   setupSanHistory,
   statusText,
   turnColor,
-} from '@kchess/core/domain/chess'
+} from '@kchess/rules/chess'
 import { initialLibrary, persistSession } from '../../utils/library'
 import { useGameArchive } from '../gameArchive'
-import { isVariant, type GameSetup } from '@kchess/core/domain/variant'
-import { ComputerGame, computerState, type ComputerClock } from '@kchess/core/domain/gameSession'
+import { isVariant, type GameSetup } from '@kchess/rules/variant'
+import { ComputerGame, computerState, type ComputerClock } from '@kchess/rules/gameSession'
 import { playMoveSound, play } from '../../utils/sound'
-export type { ComputerClock } from '@kchess/core/domain/gameSession'
+export type { ComputerClock } from '@kchess/rules/gameSession'
 
 /** Computer-game state lives for the store's lifetime, including across route changes. */
 export function useComputerGame(options: {

@@ -1,4 +1,4 @@
-//! `core/src/domain/review.ts`: the review helpers that stayed in TypeScript. `replay` and
+//! `crates/kchess-wasm/js/review.ts`: the review helpers that stayed in TypeScript. `replay` and
 //! `analyseReview` are in `review.rs`.
 
 use serde_json::{Value, json};

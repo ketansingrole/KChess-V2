@@ -1,12 +1,12 @@
-import { GameArchive, archiveState } from '@kchess/core/gameArchive'
-import type { ArchivedGame, CoreMethod } from '@kchess/core'
+import { GameArchive, archiveState } from '@kchess/rules/gameArchive'
+import type { ArchivedGame, CoreMethod } from '@kchess/native'
 import { createInterface } from 'node:readline/promises'
 import { readFile, stat } from 'node:fs/promises'
 import { stdin, stdout, stderr } from 'node:process'
 import { createNodeCore, type NodeCore, type NodeCoreOptions } from '@kchess/node'
-import { CORE_METHODS, assertLevel } from '@kchess/core'
-import { ComputerGame, computerState, LocalGame, localState } from '@kchess/core/gameSession'
-import { errorSummary, logWarn } from '@kchess/core/logger'
+import { CORE_METHODS, assertLevel } from '@kchess/native'
+import { ComputerGame, computerState, LocalGame, localState } from '@kchess/rules/gameSession'
+import { errorSummary, logWarn } from '@kchess/native/logger'
 
 const HELP = `KChess CLI
 

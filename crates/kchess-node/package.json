@@ -2,17 +2,39 @@
   "name": "@kchess/native",
   "version": "2026.10.4",
   "private": true,
+  "type": "module",
   "license": "GPL-3.0-or-later",
-  "description": "The KChess Rust rules as an N-API module for Node and Electron hosts.",
-  "main": "./index.cjs",
-  "types": "./index.d.ts",
+  "description": "The KChess Rust core for Node and Electron hosts: the N-API module and its TypeScript binding.",
+  "scripts": {
+    "build": "node ../../tooling/build-package.mjs crates/kchess-node js",
+    "typecheck": "pnpm -w exec tsc --noEmit -p crates/kchess-node/tsconfig.json"
+  },
+  "dependencies": {
+    "@kchess/contracts": "workspace:*",
+    "@kchess/rules": "workspace:*",
+    "fflate": "0.8.3",
+    "lru-cache": "^11.5.3",
+    "stockfish": "^19.0.0",
+    "tar": "7.5.22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./binding": {
+      "types": "./index.d.ts",
+      "require": "./index.cjs"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
   "files": [
     "index.cjs",
     "index.d.ts",
     "*.node",
     "THIRD_PARTY_LICENSES.txt"
-  ],
-  "scripts": {
-    "build": "node ../../tooling/build-native.mjs"
-  }
+  ]
 }

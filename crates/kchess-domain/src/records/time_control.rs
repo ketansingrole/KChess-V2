@@ -1,4 +1,4 @@
-//! `core/src/domain/timeControl.ts`: Lichess Board API time-control rules.
+//! `crates/kchess-wasm/js/timeControl.ts`: Lichess Board API time-control rules.
 
 use serde_json::{Value, json};
 

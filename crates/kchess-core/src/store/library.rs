@@ -1,4 +1,4 @@
-//! The local library (`core/src/services/library.ts`): studies, played games, mistake drills,
+//! The local library (`crates/kchess-node/js/library.ts`): studies, played games, mistake drills,
 //! unfinished sessions, joined tournaments and repertoire notes, each a bounded, versioned
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 //!

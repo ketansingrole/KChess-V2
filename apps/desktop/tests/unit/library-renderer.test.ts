@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { effectScope, ref } from 'vue'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useReviewStore } from '../../app/stores/review'
-import { analysisContext } from '@kchess/core/domain/analysisContext'
-import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
+import { analysisContext } from '@kchess/rules/analysisContext'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
 import type {
   AnalysisRequest,
   AnalysisUpdate,
@@ -18,7 +18,7 @@ import type {
   LichessRatingHistory,
   ReviewSummary,
   ReviewUpdate,
-} from '@kchess/core/contracts/types'
+} from '@kchess/contracts/types'
 import { deferred, desktop } from './fixtures'
 
 const row = (id: string): LichessGame => ({

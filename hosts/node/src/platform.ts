@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import type { CorePlatform } from '@kchess/core'
+import type { CorePlatform } from '@kchess/native'
 import { systemSecrets } from './secrets'
 
 export interface NodeCoreOptions {

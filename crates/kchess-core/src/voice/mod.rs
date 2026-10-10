@@ -1,4 +1,4 @@
-//! The offline voice model that voice input loads (formerly `core/src/services/voiceModel.ts`
+//! The offline voice model that voice input loads (formerly `crates/kchess-node/js/voiceModel.ts`
 //! and `voiceModelWorker.ts`). The model is downloaded once, verified against its published
 //! SHA-256, unpacked and repacked as `model.tar.gz` in the profile's voice folder, and recorded
 //! with a marker (`model.tar.gz.json`). A cache is trusted only while the marker and the file

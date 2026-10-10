@@ -7,7 +7,7 @@ import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useLocalGameStore } from '../../app/stores/local'
 import { desktop, deferred, componentStubs } from './fixtures'
-import type { RunInput } from '@kchess/core/contracts/types'
+import type { RunInput } from '@kchess/contracts/types'
 
 const VoiceStub = defineComponent({
   name: 'VoiceInput',

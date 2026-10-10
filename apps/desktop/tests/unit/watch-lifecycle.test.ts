@@ -1,9 +1,9 @@
 import { expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import { desktop, deferred } from './fixtures'
 import { useWatchStore } from '../../app/stores/watch'
-import type { BroadcastTourDetail, WatchFrame, WatchState } from '@kchess/core/contracts/types'
+import type { BroadcastTourDetail, WatchFrame, WatchState } from '@kchess/contracts/types'
 
 function bridge() {
   let state: (s: WatchState) => void = () => {},
@@ -195,7 +195,7 @@ it('finishes loading after a failed broadcast request and allows retry', async (
 })
 
 it('ticks broadcast clocks, preserves countdown across duplicate frames, corrects on moves and freezes on stop', async () => {
-  let receive!: (update: import('@kchess/core/contracts/types').BroadcastUpdate) => void
+  let receive!: (update: import('@kchess/contracts/types').BroadcastUpdate) => void
   desktop({
     onWatchState: () => () => {},
     onWatch: () => () => {},
@@ -209,7 +209,7 @@ it('ticks broadcast clocks, preserves countdown across duplicate frames, correct
   const watch = useWatchStore()
   const time = vi.spyOn(performance, 'now').mockReturnValue(1000)
   await watch.openRound('Round001')
-  const game: import('@kchess/core/contracts/types').BroadcastGame = {
+  const game: import('@kchess/contracts/types').BroadcastGame = {
     id: 'Board001',
     name: 'Test',
     white: { name: 'A' },

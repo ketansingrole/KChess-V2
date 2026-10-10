@@ -1,15 +1,13 @@
 # KChess workspace
 
 ```text
-core/                    Headless chess library
-  src/domain/            Pure chess, game, training and document rules
-  src/contracts/         Core API, events, types and argument validation
-  src/services/          Engines, networking, credentials and persistence
-  tests/unit/
-crates/                  Rust rules, built with Cargo (`Cargo.toml` workspace)
+crates/                  The headless core in Rust, built with Cargo (`Cargo.toml` workspace)
   kchess-domain/         Chess, PGN, review and library document rules (chessops semantics)
-  kchess-node/           `@kchess/native`: the N-API module the core loads
-  kchess-wasm/           The same rules as WebAssembly for the renderer
+  kchess-core/           Services: storage, engines, Lichess, puzzles and logging (tokio)
+  kchess-contracts/      Contract types generated from Rust; `ts/` is `@kchess/contracts`
+  kchess-node/           `@kchess/native`: the N-API module and the Node binding (`js/`)
+  kchess-wasm/           The same rules as WebAssembly for the renderer; `js/` is `@kchess/rules`
+tests/core/              Unit suites for the packages above
 hosts/node/              Reusable isolated Node host and OS capabilities
 apps/desktop/            Electron + Nuxt application
   electron/main/         Windows, native integration and authenticated IPC
@@ -32,9 +30,10 @@ The root package coordinates development, verification and releases. A single pn
 lockfile covers every workspace package. Root development dependencies also support
 the repository's integration tests; shipped dependencies are declared by their owners.
 
-Core never imports a host or application. Domain and contract modules remain pure and
-cannot import Node, Electron or frontend frameworks. Frontends may share these pure
-modules; privileged services are available through the core entry and logger only.
+The native package never imports a host or application. `@kchess/rules` and `@kchess/contracts`
+remain pure and cannot import Node, Electron or frontend frameworks. Frontends import the rules
+and contracts by name (`@kchess/rules/*`, `@kchess/contracts/*`); privileged services are
+available through `@kchess/native` and `@kchess/native/logger` only.
 Electron implements `CorePlatform`; the reusable Node host supplies worker isolation,
 OS credentials and browser login. CLI owns terminal input and presentation.
 
@@ -42,15 +41,15 @@ The chess and document rules are Rust (`crates/kchess-domain`), one implementati
 runtime. `crates/kchess-domain/src/api.rs` exposes them as `invoke(method, argsJson)`; the core
 loads it as a Node module (`@kchess/native`, required, no TypeScript fallback) and the renderer
 as WebAssembly (`crates/kchess-wasm`, loaded by `apps/desktop/app/plugins/rules.client.ts`
-before the app mounts). `core/src/domain/engine.ts` holds the binding each host sets, and the
+before the app mounts). `crates/kchess-wasm/js/engine.ts` holds the binding each host sets, and the
 domain functions (`treeFromPgn`, `addMove`, `replay`, `analyseReview`, `setupPgn` …) are thin
-wrappers over it. Core services use `core/src/services/rules.ts`, which also covers the
+wrappers over it. Core services use `crates/kchess-node/js/rules.ts`, which also covers the
 library decoders, review summaries, Lichess lines and the puzzle sampler.
 
-Frontends hold positions as `Position` values (`core/src/domain/position.ts`): a variant and a
+Frontends hold positions as `Position` values (`crates/kchess-wasm/js/position.ts`): a variant and a
 FEN, immutable, with every question (destinations, check, outcome, playing a move) answered by
 the Rust rules. Positions can live in reactive state and cross IPC as plain setups. Every rule,
-positions included, is pinned to `core/tests/unit/native-golden.json`: the outputs of the
+positions included, is pinned to `tests/core/native-golden.json`: the outputs of the
 chessops-based TypeScript rules they replaced, for seeded cases that the tests generate with the
 Rust rules themselves (`KCHESS_FUZZ_SCALE=20` searches deeper, beyond the recorded cases); the
 same tests run the WebAssembly module against the Node module. Contracts check the shape of a saved game or study command; the core service
@@ -69,10 +68,10 @@ Run the existing root commands:
 
 - `pnpm run dev`: one branded Electron + Nuxt development session.
 - `pnpm run cli -- --help`: build the headless packages and run CLI.
-- `pnpm run build:core`: build core, Node host and CLI into their own `dist/` folders.
-- `pnpm --filter @kchess/core build`: build core alone, including declarations.
+- `pnpm run build:packages`: build the Node host and CLI into their own `dist/` folders.
+- `pnpm run build:native`: build the Rust rules (Node module and WebAssembly) and the three
+  TypeScript packages' `dist/` (`@kchess/contracts`, `@kchess/rules`, `@kchess/native`); part of `build` and `dev`.
 - `pnpm --filter @kchess/node build`: build the reusable Node host and declarations.
-- `pnpm run build:native`: build the Rust rules (Node module and WebAssembly; part of `build` and `dev`).
 - `pnpm run check:rust`: rustfmt, clippy and Rust unit tests.
 - `pnpm run build`: typecheck and build desktop into `apps/desktop/out/` and `.output/`.
 - `pnpm run check:fast`: checks for editing; `pnpm run check`: full repository checks.

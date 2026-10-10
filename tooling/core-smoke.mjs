@@ -1,11 +1,17 @@
-// The built headless core (core/dist) in plain Node: no Electron, no renderer.
+// The built headless core (the native, rules and contracts packages' dist) in plain Node: no
+// Electron, no renderer.
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const out = join(root, 'core/dist')
+const out = join(root, 'crates/kchess-node/dist')
+const packageDists = [
+  out,
+  join(root, 'crates/kchess-wasm/js/dist'),
+  join(root, 'crates/kchess-contracts/ts/dist'),
+]
 let failures = 0
 function assert(name, actual, expected = true) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)
@@ -13,10 +19,18 @@ function assert(name, actual, expected = true) {
   console.info(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : `: ${JSON.stringify(actual)}`}`)
 }
 
-const files = await readdir(out, { recursive: true })
-const bundle = await Promise.all(
-  files.filter((file) => file.endsWith('.js')).map((file) => readFile(join(out, file), 'utf8')),
-)
+const bundle = (
+  await Promise.all(
+    packageDists.map(async (dir) => {
+      const files = await readdir(dir, { recursive: true })
+      return Promise.all(
+        files
+          .filter((file) => file.endsWith('.js'))
+          .map((file) => readFile(join(dir, file), 'utf8')),
+      )
+    }),
+  )
+).flat()
 assert(
   'the core bundle never loads Electron',
   bundle.some((code) => /from ["']electron["']|require\(["']electron["']\)/.test(code)),

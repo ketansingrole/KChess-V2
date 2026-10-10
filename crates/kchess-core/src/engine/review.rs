@@ -1,4 +1,4 @@
-//! Game review (`core/src/services/review.ts`): Stockfish scores every position of a game, one
+//! Game review (`crates/kchess-node/js/review.ts`): Stockfish scores every position of a game, one
 //! after another, in its own process (the analysis board and the computer opponent keep theirs).
 //! Reviews someone asks for run at once, first a quick pass so labels show within seconds and
 //! then a deeper one that refines them. Automatic reviews of synced games run one at a time on a

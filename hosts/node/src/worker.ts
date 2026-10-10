@@ -4,9 +4,9 @@ import {
   CORE_METHODS,
   type CoreMethod,
   type KChessCore,
-} from '@kchess/core'
+} from '@kchess/native'
 import { parentPort, workerData } from 'node:worker_threads'
-import { errorSummary, logWarn } from '@kchess/core/logger'
+import { errorSummary, logWarn } from '@kchess/native/logger'
 import { nodePlatform, type NodeCoreOptions } from './platform'
 import type { HostRequest, HostResponse } from './protocol'
 

@@ -128,21 +128,27 @@ importers:
 
   apps/cli:
     dependencies:
-      '@kchess/core':
-        specifier: workspace:*
-        version: link:../../core
-      '@kchess/node':
-        specifier: workspace:*
-        version: link:../../hosts/node
-
-  apps/desktop:
-    dependencies:
-      '@kchess/core':
-        specifier: workspace:*
-        version: link:../../core
       '@kchess/native':
         specifier: workspace:*
         version: link:../../crates/kchess-node
+      '@kchess/node':
+        specifier: workspace:*
+        version: link:../../hosts/node
+      '@kchess/rules':
+        specifier: workspace:*
+        version: link:../../crates/kchess-wasm/js
+
+  apps/desktop:
+    dependencies:
+      '@kchess/contracts':
+        specifier: workspace:*
+        version: link:../../crates/kchess-contracts/ts
+      '@kchess/native':
+        specifier: workspace:*
+        version: link:../../crates/kchess-node
+      '@kchess/rules':
+        specifier: workspace:*
+        version: link:../../crates/kchess-wasm/js
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9(supports-color@10.2.2)
@@ -223,11 +229,23 @@ importers:
         specifier: ^3.3.12
         version: 3.3.12(typescript@6.0.3)
 
-  core:
+  crates/kchess-contracts/ts:
     dependencies:
-      '@kchess/native':
+      '@kchess/rules':
         specifier: workspace:*
-        version: link:../crates/kchess-node
+        version: link:../../kchess-wasm/js
+      valibot:
+        specifier: ^1.5.0
+        version: 1.5.0(typescript@6.0.3)
+
+  crates/kchess-node:
+    dependencies:
+      '@kchess/contracts':
+        specifier: workspace:*
+        version: link:../kchess-contracts/ts
+      '@kchess/rules':
+        specifier: workspace:*
+        version: link:../kchess-wasm/js
       fflate:
         specifier: 0.8.3
         version: 0.8.3
@@ -240,17 +258,18 @@ importers:
       tar:
         specifier: 7.5.22
         version: 7.5.22
-      valibot:
-        specifier: ^1.5.0
-        version: 1.5.0(typescript@6.0.3)
 
-  crates/kchess-node: {}
+  crates/kchess-wasm/js:
+    dependencies:
+      '@kchess/contracts':
+        specifier: workspace:*
+        version: link:../../kchess-contracts/ts
 
   hosts/node:
     dependencies:
-      '@kchess/core':
+      '@kchess/native':
         specifier: workspace:*
-        version: link:../../core
+        version: link:../../crates/kchess-node
       stockfish:
         specifier: ^19.0.0
         version: 19.0.0

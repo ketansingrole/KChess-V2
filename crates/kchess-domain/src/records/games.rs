@@ -1,4 +1,4 @@
-//! `core/src/domain/gameResult.ts` and `gameStatus.ts`: how a position ended a game, who won
+//! `crates/kchess-wasm/js/gameResult.ts` and `gameStatus.ts`: how a position ended a game, who won
 //! on time, PGN result tokens, and whether a Lichess game is still being played.
 
 use serde_json::{Map, Value, json};

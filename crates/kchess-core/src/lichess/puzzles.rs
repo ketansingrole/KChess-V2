@@ -1,4 +1,4 @@
-//! Lichess puzzles (the puzzle endpoints of `core/src/services/lichess.ts`): the next puzzle, a
+//! Lichess puzzles (the puzzle endpoints of `crates/kchess-node/js/lichess.ts`): the next puzzle, a
 //! solved puzzle reported back, the daily puzzle, the account's dashboard and activity, and the
 //! public Storm dashboard.
 //!

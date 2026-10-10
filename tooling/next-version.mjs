@@ -13,7 +13,8 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 export function writeVersion(version, directory = root) {
   for (const packagePath of [
     'package.json',
-    'core/package.json',
+    'crates/kchess-contracts/ts/package.json',
+    'crates/kchess-wasm/js/package.json',
     'hosts/node/package.json',
     'apps/cli/package.json',
     'apps/desktop/package.json',

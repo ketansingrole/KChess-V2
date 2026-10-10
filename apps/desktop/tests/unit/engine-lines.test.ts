@@ -1,9 +1,9 @@
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 import EngineLines from '../../app/components/EngineLines.vue'
-import { addMove, newTree, pvSan } from '@kchess/core/domain/analysisTree'
-import type { EngineLine } from '@kchess/core/contracts/types'
+import { addMove, newTree, pvSan } from '@kchess/rules/analysisTree'
+import type { EngineLine } from '@kchess/contracts/types'
 
 const line: EngineLine = { rank: 1, depth: 18, cp: 30, pv: ['e2e4', 'e7e5', 'g1f3'] }
 it('shares hover and keyboard previews, keeps them stable during updates, and clears them on position change', async () => {

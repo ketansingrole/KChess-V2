@@ -1,7 +1,7 @@
 //! Lichess's own analysis of a game, as a review (`reviewFromLichess`, `fetchLichessReviews` and
-//! the review writes of the game sync in `core/src/services/lichess.ts`).
+//! the review writes of the game sync in `crates/kchess-node/js/lichess.ts`).
 //!
-//! Reviews are JSON values shaped as `StoredReview` (`core/src/contracts/types.ts`). Writing them
+//! Reviews are JSON values shaped as `StoredReview` (`crates/kchess-contracts/ts/types.ts`). Writing them
 //! goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
 //! the storage trait the wiring provides.
 

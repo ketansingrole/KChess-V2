@@ -1,12 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
-import type {
-  ChallengeInfo,
-  DeclineReason,
-  LobbyState,
-  OngoingGame,
-} from '@kchess/core/contracts/types'
+import type { ChallengeInfo, DeclineReason, LobbyState, OngoingGame } from '@kchess/contracts/types'
 import { useKChessStore } from './kchess'
 import { useTournamentStore } from './tournaments'
 

@@ -1,6 +1,6 @@
-//! `core/src/services/migrations.ts`: the ordered, append-only schema migrations and `migrate`.
+//! `crates/kchess-node/js/migrations.ts`: the ordered, append-only schema migrations and `migrate`.
 //! The SQL below is the TypeScript list, byte for byte (generated from `MIGRATIONS` and checked by
-//! `core/tests/unit/native-store-games.test.ts`); `PRAGMA user_version` counts how many have run.
+//! `tests/core/native-store-games.test.ts`); `PRAGMA user_version` counts how many have run.
 
 use rusqlite::Connection;
 use serde_json::Value;

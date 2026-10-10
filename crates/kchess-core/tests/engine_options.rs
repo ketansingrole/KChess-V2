@@ -1,4 +1,4 @@
-//! Port of `core/tests/unit/engine-options.test.ts`. The fake engine logs every command it
+//! Port of `tests/core/engine-options.test.ts`. The fake engine logs every command it
 //! receives, so the `setoption` lines and `isready` round-trips are read from that log.
 
 mod support;

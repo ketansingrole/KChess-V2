@@ -7,8 +7,8 @@ import type {
   LookupOptions,
   PositionLookup,
   PositionLookupKind,
-} from '@kchess/core/contracts/types'
-import { EXPLORER_RATINGS, EXPLORER_SPEEDS } from '@kchess/core/contracts/types'
+} from '@kchess/contracts/types'
+import { EXPLORER_RATINGS, EXPLORER_SPEEDS } from '@kchess/contracts/types'
 import { useAnalysisStore } from '../stores/analysis'
 
 const analysis = useAnalysisStore()

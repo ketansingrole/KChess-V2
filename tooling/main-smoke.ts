@@ -1,13 +1,13 @@
-import { mergeRatingHistories, ratingHistoryFromGames } from '../core/src/domain/ratings.ts'
-import { isGameInProgress } from '../core/src/domain/gameStatus.ts'
-import { pickConnectedAccount } from '../core/src/domain/accounts.ts'
-import { LichessError, lichessError } from '../core/src/domain/lichessError.ts'
+import { mergeRatingHistories, ratingHistoryFromGames } from '../crates/kchess-wasm/js/ratings.ts'
+import { isGameInProgress } from '../crates/kchess-wasm/js/gameStatus.ts'
+import { pickConnectedAccount } from '../crates/kchess-wasm/js/accounts.ts'
+import { LichessError, lichessError } from '../crates/kchess-wasm/js/lichessError.ts'
 import {
   canBoardSeek,
   canDirectChallenge,
   perfFor,
   totalSeconds,
-} from '../core/src/domain/timeControl.ts'
+} from '../crates/kchess-wasm/js/timeControl.ts'
 import {
   assertAction,
   assertGameId,
@@ -21,7 +21,7 @@ import {
   assertTheme,
   assertUci,
   assertUsername,
-} from '../core/src/domain/validate.ts'
+} from '../crates/kchess-wasm/js/validate.ts'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
@@ -37,9 +37,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nativeCall } from '../core/src/services/nativeCore.ts'
-import { pickMacAsset } from '../core/src/services/stockfishAsset.ts'
-import { setPlatform } from '../core/src/services/platform.ts'
+import { nativeCall } from '../crates/kchess-node/js/nativeCore.ts'
+import { pickMacAsset } from '../crates/kchess-node/js/stockfishAsset.ts'
+import { setPlatform } from '../crates/kchess-node/js/platform.ts'
 import { installNativeRules } from './native-rules.ts'
 
 installNativeRules()

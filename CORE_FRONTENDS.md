@@ -6,8 +6,8 @@ and subscribes to `CoreEvents`; it does not open the database or spawn an engine
 
 | Layer                                                          | Responsibility                                                                  |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `core/src/domain`                                              | Pure chess/training rules, validation, game controllers and archive transitions |
-| `core/src/services`                                            | Privileged services, document persistence, networking and engine scheduling     |
+| `crates/kchess-wasm/js`                                        | Pure chess/training rules, validation, game controllers and archive transitions |
+| `crates/kchess-node/js`                                        | Privileged services, document persistence, networking and engine scheduling     |
 | `apps/desktop/electron/main` + `apps/desktop/electron/preload` | Electron host capabilities and authenticated desktop IPC                        |
 | `apps/desktop/app`                                             | Vue views and reactive mirrors, board display, sounds and notifications         |
 | `hosts/node/src`                                               | Independent worker hosts, OS credentials and browser login                      |
@@ -15,10 +15,10 @@ and subscribes to `CoreEvents`; it does not open the database or spawn an engine
 
 ## Node library
 
-Build with `pnpm run build:core`, then import the generated entry:
+Build with `pnpm run build:native` and `pnpm run build:packages`, then import the generated entry:
 
 ```js
-import { createNodeCore } from './core/dist/node.js'
+import { createNodeCore } from '@kchess/node'
 
 const core = await createNodeCore({ dataDir: '/absolute/path/to/profile' })
 const off = core.on('engine:analysis', (update) => console.log(update))
@@ -39,7 +39,7 @@ asynchronous. The Node host also exposes asynchronous `settings`, `trustEnginePa
 `voiceHistoryDocument` and `suspend` helpers. Diagnostic output goes to stderr so CLI JSON
 on stdout remains usable in pipelines. A failed worker rejects outstanding calls.
 
-For embedded hosts, `core/dist/index.js` exports `createKChessCore(CorePlatform)`.
+For embedded hosts, `crates/kchess-node/dist/index.js` exports `createKChessCore(CorePlatform)`.
 Its platform supplies existing data directories, engine paths, a SecretStore, browser
 opening and battery state; focus and legacy paths are optional. Direct cores may coexist in one runtime when their profile directories differ.
 Each owns its database, caches, queues, engine scheduler and workers. A second core for
@@ -48,11 +48,11 @@ an async scope so a stale callback cannot access another profile.
 
 `VoiceModelCache` (from the same entry) downloads, verifies and caches the offline Vosk model
 in a directory the host chooses. Speech recognition and microphone capture stay in the frontend:
-desktop runs `vosk-browser` in the renderer and maps spoken text with `core/src/domain/voiceCommands`.
+desktop runs `vosk-browser` in the renderer and maps spoken text with `crates/kchess-wasm/js/voiceCommands`.
 
 ## Game controllers
 
-`core/dist/gameSession.js` exports `ComputerGame`, `LocalGame`, and their state factories.
+`crates/kchess-wasm/js/dist/gameSession.js` exports `ComputerGame`, `LocalGame`, and their state factories.
 They accept plain mutable state; desktop wraps that state with Vue reactivity. The computer
 controller receives engine methods, readiness/assistance checks, a monotonic clock, and
 callbacks for move sounds, notifications and errors. Its cancellation stops the actual
@@ -68,12 +68,12 @@ of the final `will-quit` hook.
 
 ## Shared online and puzzle sessions
 
-`core/dist/onlineGame.js` exports `OnlineGame` and `onlineGameState`. It reduces authoritative
+`crates/kchess-wasm/js/dist/onlineGame.js` exports `OnlineGame` and `onlineGameState`. It reduces authoritative
 Lichess events into plain state, owns clock interpolation, offers, opponent identity and
 rematch history, and never retries an ambiguous move. Hosts provide the CoreApi transport,
 a monotonic clock and optional presentation callbacks. Vue wraps the same state reactively.
 
-`core/dist/puzzleSession.js` exports `PuzzleSession` and `puzzleSessionState`. It owns offline
+`crates/kchess-wasm/js/dist/puzzleSession.js` exports `PuzzleSession` and `puzzleSessionState`. It owns offline
 difficulty selection, online/practice fallback, attempt identity, exactly-once result
 submission, session totals and stale-response rejection. Account/mode/theme choices come
 from the host; retry attempts never submit a rated result. Board display and navigation

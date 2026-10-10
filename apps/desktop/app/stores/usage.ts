@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { AccountStorage, AccountUsage, UsageReport } from '@kchess/core/contracts/types'
+import type { AccountStorage, AccountUsage, UsageReport } from '@kchess/contracts/types'
 
 const EMPTY_USAGE: AccountUsage = { total: { requests: 0, bytesIn: 0 }, byKind: {} }
 const EMPTY_STORAGE: AccountStorage = { games: 0, bytes: 0, cacheBytes: 0 }

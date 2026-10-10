@@ -1,4 +1,4 @@
-//! Computer moves (`core/src/services/engine.ts`'s `bestMove`, `stopEngine`, `resetEngine` and
+//! Computer moves (`crates/kchess-node/js/engine.ts`'s `bestMove`, `stopEngine`, `resetEngine` and
 //! `computerPlaying`). One warm engine process serves consecutive moves; a new search supersedes
 //! the one running (`SUPERSEDED`), and the process goes after two idle minutes.
 //!

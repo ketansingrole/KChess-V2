@@ -1,5 +1,5 @@
 //! KChess's main database (`kchess.db`), the storage the TypeScript services used to own
-//! (`core/src/services/{db,migrations,store,library,reviewStore,runs,insights,usage,voiceLog,
+//! (`crates/kchess-node/js/{db,migrations,store,library,reviewStore,runs,insights,usage,voiceLog,
 //! setupPositionLookup}.ts`, now removed). The Rust core is its only owner: one connection, opened
 //! and migrated on first use, with every storage method dispatched from here.
 

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import type { Puzzle } from '@kchess/core/contracts/types'
+import type { Puzzle } from '@kchess/contracts/types'
 import {
   nextSolutionSquares,
   opponentReply,
@@ -11,8 +11,8 @@ import {
   playerMove,
   startPuzzle,
   type PuzzleState,
-} from '@kchess/core/domain/puzzle'
-import { checkColor, destsFor, positionFromFen } from '@kchess/core/domain/chess'
+} from '@kchess/rules/puzzle'
+import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { play, playMoveSound } from '../utils/sound'
 
 /**

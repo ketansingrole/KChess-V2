@@ -4,7 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeNativeCore, nativeCallSync } from '../../../../core/src/services/nativeCore'
+import { closeNativeCore, nativeCallSync } from '@kchess/native/nativeCore'
 import { useTestDatabase, type TestDatabase } from '../../../../tests/fixtures/nativeStore'
 import {
   assertArchivedGameShape,
@@ -21,9 +21,9 @@ import {
   type SessionKind,
   type StudyCommand,
   type StudyCommandResult,
-} from '@kchess/core/domain/library'
-import { assertArchivedGame, assertStudyCommand } from '../../../../core/src/services/rules'
-import type { CoreApi } from '@kchess/core/contracts/types'
+} from '@kchess/rules/library'
+import { assertArchivedGame, assertStudyCommand } from '@kchess/native/rules'
+import type { CoreApi } from '@kchess/contracts/types'
 import { setInitialLibrary } from '../../app/utils/library'
 import { testGeneration, type LibraryMethod } from './testLibrary'
 

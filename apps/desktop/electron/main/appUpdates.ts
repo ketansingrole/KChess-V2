@@ -1,6 +1,6 @@
 import type { AppUpdater } from 'electron-updater'
-import { logDebug, logInfo, logWarn } from '@kchess/core/logger'
-import type { AppUpdateStatus, Settings } from '@kchess/core/contracts/types'
+import { logDebug, logInfo, logWarn } from '@kchess/native/logger'
+import type { AppUpdateStatus, Settings } from '@kchess/contracts/types'
 
 export type UpdatePreferences = Pick<
   Settings,

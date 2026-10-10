@@ -1,8 +1,8 @@
-//! Rules moved from `core/src/domain` (see RUST_MIGRATION.md), reached through `api::call`:
+//! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md), reached through `api::call`:
 //! spoken commands and moves (`voiceCommands.ts`), the board editor's string logic
 //! (`boardEditor.ts`), coordinates (`coordinates.ts`), knight paths (`knight.ts`) and material
 //! (`material.ts`). The grammar lists are pinned to the TypeScript constants by
-//! `core/tests/unit/native-voice.test.ts`.
+//! `tests/core/native-voice.test.ts`.
 //!
 //! JavaScript semantics are mirrored deliberately: `toLowerCase`, `\s` splitting, `trim`,
 //! `Number(…)` coercion and `String(…)` formatting (see `crate::js`). No regex crate: each

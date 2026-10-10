@@ -5,26 +5,26 @@ import { useDocumentVisibility, useIntervalFn, useLocalStorage, useOnline } from
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import { useBroadcastEvaluations } from '../composables/useBroadcastEvaluations'
 import { useSwipeBack } from '../composables/useSwipeBack'
-import { formatEval } from '@kchess/core/domain/analysisTree'
+import { formatEval } from '@kchess/rules/analysisTree'
 import type { Key } from '@lichess-org/chessground/types'
-import { RequestScope } from '@kchess/core/domain/requestScope'
+import { RequestScope } from '@kchess/rules/requestScope'
 import type {
   BroadcastSummary,
   BroadcastGame,
   Crosstable,
   TvPastGame,
   WatchPlayer,
-} from '@kchess/core/contracts/types'
-import { isVariant, type GameSetup } from '@kchess/core/domain/variant'
-import { formatClock } from '@kchess/core/domain/clock'
-import { materialBalance } from '@kchess/core/domain/material'
+} from '@kchess/contracts/types'
+import { isVariant, type GameSetup } from '@kchess/rules/variant'
+import { formatClock } from '@kchess/rules/clock'
+import { materialBalance } from '@kchess/rules/material'
 import {
   lastMoveKeys,
   setupPgn,
   setupPositionAfter,
   setupSanHistory,
   fen as fenOf,
-} from '@kchess/core/domain/chess'
+} from '@kchess/rules/chess'
 import { useWatchStore } from '../stores/watch'
 import { useFriendsStore } from '../stores/friends'
 import { useAnalysisStore } from '../stores/analysis'

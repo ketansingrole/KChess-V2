@@ -5,19 +5,19 @@
   "type": "module",
   "license": "GPL-3.0-or-later",
   "main": "./dist/node.js",
-  "types": "./dist/node.d.ts",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "pnpm -w exec vite build -c hosts/node/vite.config.ts --logLevel warn && pnpm -w exec tsc -p hosts/node/tsconfig.build.json && node ../../tooling/core-declarations.mjs hosts/node",
+    "build": "pnpm -w exec vite build -c hosts/node/vite.config.ts --logLevel warn && pnpm -w exec tsc -p hosts/node/tsconfig.build.json && node ../../tooling/declarations.mjs dist",
     "typecheck": "pnpm -w exec tsc --noEmit -p hosts/node/tsconfig.json",
     "test": "pnpm -w exec vitest run hosts/node/tests/unit"
   },
   "dependencies": {
-    "@kchess/core": "workspace:*",
+    "@kchess/native": "workspace:*",
     "stockfish": "^19.0.0"
   },
   "exports": {
     ".": {
-      "types": "./dist/node.d.ts",
+      "types": "./dist/index.d.ts",
       "import": "./dist/node.js"
     }
   }

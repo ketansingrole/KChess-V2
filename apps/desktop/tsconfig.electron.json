@@ -12,10 +12,10 @@
     "resolveJsonModule": true,
     "types": ["vite/client", "electron-vite/node"],
     "paths": {
-      "@kchess/core": ["../../core/src/index.ts"],
-      "@kchess/core/logger": ["../../core/src/services/logger.ts"],
-      "@kchess/core/domain/*": ["../../core/src/domain/*"],
-      "@kchess/core/contracts/*": ["../../core/src/contracts/*"]
+      "@kchess/native": ["../../crates/kchess-node/js/index.ts"],
+      "@kchess/native/*": ["../../crates/kchess-node/js/*"],
+      "@kchess/rules/*": ["../../crates/kchess-wasm/js/*"],
+      "@kchess/contracts/*": ["../../crates/kchess-contracts/ts/*"]
     }
   },
   "include": ["electron/**/*.ts", "contracts/**/*.ts", "electron.vite.config.ts"]

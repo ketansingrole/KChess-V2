@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import BroadcastCard from '../../app/components/BroadcastCard.vue'
-import type { BroadcastSummary } from '@kchess/core/contracts/types'
+import type { BroadcastSummary } from '@kchess/contracts/types'
 
 const item: BroadcastSummary = {
   tourId: 'tour1234',

@@ -1,0 +1,21 @@
+{
+  "name": "@kchess/rules",
+  "version": "2026.10.4",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "description": "The KChess domain rules: the Rust rules (WebAssembly in the renderer, a Node module in hosts) behind typed TypeScript wrappers.",
+  "scripts": {
+    "build": "node ../../../tooling/build-package.mjs crates/kchess-wasm/js",
+    "typecheck": "pnpm -w exec tsc --noEmit -p crates/kchess-wasm/js/tsconfig.json"
+  },
+  "dependencies": {
+    "@kchess/contracts": "workspace:*"
+  },
+  "exports": {
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  }
+}

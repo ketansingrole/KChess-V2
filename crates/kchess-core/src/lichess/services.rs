@@ -2,7 +2,7 @@
 //! online session (with its challenge inbox), the spectator, the position explorer and the cloud
 //! evaluation cache. `Core::call` sends every `lichess.*`, `online.*`, `challenges.*`,
 //! `tournaments.*`, `studies.*`, `spectate.*`, `cloudEval.*`, `positionLookup.*` method here; each
-//! method keeps the name and result of the TypeScript operation it replaces (`core/src/services`).
+//! method keeps the name and result of the TypeScript operation it replaces (`crates/kchess-node/js`).
 
 use std::sync::Arc;
 

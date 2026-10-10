@@ -1,4 +1,4 @@
-//! `core/src/contracts/settings.ts`: the preference keys the core owns.
+//! `crates/kchess-contracts/ts/settings.ts`: the preference keys the core owns.
 
 use ts_rs::Config;
 

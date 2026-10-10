@@ -1,4 +1,4 @@
-//! The shared engine budget (`core/src/services/engineScheduler.ts`): one active lease at a
+//! The shared engine budget (`crates/kchess-node/js/engineScheduler.ts`): one active lease at a
 //! time, higher priorities preempt lower ones, and the thread budget yields on battery power.
 //! Computer moves are priority 3, analysis 2, review 1. Each `Scheduler` is an independent
 //! budget; a core owns one, and tests create their own.

@@ -2,11 +2,11 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS, type InvokeMethod } from '../../contracts/ipc'
 import { IPC_CONTRACTS, validateIpcArguments } from '../../electron/main/ipcContracts'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
+import { INITIAL_FEN } from '@kchess/rules/position'
 
 const mocks = vi.hoisted(() => ({ handle: vi.fn() }))
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }))
-vi.mock('@kchess/core/domain/tvChannels', () => ({ TV_CHANNEL_KEYS: ['rapid', 'blitz'] }))
+vi.mock('@kchess/rules/tvChannels', () => ({ TV_CHANNEL_KEYS: ['rapid', 'blitz'] }))
 
 beforeEach(() => {
   mocks.handle.mockClear()

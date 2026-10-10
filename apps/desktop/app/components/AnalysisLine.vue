@@ -1,14 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import {
-  moveGlyph,
-  moveNumber,
-  pathOf,
-  movesOf,
-  type TreeNode,
-} from '@kchess/core/domain/analysisTree'
+import { moveGlyph, moveNumber, pathOf, movesOf, type TreeNode } from '@kchess/rules/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
-import type { Judgment } from '@kchess/core/contracts/types'
+import type { Judgment } from '@kchess/contracts/types'
 
 /**
  * One line of the analysis tree, Lichess-style: the moves of a line run on, and the alternatives

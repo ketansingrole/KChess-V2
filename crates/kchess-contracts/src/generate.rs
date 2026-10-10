@@ -1,6 +1,6 @@
 //! Renders the contract modules to TypeScript.
 //!
-//! Each module becomes one file under `core/src/contracts/generated/`. A module lists its items
+//! Each module becomes one file under `crates/kchess-contracts/ts/generated/`. A module lists its items
 //! (ts-rs declarations, raw declarations that ts-rs cannot express, and runtime `as const`
 //! arrays); the renderer adds `import type` lines for the names other modules own, so a module
 //! never names a type it does not import.

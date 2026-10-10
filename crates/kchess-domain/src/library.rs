@@ -1,4 +1,4 @@
-//! Library document decoders (`core/src/domain/library.ts`): semantic validation before a
+//! Library document decoders (`crates/kchess-wasm/js/library.ts`): semantic validation before a
 //! document reaches the library or a board. Each accepts and rejects exactly what the
 //! TypeScript decoder does and produces the same normalized value.
 

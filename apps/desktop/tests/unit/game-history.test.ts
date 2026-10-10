@@ -4,8 +4,8 @@ import { flushPromises } from '@vue/test-utils'
 import { useLocalGameStore } from '../../app/stores/local'
 import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { desktop } from './fixtures'
-import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
-import type { AppData, LichessRatingHistory } from '@kchess/core/contracts/types'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
+import type { AppData, LichessRatingHistory } from '@kchess/contracts/types'
 import {
   useGameArchiveStore,
   useGameArchive,
@@ -13,10 +13,10 @@ import {
   type ArchivedGame,
 } from '../../app/stores/gameArchive'
 import { restart, storedLibrary } from './libraryBackend'
-import { STANDARD_SETUP } from '@kchess/core/domain/variant'
-import { setupPgn } from '@kchess/core/domain/chess'
-import { DEFAULT_OAUTH_LOOK, oauthLook } from '@kchess/core/domain/oauthLook'
-import { oauthPage } from '../../../../core/src/services/oauthPage'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+import { setupPgn } from '@kchess/rules/chess'
+import { DEFAULT_OAUTH_LOOK, oauthLook } from '@kchess/rules/oauthLook'
+import { oauthPage } from '@kchess/native/oauthPage'
 
 // Every test here keeps its games in the core's library.
 beforeEach(() => void desktop())

@@ -14,8 +14,8 @@ import {
   statusText,
   takebackMoves,
   turnColor,
-} from '../core/src/domain/chess.ts'
-import { Clock, formatClock } from '../core/src/domain/clock.ts'
+} from '../crates/kchess-wasm/js/chess.ts'
+import { Clock, formatClock } from '../crates/kchess-wasm/js/clock.ts'
 import { installNativeRules } from './native-rules.ts'
 
 installNativeRules()

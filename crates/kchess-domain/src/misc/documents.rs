@@ -1,4 +1,4 @@
-//! Library documents (`core/src/domain/library.ts`): the session decoders, the study command shape
+//! Library documents (`crates/kchess-wasm/js/library.ts`): the session decoders, the study command shape
 //! and the small checks a frontend's library calls pass through. Each decoder accepts and rejects
 //! what the TypeScript decoder does, and returns the same normalized value.
 

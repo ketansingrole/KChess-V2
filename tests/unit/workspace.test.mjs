@@ -14,7 +14,8 @@ it('verifies every shipped package against its own lockfile importer and release
   const version = readPackage('.').version
   for (const directory of [
     '.',
-    'core',
+    'crates/kchess-contracts/ts',
+    'crates/kchess-wasm/js',
     'hosts/node',
     'apps/cli',
     'apps/desktop',

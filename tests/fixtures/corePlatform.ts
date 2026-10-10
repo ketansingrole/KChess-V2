@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll } from 'vitest'
-import { setPlatform, type CorePlatform, type SecretStore } from '../../core/src/services/platform'
+import { setPlatform, type CorePlatform, type SecretStore } from '@kchess/native/platform'
 
 /** Tokens round-trip as base64 of the plain text; `available` can be switched per test. */
 export function fakeSecrets(available = false): SecretStore & { enabled: boolean } {

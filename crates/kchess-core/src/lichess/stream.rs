@@ -1,4 +1,4 @@
-//! Bounded NDJSON line decoding (`core/src/services/ndjson.ts`'s `readLines`): lines split across
+//! Bounded NDJSON line decoding (`crates/kchess-node/js/ndjson.ts`'s `readLines`): lines split across
 //! chunks are reassembled, heartbeats (blank lines) are skipped, a line longer than the limit is
 //! an error, a stream that stalls past its idle deadline is an error, and cancellation stops the
 //! reader and drops the body.

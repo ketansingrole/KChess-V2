@@ -1,4 +1,4 @@
-//! `core/src/domain/variant.ts`: the playable variants and the start of a game.
+//! `crates/kchess-wasm/js/variant.ts`: the playable variants and the start of a game.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::{Config, TS};

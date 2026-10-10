@@ -1,5 +1,5 @@
 //! The one-time imports an empty profile takes from earlier releases (`ensureMigrated`,
-//! `runMigration`, `migrateFromJson` and `migrateLegacy` in `core/src/services/store.ts`): the JSON
+//! `runMigration`, `migrateFromJson` and `migrateLegacy` in `crates/kchess-node/js/store.ts`): the JSON
 //! backup `kchess-data.json` with its `lichess-tokens.json`, or else the earlier main database.
 //!
 //! Tokens: the JSON backup already holds encrypted tokens, which are stored as they are. The earlier

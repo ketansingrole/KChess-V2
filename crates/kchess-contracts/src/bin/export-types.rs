@@ -1,4 +1,4 @@
-//! Writes `core/src/contracts/generated/*.ts` from the Rust contracts; `--check` only verifies.
+//! Writes `crates/kchess-contracts/ts/generated/*.ts` from the Rust contracts; `--check` only verifies.
 
 use std::fs;
 use std::path::PathBuf;
@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let check = std::env::args().any(|arg| arg == "--check");
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../core/src/contracts/generated");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ts/generated");
     let files = kchess_contracts::render_all();
 
     if check {

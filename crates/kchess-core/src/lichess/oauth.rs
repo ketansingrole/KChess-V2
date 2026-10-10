@@ -1,4 +1,4 @@
-//! Lichess sign-in (`connectLichess` and `core/src/services/oauthPage.ts`): PKCE with S256, a
+//! Lichess sign-in (`connectLichess` and `crates/kchess-node/js/oauthPage.ts`): PKCE with S256, a
 //! random state, a loopback callback server on 127.0.0.1 that serves only `/callback` with the
 //! right `state` and only once, the page the browser lands on, the token exchange, the account
 //! check and the save of the login.

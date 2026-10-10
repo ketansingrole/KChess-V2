@@ -1,8 +1,8 @@
-//! Rules moved from `core/src/domain` (see RUST_MIGRATION.md); reached through `api::call`.
+//! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md); reached through `api::call`.
 //!
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
 //! client clock, engine levels, UCI `info` lines and review coaching. Their constants are data
-//! shared with TypeScript (`core/src/domain/data/`).
+//! shared with TypeScript (`crates/kchess-wasm/js/data/`).
 
 mod clock;
 mod coach;

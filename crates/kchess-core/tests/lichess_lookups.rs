@@ -1,6 +1,6 @@
-//! Position explorer and cloud evaluation (`core/src/services/positionLookup.ts` and `cloudEval.ts`)
-//! over local fixtures. Ports `core/tests/unit/position-lookup.test.ts` and the explorer scenarios
-//! of `core/tests/unit/watch-and-lookup.test.ts`, plus the cloud evaluation rules.
+//! Position explorer and cloud evaluation (`crates/kchess-node/js/positionLookup.ts` and `cloudEval.ts`)
+//! over local fixtures. Ports `tests/core/position-lookup.test.ts` and the explorer scenarios
+//! of `tests/core/watch-and-lookup.test.ts`, plus the cloud evaluation rules.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;

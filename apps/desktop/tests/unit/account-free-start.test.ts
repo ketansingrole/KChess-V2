@@ -2,7 +2,7 @@ import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useKChessStore } from '../../app/stores/kchess'
 import { usePuzzleStore } from '../../app/stores/puzzles'
-import { DEFAULT_SETTINGS } from '@kchess/core/contracts/defaultSettings'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
 import { desktop, puzzle } from './fixtures'
 
 afterEach(() => vi.restoreAllMocks())

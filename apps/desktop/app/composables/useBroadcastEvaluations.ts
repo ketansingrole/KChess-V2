@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, shallowReactive, watch } from 'vue'
-import type { AnalysisRequest, BroadcastGame, EngineLine } from '@kchess/core/contracts/types'
-import { analysisContext } from '@kchess/core/domain/analysisContext'
+import type { AnalysisRequest, BroadcastGame, EngineLine } from '@kchess/contracts/types'
+import { analysisContext } from '@kchess/rules/analysisContext'
 import { usePositionEngine } from './usePositionEngine'
 
 interface Preview {

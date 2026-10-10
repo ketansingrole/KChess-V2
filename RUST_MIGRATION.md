@@ -1,6 +1,6 @@
 # Migrating the core to Rust
 
-Goal: the headless core (`core/`) becomes Rust (`crates/`). When done, `core/` is deleted; no
+Goal: the headless core becomes Rust (`crates/`). `core/` is deleted (phase 6b); no
 hand-written TypeScript implements core behaviour. Frontends (Electron main and renderer, the
 Node host, the CLI) stay TypeScript and reach the core only through its two bindings.
 
@@ -27,7 +27,11 @@ crates/
 
 ## End-state decision (2026-10-10)
 
-`core/` is deleted. Contract types are generated from Rust. The only hand-written TypeScript left
+`core/` is deleted. Its TypeScript is three packages: `@kchess/contracts` (`crates/kchess-contracts/ts`,
+the generated types and IPC validators), `@kchess/rules` (`crates/kchess-wasm/js`, the rules wrappers)
+and `@kchess/native` (`crates/kchess-node/js`, the binding glue). Contract types are generated from Rust.
+The only hand-written TypeScript left
+
 for the core is binding glue inside the binding packages (`crates/kchess-node` for Node/Electron
 main, `crates/kchess-wasm` for the renderer): forwarding calls, answering host capability
 requests, running effects returned by Rust transitions, and keeping state reactive for Vue. Glue
@@ -42,9 +46,9 @@ replaced in one commit:
 1. Implement it in Rust behind the bridge (`kchess-core`), owning the same files, database
    tables, events and error messages. On-disk formats never change during the migration.
 2. Port its tests. Behavioural tests of the public `CoreApi` keep running unchanged against the
-   native core (they move to `tests/core/` once `core/` is gone). Tests of internals become Rust
+   native core (they live in `tests/core/`). Tests of internals become Rust
    `#[test]`s with the same cases and assertions. Pure functions are first pinned to
-   `core/tests/unit/native-golden.json` from the TypeScript implementation
+   `tests/core/native-golden.json` from the TypeScript implementation
    (`KCHESS_WRITE_GOLDEN=1`), then deleted from TypeScript.
 3. Switch the TypeScript caller to the bridge and delete the TypeScript implementation.
 4. `pnpm run check`, `pnpm run check:rust`; for anything the app exercises,
@@ -52,7 +56,7 @@ replaced in one commit:
 
 While services are split between the languages, the Rust core reaches remaining TypeScript
 services only through the bridge's host callbacks; TypeScript reaches Rust only through
-`core/src/services/rules.ts` (rules) and `core/src/services/nativeCore.ts` (services).
+`crates/kchess-node/js/rules.ts` (rules) and `crates/kchess-node/js/nativeCore.ts` (services).
 
 ## Rules every port keeps
 
@@ -68,20 +72,20 @@ services only through the bridge's host callbacks; TypeScript reaches Rust only 
 
 ## Phases
 
-| #   | Scope                                                                                                                                                                                                                                                                        | Status           |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| 0   | Rules, documents, positions, PGN (`kchess-domain`)                                                                                                                                                                                                                           | done             |
-| 1   | Bridge (`kchess-core`, `NativeCore`), puzzle database and queries                                                                                                                                                                                                            | done             |
-| 2a  | Pure domain: voice, board editor, coordinates, training (rush, puzzles, endgames, openings, clock, engine levels, UCI info, coach), records (reviews, ratings, studies, results, time controls, online events, Lichess errors, OAuth look), validation and library documents | done             |
-| 2b  | Stateful domain: game sessions and archive, online game, puzzle sessions, analysis-tree edits; remaining TS constants (`patterns.ts`, `tvChannels.ts`, grammar and data constants pinned by golden suites)                                                                   | done             |
-| 3   | Storage: settings, accounts, game store, library, review store, migrations                                                                                                                                                                                                   | done             |
-| 4   | Engines: UCI controller, scheduler, managed Stockfish, analysis, reviews. The core owns one engine context and the services; TypeScript wraps them (Lichess analysis for reviews is a transitional host request, `lichess.reviews`)                                          | done             |
-| 5   | Lichess: client, OAuth, usage/request policy, online games, challenges, tournaments, spectate, studies, cloud eval, explorer                                                                                                                                                 | done             |
-| 6   | Facade (`service.ts`), contracts and logging to Rust; generated types; delete `core/`. Replace the TypeScript coverage floor (`vitest.config.ts`) with a Rust coverage gate (cargo-llvm-cov) once the core's TypeScript is gone                                              | 6a done; 6b open |
+| #   | Scope                                                                                                                                                                                                                                                                        | Status                        |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| 0   | Rules, documents, positions, PGN (`kchess-domain`)                                                                                                                                                                                                                           | done                          |
+| 1   | Bridge (`kchess-core`, `NativeCore`), puzzle database and queries                                                                                                                                                                                                            | done                          |
+| 2a  | Pure domain: voice, board editor, coordinates, training (rush, puzzles, endgames, openings, clock, engine levels, UCI info, coach), records (reviews, ratings, studies, results, time controls, online events, Lichess errors, OAuth look), validation and library documents | done                          |
+| 2b  | Stateful domain: game sessions and archive, online game, puzzle sessions, analysis-tree edits; remaining TS constants (`patterns.ts`, `tvChannels.ts`, grammar and data constants pinned by golden suites)                                                                   | done                          |
+| 3   | Storage: settings, accounts, game store, library, review store, migrations                                                                                                                                                                                                   | done                          |
+| 4   | Engines: UCI controller, scheduler, managed Stockfish, analysis, reviews. The core owns one engine context and the services; TypeScript wraps them (Lichess analysis for reviews is a transitional host request, `lichess.reviews`)                                          | done                          |
+| 5   | Lichess: client, OAuth, usage/request policy, online games, challenges, tournaments, spectate, studies, cloud eval, explorer                                                                                                                                                 | done                          |
+| 6   | Facade (`service.ts`), contracts and logging to Rust; generated types; delete `core/`. Replace the TypeScript coverage floor (`vitest.config.ts`) with a Rust coverage gate (cargo-llvm-cov) once the core's TypeScript is gone                                              | done; cleanup checklist below |
 
 ## Porting a domain module (phase 2 procedure)
 
-For each TypeScript module in `core/src/domain` assigned to you:
+For each TypeScript module in `crates/kchess-wasm/js` assigned to you:
 
 1. **Rust.** Implement every exported function and constant in the Rust file of your group
    (`crates/kchess-domain/src/{voice,training,records,misc}.rs`, or a submodule declared from
@@ -94,8 +98,8 @@ For each TypeScript module in `core/src/domain` assigned to you:
    `kchess-domain`; hand-write matchers), integer vs. float formatting (`crate::js` has helpers).
    Randomness comes in as an argument (a number in [0, 1) or a list of them) — the TypeScript
    wrapper passes `Math.random()` values — so the Rust stays deterministic.
-2. **Golden.** Write `core/tests/unit/native-<group>.test.ts` using `goldenFile('<group>')` from
-   `core/tests/unit/golden.ts`. For each function, generate many cases (seeded `rng` like
+2. **Golden.** Write `tests/core/native-<group>.test.ts` using `goldenFile('<group>')` from
+   `tests/core/golden.ts`. For each function, generate many cases (seeded `rng` like
    `native-rules.test.ts`, plus hand-picked edge cases, plus every input the existing tests use)
    and call `golden.check(suite, i, rust, typescript)` where `rust = rules('<name>', ...)` and
    `typescript` is the current TS function's result, and also `expect(rust).toEqual(plain(ts))`.
@@ -107,7 +111,7 @@ For each TypeScript module in `core/src/domain` assigned to you:
    reference from your golden test (keep the golden checks only) and confirm it still passes.
 4. **Verify** in your worktree: `pnpm install`, `pnpm run build:native`, `cargo test -p
 kchess-domain`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`,
-   `npx vitest run core/tests/unit apps/desktop/tests/unit`, `pnpm run typecheck`,
+   `npx vitest run tests/core apps/desktop/tests/unit`, `pnpm run typecheck`,
    `pnpm run lint`, `pnpm run format:check`. Commit on your branch with a descriptive message.
 
 ## Porting a stateful module (phase 2b pattern)
@@ -174,7 +178,7 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
   lockfile; keep `pnpm run check:notices` green.
 - Check that the Rust core's dispatch covers exactly `kchess-contracts` `core_api::methods()`
   (a Rust test), once the facade runs in Rust.
-- Replace the hand-written valibot IPC validators (`core/src/contracts/apiContracts.ts`) with the
+- Replace the hand-written valibot IPC validators (`crates/kchess-contracts/ts/apiContracts.ts`) with the
   Rust validators (`kchess-domain` misc `assert*`), tied to the method table.
 - Use the `kchess-contracts` types in `kchess-core`/`kchess-node` instead of untyped JSON where
   they cross the bridge.
@@ -199,10 +203,10 @@ from `CORE_METHODS`; events forward through one sink, so the TypeScript keeps no
   stack when inlined.
 - Integral JSON numbers from the validators go out as integers (as `JSON.stringify` writes them).
 
-Still TypeScript in `core/src/services`, and why: `nativeCore.ts` (the binding, host capabilities
+Still TypeScript in `crates/kchess-node/js`, and why: `nativeCore.ts` (the binding, host capabilities
 and the event sink), `service.ts` (the forwarder), `platform.ts` (the host scope), `logger.ts`,
 `diagnosticLog.ts`, `performance.ts` (the diagnostics the desktop shell and the hosts use), `rules.ts`
 and `native.ts` (the rules binding), `oauthPage.ts` and `stockfishAsset.ts` (pure helpers the desktop
 tests use), `appIconSvg.ts`, `engine.ts` (the bundled engine's path and `SearchCancelled`), and the
-voice model modules (not part of this phase). `core/src/contracts/apiContracts.ts` stays for the
-desktop's IPC contract. Phase 6b deletes `core/`.
+voice model modules (not part of this phase). `crates/kchess-contracts/ts/apiContracts.ts` stays for the
+desktop's IPC contract. Phase 6b deleted `core/`; its TypeScript now lives in the three packages above.

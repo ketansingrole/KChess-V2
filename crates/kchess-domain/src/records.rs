@@ -1,4 +1,4 @@
-//! Rules moved from `core/src/domain` (see RUST_MIGRATION.md): game review helpers, ratings,
+//! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md): game review helpers, ratings,
 //! studies, game results, time controls, accounts, Lichess events and errors, OAuth looks and
 //! analysis contexts. Reached through `api::call`.
 

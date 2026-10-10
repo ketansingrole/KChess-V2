@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useOnline } from '@vueuse/core'
-import type { TournamentSummary } from '@kchess/core/contracts/types'
+import type { TournamentSummary } from '@kchess/contracts/types'
 import { useTournamentStore } from '../stores/tournaments'
 
 const online = useOnline()

@@ -1,4 +1,4 @@
-//! Game review (`core/src/domain/review.ts`): Lichess's winning chances, move labels and
+//! Game review (`crates/kchess-wasm/js/review.ts`): Lichess's winning chances, move labels and
 //! accuracy, plus turning synced Lichess games (SAN) into UCI lines.
 //!
 //! Results must be bit-for-bit what V8 computes, so `exp` is fdlibm's (which V8 uses for
@@ -49,7 +49,7 @@ fn madd(a: f64, b: f64, c: f64) -> f64 {
 
 /// V8's `Math.exp` (fdlibm `__ieee754_exp`, as in V8's `base/ieee754.cc`), including the
 /// multiply-adds its compiler fuses on arm64, so results match `Math.exp` to the bit
-/// (`core/tests/unit/native-rules.test.ts` checks this on every platform). The constants keep
+/// (`tests/core/native-rules.test.ts` checks this on every platform). The constants keep
 /// fdlibm's digits so they can be checked against the source.
 #[allow(
     clippy::excessive_precision,

@@ -1,4 +1,4 @@
-//! `core/src/domain/library.ts`: the local library's documents, as the core keeps them.
+//! `crates/kchess-wasm/js/library.ts`: the local library's documents, as the core keeps them.
 //!
 //! Bounds and decoders stay in TypeScript (`domain/library.ts`); only the shapes live here.
 

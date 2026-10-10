@@ -32,10 +32,10 @@ describe('logging guardrails', () => {
 
   it('has no silent inline promise catches in shipped sources', () => {
     const roots = [
-      'core/src/services',
+      'crates/kchess-node/js',
       'apps/desktop/electron/main',
-      'core/src/domain',
-      'core/src/contracts',
+      'crates/kchess-wasm/js',
+      'crates/kchess-contracts/ts',
       'apps/desktop/contracts',
       'apps/desktop/electron/preload',
       'apps/desktop/app',
@@ -63,10 +63,10 @@ describe('logging guardrails', () => {
 
   it('has no empty catch blocks in shipped sources', () => {
     const roots = [
-      'core/src/services',
+      'crates/kchess-node/js',
       'apps/desktop/electron/main',
-      'core/src/domain',
-      'core/src/contracts',
+      'crates/kchess-wasm/js',
+      'crates/kchess-contracts/ts',
       'apps/desktop/contracts',
       'apps/desktop/electron/preload',
       'apps/desktop/app',

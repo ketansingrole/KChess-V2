@@ -1,4 +1,4 @@
-import type { CoreApi } from '@kchess/core/contracts/types'
+import type { CoreApi } from '@kchess/contracts/types'
 import { setInitialLibrary } from '../../app/utils/library'
 
 /**

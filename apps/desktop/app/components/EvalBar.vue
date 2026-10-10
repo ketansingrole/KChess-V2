@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Color } from '@lichess-org/chessground/types'
-import type { EngineLine } from '@kchess/core/contracts/types'
-import { formatEval, winningChances } from '@kchess/core/domain/analysisTree'
+import type { EngineLine } from '@kchess/contracts/types'
+import { formatEval, winningChances } from '@kchess/rules/analysisTree'
 
 /** Lichess-style vertical evaluation bar: White's share fills from White's side of the board. */
 const props = defineProps<{ line?: EngineLine; orientation: Color; result?: string }>()

@@ -1,4 +1,4 @@
-//! Engine status, identity and trust (formerly the status parts of `core/src/services/engine.ts`):
+//! Engine status, identity and trust (formerly the status parts of `crates/kchess-node/js/engine.ts`):
 //! which engine would run, the command that starts it, a key that changes when the executable
 //! does, the engine paths the renderer may persist, and whether the computer is playing.
 //! Search orchestration (`bestMove`, `stopEngine`) belongs to the UCI controller port.

@@ -7,10 +7,10 @@ import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
 
 // The Rust core's puzzle service through the built @kchess/native module (the same binding
-// core/src/services/native.ts loads), an isolated data directory and a deterministic local
+// crates/kchess-node/js/native.ts loads), an isolated data directory and a deterministic local
 // download. Run after build.
-const native = createRequire(new URL('../core/src/services/native.ts', import.meta.url))(
-  '@kchess/native',
+const native = createRequire(new URL('../crates/kchess-node/js/native.ts', import.meta.url))(
+  '@kchess/native/binding',
 )
 const directory = await mkdtemp(join(tmpdir(), 'kchess-puzzle-service-'))
 const header = 'PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes\n'

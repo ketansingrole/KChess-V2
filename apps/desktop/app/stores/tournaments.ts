@@ -6,10 +6,10 @@ import type {
   TournamentList,
   TournamentSummary,
   TournamentSystem,
-} from '@kchess/core/contracts/types'
+} from '@kchess/contracts/types'
 import { useKChessStore } from './kchess'
 import { initialLibrary } from '../utils/library'
-import type { JoinedTournament } from '@kchess/core/domain/library'
+import type { JoinedTournament } from '@kchess/rules/library'
 
 export const useTournamentStore = defineStore('tournaments', () => {
   const app = useKChessStore()

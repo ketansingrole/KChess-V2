@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
-import type { VoiceModelStatus } from '@kchess/core/contracts/types'
+import type { VoiceModelStatus } from '@kchess/contracts/types'
 import { formatBytes } from '../utils/format'
 
 const app = useKChessStore()

@@ -4,18 +4,16 @@
     "types": ["vite/client", "node"],
     "lib": ["ES2023", "DOM"],
     "paths": {
-      "@kchess/core": ["./core/src/index.ts"],
-      "@kchess/core/logger": ["./core/src/services/logger.ts"],
-      "@kchess/core/domain/*": ["./core/src/domain/*"],
-      "@kchess/core/contracts/*": ["./core/src/contracts/*"],
-      "@kchess/core/gameArchive": ["./core/src/domain/gameArchive.ts"],
-      "@kchess/core/gameSession": ["./core/src/domain/gameSession.ts"],
+      "@kchess/native": ["./crates/kchess-node/js/index.ts"],
+      "@kchess/native/*": ["./crates/kchess-node/js/*"],
+      "@kchess/rules/*": ["./crates/kchess-wasm/js/*"],
+      "@kchess/contracts/*": ["./crates/kchess-contracts/ts/*"],
       "@kchess/node": ["./hosts/node/src/index.ts"]
     }
   },
   "include": [
     "tests/**/*.ts",
-    "core/tests/**/*.ts",
+    "tests/core/**/*.ts",
     "hosts/node/tests/**/*.ts",
     "apps/*/tests/**/*.ts",
     "vitest.config.ts",

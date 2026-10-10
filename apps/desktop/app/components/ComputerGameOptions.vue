@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { INITIAL_FEN } from '@kchess/core/domain/position'
-import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/core/domain/engineLevels'
-import { chess960Fen, setupStart, type GameSetup } from '@kchess/core/domain/variant'
-import { positionProblem } from '@kchess/core/domain/boardEditor'
+import { INITIAL_FEN } from '@kchess/rules/position'
+import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/rules/engineLevels'
+import { chess960Fen, setupStart, type GameSetup } from '@kchess/rules/variant'
+import { positionProblem } from '@kchess/rules/boardEditor'
 
 const open = defineModel<boolean>('open', { default: false })
 const store = useKChessStore()

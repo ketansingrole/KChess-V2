@@ -1,6 +1,6 @@
-//! The online-play session (`core/src/services/lichess.ts`'s `OnlineSession`) over local fixtures.
-//! Ports `core/tests/unit/online-session.test.ts` (recovery, protection, attachments, cancellation)
-//! and `core/tests/unit/online-actions.test.ts` (actions, chat, lobby, challenges, seeks), plus the
+//! The online-play session (`crates/kchess-node/js/lichess.ts`'s `OnlineSession`) over local fixtures.
+//! Ports `tests/core/online-session.test.ts` (recovery, protection, attachments, cancellation)
+//! and `tests/core/online-actions.test.ts` (actions, chat, lobby, challenges, seeks), plus the
 //! scenarios the brief names that the TypeScript suites do not cover in full: a move is sent once,
 //! a dropped game stream reconnects, and a tournament join and withdrawal use the account's login.
 
@@ -1202,7 +1202,7 @@ async fn a_tournament_join_and_withdrawal_use_the_accounts_login() {
 
 /// A malformed record on the idle event stream is reported as it arrives: the stream counts as
 /// interrupted and the lobby says so while the stream is still open, as the TypeScript event stream
-/// did when its line callback threw (`core/src/services/lichess.ts`).
+/// did when its line callback threw (`crates/kchess-node/js/lichess.ts`).
 #[tokio::test]
 async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
     let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();

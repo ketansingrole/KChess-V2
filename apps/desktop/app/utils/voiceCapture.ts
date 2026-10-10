@@ -1,5 +1,5 @@
 import type { Model, KaldiRecognizer } from 'vosk-browser/dist/model'
-import type { VoiceWord, VoiceModelProgress } from '@kchess/core/contracts/types'
+import type { VoiceWord, VoiceModelProgress } from '@kchess/contracts/types'
 
 export type VoiceState = 'off' | 'loading' | 'paused' | 'listening' | 'error'
 /** Why voice input stopped, so the UI can offer the right fix (e.g. open privacy settings). */

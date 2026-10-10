@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { VoiceModelCache, VOICE_MODEL } from '../core/src/services/voiceModel.ts'
+import { VoiceModelCache, VOICE_MODEL } from '../crates/kchess-node/js/voiceModel.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 export const voiceFixtureDirectory = join(root, '.data', 'voice', 'cache')

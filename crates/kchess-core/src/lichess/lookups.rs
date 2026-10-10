@@ -1,6 +1,6 @@
-//! Lichess's cloud evaluation (`core/src/services/cloudEval.ts`) and the explicit position lookups
+//! Lichess's cloud evaluation (`crates/kchess-node/js/cloudEval.ts`) and the explicit position lookups
 //! of the opening explorer, masters, player and tablebase databases
-//! (`core/src/services/positionLookup.ts`).
+//! (`crates/kchess-node/js/positionLookup.ts`).
 //!
 //! The saved lookups live behind `LookupCache` (the `store::lookups` table in production). Legal
 //! moves and SAN come from `kchess_domain::replay`, and every remote answer is validated before it

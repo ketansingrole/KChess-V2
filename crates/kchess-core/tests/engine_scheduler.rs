@@ -1,4 +1,4 @@
-//! Port of the shared-budget cases in `core/tests/unit/uci-lifecycle.test.ts`.
+//! Port of the shared-budget cases in `tests/core/uci-lifecycle.test.ts`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
