@@ -15,7 +15,8 @@
       "@kchess/native": ["./crates/kchess-node/js/index.ts"],
       "@kchess/native/*": ["./crates/kchess-node/js/*"],
       "@kchess/rules/*": ["./crates/kchess-wasm/js/*"],
-      "@kchess/contracts/*": ["./crates/kchess-contracts/ts/*"]
+      "@kchess/contracts/*": ["./crates/kchess-contracts/ts/*"],
+      "@kchess/node": ["./hosts/node/src/index.ts"]
     }
   }
 }
