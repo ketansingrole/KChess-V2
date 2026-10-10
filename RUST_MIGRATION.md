@@ -127,3 +127,17 @@ their exported TypeScript API, but every decision moves to Rust:
   clock expiry) and their observable outputs (state snapshots, return values, host calls in
   order). Record them from the TypeScript class, then check the Rust-backed class against them.
   Every existing test of the class must keep passing unchanged.
+
+## Phase 5 switch checklist (deviations found while porting, to fix when wiring)
+
+- Lichess reviews found during game sync must be written in the same transaction as their page
+  of games (`saveGamesPage` did both); implement `LichessStore::save_reviews`/`mark_checked`.
+- Broadcast round PGN must be split exactly as `spectate.ts` split it, emitting `watch:broadcast`
+  per chunk as before.
+- NDJSON parse errors in studies and TV lines must surface when the line arrives, as before.
+- Unreadable remote data and lookup transport failures should keep the TypeScript messages where
+  the UI shows them.
+- Add tests for `tv_channels`, `broadcast_tour`, `puzzle_daily`, `puzzle_dashboard`,
+  `puzzle_activity`, `storm_dashboard`.
+- Usage: Rust emits `host:usage` per request/chunk; keep the TypeScript batching (or move it to
+  Rust) so the store sees the same rows.
