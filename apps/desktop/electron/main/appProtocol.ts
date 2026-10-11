@@ -56,7 +56,7 @@ export function handleAppProtocol(voiceModelPath: string): void {
       if (path.endsWith('.html')) {
         const html = await response.text()
         // Only exact generated inline tooling/import maps are permitted, never arbitrary inline code.
-        const hashes = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
+        const hashes = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)]
           .filter((match) => match[1])
           .map((match) => `'sha256-${createHash('sha256').update(match[1]!).digest('base64')}'`)
         headers.set(

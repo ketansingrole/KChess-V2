@@ -1,5 +1,5 @@
 import { app, dialog } from 'electron'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DiagnosticLog, performanceSnapshot, startPerformanceMonitoring } from '@kchess/native'
@@ -14,7 +14,7 @@ export function diagnosticSessionId(): string {
       sessionId = randomUUID()
     } catch (cause) {
       console.warn('[diagnostics] Could not create session id, using fallback:', cause)
-      sessionId = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`
+      sessionId = `${Date.now().toString(36)}-${randomBytes(9).toString('hex')}`
     }
   }
   return sessionId
