@@ -164,7 +164,7 @@ pub(crate) fn clear_timer(slot: &mut Option<AbortHandle>) {
 /// A uniform number in [0, 1), the source of `Math.random()`.
 pub(crate) fn random_unit() -> f64 {
     let mut bytes = [0u8; 8];
-    let filled = getrandom::getrandom(&mut bytes).is_ok();
+    let filled = getrandom::fill(&mut bytes).is_ok();
     let bits = if filled {
         u64::from_le_bytes(bytes)
     } else {

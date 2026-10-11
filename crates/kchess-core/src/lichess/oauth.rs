@@ -54,7 +54,7 @@ pub struct Pkce {
 
 fn random_bytes<const N: usize>() -> CoreResult<[u8; N]> {
     let mut bytes = [0u8; N];
-    getrandom::getrandom(&mut bytes)
+    getrandom::fill(&mut bytes)
         .map_err(|cause| CoreError::new(format!("Random bytes are unavailable: {cause}")))?;
     Ok(bytes)
 }

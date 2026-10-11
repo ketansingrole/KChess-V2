@@ -6,7 +6,7 @@
 //! compatible text (stored documents must match the TypeScript bytes), `Date.now()`, UUIDs,
 //! UTF-16 string lengths and slicing, and the `BEGIN IMMEDIATE` wrapper.
 
-use getrandom::getrandom;
+use getrandom::fill;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -220,7 +220,7 @@ pub fn clean_name(name: &str) -> String {
 /// `crypto.randomUUID()`: a version 4 UUID.
 pub fn random_uuid() -> Result<String> {
     let mut bytes = [0u8; 16];
-    getrandom(&mut bytes).map_err(|e| CoreError::new(e.to_string()))?;
+    fill(&mut bytes).map_err(|e| CoreError::new(e.to_string()))?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();

@@ -16,7 +16,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 futures-util = "0.3"
 zstd = "0.14"
 # `crypto.randomUUID()` for study and chapter ids (already in Cargo.lock through rustls and tempfile).
-getrandom = "0.2"
+getrandom = "0.4"
 # Engine download: SHA-256 digest check (`sha2`), archive extraction (`flate2` inflates tar.gz,
 # `tar`, `zip` with deflate only, no symlinks), a private staging directory (`tempfile`), and
 # `access(2)` for the executable check of `engine/status.rs` (`libc`, already in Cargo.lock).
