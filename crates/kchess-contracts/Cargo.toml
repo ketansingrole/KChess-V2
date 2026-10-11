@@ -15,3 +15,6 @@ ts-rs = { version = "12", features = ["serde-compat", "serde-json-impl"] }
 [[bin]]
 name = "export-types"
 path = "src/bin/export-types.rs"
+
+[lints]
+workspace = true

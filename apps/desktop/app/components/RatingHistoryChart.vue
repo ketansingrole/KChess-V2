@@ -3,6 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
 import type { LichessRatingHistory } from '@kchess/contracts/types'
 import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '@kchess/rules/ratings'
+import { escapeHtml } from '../utils/quickPick'
+import {
+  RATING_DAY_MS,
+  formatRatingDate,
+  ratingYDomain,
+  spansRatingYears,
+} from '../utils/ratingChart'
 
 /** Current rating per Lichess history name ("Blitz"), shown on the toggle chips. */
 export interface CurrentRating {
@@ -33,7 +40,7 @@ const FIXED_SLOT_KEYS = [
   'chess960',
 ]
 const VARIANT_SLOT = 8
-const DAY_MS = 86_400_000
+const DAY_MS = RATING_DAY_MS
 
 interface Series {
   /** Perf key (`blitz`); stable identity for hiding, rows and current ratings. */
@@ -129,36 +136,24 @@ const accessors = computed(() =>
 const colors = computed(() => shown.value.map((entry) => `var(--rating-series-${entry.slot})`))
 const color = (_row: Row, index: number): string => colors.value[index] ?? 'var(--ui-primary)'
 
-const PAD = 15
-const domain = computed<[number, number]>(() => {
-  const values = rows.value.flatMap((row) =>
-    shown.value.map((entry) => row[entry.key]).filter((value) => value !== undefined),
-  ) as number[]
-  if (!values.length) return [0, 1]
-  return [Math.min(...values) - PAD, Math.max(...values) + PAD]
-})
-const spansYears = computed(() => {
-  const first = rows.value[0]?.date ?? 0
-  const lastDate = rows.value.at(-1)?.date ?? 0
-  return lastDate - first > 400 * DAY_MS
-})
+const domain = computed<[number, number]>(() =>
+  ratingYDomain(
+    rows.value.flatMap((row) =>
+      shown.value.map((entry) => row[entry.key]).filter((value) => value !== undefined),
+    ) as number[],
+  ),
+)
+const spansYears = computed(() =>
+  spansRatingYears(rows.value[0]?.date ?? 0, rows.value.at(-1)?.date ?? 0),
+)
 const formatDate = (timestamp: number, long = false): string =>
-  new Date(timestamp).toLocaleDateString(
-    undefined,
-    long
-      ? { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
-      : spansYears.value
-        ? { month: 'short', year: '2-digit', timeZone: 'UTC' }
-        : { month: 'short', day: 'numeric', timeZone: 'UTC' },
-  )
-const escape = (text: string) =>
-  text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+  formatRatingDate(timestamp, long, spansYears.value)
 const tooltip = (row: Row): string => {
   const lines = shown.value
     .filter((entry) => row[entry.key] !== undefined)
     .map(
       (entry) =>
-        `<span class="rh-tip-line"><i style="background:var(--rating-series-${entry.slot})"></i>${escape(entry.name)}<strong>${row[entry.key]}</strong></span>`,
+        `<span class="rh-tip-line"><i style="background:var(--rating-series-${entry.slot})"></i>${escapeHtml(entry.name)}<strong>${row[entry.key]}</strong></span>`,
     )
   return `<div class="rh-tip"><span class="rh-tip-date">${formatDate(row.date, true)}</span>${lines.join('')}</div>`
 }

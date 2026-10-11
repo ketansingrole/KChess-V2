@@ -756,7 +756,11 @@ impl Core {
                     .await
             }
             "stopAnalysis" => {
-                self.analysis.stop_analysis(false);
+                let kill = match args.first() {
+                    None | Some(Value::Null) => false,
+                    Some(value) => normal("assertBoolean", value)?.as_bool() == Some(true),
+                };
+                self.analysis.stop_analysis(kill);
                 Ok(Value::Null)
             }
 

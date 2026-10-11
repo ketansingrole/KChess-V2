@@ -136,7 +136,7 @@ pub async fn engine_identity(status: &EngineStatus) -> Result<String> {
     }
     let metadata = tokio::fs::metadata(&status.path)
         .await
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+        .map_err(|cause| CoreError::wrap("Could not read the engine executable", cause))?;
     let modified_ms = metadata
         .modified()
         .ok()

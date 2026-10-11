@@ -23,6 +23,12 @@ impl CoreError {
             aborted: true,
         }
     }
+
+    /// A low-level failure with what was being attempted: `"{message}: {err}"`.
+    /// Use it at `map_err` sites so host logs name the operation, not just the cause.
+    pub fn wrap(message: impl Into<String>, err: impl std::fmt::Display) -> CoreError {
+        CoreError::new(format!("{}: {err}", message.into()))
+    }
 }
 
 impl fmt::Display for CoreError {

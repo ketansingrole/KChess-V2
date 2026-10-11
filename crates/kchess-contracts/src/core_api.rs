@@ -242,7 +242,12 @@ pub fn methods() -> Vec<Method> {
             vec![req("request", t::<AnalysisRequest>())],
             number,
         ),
-        method("stopAnalysis", "", vec![], void),
+        method(
+            "stopAnalysis",
+            "Stop the running analysis; with `kill`, also closes the engine.",
+            vec![opt("kill", boolean)],
+            void,
+        ),
         method(
             "reviewGet",
             "The stored review of these moves from this position, if any.",

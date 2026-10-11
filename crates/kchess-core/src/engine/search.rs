@@ -310,7 +310,7 @@ impl Search {
 /// position.
 fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Result<Request> {
     let moves: Vec<String> = serde_json::from_value(validate("assertMoves", &moves)?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+        .map_err(|cause| CoreError::wrap("Invalid moves for the engine search", cause))?;
     let options = if options.is_null() {
         json!({})
     } else {

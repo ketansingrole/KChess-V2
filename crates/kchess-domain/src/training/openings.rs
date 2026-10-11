@@ -30,7 +30,12 @@ fn repetition_key(fen: &str) -> String {
 
 /// `openingAt`: the name of the opening reached after `ply` moves. As Lichess suggests, step back
 /// from the position until a named one is found. Only games under standard rules have names.
-pub fn opening_at(variant: &str, fen: &str, moves: &[String], ply: f64) -> Option<OpeningName> {
+pub fn opening_at<S: AsRef<str>>(
+    variant: &str,
+    fen: &str,
+    moves: &[S],
+    ply: f64,
+) -> Option<OpeningName> {
     if variant != "standard" {
         return None;
     }

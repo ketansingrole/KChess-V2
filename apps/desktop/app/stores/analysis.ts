@@ -349,7 +349,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ) {
       wanted = ''
       engineBusy.value = false
-      void window.kchess.stopAnalysis().catch((error: unknown) => {
+      // Turning analysis off releases the engine; other pauses keep it warm.
+      const release = !engineOn.value
+      void window.kchess.stopAnalysis(release || undefined).catch((error: unknown) => {
         console.warn('[analysis] stopping analysis failed:', error)
       })
       return
@@ -480,7 +482,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     off = undefined
     wanted = ''
     engineBusy.value = false
-    void window.kchess.stopAnalysis().catch((error: unknown) => {
+    void window.kchess.stopAnalysis(true).catch((error: unknown) => {
       console.warn('[analysis] stopping analysis failed:', error)
     })
   }

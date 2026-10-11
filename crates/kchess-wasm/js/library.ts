@@ -40,15 +40,10 @@ export type {
 /**
  * The local library: bounded, versioned documents the core keeps for every frontend
  * (studies, played games, mistake drills, unfinished sessions and training notes). The decoders
- * and checks are the Rust validators in `crates/kchess-domain/src/misc/documents.rs`.
+ * and checks are the Rust validators in `crates/kchess-domain/src/misc/documents.rs`, and the
+ * bounds live there too (`kchess_domain::library`, `misc::constants::MAX_DOCUMENT`): the core
+ * enforces them, so frontends never hardcode their own copies.
  */
-
-/** Largest serialized document the core stores. */
-export const MAX_DOCUMENT = 2_000_000
-export const MAX_STUDIES = 50
-export const MAX_CHAPTERS = 64
-export const MAX_ARCHIVED_GAMES = 500
-export const MAX_MISTAKES = 500
 
 /* ── Decoders: semantic validation before a document reaches the library or a board ── */
 

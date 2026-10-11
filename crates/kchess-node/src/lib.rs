@@ -23,7 +23,7 @@ pub fn invoke(method: String, args: String) -> napi::Result<String> {
     api::call(&method, &args).map_err(napi::Error::from_reason)
 }
 
-#[napi]
+#[napi(catch_unwind)]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -99,7 +99,7 @@ pub fn decode_mistakes(json: String) -> napi::Result<Option<String>> {
 /* ── Phase 2: reviews, study PGN and the puzzle sampler ── */
 
 /// The `Math.exp` the review rules use; exposed so tests can compare it with V8's on each platform.
-#[napi]
+#[napi(catch_unwind)]
 pub fn js_exp(x: f64) -> f64 {
     review::js_exp(x)
 }
@@ -177,41 +177,41 @@ pub struct PuzzleSampler {
 
 #[napi]
 impl PuzzleSampler {
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(seed: u32) -> Self {
         PuzzleSampler {
             inner: puzzle::Sampler::new(puzzle::Random::new(seed)),
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn push(&mut self, chunk: &[u8]) -> napi::Result<()> {
         self.inner.push(chunk).map_err(napi::Error::from_reason)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn finish(&mut self) -> napi::Result<()> {
         self.inner.finish().map_err(napi::Error::from_reason)
     }
 
-    #[napi(getter)]
+    #[napi(getter, catch_unwind)]
     pub fn lines(&self) -> f64 {
         self.inner.lines as f64
     }
 
-    #[napi(getter)]
+    #[napi(getter, catch_unwind)]
     pub fn count(&self) -> u32 {
         self.inner.count() as u32
     }
 
     /// JSON array of the kept `DbPuzzle` rows.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn kept(&self) -> napi::Result<String> {
         to_json(&self.inner.kept())
     }
 
     /// Free the sample (the counts stay); call after `kept`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn release(&mut self) {
         self.inner.release();
     }

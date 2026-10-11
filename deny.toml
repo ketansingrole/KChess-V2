@@ -1,0 +1,16 @@
+# Minimal cargo-deny config: fail on yanked advisories, unapproved licenses,
+# wildcard version requirements, and unknown registries/git sources.
+# Run with: cargo deny check
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0"]
+
+[bans]
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

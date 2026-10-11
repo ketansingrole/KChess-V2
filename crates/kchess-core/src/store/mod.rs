@@ -43,6 +43,12 @@ impl Database {
     }
 
     /// Runs one storage method (`store.<module>.<name>`) against the database, opening it first.
+    ///
+    /// Blocking: runs rusqlite synchronously and holds a `std::sync::Mutex` while it does, so
+    /// it must never run on an async executor thread. Async callers dispatch it through
+    /// `tokio::task::spawn_blocking` (as `PuzzleService::with_db` does for its own database)
+    /// instead of calling it directly.
+    #[track_caller]
     pub fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
         let mut db = self
             .connection
@@ -92,7 +98,8 @@ pub struct StoreContext<'a> {
 /// Open `kchess.db` as `db.ts` did: WAL, foreign keys, NORMAL sync, memory temp store, a 20 MB
 /// cache, migrations, then 0600 permissions.
 pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
-    let db = Connection::open(path).map_err(|e| CoreError::new(e.to_string()))?;
+    let db =
+        Connection::open(path).map_err(|e| CoreError::wrap("Could not open the database", e))?;
     db.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA foreign_keys = ON;

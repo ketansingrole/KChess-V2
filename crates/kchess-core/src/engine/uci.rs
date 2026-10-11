@@ -186,7 +186,7 @@ impl UciController {
             .kill_on_drop(true);
         let mut child = command
             .spawn()
-            .map_err(|error| CoreError::new(error.to_string()))?;
+            .map_err(|error| CoreError::wrap("Could not start the engine", error))?;
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {

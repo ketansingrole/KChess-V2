@@ -55,13 +55,13 @@ fn is_move_number(token: &str) -> bool {
 }
 
 /// The solution move at `index` when it is a non-empty one.
-fn expected_at(solution: &[String], index: f64) -> Option<&str> {
+fn expected_at<S: AsRef<str>>(solution: &[S], index: f64) -> Option<&str> {
     if index < 0.0 || index.fract() != 0.0 {
         return None;
     }
     solution
         .get(index as usize)
-        .map(String::as_str)
+        .map(|uci| uci.as_ref())
         .filter(|uci| !uci.is_empty())
 }
 
@@ -231,7 +231,8 @@ fn apply_move(state: &PuzzleState, uci: &str) -> Option<PuzzleState> {
         fen: played.position.fen,
         last_move: move_squares(&state.fen, uci),
         sans,
-        ..state.clone()
+        index: state.index,
+        status: state.status.clone(),
     })
 }
 

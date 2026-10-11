@@ -143,7 +143,25 @@ export function treeToPgn(
   root: TreeNode,
   headers: Record<string, string> = root.headers ?? {},
 ): string {
-  return rules<string>('treeToPgn', root, headers)
+  return rules<string>('treeToPgn', pgnDocument(root), headers)
+}
+
+/**
+ * The PGN export without board snapshots: Rust's `treeToPgn` reads only the root FEN,
+ * comments, and each move's SAN with its annotations, so per-move `uci`/`fen`/`ply` stay
+ * local and out of the payload.
+ */
+function pgnDocument(root: TreeNode): unknown {
+  const strip = (node: TreeNode): Record<string, unknown> => {
+    const out: Record<string, unknown> = { san: node.san, children: node.children.map(strip) }
+    if (node.comments !== undefined) out.comments = node.comments
+    if (node.startingComments !== undefined) out.startingComments = node.startingComments
+    if (node.nags !== undefined) out.nags = node.nags
+    return out
+  }
+  const document: Record<string, unknown> = { fen: root.fen, children: root.children.map(strip) }
+  if (root.comments !== undefined) document.comments = root.comments
+  return document
 }
 
 /** One bounded PGN document, or undefined when it cannot be imported without loss. */

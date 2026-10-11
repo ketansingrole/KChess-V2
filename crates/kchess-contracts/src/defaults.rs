@@ -9,6 +9,11 @@ use crate::types::{
     PromotionMode, ReviewAuto, Settings,
 };
 
+/// Minutes between correspondence-game polls.
+const DEFAULT_CORRESPONDENCE_POLL_MINUTES: f64 = 5.0;
+/// Default sound volume (0.0–1.0).
+const DEFAULT_SOUND_VOLUME: f64 = 0.7;
+
 /// The default preferences. The engine levels are the domain's data (`training` data).
 pub fn default_settings() -> Settings {
     let levels = training::call("defaultEngineLevels", &[])
@@ -25,7 +30,7 @@ pub fn default_settings() -> Settings {
             review_on_battery: false,
             receive_challenges: true,
             online_chat: true,
-            correspondence_poll: 5.0,
+            correspondence_poll: DEFAULT_CORRESPONDENCE_POLL_MINUTES,
             cloud_eval: false,
         },
         frontend: FrontendPreferences {
@@ -37,7 +42,7 @@ pub fn default_settings() -> Settings {
             piece_animation: PieceAnimation::Normal,
             coordinates: CoordinateMode::Inside,
             sound_enabled: true,
-            sound_volume: 0.7,
+            sound_volume: DEFAULT_SOUND_VOLUME,
             premove: true,
             promotion: PromotionMode::Ask,
             show_legal_moves: true,

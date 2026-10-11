@@ -90,7 +90,7 @@ const api: DesktopApi = {
   stopEngine: () => invoke('stopEngine'),
   bestMove: (moves, level, options) => invoke('bestMove', moves, level, options),
   startAnalysis: (request) => invoke('startAnalysis', request),
-  stopAnalysis: () => invoke('stopAnalysis'),
+  stopAnalysis: (kill) => invoke('stopAnalysis', kill),
   onAnalysis: (callback) => {
     const listener = (_: unknown, update: AnalysisUpdate): void => callback(update)
     ipcRenderer.on(IPC_EVENTS.analysis, listener)

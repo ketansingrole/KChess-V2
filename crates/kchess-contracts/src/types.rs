@@ -39,17 +39,17 @@ macro_rules! wire_enum {
 
 /* ── Choices and settings ───────────────────────────────────────────── */
 
-wire_enum!(Appearance, APPEARANCES {
+wire_enum!(#[doc = "Which color scheme the app uses."] Appearance, APPEARANCES {
     System = "system",
     Light = "light",
     Dark = "dark",
 });
-wire_enum!(CoordinateMode, COORDINATE_MODES {
+wire_enum!(#[doc = "Where board coordinates are shown."] CoordinateMode, COORDINATE_MODES {
     None = "none",
     Inside = "inside",
     Outside = "outside",
 });
-wire_enum!(EngineLevel, ENGINE_LEVELS {
+wire_enum!(#[doc = "Built-in engine strength, from beginner to max."] EngineLevel, ENGINE_LEVELS {
     Beginner = "beginner",
     Novice = "novice",
     Casual = "casual",
@@ -63,18 +63,18 @@ wire_enum!(EngineLevel, ENGINE_LEVELS {
     SuperGm = "super-gm",
     Max = "max",
 });
-wire_enum!(PromotionMode, PROMOTION_MODES {
+wire_enum!(#[doc = "How a pawn reaching the last rank is promoted: always ask, always to a queen, or a queen only when premoving."] PromotionMode, PROMOTION_MODES {
     Ask = "ask",
     Queen = "queen",
     Premove = "premove",
 });
-wire_enum!(#[doc = "How a pawn reaching the last rank is promoted: always ask, always to a queen, or a queen only when premoving."] PieceAnimation, PIECE_ANIMATIONS {
+wire_enum!(#[doc = "How long a piece takes to slide to its square."] PieceAnimation, PIECE_ANIMATIONS {
     None = "none",
     Fast = "fast",
     Normal = "normal",
     Slow = "slow",
 });
-wire_enum!(#[doc = "How long a piece takes to slide to its square."] NotificationKind, NOTIFICATION_KINDS {
+wire_enum!(#[doc = "What a desktop notification is about; each kind (except `test`) has its own switch in Settings."] NotificationKind, NOTIFICATION_KINDS {
     OpponentMove = "opponentMove",
     LowTime = "lowTime",
     GameEvents = "gameEvents",
@@ -82,7 +82,7 @@ wire_enum!(#[doc = "How long a piece takes to slide to its square."] Notificatio
     Challenge = "challenge",
     Test = "test",
 });
-wire_enum!(#[doc = "What a desktop notification is about; each kind (except `test`) has its own switch in Settings."] OnlineAction, ONLINE_ACTIONS {
+wire_enum!(#[doc = "An action the player can take in an online game, such as resigning, aborting, offering or declining a takeback or draw, claiming a result, or going berserk."] OnlineAction, ONLINE_ACTIONS {
     Resign = "resign",
     Abort = "abort",
     Takeback = "takeback",
@@ -105,11 +105,11 @@ wire_enum!(#[doc = "Reasons Lichess accepts when declining a challenge (it trans
     Standard = "standard",
     Variant = "variant",
 });
-wire_enum!(ChatRoom, CHAT_ROOMS {
+wire_enum!(#[doc = "Which chat room a message belongs to."] ChatRoom, CHAT_ROOMS {
     Player = "player",
     Spectator = "spectator",
 });
-wire_enum!(ChallengeColor, CHALLENGE_COLORS {
+wire_enum!(#[doc = "Which color the challenger requests."] ChallengeColor, CHALLENGE_COLORS {
     Random = "random",
     White = "white",
     Black = "black",
@@ -151,12 +151,12 @@ wire_enum!(#[doc = "What became of a spoken phrase. Moves: `played` at once, `pe
     Correct = "correct",
     Wrong = "wrong",
 });
-wire_enum!(Judgment, JUDGMENTS {
+wire_enum!(#[doc = "Severity of a move mistake in review."] Judgment, JUDGMENTS {
     Inaccuracy = "inaccuracy",
     Mistake = "mistake",
     Blunder = "blunder",
 });
-wire_enum!(ReviewAuto, REVIEW_AUTO {
+wire_enum!(#[doc = "Which games are reviewed automatically."] ReviewAuto, REVIEW_AUTO {
     Off = "off",
     Recent = "recent",
     All = "all",
@@ -167,7 +167,7 @@ wire_enum!(#[doc = "`opening` is the Lichess games database, `masters` over-the-
     Player = "player",
     Tablebase = "tablebase",
 });
-wire_enum!(ExplorerSpeed, EXPLORER_SPEEDS {
+wire_enum!(#[doc = "Time control of an opening-explorer game pool."] ExplorerSpeed, EXPLORER_SPEEDS {
     UltraBullet = "ultraBullet",
     Bullet = "bullet",
     Blitz = "blitz",
@@ -175,7 +175,7 @@ wire_enum!(ExplorerSpeed, EXPLORER_SPEEDS {
     Classical = "classical",
     Correspondence = "correspondence",
 });
-wire_enum!(PerfType, PERF_TYPES {
+wire_enum!(#[doc = "Lichess rating category, including variants."] PerfType, PERF_TYPES {
     UltraBullet = "ultraBullet",
     Bullet = "bullet",
     Blitz = "blitz",
@@ -191,19 +191,19 @@ wire_enum!(PerfType, PERF_TYPES {
     RacingKings = "racingKings",
     Crazyhouse = "crazyhouse",
 });
-wire_enum!(ExportKind, EXPORT_KINDS {
+wire_enum!(#[doc = "Format for exporting a game."] ExportKind, EXPORT_KINDS {
     Gif = "gif",
     Png = "png",
     Pgn = "pgn",
 });
 
-union!(PlayerColor { White = "white", Black = "black" });
-union!(TournamentSystem { Arena = "arena", Swiss = "swiss" });
-union!(LookupMode { Rated = "rated", Casual = "casual" });
-union!(GameResultFilter { Win = "win", Loss = "loss", Draw = "draw" });
-union!(ChallengeDirection { In = "in", Out = "out" });
-union!(Lane { Events = "events", Game = "game", Seek = "seek" });
-union!(OnlinePhase {
+union!(#[doc = "Side to play as."] PlayerColor { White = "white", Black = "black" });
+union!(#[doc = "Tournament pairing system."] TournamentSystem { Arena = "arena", Swiss = "swiss" });
+union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated", Casual = "casual" });
+union!(#[doc = "Filter games by result."] GameResultFilter { Win = "win", Loss = "loss", Draw = "draw" });
+union!(#[doc = "Whether a challenge was received or sent."] ChallengeDirection { In = "in", Out = "out" });
+union!(#[doc = "Which online stream a message arrived on."] Lane { Events = "events", Game = "game", Seek = "seek" });
+union!(#[doc = "Connection state of the online play session."] OnlinePhase {
     Checking = "checking",
     Connecting = "connecting",
     Connected = "connected",
@@ -212,8 +212,8 @@ union!(OnlinePhase {
     AuthRequired = "auth-required",
     Idle = "idle",
 });
-union!(TournamentStatus { Created = "created", Started = "started", Finished = "finished" });
-union!(UsageKind {
+union!(#[doc = "Lifecycle stage of a tournament."] TournamentStatus { Created = "created", Started = "started", Finished = "finished" });
+union!(#[doc = "Which app area a metered action belongs to."] UsageKind {
     Games = "games",
     Profile = "profile",
     Play = "play",
@@ -226,13 +226,13 @@ union!(UsageKind {
     Study = "study",
     Other = "other",
 });
-union!(ReviewSource { Lichess = "lichess", Local = "local" });
-union!(WatchPhase { Connecting = "connecting", Connected = "connected", Ended = "ended", Error = "error" });
-union!(WatchSource { Tv = "tv", Game = "game" });
-union!(BroadcastSection { Active = "active", Upcoming = "upcoming", Past = "past" });
-union!(AnalysisReason { Completed = "completed", Interrupted = "interrupted", Failed = "failed" });
-union!(ReviewPause { Battery = "battery", Engine = "engine", Online = "online", Off = "off" });
-union!(AppUpdatePhase {
+union!(#[doc = "Where a game review came from."] ReviewSource { Lichess = "lichess", Local = "local" });
+union!(#[doc = "Connection state while watching a game."] WatchPhase { Connecting = "connecting", Connected = "connected", Ended = "ended", Error = "error" });
+union!(#[doc = "Whether watching Lichess TV or a specific game."] WatchSource { Tv = "tv", Game = "game" });
+union!(#[doc = "Time section of a broadcast list."] BroadcastSection { Active = "active", Upcoming = "upcoming", Past = "past" });
+union!(#[doc = "Why engine analysis stopped."] AnalysisReason { Completed = "completed", Interrupted = "interrupted", Failed = "failed" });
+union!(#[doc = "Why automatic review is paused."] ReviewPause { Battery = "battery", Engine = "engine", Online = "online", Off = "off" });
+union!(#[doc = "Stage of the app update check."] AppUpdatePhase {
     Idle = "idle",
     Checking = "checking",
     UpToDate = "up-to-date",
@@ -242,29 +242,29 @@ union!(AppUpdatePhase {
     Error = "error",
     Disabled = "disabled",
 });
-union!(MicrophoneStatus {
+union!(#[doc = "OS permission state of the microphone."] MicrophoneStatus {
     Granted = "granted",
     Denied = "denied",
     Restricted = "restricted",
     NotDetermined = "not-determined",
     Unknown = "unknown",
 });
-union!(NotificationSkip {
+union!(#[doc = "Why a desktop notification was skipped."] NotificationSkip {
     Disabled = "disabled",
     CategoryOff = "category-off",
     WindowState = "window-state",
     Unsupported = "unsupported",
     Failed = "failed",
 });
-union!(NotificationVia { System = "system", InApp = "in-app" });
-union!(PuzzleDbPhase {
+union!(#[doc = "How a notification was delivered."] NotificationVia { System = "system", InApp = "in-app" });
+union!(#[doc = "Progress stage of the puzzle database download."] PuzzleDbPhase {
     Downloading = "downloading",
     Importing = "importing",
     Done = "done",
     Cancelled = "cancelled",
     Failed = "failed",
 });
-union!(VoiceModelPhase { Checking = "checking", Downloading = "downloading", Preparing = "preparing" });
+union!(#[doc = "Progress stage of the voice model download."] VoiceModelPhase { Checking = "checking", Downloading = "downloading", Preparing = "preparing" });
 
 /// Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest.
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]

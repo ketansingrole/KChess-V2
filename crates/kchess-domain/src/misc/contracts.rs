@@ -124,7 +124,7 @@ const CORE: &[Row] = &[
         ],
     ),
     ("startAnalysis", 1, &[Valid("assertAnalysisRequest")]),
-    ("stopAnalysis", 0, &[]),
+    ("stopAnalysis", 0, &[Optional("assertBoolean")]),
     ("reviewGet", 2, &[Position, Valid("assertMoves")]),
     ("reviewRequest", 1, &[Valid("assertReviewRequest")]),
     ("reviewCancel", 1, &[Valid("assertReviewKey")]),

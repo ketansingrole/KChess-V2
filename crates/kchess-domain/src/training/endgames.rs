@@ -44,7 +44,12 @@ fn repetition_key(fen: &str) -> String {
 
 /// `evaluateEndgame`: where the drill stands after `moves` (UCI, from `fen`), judged for
 /// `player` and the drill's `goal`.
-pub fn evaluate(fen: &str, moves: &[String], player: &str, goal: &str) -> Result<Status, String> {
+pub fn evaluate<S: AsRef<str>>(
+    fen: &str,
+    moves: &[S],
+    player: &str,
+    goal: &str,
+) -> Result<Status, String> {
     const INVALID: &str = "Invalid drill position.";
     let start = rules::standard_from_fen(fen).ok_or(INVALID)?;
     let mut seen: HashMap<String, u32> =
@@ -129,7 +134,7 @@ pub fn evaluate(fen: &str, moves: &[String], player: &str, goal: &str) -> Result
 }
 
 /// `sanFrom`: SAN of a UCI move list played from `fen`; empty when the FEN is not a position.
-pub fn san_from(fen: &str, moves: &[String]) -> Vec<String> {
+pub fn san_from<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<String> {
     rules::standard_from_fen(fen)
         .map(|start| {
             position::line(start, moves, false, false)
@@ -214,9 +219,11 @@ mod tests {
     #[test]
     fn invalid_fen_is_an_error() {
         assert_eq!(
-            evaluate("nonsense", &[], "white", "win").err().as_deref(),
+            evaluate("nonsense", &[] as &[String], "white", "win")
+                .err()
+                .as_deref(),
             Some("Invalid drill position.")
         );
-        assert!(san_from("nonsense", &[]).is_empty());
+        assert!(san_from("nonsense", &[] as &[String]).is_empty());
     }
 }

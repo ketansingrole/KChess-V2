@@ -210,8 +210,11 @@ pub(crate) fn to_value<T: Serialize>(value: &T) -> Result<Value, String> {
 
 /// The position a setup reaches after `moves` (`setupPositionAfter`): the standard start when
 /// the setup is not a legal position.
-pub(crate) fn position_after(setup: &Setup, moves: &[String]) -> Result<VariantPosition, String> {
-    let texts: Vec<&str> = moves.iter().map(String::as_str).collect();
+pub(crate) fn position_after<S: AsRef<str>>(
+    setup: &Setup,
+    moves: &[S],
+) -> Result<VariantPosition, String> {
+    let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
     replay::replay_setup(&setup.variant, &setup.fen, &texts)
         .and_then(|replayed| rules::setup_start(&setup.variant, &replayed.fen))
         .or_else(|| rules::setup_start("standard", INITIAL_FEN))
@@ -226,8 +229,12 @@ fn rule(method: &str, args: &[Value]) -> Result<Value, String> {
 }
 
 /// `setupDrawReason(setup, moves)`: the repetition or fifty-move draw already reached.
-pub(crate) fn setup_draw_reason(setup: &Setup, moves: &[String]) -> Result<Option<String>, String> {
-    let args = json!([setup.json(), moves]).to_string();
+pub(crate) fn setup_draw_reason<S: AsRef<str>>(
+    setup: &Setup,
+    moves: &[S],
+) -> Result<Option<String>, String> {
+    let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
+    let args = json!([setup.json(), texts]).to_string();
     let out = api::call("setupDrawReason", &args)?;
     let value: Value = serde_json::from_str(&out).map_err(|error| error.to_string())?;
     Ok(value.as_str().map(str::to_string))
@@ -336,7 +343,7 @@ mod tests {
             variant: "standard".into(),
             fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
         };
-        let start = position_after(&illegal, &[]).expect("the standard start");
+        let start = position_after(&illegal, &[] as &[String]).expect("the standard start");
         assert_eq!(rules::make_fen(&start), INITIAL_FEN);
     }
 

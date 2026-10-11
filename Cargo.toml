@@ -5,17 +5,41 @@ members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# Matches rust-toolchain.toml so `cargo` warns on older toolchains.
+rust-version = "1.94.0"
 license = "GPL-3.0-or-later"
 publish = false
+
+[workspace.lints.rust]
+# deny, not forbid: napi-derive expands to #[allow(unsafe_code)], which is
+# E0453-incompatible with forbid. deny still fails the build on direct unsafe.
+unsafe_code = "deny"
+# warn breaks `cargo clippy -- -D warnings` (fires on build.rs and many
+# undocumented items); keep allow until docs are added.
+missing_docs = "allow"
+
+[workspace.lints.clippy]
+# Verified zero hits on green code; existing unsafe blocks carry SAFETY comments.
+undocumented_unsafe_blocks = "deny"
+# Each allow below fired on green code, and `-D warnings` (check:rust) promotes
+# warns to errors; sources are out of scope, so these stay allow until fixed:
+# cast_possible_truncation (30+ hits), redundant_clone (2 hits),
+# unwrap_used/expect_used (90+ hits).
+cast_possible_truncation = "allow"
+redundant_clone = "allow"
+unwrap_used = "allow"
+expect_used = "allow"
 
 [workspace.dependencies]
 shakmaty = { version = "0.30", features = ["variant"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "unbounded_depth", "float_roundtrip"] }
 memchr = "2"
+thiserror = "2"
 
 [profile.release]
 lto = "fat"
+overflow-checks = true
 codegen-units = 1
 panic = "unwind"
 # Not "symbols": see .cargo/config.toml for platform-specific linker stripping.

@@ -15,12 +15,9 @@ use super::StoreContext;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
+use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_CHAPTERS, MAX_MISTAKES, MAX_STUDIES};
+use kchess_domain::misc::MAX_DOCUMENT;
 
-pub const MAX_DOCUMENT: usize = 2_000_000;
-const MAX_STUDIES: usize = 50;
-const MAX_CHAPTERS: usize = 64;
-const MAX_ARCHIVED_GAMES: i64 = 500;
-const MAX_MISTAKES: usize = 500;
 const STUDY_LIBRARY_MAX_TEXT: usize = 1_800_000;
 
 const STUDIES: &str = "studies";
@@ -244,7 +241,9 @@ pub fn transaction<T>(db: &Connection, work: impl FnOnce() -> Result<T>) -> Resu
         Ok(value) => Ok(value),
         Err(error) => {
             // The original error is the one the caller needs; a failed rollback changes nothing.
-            let _ = db.execute_batch("ROLLBACK");
+            if let Err(rollback) = db.execute_batch("ROLLBACK") {
+                tracing::warn!("library rollback failed: {rollback}");
+            }
             Err(error)
         }
     }
@@ -1140,7 +1139,7 @@ fn write_game(db: &Connection, game: &Value) -> Result<()> {
         .map_err(db_err)?;
     // Never silently discard older games to make room for a new one.
     let size = archive_overhead() + bytes + count + utf16_len(&body) as i64;
-    if count + 1 > MAX_ARCHIVED_GAMES || size > MAX_DOCUMENT as i64 {
+    if count + 1 > MAX_ARCHIVED_GAMES as i64 || size > MAX_DOCUMENT as i64 {
         return Err(CoreError::new(GAMES_FULL));
     }
     db.execute(

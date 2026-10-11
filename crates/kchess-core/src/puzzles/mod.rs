@@ -65,7 +65,8 @@ impl Phase {
 /// The schema, permissions and one-time import from the old main database.
 fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     let path = config.data_dir.join("puzzles.db");
-    let db = Connection::open(&path).map_err(|e| CoreError::new(e.to_string()))?;
+    let db = Connection::open(&path)
+        .map_err(|e| CoreError::wrap("Could not open the puzzle database", e))?;
     queries::create_schema(&db)?;
     restrict(&path, host);
     let migrated = db
@@ -99,7 +100,9 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
                 COMMIT;",
             )
             .map_err(|e| {
-                let _ = db.execute_batch("ROLLBACK");
+                if let Err(rollback) = db.execute_batch("ROLLBACK") {
+                    tracing::warn!("puzzle import rollback failed: {rollback}");
+                }
                 CoreError::new(e.to_string())
             })?;
         }

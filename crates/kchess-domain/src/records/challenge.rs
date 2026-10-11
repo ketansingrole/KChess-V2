@@ -277,8 +277,9 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
     let variant_key = parsed.variant_key.clone();
     let variant_name = parsed
         .variant_name
-        .clone()
-        .unwrap_or_else(|| variant_key.clone());
+        .as_deref()
+        .unwrap_or(&variant_key)
+        .to_owned();
     let playable_variant = crate::online_game::variant_from_lichess(Some(variant_key.as_str()));
     let problem = if playable_variant.is_none() {
         Some(format!(

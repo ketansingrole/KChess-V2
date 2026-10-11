@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { VisArea, VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
+import { formatRatingDate, ratingYDomain, spansRatingYears } from '../utils/ratingChart'
 
 export interface RatingPoint {
   /** Day of the rating, as a UTC timestamp. */
@@ -13,27 +14,15 @@ const props = defineProps<{ points: RatingPoint[]; label: string }>()
 const x = (point: RatingPoint): number => point.date
 const y = (point: RatingPoint): number => point.rating
 
-const PAD = 15
-const domain = computed<[number, number]>(() => {
-  const ratings = props.points.map(y)
-  return [Math.min(...ratings) - PAD, Math.max(...ratings) + PAD]
-})
+const domain = computed<[number, number]>(() => ratingYDomain(props.points.map(y)))
 
 /** Short spans need the day; longer ones read better as month and year. */
-const SPAN_FOR_YEARS_MS = 400 * 86_400_000
 const spansYears = computed(() => {
   const dates = props.points.map(x)
-  return Math.max(...dates) - Math.min(...dates) > SPAN_FOR_YEARS_MS
+  return spansRatingYears(Math.min(...dates), Math.max(...dates))
 })
 const formatDate = (timestamp: number, long = false): string =>
-  new Date(timestamp).toLocaleDateString(
-    undefined,
-    long
-      ? { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
-      : spansYears.value
-        ? { month: 'short', year: '2-digit', timeZone: 'UTC' }
-        : { month: 'short', day: 'numeric', timeZone: 'UTC' },
-  )
+  formatRatingDate(timestamp, long, spansYears.value)
 
 const tooltip = (point: RatingPoint): string =>
   `<strong>${point.rating}</strong><br><span>${formatDate(point.date, true)}</span>`

@@ -85,7 +85,10 @@ export interface CoreApi {
    * Start analysing a position (replacing any running analysis); updates arrive on `onAnalysis`.
    */
   startAnalysis(request: AnalysisRequest): Promise<number>
-  stopAnalysis(): Promise<void>
+  /**
+   * Stop the running analysis; with `kill`, also closes the engine.
+   */
+  stopAnalysis(kill?: boolean): Promise<void>
   /**
    * The stored review of these moves from this position, if any.
    */

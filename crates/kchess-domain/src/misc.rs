@@ -4,13 +4,14 @@
 //! sat, since JSON cannot carry them. Those are rebuilt here before validation, so each check sees
 //! exactly the values the TypeScript validator saw.
 
-mod constants;
+pub mod constants;
 mod contracts;
 mod documents;
 mod engine;
 mod patterns;
 mod validate;
 
+pub use constants::MAX_DOCUMENT;
 pub use contracts::{Scope, TV_CHANNEL_KEYS, arities, normalize, validate_arguments};
 
 use engine::J;

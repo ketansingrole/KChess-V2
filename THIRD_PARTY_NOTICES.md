@@ -23,6 +23,7 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 | [Lucide icons](https://lucide.dev) (`@iconify-json/lucide`)                 | ISC               | Interface icons                                                                   |
 | [`shakmaty`](https://github.com/niklasf/shakmaty)                           | GPL-3.0-or-later  | Chess and variant rules in the core's native rules (`crates/kchess-domain`)       |
 | [`serde`](https://serde.rs), `serde_json`                                   | MIT OR Apache-2.0 | Documents passed between the core and its native rules                            |
+| [`thiserror`](https://github.com/dtolnay/thiserror)                         | MIT OR Apache-2.0 | Typed rule errors (`DomainError`) in the native rules (`crates/kchess-domain`)    |
 | [`memchr`](https://github.com/BurntSushi/memchr)                            | MIT OR Unlicense  | Scanning the puzzle database CSV in the native rules                              |
 | [napi-rs](https://napi.rs) (`napi`, `napi-derive`)                          | MIT               | Loading the native rules into Node and Electron                                   |
 

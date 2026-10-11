@@ -6,6 +6,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::Position;
 use std::collections::HashMap;
 
+use crate::error::{DomainError, Result};
 use crate::pgn::{Game, PgnNode, make_pgn, study_document_pgn};
 use crate::position::{self, DestMode};
 use crate::replay::{replay_positions, replay_setup};
@@ -15,8 +16,6 @@ use crate::tree::tree_from_pgn;
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-type Result<T> = std::result::Result<T, String>;
-
 fn arg(args: &[Value], i: usize) -> Option<&Value> {
     args.get(i).filter(|v| !v.is_null())
 }
@@ -24,44 +23,51 @@ fn arg(args: &[Value], i: usize) -> Option<&Value> {
 fn text<'a>(args: &'a [Value], i: usize, name: &str) -> Result<&'a str> {
     arg(args, i)
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("{name} must be a string"))
+        .ok_or_else(|| DomainError::Message(format!("{name} must be a string")))
 }
 
 fn texts<'a>(args: &'a [Value], i: usize, name: &str) -> Result<Vec<&'a str>> {
     arg(args, i)
         .and_then(Value::as_array)
         .and_then(|items| items.iter().map(Value::as_str).collect())
-        .ok_or_else(|| format!("{name} must be a list of strings"))
+        .ok_or_else(|| DomainError::Message(format!("{name} must be a list of strings")))
 }
 
 /// `{ variant, fen }`
 fn setup(args: &[Value], i: usize) -> Result<(&str, &str)> {
     let setup = arg(args, i)
         .and_then(Value::as_object)
-        .ok_or("setup must be an object")?;
+        .ok_or_else(|| DomainError::Message("setup must be an object".to_string()))?;
     let field = |key| setup.get(key).and_then(Value::as_str);
     Ok((
-        field("variant").ok_or("setup.variant")?,
-        field("fen").ok_or("setup.fen")?,
+        field("variant").ok_or_else(|| DomainError::Message("setup.variant".to_string()))?,
+        field("fen").ok_or_else(|| DomainError::Message("setup.fen".to_string()))?,
     ))
 }
 
 /// The legal position a `{ variant, fen }` setup describes; an error when it is not one.
 fn setup_position(args: &[Value]) -> Result<shakmaty::variant::VariantPosition> {
     let (variant, fen) = setup(args, 0)?;
-    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".into())
+    rules::setup_start(variant, fen)
+        .ok_or_else(|| DomainError::Message("setup is not a legal position".to_string()))
 }
 
 /// Dispatch one call. Unknown methods and malformed arguments are errors.
-pub fn call(method: &str, args: &str) -> Result<String> {
+pub fn call(method: &str, args: &str) -> std::result::Result<String, String> {
+    call_inner(method, args).map_err(|e| e.to_string())
+}
+
+fn call_inner(method: &str, args: &str) -> Result<String> {
     // Analysis trees nest deeper than serde_json's default limit of 128 levels.
     let mut reader = serde_json::Deserializer::from_str(args);
     reader.disable_recursion_limit();
-    let args: Vec<Value> =
-        serde::Deserialize::deserialize(&mut reader).map_err(|e| e.to_string())?;
+    let args: Vec<Value> = serde::Deserialize::deserialize(&mut reader)?;
     let result = match method {
         "treeFromPgn" => to_value(tree_from_pgn(text(&args, 0, "pgn")?))?,
-        "treeToPgn" => Value::String(tree_to_pgn(arg(&args, 0).ok_or("root")?, arg(&args, 1))?),
+        "treeToPgn" => Value::String(tree_to_pgn(
+            arg(&args, 0).ok_or_else(|| DomainError::Message("root".to_string()))?,
+            arg(&args, 1),
+        )?),
         "replay" => to_value(replay_positions(
             text(&args, 0, "fen")?,
             &texts(&args, 1, "moves")?,
@@ -70,14 +76,21 @@ pub fn call(method: &str, args: &str) -> Result<String> {
             let (variant, fen) = setup(&args, 0)?;
             to_value(replay_setup(variant, fen, &texts(&args, 1, "moves")?))?
         }
-        "analyseReview" => analyse_review(arg(&args, 0).ok_or("review")?).unwrap_or(Value::Null),
+        "analyseReview" => {
+            analyse_review(arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
+                .unwrap_or(Value::Null)
+        }
         "studyDocumentPgn" => {
-            let chapters = arg(&args, 0).and_then(Value::as_array).ok_or("chapters")?;
+            let chapters = arg(&args, 0)
+                .and_then(Value::as_array)
+                .ok_or_else(|| DomainError::Message("chapters".to_string()))?;
             let pairs: Vec<(&str, &str)> = chapters
                 .iter()
                 .map(|c| Some((c.get("name")?.as_str()?, c.get("pgn")?.as_str()?)))
                 .collect::<Option<_>>()
-                .ok_or("chapters need a name and a pgn")?;
+                .ok_or_else(|| {
+                    DomainError::Message("chapters need a name and a pgn".to_string())
+                })?;
             study_document_pgn(&pairs).map_or(Value::Null, Value::String)
         }
         "pvSan" => {
@@ -157,7 +170,8 @@ pub fn call(method: &str, args: &str) -> Result<String> {
             }
         }
         "defaultFen" => {
-            let variant = rules::lichess_variant(text(&args, 0, "variant")?).ok_or("variant")?;
+            let variant = rules::lichess_variant(text(&args, 0, "variant")?)
+                .ok_or_else(|| DomainError::Message("variant".to_string()))?;
             Value::String(rules::make_fen(&rules::default_position(variant)))
         }
         "fenSetup" => position::fen_setup(text(&args, 0, "fen")?).unwrap_or(Value::Null),
@@ -179,16 +193,21 @@ pub fn call(method: &str, args: &str) -> Result<String> {
                 crate::trainer::call,
             ];
             return match moved.iter().find_map(|call| call(method, &args)) {
-                Some(result) => serde_json::to_string(&result?).map_err(|e| e.to_string()),
-                None => Err(format!("unknown rules method {method}")),
+                Some(result) => {
+                    let value = result.map_err(DomainError::Message)?;
+                    Ok(serde_json::to_string(&value)?)
+                }
+                None => Err(DomainError::Message(format!(
+                    "unknown rules method {method}"
+                ))),
             };
         }
     };
-    serde_json::to_string(&result).map_err(|e| e.to_string())
+    Ok(serde_json::to_string(&result)?)
 }
 
 fn to_value<T: serde::Serialize>(value: T) -> Result<Value> {
-    serde_json::to_value(value).map_err(|e| e.to_string())
+    Ok(serde_json::to_value(value)?)
 }
 
 /* ── Analysis tree ── */
@@ -265,11 +284,11 @@ fn strings(value: Option<&Value>) -> Result<Option<Vec<String>>> {
             .map(|c| {
                 c.as_str()
                     .map(str::to_string)
-                    .ok_or_else(|| "comments must be strings".into())
+                    .ok_or_else(|| DomainError::Message("comments must be strings".to_string()))
             })
             .collect::<Result<Vec<_>>>()
             .map(Some),
-        Some(_) => Err("comments must be a list".into()),
+        Some(_) => Err(DomainError::Message("comments must be a list".to_string())),
     }
 }
 
@@ -281,11 +300,11 @@ fn nags(value: Option<&Value>) -> Result<Option<Vec<u32>>> {
             .map(|n| {
                 n.as_u64()
                     .and_then(|n| u32::try_from(n).ok())
-                    .ok_or_else(|| "nags must be whole numbers".into())
+                    .ok_or_else(|| DomainError::Message("nags must be whole numbers".to_string()))
             })
             .collect::<Result<Vec<_>>>()
             .map(Some),
-        Some(_) => Err("nags must be a list".into()),
+        Some(_) => Err(DomainError::Message("nags must be a list".to_string())),
     }
 }
 
@@ -294,12 +313,17 @@ fn tree_to_pgn(root: &Value, headers: Option<&Value>) -> Result<String> {
     let mut game = Game::empty();
     if let Some(headers) = headers.and_then(Value::as_object) {
         for (key, value) in headers {
-            let value = value.as_str().ok_or("header values must be strings")?;
+            let value = value
+                .as_str()
+                .ok_or_else(|| DomainError::Message("header values must be strings".to_string()))?;
             game.put_header(key, value.to_string());
         }
     }
     game.comments = strings(root.get("comments"))?;
-    let fen = root.get("fen").and_then(Value::as_str).ok_or("root.fen")?;
+    let fen = root
+        .get("fen")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DomainError::Message("root.fen".to_string()))?;
     if fen != INITIAL_FEN
         && let Some(pos) = rules::standard_from_fen(fen)
     {
@@ -317,10 +341,13 @@ fn tree_to_pgn(root: &Value, headers: Option<&Value>) -> Result<String> {
         let children = node
             .get("children")
             .and_then(Value::as_array)
-            .ok_or("children")?;
+            .ok_or_else(|| DomainError::Message("children".to_string()))?;
         let mut added = Vec::with_capacity(children.len());
         for child in children {
-            let san = child.get("san").and_then(Value::as_str).ok_or("san")?;
+            let san = child
+                .get("san")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DomainError::Message("san".to_string()))?;
             let move_node = PgnNode::with(
                 san,
                 strings(child.get("comments"))?,
@@ -395,7 +422,7 @@ fn setup_pgn(
             key,
             value
                 .as_str()
-                .ok_or("header values must be strings")?
+                .ok_or_else(|| DomainError::Message("header values must be strings".to_string()))?
                 .to_string(),
         );
     }

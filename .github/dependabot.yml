@@ -23,6 +23,10 @@ updates:
       # Keep Node types on the runtime major in .nvmrc.
       - dependency-name: '@types/node'
         update-types: [version-update:semver-major]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:

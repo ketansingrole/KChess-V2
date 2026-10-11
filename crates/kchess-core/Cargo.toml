@@ -34,6 +34,10 @@ base64 = "0.22"
 # Cargo.lock through reqwest; no new code is pulled in.
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# Rollback-failure diagnostics (`tracing::warn!` at the storage rollback sites). Already in
+# Cargo.lock through hyper; no new code is pulled in.
+tracing = "0.1"
+
 # libc: `access(2)` for engine/status.rs, and SIGTERM before SIGKILL as Node's
 # `ChildProcess.kill()` does (tokio can only send SIGKILL).
 [target.'cfg(unix)'.dependencies]
@@ -47,3 +51,18 @@ kchess-contracts = { path = "../kchess-contracts" }
 [[bin]]
 name = "kchess-fake-uci"
 path = "tests/support/fake_uci.rs"
+
+[lints]
+# Manual table: cargo 1.94 rejects combining `workspace = true` with overrides,
+# and this crate needs unsafe for libc::access/libc::kill. Mirrors
+# [workspace.lints] except unsafe_code.
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+cast_possible_truncation = "allow"
+redundant_clone = "allow"
+unwrap_used = "allow"
+expect_used = "allow"

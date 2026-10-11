@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+thiserror = "2"
 shakmaty.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
@@ -16,3 +17,6 @@ regex-syntax = "0.8"
 
 [dev-dependencies]
 regex = { version = "1" }
+
+[lints]
+workspace = true
