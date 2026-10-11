@@ -33,7 +33,7 @@
     "@unovis/ts": "^1.7.1",
     "@unovis/vue": "^1.7.1",
     "@vueuse/core": "^15.0.0",
-    "electron": "^44.5.1",
+    "electron": "^44.7.0",
     "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
     "nuxt": "^4.6.0",
