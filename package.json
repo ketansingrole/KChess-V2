@@ -1,6 +1,6 @@
 {
   "name": "kchess",
-  "version": "2026.10.5",
+  "version": "2026.10.6",
   "description": "A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.",
   "license": "GPL-3.0-or-later",
   "author": "Ketan Singrole",
