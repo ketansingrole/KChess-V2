@@ -38,3 +38,24 @@ it('resolves the release configuration from the desktop project directory', () =
   expect(config).toBeDefined()
   expect(existsSync(resolve(root, project, config))).toBe(true)
 })
+
+it('installs the Rust coverage prerequisites before every workflow check run', () => {
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    const workflow = parse(readFileSync(join(root, file), 'utf8'))
+    for (const job of Object.values(workflow.jobs)) {
+      const checkIndex = (job.steps ?? []).findIndex((step) => step.run === 'pnpm run check')
+      if (checkIndex === -1) continue
+      const before = job.steps.slice(0, checkIndex)
+      expect(
+        before.some((step) =>
+          String(step.uses ?? '').startsWith('taiki-e/install-action@cargo-llvm-cov'),
+        ),
+        `${file} must install cargo-llvm-cov before pnpm run check`,
+      ).toBe(true)
+      expect(
+        before.some((step) => String(step.run ?? '').includes('llvm-tools-preview')),
+        `${file} must add llvm-tools-preview before pnpm run check`,
+      ).toBe(true)
+    }
+  }
+})
