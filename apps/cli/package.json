@@ -1,6 +1,6 @@
 {
   "name": "@kchess/cli",
-  "version": "2026.10.4",
+  "version": "2026.10.5",
   "private": true,
   "type": "module",
   "license": "GPL-3.0-or-later",
