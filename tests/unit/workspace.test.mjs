@@ -59,3 +59,14 @@ it('installs the Rust coverage prerequisites before every workflow check run', (
     }
   }
 })
+
+it('installs dependencies before every release job that runs a command', () => {
+  const workflow = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'))
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (!(job.steps ?? []).some((step) => typeof step.run === 'string')) continue
+    expect(
+      job.steps.some((step) => String(step.run ?? '').startsWith('pnpm install')),
+      `release job ${name} must install dependencies before running commands`,
+    ).toBe(true)
+  }
+})
