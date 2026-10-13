@@ -91,22 +91,26 @@ Process note: the 2026-10-13 bug-audit document records a passing `pnpm run chec
 committed tree does not reproduce. Run the full check before committing; CI never saw these
 commits.
 
-## Fix follow-up (2026-10-14, uncommitted work on `main` above `65298e1`)
+## Fix follow-up (2026-10-14, local commits on `main` above `65298e1`)
 
-All 15 findings fixed in the working tree; `pnpm run check` passes end to end
+All 15 findings fixed; `pnpm run check` passes end to end
 (format, lint 0 warnings, notices, types, rust, rust-coverage, native, contracts,
-release-versions, smoke, core, unit 105 files / 985 tests with lines 45.27% ≥ 45%,
-performance). `node --check tooling/dev.mjs` passes. `pnpm run build` passes;
-`pnpm run test:e2e` gives 46 passed / 3 failed, and the same 3 fail on a clean
-`65298e1` worktree (pre-existing environment issue: the seeded review engine never
-produces the Review button on this box, and the two logout failures cascade from its
-dirty seed via `UNIQUE constraint failed: accounts.username`).
+release-versions, smoke, core, unit 105 files / 985 tests with lines 45.26% ≥ 45%,
+performance). `node --check tooling/dev.mjs` passes. `pnpm run build` passes and
+`pnpm run test:e2e` passes 49/49.
+
+16. E2E seed-tag regression from `65298e1` (not an environment issue). The switch from
+    title substrings to `@seed:` tags mis-tagged three tests: the analysis-board review
+    test gained a pre-reviewed game, so its "Review game" button never appeared; the
+    first quick-logout test seeded the reviewed game twice
+    (`UNIQUE constraint failed: accounts.username`); and "quick logout all accounts" lost
+    its accounts. Tags now reproduce the previous fixtures exactly.
 
 1. `tooling/dev.mjs`: native-build failure now throws (with `cause`) instead of a
    top-level `return`; outer catch logs and cleans up. Verified `node --check` passes.
-2. `.prettierignore` and `THIRD_PARTY_NOTICES.md` point at
+1. `.prettierignore` and `THIRD_PARTY_NOTICES.md` point at
    `crates/kchess-domain/data/openings.json`. The generated file stays ignored.
-3. Lint green: `tests/core/analysis-engine.test.ts` awaits `stopAnalysis`;
+1. Lint green: `tests/core/analysis-engine.test.ts` awaits `stopAnalysis`;
    `stores/local.ts` uses `import type`; silent catches collapsed into one helper per
    area (`tests/core/helpers/capture.ts`, `apps/desktop/tests/unit/capture.ts`,
    `tooling/capture-error.mjs`, each holding the area's single justified disable;
@@ -115,41 +119,41 @@ dirty seed via `UNIQUE constraint failed: accounts.username`).
    helper since TS 6 drops const narrowing in closures; one revert: a `fresh`-object
    hoist in `lichessStudies.ts` bypassed Vue reactivity and broke 5 unit tests —
    fixed by reading back through the store).
-4. Coverage 44.87% → 45.27% lines via five new suites (`tests/unit/time-control`,
+1. Coverage 44.87% → 45.27% lines via five new suites (`tests/unit/time-control`,
    `tv-channels`, `rush-rules`, `puzzle-rules`, `validate-rules`: 64 tests, 100%
    lines on the five target modules). Thresholds untouched.
-5. Single instance, both layers: Electron `requestSingleInstanceLock` (second
+1. Single instance, both layers: Electron `requestSingleInstanceLock` (second
    instance quits, first restores/creates its window; startup guarded) and
    `ProfileClaim` holds an OS advisory lock (`profile.lock`, `File::try_lock`,
    unlocked in `release()` so a closed core reopens while its object lives).
    New `crates/kchess-core/tests/profile_lock.rs` (3 tests: foreign-held lock
    refuses claim and `Core::open`; drop releases; close releases and reopen works).
-6. Quit trap: `QuitPreparation` returns `true` when the renderer is gone
+1. Quit trap: `QuitPreparation` returns `true` when the renderer is gone
    (`gone()`, set on `render-process-gone`, cleared on new/finished load) and the
    retry dialog offers Retry / Quit without saving / Cancel (`QuitRetryChoice`).
    `quit.test.ts` updated to the new contract plus 3 new regression tests (10 pass).
    E2E quit-dialog mock updated to the new Cancel index (response 2); both
    `@packaged` quit/close tests pass.
-7. Renderer `warning` console messages go through `logWarn` (errors stay `logError`).
-8. Tenths under 10 s are now the rule in Rust `format_clock`
+1. Renderer `warning` console messages go through `logWarn` (errors stay `logError`).
+1. Tenths under 10 s are now the rule in Rust `format_clock`
    (`0:09.9`, floor-based, clamped); `local.ts`, `computerGame.ts` and
    `local.vue:otbText` use `formatClock`. Golden `training.json` regenerated for the
    5 changed digests only; `native-rules` green incl. `KCHESS_FUZZ_SCALE=20`;
    `tooling/chess-smoke.ts` asserts the new `0:09.` prefix.
-9. `watchGame(gameId)` action on the watch store (friends tab + stream +
+1. `watchGame(gameId)` action on the watch store (friends tab + stream +
    `selectPage('watch')`); call sites unified. Shared `utils/storageKeys.ts`
    (`WATCH_TAB_KEY`, `PRACTICE_TAB_KEY`, `REPERTOIRE_STUDY_KEY`) replaces all
    literals. Watch/quick-pick/computer-game/clock tests pass (28 + 38).
-10. `OnlineSession::action` uses `live_token(id, "sending an action")`; redundant
-    `current_account` write-back removed. Message text unchanged.
-11. `ASSISTANCE_METHODS` lives in `kchess_domain::misc::contracts`, is exported by
-    `kchess-contracts` into `ts/generated/arity.ts`, and the CLI imports it
-    (`@kchess/contracts` added to its deps). `check:contracts` green.
-12. `SQLITE_EXEMPT` is now a real exclusion in the `node:sqlite` boundary rule.
-13. `secrets.ts` invokes the detected absolute `secret-tool` path
-    (`credentialTool`); new Linux unit test asserts every call uses it (6 pass).
-14. `RUST_MIGRATION.md` no longer names the removed TypeScript storage suites.
-15. `deny.toml` allows the repo-compatible licenses (own GPL-3.0-or-later crates,
-    shakmaty, Zlib, CDLA-Permissive-2.0) and path-dependency wildcards;
-    `cargo deny check` is fully green and runs as a new CI `deny` job
-    (`taiki-e/install-action@cargo-deny`).
+1. `OnlineSession::action` uses `live_token(id, "sending an action")`; redundant
+   `current_account` write-back removed. Message text unchanged.
+1. `ASSISTANCE_METHODS` lives in `kchess_domain::misc::contracts`, is exported by
+   `kchess-contracts` into `ts/generated/arity.ts`, and the CLI imports it
+   (`@kchess/contracts` added to its deps). `check:contracts` green.
+1. `SQLITE_EXEMPT` is now a real exclusion in the `node:sqlite` boundary rule.
+1. `secrets.ts` invokes the detected absolute `secret-tool` path
+   (`credentialTool`); new Linux unit test asserts every call uses it (6 pass).
+1. `RUST_MIGRATION.md` no longer names the removed TypeScript storage suites.
+1. `deny.toml` allows the repo-compatible licenses (own GPL-3.0-or-later crates,
+   shakmaty, Zlib, CDLA-Permissive-2.0) and path-dependency wildcards;
+   `cargo deny check` is fully green and runs as a new CI `deny` job
+   (`taiki-e/install-action@cargo-deny`).

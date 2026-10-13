@@ -220,7 +220,7 @@ const test = base.extend<{
       db.prepare('INSERT INTO accounts (username, connected) VALUES (?, 1)').run('tester')
     if (wantReviewedGame) seedReviewedGame(db)
     if (wantQuickLogout) {
-      seedReviewedGame(db)
+      // `wantReviewedGame` already seeded the reviewed game for this tag.
       db.exec(
         "UPDATE accounts SET connected = 1; INSERT INTO accounts (username, connected) VALUES ('second', 1); INSERT INTO tokens VALUES ('tester', 'invalid'), ('second', 'invalid'); INSERT INTO api_cache VALUES ('tester:profile', '{}', 0)",
       )
@@ -887,7 +887,7 @@ test('keeps variations on the analysis board and steps through them', async ({
   await expect(page.locator('.pv-row:not(.pending)').first()).toBeVisible({ timeout: 30_000 })
 })
 
-test('reviews a game on the analysis board, labelling the blunder and the better move @seed:reviewed-game', async ({
+test('reviews a game on the analysis board, labelling the blunder and the better move', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Analysis board')
@@ -1204,7 +1204,7 @@ test('renders the Lichess authorization confirmation page clearly', async ({
   await page.screenshot({ path: test.info().outputPath('kchess-lichess-confirmation.png') })
 })
 
-test('quick logout removes only the selected account and returns to account-free Home after the last @seed:quick-logout @seed:reviewed-game', async ({
+test('quick logout removes only the selected account and returns to account-free Home after the last @seed:quick-logout', async ({
   desktop: { page },
 }) => {
   const before = await page.evaluate(() => window.kchess.loadData())
@@ -1264,7 +1264,9 @@ test('quick logout removes only the selected account and returns to account-free
   expect((await page.evaluate(() => window.kchess.loadData())).accounts).toEqual([])
 })
 
-test('quick logout all accounts is a separate explicit action', async ({ desktop: { page } }) => {
+test('quick logout all accounts is a separate explicit action @seed:quick-logout', async ({
+  desktop: { page },
+}) => {
   await page.getByRole('button', { name: /account menu/i }).click()
   await Promise.all([
     page.waitForEvent('load'),
