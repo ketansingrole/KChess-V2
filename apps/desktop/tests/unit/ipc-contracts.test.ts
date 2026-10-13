@@ -41,6 +41,7 @@ it.each([
   ['reportRendererError', [{ route: '/analysis', message: 'x'.repeat(1001), info: 'render' }]],
   ['exportToLichessStudy', ['Alice', '', 'Chapter', ' ']],
   ['stopAnalysis', ['yes']],
+  ['completeQuit', ['10000000-0000-4000-8000-000000000000', 'saved']],
 ] as [InvokeMethod, unknown[]][])('rejects malformed %s input', (method, args) => {
   expect(() => validateIpcArguments(method, args)).toThrow()
 })
@@ -56,6 +57,9 @@ it('allows optional arguments and preserves valid invocations', () => {
   expect(() => validateIpcArguments('syncGames', [])).not.toThrow()
   expect(() => validateIpcArguments('stopAnalysis', [])).not.toThrow()
   expect(() => validateIpcArguments('stopAnalysis', [true])).not.toThrow()
+  expect(() =>
+    validateIpcArguments('completeQuit', ['10000000-0000-4000-8000-000000000000', false]),
+  ).not.toThrow()
   expect(() => validateIpcArguments('bestMove', [[], 'club'])).not.toThrow()
   expect(() => validateIpcArguments('positionLookup', ['opening', INITIAL_FEN])).not.toThrow()
   expect(() => validateIpcArguments('reviewGet', [INITIAL_FEN, ['e2e4']])).not.toThrow()

@@ -25,8 +25,8 @@ impl DbLichessStore {
         DbLichessStore { database }
     }
 
-    fn call(&self, method: &str, args: &[Value]) -> CoreResult<Value> {
-        self.database.call(method, args)
+    async fn call(&self, method: &str, args: &[Value]) -> CoreResult<Value> {
+        self.database.call_async(method, args).await
     }
 
     fn strings(value: Value) -> Vec<String> {
@@ -43,136 +43,193 @@ impl DbLichessStore {
 }
 
 impl LichessStore for DbLichessStore {
-    fn accounts(&self) -> CoreResult<Vec<AccountRow>> {
-        let data = self.call("store.games.loadData", &[])?;
-        let rows = data
-            .get("accounts")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(rows
-            .iter()
-            .filter_map(|row| {
-                Some(AccountRow {
-                    username: row.get("username")?.as_str()?.to_string(),
-                    connected: row
-                        .get("connected")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    last_synced_at: row.get("lastSyncedAt").and_then(Value::as_i64),
+    fn accounts<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<AccountRow>>> {
+        Box::pin(async move {
+            let data = self.call("store.games.loadData", &[]).await?;
+            let rows = data
+                .get("accounts")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            Ok(rows
+                .iter()
+                .filter_map(|row| {
+                    Some(AccountRow {
+                        username: row.get("username")?.as_str()?.to_string(),
+                        connected: row
+                            .get("connected")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        last_synced_at: row.get("lastSyncedAt").and_then(Value::as_i64),
+                    })
                 })
-            })
-            .collect())
-    }
-
-    fn dismissed_friends(&self) -> CoreResult<Vec<String>> {
-        Ok(Self::strings(
-            self.call("store.games.dismissedFriends", &[])?,
-        ))
-    }
-
-    fn pending_game_ids(&self, account: &str) -> CoreResult<Vec<String>> {
-        Ok(Self::strings(
-            self.call("store.games.pendingGameIds", &[json!(account)])?,
-        ))
-    }
-
-    fn save_games_page(
-        &self,
-        account: &str,
-        games: &[LichessGame],
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()> {
-        // The store writes the games and their reviews in one transaction, and checks `current`
-        // once more before it writes.
-        self.call(
-            "store.games.saveGamesPage",
-            &[
-                json!(account),
-                json!(games),
-                json!(reviews),
-                json!(current()),
-            ],
-        )
-        .map(|_| ())
-    }
-
-    fn save_games_cursor(
-        &self,
-        account: &str,
-        synced_at: i64,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()> {
-        self.call(
-            "store.games.saveGames",
-            &[
-                json!(account),
-                json!([]),
-                json!(synced_at),
-                json!(current()),
-            ],
-        )
-        .map(|_| ())
-    }
-
-    fn read_api_cache(&self, key: &str) -> CoreResult<Option<CachedValue>> {
-        let row = self.call("store.games.readApiCache", &[json!(key)])?;
-        Ok(match row {
-            Value::Object(object) => Some(CachedValue {
-                value: object.get("value").cloned().unwrap_or(Value::Null),
-                fetched_at: object.get("fetchedAt").and_then(Value::as_i64).unwrap_or(0),
-            }),
-            _ => None,
+                .collect())
         })
     }
 
-    fn write_api_cache(
-        &self,
-        key: &str,
-        value: &Value,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()> {
-        self.call(
-            "store.games.writeApiCache",
-            &[json!(key), value.clone(), json!(current())],
-        )
-        .map(|_| ())
+    fn dismissed_friends<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>> {
+        Box::pin(async move {
+            Ok(Self::strings(
+                self.call("store.games.dismissedFriends", &[]).await?,
+            ))
+        })
     }
 
-    fn save_login(&self, username: &str, ciphertext: &str) -> CoreResult<()> {
-        self.call(
-            "store.games.saveTokenCiphertext",
-            &[json!(username), json!(ciphertext)],
-        )
-        .map(|_| ())
+    fn pending_game_ids<'a>(
+        &'a self,
+        account: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>> {
+        Box::pin(async move {
+            Ok(Self::strings(
+                self.call("store.games.pendingGameIds", &[json!(account)])
+                    .await?,
+            ))
+        })
     }
 
-    fn save_reviews(
-        &self,
-        account: &str,
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<Vec<Value>> {
-        let _ = account;
-        if !current() {
-            return Err(CoreError::new("Sync was cancelled."));
-        }
-        let mut stored = Vec::with_capacity(reviews.len());
-        for review in reviews {
-            let written = self.call(
-                "store.reviewStore.writeReview",
-                std::slice::from_ref(review),
-            )?;
-            stored.push(written.get("review").cloned().unwrap_or(Value::Null));
-        }
-        Ok(stored)
+    fn save_games_page<'a>(
+        &'a self,
+        account: &'a str,
+        games: &'a [LichessGame],
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            // The store writes the games and their reviews in one transaction, and checks `current`
+            // once more before it writes.
+            self.database
+                .call_async_with("store.games.saveGamesPage", || {
+                    Ok(vec![
+                        json!(account),
+                        json!(games),
+                        json!(reviews),
+                        json!(current()),
+                    ])
+                })
+                .await
+                .map(|_| ())
+        })
     }
 
-    fn mark_checked(&self, ids: &[String]) -> CoreResult<()> {
-        let now = super::accounts::now_ms();
-        self.call("store.reviewStore.markChecked", &[json!(ids), json!(now)])
-            .map(|_| ())
+    fn save_games_cursor<'a>(
+        &'a self,
+        account: &'a str,
+        synced_at: i64,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            self.database
+                .call_async_with("store.games.saveGames", || {
+                    Ok(vec![
+                        json!(account),
+                        json!([]),
+                        json!(synced_at),
+                        json!(current()),
+                    ])
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn read_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<CachedValue>>> {
+        Box::pin(async move {
+            let row = self.call("store.games.readApiCache", &[json!(key)]).await?;
+            Ok(match row {
+                Value::Object(object) => Some(CachedValue {
+                    value: object.get("value").cloned().unwrap_or(Value::Null),
+                    fetched_at: object.get("fetchedAt").and_then(Value::as_i64).unwrap_or(0),
+                }),
+                _ => None,
+            })
+        })
+    }
+
+    fn write_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            self.database
+                .call_async_with("store.games.writeApiCache", || {
+                    Ok(vec![json!(key), value.clone(), json!(current())])
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn save_login<'a>(
+        &'a self,
+        username: &'a str,
+        ciphertext: &'a str,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            self.database
+                .call_async_with("store.games.saveTokenCiphertext", || {
+                    if !current() {
+                        return Err(CoreError::aborted("Login was cancelled by logout."));
+                    }
+                    Ok(vec![json!(username), json!(ciphertext)])
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn save_reviews<'a>(
+        &'a self,
+        account: &'a str,
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>> {
+        Box::pin(async move {
+            let _ = account;
+            if !current() {
+                return Err(CoreError::new("Sync was cancelled."));
+            }
+            let mut stored = Vec::with_capacity(reviews.len());
+            for review in reviews {
+                let written = self
+                    .database
+                    .call_async_with("store.reviewStore.writeReview", || {
+                        if !current() {
+                            return Err(CoreError::new("Sync was cancelled."));
+                        }
+                        Ok(vec![review.clone()])
+                    })
+                    .await?;
+                stored.push(written.get("review").cloned().unwrap_or(Value::Null));
+            }
+            Ok(stored)
+        })
+    }
+
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            let now = super::accounts::now_ms();
+            self.database
+                .call_async_with("store.reviewStore.markChecked", || {
+                    if !current() {
+                        return Err(CoreError::aborted("Sync was cancelled."));
+                    }
+                    Ok(vec![json!(ids), json!(now)])
+                })
+                .await
+                .map(|_| ())
+        })
     }
 }
 
@@ -196,7 +253,8 @@ impl TokenSource for DbTokens {
         Box::pin(async move {
             let ciphertext = self
                 .database
-                .call("store.games.tokenCiphertext", &[json!(account)])?;
+                .call_async("store.games.tokenCiphertext", &[json!(account)])
+                .await?;
             match ciphertext.as_str() {
                 Some(ciphertext) => self.capabilities.decrypt(ciphertext).await.map(Some),
                 None => Ok(None),
@@ -222,7 +280,8 @@ impl ExplorerLogin for DbExplorerLogin {
         Box::pin(async move {
             let account = self
                 .database
-                .call("store.setupPositionLookup.explorerAccount", &[])?;
+                .call_async("store.setupPositionLookup.explorerAccount", &[])
+                .await?;
             match account.as_str() {
                 Some(account) => self.tokens.token(account).await,
                 None => Ok(None),
@@ -243,24 +302,37 @@ impl DbLookups {
 }
 
 impl LookupCache for DbLookups {
-    fn read(&self, key: &str) -> CoreResult<Option<Value>> {
-        // The store answers the saved text, or null when it is missing or too large to read; text
-        // that is not JSON is an unreadable entry, which the explorer treats as missing.
-        let text = self
-            .database
-            .call("store.setupPositionLookup.read", &[json!(key)])?;
-        Ok(text
-            .as_str()
-            .and_then(|text| serde_json::from_str::<Value>(text).ok()))
+    fn read<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<Value>>> {
+        Box::pin(async move {
+            // The store answers the saved text, or null when it is missing or too large to read; text
+            // that is not JSON is an unreadable entry, which the explorer treats as missing.
+            let text = self
+                .database
+                .call_async("store.setupPositionLookup.read", &[json!(key)])
+                .await?;
+            Ok(text
+                .as_str()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok()))
+        })
     }
 
-    fn write(&self, key: &str, value: &Value) -> CoreResult<()> {
-        self.database
-            .call(
-                "store.setupPositionLookup.write",
-                &[json!(key), value.clone()],
-            )
-            .map(|_| ())
+    fn write<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            self.database
+                .call_async(
+                    "store.setupPositionLookup.write",
+                    &[json!(key), value.clone()],
+                )
+                .await
+                .map(|_| ())
+        })
     }
 }
 
@@ -278,8 +350,8 @@ mod tests {
 
     /// A saved explorer lookup written by the cache comes back as the same JSON, so a refresh that
     /// fails can show it (`lookups.rs` reads the entry the store keeps as text).
-    #[test]
-    fn a_saved_lookup_reads_back_as_the_json_it_was_written_as() {
+    #[tokio::test]
+    async fn a_saved_lookup_reads_back_as_the_json_it_was_written_as() {
         let dir = tempfile::tempdir().expect("temp dir");
         let host: Arc<dyn Host> = Arc::new(Quiet);
         let database = Arc::new(Database::new(
@@ -293,8 +365,8 @@ mod tests {
             "fetchedAt": 1,
             "moves": [{ "uci": "e2e4", "san": "e4", "white": 100, "draws": 20, "black": 50 }],
         });
-        assert_eq!(cache.read("opening:fen").expect("read"), None);
-        cache.write("opening:fen", &saved).expect("write");
-        assert_eq!(cache.read("opening:fen").expect("read"), Some(saved));
+        assert_eq!(cache.read("opening:fen").await.expect("read"), None);
+        cache.write("opening:fen", &saved).await.expect("write");
+        assert_eq!(cache.read("opening:fen").await.expect("read"), Some(saved));
     }
 }

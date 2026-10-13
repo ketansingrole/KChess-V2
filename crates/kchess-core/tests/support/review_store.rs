@@ -102,99 +102,124 @@ fn summary_of(review: &StoredReview) -> Value {
 }
 
 impl ReviewStorage for MemoryStore {
-    fn read_review(&self, key: &str) -> Result<Option<StoredReview>> {
-        Ok(self.review(key))
+    fn read_review<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>> {
+        Box::pin(async move { Ok(self.review(key)) })
     }
 
-    fn write_review(&self, review: StoredReview) -> Result<ReviewUpdate> {
-        let mut inner = self.inner.lock().expect("store");
-        let existing = inner.reviews.get(&review.key).cloned();
-        if let Some(stored) = &existing
-            && rank(stored) > rank(&review)
-        {
-            if let Some(game) = &review.game_id {
-                inner.links.insert((game.clone(), review.key.clone()));
+    fn write_review<'a>(
+        &'a self,
+        review: StoredReview,
+    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>> {
+        Box::pin(async move {
+            let mut inner = self.inner.lock().expect("store");
+            let existing = inner.reviews.get(&review.key).cloned();
+            if let Some(stored) = &existing
+                && rank(stored) > rank(&review)
+            {
+                if let Some(game) = &review.game_id {
+                    inner.links.insert((game.clone(), review.key.clone()));
+                }
+                let kept = StoredReview {
+                    game_id: review.game_id.clone().or_else(|| stored.game_id.clone()),
+                    ..stored.clone()
+                };
+                let summary = summary_of(&kept);
+                return Ok(ReviewUpdate {
+                    review: kept,
+                    summary,
+                });
             }
-            let kept = StoredReview {
-                game_id: review.game_id.clone().or_else(|| stored.game_id.clone()),
-                ..stored.clone()
+            let merged = StoredReview {
+                game_id: review
+                    .game_id
+                    .clone()
+                    .or_else(|| existing.and_then(|stored| stored.game_id)),
+                updated_at: 1_000,
+                ..review
             };
-            let summary = summary_of(&kept);
-            return Ok(ReviewUpdate {
-                review: kept,
+            inner.reviews.insert(merged.key.clone(), merged.clone());
+            if let Some(game) = &merged.game_id {
+                inner.links.insert((game.clone(), merged.key.clone()));
+            }
+            let summary = summary_of(&merged);
+            Ok(ReviewUpdate {
+                review: merged,
                 summary,
-            });
-        }
-        let merged = StoredReview {
-            game_id: review
-                .game_id
-                .clone()
-                .or_else(|| existing.and_then(|stored| stored.game_id)),
-            updated_at: 1_000,
-            ..review
-        };
-        inner.reviews.insert(merged.key.clone(), merged.clone());
-        if let Some(game) = &merged.game_id {
-            inner.links.insert((game.clone(), merged.key.clone()));
-        }
-        let summary = summary_of(&merged);
-        Ok(ReviewUpdate {
-            review: merged,
-            summary,
+            })
         })
     }
 
-    fn has_account(&self, username: &str) -> Result<bool> {
-        Ok(self
-            .inner
-            .lock()
-            .expect("store")
-            .accounts
-            .iter()
-            .any(|account| account.eq_ignore_ascii_case(username)))
+    fn has_account<'a>(
+        &'a self,
+        username: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            Ok(self
+                .inner
+                .lock()
+                .expect("store")
+                .accounts
+                .iter()
+                .any(|account| account.eq_ignore_ascii_case(username)))
+        })
     }
 
-    fn mark_checked(&self, ids: &[String]) -> Result<()> {
-        self.inner
-            .lock()
-            .expect("store")
-            .checked
-            .extend(ids.iter().cloned());
-        Ok(())
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.inner
+                .lock()
+                .expect("store")
+                .checked
+                .extend(ids.iter().cloned());
+            Ok(())
+        })
     }
 
-    fn games_to_review(&self, accounts: &[String], since: i64) -> Result<Vec<GameToReview>> {
-        let inner = self.inner.lock().expect("store");
-        let mut games: Vec<&GameRow> = inner
-            .games
-            .iter()
-            .filter(|game| {
-                accounts
-                    .iter()
-                    .any(|account| account.eq_ignore_ascii_case(&game.account))
-                    && game.created_at >= since
-                    && !game.moves.is_empty()
-            })
-            .filter(|game| {
-                !inner.links.iter().any(|(id, key)| {
-                    id == &game.id && inner.reviews.get(key).is_some_and(|review| review.complete)
+    fn games_to_review<'a>(
+        &'a self,
+        accounts: &'a [String],
+        since: i64,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>> {
+        Box::pin(async move {
+            let inner = self.inner.lock().expect("store");
+            let mut games: Vec<&GameRow> = inner
+                .games
+                .iter()
+                .filter(|game| {
+                    accounts
+                        .iter()
+                        .any(|account| account.eq_ignore_ascii_case(&game.account))
+                        && game.created_at >= since
+                        && !game.moves.is_empty()
                 })
-            })
-            .collect();
-        games.sort_by_key(|game| std::cmp::Reverse(game.created_at));
-        Ok(games
-            .into_iter()
-            .take(300)
-            .map(|game| GameToReview {
-                id: game.id.clone(),
-                account: game.account.clone(),
-                moves: game.moves.clone(),
-                pgn: game.pgn.clone(),
-                perf: game.perf.clone(),
-                created_at: game.created_at,
-                checked: inner.checked.contains(&game.id),
-            })
-            .collect())
+                .filter(|game| {
+                    !inner.links.iter().any(|(id, key)| {
+                        id == &game.id
+                            && inner.reviews.get(key).is_some_and(|review| review.complete)
+                    })
+                })
+                .collect();
+            games.sort_by_key(|game| std::cmp::Reverse(game.created_at));
+            Ok(games
+                .into_iter()
+                .take(300)
+                .map(|game| GameToReview {
+                    id: game.id.clone(),
+                    account: game.account.clone(),
+                    moves: game.moves.clone(),
+                    pgn: game.pgn.clone(),
+                    perf: game.perf.clone(),
+                    created_at: game.created_at,
+                    checked: inner.checked.contains(&game.id),
+                })
+                .collect())
+        })
     }
 }
 
@@ -273,7 +298,7 @@ impl ReviewHost for ScriptedHost {
                 .expect("fetched")
                 .push((account, ids.clone()));
             // What the real host does: the games are marked checked, nothing came back.
-            self.store.mark_checked(&ids)?;
+            self.store.mark_checked(&ids).await?;
             Ok(Vec::new())
         })
     }

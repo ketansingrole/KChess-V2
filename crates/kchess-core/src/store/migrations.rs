@@ -228,6 +228,13 @@ pub const MIGRATIONS: &[&str] = &[
     seq INTEGER NOT NULL
   );
   CREATE INDEX idx_archived_games_seq ON archived_games(seq);"#,
+    r#"CREATE TABLE studies (
+    id TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    textUnits INTEGER NOT NULL
+  );
+  CREATE INDEX idx_studies_position ON studies(position);"#,
 ];
 
 fn storage_error(cause: rusqlite::Error) -> CoreError {

@@ -59,8 +59,8 @@ function guard(action: () => void | Promise<void>): void {
 function open(study: SavedStudy, chapterId?: string): void {
   if (analysis.studyId === study.id && (!chapterId || analysis.studyChapterId === chapterId))
     return app.selectPage('analysis')
-  guard(() => {
-    if (analysis.openStudy(study.id, chapterId)) app.selectPage('analysis')
+  guard(async () => {
+    if (await analysis.openStudy(study.id, chapterId)) app.selectPage('analysis')
   })
 }
 function create(): void {
@@ -309,7 +309,7 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
       </div>
       <p v-if="library.error" role="alert" class="mb-3 text-sm text-error">{{ library.error }}</p>
 
-      <div v-if="!library.items.length" class="card empty">
+      <div v-if="!library.items.length && !library.error" class="card empty">
         <UIcon name="i-lucide-library-big" class="empty-icon" />
         <h2 class="text-lg font-semibold">No studies yet</h2>
         <div class="flex gap-2">
@@ -320,7 +320,7 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
         </div>
       </div>
 
-      <p v-else-if="!cards.length" class="muted py-10 text-center">
+      <p v-else-if="!cards.length && !library.error" class="muted py-10 text-center">
         No study matches “{{ query }}”.
       </p>
 

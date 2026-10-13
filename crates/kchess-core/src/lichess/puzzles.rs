@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, LichessError, authorize, lichess_error};
+use super::client::{Failure, LichessError, authorize, lichess_error, read_with_deadline};
 use super::policy::Admitted;
 use super::reviews::collect_lines;
 use crate::error::{CoreError, Result as CoreResult};
@@ -301,20 +301,9 @@ async fn post_json(
     let Admitted { response, hold } = lichess.client().policy().send(request, cancel).await?;
     let status = response.status().as_u16();
     let timeout: Duration = lichess.client().policy().timeout();
-    let text = match tokio::time::timeout(timeout, response.text()).await {
-        Ok(Ok(text)) => text,
-        Ok(Err(cause)) => {
-            drop(hold);
-            return Err(Failure::Core(CoreError::new(cause.to_string())));
-        }
-        Err(_) => {
-            drop(hold);
-            return Err(Failure::Core(CoreError::new(
-                "Lichess request timed out. Retry or reconnect.",
-            )));
-        }
-    };
+    let text = read_with_deadline(response, cancel, false, timeout, None).await;
     drop(hold);
+    let text = text?;
     let endpoint = format!("POST {path}");
     if !(200..300).contains(&status) {
         let detail = if text.is_empty() {

@@ -36,13 +36,13 @@ it('keeps all chapters together and edits the selected chapter without overwriti
   const analysis = useAnalysisStore()
   const firstPgn = library.items[0]!.chapters[0]!.pgn
   const secondId = library.items[0]!.chapters[1]!.id
-  expect(analysis.openStudy(id, secondId)).toBe(true)
+  expect(await analysis.openStudy(id, secondId)).toBe(true)
   analysis.root.comments = ['Queen pawn notes']
   await nextTick()
   await analysis.flushStudy()
   expect(library.items[0]!.chapters[0]!.pgn).toBe(firstPgn)
   expect(library.items[0]!.chapters[1]!.pgn).toContain('Queen pawn notes')
-  expect(analysis.openStudy(id, library.items[0]!.chapters[0]!.id)).toBe(true)
+  expect(await analysis.openStudy(id, library.items[0]!.chapters[0]!.id)).toBe(true)
   expect(analysis.pgn()).toContain('Keep this')
   expect(analysis.pgn()).toContain('$1')
   expect(analysis.pgn()).toContain('c5')

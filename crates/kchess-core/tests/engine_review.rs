@@ -94,6 +94,7 @@ async fn a_quick_pass_shows_first_then_the_deep_pass_completes_and_finds_the_blu
     assert!(
         rig.reviews
             .request_review(request(&SCHOLARS))
+            .await
             .expect("the request")
             .is_none()
     );
@@ -139,6 +140,7 @@ async fn a_request_for_a_finished_review_answers_from_the_store() {
     let rig = rig("review", "stored", false, "off", true);
     rig.reviews
         .request_review(request(&SCHOLARS))
+        .await
         .expect("the request");
     wait_until(WAIT, "the complete review", || {
         rig.host.complete_updates().into_iter().next()
@@ -147,6 +149,7 @@ async fn a_request_for_a_finished_review_answers_from_the_store() {
     let stored = rig
         .reviews
         .request_review(request(&SCHOLARS))
+        .await
         .expect("the request")
         .expect("the stored review");
     assert!(stored.complete);
@@ -242,10 +245,12 @@ async fn the_most_recent_request_is_reviewed_first() {
     *rig.host.busy.lock().expect("busy") = Some(Pause::Online);
     rig.reviews
         .request_review(request(&SCHOLARS))
+        .await
         .expect("first");
     let second = ["e2e4", "e7e5", "g1f3"];
     rig.reviews
         .request_review(request(&second))
+        .await
         .expect("second");
     wait_until(WAIT, "both reviews queued", || {
         (rig.reviews.review_status().waiting == 2).then_some(())
@@ -275,6 +280,7 @@ async fn two_requested_reviews_both_finish_instead_of_yielding_to_each_other() {
     let rig = rig("slow-review", "no-livelock", false, "off", true);
     rig.reviews
         .request_review(request(&SCHOLARS))
+        .await
         .expect("first");
     // The quick pass is published while the deep pass still runs: the second request overlaps it.
     wait_until(WAIT, "the first review's quick pass", || {
@@ -291,6 +297,7 @@ async fn two_requested_reviews_both_finish_instead_of_yielding_to_each_other() {
     let second = ["e2e4", "e7e5", "g1f3"];
     rig.reviews
         .request_review(request(&second))
+        .await
         .expect("second");
     wait_until(WAIT, "both reviews", || {
         (rig.host.complete_updates().len() >= 2).then_some(())
@@ -318,7 +325,10 @@ async fn discarding_an_account_drops_its_queued_reviews() {
     let mut queued = request(&SCHOLARS);
     queued.account = Some("tester".into());
     queued.game_id = Some("g1".into());
-    rig.reviews.request_review(queued).expect("the request");
+    rig.reviews
+        .request_review(queued)
+        .await
+        .expect("the request");
     wait_until(WAIT, "the queued review", || {
         (rig.reviews.review_status().waiting == 1).then_some(())
     })
@@ -342,7 +352,10 @@ async fn discarding_an_account_while_its_review_runs_stores_nothing_more() {
     let mut running = request(&SCHOLARS);
     running.account = Some("tester".into());
     running.game_id = Some("g1".into());
-    rig.reviews.request_review(running).expect("the request");
+    rig.reviews
+        .request_review(running)
+        .await
+        .expect("the request");
     // The quick pass finishes; the deep pass stalls in the engine.
     wait_until(WAIT, "the quick pass", || {
         updates_of(&rig)
@@ -374,6 +387,7 @@ async fn cancelling_keeps_the_finished_quick_pass_and_is_not_complete() {
     let rig = rig("stall", "cancel", false, "off", true);
     rig.reviews
         .request_review(request(&SCHOLARS))
+        .await
         .expect("the request");
     let key = key_of(START, &SCHOLARS);
     wait_until(WAIT, "the quick pass", || {
@@ -402,6 +416,7 @@ async fn battery_power_limits_the_threads_a_review_may_use() {
     let rig = rig("review", "battery-threads", true, "off", true);
     rig.reviews
         .request_review(request(&["e2e4", "e7e5"]))
+        .await
         .expect("the request");
     wait_until(WAIT, "the review", || {
         rig.host.complete_updates().into_iter().next()
@@ -437,6 +452,7 @@ async fn a_cached_lichess_review_is_linked_to_the_requesting_game() {
     let stored = rig
         .reviews
         .request_review(asking)
+        .await
         .expect("the request")
         .expect("the cached review");
     assert_eq!(stored.game_id.as_deref(), Some("Game0002"));
@@ -455,7 +471,10 @@ async fn identical_queued_searches_keep_an_association_for_each_game() {
     for game in ["Game0001", "Game0002"] {
         let mut asking = request(&SCHOLARS);
         asking.game_id = Some(game.into());
-        rig.reviews.request_review(asking).expect("the request");
+        rig.reviews
+            .request_review(asking)
+            .await
+            .expect("the request");
     }
     assert!(rig.store.linked("Game0001", &key));
     assert!(rig.store.linked("Game0002", &key));
@@ -471,6 +490,7 @@ async fn a_request_for_an_account_that_is_gone_stores_nothing() {
     assert!(
         rig.reviews
             .request_review(asking)
+            .await
             .expect("the request")
             .is_none()
     );
@@ -492,7 +512,10 @@ async fn a_finished_review_is_not_queued_again_automatically() {
     // Reviewed by hand first (the analysis board): the game is linked to the finished review.
     let mut asking = request(&["e2e4", "e7e5"]);
     asking.game_id = Some("done1".into());
-    rig.reviews.request_review(asking).expect("the request");
+    rig.reviews
+        .request_review(asking)
+        .await
+        .expect("the request");
     wait_until(WAIT, "the finished review", || {
         rig.host.complete_updates().into_iter().next()
     })
@@ -522,6 +545,7 @@ async fn a_computer_move_takes_the_engine_from_a_running_review() {
     let rig = rig_on(Arc::clone(&shared), "stall", "preempt", "off", true);
     rig.reviews
         .request_review(request(&SCHOLARS))
+        .await
         .expect("the request");
     wait_until(WAIT, "the quick pass", || {
         updates_of(&rig)

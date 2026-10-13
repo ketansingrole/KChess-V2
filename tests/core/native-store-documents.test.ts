@@ -102,6 +102,7 @@ function cell(column: string, value: unknown, labels: Labels): string {
 
 const TABLES: [string, string][] = [
   ['documents', 'key'],
+  ['studies', 'position'],
   ['archived_games', 'id'],
   ['games', 'account, id'],
   ['accounts', 'username'],
@@ -342,7 +343,7 @@ function seedGame(s: Session, id: string, account = 'Alice', extra: Record<strin
 /* ── Library documents ── */
 
 describe('library documents', () => {
-  it('reads the library, takes earlier documents over once and reads damaged ones as empty', async () => {
+  it('reads the library, takes earlier documents over once and preserves damaged studies', async () => {
     const s = await open()
     try {
       value(await s.run('store.library.library', [NOW]))
@@ -407,12 +408,20 @@ describe('library documents', () => {
       value(await s.run('store.library.library', [NOW]))
       value(await s.run('store.library.joinedTournaments', [NOW]))
 
-      // A damaged study document reads as no studies; the next command writes over it.
+      // Damaged stored studies block reads and edits rather than being overwritten.
       s.seed("UPDATE documents SET body = '{broken' WHERE key = 'studies'")
-      value(await s.run('store.library.library', [NOW]))
-      value(await s.run('store.library.studyCommand', [study('After damage'), NOW]))
-      // Documents of the wrong shape read as empty, and an archived game that does not replay is skipped.
+      expect(
+        value<{ studyError: string }>(await s.run('store.library.library', [NOW])).studyError,
+      ).toContain('preserved')
+      expect(
+        failure(await s.run('store.library.studyCommand', [study('After damage'), NOW])),
+      ).toContain('preserved')
       s.seed('UPDATE documents SET body = \'{"version":2,"items":"nope"}\' WHERE key = \'studies\'')
+      expect(
+        value<{ studyError: string }>(await s.run('store.library.library', [NOW])).studyError,
+      ).toContain('preserved')
+      s.seed("UPDATE documents SET body = '{\"version\":3}' WHERE key = 'studies'")
+      // Other document decoders retain their existing recovery behavior.
       s.seed("UPDATE documents SET body = '[1]' WHERE key = 'repertoire:misses'")
       s.seed("UPDATE documents SET body = '{}' WHERE key = 'tournaments:joined'")
       s.seed(

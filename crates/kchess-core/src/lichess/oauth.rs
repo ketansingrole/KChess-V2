@@ -342,7 +342,10 @@ impl Lichess {
             return Err(CoreError::new("OS credential encryption is unavailable."));
         }
         let ciphertext = self.capabilities().encrypt(token).await?;
-        self.store().save_login(username, &ciphertext)
+        let current = || epoch == self.login_epoch();
+        self.store()
+            .save_login(username, &ciphertext, &current)
+            .await
     }
 }
 

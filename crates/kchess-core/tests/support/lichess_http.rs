@@ -60,6 +60,8 @@ pub enum Reply {
     /// 200 NDJSON, sent chunk by chunk as the sender provides them; the body ends when the sender
     /// is dropped.
     Stream(mpsc::UnboundedReceiver<String>),
+    /// A chunked response with a specified status and content type.
+    StreamText(u16, &'static str, mpsc::UnboundedReceiver<String>),
     /// Waits until the gate opens, then answers with the inner reply.
     Gated(watch::Receiver<bool>, Box<Reply>),
     /// Never answers.
@@ -216,8 +218,14 @@ async fn handle(
                 let extra: Vec<(&str, String)> = extra;
                 return write_sized(&mut socket, status, &extra, &body).await;
             }
-            Reply::Stream(mut chunks) => {
-                let head = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+            Reply::Stream(chunks) => {
+                reply = Reply::StreamText(200, "application/x-ndjson", chunks);
+            }
+            Reply::StreamText(status, content_type, mut chunks) => {
+                let head = format!(
+                    "HTTP/1.1 {status} {}\r\nContent-Type: {content_type}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                    status_text(status)
+                );
                 socket.write_all(head.as_bytes()).await?;
                 while let Some(piece) = chunks.recv().await {
                     let frame = format!("{:x}\r\n{}\r\n", piece.len(), piece);
@@ -362,7 +370,7 @@ pub fn capabilities_for(host: &Arc<Recording>) -> Arc<Capabilities> {
 
 /// The HTTP client every test uses (no proxy, so the fixtures are reached directly).
 pub fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    kchess_core::lichess::client::http_client_builder()
         .no_proxy()
         .build()
         .expect("http client")
@@ -371,6 +379,12 @@ pub fn http_client() -> reqwest::Client {
 /// An in-memory `LichessStore`: the account rows, the games, the cursor and the API cache.
 #[derive(Default)]
 pub struct MemoryStore {
+    pub cache_write_gate: Mutex<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>,
+    >,
     pub accounts: Mutex<Vec<AccountRow>>,
     pub games: Mutex<Vec<LichessGame>>,
     pub cursors: Mutex<HashMap<String, i64>>,
@@ -400,128 +414,175 @@ impl MemoryStore {
 }
 
 impl LichessStore for MemoryStore {
-    fn accounts(&self) -> CoreResult<Vec<AccountRow>> {
-        Ok(self.accounts.lock().unwrap().clone())
+    fn accounts<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<AccountRow>>> {
+        Box::pin(async move { Ok(self.accounts.lock().unwrap().clone()) })
     }
 
-    fn dismissed_friends(&self) -> CoreResult<Vec<String>> {
-        Ok(self.dismissed.lock().unwrap().clone())
+    fn dismissed_friends<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>> {
+        Box::pin(async move { Ok(self.dismissed.lock().unwrap().clone()) })
     }
 
-    fn pending_game_ids(&self, account: &str) -> CoreResult<Vec<String>> {
-        Ok(self
-            .pending
-            .lock()
-            .unwrap()
-            .get(&account.to_lowercase())
-            .cloned()
-            .unwrap_or_default())
+    fn pending_game_ids<'a>(
+        &'a self,
+        account: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>> {
+        Box::pin(async move {
+            Ok(self
+                .pending
+                .lock()
+                .unwrap()
+                .get(&account.to_lowercase())
+                .cloned()
+                .unwrap_or_default())
+        })
     }
 
-    fn save_games_page(
-        &self,
-        account: &str,
-        games: &[LichessGame],
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()> {
-        if !current() {
-            return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
-        }
-        let mut stored = self.games.lock().unwrap();
-        for game in games {
-            if !stored
-                .iter()
-                .any(|known| known.id == game.id && known.account == account)
-            {
-                stored.push(game.clone());
+    fn save_games_page<'a>(
+        &'a self,
+        account: &'a str,
+        games: &'a [LichessGame],
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
             }
-        }
-        self.reviews.lock().unwrap().extend(reviews.iter().cloned());
-        Ok(())
+            let mut stored = self.games.lock().unwrap();
+            for game in games {
+                if !stored
+                    .iter()
+                    .any(|known| known.id == game.id && known.account == account)
+                {
+                    stored.push(game.clone());
+                }
+            }
+            self.reviews.lock().unwrap().extend(reviews.iter().cloned());
+            Ok(())
+        })
     }
 
-    fn save_reviews(
-        &self,
-        _account: &str,
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<Vec<Value>> {
-        if !current() {
-            return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
-        }
-        self.reviews.lock().unwrap().extend(reviews.iter().cloned());
-        Ok(reviews.to_vec())
+    fn save_reviews<'a>(
+        &'a self,
+        _account: &'a str,
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+            }
+            self.reviews.lock().unwrap().extend(reviews.iter().cloned());
+            Ok(reviews.to_vec())
+        })
     }
 
-    fn mark_checked(&self, ids: &[String]) -> CoreResult<()> {
-        self.checked.lock().unwrap().extend(ids.iter().cloned());
-        Ok(())
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(kchess_core::error::CoreError::aborted(
+                    "Sync was cancelled.",
+                ));
+            }
+            self.checked.lock().unwrap().extend(ids.iter().cloned());
+            Ok(())
+        })
     }
 
-    fn save_games_cursor(
-        &self,
-        account: &str,
+    fn save_games_cursor<'a>(
+        &'a self,
+        account: &'a str,
         synced_at: i64,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()> {
-        if !current() {
-            return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
-        }
-        self.cursors
-            .lock()
-            .unwrap()
-            .insert(account.to_lowercase(), synced_at);
-        if let Some(row) = self
-            .accounts
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .find(|row| row.username.eq_ignore_ascii_case(account))
-        {
-            row.last_synced_at = Some(synced_at);
-        }
-        Ok(())
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+            }
+            self.cursors
+                .lock()
+                .unwrap()
+                .insert(account.to_lowercase(), synced_at);
+            if let Some(row) = self
+                .accounts
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row.username.eq_ignore_ascii_case(account))
+            {
+                row.last_synced_at = Some(synced_at);
+            }
+            Ok(())
+        })
     }
 
-    fn read_api_cache(&self, key: &str) -> CoreResult<Option<CachedValue>> {
-        Ok(self.cache.lock().unwrap().get(key).cloned())
+    fn read_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<CachedValue>>> {
+        Box::pin(async move { Ok(self.cache.lock().unwrap().get(key).cloned()) })
     }
 
-    fn write_api_cache(
-        &self,
-        key: &str,
-        value: &Value,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()> {
-        if !current() {
-            return Err(kchess_core::error::CoreError::new(
-                "Account was logged out.",
-            ));
-        }
-        self.cache.lock().unwrap().insert(
-            key.to_string(),
-            CachedValue {
-                value: value.clone(),
-                fetched_at: 1,
-            },
-        );
-        Ok(())
+    fn write_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            let gate = self.cache_write_gate.lock().unwrap().take();
+            if let Some((started, release)) = gate {
+                let _ = started.send(());
+                release.await.expect("release cache write");
+            }
+
+            if !current() {
+                return Err(kchess_core::error::CoreError::new(
+                    "Account was logged out.",
+                ));
+            }
+            self.cache.lock().unwrap().insert(
+                key.to_string(),
+                CachedValue {
+                    value: value.clone(),
+                    fetched_at: 1,
+                },
+            );
+            Ok(())
+        })
     }
 
-    fn save_login(&self, username: &str, ciphertext: &str) -> CoreResult<()> {
-        self.logins
-            .lock()
-            .unwrap()
-            .push((username.to_string(), ciphertext.to_string()));
-        let mut accounts = self.accounts.lock().unwrap();
-        accounts.retain(|row| !row.username.eq_ignore_ascii_case(username));
-        accounts.push(AccountRow {
-            username: username.to_string(),
-            connected: true,
-            last_synced_at: None,
-        });
-        Ok(())
+    fn save_login<'a>(
+        &'a self,
+        username: &'a str,
+        ciphertext: &'a str,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(kchess_core::error::CoreError::aborted(
+                    "Login was cancelled by logout.",
+                ));
+            }
+            self.logins
+                .lock()
+                .unwrap()
+                .push((username.to_string(), ciphertext.to_string()));
+            let mut accounts = self.accounts.lock().unwrap();
+            accounts.retain(|row| !row.username.eq_ignore_ascii_case(username));
+            accounts.push(AccountRow {
+                username: username.to_string(),
+                connected: true,
+                last_synced_at: None,
+            });
+            Ok(())
+        })
     }
 }
 

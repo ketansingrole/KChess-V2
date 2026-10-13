@@ -219,6 +219,10 @@ pub struct SessionDocuments {
 #[serde(rename_all = "camelCase")]
 pub struct LibrarySnapshot {
     pub studies: Vec<SavedStudy>,
+    /// Stored studies could not be decoded; other library documents still load normally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub study_error: Option<String>,
     pub games: Vec<ArchivedGame>,
     pub mistakes: Vec<MistakeExercise>,
     /// `Partial<SessionDocuments>`: a session kind is present only when one was saved.
@@ -316,6 +320,9 @@ pub struct StudyRemote {
 #[ts(optional_fields)]
 pub struct StudyCommandResult {
     pub studies: Vec<SavedStudy>,
+    /// Incremental responses contain only changed studies; order lists every remaining study ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<String>>,
     /// The study or chapter the command created or selected.
     pub id: Option<String>,
     /// `offline`: the device copy had local edits, so the cloud version became a new copy.

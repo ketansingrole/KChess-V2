@@ -32,7 +32,7 @@ async function save(): Promise<void> {
     await analysis.flushStudy()
     if (editing.value === 'add') {
       const id = await library.addChapter(studyId, name.value)
-      analysis.openStudy(studyId, id)
+      await analysis.openStudy(studyId, id)
     } else await library.renameChapter(studyId, analysis.studyChapterId, name.value)
     editing.value = null
     error.value = ''
@@ -47,7 +47,7 @@ async function duplicate(): Promise<void> {
   try {
     await analysis.flushStudy()
     const id = await library.duplicateChapter(studyId, analysis.studyChapterId)
-    analysis.openStudy(studyId, id)
+    await analysis.openStudy(studyId, id)
   } catch (cause) {
     console.warn('[study-chapters] Could not duplicate chapter:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
@@ -64,9 +64,9 @@ async function remove(): Promise<void> {
       return
     }
     const next = await library.removeChapter(id, chapterId)
-    analysis.openStudy(id, next)
+    await analysis.openStudy(id, next)
   } catch (cause) {
-    analysis.openStudy(id, chapterId)
+    await analysis.openStudy(id, chapterId)
     console.warn('[study-chapters] Could not delete chapter:', cause)
     error.value = cause instanceof Error ? cause.message : String(cause)
   }

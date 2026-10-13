@@ -7,6 +7,10 @@ export default defineNuxtPlugin(async () => {
       .then(() => window.kchess?.completeQuit(token))
       .catch((cause) => {
         console.warn('[library] Preparing to quit failed:', cause)
+        return window.kchess?.completeQuit(token, false)
+      })
+      .catch((cause) => {
+        console.warn('[library] Reporting quit failure failed:', cause)
       })
   })
   await loadLibrary()

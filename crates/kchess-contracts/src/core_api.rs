@@ -584,7 +584,7 @@ pub fn methods() -> Vec<Method> {
         method(
             "studyCommand",
             "",
-            vec![req("command", "StudyCommand")],
+            vec![req("command", "StudyCommand"), opt("incremental", boolean)],
             t::<StudyCommandResult>(),
         ),
         method(

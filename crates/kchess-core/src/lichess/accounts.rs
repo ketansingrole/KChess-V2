@@ -70,48 +70,65 @@ pub enum Reply<T> {
 /// check, read again by the store right before it writes.
 pub trait LichessStore: Send + Sync {
     /// `loadData().accounts`.
-    fn accounts(&self) -> CoreResult<Vec<AccountRow>>;
+    fn accounts<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<AccountRow>>>;
     /// Lowercase usernames the user dismissed as friends (`dismissedFriends`).
-    fn dismissed_friends(&self) -> CoreResult<Vec<String>>;
+    fn dismissed_friends<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>>;
     /// Games of `account` that were unfinished at the last sync (`pendingGameIds`).
-    fn pending_game_ids(&self, account: &str) -> CoreResult<Vec<String>>;
+    fn pending_game_ids<'a>(
+        &'a self,
+        account: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>>;
     /// Saves a page of games and the reviews Lichess returned with them, in one transaction, unless
     /// `current` turned false (`saveGamesPage`).
-    fn save_games_page(
-        &self,
-        account: &str,
-        games: &[LichessGame],
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()>;
+    fn save_games_page<'a>(
+        &'a self,
+        account: &'a str,
+        games: &'a [LichessGame],
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// Moves the sync cursor of `account` to `synced_at` (`saveGames(username, [], startedAt)`).
-    fn save_games_cursor(
-        &self,
-        account: &str,
+    fn save_games_cursor<'a>(
+        &'a self,
+        account: &'a str,
         synced_at: i64,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()>;
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// `readApiCache(key)`.
-    fn read_api_cache(&self, key: &str) -> CoreResult<Option<CachedValue>>;
+    fn read_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<CachedValue>>>;
     /// `writeApiCache(key, value, current)`.
-    fn write_api_cache(
-        &self,
-        key: &str,
-        value: &Value,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<()>;
+    fn write_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// `saveLogin`'s write: the encrypted token and the connected account, together.
-    fn save_login(&self, username: &str, ciphertext: &str) -> CoreResult<()>;
+    fn save_login<'a>(
+        &'a self,
+        username: &'a str,
+        ciphertext: &'a str,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// Reviews without a page of games (the review queue's fetch): written, and the stored reviews
     /// returned (`writeReview` for each).
-    fn save_reviews(
-        &self,
-        account: &str,
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> CoreResult<Vec<Value>>;
+    fn save_reviews<'a>(
+        &'a self,
+        account: &'a str,
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>>;
     /// Games Lichess was asked about, so they are not asked again soon (`markChecked`).
-    fn mark_checked(&self, ids: &[String]) -> CoreResult<()>;
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
 }
 
 /// A game as the store keeps it and the UI shows it (`LichessGame` of `contracts/types.ts`).
@@ -440,7 +457,7 @@ impl Lichess {
         F: Fn(Option<String>) -> Fut,
         Fut: Future<Output = Result<T, Failure>>,
     {
-        let connected: Vec<String> = match self.store.accounts() {
+        let connected: Vec<String> = match self.store.accounts().await {
             Ok(rows) => rows
                 .into_iter()
                 .filter(|row| row.connected)
@@ -515,19 +532,22 @@ impl Lichess {
                 if !current() {
                     return Err(CoreError::new("Account was logged out."));
                 }
-                if let Err(cause) = self.store.write_api_cache(key, &value, &current) {
+                if let Err(cause) = self.store.write_api_cache(key, &value, &current).await {
                     self.host.log(
                         Level::Warn,
                         "lichess-cache",
                         &format!("Profile cache write failed: {key} {}", cause.message),
                     );
                 }
+                if !current() {
+                    return Err(CoreError::new("Account was logged out."));
+                }
                 self.remember(key, &value);
                 Ok(value)
             }
             Err(failure) if failure.status() == Some(404) => Err(failure.into()),
             Err(failure) => {
-                let stale = match self.store.read_api_cache(key) {
+                let stale = match self.store.read_api_cache(key).await {
                     Ok(stale) => stale,
                     Err(cause) => {
                         self.host.log(
@@ -538,6 +558,9 @@ impl Lichess {
                         None
                     }
                 };
+                if self.account_epoch(account) != epoch {
+                    return Err(CoreError::new("Account was logged out."));
+                }
                 match stale {
                     Some(stale) => Ok(stale.value),
                     None => Err(failure.into()),
@@ -574,9 +597,13 @@ impl Lichess {
     }
 
     /// `cachedProfile`: the last persisted profile and rating history, with no network.
-    pub fn cached_profile(&self, username: &str) -> CoreResult<CachedProfile> {
-        let profile = self.read_cache_or_log(&profile_key(username, "profile"), username);
-        let rating = self.read_cache_or_log(&profile_key(username, "rating"), username);
+    pub async fn cached_profile(&self, username: &str) -> CoreResult<CachedProfile> {
+        let profile = self
+            .read_cache_or_log(&profile_key(username, "profile"), username)
+            .await;
+        let rating = self
+            .read_cache_or_log(&profile_key(username, "rating"), username)
+            .await;
         Ok(CachedProfile {
             profile_fetched_at: profile.as_ref().map(|hit| hit.fetched_at),
             profile: profile.map(|hit| hit.value),
@@ -584,8 +611,8 @@ impl Lichess {
         })
     }
 
-    fn read_cache_or_log(&self, key: &str, username: &str) -> Option<CachedValue> {
-        match self.store.read_api_cache(key) {
+    async fn read_cache_or_log(&self, key: &str, username: &str) -> Option<CachedValue> {
+        match self.store.read_api_cache(key).await {
             Ok(hit) => hit,
             Err(cause) => {
                 self.host.log(
@@ -601,10 +628,13 @@ impl Lichess {
     /// `followedUsers`: everyone the connected accounts follow. Needs `follow:read`; accounts
     /// connected before it was requested come back as a problem to reconnect.
     pub async fn followed_users(&self) -> CoreResult<FollowingReport> {
-        let rows = self.store.accounts()?;
-        let dismissed = self.store.dismissed_friends()?;
-        let added: Vec<String> = rows.iter().map(|row| row.username.to_lowercase()).collect();
         let epoch = self.login_epoch();
+        let rows = self.store.accounts().await?;
+        let dismissed = self.store.dismissed_friends().await?;
+        let added: Vec<String> = rows.iter().map(|row| row.username.to_lowercase()).collect();
+        if epoch != self.login_epoch() {
+            return Err(CoreError::new("Login was cancelled by logout."));
+        }
         let mut by_name: BTreeMap<String, FollowedUser> = BTreeMap::new();
         let mut following: HashMap<String, Value> = HashMap::new();
         let mut problems = Vec::new();
@@ -705,15 +735,16 @@ impl Lichess {
     }
 
     /// `primeProfiles`: saves the profiles `followedUsers` just fetched for the players added.
-    pub fn prime_profiles(&self, usernames: &[String]) -> CoreResult<()> {
+    pub async fn prime_profiles(&self, usernames: &[String]) -> CoreResult<()> {
+        let epoch = self.login_epoch();
+        let current = || epoch == self.login_epoch();
         let last = lock(&self.last_following).clone();
         for name in usernames {
             let Some(user) = last.get(&name.to_lowercase()) else {
                 continue;
             };
             let key = profile_key(name, "profile");
-            let always = || true;
-            if let Err(cause) = self.store.write_api_cache(&key, user, &always) {
+            if let Err(cause) = self.store.write_api_cache(&key, user, &current).await {
                 self.host.log(
                     Level::Debug,
                     "lichess",
@@ -924,7 +955,7 @@ impl Lichess {
     /// `syncGames`: syncs the connected accounts (or one of them), in turn. Every account still
     /// syncs when one fails; the first failure is reported afterwards.
     pub async fn sync_games(&self, username: Option<&str>) -> CoreResult<()> {
-        let rows = self.store.accounts()?;
+        let rows = self.store.accounts().await?;
         let mut first_error: Option<CoreError> = None;
         for row in rows.iter().filter(|row| {
             username.is_none_or(|wanted| row.username.to_lowercase() == wanted.to_lowercase())
@@ -1001,12 +1032,13 @@ impl Lichess {
                     }
                     if !games.is_empty() {
                         self.store
-                            .save_games_page(name, &games, &reviews, &current)?;
+                            .save_games_page(name, &games, &reviews, &current)
+                            .await?;
                     }
                     if !current() {
                         return Err(sync_cancelled());
                     }
-                    self.store.mark_checked(&settled)?;
+                    self.store.mark_checked(&settled, &current).await?;
                     fetched += games.len();
                     if games.len() < SYNC_PAGE {
                         break;
@@ -1017,7 +1049,9 @@ impl Lichess {
                     }
                     until = Some(oldest);
                 }
-                self.store.save_games_cursor(name, started_at, &current)?;
+                self.store
+                    .save_games_cursor(name, started_at, &current)
+                    .await?;
                 self.forget_profile(name);
                 Ok::<usize, CoreError>(fetched)
             })
@@ -1081,7 +1115,7 @@ impl Lichess {
         account: &str,
         current: &(dyn Fn() -> bool + Sync),
     ) -> CoreResult<()> {
-        let ids = self.store.pending_game_ids(account)?;
+        let ids = self.store.pending_game_ids(account).await?;
         let query: Vec<(&str, String)> = [
             "moves",
             "pgnInJson",
@@ -1117,7 +1151,8 @@ impl Lichess {
             }
             // A missing ID stays pending; a failed request never moves the cursor.
             self.store
-                .save_games_page(account, &games, &reviews, current)?;
+                .save_games_page(account, &games, &reviews, current)
+                .await?;
         }
         Ok(())
     }

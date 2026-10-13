@@ -8,6 +8,7 @@
 //! request) ends it.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -229,6 +230,16 @@ struct Finish {
     id: u64,
 }
 
+/// An admitted request owns cancellation and its place in line, including while settings load.
+struct PendingAnalysis {
+    request: Request,
+    id: u64,
+    token: CancellationToken,
+    prev: Option<oneshot::Receiver<()>>,
+    finish: Finish,
+    done: oneshot::Sender<()>,
+}
+
 impl Drop for Finish {
     fn drop(&mut self) {
         let mut state = lock(&self.shared.state);
@@ -269,6 +280,29 @@ impl Analysis {
     /// `startAnalysis(request, configured, send)`: validates the request, supersedes the analysis
     /// running, and starts this one on its own task. Returns the request's id.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
+        Ok(self.start_pending(self.reserve(raw)?, configured.to_string(), send))
+    }
+
+    /// Admit before the first await; stopping the service cancels pending settings reads too.
+    pub(crate) async fn start_analysis_with_settings(
+        &self,
+        raw: Value,
+        configured: impl Future<Output = Result<String>>,
+        send: AnalysisSink,
+    ) -> Result<u64> {
+        let mut pending = self.reserve(raw)?;
+        if let Some(prev) = pending.prev.take() {
+            let _ = prev.await;
+        }
+        let configured = tokio::select! {
+            biased;
+            _ = pending.token.cancelled() => return Err(signal_aborted()),
+            result = configured => result?,
+        };
+        Ok(self.start_pending(pending, configured, send))
+    }
+
+    fn reserve(&self, raw: Value) -> Result<PendingAnalysis> {
         let request: Request = serde_json::from_value(validate("assertAnalysisRequest", &raw)?)
             .map_err(|cause| CoreError::new(cause.to_string()))?;
         let (id, token, prev, done) = {
@@ -285,15 +319,38 @@ impl Analysis {
             let prev = state.serial.replace(queued);
             (id, token, prev, done)
         };
+        Ok(PendingAnalysis {
+            request,
+            id,
+            token,
+            prev,
+            done,
+            finish: Finish {
+                shared: Arc::clone(&self.shared),
+                id,
+            },
+        })
+    }
+
+    fn start_pending(
+        &self,
+        pending: PendingAnalysis,
+        configured: String,
+        send: AnalysisSink,
+    ) -> u64 {
+        let PendingAnalysis {
+            request,
+            id,
+            token,
+            prev,
+            done,
+            finish,
+        } = pending;
         let shared = Arc::clone(&self.shared);
-        let configured = configured.to_string();
         tokio::spawn(async move {
             // Declared so that the finish bookkeeping runs first, then the next analysis may start.
             let _done = done;
-            let _finish = Finish {
-                shared: Arc::clone(&shared),
-                id,
-            };
+            let _finish = finish;
             if let Some(prev) = prev {
                 // A failed analysis still lets the next one start.
                 let _ = prev.await;
@@ -359,7 +416,7 @@ impl Analysis {
                 }
             }
         });
-        Ok(id)
+        id
     }
 
     /// `analysisRunning`: an analysis is in progress.

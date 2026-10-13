@@ -19,11 +19,15 @@ export function useSettingsPersistence(options: {
   // when nothing changed, so explicit calls (engine actions) and the debounced
   // watcher below never double-write.
   let saveChain: Promise<void> = Promise.resolve()
-  function save(): Promise<void> {
-    saveChain = saveChain.then(persistSettings)
-    return saveChain
+  function save(strict = false): Promise<void> {
+    const result = saveChain.then(() => persistSettings(strict))
+    saveChain = result.then(
+      () => {},
+      () => {},
+    )
+    return result
   }
-  async function persistSettings(): Promise<void> {
+  async function persistSettings(strict: boolean): Promise<void> {
     if (!settings.value || !data.value || !settingsDirty.value) return
     // A reactive array cannot cross IPC (structured clone): send a plain copy of the list.
     const sent = { ...settings.value, engineLevels: [...settings.value.engineLevels] }
@@ -40,7 +44,9 @@ export function useSettingsPersistence(options: {
       console.warn('[settings] saving settings failed:', cause)
       fail(cause)
       // Show what is actually stored rather than a change that did not stick.
-      if (data.value) settings.value = { ...data.value.settings }
+      if (data.value && JSON.stringify(settings.value) === JSON.stringify(sent))
+        settings.value = { ...data.value.settings }
+      if (strict) throw cause
     }
   }
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -50,7 +56,7 @@ export function useSettingsPersistence(options: {
   }
   const unregister = registerPersistenceFlush(() => {
     clearTimeout(timer)
-    return save()
+    return save(true)
   })
   onScopeDispose(() => {
     clearTimeout(timer)

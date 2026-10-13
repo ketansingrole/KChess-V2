@@ -21,6 +21,65 @@ fn service(base: &str) -> Arc<kchess_core::lichess::accounts::Lichess> {
 }
 
 #[tokio::test]
+async fn cancels_a_puzzle_result_after_headers_while_its_body_is_stalled() {
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    for status in [200, 500] {
+        let (send, receive) = mpsc::unbounded_channel();
+        let mut receive = Some(receive);
+        let fixture =
+            serve(move |_| Reply::StreamText(status, "application/json", receive.take().unwrap()))
+                .await;
+        let host = Arc::new(Recording::default());
+        let lichess = lichess_service(
+            &fixture.base,
+            &host,
+            MemoryStore::with_accounts(&[("Alice", true)]),
+            MemoryTokens::with(&[("Alice", "lip_alice")]),
+        );
+        let solving = tokio::spawn({
+            let lichess = Arc::clone(&lichess);
+            async move {
+                puzzle_solve(
+                    &lichess,
+                    &PuzzleSolveRequest {
+                        account: "Alice".into(),
+                        angle: "fork".into(),
+                        id: "p1".into(),
+                        win: true,
+                        rated: true,
+                    },
+                )
+                .await
+            }
+        });
+        send.send("{\"rounds\":".into()).unwrap();
+        // Policy records a request only after accepting its response headers.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while host.usage_events().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("response headers accepted");
+        assert!(!solving.is_finished());
+        lichess.lifetime().cancel();
+        let error = tokio::time::timeout(Duration::from_secs(1), solving)
+            .await
+            .expect("body cancellation is prompt")
+            .expect("task")
+            .expect_err("cancelled result");
+        assert!(error.aborted);
+        assert_eq!(
+            fixture.requests().len(),
+            1,
+            "ambiguous result is never retried"
+        );
+        drop(send);
+    }
+}
+
+#[tokio::test]
 async fn reports_a_solved_puzzle_as_json_and_returns_the_rating_change() {
     let fixture = serve(|_| {
         Reply::Json(

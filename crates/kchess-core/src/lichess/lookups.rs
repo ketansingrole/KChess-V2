@@ -14,6 +14,7 @@ use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 use super::client::Failure;
 use super::reviews::split_whitespace;
@@ -346,9 +347,16 @@ where
 /// The stored saved-lookup cache: the newest entries, as the store keeps them.
 pub trait LookupCache: Send + Sync {
     /// The saved JSON for `key`, if any (a missing or unreadable entry is None).
-    fn read(&self, key: &str) -> CoreResult<Option<Value>>;
+    fn read<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<Value>>>;
     /// Saves `value` under `key`.
-    fn write(&self, key: &str, value: &Value) -> CoreResult<()>;
+    fn write<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -445,6 +453,19 @@ pub struct PositionLookups {
     pending: Mutex<HashMap<String, Pending>>,
     /// The login the explorer is asked with; None sends no login (tests).
     login: Option<Arc<dyn ExplorerLogin>>,
+    lifetime: CancellationToken,
+}
+
+/// Removing a pending lookup must also happen when its caller is cancelled or dropped.
+struct PendingLookup<'a> {
+    pending: &'a Mutex<HashMap<String, Pending>>,
+    key: String,
+}
+
+impl Drop for PendingLookup<'_> {
+    fn drop(&mut self) {
+        lock(self.pending).remove(&self.key);
+    }
 }
 
 /// The login the opening explorer and master games are asked with: the account the explorer is set
@@ -469,6 +490,7 @@ impl PositionLookups {
             now,
             pending: Mutex::new(HashMap::new()),
             login: None,
+            lifetime: CancellationToken::new(),
         }
     }
 
@@ -476,6 +498,12 @@ impl PositionLookups {
     /// not asked at all: it requires a Lichess login.
     pub fn with_login(mut self, login: Arc<dyn ExplorerLogin>) -> PositionLookups {
         self.login = Some(login);
+        self
+    }
+
+    /// Share the core's lifetime so close stops login, HTTP, cache waits and deduplicated callers.
+    pub fn with_lifetime(mut self, lifetime: CancellationToken) -> PositionLookups {
+        self.lifetime = lifetime;
         self
     }
 
@@ -492,6 +520,19 @@ impl PositionLookups {
 
     /// `lookup(kind, fen, options)`.
     pub async fn lookup(
+        &self,
+        raw_kind: &Value,
+        raw_fen: &Value,
+        raw_options: Option<&Value>,
+    ) -> CoreResult<PositionLookup> {
+        tokio::select! {
+            biased;
+            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
+            result = self.lookup_inner(raw_kind, raw_fen, raw_options) => result,
+        }
+    }
+
+    async fn lookup_inner(
         &self,
         raw_kind: &Value,
         raw_fen: &Value,
@@ -533,7 +574,7 @@ impl PositionLookups {
             } else {
                 format!("{}:{filters}:{fen}", kind.name())
             };
-        let candidate = decode_cached(self.cache.read(&key)?.as_ref());
+        let candidate = decode_cached(self.cache.read(&key).await?.as_ref());
         let saved = candidate.filter(|candidate| {
             candidate.fen == fen
                 && candidate.kind == kind.name()
@@ -552,20 +593,31 @@ impl PositionLookups {
                 message: None,
             });
         }
-        let known = lock(&self.pending).get(&key).cloned();
-        if let Some(known) = known {
-            return wait_for(known).await;
-        }
-        if lock(&self.pending).len() >= PENDING_MAX {
-            return Err(CoreError::new(
-                "Too many position lookups are pending. Try again shortly.",
-            ));
-        }
-        let (send, receive) = watch::channel(None);
-        lock(&self.pending).insert(key.clone(), receive);
+        let admitted = {
+            let mut pending = lock(&self.pending);
+            if let Some(known) = pending.get(&key).cloned() {
+                Err(known)
+            } else {
+                if pending.len() >= PENDING_MAX {
+                    return Err(CoreError::new(
+                        "Too many position lookups are pending. Try again shortly.",
+                    ));
+                }
+                let (send, receive) = watch::channel(None);
+                pending.insert(key.clone(), receive);
+                Ok(send)
+            }
+        };
+        let send = match admitted {
+            Ok(send) => send,
+            Err(known) => return wait_for(known).await,
+        };
+        let _pending = PendingLookup {
+            pending: &self.pending,
+            key: key.clone(),
+        };
         let result = self.load(kind, &fen, &options, &key, saved.as_ref()).await;
         let _ = send.send(Some(result.clone()));
-        lock(&self.pending).remove(&key);
         result
     }
 
@@ -603,12 +655,14 @@ impl PositionLookups {
             } else {
                 explorer_result(kind, fen, (self.now)(), &raw)?
             };
-            self.cache.write(
-                key,
-                &serde_json::to_value(&result).map_err(|cause| {
-                    CoreError::new(format!("Position lookup could not be saved: {cause}"))
-                })?,
-            )?;
+            self.cache
+                .write(
+                    key,
+                    &serde_json::to_value(&result).map_err(|cause| {
+                        CoreError::new(format!("Position lookup could not be saved: {cause}"))
+                    })?,
+                )
+                .await?;
             Ok(PositionLookup {
                 data: result,
                 cached: false,
@@ -733,6 +787,14 @@ impl PositionLookups {
 
     /// `mastersGame(id)`: a master game's PGN; master games never change.
     pub async fn masters_game(&self, id: &str) -> CoreResult<String> {
+        tokio::select! {
+            biased;
+            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
+            result = self.masters_game_inner(id) => result,
+        }
+    }
+
+    async fn masters_game_inner(&self, id: &str) -> CoreResult<String> {
         let valid = id.len() == 8 && id.bytes().all(|b| b.is_ascii_alphanumeric());
         if !valid {
             return Err(CoreError::new("Invalid id."));

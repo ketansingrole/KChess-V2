@@ -15,11 +15,24 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::policy::{Admitted, Policy, is_stream};
-use super::stream::{LineOptions, read_chunks, read_lines};
+use super::stream::{IDLE, LineOptions, read_chunks, read_lines};
 use crate::error::{CoreError, Result as CoreResult};
 
 /// `BASE` of `lichess.ts`.
 pub const BASE_URL: &str = "https://lichess.org";
+
+/// Shared transport configuration. Streams have no total response deadline; the policy bounds
+/// headers, ordinary calls bound their bodies, and stream readers bound silence between chunks.
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().connect_timeout(super::policy::REQUEST_TIMEOUT)
+}
+
+/// A limit checked as decoded text arrives, before it is appended to the collected response.
+#[derive(Clone, Copy)]
+pub struct TextLimit<'a> {
+    pub utf16_units: usize,
+    pub message: &'a str,
+}
 
 /// A failed Lichess call: the API's own error (with its status and endpoint), or a failure of
 /// the core itself (a rejected request, a stalled stream, an abort).
@@ -217,7 +230,7 @@ impl LichessClient {
         let admitted = self
             .call(reqwest::Method::GET, path, query, &headers, None, cancel)
             .await?;
-        let text = self.read_text(admitted, "GET", path, cancel).await?;
+        let text = self.read_text(admitted, "GET", path, cancel, None).await?;
         parse_json(&text, path)
     }
 
@@ -234,7 +247,7 @@ impl LichessClient {
         let admitted = self
             .call(reqwest::Method::POST, path, &[], &headers, body, cancel)
             .await?;
-        let text = self.read_text(admitted, "POST", path, cancel).await?;
+        let text = self.read_text(admitted, "POST", path, cancel, None).await?;
         parse_json(&text, path)
     }
 
@@ -253,7 +266,27 @@ impl LichessClient {
         let admitted = self
             .call(reqwest::Method::GET, path, query, &headers, None, cancel)
             .await?;
-        self.read_text(admitted, "GET", path, cancel).await
+        self.read_text(admitted, "GET", path, cancel, None).await
+    }
+
+    /// A text download whose decoded size is bounded before the response finishes.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_text_bounded(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        accept: &str,
+        auth: Option<&str>,
+        cancel: &CancellationToken,
+        limit: TextLimit<'_>,
+    ) -> Result<String> {
+        let mut headers = vec![("Accept", accept.to_string())];
+        headers.extend(auth_header(auth));
+        let admitted = self
+            .call(reqwest::Method::GET, path, query, &headers, None, cancel)
+            .await?;
+        self.read_text(admitted, "GET", path, cancel, Some(limit))
+            .await
     }
 
     /// An NDJSON response, read line by line as it arrives (`parseAs: 'stream'`). `body` is the
@@ -278,7 +311,8 @@ impl LichessClient {
         let Admitted { response, hold } = admitted;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let text = response.text().await.map_err(read_failure)?;
+            let text =
+                read_with_deadline(response, cancel, false, self.policy.timeout(), None).await?;
             return Err(Failure::Lichess(lichess_error(
                 status,
                 body_value(&text),
@@ -313,7 +347,8 @@ impl LichessClient {
             .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let text = response.text().await.map_err(read_failure)?;
+            let text =
+                read_with_deadline(response, cancel, false, self.policy.timeout(), None).await?;
             return Err(Failure::Lichess(lichess_error(
                 status,
                 body_value(&text),
@@ -321,7 +356,7 @@ impl LichessClient {
             )));
         }
         let body = self.policy.metered(response.bytes_stream());
-        let outcome = read_chunks(Box::pin(body), cancel, on_chunk).await;
+        let outcome = read_chunks(Box::pin(body), cancel, IDLE, on_chunk).await;
         drop(hold);
         outcome
     }
@@ -334,6 +369,7 @@ impl LichessClient {
         method: &str,
         path: &str,
         cancel: &CancellationToken,
+        limit: Option<TextLimit<'_>>,
     ) -> Result<String> {
         let Admitted { response, hold } = admitted;
         let status = response.status().as_u16();
@@ -342,8 +378,8 @@ impl LichessClient {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let stream = is_stream(path, content_type.as_deref());
-        let text = read_with_deadline(response, cancel, stream, self.policy.timeout()).await;
+        let stream = (200..300).contains(&status) && is_stream(path, content_type.as_deref());
+        let text = read_with_deadline(response, cancel, stream, self.policy.timeout(), limit).await;
         drop(hold);
         let text = text?;
         if !(200..300).contains(&status) {
@@ -389,31 +425,45 @@ fn parse_json<T: DeserializeOwned>(text: &str, path: &str) -> Result<T> {
 
 /// Read the whole body within the request deadline (a stream is exempt; it has its own idle
 /// deadline), abortable through `cancel`.
-async fn read_with_deadline(
+pub(crate) async fn read_with_deadline(
     response: reqwest::Response,
     cancel: &CancellationToken,
     stream: bool,
     timeout: Duration,
+    limit: Option<TextLimit<'_>>,
 ) -> Result<String> {
     let read = async move {
-        if stream {
-            response.text().await.map_err(read_failure)
-        } else {
-            match tokio::time::timeout(timeout, response.text()).await {
-                Ok(answer) => answer.map_err(read_failure),
-                Err(_) => Err(Failure::Core(CoreError::new(
-                    "Lichess request timed out. Retry or reconnect.",
-                ))),
-            }
+        // Preserve reqwest's normal text decoding (including BOM handling) for ordinary calls.
+        if !stream && limit.is_none() {
+            return tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(Failure::Core(CoreError::aborted("This operation was aborted"))),
+                text = response.text() => text.map_err(|cause| Failure::Core(CoreError::new(cause.to_string()))),
+            };
         }
+        let mut text = String::new();
+        let mut units = 0usize;
+        read_chunks(Box::pin(response.bytes_stream()), cancel, IDLE, |chunk| {
+            if let Some(limit) = limit {
+                units = units.saturating_add(chunk.encode_utf16().count());
+                if units > limit.utf16_units {
+                    return Err(Failure::Core(CoreError::new(limit.message)));
+                }
+            }
+            text.push_str(chunk);
+            Ok(())
+        })
+        .await?;
+        Ok(text)
     };
-    tokio::select! {
-        biased;
-        _ = cancel.cancelled() => Err(Failure::Core(CoreError::aborted("This operation was aborted"))),
-        answer = read => answer,
+    if stream {
+        read.await
+    } else {
+        match tokio::time::timeout(timeout, read).await {
+            Ok(answer) => answer,
+            Err(_) => Err(Failure::Core(CoreError::new(
+                "Lichess request timed out. Retry or reconnect.",
+            ))),
+        }
     }
-}
-
-fn read_failure(cause: reqwest::Error) -> Failure {
-    Failure::Core(CoreError::new(cause.to_string()))
 }

@@ -264,3 +264,26 @@ async fn a_malformed_study_record_fails_the_listing_as_it_arrives() {
     );
     drop(lines_tx);
 }
+
+#[tokio::test]
+async fn rejects_an_oversized_study_before_the_server_finishes_the_body() {
+    let (send, receive) = tokio::sync::mpsc::unbounded_channel();
+    let mut receive = Some(receive);
+    let fixture =
+        serve(move |_| Reply::StreamText(200, "application/x-chess-pgn", receive.take().unwrap()))
+            .await;
+    let lichess = service(&fixture.base);
+    // The sender deliberately stays open: rejection must happen before EOF.
+    for _ in 0..9 {
+        send.send("x".repeat(500_000)).unwrap();
+    }
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        lichess_study_chapters(&lichess, "Alice", "Study001"),
+    )
+    .await
+    .expect("oversized download fails without waiting for EOF")
+    .unwrap_err();
+    assert_eq!(error.message, "That study is too large to import.");
+    drop(send);
+}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
+import { RequestScope } from '@kchess/rules/requestScope'
 import { useLocalStorage, useOnline } from '@vueuse/core'
 import type {
   Crosstable,
@@ -52,6 +53,11 @@ const gamesError = ref('')
 const error = ref('')
 const loading = ref(false)
 let request = 0
+const statsRequests = new RequestScope()
+onScopeDispose(() => {
+  request++
+  statsRequests.invalidate()
+})
 
 const PERF_LABELS: Record<PerfType, string> = {
   ultraBullet: 'UltraBullet',
@@ -90,6 +96,7 @@ async function lookup(name = query.value.trim()): Promise<void> {
     return
   }
   const current = ++request
+  statsRequests.invalidate()
   loading.value = true
   error.value = ''
   stats.value = null
@@ -145,12 +152,15 @@ async function loadStats(): Promise<void> {
   const user = profile.value
   if (!user) return
   const current = request
+  const pending = statsRequests.next()
+  const speed = perf.value
+  stats.value = null
   statsError.value = ''
   try {
-    const next = await window.kchess.playerPerf(user.username, perf.value)
-    if (current === request) stats.value = next
+    const next = await window.kchess.playerPerf(user.username, speed)
+    if (pending.current() && current === request && speed === perf.value) stats.value = next
   } catch (cause) {
-    if (current === request) {
+    if (pending.current() && current === request && speed === perf.value) {
       console.warn('[players] Performance stats unavailable:', cause)
       statsError.value = cause instanceof Error ? cause.message : String(cause)
     }

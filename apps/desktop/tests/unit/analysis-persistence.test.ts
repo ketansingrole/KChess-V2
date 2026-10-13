@@ -168,7 +168,7 @@ it('flushes pending edits before opening another study and before unload', async
   const second = await studies.save('Two', '1. d4 *')
   store.forward()
   store.node.comments = ['Keep before switch']
-  store.openStudy(second)
+  await store.openStudy(second)
   await flushPromises()
   expect(studies.items.find((s) => s.id === first)?.pgn).toContain('Keep before switch')
   store.forward()
@@ -257,7 +257,7 @@ it('closing a study saves pending chapter edits and clears the board and move li
     { name: 'Second', pgn: '1. d4 d5 (1... Nf6 $1) *' },
   ])
   const analysis = useAnalysisStore()
-  analysis.openStudy(id, library.items[0]!.chapters[1]!.id)
+  await analysis.openStudy(id, library.items[0]!.chapters[1]!.id)
   analysis.root.comments = ['Keep the pending edit']
   await nextTick()
   expect(await analysis.closeStudy()).toBe(true)
@@ -277,7 +277,7 @@ it('keeps the study and board open when pending edits cannot be persisted', asyn
   const library = useStudyStore()
   const id = await library.save('Do not lose', '1. e4 *')
   const analysis = useAnalysisStore()
-  analysis.openStudy(id)
+  await analysis.openStudy(id)
   analysis.root.comments = ['Unsaved edit']
   await nextTick()
   api.studyCommand = () => Promise.reject(new Error('Storage full'))

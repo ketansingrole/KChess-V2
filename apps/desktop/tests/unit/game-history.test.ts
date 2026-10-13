@@ -17,6 +17,7 @@ import { STANDARD_SETUP } from '@kchess/rules/variant'
 import { setupPgn } from '@kchess/rules/chess'
 import { DEFAULT_OAUTH_LOOK, oauthLook } from '@kchess/rules/oauthLook'
 import { oauthPage } from '@kchess/native/oauthPage'
+import { flushSavedDocuments } from '../../app/utils/library'
 
 // Every test here keeps its games in the core's library.
 beforeEach(() => void desktop())
@@ -213,6 +214,7 @@ it('shows the saved version again when the core refuses a change', async () => {
   expect(history.error).toContain('full')
   expect(history.games[0]!.reason).toBe('In progress')
   history.save({ ...archived('new'), finished: true })
+  await history.flush()
   vi.spyOn(api, 'saveArchivedGame').mockRejectedValueOnce(new Error('Game history is full.'))
   history.save({ ...archived('refused'), finished: true })
   await flushPromises()
@@ -234,6 +236,29 @@ it('keeps the saved history when a write fails and saves the latest game next ti
   expect(history.error).toBe('')
   expect(storedLibrary().games[0]!.result).toBe('1-0')
   expect(write).toHaveBeenCalledTimes(2)
+})
+
+it('retains a refused game for quit Retry while allowing other games to save', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop()
+  const backend = api.saveArchivedGame
+  let refusing = true
+  const write = vi.spyOn(api, 'saveArchivedGame').mockImplementation(async (game) => {
+    if (refusing && game.id === 'refused') throw new Error('Disk unavailable')
+    return backend(game)
+  })
+  const history = useGameArchiveStore()
+  history.save(archived('refused'))
+  await history.flush()
+  history.save(archived('new'))
+  await history.flush()
+  expect(write).toHaveBeenCalledTimes(2)
+  expect(history.games.map((game) => game.id)).toEqual(['new'])
+  await expect(flushSavedDocuments()).rejects.toThrow('Some changes could not be saved')
+  refusing = false
+  await flushSavedDocuments()
+  expect(storedLibrary().games.map((game) => game.id)).toEqual(['refused', 'new'])
+  expect(history.games.map((game) => game.id)).toEqual(['refused', 'new'])
 })
 
 it('keeps all 500 games when the archive is full and permits replacing an existing game', async () => {

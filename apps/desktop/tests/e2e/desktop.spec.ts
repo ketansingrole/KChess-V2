@@ -239,6 +239,21 @@ const test = base.extend<{
         1,
       )
     }
+    if (testInfo.title.includes('library startup recovery')) {
+      db.prepare('INSERT INTO documents (key, body, updatedAt) VALUES (?, ?, 1)').run(
+        'session:local',
+        JSON.stringify({
+          version: 1,
+          setup: { variant: 'standard', fen: START_FEN },
+          moves: ['e2e4'],
+          clock: null,
+          times: null,
+          result: null,
+        }),
+      )
+      // A recoverable read failure, without damaging the saved session itself.
+      db.exec('ALTER TABLE archived_games RENAME TO startup_archive_backup')
+    }
     db.close()
     let app: ElectronApplication | undefined
     let appClosed = false
@@ -277,7 +292,8 @@ const test = base.extend<{
       })
       page.on('pageerror', (error) => console.error(`[renderer] ${error.message}`))
       await page.waitForSelector('.main-area')
-      await expect(page.locator('aside').getByText('Home', { exact: true })).toBeAttached()
+      if (!testInfo.title.includes('library startup recovery'))
+        await expect(page.locator('aside').getByText('Home', { exact: true })).toBeAttached()
       await use({ app, page, profile, lichess: lichess.stand })
     } finally {
       await lichess.close()
@@ -303,6 +319,31 @@ const test = base.extend<{
       await rm(profile, { recursive: true, force: true })
     }
   },
+})
+
+test('library startup recovery preserves the saved session and mounts the workspace after retry', async ({
+  desktop: { page, profile },
+}) => {
+  await expect(page.getByRole('heading', { name: "KChess couldn't start" })).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('archived_games')
+  await expect(page.locator('aside')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('library-startup-recovery.png') })
+  const db = new DatabaseSync(join(profile, 'kchess.db'))
+  try {
+    const row = db.prepare("SELECT body FROM documents WHERE key = 'session:local'").get() as {
+      body: string
+    }
+    expect(JSON.parse(row.body).moves).toEqual(['e2e4'])
+    db.exec('ALTER TABLE startup_archive_backup RENAME TO archived_games')
+  } finally {
+    db.close()
+  }
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.locator('aside').getByText('Home', { exact: true })).toBeAttached()
+  await page.locator('aside').getByText('Over the board', { exact: true }).click()
+  await expect
+    .poll(() => page.evaluate(async () => (await window.kchess.library()).sessions.local?.moves))
+    .toEqual(['e2e4'])
 })
 
 test('starts without an account and keeps settings and downloaded puzzles accessible offline', async ({
@@ -1864,3 +1905,118 @@ test('flushes pending settings and closes core services before quitting @package
     database.close()
   }
 })
+
+test('flushes a study annotation before its debounce when quitting @packaged', async ({
+  desktop: { app, page, profile },
+}) => {
+  await navigate(page, 'Analysis board')
+  const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  await input.fill('e4')
+  await input.press('Enter')
+  await page.getByRole('button', { name: 'Save as study', exact: true }).click()
+  await page.getByLabel('Study name', { exact: true }).fill('Quit regression')
+  await page.getByRole('button', { name: 'Save study', exact: true }).click()
+  await expect(page.getByText('Study saved', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Add a comment' }).click()
+  const comment = page.getByLabel('Comment on 1. e4', { exact: true })
+  await expect(comment).toBeVisible()
+  // Freeze renderer timers so the 150 ms autosave cannot mask a missing quit flush.
+  const now = Date.now()
+  await page.clock.install({ time: now })
+  await page.clock.pauseAt(now + 1000)
+  await comment.evaluate((field) => {
+    const textarea = field as HTMLTextAreaElement
+    textarea.value = 'Keep this edit on quit'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  const closed = app.waitForEvent('close')
+  await app.evaluate(({ app }) => {
+    setImmediate(() => app.quit())
+  })
+  await closed
+  const database = new DatabaseSync(join(profile, 'kchess.db'))
+  try {
+    const row = database.prepare('SELECT body FROM studies').get() as { body: string }
+    expect(JSON.parse(row.body).chapters[0].pgn).toContain('Keep this edit on quit')
+  } finally {
+    database.close()
+  }
+})
+
+for (const action of ['quit', 'close'] as const) {
+  test(`retains failed study edits on ${action} and saves them when Retry succeeds @packaged`, async ({
+    desktop: { app, page, profile },
+  }) => {
+    await navigate(page, 'Analysis board')
+    const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+    await input.fill('e4')
+    await input.press('Enter')
+    await page.getByRole('button', { name: 'Save as study', exact: true }).click()
+    await page.getByLabel('Study name', { exact: true }).fill('Save failure regression')
+    await page.getByRole('button', { name: 'Save study', exact: true }).click()
+    await expect(page.getByText('Study saved', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Add a comment' }).click()
+    const comment = page.getByLabel('Comment on 1. e4', { exact: true })
+    await expect(comment).toBeVisible()
+    const now = Date.now()
+    await page.clock.install({ time: now })
+    await page.clock.pauseAt(now + 1000)
+    const database = new DatabaseSync(join(profile, 'kchess.db'))
+    database.exec(
+      "CREATE TRIGGER reject_study_save BEFORE INSERT ON studies BEGIN SELECT RAISE(ABORT, 'Disk unavailable'); END;",
+    )
+    type DialogProbe = typeof globalThis & {
+      quitDialogs?: number
+      retryQuit?: () => void
+    }
+    try {
+      await app.evaluate(({ dialog }) => {
+        const probe = globalThis as DialogProbe
+        probe.quitDialogs = 0
+        dialog.showMessageBox = (async () => {
+          probe.quitDialogs!++
+          if (probe.quitDialogs === 1) return { response: 1, checkboxChecked: false }
+          await new Promise<void>((resolve) => {
+            probe.retryQuit = resolve
+          })
+          return { response: 0, checkboxChecked: false }
+        }) as typeof dialog.showMessageBox
+      })
+      await comment.evaluate((field) => {
+        const textarea = field as HTMLTextAreaElement
+        textarea.value = 'Preserve this failed edit'
+        textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      const attempt = async () => {
+        await app.evaluate(({ app, BrowserWindow }, action) => {
+          setImmediate(() =>
+            action === 'quit' ? app.quit() : BrowserWindow.getAllWindows()[0]!.close(),
+          )
+        }, action)
+      }
+      await attempt()
+      await expect.poll(() => app.evaluate(() => (globalThis as DialogProbe).quitDialogs)).toBe(1)
+      await expect(comment).toHaveValue('Preserve this failed edit')
+      // Cancel left the core usable and the renderer's unsaved tree intact.
+      expect(await page.evaluate(() => window.kchess.loadData())).toHaveProperty('settings')
+      await attempt()
+      await expect.poll(() => app.evaluate(() => (globalThis as DialogProbe).quitDialogs)).toBe(2)
+      database.exec('DROP TRIGGER reject_study_save')
+      const windowClosed = page.waitForEvent('close')
+      const appClosed = app.waitForEvent('close')
+      await app.evaluate(() => (globalThis as DialogProbe).retryQuit!())
+      await windowClosed
+      if (action === 'close' && process.platform === 'darwin')
+        await app.evaluate(({ app }) => {
+          setImmediate(() => app.quit())
+        })
+      await appClosed
+      const row = database.prepare('SELECT body FROM studies').get() as { body: string }
+      expect(JSON.parse(row.body).chapters[0].pgn).toContain('Preserve this failed edit')
+    } finally {
+      database.exec('DROP TRIGGER IF EXISTS reject_study_save')
+      database.close()
+      if (!page.isClosed()) await app.evaluate(() => (globalThis as DialogProbe).retryQuit?.())
+    }
+  })
+}

@@ -363,13 +363,15 @@ impl Core {
         // Asking the OS secret store can show a keychain prompt: only when tokens may be imported.
         let pending = self
             .database
-            .call("store.games.legacyImportPending", &[])?
+            .call_async("store.games.legacyImportPending", &[])
+            .await?
             .as_bool()
             == Some(true);
         let available = pending && self.capabilities.secrets_available().await?;
         let legacy = self
             .database
-            .call("store.games.migrate", &[json!(available)])?;
+            .call_async("store.games.migrate", &[json!(available)])
+            .await?;
         if !available {
             return Ok(());
         }
@@ -383,10 +385,11 @@ impl Core {
             let stored = match self.capabilities.encrypt(&token).await {
                 Ok(encrypted) => self
                     .database
-                    .call(
+                    .call_async(
                         "store.games.importTokenCiphertext",
                         &[account, json!(encrypted)],
                     )
+                    .await
                     .map(|_| ()),
                 Err(cause) => Err(cause),
             };
@@ -404,13 +407,15 @@ impl Core {
     /// The saved settings (`getSettings`).
     async fn get_settings(&self) -> Result<Value> {
         self.ensure_migrated().await?;
-        self.database.call("store.games.getSettings", &[])
+        self.database
+            .call_async("store.games.getSettings", &[])
+            .await
     }
 
     /// Settings, accounts and the library size (`loadData`).
     async fn load_data(&self) -> Result<Value> {
         self.ensure_migrated().await?;
-        self.database.call("store.games.loadData", &[])
+        self.database.call_async("store.games.loadData", &[]).await
     }
 
     /// The Lichess accounts that are signed in, as names; `username` restricts the list.
@@ -443,7 +448,7 @@ impl Core {
         };
         self.inner("online.logout", vec![online_accounts]).await?;
         self.reviews.discard_account_reviews(&accounts);
-        self.usage.flush();
+        self.usage.flush().await;
         self.services.forget_usage(&accounts);
         for name in &accounts {
             self.inner("challenges.forget", vec![json!(name)]).await?;
@@ -472,7 +477,8 @@ impl Core {
         self.ensure_migrated().await?;
         let saved = self
             .database
-            .call("store.games.saveSettings", &[settings])?;
+            .call_async("store.games.saveSettings", &[settings])
+            .await?;
         if previous["enginePath"] != saved["enginePath"] {
             self.search.stop_engine(true);
             self.analysis.stop_analysis(true);
@@ -581,7 +587,8 @@ impl Core {
                 let name = normal("assertUsername", &arg(args, 0))?;
                 self.ensure_migrated().await?;
                 self.database
-                    .call("store.games.addAccount", &[name, json!(false)])
+                    .call_async("store.games.addAccount", &[name, json!(false)])
+                    .await
             }
             "logout" => {
                 let username = text_arg(args, 0);
@@ -603,7 +610,7 @@ impl Core {
                         .await?;
                     self.reviews
                         .discard_account_reviews(std::slice::from_ref(&name));
-                    self.usage.flush();
+                    self.usage.flush().await;
                     self.services.forget_usage(std::slice::from_ref(&name));
                     self.inner("store.library.forgetTournamentsOf", vec![json!([name])])
                         .await?;
@@ -612,7 +619,8 @@ impl Core {
                 self.ensure_migrated().await?;
                 let data = self
                     .database
-                    .call("store.games.removeAccount", &[json!(name)])?;
+                    .call_async("store.games.removeAccount", &[json!(name)])
+                    .await?;
                 self.reviews.reviews_changed();
                 Ok(data)
             }
@@ -628,27 +636,36 @@ impl Core {
             "gamePage" => {
                 let query = normal("assertGamePageQuery", &arg(args, 0))?;
                 self.ensure_migrated().await?;
-                self.database.call("store.games.gamePage", &[query])
+                self.database
+                    .call_async("store.games.gamePage", &[query])
+                    .await
             }
             "gameLibraryOverview" => {
                 self.ensure_migrated().await?;
-                self.database.call("store.games.gameLibraryOverview", &[])
+                self.database
+                    .call_async("store.games.gameLibraryOverview", &[])
+                    .await
             }
             "insights" => {
                 let query = normal("assertInsightsQuery", &arg(args, 0))?;
-                self.database.call("store.insights.insights", &[query])
+                self.database
+                    .call_async("store.insights.insights", &[query])
+                    .await
             }
             "gameRatingHistory" => {
                 let account = normal("assertUsername", &arg(args, 0))?;
                 self.ensure_migrated().await?;
                 self.database
-                    .call("store.games.gameRatingHistory", &[account])
+                    .call_async("store.games.gameRatingHistory", &[account])
+                    .await
             }
             "gamePgn" => {
                 let account = normal("assertUsername", &arg(args, 0))?;
                 let id = normal("assertGameId", &arg(args, 1))?;
                 self.ensure_migrated().await?;
-                self.database.call("store.games.gamePgn", &[account, id])
+                self.database
+                    .call_async("store.games.gamePgn", &[account, id])
+                    .await
             }
             "cachedProfile" => {
                 let name = normal("assertUsername", &arg(args, 0))?;
@@ -689,7 +706,8 @@ impl Core {
                 self.ensure_migrated().await?;
                 let data = self
                     .database
-                    .call("store.games.clearAccountData", std::slice::from_ref(&name))?;
+                    .call_async("store.games.clearAccountData", std::slice::from_ref(&name))
+                    .await?;
                 self.inner("lichess.forgetProfile", vec![name]).await?;
                 self.reviews.reviews_changed();
                 Ok(data)
@@ -700,7 +718,8 @@ impl Core {
                 self.ensure_migrated().await?;
                 let data = self
                     .database
-                    .call("store.games.addFriends", std::slice::from_ref(&names))?;
+                    .call_async("store.games.addFriends", std::slice::from_ref(&names))
+                    .await?;
                 self.inner("lichess.primeProfiles", vec![names]).await?;
                 Ok(data)
             }
@@ -745,15 +764,47 @@ impl Core {
                 let moves = normal("assertMoves", &arg(args, 0))?;
                 let level = normal("assertLevel", &arg(args, 1))?;
                 let options = normal("assertBestMoveOptions", &arg(args, 2))?;
-                let configured = self.get_settings().await?["enginePath"].clone();
-                self.inner("engine.bestMove", vec![moves, level, configured, options])
+                let configured = async {
+                    let settings = self.get_settings().await?;
+                    self.assistance_allowed(
+                        "Engine assistance is unavailable during a live Lichess game.",
+                    )?;
+                    Ok(settings["enginePath"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string())
+                };
+                self.search
+                    .best_move_with_settings(
+                        moves,
+                        level.as_str().unwrap_or_default(),
+                        options,
+                        configured,
+                    )
                     .await
+                    .map(|value| json!(value))
             }
             "startAnalysis" => {
                 self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
-                let configured = self.get_settings().await?["enginePath"].clone();
-                self.inner("analysis.start", vec![arg(args, 0), configured])
+                let configured = async {
+                    let settings = self.get_settings().await?;
+                    self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
+                    Ok(settings["enginePath"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string())
+                };
+                let host = Arc::clone(&self.host);
+                self.analysis
+                    .start_analysis_with_settings(
+                        arg(args, 0),
+                        configured,
+                        Arc::new(move |update| {
+                            host.emit(crate::engine::analysis::ANALYSIS_EVENT, json!(update))
+                        }),
+                    )
                     .await
+                    .map(|id| json!(id))
             }
             "stopAnalysis" => {
                 let kill = match args.first() {
@@ -792,7 +843,8 @@ impl Core {
             "reviewSummaries" => {
                 let ids = normal("assertGameIds", &arg(args, 0))?;
                 self.database
-                    .call("store.reviewStore.reviewSummaries", &[ids])
+                    .call_async("store.reviewStore.reviewSummaries", &[ids])
+                    .await
             }
 
             // Online play.
@@ -1009,7 +1061,8 @@ impl Core {
                     ),
                 }
                 self.database
-                    .call("store.library.rememberTournament", &[entry, json!(now)])?;
+                    .call_async("store.library.rememberTournament", &[entry, json!(now)])
+                    .await?;
                 Ok(result)
             }
             "leaveTournament" => {
@@ -1090,61 +1143,82 @@ impl Core {
             }
             "saveRun" => {
                 let run = normal("assertRunInput", &arg(args, 0))?;
-                self.database.call("store.runs.saveRun", &[run])
+                self.database.call_async("store.runs.saveRun", &[run]).await
             }
             "runSummary" => {
                 let kind = normal("assertRunKind", &arg(args, 0))?;
-                self.database.call("store.runs.runSummary", &[kind])
+                self.database
+                    .call_async("store.runs.runSummary", &[kind])
+                    .await
             }
             "clearRuns" => {
                 let kind = match args.first() {
                     None | Some(Value::Null) => Value::Null,
                     Some(value) => normal("assertRunKind", value)?,
                 };
-                self.database.call("store.runs.clearRuns", &[kind])
+                self.database
+                    .call_async("store.runs.clearRuns", &[kind])
+                    .await
             }
             "saveVoiceAttempt" => {
                 let attempt = normal("assertVoiceAttempt", &arg(args, 0))?;
                 self.database
-                    .call("store.voiceLog.saveVoiceAttempt", &[attempt])
+                    .call_async("store.voiceLog.saveVoiceAttempt", &[attempt])
+                    .await
             }
             "updateVoiceAttempt" => {
                 let id = normal("assertVoiceId", &arg(args, 0))?;
                 let update = normal("assertVoiceUpdate", &arg(args, 1))?;
                 self.database
-                    .call("store.voiceLog.updateVoiceAttempt", &[id, update])
+                    .call_async("store.voiceLog.updateVoiceAttempt", &[id, update])
+                    .await
             }
             "voiceHistory" => {
                 let limit = normal("assertVoiceLimit", &arg(args, 0))?;
-                self.database.call("store.voiceLog.voiceHistory", &[limit])
+                self.database
+                    .call_async("store.voiceLog.voiceHistory", &[limit])
+                    .await
             }
-            "clearVoiceHistory" => self.database.call("store.voiceLog.clearVoiceHistory", &[]),
+            "clearVoiceHistory" => {
+                self.database
+                    .call_async("store.voiceLog.clearVoiceHistory", &[])
+                    .await
+            }
 
             // The library: studies, played games, drills, sessions and repertoire notes.
-            "library" => self
-                .database
-                .call("store.library.library", &[json!(now_ms())]),
+            "library" => {
+                self.database
+                    .call_async("store.library.library", &[json!(now_ms())])
+                    .await
+            }
             "importLibrary" => {
                 let documents = normal("assertLegacyDocuments", &arg(args, 0))?;
                 self.database
-                    .call("store.library.importLibrary", &[documents])
+                    .call_async("store.library.importLibrary", &[documents])
+                    .await
             }
             "studyCommand" => {
                 let shape = normal("assertStudyCommandShape", &arg(args, 0))?;
                 let command = study_command(&shape)?;
                 self.database
-                    .call("store.library.studyCommand", &[command, json!(now_ms())])
+                    .call_async(
+                        "store.library.studyCommand",
+                        &[command, json!(now_ms()), arg(args, 1)],
+                    )
+                    .await
             }
             "saveArchivedGame" => {
                 let shape = normal("assertArchivedGameShape", &arg(args, 0))?;
                 let game = archived_game(&shape)?;
                 self.database
-                    .call("store.library.saveArchivedGame", &[game])
+                    .call_async("store.library.saveArchivedGame", &[game])
+                    .await
             }
             "removeArchivedGame" => {
                 let id = normal("assertLibraryId", &arg(args, 0))?;
                 self.database
-                    .call("store.library.removeArchivedGame", &[id])
+                    .call_async("store.library.removeArchivedGame", &[id])
+                    .await
             }
             "addMistakes" => {
                 let key = normal("assertReviewKey", &arg(args, 0))?;
@@ -1153,46 +1227,60 @@ impl Core {
                     Some(value) => normal("assertSide", value)?,
                 };
                 self.database
-                    .call("store.library.addMistakes", &[key, color, json!(now_ms())])
+                    .call_async("store.library.addMistakes", &[key, color, json!(now_ms())])
+                    .await
             }
             "answerMistake" => {
                 let id = normal("assertLibraryId", &arg(args, 0))?;
                 let solved = normal("assertBoolean", &arg(args, 1))?;
-                self.database.call(
-                    "store.library.answerMistake",
-                    &[id, solved, json!(now_ms())],
-                )
+                self.database
+                    .call_async(
+                        "store.library.answerMistake",
+                        &[id, solved, json!(now_ms())],
+                    )
+                    .await
             }
             "saveSession" => {
                 let kind = normal("assertSessionKind", &arg(args, 0))?;
                 let value = normal_args("assertSession", &[kind.clone(), arg(args, 1)])?;
                 self.database
-                    .call("store.library.saveSession", &[kind, value])
+                    .call_async("store.library.saveSession", &[kind, value])
+                    .await
             }
-            "joinedTournaments" => self
-                .database
-                .call("store.library.joinedTournaments", &[json!(now_ms())]),
+            "joinedTournaments" => {
+                self.database
+                    .call_async("store.library.joinedTournaments", &[json!(now_ms())])
+                    .await
+            }
             "recordRepertoireMiss" => {
                 let key = normal("assertRepertoireKey", &arg(args, 0))?;
                 let fen = normal(
                     "assertAnalysisRequest",
                     &json!({ "fen": arg(args, 1), "lines": 1 }),
                 )?;
-                self.database.call(
-                    "store.library.recordRepertoireMiss",
-                    &[key, fen["fen"].clone()],
-                )
+                self.database
+                    .call_async(
+                        "store.library.recordRepertoireMiss",
+                        &[key, fen["fen"].clone()],
+                    )
+                    .await
             }
             "clearRepertoireMisses" => {
                 let key = normal("assertRepertoireKey", &arg(args, 0))?;
                 self.database
-                    .call("store.library.clearRepertoireMisses", &[key])
+                    .call_async("store.library.clearRepertoireMisses", &[key])
+                    .await
             }
 
             // Usage and the lifecycle.
-            "usage" => self.usage.report(),
-            "resetUsage" => self.usage.reset(),
-            "trustEnginePath" | "voiceHistoryDocument" => self.call_sync(method, args.to_vec()),
+            "usage" => self.usage.report().await,
+            "resetUsage" => self.usage.reset().await,
+            "trustEnginePath" => self.call_sync(method, args.to_vec()),
+            "voiceHistoryDocument" => {
+                self.database
+                    .call_async("store.voiceLog.voiceHistoryDocument", &[])
+                    .await
+            }
             "suspend" => {
                 if let Err(cause) = self.dispatch("puzzles.cancel", vec![]).await {
                     self.host.log(
@@ -1229,10 +1317,12 @@ impl Core {
     /// Logs a user's logout result after the sessions have ended (`logoutAccounts`).
     async fn logout_accounts(&self, username: Option<&str>) -> Result<Value> {
         self.ensure_migrated().await?;
-        self.database.call(
-            "store.games.logoutAccounts",
-            &[username.map_or(Value::Null, |name| json!(name))],
-        )
+        self.database
+            .call_async(
+                "store.games.logoutAccounts",
+                &[username.map_or(Value::Null, |name| json!(name))],
+            )
+            .await
     }
 
     /// A request id for a managed engine install or delete (the host cancels it by id).
@@ -1254,7 +1344,7 @@ impl Core {
         self.analysis.stop_analysis(true);
         self.search.reset_engine();
         self.reviews.stop_reviews().await;
-        self.usage.flush();
+        self.usage.flush().await;
         // Cancel what is in flight: installs, pending host requests, lookups, downloads, streams.
         self.capabilities.close();
         self.battery.close();
@@ -1280,7 +1370,7 @@ impl Core {
         let _ = self.dispatch("cloudEval.clear", vec![]).await;
         self.usage.close();
         self.puzzles.close().await;
-        self.database.close();
+        self.database.close_async().await;
         self.claim.release();
     }
 }

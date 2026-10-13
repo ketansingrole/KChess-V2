@@ -188,8 +188,11 @@ pub async fn fetch_lichess_reviews(
         return Err(CoreError::new("Sync was cancelled."));
     }
     let current = || lichess.account_epoch(account) == epoch;
-    let found = lichess.store().save_reviews(account, &parsed, &current)?;
-    lichess.store().mark_checked(&batch)?;
+    let found = lichess
+        .store()
+        .save_reviews(account, &parsed, &current)
+        .await?;
+    lichess.store().mark_checked(&batch, &current).await?;
     Ok(found)
 }
 

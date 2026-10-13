@@ -92,8 +92,8 @@ const status = computed(
 function openRemote(id: string): Promise<void> {
   const saved = offlineCopy(id)
   if (saved) {
-    guardOpen(() => {
-      if (analysis.openStudy(saved.id)) app.selectPage('analysis')
+    guardOpen(async () => {
+      if (await analysis.openStudy(saved.id)) app.selectPage('analysis')
       else message.value = 'This study could not be opened.'
     })
     return Promise.resolve()
@@ -118,7 +118,8 @@ function openRemote(id: string): Promise<void> {
           result as LichessStudyChapter[],
         )
         if (!request.current()) return
-        if (!analysis.openStudy(downloaded.id)) throw new Error('This study could not be opened.')
+        if (!(await analysis.openStudy(downloaded.id)))
+          throw new Error('This study could not be opened.')
         app.selectPage('analysis')
       } catch (cause) {
         console.warn('[lichess-studies] Could not open study:', cause)
@@ -142,7 +143,7 @@ function download(id: string): Promise<void> {
     if (!request.current() || reconnectNote(result)) return
     await analysis.flushStudy()
     const saved = await library.offline(downloadingAccount, item, result as LichessStudyChapter[])
-    if (analysis.studyId === saved.id) analysis.openStudy(saved.id, analysis.studyChapterId)
+    if (analysis.studyId === saved.id) await analysis.openStudy(saved.id, analysis.studyChapterId)
     if (saved.conflict)
       message.value =
         'Your offline edits were kept. The cloud version was downloaded as a separate copy.'

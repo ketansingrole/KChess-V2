@@ -186,18 +186,59 @@ pub struct GameToReview {
 /// them). Implementations must be safe to call from any thread.
 pub trait ReviewStorage: Send + Sync + 'static {
     /// `readReview(key)`.
-    fn read_review(&self, key: &str) -> Result<Option<StoredReview>>;
+    fn read_review<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>>;
     /// `writeReview(review)`: saves `review` unless a better one is stored (a Lichess review
     /// beats a local one, a finished one beats one in progress), links its game, and returns
     /// what is stored with its summary.
-    fn write_review(&self, review: StoredReview) -> Result<ReviewUpdate>;
+    fn write_review<'a>(
+        &'a self,
+        review: StoredReview,
+    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>>;
+    /// Rechecks the owner after waiting for storage admission, before writing.
+    fn write_review_if<'a>(
+        &'a self,
+        review: StoredReview,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> BoxFuture<'a, Result<ReviewUpdate>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(CoreError::new("Review was discarded."));
+            }
+            self.write_review(review).await
+        })
+    }
     /// `hasAccount(username)`: whether the account is still on this device.
-    fn has_account(&self, username: &str) -> Result<bool>;
+    fn has_account<'a>(
+        &'a self,
+        username: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool>>;
     /// `markChecked(ids)`: Lichess was asked for these games' analysis.
-    fn mark_checked(&self, ids: &[String]) -> Result<()>;
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+    ) -> futures_util::future::BoxFuture<'a, Result<()>>;
+    fn mark_checked_if<'a>(
+        &'a self,
+        ids: &'a [String],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            if !current() {
+                return Err(CoreError::aborted("Review was discarded."));
+            }
+            self.mark_checked(ids).await
+        })
+    }
     /// `gamesToReview(accounts, since)`: finished games of these accounts with no finished
     /// review, newest first, played after `since` (ms).
-    fn games_to_review(&self, accounts: &[String], since: i64) -> Result<Vec<GameToReview>>;
+    fn games_to_review<'a>(
+        &'a self,
+        accounts: &'a [String],
+        since: i64,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>>;
 }
 
 /// The host the review talks to: settings, the accounts, what else needs the computer, Lichess,
@@ -253,6 +294,8 @@ struct State {
     host: Option<Arc<dyn ReviewHost>>,
     /// Reviews someone asked for, the most recent first.
     asked: Vec<Arc<Job>>,
+    /// Requests admitted before their asynchronous storage reads finish.
+    pending: Vec<Arc<Job>>,
     review_epoch: u64,
     /// Requests made so far (the `requested` of the next one is this plus one).
     request_seq: u64,
@@ -278,6 +321,20 @@ struct Shared {
     state: Mutex<State>,
     /// `true` while no pump runs; `stop_reviews` waits for it (`drain`).
     idle_tx: watch::Sender<bool>,
+}
+
+/// A dropped request relinquishes admission even while storage is still pending.
+struct PendingReview {
+    shared: Arc<Shared>,
+    requested: u64,
+}
+
+impl Drop for PendingReview {
+    fn drop(&mut self) {
+        lock(&self.shared.state)
+            .pending
+            .retain(|job| job.requested != self.requested);
+    }
 }
 
 /// The review queue and worker. Cloning shares the same queue and engine.
@@ -311,41 +368,56 @@ impl Reviews {
     }
 
     /// `getReview(fen, moves)`: the stored review of these moves, if any.
-    pub fn get_review(&self, fen: &str, moves: &[String]) -> Result<Option<StoredReview>> {
+    pub async fn get_review(&self, fen: &str, moves: &[String]) -> Result<Option<StoredReview>> {
         let positions = replay_positions(fen, moves);
         if positions.is_empty() {
             return Ok(None);
         }
         let upto = (positions.len() - 1).min(moves.len());
         let key = review_key(&positions[0].fen, &moves[..upto])?;
-        self.shared.storage.read_review(&key)
+        self.shared.storage.read_review(&key).await
     }
 
     /// `requestReview(request)`: reviews a game now, ahead of automatic reviews. Returns what is
     /// already stored (complete or not); updates arrive as the review goes on.
-    pub fn request_review(&self, request: ReviewRequest) -> Result<Option<StoredReview>> {
+    pub async fn request_review(&self, request: ReviewRequest) -> Result<Option<StoredReview>> {
         let s = &self.shared;
-        let requested = {
+        let (requested, epoch) = {
             let mut state = lock(&s.state);
             state.request_seq += 1;
-            state.request_seq
+            (state.request_seq, state.review_epoch)
         };
         let Some(job) = job_for(&request, false, requested)? else {
             return Ok(None);
         };
+        let job = Arc::new(job);
+        lock(&s.state).pending.push(Arc::clone(&job));
+        let _pending = PendingReview {
+            shared: Arc::clone(s),
+            requested,
+        };
+        let current =
+            || !job.cancelled.load(Ordering::SeqCst) && lock(&s.state).review_epoch == epoch;
         // A request sent just before its account was logged out or removed stores nothing.
         if let Some(account) = &job.account
-            && !s.storage.has_account(account)?
+            && !s.storage.has_account(account).await?
         {
             return Ok(None);
         }
-        let cached = s.storage.read_review(&job.key)?;
+        let cached = s.storage.read_review(&job.key).await?;
+        if !current() {
+            return Ok(None);
+        }
         // Link the requesting game even when cached output is returned or its search is queued.
         let stored = match &job.game_id {
             Some(game) => {
                 let mut base = cached.unwrap_or_else(|| empty_review(&job));
                 base.game_id = Some(game.clone());
-                Some(s.storage.write_review(base)?.review)
+                match s.storage.write_review_if(base, &current).await {
+                    Ok(update) => Some(update.review),
+                    Err(_) if !current() => return Ok(None),
+                    Err(cause) => return Err(cause),
+                }
             }
             None => cached,
         };
@@ -358,6 +430,9 @@ impl Reviews {
         let key = job.key.clone();
         {
             let mut state = lock(&s.state);
+            if state.review_epoch != epoch || job.cancelled.load(Ordering::SeqCst) {
+                return Ok(stored);
+            }
             if let Some(running) = state.running.clone().filter(|running| running.key == key) {
                 running.background.store(false, Ordering::SeqCst);
                 return Ok(stored);
@@ -366,7 +441,7 @@ impl Reviews {
                 state.asked.remove(queued);
             }
             // The game asked for most recently is the one being looked at: it goes first.
-            state.asked.insert(0, Arc::new(job));
+            state.asked.insert(0, Arc::clone(&job));
             state.skipped.remove(&key);
             if state
                 .failed
@@ -385,6 +460,9 @@ impl Reviews {
     pub fn cancel_review(&self, key: &str) {
         {
             let mut state = lock(&self.shared.state);
+            for job in state.pending.iter().filter(|job| job.key == key) {
+                job.cancelled.store(true, Ordering::SeqCst);
+            }
             state.asked.retain(|job| job.key != key);
             if let Some(running) = state.running.clone()
                 && running.key == key
@@ -409,6 +487,10 @@ impl Reviews {
         {
             let mut state = lock(&self.shared.state);
             state.review_epoch += 1;
+            for job in state.pending.iter().filter(|job| account_in(job, &names)) {
+                job.cancelled.store(true, Ordering::SeqCst);
+                job.discarded.store(true, Ordering::SeqCst);
+            }
             state.asked.retain(|job| !account_in(job, &names));
             if let Some(running) = state.running.clone()
                 && account_in(&running, &names)
@@ -446,6 +528,9 @@ impl Reviews {
             let mut state = lock(&s.state);
             state.review_epoch += 1;
             state.asked.clear();
+            for job in &state.pending {
+                job.cancelled.store(true, Ordering::SeqCst);
+            }
             if let Some(running) = &state.running {
                 running.cancelled.store(true, Ordering::SeqCst);
             }
@@ -636,6 +721,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
     let current_epoch = |s: &Shared| lock(&s.state).review_epoch;
     loop {
         let epoch = current_epoch(s);
+        let current = || epoch == current_epoch(s) && host_of(s).is_some();
         let Some(host) = host_of(s) else {
             return Ok(None);
         };
@@ -654,10 +740,13 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
         };
         let skipped = lock(&s.state).skipped.clone();
         let mut games = Vec::new();
-        for game in s.storage.games_to_review(&accounts, since)? {
+        for game in s.storage.games_to_review(&accounts, since).await? {
             if !skipped.contains(&game.id) && is_reviewable_perf(&game.perf)? {
                 games.push(game);
             }
+        }
+        if !current() {
+            return Ok(None);
         }
         lock(&s.state).waiting_background = games.len();
         // Games not yet looked up on Lichess go there first, a batch per account.
@@ -675,7 +764,11 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                         return Ok(None);
                     }
                     for review in found {
-                        let update = s.storage.write_review(review)?;
+                        let update = match s.storage.write_review_if(review, &current).await {
+                            Ok(update) => update,
+                            Err(_) if !current() => return Ok(None),
+                            Err(cause) => return Err(cause),
+                        };
                         host.update(update);
                     }
                 }
@@ -691,7 +784,11 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                     if epoch != current_epoch(s) {
                         return Ok(None);
                     }
-                    s.storage.mark_checked(&ids)?;
+                    match s.storage.mark_checked_if(&ids, &current).await {
+                        Ok(()) => {}
+                        Err(_) if !current() => return Ok(None),
+                        Err(cause) => return Err(cause),
+                    }
                 }
             }
             continue;
@@ -708,13 +805,26 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
             match job_for(&request, true, 0)? {
                 Some(job) => {
                     // Reviewed already (opened from the analysis board): link it to the game.
-                    if let Some(existing) = s.storage.read_review(&job.key)?
-                        && existing.complete
-                    {
-                        s.storage.write_review(StoredReview {
-                            game_id: Some(game.id.clone()),
-                            ..existing
-                        })?;
+                    let existing = s.storage.read_review(&job.key).await?;
+                    if !current() {
+                        return Ok(None);
+                    }
+                    if let Some(existing) = existing.filter(|review| review.complete) {
+                        match s
+                            .storage
+                            .write_review_if(
+                                StoredReview {
+                                    game_id: Some(game.id.clone()),
+                                    ..existing
+                                },
+                                &current,
+                            )
+                            .await
+                        {
+                            Ok(_) => {}
+                            Err(_) if !current() => return Ok(None),
+                            Err(cause) => return Err(cause),
+                        }
                         continue;
                     }
                     return Ok(Some(Arc::new(job)));
@@ -821,14 +931,19 @@ async fn pump_loop(s: &Arc<Shared>) -> Result<()> {
 }
 
 /// Saves what a job produced, unless it was discarded (`publish`).
-fn publish(s: &Shared, job: &Job, review: StoredReview) -> Result<()> {
+async fn publish(s: &Shared, job: &Job, review: StoredReview) -> Result<()> {
     if job.discarded.load(Ordering::SeqCst) {
         return Ok(());
     }
     let Some(host) = host_of(s) else {
         return Ok(());
     };
-    let update = s.storage.write_review(review)?;
+    let current = || !job.discarded.load(Ordering::SeqCst) && host_of(s).is_some();
+    let update = match s.storage.write_review_if(review, &current).await {
+        Ok(update) => update,
+        Err(_) if !current() => return Ok(()),
+        Err(cause) => return Err(cause),
+    };
     host.update(update);
     Ok(())
 }
@@ -865,7 +980,7 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
         return;
     }
     lock(&s.state).running = Some(Arc::clone(&job));
-    let mut review = match s.storage.read_review(&job.key) {
+    let mut review = match s.storage.read_review(&job.key).await {
         Ok(Some(stored)) => stored,
         Ok(None) => empty_review(&job),
         Err(cause) => {
@@ -902,7 +1017,7 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
                 &format!("Review interrupted: {} {cause}", job.key),
             );
             if review.evals.iter().any(Option::is_some)
-                && let Err(saved) = publish(s, &job, review.clone())
+                && let Err(saved) = publish(s, &job, review.clone()).await
             {
                 host_log(
                     s,
@@ -942,7 +1057,7 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
             }
             close_engine(s);
             if review.evals.iter().any(Option::is_some)
-                && let Err(saved) = publish(s, &job, review.clone())
+                && let Err(saved) = publish(s, &job, review.clone()).await
             {
                 host_log(
                     s,
@@ -978,7 +1093,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
             }
         };
         if let Some(matched) = found.into_iter().find(|found| found.key == job.key) {
-            return publish(s, job, matched);
+            return publish(s, job, matched).await;
         }
     }
     let previous_game = review.game_id.take();
@@ -1016,7 +1131,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
                 || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
             {
                 if should_yield(s, job).await? {
-                    publish(s, job, review.clone())?;
+                    publish(s, job, review.clone()).await?;
                     if !job.cancelled.load(Ordering::SeqCst)
                         && !job.background.load(Ordering::SeqCst)
                     {
@@ -1041,7 +1156,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
             send_status(s);
             // The quick pass shows as it goes; the deep one replaces it a few positions at a time.
             if depth == QUICK_DEPTH || since_save >= SAVE_EVERY {
-                publish(s, job, review.clone())?;
+                publish(s, job, review.clone()).await?;
                 since_save = 0;
             }
         }
@@ -1050,7 +1165,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         .evals
         .iter()
         .all(|eval| eval.as_ref().is_some_and(|eval| has_score(Some(eval))));
-    publish(s, job, review.clone())?;
+    publish(s, job, review.clone()).await?;
     if !review.complete {
         lock(&s.state)
             .skipped

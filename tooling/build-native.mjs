@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { writeRustLicenses } from './rust-licenses.mjs'
+import { replaceNative } from './replace-native.mjs'
 
 /**
  * Build the Rust rules for both runtimes: the Node module for this host, where `@kchess/native`
@@ -37,7 +38,7 @@ if (!library) throw new Error(`No native build for ${process.platform}.`)
 const source = `${root}target/${profile}/${library}`
 if (!existsSync(source)) throw new Error(`Cargo did not produce ${source}.`)
 const target = `${root}crates/kchess-node/kchess-native.${process.platform}-${process.arch}.node`
-copyFileSync(source, target)
+replaceNative(source, target)
 console.info(
   `[kchess] Built ${target.slice(root.length)} (${profile}, ${(statSync(target).size / 1024 / 1024).toFixed(2)} MiB).`,
 )

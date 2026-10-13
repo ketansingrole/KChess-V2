@@ -40,7 +40,7 @@ export interface DesktopApi extends CoreApi {
   connectLichess(look?: OAuthPageLook): Promise<{ data: AppData; username: string }>
   /** Flush pending frontend writes before the shell closes the core. */
   onPrepareQuit(callback: (token: string) => void): () => void
-  completeQuit(token: string): Promise<void>
+  completeQuit(token: string, saved?: boolean): Promise<void>
   reportRendererError(report: RendererErrorReport): Promise<void>
   recordPerformance(name: PerformanceName, milliseconds: number): Promise<void>
   /**

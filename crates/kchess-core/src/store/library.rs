@@ -67,8 +67,14 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             str_arg(args, 0, "kind").and_then(|kind| read_session(host, db, kind))
         }
         "store.library.importLibrary" => import_library(host, db, args.first()),
-        "store.library.studyCommand" => now_arg(args, 1)
-            .and_then(|now| study_command(db, args.first().unwrap_or(&Value::Null), now)),
+        "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
+            study_command(
+                db,
+                args.first().unwrap_or(&Value::Null),
+                now,
+                args.get(2) == Some(&Value::Bool(true)),
+            )
+        }),
         "store.library.saveArchivedGame" => {
             write_game(db, args.first().unwrap_or(&Value::Null)).map(|()| Value::Null)
         }
@@ -363,6 +369,12 @@ fn stored(host: &dyn Host, db: &Connection, key: &str) -> Result<bool> {
             .map_err(db_err)?;
         return Ok(any.is_some());
     }
+    if key == STUDIES {
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM studies", [], |row| row.get(0))
+            .map_err(db_err)?;
+        return Ok(count > 0 || read_document_text(db, key)?.is_some());
+    }
     Ok(read_document(host, db, key)?.is_some())
 }
 
@@ -386,10 +398,90 @@ fn decode_archived_game_text(text: &str) -> Option<Value> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_archived_game(&raw))
 }
 
+const DAMAGED_STUDIES: &str = "The saved study library is damaged. Its data has been preserved; restore a backup before editing studies.";
+
+/// Stored documents must not silently discard invalid or excess studies on the next mutation.
+fn stored_studies(text: &str) -> Result<Vec<Value>> {
+    if utf16_len(text) > MAX_DOCUMENT {
+        return Err(CoreError::new(DAMAGED_STUDIES));
+    }
+    let raw = parse_text(text).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+    let decoded = kchess_domain::library::decode_studies(&raw)
+        .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+    let raw_items = raw
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+    let mut ids = std::collections::HashSet::new();
+    if decoded.len() != raw_items.len() || decoded.iter().any(|study| !ids.insert(id_of(study))) {
+        return Err(CoreError::new(DAMAGED_STUDIES));
+    }
+    Ok(decoded)
+}
+
+/// Migrate an earlier release's document atomically, retaining it unchanged on any failure.
+fn migrate_studies(db: &Connection) -> Result<()> {
+    let Some(body) = read_document_text(db, STUDIES)? else {
+        return Ok(());
+    };
+    if parse_text(&body) == Some(json!({ "version": 3 })) {
+        return Ok(());
+    }
+    let items = stored_studies(&body)?;
+    let work = || {
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM studies", [], |row| row.get(0))
+            .map_err(db_err)?;
+        if count != 0 {
+            return Err(CoreError::new(DAMAGED_STUDIES));
+        }
+        for (position, study) in items.iter().enumerate() {
+            db.execute(
+                "INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    id_of(study),
+                    js_json(study),
+                    position as i64,
+                    utf16_len(&js_json(study)) as i64
+                ],
+            )
+            .map_err(db_err)?;
+        }
+        write_document(db, STUDIES, &json!({ "version": 3 }), "")?;
+        Ok(())
+    };
+    if db.is_autocommit() {
+        transaction(db, work)
+    } else {
+        work()
+    }
+}
+
 fn read_studies(db: &Connection) -> Result<Vec<Value>> {
-    Ok(read_document_text(db, STUDIES)?
-        .and_then(|body| decode_studies_text(&body))
-        .unwrap_or_default())
+    migrate_studies(db)?;
+    let mut statement = db
+        .prepare("SELECT id, body FROM studies ORDER BY position")
+        .map_err(db_err)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(db_err)?;
+    let mut items = Vec::new();
+    for row in rows {
+        let (id, body) = row.map_err(db_err)?;
+        let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+        let study = kchess_domain::library::decode_study(&raw)
+            .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+        if id_of(&study) != Some(id.as_str()) {
+            return Err(CoreError::new(DAMAGED_STUDIES));
+        }
+        items.push(study);
+    }
+    if items.len() > MAX_STUDIES {
+        return Err(CoreError::new(DAMAGED_STUDIES));
+    }
+    Ok(items)
 }
 
 fn read_mistakes(db: &Connection) -> Result<Vec<Value>> {
@@ -455,15 +547,27 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
         .into_iter()
         .filter(|entry| until_after(entry, now))
         .collect();
-    Ok(json!({
-        "studies": read_studies(db)?,
+    let (studies, study_error) = match read_studies(db) {
+        Ok(studies) => (studies, None),
+        Err(error) if error.message == DAMAGED_STUDIES => {
+            host.log(Level::Warn, "library", DAMAGED_STUDIES);
+            (Vec::new(), Some(error.message))
+        }
+        Err(error) => return Err(error),
+    };
+    let mut snapshot = json!({
+        "studies": studies,
         "games": read_games(host, db)?,
         "mistakes": read_mistakes(db)?,
         "sessions": Value::Object(sessions),
         "joinedTournaments": joined,
         "repertoireMisses": read_misses(host, db)?,
         "imported": read_document(host, db, IMPORTED)? == Some(Value::Bool(true)),
-    }))
+    });
+    if let Some(error) = study_error {
+        snapshot["studyError"] = json!(error);
+    }
+    Ok(snapshot)
 }
 
 /// `entry.until > now`
@@ -563,9 +667,27 @@ fn spread(base: &Map<String, Value>, updates: Vec<(&str, Value)>) -> Map<String,
 struct Studies {
     items: Vec<Value>,
     now: f64,
+    sizes: std::collections::HashMap<String, usize>,
 }
 
 impl Studies {
+    /// Unloaded studies contain only their ID; their persisted size avoids reading their PGNs.
+    fn text_size(&self, items: &[Value]) -> usize {
+        2 + items.len().saturating_sub(1)
+            + items
+                .iter()
+                .map(|study| {
+                    if study.as_object().is_some_and(|item| item.len() == 1) {
+                        self.sizes
+                            .get(id_of(study).unwrap_or_default())
+                            .copied()
+                            .unwrap_or(0)
+                    } else {
+                        utf16_len(&js_json(study))
+                    }
+                })
+                .sum::<usize>()
+    }
     fn find(&self, id: &str) -> Option<&Value> {
         self.items.iter().find(|item| id_of(item) == Some(id))
     }
@@ -588,9 +710,7 @@ impl Studies {
                 .filter(|item| id_of(item) != Some(id.as_str()))
                 .cloned(),
         );
-        if next.len() > MAX_STUDIES
-            || utf16_len(&js_json(&Value::Array(next.clone()))) > STUDY_LIBRARY_MAX_TEXT
-        {
+        if next.len() > MAX_STUDIES || self.text_size(&next) > STUDY_LIBRARY_MAX_TEXT {
             return Err(CoreError::new(
                 "The study library is full. Export and remove a study before saving another.",
             ));
@@ -692,8 +812,67 @@ fn name_field(command: &Map<String, Value>, key: &str) -> Result<String> {
     }
 }
 
+/// An incremental command loads only its target; other studies carry their order and size.
+fn read_command_studies(db: &Connection, command: &Map<String, Value>) -> Result<Vec<Value>> {
+    let op = command
+        .get("op")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let target = if op == "restore" {
+        command.get("study").and_then(id_of)
+    } else {
+        command.get("id").and_then(Value::as_str)
+    };
+    let offline_id: Option<String> = if op == "offline" {
+        let account = command
+            .get("account")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let remote = command
+            .get("remote")
+            .and_then(|remote| remote.get("id"))
+            .and_then(Value::as_str);
+        db.query_row("SELECT id FROM studies WHERE lower(json_extract(body, '$.cloud.account')) = lower(?1) AND json_extract(body, '$.cloud.id') = ?2 ORDER BY position LIMIT 1",
+            params![account, remote], |row| row.get(0)).optional().map_err(db_err)?
+    } else {
+        None
+    };
+    let target = offline_id.as_deref().or(target);
+    let mut statement = db
+        .prepare(
+            "SELECT id, CASE WHEN id = ?1 THEN body ELSE NULL END FROM studies ORDER BY position",
+        )
+        .map_err(db_err)?;
+    let rows = statement
+        .query_map(params![target], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(db_err)?;
+    let mut items = Vec::new();
+    for row in rows {
+        let (id, body) = row.map_err(db_err)?;
+        let study = match body {
+            Some(body) => {
+                let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+                let study = kchess_domain::library::decode_study(&raw)
+                    .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
+                if id_of(&study) != Some(id.as_str()) {
+                    return Err(CoreError::new(DAMAGED_STUDIES));
+                }
+                study
+            }
+            None => json!({ "id": id }),
+        };
+        items.push(study);
+    }
+    if items.len() > MAX_STUDIES {
+        return Err(CoreError::new(DAMAGED_STUDIES));
+    }
+    Ok(items)
+}
+
 /// `studyCommand(command, now)`: one change to the study library, stored on success.
-fn study_command(db: &Connection, command: &Value, now: f64) -> Result<Value> {
+fn study_command(db: &Connection, command: &Value, now: f64, incremental: bool) -> Result<Value> {
     let command = object(command, "study command")?;
     let op = command
         .get("op")
@@ -703,9 +882,23 @@ fn study_command(db: &Connection, command: &Value, now: f64) -> Result<Value> {
     // `find(command.id)` takes any id; `command.id ? … : …` only a non-empty one.
     let id_arg = command.get("id").and_then(Value::as_str);
 
+    migrate_studies(db)?;
+    let sizes: std::collections::HashMap<String, usize> = db
+        .prepare("SELECT id, textUnits FROM studies")
+        .map_err(db_err)?
+        .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))
+        .map_err(db_err)?
+        .collect::<std::result::Result<_, _>>()
+        .map_err(db_err)?;
+    let original = if incremental {
+        read_command_studies(db, command)?
+    } else {
+        read_studies(db)?
+    };
     let mut studies = Studies {
-        items: read_studies(db)?,
+        items: original.clone(),
         now,
+        sizes,
     };
     let mut result = Map::new();
     match op {
@@ -726,7 +919,7 @@ fn study_command(db: &Connection, command: &Value, now: f64) -> Result<Value> {
                     id_arg,
                 )?;
                 result.insert("id".into(), json!(id));
-                return finish_studies(db, studies, result);
+                return finish_studies(db, studies, result, &original, incremental);
             };
             let old = object(&old, "study")?.clone();
             let chapters = old
@@ -811,7 +1004,7 @@ fn study_command(db: &Connection, command: &Value, now: f64) -> Result<Value> {
             if let Some(study) = study {
                 let raw_name = name_field(command, "name")?;
                 if js::trim(&raw_name).is_empty() {
-                    return finish_studies(db, studies, result);
+                    return finish_studies(db, studies, result, &original, incremental);
                 }
                 let study = object(&study, "study")?.clone();
                 let chapter_id = field("chapterId");
@@ -997,7 +1190,7 @@ fn study_command(db: &Connection, command: &Value, now: f64) -> Result<Value> {
         // Any other operation changes nothing; the list is still written, as before.
         _ => {}
     }
-    finish_studies(db, studies, result)
+    finish_studies(db, studies, result, &original, incremental)
 }
 
 /// `offline`: a cloud copy of a study, kept beside a changed local one.
@@ -1102,18 +1295,65 @@ fn study_matches(study: &Value, downloaded: &str) -> Result<bool> {
         .ok_or_else(|| CoreError::new("A study chapter holds no game."))
 }
 
-/// `writeStudies(items)`, then the `{ studies, ...result }` a command returns.
-fn finish_studies(db: &Connection, studies: Studies, result: Map<String, Value>) -> Result<Value> {
-    write_document(
-        db,
-        STUDIES,
-        &json!({ "version": 2, "items": studies.items }),
-        "This study is too large to save automatically. Export a PGN copy.",
-    )?;
-    let mut out = Map::new();
-    out.insert("studies".into(), Value::Array(studies.items));
-    for (key, value) in result {
-        out.insert(key, value);
+/// Atomically update changed rows and ordering, then return a snapshot or an incremental response.
+fn finish_studies(
+    db: &Connection,
+    studies: Studies,
+    result: Map<String, Value>,
+    original: &[Value],
+    incremental: bool,
+) -> Result<Value> {
+    // Serialize only changed studies; unrelated documents keep their bodies and row identities.
+    let old: std::collections::HashMap<_, _> =
+        original.iter().map(|study| (id_of(study), study)).collect();
+    let changed: Vec<Value> = studies
+        .items
+        .iter()
+        .filter(|study| old.get(&id_of(study)).copied() != Some(*study))
+        .cloned()
+        .collect();
+    let order: Vec<Value> = studies
+        .items
+        .iter()
+        .map(|study| study["id"].clone())
+        .collect();
+    let overhead = utf16_len("{\"version\":2,\"items\":}");
+    if overhead + studies.text_size(&studies.items) > MAX_DOCUMENT {
+        return Err(CoreError::new(
+            "This study is too large to save automatically. Export a PGN copy.",
+        ));
+    }
+    transaction(db, || {
+        if read_document_text(db, STUDIES)?.is_none() {
+            write_document(db, STUDIES, &json!({ "version": 3 }), "")?;
+        }
+        for study in original {
+            if !studies.items.iter().any(|next| id_of(next) == id_of(study)) {
+                db.execute("DELETE FROM studies WHERE id = ?1", params![id_of(study)])
+                    .map_err(db_err)?;
+            }
+        }
+        for (position, study) in studies.items.iter().enumerate() {
+            if changed.iter().any(|next| id_of(next) == id_of(study)) {
+                db.execute("INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET body = excluded.body, position = excluded.position, textUnits = excluded.textUnits",
+                    params![id_of(study), js_json(study), position as i64, utf16_len(&js_json(study)) as i64]).map_err(db_err)?;
+            } else {
+                db.execute(
+                    "UPDATE studies SET position = ?2 WHERE id = ?1 AND position != ?2",
+                    params![id_of(study), position as i64],
+                )
+                .map_err(db_err)?;
+            }
+        }
+        Ok(())
+    })?;
+    let mut out = result;
+    out.insert(
+        "studies".into(),
+        Value::Array(if incremental { changed } else { studies.items }),
+    );
+    if incremental {
+        out.insert("order".into(), Value::Array(order));
     }
     Ok(Value::Object(out))
 }
@@ -1501,6 +1741,135 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ids(joined(&ctx)), ["other"]);
+    }
+
+    fn study_db() -> Connection {
+        let db = Connection::open_in_memory().expect("database");
+        super::super::migrations::migrate(&db).expect("migrate");
+        db
+    }
+
+    #[test]
+    fn damaged_study_documents_are_preserved_and_cannot_be_overwritten() {
+        for body in [
+            "{broken",
+            r#"{"version":2,"items":"nope"}"#,
+            r#"{"version":99,"items":[]}"#,
+            r#"{"version":2,"items":[{"id":"bad","name":"Bad","pgn":"1. e5 *","updatedAt":1}]}"#,
+        ] {
+            let db = study_db();
+            db.execute("INSERT INTO documents VALUES ('studies', ?1, 1)", [body])
+                .expect("seed");
+            assert!(read_studies(&db).is_err());
+            let session = misc("encodeSession", vec![json!("analysis"), json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""})]).expect("session");
+            write_document(&db, "session:analysis", &session, "").expect("save session");
+            let snapshot = library(&Quiet, &db, 1.0).expect("other documents remain readable");
+            assert_eq!(snapshot["studyError"], json!(DAMAGED_STUDIES));
+            assert_eq!(snapshot["sessions"]["analysis"]["pgn"], json!("1. d4 *"));
+            assert!(
+                study_command(
+                    &db,
+                    &json!({ "op":"save", "name":"New", "pgn":"1. e4 *" }),
+                    1.0,
+                    true
+                )
+                .is_err()
+            );
+            assert_eq!(
+                read_document_text(&db, STUDIES).expect("read").as_deref(),
+                Some(body)
+            );
+            let count: i64 = db
+                .query_row("SELECT COUNT(*) FROM studies", [], |row| row.get(0))
+                .expect("count");
+            assert_eq!(count, 0);
+        }
+    }
+
+    #[test]
+    fn study_migration_preserves_chapters_and_rolls_back_failed_inserts() {
+        let db = study_db();
+        let body = js_json(
+            &json!({"version":2,"items":[{"id":"s","name":"Study","pgn":"1. e4 *","updatedAt":1,
+            "chapters":[{"id":"c","name":"Chapter","pgn":"1. e4 {Keep} e5 (1... c5 $1) *"}]}]}),
+        );
+        db.execute("INSERT INTO documents VALUES ('studies', ?1, 1)", [&body])
+            .expect("seed");
+        db.execute_batch("CREATE TRIGGER refuse_study BEFORE INSERT ON studies BEGIN SELECT RAISE(ABORT, 'disk failure'); END;").expect("trigger");
+        assert!(read_studies(&db).is_err());
+        assert_eq!(read_document_text(&db, STUDIES).expect("read"), Some(body));
+        db.execute_batch("DROP TRIGGER refuse_study").expect("drop");
+        let studies = read_studies(&db).expect("migrate");
+        assert!(
+            studies[0]["chapters"][0]["pgn"]
+                .as_str()
+                .expect("pgn")
+                .contains("c5 $1")
+        );
+        assert_eq!(read_studies(&db).expect("repeat"), studies);
+    }
+
+    #[test]
+    fn incremental_study_edits_write_and_return_only_the_changed_document() {
+        let db = study_db();
+        for id in ["a", "b", "c"] {
+            study_command(
+                &db,
+                &json!({"op":"save", "id":id, "name":id, "pgn":"1. e4 *"}),
+                1.0,
+                true,
+            )
+            .expect("save");
+        }
+        db.execute_batch("CREATE TRIGGER unchanged_body BEFORE UPDATE OF body ON studies WHEN OLD.id != 'a' BEGIN SELECT RAISE(ABORT, 'unrelated study rewritten'); END;").expect("trigger");
+        let result = study_command(
+            &db,
+            &json!({"op":"save", "id":"a", "name":"A", "pgn":"1. d4 {Notes} d5 (1... Nf6 $1) *"}),
+            2.0,
+            true,
+        )
+        .expect("edit");
+        assert_eq!(result["order"], json!(["a", "c", "b"]));
+        assert_eq!(result["studies"].as_array().expect("studies").len(), 1);
+        assert_eq!(result["studies"][0]["id"], json!("a"));
+        assert_eq!(read_studies(&db).expect("snapshot").len(), 3);
+        let removed =
+            study_command(&db, &json!({"op":"remove", "id":"a"}), 3.0, true).expect("remove");
+        assert_eq!(removed["order"], json!(["c", "b"]));
+        assert_eq!(removed["studies"], json!([]));
+        assert_eq!(removed["removed"]["id"], json!("a"));
+        let restored = study_command(
+            &db,
+            &json!({"op":"restore", "study":removed["removed"]}),
+            4.0,
+            true,
+        )
+        .expect("restore");
+        assert_eq!(restored["order"], json!(["a", "c", "b"]));
+    }
+
+    #[test]
+    fn failed_study_updates_keep_the_previous_body_and_order() {
+        let db = study_db();
+        study_command(
+            &db,
+            &json!({"op":"save","id":"a","name":"A","pgn":"1. e4 *"}),
+            1.0,
+            true,
+        )
+        .expect("save");
+        let before = read_studies(&db).expect("snapshot");
+        db.execute_batch("CREATE TRIGGER refuse_study BEFORE UPDATE ON studies BEGIN SELECT RAISE(ABORT, 'disk failure'); END;").expect("trigger");
+        assert!(
+            study_command(
+                &db,
+                &json!({"op":"rename","id":"a","name":"New"}),
+                2.0,
+                true
+            )
+            .is_err()
+        );
+        assert_eq!(read_studies(&db).expect("snapshot"), before);
     }
 
     #[test]

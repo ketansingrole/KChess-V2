@@ -276,7 +276,11 @@ const CORE: &[Row] = &[
     ("clearVoiceHistory", 0, &[]),
     ("library", 0, &[]),
     ("importLibrary", 1, &[Valid("assertLegacyDocuments")]),
-    ("studyCommand", 1, &[Valid("assertStudyCommandShape")]),
+    (
+        "studyCommand",
+        1,
+        &[Valid("assertStudyCommandShape"), Optional("assertBoolean")],
+    ),
     ("saveArchivedGame", 1, &[Valid("assertArchivedGameShape")]),
     ("removeArchivedGame", 1, &[Valid("assertLibraryId")]),
     (
@@ -306,7 +310,11 @@ const CORE: &[Row] = &[
 /// The desktop's own invocations (`IPC_CHANNELS` that are not core methods, and `saveSettings`,
 /// whose desktop settings differ from the core's).
 const DESKTOP: &[Row] = &[
-    ("completeQuit", 1, &[Valid("assertUuid")]),
+    (
+        "completeQuit",
+        1,
+        &[Valid("assertUuid"), Valid("assertOptionalFlag")],
+    ),
     (
         "recordPerformance",
         2,

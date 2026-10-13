@@ -118,43 +118,119 @@ fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
 }
 
 impl ReviewStorage for ReviewRecords {
-    fn read_review(&self, key: &str) -> Result<Option<StoredReview>> {
-        let value = self.0.call("store.reviewStore.readReview", &[json!(key)])?;
-        if value.is_null() {
-            return Ok(None);
-        }
-        parse(value).map(Some)
+    fn write_review_if<'a>(
+        &'a self,
+        review: StoredReview,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> BoxFuture<'a, Result<ReviewUpdate>> {
+        Box::pin(async move {
+            let value = self
+                .0
+                .call_async_with("store.reviewStore.writeReview", || {
+                    if !current() {
+                        return Err(CoreError::new("Review was discarded."));
+                    }
+                    Ok(vec![
+                        serde_json::to_value(review)
+                            .map_err(|cause| CoreError::new(cause.to_string()))?,
+                    ])
+                })
+                .await?;
+            parse(value)
+        })
+    }
+    fn mark_checked_if<'a>(
+        &'a self,
+        ids: &'a [String],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.0
+                .call_async_with("store.reviewStore.markChecked", || {
+                    if !current() {
+                        return Err(CoreError::aborted("Review was discarded."));
+                    }
+                    Ok(vec![json!(ids), json!(super::now_ms())])
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+    fn read_review<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>> {
+        Box::pin(async move {
+            let value = self
+                .0
+                .call_async("store.reviewStore.readReview", &[json!(key)])
+                .await?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            parse(value).map(Some)
+        })
     }
 
-    fn write_review(&self, review: StoredReview) -> Result<ReviewUpdate> {
-        let value = self.0.call(
-            "store.reviewStore.writeReview",
-            &[serde_json::to_value(review).map_err(|cause| CoreError::new(cause.to_string()))?],
-        )?;
-        parse(value)
+    fn write_review<'a>(
+        &'a self,
+        review: StoredReview,
+    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>> {
+        Box::pin(async move {
+            let value = self
+                .0
+                .call_async(
+                    "store.reviewStore.writeReview",
+                    &[serde_json::to_value(review)
+                        .map_err(|cause| CoreError::new(cause.to_string()))?],
+                )
+                .await?;
+            parse(value)
+        })
     }
 
-    fn has_account(&self, username: &str) -> Result<bool> {
-        Ok(self
-            .0
-            .call("store.reviewStore.hasAccount", &[json!(username)])?
-            .as_bool()
-            == Some(true))
+    fn has_account<'a>(
+        &'a self,
+        username: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            Ok(self
+                .0
+                .call_async("store.reviewStore.hasAccount", &[json!(username)])
+                .await?
+                .as_bool()
+                == Some(true))
+        })
     }
 
-    fn mark_checked(&self, ids: &[String]) -> Result<()> {
-        let at = super::now_ms();
-        self.0
-            .call("store.reviewStore.markChecked", &[json!(ids), json!(at)])
-            .map(|_| ())
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let at = super::now_ms();
+            self.0
+                .call_async("store.reviewStore.markChecked", &[json!(ids), json!(at)])
+                .await
+                .map(|_| ())
+        })
     }
 
-    fn games_to_review(&self, accounts: &[String], since: i64) -> Result<Vec<GameToReview>> {
-        let value = self.0.call(
-            "store.reviewStore.gamesToReview",
-            &[json!(accounts), json!(since), json!(REVIEW_LIMIT)],
-        )?;
-        parse(value)
+    fn games_to_review<'a>(
+        &'a self,
+        accounts: &'a [String],
+        since: i64,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>> {
+        Box::pin(async move {
+            let value = self
+                .0
+                .call_async(
+                    "store.reviewStore.gamesToReview",
+                    &[json!(accounts), json!(since), json!(REVIEW_LIMIT)],
+                )
+                .await?;
+            parse(value)
+        })
     }
 }
 
@@ -187,12 +263,22 @@ struct AppData {
 
 impl ReviewHost for ReviewBridge {
     fn settings(&self) -> BoxFuture<'_, Result<ReviewSettings>> {
-        Box::pin(async move { parse(self.database.call("store.games.getSettings", &[])?) })
+        Box::pin(async move {
+            parse(
+                self.database
+                    .call_async("store.games.getSettings", &[])
+                    .await?,
+            )
+        })
     }
 
     fn accounts(&self) -> BoxFuture<'_, Result<Vec<String>>> {
         Box::pin(async move {
-            let data: AppData = parse(self.database.call("store.games.loadData", &[])?)?;
+            let data: AppData = parse(
+                self.database
+                    .call_async("store.games.loadData", &[])
+                    .await?,
+            )?;
             // Your own accounts: the connected ones, or the first one added when none is.
             let own: Vec<String> = data
                 .accounts

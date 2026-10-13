@@ -7,6 +7,7 @@
 //! it is called, before its future is polled; the search itself runs inside the returned future.
 //! Dropping that future ends the search.
 
+use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -232,7 +233,18 @@ impl Search {
         configured: &str,
         options: Value,
     ) -> BoxFuture<'static, Result<String>> {
-        let request = match prepare(moves, options, level, configured) {
+        self.best_move_with_settings(moves, level, options, ready(Ok(configured.to_string())))
+    }
+
+    /// Register before settings are read, so stop/suspend also cancel that wait.
+    pub(crate) fn best_move_with_settings<'a>(
+        &self,
+        moves: Value,
+        level: &str,
+        options: Value,
+        configured: impl Future<Output = Result<String>> + Send + 'a,
+    ) -> BoxFuture<'a, Result<String>> {
+        let mut request = match prepare(moves, options, level, "") {
             Ok(request) => request,
             Err(cause) => return Box::pin(ready(Err(cause))),
         };
@@ -246,7 +258,19 @@ impl Search {
                 ticket,
             };
             let mut key = String::new();
-            let outcome = attempt(&shared, &request, epoch, &token, &mut key, prev).await;
+            let outcome = async {
+                // Retain the serial chain even when a settings wait is cancelled.
+                if let Some(prev) = prev {
+                    let _ = prev.await;
+                }
+                request.configured = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => return Err(signal_aborted()),
+                    result = configured => result?,
+                };
+                attempt(&shared, &request, epoch, &token, &mut key).await
+            }
+            .await;
             match outcome {
                 Ok(mv) => Ok(mv),
                 Err(cause) => {
@@ -374,12 +398,7 @@ async fn attempt(
     epoch: u64,
     token: &CancellationToken,
     key: &mut String,
-    prev: Option<oneshot::Receiver<()>>,
 ) -> Result<String> {
-    if let Some(prev) = prev {
-        // A search that failed still lets the next one start.
-        let _ = prev.await;
-    }
     if token.is_cancelled() {
         return Err(signal_aborted());
     }

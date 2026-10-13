@@ -260,7 +260,7 @@ export interface CoreApi {
    * Take over the documents an earlier release kept in the renderer; runs once.
    */
   importLibrary(documents: LegacyDocuments): Promise<LibrarySnapshot>
-  studyCommand(command: StudyCommand): Promise<StudyCommandResult>
+  studyCommand(command: StudyCommand, incremental?: boolean): Promise<StudyCommandResult>
   /**
    * Add or replace a played game; it becomes the most recent.
    */

@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use super::accounts::{Lichess, Reply};
 use super::adapters::{DbExplorerLogin, DbLichessStore, DbLookups, DbTokens};
 use super::challenges::ChallengeInfo;
-use super::client::{LichessClient, TokenSource};
+use super::client::{LichessClient, TokenSource, http_client_builder};
 use super::lookups::{CloudCache, Endpoints, PositionLookups, cloud_eval};
 use super::online::{OnlineAction, OnlineOptions, OnlineSession};
 use super::policy::Policy;
@@ -27,9 +27,6 @@ use crate::error::{CoreError, Result};
 use crate::host::Host;
 use crate::store::Database;
 use crate::usage::UsageBatch;
-
-/// The request deadline of the Lichess client (`requestPolicy.ts`).
-const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The Lichess services of one core.
 pub struct Services {
@@ -75,8 +72,7 @@ impl Services {
             stops: game_stops,
             busy,
         } = live;
-        let http = reqwest::Client::builder()
-            .timeout(HTTP_TIMEOUT)
+        let http = http_client_builder()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         let policy = Policy::new(Arc::clone(&host), http.clone(), lifetime.clone());
@@ -124,6 +120,7 @@ impl Services {
             Arc::new(DbLookups::new(Arc::clone(&database))),
             Arc::new(super::accounts::now_ms),
         )
+        .with_lifetime(lifetime.clone())
         .with_login(Arc::new(DbExplorerLogin::new(
             Arc::clone(&database),
             Arc::clone(&tokens),
@@ -215,8 +212,27 @@ impl Services {
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             "lichess.followedUsers" => to_json(self.lichess.followed_users().await),
+            "lichess.cachedProfile" => match text(args, 0) {
+                Ok(name) => to_json(self.lichess.cached_profile(&name).await.map(|cached| {
+                    let mut object = serde_json::Map::new();
+                    object.insert("profile".into(), cached.profile.unwrap_or(Value::Null));
+                    object.insert(
+                        "ratingHistory".into(),
+                        cached.rating_history.unwrap_or(Value::Null),
+                    );
+                    if let Some(at) = cached.profile_fetched_at {
+                        object.insert("profileFetchedAt".into(), json!(at));
+                    }
+                    Value::Object(object)
+                })),
+                Err(cause) => Err(cause),
+            },
             "lichess.primeProfiles" => match strings(args, 0) {
-                Ok(names) => self.lichess.prime_profiles(&names).map(|()| Value::Null),
+                Ok(names) => self
+                    .lichess
+                    .prime_profiles(&names)
+                    .await
+                    .map(|()| Value::Null),
                 Err(cause) => Err(cause),
             },
             "lichess.profile" => match text(args, 0) {
@@ -540,21 +556,6 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
-            "lichess.cachedProfile" => match text(args, 0) {
-                Ok(name) => to_json(self.lichess.cached_profile(&name).map(|cached| {
-                    let mut object = serde_json::Map::new();
-                    object.insert("profile".into(), cached.profile.unwrap_or(Value::Null));
-                    object.insert(
-                        "ratingHistory".into(),
-                        cached.rating_history.unwrap_or(Value::Null),
-                    );
-                    if let Some(at) = cached.profile_fetched_at {
-                        object.insert("profileFetchedAt".into(), json!(at));
-                    }
-                    Value::Object(object)
-                })),
-                Err(cause) => Err(cause),
-            },
             "lichess.forgetProfile" => match text(args, 0) {
                 Ok(name) => {
                     self.lichess.forget_profile(&name);
@@ -608,7 +609,7 @@ impl Services {
     async fn sync_games(&self, args: &[Value]) -> Result<Value> {
         let username = optional_text(args, 0);
         self.lichess.sync_games(username.as_deref()).await?;
-        self.database.call("store.games.loadData", &[])
+        self.database.call_async("store.games.loadData", &[]).await
     }
 
     /// `connectLichess(look)`: the browser sign-in; the window is focused when the browser returns.
@@ -622,7 +623,10 @@ impl Services {
             });
         };
         let connected = self.lichess.connect_lichess(look, Some(&focus)).await?;
-        let data = self.database.call("store.games.loadData", &[])?;
+        let data = self
+            .database
+            .call_async("store.games.loadData", &[])
+            .await?;
         Ok(json!({ "data": data, "username": connected.username }))
     }
 

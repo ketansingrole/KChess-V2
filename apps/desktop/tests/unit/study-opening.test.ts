@@ -47,6 +47,7 @@ it('confirms replacement before closing the dialog and opens the full local stud
   await wrapper.get('button[aria-label="Open Two chapters"]').trigger('click')
   expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
   await button(wrapper, 'Replace').trigger('click')
+  await flushPromises()
   expect(analysis.studyId).toBe(id)
   expect(analysis.study!.chapters).toHaveLength(2)
   expect(analysis.pgn()).toContain('e4')
@@ -110,7 +111,7 @@ it('selects chapters from a compact dropdown and adds, renames, duplicates, and 
     { name: 'Second', pgn: '1. d4 {Notes} *' },
   ])
   const analysis = useAnalysisStore()
-  analysis.openStudy(id)
+  await analysis.openStudy(id)
   const wrapper = mount(StudyChapters, {
     global: {
       ...global,
@@ -120,6 +121,7 @@ it('selects chapters from a compact dropdown and adds, renames, duplicates, and 
   expect(wrapper.find('input[aria-label="Chapter name"]').exists()).toBe(false)
   expect(wrapper.find('nav').exists()).toBe(false)
   await wrapper.get('select[aria-label="Study chapter"]').setValue(analysis.study!.chapters[1]!.id)
+  await flushPromises()
   expect(analysis.pgn()).toContain('d4')
   await button(wrapper, 'Rename chapter').trigger('click')
   await wrapper.get('input[aria-label="Chapter name"]').setValue('Queen pawn')
@@ -149,5 +151,36 @@ it('selects chapters from a compact dropdown and adds, renames, duplicates, and 
   expect(analysis.studyId).toBe(id)
   expect(analysis.study!.chapters).toHaveLength(3)
   expect(analysis.study!.chapters.at(-1)!.name).toBe('Third')
+  wrapper.unmount()
+})
+
+it('keeps edited chapters open when duplication cannot flush their changes', async () => {
+  const { api } = desktop()
+  const library = useStudyStore()
+  const id = await library.save('Study', '1. e4 *')
+  const analysis = useAnalysisStore()
+  await analysis.openStudy(id)
+  analysis.root.comments = ['Keep this edit']
+  const backend = api.studyCommand
+  api.studyCommand = async (command, incremental) => {
+    if (command.op === 'save') throw new Error('Disk unavailable')
+    return backend(command, incremental)
+  }
+  const wrapper = mount(StudyChapters, {
+    global: {
+      ...global,
+      stubs: { ...global.stubs, USelectMenu: SelectMenu, UDropdownMenu: Dropdown },
+    },
+  })
+  await button(wrapper, 'Duplicate chapter').trigger('click')
+  await flushPromises()
+  expect(analysis.root.comments).toEqual(['Keep this edit'])
+  expect(analysis.study!.chapters).toHaveLength(1)
+  expect(wrapper.get('[role="alert"]').text()).toBe('Disk unavailable')
+  api.studyCommand = backend
+  await button(wrapper, 'Duplicate chapter').trigger('click')
+  await flushPromises()
+  expect(analysis.study!.chapters).toHaveLength(2)
+  expect(analysis.pgn()).toContain('Keep this edit')
   wrapper.unmount()
 })

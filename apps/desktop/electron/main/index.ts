@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { QuitPreparation } from './quit'
 import { PERFORMANCE_NAMES, type PerformanceName } from '../../contracts/rendererDiagnostics'
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
@@ -38,7 +38,37 @@ import type { ChallengeInfo } from '../../contracts/types'
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
 let core: KChessCore | undefined
-let quitFlush: { token: string; resolve: () => void } | undefined
+const quitPreparation = new QuitPreparation({
+  window: () => {
+    const owner = window
+    if (!owner || owner.isDestroyed()) return undefined
+    return {
+      send: (token) => owner.webContents.send(IPC_EVENTS.prepareQuit, token),
+      onClosed(callback) {
+        owner.once('closed', callback)
+        return () => owner.removeListener('closed', callback)
+      },
+    }
+  },
+  async retry() {
+    const options = {
+      type: 'warning' as const,
+      title: 'Could not save before quitting',
+      message: 'Some changes could not be saved.',
+      detail: 'Retry saving or cancel quitting to keep your changes open.',
+      buttons: ['Retry', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    }
+    const owner = window
+    const result =
+      owner && !owner.isDestroyed()
+        ? await dialog.showMessageBox(owner, options)
+        : await dialog.showMessageBox(options)
+    return result.response === 0
+  },
+})
 setIpcOwner(() => window)
 registerAppScheme()
 app.setName('KChess')
@@ -205,6 +235,27 @@ function createWindow(): void {
   window.on('closed', () => {
     window = null
   })
+  const owner = window
+  let closingWindow = false
+  let preparingClose = false
+  owner.on('close', (event) => {
+    if (coreStopped || closingWindow) return
+    event.preventDefault()
+    if (coreShutdown || preparingClose) return
+    preparingClose = true
+    void quitPreparation
+      .prepare()
+      .then((saved) => {
+        preparingClose = false
+        if (!saved || owner.isDestroyed() || coreShutdown) return
+        closingWindow = true
+        owner.close()
+      })
+      .catch((cause) => {
+        preparingClose = false
+        logWarn('shutdown', 'Window close preparation failed:', cause)
+      })
+  })
   window.on('maximize', () => {
     if (window && !window.isDestroyed())
       window.webContents.send(IPC_EVENTS.windowMaximized, { maximized: true })
@@ -343,7 +394,9 @@ void app
     handle('appUpdateStatus', () => appUpdates!.status())
     handle('checkAppUpdate', () => appUpdates!.check())
     handle('downloadAppUpdate', () => appUpdates!.download())
-    handle('installAppUpdate', () => appUpdates!.install())
+    handle('installAppUpdate', async () => {
+      if (await quitPreparation.prepare()) appUpdates!.install()
+    })
     handle('openAppReleases', () => shell.openExternal(APP_RELEASES_URL))
     handle('chooseEngine', async () => {
       const result = await dialog.showOpenDialog({
@@ -403,9 +456,10 @@ void app
     })
     handle('microphoneAccess', (_event, request: unknown) => microphoneAccess(request === true))
     handle('openMicrophoneSettings', () => openMicrophoneSettings())
-    handle('completeQuit', (_event, token) => {
-      if (!quitFlush || token !== quitFlush.token) throw new Error('No matching quit request.')
-      quitFlush.resolve()
+    handle('completeQuit', (_event, token, saved) => {
+      if (typeof token !== 'string' || (saved !== undefined && typeof saved !== 'boolean'))
+        throw new Error('Invalid quit acknowledgment.')
+      quitPreparation.complete(token, saved)
     })
     assertIpcComplete()
     createWindow()
@@ -425,51 +479,37 @@ app.on('window-all-closed', () => {
 })
 let coreShutdown: Promise<void> | undefined
 let coreStopped = false
-async function flushRenderer(): Promise<void> {
-  const owner = window
-  if (!owner || owner.isDestroyed()) return
-  let resolve!: () => void
-  const ready = new Promise<void>((done) => {
-    resolve = done
-  })
-  const token = randomUUID()
-  quitFlush = { token, resolve }
-  owner.once('closed', resolve)
-  const timer = setTimeout(() => {
-    logWarn('shutdown', 'Renderer flush timed out.')
-    resolve()
-  }, 3000)
-  send(IPC_EVENTS.prepareQuit, token)
-  try {
-    await ready
-  } finally {
-    clearTimeout(timer)
-    owner.removeListener('closed', resolve)
-    quitFlush = undefined
-  }
-}
+let installPreparation: Promise<void> | undefined
 app.on('before-quit', (event) => {
   if (appUpdates?.shouldInstallOnQuit()) {
     event.preventDefault()
-    try {
-      appUpdates.install(false)
-    } catch (cause) {
-      logWarn('app-updates', 'Could not install on quit:', cause)
-    }
+    installPreparation ??= (async () => {
+      if (await quitPreparation.prepare()) appUpdates?.install(false)
+    })()
+      .catch((cause) => {
+        logWarn('app-updates', 'Could not install on quit:', cause)
+      })
+      .finally(() => {
+        installPreparation = undefined
+      })
     return
   }
   if (core && !coreStopped) {
     event.preventDefault()
     coreShutdown ??= (async () => {
-      await flushRenderer()
+      if (!(await quitPreparation.prepare())) return
       await core?.close()
       coreStopped = true
       app.quit()
-    })().catch((cause) => {
-      logError('shutdown', 'Core shutdown failed:', cause)
-      coreStopped = true
-      app.quit()
-    })
+    })()
+      .catch((cause) => {
+        logError('shutdown', 'Core shutdown failed:', cause)
+        coreStopped = true
+        app.quit()
+      })
+      .finally(() => {
+        if (!coreStopped) coreShutdown = undefined
+      })
   }
 })
 app.on('will-quit', () => {

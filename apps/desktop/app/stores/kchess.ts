@@ -152,6 +152,7 @@ export const useKChessStore = defineStore('kchess', () => {
     chartFromGames,
     openReview,
   } = useGameHistory({
+    page,
     data,
     selectedAccount,
     ratingHistories,

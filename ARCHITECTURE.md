@@ -64,6 +64,16 @@ Desktop IPC contracts extend the core validation tuples. Core validates direct c
 without loading desktop contracts, and desktop replaces the settings tuple with its
 complete frontend settings shape. Import rules enforce these boundaries.
 
+Studies live in individual rows in the Rust-owned database. An earlier release's study
+collection migrates atomically on first library access; unreadable or invalid stored studies
+block edits and retain their original data. Desktop study commands request incremental results:
+changed studies plus the full ID order. Other callers retain the full-snapshot default.
+Renderer quit preparation flushes the open chapter and drains pending study commands before
+main closes the core.
+Failed quit saves keep the window and core open. Retry requests a new flush; Cancel leaves the
+current documents available for editing or export. Explorer requests share the core's cancellation
+token, and engine requests acquire cancellation ownership before waiting for settings.
+
 Run the existing root commands:
 
 - `pnpm run dev`: one branded Electron + Nuxt development session.

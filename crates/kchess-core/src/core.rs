@@ -247,6 +247,12 @@ impl Core {
     /// The internal service methods, by their service names.
     pub(crate) async fn dispatch(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         match method {
+            "usage.flush" => {
+                self.usage.flush().await;
+                Ok(Value::Null)
+            }
+            "usage.report" => self.usage.report().await,
+            "usage.reset" => self.usage.reset().await,
             "host.reply" => {
                 let id: u64 = arg(&args, 0, "id")?;
                 self.capabilities
@@ -300,13 +306,19 @@ impl Core {
                         .start_analysis(raw(&args, 0), &configured, sink)?,
                 )
             }
+            "reviews.get" => {
+                let fen: String = arg(&args, 0, "fen")?;
+                let moves: Vec<String> = optional(&args, 1, "moves")?;
+                json(self.reviews.get_review(&fen, &moves).await?)
+            }
             "reviews.setup" => {
                 self.reviews.setup_reviews(Arc::new(self.review_bridge()));
                 Ok(Value::Null)
             }
             "reviews.request" => json(
                 self.reviews
-                    .request_review(arg::<ReviewRequest>(&args, 0, "request")?)?,
+                    .request_review(arg::<ReviewRequest>(&args, 0, "request")?)
+                    .await?,
             ),
             "reviews.changed" => {
                 self.reviews.reviews_changed();
@@ -350,6 +362,15 @@ impl Core {
                 if let Some(result) = Box::pin(self.services.call(method, &args)).await {
                     return result;
                 }
+                if method.starts_with("store.") {
+                    return self.database.call_async(method, &args).await;
+                }
+                if method == "voiceHistoryDocument" {
+                    return self
+                        .database
+                        .call_async("store.voiceLog.voiceHistoryDocument", &[])
+                        .await;
+                }
                 self.call_sync(method, args)
             }
         }
@@ -380,12 +401,6 @@ impl Core {
     /// The network accounting methods (`usage.ts`).
     fn usage_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
-            "usage.flush" => {
-                self.usage.flush();
-                Ok(Value::Null)
-            }
-            "usage.report" => self.usage.report(),
-            "usage.reset" => self.usage.reset(),
             "usage.close" => {
                 self.usage.close();
                 Ok(Value::Null)
@@ -443,10 +458,6 @@ impl Core {
                 })
             }
             "reviews.status" => json(self.reviews.review_status()),
-            "reviews.get" => arg::<String>(args, 0, "fen").and_then(|fen| {
-                let moves: Vec<String> = optional(args, 1, "moves")?;
-                json(self.reviews.get_review(&fen, &moves)?)
-            }),
             "reviews.cancel" => arg::<String>(args, 0, "key").map(|key| {
                 self.reviews.cancel_review(&key);
                 Value::Null

@@ -19,6 +19,7 @@ use kchess_core::lichess::lookups::{
 };
 use serde_json::{Value, json};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 const INITIAL: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -28,16 +29,25 @@ struct MemoryCache {
 }
 
 impl LookupCache for MemoryCache {
-    fn read(&self, key: &str) -> kchess_core::error::Result<Option<Value>> {
-        Ok(self.values.lock().unwrap().get(key).cloned())
+    fn read<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Option<Value>>> {
+        Box::pin(async move { Ok(self.values.lock().unwrap().get(key).cloned()) })
     }
 
-    fn write(&self, key: &str, value: &Value) -> kchess_core::error::Result<()> {
-        self.values
-            .lock()
-            .unwrap()
-            .insert(key.to_string(), value.clone());
-        Ok(())
+    fn write<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+        Box::pin(async move {
+            self.values
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.clone());
+            Ok(())
+        })
     }
 }
 
@@ -74,6 +84,94 @@ fn lookups(base: &str, start: i64) -> Lookups {
 
 fn opening_body() -> Value {
     json!({ "moves": [{ "uci": "e2e4", "white": 100, "draws": 20, "black": 50 }] })
+}
+
+#[tokio::test]
+async fn lifetime_cancellation_ends_pending_and_deduplicated_lookups_without_stale_fallback() {
+    let (gate_open, gate) = watch::channel(false);
+    let mut calls = 0;
+    let fixture = serve(move |_| {
+        calls += 1;
+        let reply = Reply::Json(200, opening_body().to_string());
+        if calls == 1 {
+            reply
+        } else {
+            Reply::Gated(gate.clone(), Box::new(reply))
+        }
+    })
+    .await;
+    let lifetime = CancellationToken::new();
+    let lookups = lookups(&fixture.base, 1_000);
+    let service = Arc::new(lookups.service.with_lifetime(lifetime.clone()));
+    service
+        .lookup(&json!("opening"), &json!(INITIAL), None)
+        .await
+        .unwrap();
+    lookups.clock.store(100_000_000, Ordering::SeqCst);
+    let first = {
+        let service = Arc::clone(&service);
+        tokio::spawn(async move {
+            service
+                .lookup(&json!("opening"), &json!(INITIAL), None)
+                .await
+        })
+    };
+    wait_for_requests(&fixture, 2).await;
+    let kind = json!("opening");
+    let fen = json!(INITIAL);
+    let second = service.lookup(&kind, &fen, None);
+    tokio::pin!(second);
+    assert!(futures_util::poll!(&mut second).is_pending());
+    lifetime.cancel();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), first)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .aborted
+    );
+    assert!(second.await.unwrap_err().aborted);
+    assert!(
+        service
+            .lookup(&json!("opening"), &json!(INITIAL), None)
+            .await
+            .unwrap_err()
+            .aborted
+    );
+    gate_open.send(true).unwrap();
+    assert_eq!(fixture.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn dropping_the_producer_releases_its_pending_key_for_retry() {
+    let fixture = serve(|_| Reply::Hang).await;
+    let service = lookups(&fixture.base, 1_000).service;
+    let kind = json!("opening");
+    let fen = json!(INITIAL);
+    {
+        let first = service.lookup(&kind, &fen, None);
+        tokio::pin!(first);
+        tokio::select! { biased; _ = &mut first => panic!("fixture hangs"), _ = wait_for_requests(&fixture, 1) => {} }
+    }
+    let retry = service.lookup(&kind, &fen, None);
+    tokio::pin!(retry);
+    tokio::select! { biased; _ = &mut retry => panic!("fixture hangs"), _ = wait_for_requests(&fixture, 2) => {} }
+    assert_eq!(fixture.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn lifetime_cancellation_also_stops_master_game_downloads() {
+    let fixture = serve(|_| Reply::Hang).await;
+    let lifetime = CancellationToken::new();
+    let service = lookups(&fixture.base, 1_000)
+        .service
+        .with_lifetime(lifetime.clone());
+    let download = service.masters_game("Game0001");
+    tokio::pin!(download);
+    tokio::select! { biased; _ = &mut download => panic!("fixture hangs"), _ = wait_for_requests(&fixture, 1) => {} }
+    lifetime.cancel();
+    assert!(download.await.unwrap_err().aborted);
 }
 
 #[tokio::test]

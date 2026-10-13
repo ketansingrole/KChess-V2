@@ -70,7 +70,8 @@ impl UsageBatch {
                         let this = Arc::clone(self);
                         pending.timer = Some(handle.spawn(async move {
                             tokio::time::sleep(FLUSH_EVERY).await;
-                            this.timer_fired();
+                            lock(&this.pending).timer = None;
+                            this.flush().await;
                         }));
                     }
                     false
@@ -79,21 +80,16 @@ impl UsageBatch {
             }
         };
         if immediate {
-            self.flush();
+            self.flush_sync();
         }
     }
 
-    fn timer_fired(&self) {
-        lock(&self.pending).timer = None;
-        self.flush();
-    }
-
     /// Writes every pending counter (`flushUsage`). A failed write drops the batch and logs it.
-    pub fn flush(&self) {
-        let rows: Vec<Value> = {
+    fn take_rows(&self) -> Vec<Value> {
+        {
             let mut pending = lock(&self.pending);
             if pending.cells.is_empty() {
-                return;
+                return Vec::new();
             }
             std::mem::take(&mut pending.cells)
                 .into_iter()
@@ -106,12 +102,38 @@ impl UsageBatch {
                     })
                 })
                 .collect()
-        };
+        }
+    }
+
+    fn flush_sync(&self) {
+        let rows = self.take_rows();
+        if rows.is_empty() {
+            return;
+        }
         let count = rows.len();
-        if let Err(cause) = self
-            .database
-            .call("store.usage.flushUsage", &[Value::Array(rows)])
-        {
+        self.log_flush(
+            self.database
+                .call("store.usage.flushUsage", &[Value::Array(rows)]),
+            count,
+        );
+    }
+
+    pub async fn flush(&self) {
+        let rows = self.take_rows();
+        if rows.is_empty() {
+            return;
+        }
+        let count = rows.len();
+        self.log_flush(
+            self.database
+                .call_async("store.usage.flushUsage", &[Value::Array(rows)])
+                .await,
+            count,
+        );
+    }
+
+    fn log_flush(&self, result: Result<Value>, count: usize) {
+        if let Err(cause) = result {
             self.host.log(
                 Level::Warn,
                 "usage",
@@ -130,22 +152,30 @@ impl UsageBatch {
 
     /// `usageReport`: the pending counters are written first, then the stored report with the
     /// size of the databases on disk.
-    pub fn report(&self) -> Result<Value> {
-        self.flush();
-        let report = self.database.call("store.usage.usageReport", &[])?;
+    pub async fn report(&self) -> Result<Value> {
+        self.flush().await;
+        let report = self
+            .database
+            .call_async("store.usage.usageReport", &[])
+            .await?;
         let mut object: Map<String, Value> = match report {
             Value::Object(object) => object,
             _ => Map::new(),
         };
-        let db_bytes = database_bytes(&self.data_dir);
+        let dir = self.data_dir.clone();
+        let db_bytes = tokio::task::spawn_blocking(move || database_bytes(&dir))
+            .await
+            .map_err(|cause| crate::error::CoreError::wrap("Database size check failed", cause))?;
         object.insert("dbBytes".into(), json!(db_bytes));
         Ok(Value::Object(object))
     }
 
     /// `resetUsage`: the pending counters and the stored ones are cleared.
-    pub fn reset(&self) -> Result<Value> {
+    pub async fn reset(&self) -> Result<Value> {
         lock(&self.pending).cells.clear();
-        self.database.call("store.usage.resetUsage", &[])
+        self.database
+            .call_async("store.usage.resetUsage", &[])
+            .await
     }
 
     /// `closeUsage`: stops the timer and drops what is pending.
@@ -233,7 +263,7 @@ mod tests {
         batch.record("alice", "profile", 2, 50);
         batch.record("Alice", "games", 1, 10);
         batch.record("Bob", "games", 3, 7);
-        let report = batch.report().expect("report");
+        let report = batch.report().await.expect("report");
         let alice = &report["accounts"]["alice"];
         assert_eq!(alice["total"], json!({ "requests": 4, "bytesIn": 160 }));
         assert_eq!(
@@ -259,7 +289,7 @@ mod tests {
         batch.record("Alice", "games", 1, 10);
         batch.record("Bob", "games", 1, 20);
         batch.forget(&["ALICE".to_string()]);
-        let report = batch.report().expect("report");
+        let report = batch.report().await.expect("report");
         assert!(report["accounts"].get("alice").is_none());
         assert_eq!(report["accounts"]["bob"]["total"]["bytesIn"], json!(20));
     }
@@ -270,10 +300,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let batch = batch(dir.path());
         batch.record("Alice", "games", 1, 10);
-        batch.flush();
+        batch.flush().await;
         batch.record("Alice", "games", 1, 10);
-        batch.reset().expect("reset");
-        let report = batch.report().expect("report");
+        batch.reset().await.expect("reset");
+        let report = batch.report().await.expect("report");
         assert!(
             report["accounts"]
                 .as_object()

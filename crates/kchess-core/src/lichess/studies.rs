@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, authorize};
+use super::client::{Failure, TextLimit, authorize};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, position};
 
@@ -213,17 +213,18 @@ pub async fn lichess_study_chapters(
             ];
             let text = lichess
                 .client()
-                .get_text(
+                .get_text_bounded(
                     &path,
                     &query,
                     "application/x-chess-pgn",
                     Some(auth.as_str()),
                     &cancel,
+                    TextLimit {
+                        utf16_units: MAX_STUDY_PGN,
+                        message: "That study is too large to import.",
+                    },
                 )
                 .await?;
-            if js::utf16_len(&text) > MAX_STUDY_PGN {
-                return Err(CoreError::new("That study is too large to import.").into());
-            }
             Ok(split_pgn(&text)
                 .into_iter()
                 .take(MAX_CHAPTERS)

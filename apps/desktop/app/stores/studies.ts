@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { initialLibrary, plain } from '../utils/library'
+import { onScopeDispose, ref } from 'vue'
+import { initialLibrary, plain, registerPersistenceFlush } from '../utils/library'
 import {
   studyDocumentPgn,
   type RepertoireMisses,
@@ -16,14 +16,39 @@ export type { SavedStudy, StudyChapter }
 /** The study library as the core keeps it; every change is made by the core. */
 export const useStudyStore = defineStore('studies', () => {
   const items = ref<SavedStudy[]>(initialLibrary().studies)
-  const error = ref('')
-  let latest = 0
-  async function run(command: StudyCommand): Promise<StudyCommandResult> {
-    const request = ++latest
+  const error = ref(initialLibrary().studyError ?? '')
+  let changes: Promise<unknown> = Promise.resolve()
+  function run(command: StudyCommand): Promise<StudyCommandResult> {
+    const sent = plain(command)
+    const result = changes.then(() => persist(sent))
+    // A failed command must not prevent later commands from reaching the core.
+    changes = result.then(
+      () => {},
+      () => {},
+    )
+    return result
+  }
+  async function flush(): Promise<void> {
+    let pending: Promise<unknown>
+    do {
+      pending = changes
+      await pending
+    } while (pending !== changes)
+  }
+  const unregister = registerPersistenceFlush(flush)
+  onScopeDispose(unregister)
+  async function persist(command: StudyCommand): Promise<StudyCommandResult> {
     try {
-      const result = await window.kchess.studyCommand(plain(command))
-      // A newer change already carries a newer library.
-      if (request === latest) items.value = result.studies
+      const result = await window.kchess.studyCommand(command, true)
+      if (result.order) {
+        const byId = new Map(items.value.map((study) => [study.id, study]))
+        for (const study of result.studies) byId.set(study.id, study)
+        items.value = result.order.map((id) => {
+          const study = byId.get(id)
+          if (!study) throw new Error('The study library changed. Reopen the app to reload it.')
+          return study
+        })
+      } else items.value = result.studies
       error.value = ''
       return result
     } catch (cause) {
@@ -106,6 +131,7 @@ export const useStudyStore = defineStore('studies', () => {
   }
   return {
     items,
+    flush,
     error,
     save,
     saveChapters,

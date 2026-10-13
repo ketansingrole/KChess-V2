@@ -8,10 +8,11 @@ import {
   watch,
   type EffectScope,
 } from 'vue'
-import { initialLibrary, persistSession } from '../utils/library'
+import { initialLibrary, persistSession, registerPersistenceFlush } from '../utils/library'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
 import type { AnalysisUpdate, CloudEval, Judgment } from '@kchess/contracts/types'
+import { RequestScope } from '@kchess/rules/requestScope'
 import { analysisContext } from '@kchess/rules/analysisContext'
 import { analyseReview, reviewKey, type GameAnalysis } from '@kchess/rules/review'
 import { useKChessStore } from './kchess'
@@ -117,7 +118,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   /* ── Navigation and editing the tree ──────────────────────────────── */
 
+  const studyNavigation = new RequestScope()
   function load(fen?: string): void {
+    studyNavigation.invalidate()
     void saveStudy()
     root.value = newTree(fen)
     path.value = ''
@@ -127,6 +130,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
   /** Load a game; `ply` opens it at that many moves into the main line (default: the start). */
   function loadPgn(text: string, ply = 0): boolean {
+    studyNavigation.invalidate()
     const tree = treeFromPgn(text)
     if (!tree) return false
     void saveStudy()
@@ -187,7 +191,15 @@ export const useAnalysisStore = defineStore('analysis', () => {
       ? 'Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.'
       : '',
   )
-  function openStudy(id: string, chapterId?: string): boolean {
+  async function openStudy(id: string, chapterId?: string): Promise<boolean> {
+    const request = studyNavigation.next()
+    try {
+      await flushStudy()
+    } catch (cause) {
+      console.warn('[analysis] opening study blocked by unsaved changes:', cause)
+      return false
+    }
+    if (!request.current()) return false
     const found = studies.items.find((item) => item.id === id)
     const chapter = found?.chapters.find((c) => c.id === chapterId) ?? found?.chapters[0]
     if (!found || !chapter || !loadPgn(chapter.pgn)) return false
@@ -199,7 +211,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
   /** Keep the board as a study (named), and save its edits to it from now on. */
   async function saveAsStudy(name: string): Promise<string> {
-    await saveStudy()
+    await flushStudy()
     const text = pgn()
     const id = await studies.save(name, text)
     studyId.value = id
@@ -210,8 +222,15 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
   /** Save the open study before returning to an empty analysis board. */
   async function closeStudy(): Promise<boolean> {
-    await saveStudy()
-    if ((study.value && pgn() !== studyPgn) || studySaveError.value) return false
+    const request = studyNavigation.next()
+    try {
+      await flushStudy()
+    } catch (cause) {
+      console.warn('[analysis] closing study blocked by unsaved changes:', cause)
+      return false
+    }
+    if (!request.current() || (study.value && pgn() !== studyPgn) || studySaveError.value)
+      return false
     studyId.value = ''
     studyChapterId.value = ''
     studyPgn = ''
@@ -219,7 +238,17 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return true
   }
   let studyTimer: ReturnType<typeof setTimeout> | undefined
+  const studyWrites = new Set<Promise<void>>()
   async function saveStudy(): Promise<void> {
+    const write = persistStudy()
+    studyWrites.add(write)
+    try {
+      await write
+    } finally {
+      studyWrites.delete(write)
+    }
+  }
+  async function persistStudy(): Promise<void> {
     clearTimeout(studyTimer)
     const open = study.value
     if (!open) return
@@ -237,7 +266,17 @@ export const useAnalysisStore = defineStore('analysis', () => {
       studySaveError.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
-  const saveStudyNow = (): void => void saveStudy()
+  async function flushStudy(): Promise<void> {
+    await saveStudy()
+    while (studyWrites.size) await Promise.all([...studyWrites])
+    await studies.flush()
+    if (study.value && pgn() !== studyPgn)
+      throw new Error(studySaveError.value || 'The study could not be saved.')
+  }
+  const unregisterStudyFlush = registerPersistenceFlush(flushStudy)
+  const saveStudyNow = (): void => {
+    void flushStudy().catch((cause) => console.warn('[analysis] flushing study failed:', cause))
+  }
   watch([documentRevision, studyId], () => {
     clearTimeout(studyTimer)
     if (studyId.value) studyTimer = setTimeout(saveStudyNow, 150)
@@ -245,7 +284,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // Flush the previous study before handing the board to another document.
   window.addEventListener('beforeunload', saveStudyNow, { capture: true })
   onScopeDispose(() => {
+    studyNavigation.invalidate()
     saveStudyNow()
+    unregisterStudyFlush()
     window.removeEventListener('beforeunload', saveStudyNow, { capture: true })
   })
   // A study removed from the library (here or on the Studies page) no longer receives edits.
@@ -633,7 +674,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     study,
     studySaveError,
     openStudy,
-    flushStudy: saveStudy,
+    flushStudy,
     saveAsStudy,
     closeStudy,
     mainline,

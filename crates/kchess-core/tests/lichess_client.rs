@@ -276,3 +276,148 @@ async fn streamed_bytes_are_counted_for_the_account_that_read_them() {
         .sum();
     assert_eq!(bytes, body.len() as u64);
 }
+
+/// Exercise the production transport past the old 30-second total deadline with healthy
+/// traffic. A short policy deadline still bounds headers, but must not bound the stream body.
+#[tokio::test]
+async fn active_stream_survives_the_old_total_deadline_and_remains_cancellable() {
+    let (send, receive) = mpsc::unbounded_channel::<String>();
+    let mut receive = Some(receive);
+    let fixture = serve(move |_| Reply::Stream(receive.take().expect("one stream"))).await;
+    let http = http_client();
+    let policy = Policy::with_timeout(
+        Arc::new(Recording::default()),
+        http.clone(),
+        CancellationToken::new(),
+        Duration::from_secs(5),
+    );
+    let client = LichessClient::with_base(&fixture.base, policy, http);
+    let cancel = CancellationToken::new();
+    let (observed, mut observations) = mpsc::unbounded_channel();
+    let reading = tokio::spawn({
+        let cancel = cancel.clone();
+        async move {
+            client
+                .ndjson(
+                    reqwest::Method::GET,
+                    "/api/tv/blitz/feed",
+                    &[],
+                    None,
+                    None,
+                    &cancel,
+                    |line| {
+                        observed.send(line.to_string()).expect("observer");
+                        Ok(())
+                    },
+                )
+                .await
+        }
+    });
+    send.send("{\"started\":true}\n".into()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), observations.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(31) {
+        send.send("\n".into()).unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            !reading.is_finished(),
+            "healthy stream ended before cancellation"
+        );
+    }
+    send.send("{\"afterDeadline\":true}\n".into()).unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), observations.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        "{\"afterDeadline\":true}"
+    );
+    cancel.cancel();
+    let error = tokio::time::timeout(Duration::from_secs(5), reading)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert!(error.is_aborted());
+}
+
+#[tokio::test]
+async fn ordinary_and_error_response_bodies_keep_their_deadline() {
+    for (status, stream) in [(200, false), (503, true)] {
+        let (_keep_open, receive) = mpsc::unbounded_channel::<String>();
+        let mut receive = Some(receive);
+        let fixture =
+            serve(move |_| Reply::StreamText(status, "application/json", receive.take().unwrap()))
+                .await;
+        let http = http_client();
+        let policy = Policy::with_timeout(
+            Arc::new(Recording::default()),
+            http.clone(),
+            CancellationToken::new(),
+            Duration::from_millis(100),
+        );
+        let client = LichessClient::with_base(&fixture.base, policy, http);
+        let cancel = CancellationToken::new();
+        let error = if stream {
+            client
+                .ndjson(
+                    reqwest::Method::GET,
+                    "/api/stream/event",
+                    &[],
+                    None,
+                    None,
+                    &cancel,
+                    |_| Ok(()),
+                )
+                .await
+                .unwrap_err()
+        } else {
+            client
+                .get_json::<Value>("/api/account", &[], None, &cancel)
+                .await
+                .unwrap_err()
+        };
+        assert!(error.message().contains("timed out"));
+    }
+}
+
+#[tokio::test]
+async fn text_limit_counts_utf16_units_while_collecting_chunks() {
+    use kchess_core::lichess::client::TextLimit;
+    let fixture = serve(|_| Reply::Text(200, "text/plain", "a😀é".into())).await;
+    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let cancel = CancellationToken::new();
+    let text = client
+        .get_text_bounded(
+            "/text",
+            &[],
+            "text/plain",
+            None,
+            &cancel,
+            TextLimit {
+                utf16_units: 4,
+                message: "too large",
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(text, "a😀é");
+    let error = client
+        .get_text_bounded(
+            "/text",
+            &[],
+            "text/plain",
+            None,
+            &cancel,
+            TextLimit {
+                utf16_units: 3,
+                message: "too large",
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.message(), "too large");
+}

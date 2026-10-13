@@ -29,7 +29,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, now_ms, path_segment};
 use super::challenges::{ChallengeInbox, ChallengeInfo, PlayerRef, TimeControl, is_game_id};
-use super::client::{Failure, LichessError, TokenSource, authorize, lichess_error};
+use super::client::{
+    Failure, LichessError, TokenSource, authorize, lichess_error, read_with_deadline,
+};
 use super::stream::{LineOptions, read_lines};
 use crate::error::CoreError;
 use crate::host::{Host, Level};
@@ -372,10 +374,6 @@ fn body_value(text: &str) -> Option<Value> {
     Some(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string())))
 }
 
-fn read_failure(cause: reqwest::Error) -> Failure {
-    core(cause.to_string())
-}
-
 /// `gameBody(options)`: the form fields of a seek or challenge.
 fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> {
     let has_fen = options.fen.as_deref().is_some_and(|fen| !fen.is_empty());
@@ -568,7 +566,8 @@ impl OnlineSession {
         let super::policy::Admitted { response, hold } = self.policy().send(built, cancel).await?;
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.map_err(read_failure)?;
+            let text =
+                read_with_deadline(response, cancel, false, self.policy().timeout(), None).await?;
             drop(hold);
             return Err(Failure::Lichess(lichess_error(
                 status.as_u16(),
@@ -1225,7 +1224,8 @@ impl OnlineSession {
             .inner
             .lichess
             .store()
-            .accounts()?
+            .accounts()
+            .await?
             .into_iter()
             .filter(|row| row.connected)
             .map(|row| row.username)
@@ -1393,7 +1393,8 @@ impl OnlineSession {
             .inner
             .lichess
             .store()
-            .accounts()?
+            .accounts()
+            .await?
             .into_iter()
             .filter(|row| row.connected)
             .map(|row| row.username)
@@ -1560,7 +1561,8 @@ impl OnlineSession {
             .inner
             .lichess
             .store()
-            .accounts()?
+            .accounts()
+            .await?
             .into_iter()
             .filter(|row| row.connected)
             .map(|row| row.username)

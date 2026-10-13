@@ -17,6 +17,9 @@ const EMPTY: LibrarySnapshot = {
   imported: true,
 }
 let current: LibrarySnapshot = EMPTY
+export const libraryReady = ref(false)
+export const libraryLoading = ref(false)
+export const libraryError = ref('')
 
 /** The library as loaded at startup; stores copy what they own from it when created. */
 export function initialLibrary(): LibrarySnapshot {
@@ -25,6 +28,9 @@ export function initialLibrary(): LibrarySnapshot {
 /** Tests seed the library stores start from. */
 export function setInitialLibrary(snapshot: Partial<LibrarySnapshot> = {}): void {
   current = { ...EMPTY, ...snapshot }
+  libraryReady.value = true
+  libraryLoading.value = false
+  libraryError.value = ''
 }
 
 const persistence = new Set<() => Promise<void>>()
@@ -37,13 +43,23 @@ export function registerPersistenceFlush(flush: () => Promise<void>): () => void
 export async function flushSavedDocuments(): Promise<void> {
   // Let reactive game/archive watchers publish the final state before collecting writes.
   await nextTick()
-  const results = await Promise.allSettled([...persistence].map((flush) => flush()))
+  const results = await Promise.allSettled(
+    [...persistence].map((flush) => Promise.resolve().then(flush)),
+  )
+  const failures: unknown[] = []
   for (const result of results)
-    if (result.status === 'rejected') console.warn('[library] Quit flush failed:', result.reason)
+    if (result.status === 'rejected') {
+      console.warn('[library] Quit flush failed:', result.reason)
+      failures.push(result.reason)
+    }
+  if (failures.length) throw new AggregateError(failures, 'Some changes could not be saved.')
 }
 
 /** Load the core's library before the app mounts, handing over documents earlier releases kept here. */
 export async function loadLibrary(): Promise<void> {
+  if (libraryLoading.value) return
+  libraryReady.value = false
+  libraryLoading.value = true
   try {
     let snapshot = await window.kchess.library()
     if (!snapshot.imported) {
@@ -53,11 +69,19 @@ export async function loadLibrary(): Promise<void> {
         if (text !== null) documents[key] = text
       }
       snapshot = await window.kchess.importLibrary(documents)
-      for (const key of Object.keys(documents)) localStorage.removeItem(key)
+      for (const key of Object.keys(documents)) {
+        // A damaged core copy must not cause us to delete an earlier renderer recovery copy.
+        if (key !== 'kchess:studies:v1' || !snapshot.studyError) localStorage.removeItem(key)
+      }
     }
     current = snapshot
+    libraryReady.value = true
+    libraryError.value = ''
   } catch (cause) {
     console.warn('[library] loading the library failed:', cause)
+    libraryError.value = cause instanceof Error ? cause.message : 'The library could not be loaded.'
+  } finally {
+    libraryLoading.value = false
   }
 }
 
@@ -76,8 +100,10 @@ export function persistSession<K extends SessionKind>(
 ): Ref<string> & { flush: () => Promise<void> } {
   const error = ref('')
   let timer: ReturnType<typeof setTimeout> | undefined
-  const save = async (): Promise<void> => {
+  const save = async (strict = false): Promise<void> => {
     clearTimeout(timer)
+    // Unloaded documents must never be replaced by a store's default session.
+    if (!libraryReady.value) return
     try {
       await window.kchess.saveSession(kind, plain(source()))
       error.value = ''
@@ -85,9 +111,10 @@ export function persistSession<K extends SessionKind>(
       console.warn('[library] saving session failed:', kind, cause)
       error.value =
         cause instanceof Error ? cause.message : 'Automatic saving failed. Export a PGN copy.'
+      if (strict) throw cause
     }
   }
-  const unregister = registerPersistenceFlush(save)
+  const unregister = registerPersistenceFlush(() => save(true))
   const saveNow = (): void => void save()
   const off = watch(
     changes,
@@ -104,5 +131,5 @@ export function persistSession<K extends SessionKind>(
     off()
     window.removeEventListener('beforeunload', saveNow)
   })
-  return Object.assign(error, { flush: save })
+  return Object.assign(error, { flush: () => save() })
 }

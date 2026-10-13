@@ -103,11 +103,12 @@ where
 
 /// Read `body` as it arrives in chunks, handing each decoded piece to `on_chunk` (`readPgnStream`).
 /// A multi-byte character split across chunks is held back until its rest arrives. There is no
-/// idle deadline or line limit here: the caller bounds what it keeps. A cancelled read ends
-/// quietly, as `readPgnStream` returned when its signal aborted; the caller checks its token.
+/// line limit here: the caller bounds what it keeps. Silence is bounded by `idle`, and
+/// cancellation returns an abort error and drops the body.
 pub async fn read_chunks<S, B, E, F, Err>(
     body: S,
     cancel: &CancellationToken,
+    idle: Duration,
     mut on_chunk: F,
 ) -> std::result::Result<(), Err>
 where
@@ -122,9 +123,10 @@ where
     loop {
         let next = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Ok(()),
-            answer = body.next() => answer,
+            _ = cancel.cancelled() => return Err(CoreError::aborted("This operation was aborted").into()),
+            answer = tokio::time::timeout(idle, body.next()) => answer,
         };
+        let next = next.map_err(|_| CoreError::new(STALLED))?;
         let Some(item) = next else { break };
         let chunk = item.map_err(|cause| CoreError::new(cause.to_string()))?;
         pending.extend_from_slice(chunk.as_ref());
@@ -253,6 +255,38 @@ mod tests {
         )
         .await
         .unwrap_err();
+        assert!(error.aborted);
+    }
+    #[tokio::test]
+    async fn chunk_reads_bound_silence_and_preserve_split_utf8() {
+        let token = CancellationToken::new();
+        let mut text = String::new();
+        read_chunks(
+            stream_of(vec![b"a\xf0\x9f", b"\x98\x80\xc3", b"\xa9"]),
+            &token,
+            IDLE,
+            |chunk| {
+                text.push_str(chunk);
+                Ok::<(), CoreError>(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "a😀é");
+        let pending = futures_util::stream::pending::<std::result::Result<Vec<u8>, String>>();
+        let error: CoreError =
+            read_chunks(Box::pin(pending), &token, Duration::from_millis(20), |_| {
+                Ok::<(), CoreError>(())
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.message, STALLED);
+        token.cancel();
+        let pending = futures_util::stream::pending::<std::result::Result<Vec<u8>, String>>();
+        let error: CoreError =
+            read_chunks(Box::pin(pending), &token, IDLE, |_| Ok::<(), CoreError>(()))
+                .await
+                .unwrap_err();
         assert!(error.aborted);
     }
 }

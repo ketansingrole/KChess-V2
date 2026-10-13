@@ -5,6 +5,7 @@ import type {
   LichessGame,
   LichessRatingHistory,
 } from '@kchess/contracts/types'
+import { RequestScope } from '@kchess/rules/requestScope'
 import { pgnFromMoves } from '@kchess/rules/chess'
 import { mergeRatingHistories, normalizeRatingKey } from '@kchess/rules/ratings'
 
@@ -14,6 +15,7 @@ export function useGameHistory(options: {
   ratingHistories: Ref<LichessRatingHistory>
   chartMode: Ref<string>
   chartRange: Ref<string>
+  page?: Ref<string>
   selectPage: (page: 'history') => void
 }) {
   const { data, selectedAccount, ratingHistories, chartMode, chartRange, selectPage } = options
@@ -42,10 +44,14 @@ export function useGameHistory(options: {
   const historyPageCount = computed(() =>
     Math.max(1, Math.ceil(historyTotal.value / historyPageSize.value)),
   )
+  const reviewRequests = new RequestScope()
+  if (options.page) watch(options.page, () => reviewRequests.invalidate(), { flush: 'sync' })
+  watch(reviewGame, () => reviewRequests.invalidate(), { flush: 'sync' })
   let pageEpoch = 0
   let overviewEpoch = 0
   let accountEpoch = 0
   onScopeDispose(() => {
+    reviewRequests.invalidate()
     ++pageEpoch
     ++overviewEpoch
     ++accountEpoch
@@ -177,6 +183,7 @@ export function useGameHistory(options: {
   const chartValues = computed(() => chartSeries.value.map((point) => point.rating))
 
   async function openReview(game: LichessGame): Promise<void> {
+    const request = reviewRequests.next()
     // List rows carry no PGN; it is read locally on demand.
     const pgn =
       game.pgn ??
@@ -184,6 +191,7 @@ export function useGameHistory(options: {
         console.warn('[game-history] loading game PGN failed:', cause)
         return null
       }))
+    if (!request.current()) return
     reviewGame.value = pgn ? { ...game, pgn } : game
     selectPage('history')
   }

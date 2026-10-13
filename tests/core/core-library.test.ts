@@ -82,6 +82,33 @@ describe('studies', () => {
     expect((await core.library()).studies).toEqual(before)
   })
 
+  it('returns a bounded incremental edit without unrelated PGNs and keeps full snapshots compatible', async () => {
+    for (let n = 0; n < 50; n++)
+      await core.studyCommand(
+        { op: 'save', id: `s${n}`, name: `Study ${n}`, pgn: `1. e4 {${'Notes '.repeat(100)}} *` },
+        true,
+      )
+    const result = await core.studyCommand({ op: 'rename', id: 's0', name: 'Renamed' }, true)
+    expect(result.order).toHaveLength(50)
+    expect(result.order![0]).toBe('s0')
+    expect(result.studies.map((study) => study.id)).toEqual(['s0'])
+    expect(JSON.stringify(result).length).toBeLessThan(2500)
+    const snapshot = await core.library()
+    expect(snapshot.studies.map((study) => study.id)).toEqual(result.order)
+    expect(snapshot.studies[0]!.name).toBe('Renamed')
+    expect(snapshot.studies[1]!.pgn).toContain('Notes')
+    const full = await core.studyCommand({ op: 'rename', id: 's0', name: 'Full response' })
+    expect(full.order).toBeUndefined()
+    expect(full.studies).toHaveLength(50)
+    await expect(
+      core.studyCommand({ op: 'save', name: 'One more', pgn: '1. e4 *' }, true),
+    ).rejects.toThrow('full')
+    await expect(
+      core.studyCommand({ op: 'rename', id: 's0', name: 'Invalid flag' }, 'yes' as never),
+    ).rejects.toThrow()
+    expect((await core.library()).studies[0]!.name).toBe('Full response')
+  })
+
   it('refuses a 51st study', async () => {
     for (let n = 0; n < 50; n++)
       await core.studyCommand({ op: 'save', name: `Study ${n}`, pgn: '1. e4 *' })

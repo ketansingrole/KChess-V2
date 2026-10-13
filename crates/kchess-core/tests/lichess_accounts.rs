@@ -429,7 +429,7 @@ async fn a_profile_is_served_from_the_saved_copy_when_lichess_is_unreachable() {
 
     let profile = lichess.profile("alice").await.unwrap();
     assert_eq!(profile["title"], "IM");
-    let cached = lichess.cached_profile("alice").unwrap();
+    let cached = lichess.cached_profile("alice").await.unwrap();
     assert_eq!(cached.profile_fetched_at, Some(42));
 }
 
@@ -528,58 +528,83 @@ async fn tokens_never_reach_the_host_log() {
 struct PageOnly(Arc<MemoryStore>);
 
 impl LichessStore for PageOnly {
-    fn accounts(&self) -> kchess_core::error::Result<Vec<AccountRow>> {
-        self.0.accounts()
+    fn accounts<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<AccountRow>>> {
+        Box::pin(async move { self.0.accounts().await })
     }
-    fn dismissed_friends(&self) -> kchess_core::error::Result<Vec<String>> {
-        self.0.dismissed_friends()
+    fn dismissed_friends<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<String>>> {
+        Box::pin(async move { self.0.dismissed_friends().await })
     }
-    fn pending_game_ids(&self, account: &str) -> kchess_core::error::Result<Vec<String>> {
-        self.0.pending_game_ids(account)
+    fn pending_game_ids<'a>(
+        &'a self,
+        account: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<String>>> {
+        Box::pin(async move { self.0.pending_game_ids(account).await })
     }
-    fn save_games_page(
-        &self,
-        account: &str,
-        games: &[LichessGame],
-        reviews: &[Value],
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> kchess_core::error::Result<()> {
-        self.0.save_games_page(account, games, reviews, current)
+    fn save_games_page<'a>(
+        &'a self,
+        account: &'a str,
+        games: &'a [LichessGame],
+        reviews: &'a [Value],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+        Box::pin(async move {
+            self.0
+                .save_games_page(account, games, reviews, current)
+                .await
+        })
     }
-    fn save_games_cursor(
-        &self,
-        account: &str,
+    fn save_games_cursor<'a>(
+        &'a self,
+        account: &'a str,
         synced_at: i64,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> kchess_core::error::Result<()> {
-        self.0.save_games_cursor(account, synced_at, current)
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+        Box::pin(async move { self.0.save_games_cursor(account, synced_at, current).await })
     }
-    fn read_api_cache(&self, key: &str) -> kchess_core::error::Result<Option<CachedValue>> {
-        self.0.read_api_cache(key)
+    fn read_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Option<CachedValue>>> {
+        Box::pin(async move { self.0.read_api_cache(key).await })
     }
-    fn write_api_cache(
-        &self,
-        key: &str,
-        value: &Value,
-        current: &(dyn Fn() -> bool + Sync),
-    ) -> kchess_core::error::Result<()> {
-        self.0.write_api_cache(key, value, current)
+    fn write_api_cache<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a Value,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+        Box::pin(async move { self.0.write_api_cache(key, value, current).await })
     }
-    fn save_login(&self, username: &str, ciphertext: &str) -> kchess_core::error::Result<()> {
-        self.0.save_login(username, ciphertext)
+    fn save_login<'a>(
+        &'a self,
+        username: &'a str,
+        ciphertext: &'a str,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+        Box::pin(async move { self.0.save_login(username, ciphertext, current).await })
     }
-    fn save_reviews(
-        &self,
-        _account: &str,
-        _reviews: &[Value],
-        _current: &(dyn Fn() -> bool + Sync),
-    ) -> kchess_core::error::Result<Vec<Value>> {
-        Err(kchess_core::error::CoreError::new(
-            "Reviews are saved with their page.",
-        ))
+    fn save_reviews<'a>(
+        &'a self,
+        _account: &'a str,
+        _reviews: &'a [Value],
+        _current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<Value>>> {
+        Box::pin(async move {
+            Err(kchess_core::error::CoreError::new(
+                "Reviews are saved with their page.",
+            ))
+        })
     }
-    fn mark_checked(&self, ids: &[String]) -> kchess_core::error::Result<()> {
-        self.0.mark_checked(ids)
+    fn mark_checked<'a>(
+        &'a self,
+        ids: &'a [String],
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+        Box::pin(async move { self.0.mark_checked(ids, current).await })
     }
 }
 
@@ -652,4 +677,43 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
     let reviews = store.reviews.lock().unwrap().clone();
     assert_eq!(reviews.len(), 1, "the page's review is saved with the page");
     assert_eq!(reviews[0]["gameId"], "abcdefgh");
+}
+
+#[tokio::test]
+async fn logout_during_a_cache_write_does_not_restore_the_memory_cache() {
+    let fixture = serve(|_| Reply::Json(200, json!({ "username": "Alice" }).to_string())).await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let (started, waiting) = tokio::sync::oneshot::channel();
+    let (release, held) = tokio::sync::oneshot::channel();
+    *store.cache_write_gate.lock().unwrap() = Some((started, held));
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[]),
+    );
+    let pending_lichess = Arc::clone(&lichess);
+    let pending = tokio::spawn(async move { pending_lichess.profile("Alice").await });
+    tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .expect("cache write reached")
+        .expect("started");
+    lichess.invalidate_login(&["Alice".to_string()]);
+    release.send(()).expect("release");
+    assert_eq!(
+        pending
+            .await
+            .expect("profile task")
+            .expect_err("stale profile")
+            .message,
+        "Account was logged out."
+    );
+    assert!(store.cache.lock().unwrap().is_empty());
+    lichess.profile("Alice").await.expect("fresh profile");
+    assert_eq!(
+        fixture.to("/api/user/Alice").len(),
+        2,
+        "the stale result was not remembered"
+    );
 }

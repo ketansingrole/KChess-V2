@@ -69,7 +69,11 @@ export type ArchiveIdentity = { id: string, startedAt: number, };
 
 export type SessionDocuments = { analysis: AnalysisSession, local: LocalSession, computer: ComputerSession, "archive:computer": ArchiveIdentity, "archive:board": ArchiveIdentity, "archive:clock": ArchiveIdentity, };
 
-export type LibrarySnapshot = { studies: Array<SavedStudy>, games: Array<ArchivedGame>, mistakes: Array<MistakeExercise>, 
+export type LibrarySnapshot = { studies: Array<SavedStudy>, 
+/**
+ * Stored studies could not be decoded; other library documents still load normally.
+ */
+studyError?: string, games: Array<ArchivedGame>, mistakes: Array<MistakeExercise>, 
 /**
  * `Partial<SessionDocuments>`: a session kind is present only when one was saved.
  */
@@ -86,6 +90,10 @@ export type StudyChapterDraft = { name: string, pgn: string, };
 export type StudyRemote = { id: string, name: string, };
 
 export type StudyCommandResult = { studies: Array<SavedStudy>, 
+/**
+ * Incremental responses contain only changed studies; order lists every remaining study ID.
+ */
+order?: Array<string>, 
 /**
  * The study or chapter the command created or selected.
  */

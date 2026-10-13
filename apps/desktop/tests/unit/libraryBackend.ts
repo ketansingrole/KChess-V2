@@ -35,8 +35,8 @@ const library = {
   library: (now = Date.now()) => nativeCallSync<LibrarySnapshot>('store.library.library', now),
   importLibrary: (documents: LegacyDocuments) =>
     nativeCallSync<LibrarySnapshot>('store.library.importLibrary', documents),
-  studyCommand: (command: StudyCommand, now = Date.now()) =>
-    nativeCallSync<StudyCommandResult>('store.library.studyCommand', command, now),
+  studyCommand: (command: StudyCommand, now = Date.now(), incremental = false) =>
+    nativeCallSync<StudyCommandResult>('store.library.studyCommand', command, now, incremental),
   saveArchivedGame: (game: ArchivedGame): void => {
     nativeCallSync('store.library.saveArchivedGame', game)
   },
@@ -74,7 +74,7 @@ function ready(): void {
     database = useTestDatabase({ dataDir: directory })
   }
   if (cleared !== testGeneration()) {
-    database!.exec('DELETE FROM documents; DELETE FROM archived_games;')
+    database!.exec('DELETE FROM documents; DELETE FROM archived_games; DELETE FROM studies;')
     cleared = testGeneration()
   }
 }
@@ -102,8 +102,14 @@ export function libraryApi(): Pick<CoreApi, LibraryMethod> {
     library: () => run(() => library.library()),
     importLibrary: (documents) =>
       run(() => library.importLibrary(assertLegacyDocuments(documents))),
-    studyCommand: (command) =>
-      run(() => library.studyCommand(assertStudyCommand(assertStudyCommandShape(command)))),
+    studyCommand: (command, incremental) =>
+      run(() =>
+        library.studyCommand(
+          assertStudyCommand(assertStudyCommandShape(command)),
+          Date.now(),
+          incremental,
+        ),
+      ),
     saveArchivedGame: (game) =>
       run(() => library.saveArchivedGame(assertArchivedGame(assertArchivedGameShape(game)))),
     removeArchivedGame: (id) => run(() => library.removeArchivedGame(id)),
