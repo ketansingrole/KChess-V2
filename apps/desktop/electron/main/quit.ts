@@ -1,10 +1,15 @@
 import { randomUUID } from 'node:crypto'
-import { logWarn } from '@kchess/native/logger'
+import { logDebug, logWarn } from '@kchess/native/logger'
 
 interface QuitWindow {
   send(token: string): void
   onClosed(callback: () => void): () => void
+  /** True when the renderer process is gone (crashed): there is nothing left to flush. */
+  gone(): boolean
 }
+
+/** The user's answer after a flush failed or went unanswered. */
+export type QuitRetryChoice = 'retry' | 'discard' | 'cancel'
 
 /** A failed or unanswered flush never authorizes closing the renderer or its core. */
 export class QuitPreparation {
@@ -14,7 +19,7 @@ export class QuitPreparation {
   constructor(
     private options: {
       window: () => QuitWindow | undefined
-      retry: () => Promise<boolean>
+      retry: () => Promise<QuitRetryChoice>
       timeoutMs?: number
     },
   ) {}
@@ -39,7 +44,8 @@ export class QuitPreparation {
   private async perform(): Promise<boolean> {
     while (true) {
       const owner = this.options.window()
-      if (!owner) return true
+      // No window, or a crashed renderer: nothing remains to flush, so quitting is safe.
+      if (!owner || owner.gone()) return true
       const token = randomUUID()
       let resolve!: (saved: boolean) => void
       const ready = new Promise<boolean>((done) => {
@@ -61,7 +67,12 @@ export class QuitPreparation {
         this.pending = undefined
       }
       if (saved) return true
-      if (!(await this.options.retry())) return false
+      const choice = await this.options.retry()
+      if (choice === 'discard') {
+        logDebug('shutdown', 'Quitting without saving after a failed flush.')
+        return true
+      }
+      if (choice === 'cancel') return false
     }
   }
 }

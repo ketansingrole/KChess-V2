@@ -1,4 +1,4 @@
-import { QuitPreparation } from './quit'
+import { QuitPreparation, type QuitRetryChoice } from './quit'
 import { PERFORMANCE_NAMES, type PerformanceName } from '../../contracts/rendererDiagnostics'
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
@@ -38,6 +38,8 @@ import type { ChallengeInfo } from '../../contracts/types'
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
 let core: KChessCore | undefined
+/** Set when the renderer process exits; cleared on a new or reloaded window. */
+let rendererGone = false
 const quitPreparation = new QuitPreparation({
   window: () => {
     const owner = window
@@ -48,17 +50,18 @@ const quitPreparation = new QuitPreparation({
         owner.once('closed', callback)
         return () => owner.removeListener('closed', callback)
       },
+      gone: () => rendererGone,
     }
   },
-  async retry() {
+  async retry(): Promise<QuitRetryChoice> {
     const options = {
       type: 'warning' as const,
       title: 'Could not save before quitting',
       message: 'Some changes could not be saved.',
-      detail: 'Retry saving or cancel quitting to keep your changes open.',
-      buttons: ['Retry', 'Cancel'],
-      defaultId: 1,
-      cancelId: 1,
+      detail: 'Retry saving, quit without saving your changes, or cancel to keep them open.',
+      buttons: ['Retry', 'Quit without saving', 'Cancel'],
+      defaultId: 2,
+      cancelId: 2,
       noLink: true,
     }
     const owner = window
@@ -66,7 +69,7 @@ const quitPreparation = new QuitPreparation({
       owner && !owner.isDestroyed()
         ? await dialog.showMessageBox(owner, options)
         : await dialog.showMessageBox(options)
-    return result.response === 0
+    return result.response === 0 ? 'retry' : result.response === 1 ? 'discard' : 'cancel'
   },
 })
 setIpcOwner(() => window)
@@ -195,6 +198,7 @@ function refreshAppIcon(): void {
 }
 
 function createWindow(): void {
+  rendererGone = false
   const icon = windowIcon()
   // macOS keeps its traffic lights (hiddenInset). Windows/Linux use OpenChamber-style
   // frameless chrome: no OS title bar at all, the renderer draws its own
@@ -269,17 +273,24 @@ function createWindow(): void {
     if (!isAppUrl(url)) event.preventDefault()
   })
   window.webContents.on('render-process-gone', (_event, details) => {
+    // A crashed renderer holds no flushable state; quitting must not wait on it.
+    rendererGone = true
     logError('renderer', 'Renderer exited:', details.reason, details.exitCode)
   })
   window.webContents.on('preload-error', (_event, _path, error) => {
     logError('renderer', 'Preload failed:', error)
   })
   window.webContents.on('console-message', ({ level, message }) => {
-    if (level === 'warning' || level === 'error') logError('renderer', 'Renderer console:', message)
+    if (level === 'warning') logWarn('renderer', 'Renderer console:', message)
+    else if (level === 'error') logError('renderer', 'Renderer console:', message)
   })
   window.webContents.on('did-fail-load', (_event, code, description, url) =>
     logError('renderer', 'Renderer load failed:', code, description, url),
   )
+  // A reloaded renderer can flush again.
+  window.webContents.on('did-finish-load', () => {
+    rendererGone = false
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://lichess.org/')) void shell.openExternal(url)
     return { action: 'deny' }
@@ -322,9 +333,25 @@ function setupAppMenu(): void {
   )
 }
 
+// One app instance per profile: a second launch (common on Windows/Linux) quits
+// here while the running instance restores its window. Without this, two cores
+// would drive the same databases, engine scheduler and Lichess streams.
+const singleInstance = app.requestSingleInstanceLock()
+if (!singleInstance) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      if (!coreShutdown) createWindow()
+    } else bringToFront()
+  })
+}
+
 void app
   .whenReady()
   .then(async () => {
+    // A second instance already quit above; its ready handler must not start a core.
+    if (!singleInstance) return
     const voiceModel = new VoiceModelCache(join(app.getPath('userData'), 'voice'))
     handleAppProtocol(voiceModel.path)
     handle('voiceModelStatus', () => voiceModel.status())
@@ -391,11 +418,13 @@ void app
       },
       service.desktopSettings,
     )
-    handle('appUpdateStatus', () => appUpdates!.status())
-    handle('checkAppUpdate', () => appUpdates!.check())
-    handle('downloadAppUpdate', () => appUpdates!.download())
+    const updates = appUpdates
+    if (!updates) throw new Error('App updates are unavailable.')
+    handle('appUpdateStatus', () => updates.status())
+    handle('checkAppUpdate', () => updates.check())
+    handle('downloadAppUpdate', () => updates.download())
     handle('installAppUpdate', async () => {
-      if (await quitPreparation.prepare()) appUpdates!.install()
+      if (await quitPreparation.prepare()) updates.install()
     })
     handle('openAppReleases', () => shell.openExternal(APP_RELEASES_URL))
     handle('chooseEngine', async () => {

@@ -15,6 +15,7 @@ import type { AddressInfo } from 'node:net'
 import { crc32 } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 import { nativeRules } from '../../../../crates/kchess-node/js/native'
+import { captureAsync } from '../unit/capture.ts'
 import { setRulesBinding } from '@kchess/rules/engine'
 import { reviewKey } from '@kchess/rules/review'
 import type { StoredReview } from '@kchess/contracts/types'
@@ -134,14 +135,14 @@ async function startLichess(): Promise<{ stand: LichessStand; close: () => Promi
         headers.set(name, value)
     const body = chunks.length ? Buffer.concat(chunks) : undefined
     const url = new URL(incoming.url ?? '/', stand.base)
-    let response: Response
-    try {
-      response = stand.route
-        ? await stand.route(new Request(url, { method: incoming.method, headers, body }))
-        : new Response(null, { status: 503 })
-    } catch {
-      response = new Response(null, { status: 503 })
-    }
+    const route = stand.route
+    const routed = route
+      ? await captureAsync(async () =>
+          route(new Request(url, { method: incoming.method, headers, body })),
+        )
+      : null
+    const response =
+      routed && 'value' in routed ? routed.value : new Response(null, { status: 503 })
     outgoing.writeHead(response.status, Object.fromEntries(response.headers))
     const reader = response.body?.getReader()
     for (;;) {
@@ -310,14 +311,14 @@ const test = base.extend<{
     } finally {
       await lichess.close()
       if (app && !appClosed) {
+        const running = app
         if (testInfo.status !== testInfo.expectedStatus) {
-          try {
-            await app
+          // The window may have crashed; a failed screenshot must not hide the real failure.
+          await captureAsync(() =>
+            running
               .firstWindow()
-              .then((page) => page.screenshot({ path: testInfo.outputPath('desktop.png') }))
-          } catch {
-            /* Window may have crashed. */
-          }
+              .then((page) => page.screenshot({ path: testInfo.outputPath('desktop.png') })),
+          )
         }
         await app
           .context()
@@ -960,14 +961,12 @@ test('browses paged history through validated IPC with filters and on-demand PGN
   expect(rows.games[0]!.pgn).toBeUndefined()
   expect(await page.evaluate(() => window.kchess.gamePgn('tester', 'Paged040'))).toBe('1. e4 e5 *')
   expect(
-    await page.evaluate(async () => {
-      try {
-        await window.kchess.gamePage({ offset: 0, limit: 5000 })
-        return false
-      } catch {
-        return true
-      }
-    }),
+    await page.evaluate(() =>
+      window.kchess.gamePage({ offset: 0, limit: 5000 }).then(
+        () => false,
+        () => true,
+      ),
+    ),
   ).toBe(true)
   await navigate(page, 'Game history')
   await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
@@ -1989,7 +1988,8 @@ for (const action of ['quit', 'close'] as const) {
         probe.quitDialogs = 0
         dialog.showMessageBox = (async () => {
           probe.quitDialogs!++
-          if (probe.quitDialogs === 1) return { response: 1, checkboxChecked: false }
+          // Quit dialog buttons are Retry, Quit without saving, Cancel: cancel first.
+          if (probe.quitDialogs === 1) return { response: 2, checkboxChecked: false }
           await new Promise<void>((resolve) => {
             probe.retryQuit = resolve
           })

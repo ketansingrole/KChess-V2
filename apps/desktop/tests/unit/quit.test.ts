@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { QuitPreparation } from '../../electron/main/quit'
+import { QuitPreparation, type QuitRetryChoice } from '../../electron/main/quit'
 import { deferred } from './fixtures'
 import { logWarn } from '@kchess/native/logger'
 
@@ -11,10 +11,10 @@ vi.mock('@kchess/native/logger', async (original) => ({
 
 afterEach(() => vi.useRealTimers())
 
-function fixture() {
+function fixture(gone = false) {
   const tokens: string[] = []
   const closed = new Set<() => void>()
-  const retry = vi.fn(async () => false)
+  const retry = vi.fn(async (): Promise<QuitRetryChoice> => 'cancel')
   const warn = vi.mocked(logWarn)
   const preparation = new QuitPreparation({
     window: () => ({
@@ -25,6 +25,7 @@ function fixture() {
           closed.delete(callback)
         }
       },
+      gone: () => gone,
     }),
     retry,
     timeoutMs: 100,
@@ -44,7 +45,7 @@ it('only authorizes closing after a successful renderer flush', async () => {
 
 it('keeps quit pending on a failed save and cancels without closing', async () => {
   const f = fixture()
-  const choice = deferred<boolean>()
+  const choice = deferred<QuitRetryChoice>()
   f.retry.mockImplementationOnce(() => choice.promise)
   let done = false
   const ready = f.preparation.prepare().then((saved) => {
@@ -54,7 +55,7 @@ it('keeps quit pending on a failed save and cancels without closing', async () =
   f.preparation.complete(f.tokens[0]!, false)
   await flushPromises()
   expect(done).toBe(false)
-  choice.resolve(false)
+  choice.resolve('cancel')
   expect(await ready).toBe(false)
   const next = f.preparation.prepare()
   f.preparation.complete(f.tokens[1]!, true)
@@ -63,7 +64,7 @@ it('keeps quit pending on a failed save and cancels without closing', async () =
 
 it('retry requires a fresh successful flush and rejects old acknowledgments', async () => {
   const f = fixture()
-  f.retry.mockResolvedValueOnce(true)
+  f.retry.mockResolvedValueOnce('retry')
   const ready = f.preparation.prepare()
   f.preparation.complete(f.tokens[0]!, false)
   await flushPromises()
@@ -94,7 +95,7 @@ it('an error presenting the retry choice leaves quitting cancelled', async () =>
 })
 
 it('authorizes quitting immediately when the window is already gone', async () => {
-  const retry = vi.fn(async () => false)
+  const retry = vi.fn(async (): Promise<QuitRetryChoice> => 'cancel')
   const preparation = new QuitPreparation({ window: () => undefined, retry, timeoutMs: 100 })
   await expect(preparation.prepare()).resolves.toBe(true)
   expect(retry).not.toHaveBeenCalled()
@@ -111,4 +112,31 @@ it('cancels quitting when the window closes before the renderer answers', async 
   expect(await ready).toBe(false)
   expect(f.retry).toHaveBeenCalledOnce()
   expect(f.closed.size).toBe(0)
+})
+
+it('authorizes quitting without a flush when the renderer process is gone', async () => {
+  const f = fixture(true)
+  await expect(f.preparation.prepare()).resolves.toBe(true)
+  // Nothing is sent: a dead renderer holds no state worth flushing.
+  expect(f.tokens).toHaveLength(0)
+  expect(f.retry).not.toHaveBeenCalled()
+})
+
+it('quits without saving when the user discards after a failed flush', async () => {
+  const f = fixture()
+  f.retry.mockResolvedValueOnce('discard')
+  const ready = f.preparation.prepare()
+  f.preparation.complete(f.tokens[0]!, false)
+  await expect(ready).resolves.toBe(true)
+})
+
+it('retries the flush when the user asks after a failed flush', async () => {
+  const f = fixture()
+  f.retry.mockResolvedValueOnce('retry')
+  const ready = f.preparation.prepare()
+  f.preparation.complete(f.tokens[0]!, false)
+  await flushPromises()
+  expect(f.tokens).toHaveLength(2)
+  f.preparation.complete(f.tokens[1]!, true)
+  await expect(ready).resolves.toBe(true)
 })

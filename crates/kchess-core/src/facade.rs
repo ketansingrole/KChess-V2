@@ -173,10 +173,16 @@ static PROFILES: LazyLock<Mutex<HashMap<PathBuf, u64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static CLAIMS: AtomicU64 = AtomicU64::new(1);
 
+/// The lock file a live core holds in its profile directory: one live core per
+/// profile, even across processes (a second app launch, the CLI on the same data dir).
+const PROFILE_LOCK: &str = "profile.lock";
+
 /// One core's claim on its profile directory: one live core per profile (`createKChessCore`).
 pub struct ProfileClaim {
     path: PathBuf,
     token: u64,
+    /// The lock file, held open: `release` (or drop) frees the OS advisory lock.
+    lock: Mutex<Option<std::fs::File>>,
 }
 
 impl ProfileClaim {
@@ -193,8 +199,26 @@ impl ProfileClaim {
                 "A KChess core is already running for this profile.",
             ));
         }
+        // The in-process map cannot see a second process, so the claim also holds an OS
+        // advisory lock on a lock file in the data dir for the core's lifetime (`flock` on
+        // Unix, `LockFileEx` on Windows: both conflict across open file descriptions, which
+        // is exactly how a second process opens the same file).
+        let lock = std::fs::File::create(path.join(PROFILE_LOCK))
+            .map_err(|cause| CoreError::wrap("profile lock", cause))?;
+        if let Err(cause) = lock.try_lock() {
+            return Err(match cause {
+                std::fs::TryLockError::WouldBlock => {
+                    CoreError::new("A KChess core is already running for this profile.")
+                }
+                std::fs::TryLockError::Error(locked) => CoreError::wrap("profile lock", locked),
+            });
+        }
         profiles.insert(path.clone(), token);
-        Ok(ProfileClaim { path, token })
+        Ok(ProfileClaim {
+            path,
+            token,
+            lock: Mutex::new(Some(lock)),
+        })
     }
 
     /// Frees the profile, once the core has closed it.
@@ -203,6 +227,13 @@ impl ProfileClaim {
             && profiles.get(&self.path) == Some(&self.token)
         {
             profiles.remove(&self.path);
+        }
+        // Free the OS lock now, not at drop: a closed core must be reopenable
+        // while its (shut down) object still exists.
+        if let Ok(mut held) = self.lock.lock()
+            && let Some(file) = held.take()
+        {
+            let _ = file.unlock();
         }
     }
 }
