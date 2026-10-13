@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { INITIAL_FEN } from '@kchess/rules/position'
+import { formatClock } from '@kchess/rules/clock'
 import { initialLibrary, persistSession } from '../utils/library'
 import type { LocalClock } from '@kchess/rules/library'
 import {
@@ -11,7 +12,7 @@ import {
   setupPositionAfter,
   setupSanHistory,
 } from '@kchess/rules/chess'
-import { type GameSetup } from '@kchess/rules/variant'
+import type { GameSetup } from '@kchess/rules/variant'
 import { play, playMoveSound } from '../utils/sound'
 
 import { useGameArchive } from './gameArchive'
@@ -88,10 +89,7 @@ export const useLocalGameStore = defineStore('local', () => {
   function clockText(color: Color): string | undefined {
     if (!times.value) return undefined
     void now.value
-    const ms = game.remaining(color)
-    if (ms < 10_000) return `0:${(ms / 1000).toFixed(1).padStart(4, '0')}`
-    const seconds = Math.ceil(ms / 1000)
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+    return formatClock(game.remaining(color))
   }
 
   function move(uci: string): boolean {

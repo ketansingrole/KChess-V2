@@ -129,9 +129,20 @@ impl ClockState {
     }
 }
 
-/// `formatClock`: `m:ss`, `h:mm:ss` past an hour, and days plus hours for correspondence clocks.
+/// `formatClock`: tenths under ten seconds, `m:ss` under an hour, `h:mm:ss` past an
+/// hour, and days plus hours for correspondence clocks.
 pub fn format_clock(millis: f64) -> String {
-    let seconds = js_max(0.0, (millis / 1000.0).floor());
+    let millis = js_max(0.0, millis);
+    if millis < 10_000.0 {
+        // Sub-second time decides blitz games, so the last ten seconds show tenths.
+        let tenths = (millis / 100.0).floor();
+        return format!(
+            "0:{}.{}",
+            pad2((tenths / 10.0).floor()),
+            text_of(tenths % 10.0)
+        );
+    }
+    let seconds = (millis / 1000.0).floor();
     if seconds >= 86_400.0 {
         let days = (seconds / 86_400.0).floor();
         let hours = ((seconds % 86_400.0) / 3600.0).floor();
@@ -221,9 +232,13 @@ mod tests {
 
     #[test]
     fn clock_text() {
-        assert_eq!(format_clock(9_000.0), "0:09");
+        assert_eq!(format_clock(9_000.0), "0:09.0");
+        assert_eq!(format_clock(9_950.0), "0:09.9");
+        assert_eq!(format_clock(500.0), "0:00.5");
+        assert_eq!(format_clock(0.0), "0:00.0");
+        assert_eq!(format_clock(10_000.0), "0:10");
         assert_eq!(format_clock(3_723_000.0), "1:02:03");
         assert_eq!(format_clock(90_000_000.0), "1d 1h");
-        assert_eq!(format_clock(-5.0), "0:00");
+        assert_eq!(format_clock(-5.0), "0:00.0");
     }
 }

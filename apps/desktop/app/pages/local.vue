@@ -217,7 +217,8 @@ function hearMove(result: VoiceResult): void {
     cancelVoice()
   } else if (parsed.kind === 'confirm' && !result.unclear) {
     void recordVoice(result, 'command', 'confirm')
-    if (voiceChoices.value.length === 1) playVoice(voiceChoices.value[0]!, 'confirmed')
+    const only = voiceChoices.value[0]
+    if (voiceChoices.value.length === 1 && only) playVoice(only, 'confirmed')
     else voiceFeedback.value = 'Say a move, or choose its number.'
   } else if (parsed.kind === 'move') {
     settleVoice('replaced')
@@ -228,12 +229,13 @@ function hearMove(result: VoiceResult): void {
       'pending',
       parsed.choices.map((choice) => choice.san).join('|'),
     )
-    if (parsed.choices.length === 1 && !settings.value.voiceConfirmMoves && !result.unclear)
-      playVoice(parsed.choices[0]!, 'played')
+    const only = parsed.choices[0]
+    if (parsed.choices.length === 1 && only && !settings.value.voiceConfirmMoves && !result.unclear)
+      playVoice(only, 'played')
     else
       voiceFeedback.value =
         parsed.choices.length === 1
-          ? `Play ${parsed.choices[0]!.san}? Say “confirm” or “cancel”.`
+          ? `Play ${only?.san ?? 'that move'}? Say “confirm” or “cancel”.`
           : 'Several moves match: say its number, or select it.'
   } else {
     void recordVoice(result, result.unclear ? 'unclear' : 'invalid')
@@ -310,10 +312,7 @@ const setupProblem = computed(() =>
 
 /* ── Chess clock ──────────────────────────────────────────────────── */
 function otbText(side: 'top' | 'bottom'): string {
-  const ms = game.otbLeft(side)
-  return ms < 10_000
-    ? `0:${(ms / 1000).toFixed(1).padStart(4, '0')}`
-    : formatClock(Math.ceil(ms / 1000) * 1000)
+  return formatClock(game.otbLeft(side))
 }
 </script>
 

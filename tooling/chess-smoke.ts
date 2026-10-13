@@ -145,6 +145,7 @@ await new Promise((resolve) => setTimeout(resolve, 60))
 const white = clock.remaining('white')
 assert('clock ticks down', white < 10_000 && white > 9_800, true)
 assert('clock stopped side', clock.remaining('black'), 20_000)
-assert('clock format', formatClock(white), '0:09')
+// Tenths under ten seconds; the exact tenth depends on timer slop, the prefix does not.
+assert('clock format', formatClock(white).slice(0, 5), '0:09.')
 assert('low time alert fires once', clock.lowTimeAlert('white'), true)
 assert('low time alert once only', clock.lowTimeAlert('white'), false)

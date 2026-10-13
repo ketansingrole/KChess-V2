@@ -13,6 +13,7 @@ import {
 import { initialLibrary, persistSession } from '../../utils/library'
 import { useGameArchive } from '../gameArchive'
 import { isVariant, type GameSetup } from '@kchess/rules/variant'
+import { formatClock } from '@kchess/rules/clock'
 import { ComputerGame, computerState, type ComputerClock } from '@kchess/rules/gameSession'
 import { playMoveSound, play } from '../../utils/sound'
 export type { ComputerClock } from '@kchess/rules/gameSession'
@@ -110,10 +111,7 @@ export function useComputerGame(options: {
   function clockText(color: 'white' | 'black'): string | undefined {
     if (!state.times) return undefined
     void now.value
-    const ms = game.remaining(color)
-    const seconds = Math.ceil(ms / 1000)
-    if (ms < 10_000) return `0:${(ms / 1000).toFixed(1).padStart(4, '0')}`
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+    return formatClock(game.remaining(color))
   }
 
   function makeMove(uci: string): void {
