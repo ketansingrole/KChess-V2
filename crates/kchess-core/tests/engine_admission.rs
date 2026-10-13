@@ -80,6 +80,9 @@ async fn stopping_cancels_analysis_waiting_for_settings() {
     let dir = tempfile::tempdir().unwrap();
     let host = support::host();
     let core = prepared(dir.path(), &host).await;
+    // Held storage keeps the settings read queued: without it, a loaded machine can finish
+    // the read inside the first poll (seen on Linux) and the start never waits.
+    let storage = core.hold_storage_for_tests().await.unwrap();
     let start = core.call(
         "startAnalysis",
         vec![json!({"fen": START, "lines": 1, "infinite": true})],
@@ -87,6 +90,7 @@ async fn stopping_cancels_analysis_waiting_for_settings() {
     tokio::pin!(start);
     assert!(poll!(&mut start).is_pending(), "start is awaiting settings");
     core.call("stopAnalysis", vec![json!(true)]).await.unwrap();
+    drop(storage);
     assert!(start.await.unwrap_err().aborted);
     assert_eq!(
         core.call_sync("analysis.running", vec![]).unwrap(),
@@ -128,6 +132,7 @@ async fn recovery_cancels_analysis_waiting_for_settings() {
     let dir = tempfile::tempdir().unwrap();
     let host = support::host();
     let core = prepared(dir.path(), &host).await;
+    let storage = core.hold_storage_for_tests().await.unwrap();
     let start = core.call(
         "startAnalysis",
         vec![json!({"fen": START, "lines": 1, "infinite": true})],
@@ -144,6 +149,7 @@ async fn recovery_cancels_analysis_waiting_for_settings() {
         core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
         json!(true)
     );
+    drop(storage);
     assert!(start.await.unwrap_err().aborted);
     assert!(
         host.events
@@ -165,6 +171,7 @@ async fn stopping_cancels_computer_search_waiting_for_settings() {
     let dir = tempfile::tempdir().unwrap();
     let host = support::host();
     let core = prepared(dir.path(), &host).await;
+    let storage = core.hold_storage_for_tests().await.unwrap();
     let search = core.call(
         "bestMove",
         vec![json!([]), json!("max"), json!({"movetime": 50})],
@@ -175,6 +182,7 @@ async fn stopping_cancels_computer_search_waiting_for_settings() {
         "search is awaiting settings"
     );
     core.call("stopEngine", vec![]).await.unwrap();
+    drop(storage);
     assert_eq!(
         search.await.unwrap_err().message,
         "Engine search superseded."
@@ -187,12 +195,14 @@ async fn close_drains_and_cancels_a_pending_analysis_start() {
     let dir = tempfile::tempdir().unwrap();
     let host = support::host();
     let core = prepared(dir.path(), &host).await;
+    let storage = core.hold_storage_for_tests().await.unwrap();
     let start = core.call(
         "startAnalysis",
         vec![json!({"fen": START, "lines": 1, "infinite": true})],
     );
     tokio::pin!(start);
     assert!(poll!(&mut start).is_pending());
+    drop(storage);
     let (_, result) = tokio::time::timeout(Duration::from_secs(2), async {
         tokio::join!(core.close(), start)
     })

@@ -94,6 +94,14 @@ impl Database {
         result
     }
 
+    /// Occupies the async execution lane until the permit drops (`Core::hold_storage_for_tests`).
+    pub(crate) async fn hold_execution(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
+        Arc::clone(&self.execution)
+            .acquire_owned()
+            .await
+            .map_err(|_| CoreError::new("The database is closed."))
+    }
+
     /// Refuses queued/new async work, drains accepted operations, then releases the file.
     pub async fn close_async(self: &Arc<Self>) {
         self.execution.close();

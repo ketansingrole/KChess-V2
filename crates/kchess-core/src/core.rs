@@ -411,6 +411,13 @@ impl Core {
         }
     }
 
+    /// Tests only: asynchronous storage calls queue behind the returned guard until it drops, so
+    /// a test can observe work that is waiting for the database without depending on timing.
+    #[doc(hidden)]
+    pub async fn hold_storage_for_tests(&self) -> Result<impl Drop + use<>> {
+        self.database.hold_execution().await
+    }
+
     /// Run one synchronous method: storage, and the engine state that a synchronous caller reads
     /// or changes without starting work (`engine.stop`, `engine.computerPlaying`,
     /// `reviews.status`, ...). Unknown methods and malformed arguments are errors.
