@@ -1784,13 +1784,7 @@ impl OnlineSession {
     /// An action on the live game: resign, abort, draw, takeback, claim, berserk. Each is sent
     /// once.
     pub async fn action(&self, id: &str, action: OnlineAction) -> Res<()> {
-        let account = {
-            let st = self.st();
-            if id != st.live_game {
-                return Err(core("Reconnect to this game before sending an action."));
-            }
-            st.current_account.clone()
-        };
+        let (account, token) = self.live_token(id, "sending an action").await?;
         let game = path_segment(id);
         let (path, form): (String, Vec<(&str, &str)>) = match action {
             OnlineAction::Resign => (format!("/api/board/game/{game}/resign"), vec![]),
@@ -1821,11 +1815,6 @@ impl OnlineSession {
                 vec![],
             ),
         };
-        self.st().current_account = account.clone();
-        let token = self
-            .token(&account)
-            .await?
-            .ok_or_else(|| core("Lichess login unavailable."))?;
         let cancel = self.inner.lichess.lifetime().clone();
         self.policy()
             .with_usage(&account, "play", async {
