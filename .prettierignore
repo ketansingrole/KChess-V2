@@ -15,7 +15,7 @@ docs/benchmarks/raw/
 pnpm-lock.yaml
 apps/desktop/electron/renderer/auto-imports.d.ts
 apps/desktop/electron/renderer/components.d.ts
-crates/kchess-wasm/js/data/openings.json
+crates/kchess-domain/data/openings.json
 tests/core/native-golden.json
 tests/core/golden/
 crates/kchess-contracts/ts/generated/

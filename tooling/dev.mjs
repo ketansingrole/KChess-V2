@@ -11,6 +11,7 @@ import {
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
+import { attempt, attemptAsync } from './capture-error.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const url = 'http://127.0.0.1:3000'
@@ -39,28 +40,23 @@ function processes() {
     })
 }
 function alive(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  // The thrown error is the signal (no such process): `attempt` records it as a value.
+  return !('error' in attempt(() => process.kill(pid, 0)))
 }
 function stop(pid, group = false) {
-  try {
+  // Stopping an already-dead process is expected during stale-session recovery.
+  void attempt(() => {
     if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'])
     else process.kill(group ? -pid : pid, 'SIGTERM')
-  } catch {
-    /* Already stopped. */
-  }
+  })
 }
 async function nuxtUp() {
-  try {
+  // A refused connection is the expected "not ready yet" signal while polling.
+  const probed = await attemptAsync(async () => {
     const response = await fetch(url, { signal: AbortSignal.timeout(1500) })
     return response.ok
-  } catch {
-    return false
-  }
+  })
+  return 'value' in probed ? probed.value : false
 }
 
 const projectProcesses = processes().filter(
@@ -85,12 +81,9 @@ try {
     console.info('[kchess] A dev session is already starting. Try again shortly.')
     process.exit(0)
   }
-  let session
-  try {
-    session = JSON.parse(readFileSync(lockPath, 'utf8'))
-  } catch {
-    /* Invalid stale lock. */
-  }
+  const parsed = attempt(() => JSON.parse(readFileSync(lockPath, 'utf8')))
+  // An unreadable lock file is treated as stale and recreated below.
+  const session = 'value' in parsed ? parsed.value : undefined
   if (session && alive(session.pid)) {
     console.info('[kchess] A dev session is already starting or stopping. Try again shortly.')
     process.exit(0)
@@ -107,11 +100,8 @@ function cleanup(code = 0) {
   if (stopping) return
   stopping = true
   for (const child of children) if (child.pid) stop(child.pid, true)
-  try {
-    unlinkSync(lockPath)
-  } catch {
-    /* Already removed. */
-  }
+  // The lock may already be gone when two launchers race; the value is discarded.
+  void attempt(() => unlinkSync(lockPath))
   process.exitCode = code
 }
 process.once('SIGINT', () => cleanup())
@@ -121,7 +111,7 @@ process.once('exit', () => cleanup(process.exitCode ?? 0))
 try {
   // Recover only processes whose command belongs to this checkout.
   for (const row of projectProcesses) stop(row.pid)
-  for (let attempt = 0; attempt < 20 && (await nuxtUp()); attempt++) await delay(250)
+  for (let poll = 0; poll < 20 && (await nuxtUp()); poll++) await delay(250)
   if (await nuxtUp())
     throw new Error(`Port 3000 is occupied by another server. Stop it before starting KChess.`)
   function launch(args, env = process.env) {
@@ -150,12 +140,10 @@ try {
       stdio: 'inherit',
     })
   } catch (error) {
-    console.error(
-      '[kchess] Native rules did not build; refusing to launch without them.',
-      error.message,
+    throw new Error(
+      `Native rules did not build; refusing to launch without them. ${error.message}`,
+      { cause: error },
     )
-    process.exitCode = 1
-    return
   }
   launch([
     join(root, 'node_modules/nuxt/bin/nuxt.mjs'),
@@ -167,7 +155,7 @@ try {
     '3000',
   ])
   let ready = false
-  for (let attempt = 0; attempt < 120 && !stopping; attempt++) {
+  for (let poll = 0; poll < 120 && !stopping; poll++) {
     if (await nuxtUp()) {
       ready = true
       break
