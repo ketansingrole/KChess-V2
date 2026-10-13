@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { wasmBinding, type RulesBinding } from '@kchess/rules/engine'
-import training from '@kchess/rules/data/training.json' with { type: 'json' }
+import training from '../../crates/kchess-domain/data/training.json' with { type: 'json' }
 import type { GameSetup, Variant } from '@kchess/rules/variant'
 import type { StoredReview } from '@kchess/contracts/types'
 import { nativeRules } from '@kchess/native/native'
@@ -209,7 +209,7 @@ function rushOps(random: () => number): RushOp[] {
   return ops
 }
 
-/** The run kinds, from the shared data (`crates/kchess-wasm/js/data/training.json`). */
+/** The run kinds, from the shared data (`crates/kchess-domain/data/training.json`). */
 const RUSH_CONFIGS = training.rushConfigs as Record<string, RushConfigJson>
 const RUSH_KEYS = training.rushChoices
 

@@ -21,6 +21,7 @@ use uci::{EngineHub, UciController};
 
 pub mod analysis;
 pub mod bridge;
+pub mod domain_client;
 pub mod managed;
 pub mod review;
 pub mod scheduler;
@@ -119,7 +120,7 @@ pub(crate) struct ParsedInfo {
 }
 
 pub(crate) fn parse_info(text: &str, white_to_move: bool) -> Option<ParsedInfo> {
-    let parsed = domain("parseInfo", vec![json!(text), json!(white_to_move)]).ok()?;
+    let parsed = domain_client::parse_info_typed(text, white_to_move)?;
     serde_json::from_value(parsed).ok()
 }
 

@@ -6,7 +6,7 @@ import { runChecks } from './run-checks.mjs'
 export function selectChecks(files) {
   const relevant = files.filter((file) => !file.startsWith('docs/'))
   const full = relevant.some((file) =>
-    /^(?:(?:.*\/)?package\.json|pnpm-(?:lock|workspace)\.yaml|\.npmrc|.*config\.[^/]+|\.github\/|tooling\/|crates\/kchess-contracts\/ts\/|apps\/desktop\/contracts\/|crates\/kchess-wasm\/js\/|crates\/kchess-node\/js\/(?:index|platform|service)\.ts$|AGENTS\.md)/.test(
+    /^(?:(?:.*\/)?package\.json|pnpm-(?:lock|workspace)\.yaml|\.npmrc|.*config\.[^/]+|\.github\/|tooling\/|crates\/kchess-contracts\/ts\/|apps\/desktop\/contracts\/|crates\/kchess-wasm\/js\/|crates\/kchess-node\/js\/(?:index|platform|service)\.ts$|apps\/desktop\/electron\/(?:main\/ipc\.ts|preload\/.*)|hosts\/node\/src\/|apps\/cli\/src\/|AGENTS\.md)/.test(
       file,
     ),
   )
@@ -27,7 +27,14 @@ export function selectChecks(files) {
   if (code.length)
     steps.push(['lint', ['exec', 'eslint', '--no-warn-ignored', '--max-warnings', '0', ...code]])
   // The Rust rules must keep matching the TypeScript ones they replace.
-  if (rust) steps.push(['rust', ['run', 'check:rust']], ['native', ['run', 'build:native']])
+  // Rust changes also rebuild the Node packages so worker framing (build:packages)
+  // is covered in fast, not only in full `check` (`test:core`).
+  if (rust)
+    steps.push(
+      ['rust', ['run', 'check:rust']],
+      ['native', ['run', 'build:native']],
+      ['packages', ['run', 'build:packages']],
+    )
   if (rust && !full)
     steps.push(['unit-native', ['exec', 'vitest', 'run', 'tests/core/native-rules.test.ts']])
   // Unit tests load the core, which requires the native rules for this host.

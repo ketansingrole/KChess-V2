@@ -375,18 +375,26 @@ impl Core {
                     .database
                     .call_async(
                         "store.games.importTokenCiphertext",
-                        &[account, json!(encrypted)],
+                        &[account.clone(), json!(encrypted)],
                     )
                     .await
                     .map(|_| ()),
                 Err(cause) => Err(cause),
             };
             if let Err(cause) = stored {
+                // The accounts row was already committed as connected: disconnect it
+                // so a per-account encrypt failure does not leave a silent logged-out
+                // state that `legacyImportPending` (now false) would never retry.
+                let name = account.as_str().unwrap_or("?");
                 self.host.log(
-                    Level::Debug,
+                    Level::Warn,
                     "store",
-                    &format!("Legacy migration failed: {}", cause.message),
+                    &format!("Legacy migration failed for {name}: {}", cause.message),
                 );
+                let _ = self
+                    .database
+                    .call_async("store.games.logoutAccounts", &[account])
+                    .await;
             }
         }
         Ok(())

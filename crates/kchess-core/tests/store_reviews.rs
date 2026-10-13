@@ -230,3 +230,36 @@ async fn both_associations_are_retained_when_identical_searches_are_queued_befor
         .await
         .expect("the core closes");
 }
+
+#[test]
+fn a_review_batch_writes_atomically_and_a_failed_batch_keeps_the_previous_reviews() {
+    let profile = fresh();
+    let first = review(Some("Game0001"), &[]);
+    let key = first["key"].as_str().expect("review key").to_string();
+    profile.write_review(&first);
+    // A batch with one malformed review fails as a whole: the good half is not kept.
+    // NB: same position => same key, so the batch targets the stored review's key.
+    let second = {
+        let mut second = review(Some("Game0002"), &[]);
+        second["key"] = json!("batch-second-key");
+        second
+    };
+    let bad = json!({ "fen": INITIAL_FEN });
+    let outcome = profile
+        .core
+        .call_sync("store.reviewStore.writeReviews", vec![json!([second, bad])]);
+    assert!(outcome.is_err(), "a malformed batch member fails the batch");
+    assert!(
+        profile.read_review("batch-second-key").is_null(),
+        "the failed batch keeps the previous reviews"
+    );
+    // A well-formed batch writes every member in one transaction.
+    let stored = profile.sync("store.reviewStore.writeReviews", vec![json!([second])]);
+    assert_eq!(stored.as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        profile.read_review("batch-second-key")["gameId"],
+        json!("Game0002")
+    );
+    // The first review (different key) is untouched.
+    assert_eq!(profile.read_review(&key)["gameId"], json!("Game0001"));
+}

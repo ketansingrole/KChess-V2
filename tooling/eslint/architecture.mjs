@@ -19,6 +19,13 @@ const PACKAGES = [
 const PUBLIC_CORE = [NATIVE, `${NATIVE}/index`, `${NATIVE}/logger`]
 /** Where the core and Electron main never open SQLite, and their tests. */
 const SQLITE_FREE = [NATIVE, RULES, CONTRACTS, 'tests/core']
+/**
+ * Raw `node:sqlite` outside the gate: only the desktop e2e seeds, which open a
+ * scratch profile via the real Rust schema and write minimal rows (plus one
+ * intentionally-corrupt recovery case). All other seeds should go through
+ * `CoreApi` (`studyCommand`/`saveSession`); see `apps/desktop/tests/e2e/desktop.spec.ts`.
+ */
+const SQLITE_EXEMPT = ['apps/desktop/tests/e2e']
 
 const inCore = (path) => [NATIVE, RULES, CONTRACTS].some((dir) => within(path, dir))
 
@@ -40,7 +47,26 @@ export const boundaries = {
   create(context) {
     const file = normalize(relative(context.cwd, context.filename))
     function check(node, source) {
-      if (typeof source !== 'string') return
+      // Dynamic specifiers (`require(variable)`, `import(variable)`) evade literal
+      // checks: flag them in the gated trees instead of silently passing.
+      if (typeof source !== 'string') {
+        const gated =
+          inCore(file) ||
+          file.startsWith('apps/desktop/electron/main/') ||
+          file.startsWith('apps/desktop/electron/preload/') ||
+          file.startsWith('hosts/node/src/') ||
+          file.startsWith('apps/cli/src/')
+        if (gated)
+          context.report({
+            node,
+            messageId: 'boundary',
+            data: {
+              reason:
+                'Dynamic imports evade boundary checks; use a literal specifier in gated code.',
+            },
+          })
+        return
+      }
       const imported = source.startsWith('.')
         ? normalize(relative(context.cwd, resolve(context.filename, '..', source)))
         : /^[@~]{1,2}\//.test(source)
@@ -113,6 +139,20 @@ export const boundaries = {
       if (reason) context.report({ node, messageId: 'boundary', data: { reason } })
     }
     function privilegedLoad(node, source) {
+      if (typeof source !== 'string') {
+        // `createRequire(import(...))` with a variable evades the literal gates below.
+        const gated = inCore(file) || file.startsWith('apps/desktop/electron/main/')
+        if (gated)
+          context.report({
+            node,
+            messageId: 'boundary',
+            data: {
+              reason:
+                'Dynamic module loads evade the privileged-API gates; use a literal specifier.',
+            },
+          })
+        return
+      }
       if (
         source === 'electron' &&
         file.startsWith('apps/desktop/electron/main/') &&
@@ -129,7 +169,9 @@ export const boundaries = {
         source === 'node:sqlite' &&
         (file.startsWith('apps/desktop/electron/main/') ||
           SQLITE_FREE.some((dir) => within(file, dir)))
-      )
+      ) {
+        // `SQLITE_EXEMPT` (desktop e2e seeds) is intentionally not in `SQLITE_FREE`.
+        void SQLITE_EXEMPT
         context.report({
           node,
           messageId: 'boundary',
@@ -137,6 +179,7 @@ export const boundaries = {
             reason: 'The core and Electron main never open SQLite; the Rust core owns kchess.db.',
           },
         })
+      }
     }
     return {
       ImportDeclaration(node) {

@@ -313,6 +313,7 @@ pub struct Lichess {
     account_epochs: Mutex<HashMap<String, u64>>,
     profiles: Mutex<HashMap<String, (Instant, Value)>>,
     last_following: Mutex<HashMap<String, Value>>,
+    last_following_epoch: AtomicU64,
     syncs: Mutex<HashMap<String, (u64, SyncOutcome)>>,
     next_sync: AtomicU64,
 }
@@ -343,6 +344,7 @@ impl Lichess {
             account_epochs: Mutex::new(HashMap::new()),
             profiles: Mutex::new(HashMap::new()),
             last_following: Mutex::new(HashMap::new()),
+            last_following_epoch: AtomicU64::new(0),
             syncs: Mutex::new(HashMap::new()),
             next_sync: AtomicU64::new(0),
         }
@@ -426,7 +428,24 @@ impl Lichess {
     /// `asOwner`: run `call` with the account's own token when it has one. A rejected token
     /// falls back to the anonymous request, so a sync is never worse than an anonymous one.
     /// `call` receives the `Authorization` header value, or None.
+    /// A 401 fallback is logged at warn and reported via `as_owner_downgraded` so callers
+    /// (game sync) can avoid advancing the cursor on partial data.
     pub async fn as_owner<T, F, Fut>(&self, account: &str, call: F) -> Result<T, Failure>
+    where
+        F: Fn(Option<String>) -> Fut,
+        Fut: Future<Output = Result<T, Failure>>,
+    {
+        let (result, _) = self.as_owner_downgraded(account, call).await?;
+        Ok(result)
+    }
+
+    /// `as_owner` with downgrade flag: true when the request fell back to anonymous
+    /// because the stored login was missing, undecryptable, or refused (401).
+    pub async fn as_owner_downgraded<T, F, Fut>(
+        &self,
+        account: &str,
+        call: F,
+    ) -> Result<(T, bool), Failure>
     where
         F: Fn(Option<String>) -> Fut,
         Fut: Future<Output = Result<T, Failure>>,
@@ -434,8 +453,10 @@ impl Lichess {
         let token = match self.tokens.token(account).await {
             Ok(token) => token,
             Err(cause) => {
+                // A corrupt OS keychain must not silently degrade to a partial sync:
+                // log at warn and mark downgraded so the cursor is not advanced.
                 self.host.log(
-                    Level::Debug,
+                    Level::Warn,
                     "lichess",
                     &format!("Stored login is unavailable: {account} {}", cause.message),
                 );
@@ -443,11 +464,18 @@ impl Lichess {
             }
         };
         let Some(token) = token else {
-            return call(None).await;
+            return Ok((call(None).await?, true));
         };
         match call(Some(authorize(&token))).await {
-            Err(failure) if failure.status() == Some(401) => call(None).await,
-            answer => answer,
+            Err(failure) if failure.status() == Some(401) => {
+                self.host.log(
+                    Level::Warn,
+                    "lichess",
+                    &format!("Lichess refused the login for {account}; synced public games only."),
+                );
+                Ok((call(None).await?, true))
+            }
+            answer => answer.map(|value| (value, false)),
         }
     }
 
@@ -491,8 +519,9 @@ impl Lichess {
         }
     }
 
-    /// `asAccount`: run `work` with the account's token. A missing login, or one Lichess refuses
-    /// (401/403), answers "reconnect" instead of failing.
+    /// `asAccount`: run `work` with the account's token. A missing login, an
+    /// undecryptable login, or one Lichess refuses (401/403), answers "reconnect"
+    /// instead of failing.
     pub async fn as_account<T, F, Fut>(
         &self,
         account: &str,
@@ -503,7 +532,18 @@ impl Lichess {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<T, Failure>>,
     {
-        let Some(token) = self.tokens.token(account).await? else {
+        let token = match self.tokens.token(account).await {
+            Ok(token) => token,
+            Err(cause) => {
+                self.host.log(
+                    Level::Warn,
+                    "lichess",
+                    &format!("Stored login is unavailable: {account} {}", cause.message),
+                );
+                return Ok(Reply::NeedsReconnect);
+            }
+        };
+        let Some(token) = token else {
             return Ok(Reply::NeedsReconnect);
         };
         match self
@@ -567,7 +607,22 @@ impl Lichess {
                     return Err(CoreError::new("Account was logged out."));
                 }
                 match stale {
-                    Some(stale) => Ok(stale.value),
+                    Some(stale) => {
+                        // Intentional offline fallback with no freshness bound: any age may
+                        // serve after prolonged offline. Callers show it as-is; the
+                        // persisted `fetchedAt` travels with `cached_profile` so the UI
+                        // can label staleness where it matters.
+                        self.host.log(
+                            Level::Debug,
+                            "lichess-cache",
+                            &format!(
+                                "Serving stale cache: {key} fetchedAt={} ({})",
+                                stale.fetched_at,
+                                failure.message()
+                            ),
+                        );
+                        Ok(stale.value)
+                    }
                     None => Err(failure.into()),
                 }
             }
@@ -644,9 +699,9 @@ impl Lichess {
         let mut following: HashMap<String, Value> = HashMap::new();
         let mut problems = Vec::new();
         for row in rows.iter().filter(|row| row.connected) {
-            let token = match self.tokens.token(&row.username).await? {
-                Some(token) => token,
-                None => {
+            let token = match self.tokens.token(&row.username).await {
+                Ok(Some(token)) => token,
+                Ok(None) | Err(_) => {
                     problems.push(FollowingProblem {
                         account: row.username.clone(),
                         message: "Its Lichess login is unavailable.".to_string(),
@@ -732,6 +787,9 @@ impl Lichess {
             let mut last = lock(&self.last_following);
             last.clear();
             last.extend(following);
+            // Thread the epoch that produced this snapshot so `prime_profiles`
+            // (a separate call) does not write cache keys after a logout in between.
+            self.last_following_epoch.store(epoch, Ordering::SeqCst);
         }
         let mut users: Vec<FollowedUser> = by_name.into_values().collect();
         users.sort_by(|a, b| a.username.to_lowercase().cmp(&b.username.to_lowercase()));
@@ -740,9 +798,15 @@ impl Lichess {
     }
 
     /// `primeProfiles`: saves the profiles `followedUsers` just fetched for the players added.
+    /// Writes are keyed to the epoch that produced the `followedUsers` snapshot: a logout
+    /// between the two calls invalidates the primed keys instead of caching after logout.
     pub async fn prime_profiles(&self, usernames: &[String]) -> CoreResult<()> {
-        let epoch = self.login_epoch();
-        let current = || epoch == self.login_epoch();
+        let snapshot_epoch = self.last_following_epoch.load(Ordering::SeqCst);
+        let current = || self.login_epoch() == snapshot_epoch;
+        // If the snapshot predates a logout, skip all writes.
+        if self.login_epoch() != snapshot_epoch {
+            return Ok(());
+        }
         let last = lock(&self.last_following).clone();
         for name in usernames {
             let Some(user) = last.get(&name.to_lowercase()) else {
@@ -981,6 +1045,11 @@ impl Lichess {
     }
 
     /// One sync per account at a time: a second request joins the running one.
+    /// A logout removes the entry without notifying the waiter; the waiter stays until
+    /// the in-flight run finishes and sends. A new generation started after cancel may
+    /// briefly run concurrently with the old one, but both recheck the account epoch
+    /// before every write (`current()`), so stale writes are skipped and only the
+    /// current generation advances the cursor.
     async fn sync_account(&self, row: &AccountRow) -> CoreResult<usize> {
         let key = row.username.to_lowercase();
         let joined = lock(&self.syncs)
@@ -1029,9 +1098,11 @@ impl Lichess {
                 let since = row.last_synced_at.map(|at| at - SYNC_OVERLAP_MS);
                 let mut fetched = 0usize;
                 let mut until: Option<i64> = None;
+                let mut downgraded = false;
                 while fetched < MAX_GAMES {
-                    let (games, reviews, settled) =
+                    let (games, reviews, settled, page_downgraded) =
                         self.fetch_games_page(name, since, until).await?;
+                    downgraded |= page_downgraded;
                     if !current() {
                         return Err(sync_cancelled());
                     }
@@ -1054,9 +1125,19 @@ impl Lichess {
                     }
                     until = Some(oldest);
                 }
-                self.store
-                    .save_games_cursor(name, started_at, &current)
-                    .await?;
+                // A 401-downgraded sync yields a successful partial (public games only):
+                // do not advance the cursor, so the gap is backfilled after reconnect.
+                if !downgraded {
+                    self.store
+                        .save_games_cursor(name, started_at, &current)
+                        .await?;
+                } else {
+                    self.host.log(
+                        Level::Warn,
+                        "lichess",
+                        &format!("Game sync for {name} used public games only; cursor unchanged."),
+                    );
+                }
                 self.forget_profile(name);
                 Ok::<usize, CoreError>(fetched)
             })
@@ -1070,7 +1151,7 @@ impl Lichess {
         account: &str,
         since: Option<i64>,
         until: Option<i64>,
-    ) -> CoreResult<(Vec<LichessGame>, Vec<Value>, Vec<String>)> {
+    ) -> CoreResult<(Vec<LichessGame>, Vec<Value>, Vec<String>, bool)> {
         let mut query = vec![
             ("max", SYNC_PAGE.to_string()),
             ("ongoing", "true".to_string()),
@@ -1092,7 +1173,7 @@ impl Lichess {
             query.push((flag, "true".to_string()));
         }
         let path = format!("/api/games/user/{}", path_segment(account));
-        let lines = self
+        let (lines, downgraded) = self
             .collect_lines(account, reqwest::Method::GET, &path, &query, None)
             .await?;
         let mut games = Vec::with_capacity(lines.len());
@@ -1111,7 +1192,7 @@ impl Lichess {
             }
             reviews.extend(review);
         }
-        Ok((games, reviews, settled))
+        Ok((games, reviews, settled, downgraded))
     }
 
     /// Unfinished games are re-fetched by ID, even when their creation predates the next window.
@@ -1135,7 +1216,7 @@ impl Lichess {
         for chunk in ids.chunks(300) {
             let requested: std::collections::HashSet<&str> =
                 chunk.iter().map(String::as_str).collect();
-            let lines = self
+            let (lines, _) = self
                 .collect_lines(
                     account,
                     reqwest::Method::POST,
@@ -1163,6 +1244,7 @@ impl Lichess {
     }
 
     /// The lines of an NDJSON response for `account`, read with its own token when it has one.
+    /// Returns whether the request was downgraded to anonymous (missing/refused login).
     async fn collect_lines(
         &self,
         account: &str,
@@ -1170,12 +1252,12 @@ impl Lichess {
         path: &str,
         query: &[(&str, String)],
         body: Option<String>,
-    ) -> CoreResult<Vec<String>> {
-        let lines = self
+    ) -> CoreResult<(Vec<String>, bool)> {
+        let (lines, downgraded) = self
             .client
             .policy()
             .with_usage(account, "games", async {
-                self.as_owner(account, |auth| {
+                self.as_owner_downgraded(account, |auth| {
                     let method = method.clone();
                     let body = body.clone();
                     async move {
@@ -1200,7 +1282,7 @@ impl Lichess {
                 .await
             })
             .await?;
-        Ok(lines)
+        Ok((lines, downgraded))
     }
 }
 

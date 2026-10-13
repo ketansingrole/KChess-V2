@@ -11,6 +11,10 @@ it('runs only changed formatting, lint and related tests for renderer edits', ()
 it.each([
   'crates/kchess-contracts/ts/types.ts',
   'crates/kchess-node/js/platform.ts',
+  'apps/desktop/electron/main/ipc.ts',
+  'apps/desktop/electron/preload/index.ts',
+  'hosts/node/src/worker.ts',
+  'apps/cli/src/index.ts',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
   'vitest.config.ts',
@@ -34,10 +38,12 @@ it('runs new regression tests directly and tolerates asset-only changes', () => 
   expect(selectChecks([])).toEqual([])
 })
 it('checks the Rust rules and their parity with TypeScript when crates change', () => {
+  // Rust changes also rebuild the Node packages so worker framing is covered in fast.
   expect(selectChecks(['crates/kchess-domain/src/rules.rs']).map(([name]) => name)).toEqual([
     'format',
     'rust',
     'native',
+    'packages',
     'unit-native',
   ])
   expect(selectChecks(['Cargo.lock']).map(([name]) => name)).toContain('rust')

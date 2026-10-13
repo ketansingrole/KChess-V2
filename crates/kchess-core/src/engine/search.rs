@@ -23,10 +23,7 @@ use super::status::{EngineStatus, EngineTrust, computer_playing, engine_identity
 use super::uci::{
     UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
 };
-use super::{
-    EngineContext, after, clear_timer, domain, js_number, now_ms, random_unit, replace_timer,
-    validate,
-};
+use super::{EngineContext, after, clear_timer, js_number, now_ms, random_unit, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 
@@ -333,15 +330,16 @@ impl Search {
 /// Validates the untrusted arguments the way `bestMove` does, then checks the moves reach a
 /// position.
 fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Result<Request> {
-    let moves: Vec<String> = serde_json::from_value(validate("assertMoves", &moves)?)
+    let moves: Vec<String> = serde_json::from_value(super::domain_client::assert_moves(&moves)?)
         .map_err(|cause| CoreError::wrap("Invalid moves for the engine search", cause))?;
     let options = if options.is_null() {
         json!({})
     } else {
         options
     };
-    let options: MoveOptions = serde_json::from_value(validate("assertBestMoveOptions", &options)?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+    let options: MoveOptions =
+        serde_json::from_value(super::domain_client::assert_best_move_options(&options)?)
+            .map_err(|cause| CoreError::new(cause.to_string()))?;
     let start = options.fen.as_deref().unwrap_or(INITIAL_FEN);
     if kchess_domain::replay::replay_positions_count(start, &moves) != moves.len() + 1 {
         return Err(CoreError::new("Invalid computer position or move history."));
@@ -358,7 +356,7 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
 
 /// The level's search profile (`engineLevelInfo`).
 fn level_profile(level: &str) -> Result<LevelProfile> {
-    let info = domain("engineLevelInfo", vec![json!(level)])?;
+    let info = super::domain_client::engine_level_info(level)?;
     if info.is_null() {
         return Err(CoreError::new(format!("Unknown engine level {level}.")));
     }
@@ -420,12 +418,22 @@ async fn attempt(
     let target = warm_engine(shared, key, &status)?;
     let profile = level_profile(&request.level)?;
     let stop_token = token.clone();
+    let epoch_at_lease = epoch;
     shared
         .ctx
         .lease(3, move || stop_token.cancel(), token, async {
+            // Re-check supersede after queue wait: a `stop_engine` during admission
+            // only surfaces via token-cancel otherwise, which future generations
+            // without token cancel would bypass.
+            if epoch_at_lease != lock(&shared.state).generation {
+                return Err(search_cancelled());
+            }
             target.ready().await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());
+            }
+            if epoch_at_lease != lock(&shared.state).generation {
+                return Err(search_cancelled());
             }
             target.write("ucinewgame")?;
             search_under_lease(shared, request, &profile, &target, token).await

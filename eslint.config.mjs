@@ -62,6 +62,10 @@ export default withNuxt(
       'logging/no-silent-catch': 'error',
       'logging/no-silent-promise-catch': 'error',
       'logging/no-raw-console': 'error',
+      // Renderer `console.log/info` is quiet-cost, not correctness: forbid it in
+      // shipped code so the "quiet UI" rule (AGENTS.md) does not regress via dev logs.
+      // `warn`/`error` stay allowed (forwarded to the main DiagnosticLog file).
+      'no-console': ['error', { allow: ['warn', 'error'] }],
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
       '@typescript-eslint/no-explicit-any': 'error',
@@ -86,7 +90,13 @@ export default withNuxt(
     // (`!` on seeded fixture access throws the test); the ratchet targets
     // shipped code, so the rule is off here.
     files: ['tests/**/*.ts', 'apps/desktop/tests/**/*.ts', 'hosts/node/tests/**/*.ts'],
-    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+    rules: { '@typescript-eslint/no-non-null-assertion': 'off', 'no-console': 'off' },
+  },
+  {
+    // The logger implementation itself writes to the console; diagnostics.ts
+    // mirrors the same exemption as `logging/no-raw-console`.
+    files: ['crates/kchess-node/js/logger.ts', 'apps/desktop/electron/main/diagnostics.ts'],
+    rules: { 'no-console': 'off' },
   },
   {
     rules: {

@@ -221,6 +221,12 @@ impl ManagedEngine {
 
 /// Physical engine directories may be shared by profiles; mutations of one directory are
 /// serialized. The map keeps only weak references, so idle directories are forgotten.
+///
+/// One writer per directory per process; executables are not shared across profiles:
+/// file mutation holds the per-directory lock, but engine suspension (`EngineHub`,
+/// per-core) does not. A second core's warm engine can hold the executable open
+/// while the first core replaces it (Windows rename failure). Do not point two
+/// live profiles at the same `managed_engine_dir` with a warm engine running.
 fn dir_lock(dir: &Path) -> Arc<AsyncMutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(Default::default);

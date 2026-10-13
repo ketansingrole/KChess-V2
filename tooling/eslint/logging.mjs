@@ -32,6 +32,10 @@ function isLoggingCall(node) {
 }
 
 function containsThrow(node) {
+  // Intentional blind spot (documented): logging inside a nested function does not
+  // count as handling the outer error, so `catch { setTimeout(() => logWarn(...)) }`
+  // still fails. The inverse — a nested function that swallows — is out of scope;
+  // `tests/unit/logging-guardrail.test.ts` pins the intended behavior.
   let found = false
   const visit = (current) => {
     if (!current || found) return
@@ -62,6 +66,9 @@ function containsThrow(node) {
 }
 
 function containsLogging(node) {
+  // Same intentional blind spot as `containsThrow`: nested-function logging does not
+  // satisfy the outer catch. Named `.catch(handler)` bodies are checked at their
+  // definition site, not at the call site (see `noSilentPromiseCatch` below).
   let found = false
   const visit = (current) => {
     if (!current || found) return

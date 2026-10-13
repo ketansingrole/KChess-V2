@@ -9,7 +9,7 @@ export interface OpeningName {
 /** Lichess's CC0 opening names (tooling/make-openings.mjs), keyed by EPD; loaded on first use. */
 let table: Promise<Map<string, string>> | undefined
 export function loadOpenings(): Promise<Map<string, string>> {
-  table ??= import('./data/openings.json').then(
+  table ??= import('../../kchess-domain/data/openings.json').then(
     (module) => new Map(Object.entries(module.default as Record<string, string>)),
   )
   return table

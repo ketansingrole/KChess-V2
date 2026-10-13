@@ -164,7 +164,7 @@ export class ComputerGame {
           this.host.failed(cause)
           break
         case 'debug':
-          console.debug('[computer-game] Cancelled engine reply:', cause)
+          // Expected cancellation (superseded/disposed): silent by design.
           break
       }
     }

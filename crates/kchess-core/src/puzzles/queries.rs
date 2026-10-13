@@ -114,7 +114,7 @@ const COLUMNS: &str = "SELECT id, fen, moves, rating, plays, themes FROM puzzles
 /// The `CREATE` statements and PRAGMAs of `puzzleWorker.ts`, run in the same order.
 pub fn create_schema(db: &Connection) -> Result<(), String> {
     db.execute_batch(
-        "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_puzzles_rating ON puzzles(rating);
 CREATE TABLE IF NOT EXISTS puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);

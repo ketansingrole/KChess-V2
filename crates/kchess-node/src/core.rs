@@ -67,8 +67,10 @@ impl NativeCore {
         let config = Config {
             legacy_database_path: options.legacy_database_path.map(PathBuf::from),
             bundled_engine_path: options.bundled_engine_path.map(PathBuf::from),
-            node_path: options.node_path.map(PathBuf::from),
-            node_env: options
+            // The N-API names stay `node*` for the Node/Electron hosts; the core
+            // itself is host-agnostic (`runtime_*`).
+            runtime_path: options.node_path.map(PathBuf::from),
+            runtime_env: options
                 .node_env
                 .unwrap_or_default()
                 .into_iter()

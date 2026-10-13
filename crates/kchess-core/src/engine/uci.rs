@@ -337,12 +337,21 @@ impl Drop for ListenerGuard<'_> {
     }
 }
 
-/// Clears the searching flag and the stop token on every exit path.
-struct SearchGuard<'a>(&'a Inner);
+/// Clears the searching flag and the stop token on every exit path, sending `stop`
+/// when the search did not complete so a dropped future never leaves Stockfish
+/// searching unobserved.
+struct SearchGuard<'a> {
+    inner: &'a Inner,
+    completed: bool,
+}
 
 impl Drop for SearchGuard<'_> {
     fn drop(&mut self) {
-        let mut state = lock(&self.0.state);
+        if !self.completed {
+            // Best effort: the engine may already be gone; failure is recorded via `fail`.
+            let _ = self.inner.write("stop");
+        }
+        let mut state = lock(&self.inner.state);
         state.searching = false;
         state.stop = None;
     }
@@ -475,7 +484,10 @@ impl Inner {
             state.searching = true;
             state.stop = Some(stop.clone());
         }
-        let _searching = SearchGuard(self);
+        let mut _searching = SearchGuard {
+            inner: self,
+            completed: false,
+        };
         let search = self.command(
             command,
             |line| line.starts_with("bestmove ") || line.starts_with("Nodes searched"),
@@ -505,6 +517,9 @@ impl Inner {
             }
         };
         let line = result?;
+        // The search completed (even if cancelled): do not send a second `stop` on drop.
+        // A cancelled search already sent `stop` above; a completed one needs none.
+        _searching.completed = true;
         if cancelled {
             return Err(search_cancelled());
         }

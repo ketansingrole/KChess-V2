@@ -37,6 +37,10 @@ const REVIEW_LIMIT: usize = 300;
 
 /// The battery reading the scheduler's on-battery function reads. A refresh asks the host once
 /// at a time, in the background.
+///
+/// Intentionally stale-tolerant: refreshed at most every 15 s and on each lease via
+/// `before_lease` spawn-and-don't-wait, never blocking lease admission. A plug/unplug
+/// flip mid-queue uses the last reading (at most 2 threads on battery until refresh).
 pub struct Battery {
     value: AtomicBool,
     refreshing: AtomicBool,

@@ -196,20 +196,17 @@ impl LichessStore for DbLichessStore {
             if !current() {
                 return Err(CoreError::new("Sync was cancelled."));
             }
-            let mut stored = Vec::with_capacity(reviews.len());
-            for review in reviews {
-                let written = self
-                    .database
-                    .call_async_with("store.reviewStore.writeReview", || {
-                        if !current() {
-                            return Err(CoreError::new("Sync was cancelled."));
-                        }
-                        Ok(vec![review.clone()])
-                    })
-                    .await?;
-                stored.push(written.get("review").cloned().unwrap_or(Value::Null));
-            }
-            Ok(stored)
+            // One transaction: a cancelled or failed batch keeps the previous reviews.
+            let stored = self
+                .database
+                .call_async_with("store.reviewStore.writeReviews", || {
+                    if !current() {
+                        return Err(CoreError::new("Sync was cancelled."));
+                    }
+                    Ok(vec![Value::Array(reviews.to_vec())])
+                })
+                .await?;
+            Ok(stored.as_array().cloned().unwrap_or_default())
         })
     }
 

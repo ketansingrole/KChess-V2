@@ -1,0 +1,19 @@
+import { expect, it, vi } from 'vitest'
+import { effectScope, ref } from 'vue'
+import { desktop, deferred } from './fixtures'
+import { useGameHistory } from '../../app/stores/kchess/gameHistory'
+import type { LichessGame, AppData, LichessRatingHistory } from '@kchess/contracts/types'
+it('audit: opening two history games retains the latest selection', async () => {
+ const first = deferred<string | null>()
+ desktop({ gamePgn: async (_, id) => id === 'first' ? first.promise : '1. d4 *' })
+ const scope = effectScope()
+ const history = scope.run(() => useGameHistory({ data: ref<AppData | null>(null), selectedAccount: ref(''), ratingHistories: ref<LichessRatingHistory>([]), chartMode: ref('blitz'), chartRange: ref('All'), selectPage: vi.fn() }))!
+ const game = (id: string) => ({ id, account: 'Alice', moves: 'e4' }) as LichessGame
+ const pending = history.openReview(game('first'))
+ await history.openReview(game('second'))
+ expect(history.reviewGame.value?.id).toBe('second')
+ first.resolve('1. e4 *')
+ await pending
+ scope.stop()
+ expect(history.reviewGame.value?.id).toBe('second')
+})

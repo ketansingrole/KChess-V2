@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use super::{Out, js_slice_end, to_value, value_arg};
 use crate::{js, position, rules};
 
-const OPENINGS_JSON: &str = include_str!("../../../../crates/kchess-wasm/js/data/openings.json");
+const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
 
 /// `OpeningName`
 #[derive(Debug, Serialize)]

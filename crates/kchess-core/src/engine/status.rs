@@ -32,10 +32,11 @@ pub struct EngineLocations {
     pub target: Target,
     /// Absolute path of `BUNDLED_ENGINE_SCRIPT`.
     pub bundled_script: PathBuf,
-    /// The host's Node executable, which runs the bundled script (`process.execPath`).
-    pub node_path: PathBuf,
+    /// The host runtime executable, which runs the bundled script
+    /// (Node's `process.execPath` on Node/Electron hosts).
+    pub runtime_path: PathBuf,
     /// Extra environment for running the bundled script, on top of the inherited one.
-    pub node_env: BTreeMap<String, String>,
+    pub runtime_env: BTreeMap<String, String>,
 }
 
 /// What `engine_status` reports (`EngineStatus` in the TypeScript contracts).
@@ -118,10 +119,10 @@ async fn is_executable_file(host: &dyn Host, path: &Path) -> bool {
 /// caller chooses its stdio.
 pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Command {
     if status.bundled {
-        let mut command = Command::new(&locations.node_path);
+        let mut command = Command::new(&locations.runtime_path);
         command
             .arg(&locations.bundled_script)
-            .envs(&locations.node_env);
+            .envs(&locations.runtime_env);
         command
     } else {
         Command::new(&status.path)
@@ -243,8 +244,8 @@ mod tests {
                 arch: "x64",
             },
             bundled_script: dir.join("bundled.js"),
-            node_path: PathBuf::from("/usr/bin/node"),
-            node_env: BTreeMap::from([("KCHESS_TEST".to_string(), "1".to_string())]),
+            runtime_path: PathBuf::from("/usr/bin/node"),
+            runtime_env: BTreeMap::from([("KCHESS_TEST".to_string(), "1".to_string())]),
         }
     }
 
@@ -282,7 +283,10 @@ mod tests {
         };
         let command = engine_command(&locations, &status);
         let std_command = command.as_std();
-        assert_eq!(std_command.get_program(), locations.node_path.as_os_str());
+        assert_eq!(
+            std_command.get_program(),
+            locations.runtime_path.as_os_str()
+        );
         let args: Vec<_> = std_command.get_args().collect();
         assert_eq!(args, [locations.bundled_script.as_os_str()]);
         let envs: Vec<_> = std_command

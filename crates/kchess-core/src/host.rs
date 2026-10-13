@@ -33,6 +33,9 @@ pub trait Host: Send + Sync + 'static {
 }
 
 /// Where the core keeps its files, and where the host keeps the engines.
+/// Field names stay host-agnostic on purpose: the Node/Electron mapping
+/// (`process.execPath`, `CorePlatform.nodeEnv`) lives only in the N-API
+/// binding (`kchess-node/src/core.rs`), not in the headless core.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// KChess's data directory; it exists.
@@ -43,10 +46,11 @@ pub struct Config {
     /// Absolute path of the bundled Stockfish UCI script (`CorePlatform.bundledEnginePath`).
     /// `None` when the host bundles none; the bundled engine is then not ready.
     pub bundled_engine_path: Option<PathBuf>,
-    /// The Node executable that runs the bundled script (`process.execPath`).
-    pub node_path: Option<PathBuf>,
+    /// The runtime executable that runs the bundled script (Node's `process.execPath`
+    /// on Node/Electron hosts).
+    pub runtime_path: Option<PathBuf>,
     /// Extra environment for running the bundled script (`CorePlatform.nodeEnv`).
-    pub node_env: BTreeMap<String, String>,
+    pub runtime_env: BTreeMap<String, String>,
     /// Where the downloaded Stockfish is kept (`CorePlatform.managedEngineDir`); the default is
     /// `engines/stockfish/current` in the data directory.
     pub managed_engine_dir: Option<PathBuf>,
@@ -59,8 +63,8 @@ impl Config {
             data_dir,
             legacy_database_path: None,
             bundled_engine_path: None,
-            node_path: None,
-            node_env: BTreeMap::new(),
+            runtime_path: None,
+            runtime_env: BTreeMap::new(),
             managed_engine_dir: None,
         }
     }

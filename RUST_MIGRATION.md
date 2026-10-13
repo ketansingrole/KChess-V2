@@ -1,4 +1,8 @@
-# Migrating the core to Rust
+# Migrating the core to Rust — complete
+
+> Status (2026-10-13): complete. Phases 0–6 done, `core/` deleted, all cleanup
+> items below closed. The one typing item is superseded (see Final cleanup
+> checklist); the bridge stays generic by design.
 
 Goal: the headless core becomes Rust (`crates/`). `core/` is deleted (phase 6b); no
 hand-written TypeScript implements core behaviour. Frontends (Electron main and renderer, the
@@ -15,7 +19,7 @@ crates/
 ```
 
 - **Types** come from Rust: contract types derive `serde` and `ts_rs::TS`; their `.d.ts` files
-  are generated (`pnpm run build:native`) and checked in under `crates/kchess-node/types/`
+  are generated (`pnpm run build:native`) and checked in under `crates/kchess-contracts/ts/generated/`
   as generated output. `CoreApi`, `CoreEvents`, `CORE_METHODS` and settings defaults are
   generated the same way.
 - **Bindings** are thin and generic: `NativeCore.call(method, argsJson) → Promise<json>`,
@@ -188,8 +192,14 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
   argument through `validateCoreArguments` / `validateIpcArguments` on the rules binding; the
   TypeScript arities are generated (`ts/generated/arity.ts`). valibot is no longer a direct dependency
   of any package.)
-- Use the `kchess-contracts` types in `kchess-core`/`kchess-node` instead of untyped JSON where
-  they cross the bridge.
+- ~~Use the `kchess-contracts` types in `kchess-core`/`kchess-node` instead of untyped JSON where
+  they cross the bridge.~~ (superseded, 2026-10-13: invalid as a completion gate. The bridge
+  `NativeCore.call(method, argsJson)` is intentionally generic; typing already lands where it
+  pays off — generated `CoreApi`/`CoreEvents`/`CORE_METHODS`, the `validateCoreArguments` /
+  `validateIpcArguments` tables in `misc/contracts.rs`, and typed `arg<T>` / `json<T>` at each
+  call site in `kchess-core/src/core.rs`. Eliminating the remaining `serde_json::Value`
+  (dynamic store documents, moves/options passthrough, host payloads across 57 files) would be
+  a large refactor with no behaviour gain and would rigidify schemaless documents.)
 - ~~Replace the TypeScript coverage floor (vitest.config.ts) with a Rust coverage gate
   (cargo-llvm-cov) once the core's TypeScript is gone~~ (done, 2026-10-10: `pnpm run
 check:rust-coverage` gates the Rust workspace at the floors in `tooling/check-rust-coverage.mjs`;

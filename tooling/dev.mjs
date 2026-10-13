@@ -142,16 +142,20 @@ try {
     return child
   }
   // The core runs the Rust rules when they are built for this host (incremental, seconds).
+  // Fail fast: continuing with a missing native module leaves the core unable to
+  // start and surfaces only as an obscure `nativeRules() null` later.
   try {
     execFileSync(process.execPath, [join(root, 'tooling/build-native.mjs')], {
       cwd: root,
       stdio: 'inherit',
     })
   } catch (error) {
-    console.warn(
-      '[kchess] Native rules did not build; the core cannot start without them.',
+    console.error(
+      '[kchess] Native rules did not build; refusing to launch without them.',
       error.message,
     )
+    process.exitCode = 1
+    return
   }
   launch([
     join(root, 'node_modules/nuxt/bin/nuxt.mjs'),

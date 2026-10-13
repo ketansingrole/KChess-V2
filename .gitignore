@@ -9,6 +9,7 @@ out/
 .data/
 apps/desktop/public/voice/model.tar.gz*
 *.tsbuildinfo
+.eslintcache
 
 # OS
 .DS_Store
@@ -22,6 +23,14 @@ Desktop.ini
 .env
 .env.*
 !.env.example
+
+# Local databases (runtime state lives outside the repo; tests use temp dirs)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 
 # Electron-builder installers that can land outside **/dist
 *.dmg
@@ -61,8 +70,11 @@ coverage/
 playwright-report/
 test-results/
 
-# Local docs / review notes
-docs/
+# Generated report output (curated *.md stays tracked)
+docs/lighthouse/**/*.html
+docs/lighthouse/**/*.json
+docs/lighthouse/**/*.png
+docs/benchmarks/raw/
 
 # Rust build output
 target/

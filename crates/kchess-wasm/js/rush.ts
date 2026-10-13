@@ -1,6 +1,6 @@
 /** Rules of the local puzzle runs: Storm and Streak (after Lichess's modes) and Rush (timed, with strikes). */
 import { rules } from './engine.ts'
-import training from './data/training.json' with { type: 'json' }
+import training from '../../kchess-domain/data/training.json' with { type: 'json' }
 
 export const RUSH_MODES = ['storm', 'streak', 'rush'] as const
 export type RushMode = (typeof RUSH_MODES)[number]

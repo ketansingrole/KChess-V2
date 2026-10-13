@@ -167,10 +167,22 @@ const test = base.extend<{
   desktop: { app: ElectronApplication; page: Page; profile: string; lichess: LichessStand }
 }>({
   desktop: async ({ playwright: _playwright }, use, testInfo) => {
+    // Explicit seed tags (not title substrings): renaming a test must not silently
+    // change its fixture. New tests opt in by adding a tag, e.g.
+    // `@seed:reviewed-game`. The mapping below is the complete list.
+    const has = (tag: string): boolean => testInfo.title.includes(tag)
+    const wantVoice = has('@voice')
+    const wantVoiceArchive = has('@seed:voice-archive')
+    const wantReviewedGame = has('@seed:reviewed-game') || has('@seed:quick-logout')
+    const wantQuickLogout = has('@seed:quick-logout')
+    const wantPagedHistory = has('@seed:paged-history')
+    const wantPositionLookup = has('@seed:position-lookup')
+    const wantLibraryRecovery = has('@seed:library-recovery')
+    const wantUnverifiedStartup = has('@seed:unverified-startup')
     const profile = await mkdtemp(join(tmpdir(), 'kchess-e2e-'))
     // The archive test prepares its own generated model, so it starts with no voice cache.
-    const archiveTest = testInfo.title.includes('prepares a voice archive')
-    if (testInfo.title.includes('voice') && !archiveTest)
+    const archiveTest = wantVoiceArchive
+    if (wantVoice && !archiveTest)
       await cp(join(process.cwd(), '.data', 'voice', 'cache'), join(profile, 'voice'), {
         recursive: true,
       })
@@ -203,16 +215,16 @@ const test = base.extend<{
       Date.now(),
       Buffer.byteLength(puzzle.id + puzzle.fen + puzzle.moves + puzzle.themes) + 24,
     )
-    if (testInfo.title.includes('unverified startup'))
+    if (wantUnverifiedStartup)
       db.prepare('INSERT INTO accounts (username, connected) VALUES (?, 1)').run('tester')
-    if (testInfo.title.includes('reviewed game')) seedReviewedGame(db)
-    if (testInfo.title.includes('quick logout')) {
+    if (wantReviewedGame) seedReviewedGame(db)
+    if (wantQuickLogout) {
       seedReviewedGame(db)
       db.exec(
         "UPDATE accounts SET connected = 1; INSERT INTO accounts (username, connected) VALUES ('second', 1); INSERT INTO tokens VALUES ('tester', 'invalid'), ('second', 'invalid'); INSERT INTO api_cache VALUES ('tester:profile', '{}', 0)",
       )
     }
-    if (testInfo.title.includes('paged history')) {
+    if (wantPagedHistory) {
       db.exec("INSERT INTO accounts (username, connected) VALUES ('tester', 0)")
       const insert =
         db.prepare(`INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, moves, pgn)
@@ -226,7 +238,7 @@ const test = base.extend<{
           `rival${i}`,
         )
     }
-    if (testInfo.title.includes('saved position lookup')) {
+    if (wantPositionLookup) {
       const saved = {
         kind: 'opening',
         fen: START_FEN,
@@ -239,7 +251,7 @@ const test = base.extend<{
         1,
       )
     }
-    if (testInfo.title.includes('library startup recovery')) {
+    if (wantLibraryRecovery) {
       db.prepare('INSERT INTO documents (key, body, updatedAt) VALUES (?, ?, 1)').run(
         'session:local',
         JSON.stringify({
@@ -268,7 +280,7 @@ const test = base.extend<{
         executablePath,
         args: [
           ...(process.env.KCHESS_PACKAGED_EXEC_PATH ? [] : ['apps/desktop']),
-          ...(testInfo.title.includes('voice')
+          ...(wantVoice || wantVoiceArchive
             ? ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream']
             : []),
         ],
@@ -292,7 +304,7 @@ const test = base.extend<{
       })
       page.on('pageerror', (error) => console.error(`[renderer] ${error.message}`))
       await page.waitForSelector('.main-area')
-      if (!testInfo.title.includes('library startup recovery'))
+      if (!wantLibraryRecovery)
         await expect(page.locator('aside').getByText('Home', { exact: true })).toBeAttached()
       await use({ app, page, profile, lichess: lichess.stand })
     } finally {
@@ -321,7 +333,7 @@ const test = base.extend<{
   },
 })
 
-test('library startup recovery preserves the saved session and mounts the workspace after retry', async ({
+test('library startup recovery preserves the saved session and mounts the workspace after retry @seed:library-recovery', async ({
   desktop: { page, profile },
 }) => {
   await expect(page.getByRole('heading', { name: "KChess couldn't start" })).toBeVisible()
@@ -461,7 +473,7 @@ test('offers account-free actions and manages offline downloads without signing 
   await page.screenshot({ path: test.info().outputPath('kchess-offline-downloads.png') })
 })
 
-test('loads cached voice recognition offline and releases the microphone after a training run @packaged', async ({
+test('loads cached voice recognition offline and releases the microphone after a training run @voice @packaged', async ({
   desktop: { app, page },
 }) => {
   await app.evaluate(() => {
@@ -632,7 +644,7 @@ test('plays keyboard moves and restores an annotated saved study after reload @p
   await page.screenshot({ path: join(process.cwd(), 'test-results', 'study-library.png') })
 })
 
-test('turns a reviewed game mistake into a scheduled practice position @packaged', async ({
+test('turns a reviewed game mistake into a scheduled practice position @seed:reviewed-game @packaged', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Game history')
@@ -651,7 +663,7 @@ test('turns a reviewed game mistake into a scheduled practice position @packaged
   ).toBeVisible()
 })
 
-test('recovers a saved position lookup offline and rejects unsupported tablebases @packaged', async ({
+test('recovers a saved position lookup offline and rejects unsupported tablebases @seed:position-lookup @packaged', async ({
   desktop: { page, lichess },
 }) => {
   lichess.route = async () => {
@@ -874,7 +886,7 @@ test('keeps variations on the analysis board and steps through them', async ({
   await expect(page.locator('.pv-row:not(.pending)').first()).toBeVisible({ timeout: 30_000 })
 })
 
-test('reviews a game on the analysis board, labelling the blunder and the better move', async ({
+test('reviews a game on the analysis board, labelling the blunder and the better move @seed:reviewed-game', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Analysis board')
@@ -913,7 +925,7 @@ test('reviews a game on the analysis board, labelling the blunder and the better
   await expect(moves.locator('.tree-variations')).toBeVisible()
 })
 
-test('shows a reviewed game’s accuracy in History and opens its review', async ({
+test('shows a reviewed game’s accuracy in History and opens its review @seed:reviewed-game', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Game history')
@@ -929,7 +941,7 @@ test('shows a reviewed game’s accuracy in History and opens its review', async
   await expect(page.locator('.tree-glyph.blunder')).toHaveText('??')
 })
 
-test('browses paged history through validated IPC with filters and on-demand PGN', async ({
+test('browses paged history through validated IPC with filters and on-demand PGN @seed:paged-history', async ({
   desktop: { page },
 }) => {
   // Publicly followed players are stored, but their games aren't the signed-in user's activity.
@@ -1077,14 +1089,16 @@ test('starts a Chess960 game against Stockfish with a clock', async ({ desktop: 
   await expect(page.getByText('Chess960', { exact: true })).toBeVisible()
 })
 
-test('summarises a reviewed game on the Insights page', async ({ desktop: { page } }) => {
+test('summarises a reviewed game on the Insights page @seed:reviewed-game', async ({
+  desktop: { page },
+}) => {
   await navigate(page, 'Lichess insights')
   await expect(page.getByText('Games', { exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: /^Checkmate: 1 game/ })).toBeVisible()
   await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
 })
 
-test('blocks assistance after unverified startup until account status is confirmed @packaged', async ({
+test('blocks assistance after unverified startup until account status is confirmed @seed:unverified-startup @packaged', async ({
   desktop: { page },
 }) => {
   await navigate(page, 'Analysis board')
@@ -1118,7 +1132,7 @@ test('blocks assistance after unverified startup until account status is confirm
   await expect(page.locator('.pv-eval').first()).toBeVisible({ timeout: 20_000 })
 })
 
-test('prepares a voice archive with the packaged native module @packaged', async ({
+test('prepares a voice archive with the packaged native module @seed:voice-archive @packaged', async ({
   desktop: { page, profile },
 }) => {
   const zip = await readFile(join(profile, 'test-model.zip'))
@@ -1191,7 +1205,7 @@ test('renders the Lichess authorization confirmation page clearly', async ({
   await page.screenshot({ path: test.info().outputPath('kchess-lichess-confirmation.png') })
 })
 
-test('quick logout removes only the selected account and returns to account-free Home after the last', async ({
+test('quick logout removes only the selected account and returns to account-free Home after the last @seed:quick-logout @seed:reviewed-game', async ({
   desktop: { page },
 }) => {
   const before = await page.evaluate(() => window.kchess.loadData())
@@ -1365,7 +1379,7 @@ test('announces page navigation and prefetches links on intent @packaged', async
   )
 })
 
-test('recovers a failed reviewed game Insights page and records route diagnostics @packaged', async ({
+test('recovers a failed reviewed game Insights page and records route diagnostics @seed:reviewed-game @packaged', async ({
   desktop: { app, page, profile },
 }) => {
   await navigate(page, 'Lichess insights')

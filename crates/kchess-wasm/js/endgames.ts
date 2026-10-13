@@ -1,5 +1,5 @@
 import { rules } from './engine.ts'
-import training from './data/training.json' with { type: 'json' }
+import training from '../../kchess-domain/data/training.json' with { type: 'json' }
 
 export type DrillGoal = 'win' | 'draw'
 

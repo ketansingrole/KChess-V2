@@ -147,7 +147,9 @@ async fn a_rejected_token_falls_back_to_an_anonymous_export() {
         .collect();
     assert_eq!(auths, vec![Some("Bearer lip_alice".to_string()), None]);
     assert_eq!(store.games.lock().unwrap().len(), 1);
-    assert!(store.cursors.lock().unwrap().contains_key("alice"));
+    // A 401-downgraded sync yields public games only: the games are kept, but the
+    // cursor is unchanged so the gap is backfilled after reconnect.
+    assert!(store.cursors.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

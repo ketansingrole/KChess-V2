@@ -9,6 +9,12 @@ import { replaceNative } from './replace-native.mjs'
  * loads it (crates/kchess-node/kchess-native.<platform>-<arch>.node), and the WebAssembly module
  * the renderer imports (apps/desktop/app/assets/rules/kchess.wasm).
  * `--debug` skips release optimizations for quicker local iteration.
+ *
+ * Windows size note: MSVC's DLL carries more code/unwind data than the other
+ * hosts, so the shipped Windows core passes `--config profile.release.opt-level="z"`
+ * below (retaining unwinding and N-API exports). This lives here rather than in
+ * `Cargo.toml` so the other hosts keep the default release optimizations; any
+ * `cargo build -p kchess-node --release` outside this script builds Windows larger.
  */
 const root = fileURLToPath(new URL('..', import.meta.url))
 const debug = process.argv.includes('--debug')

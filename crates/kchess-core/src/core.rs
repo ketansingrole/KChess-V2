@@ -146,11 +146,11 @@ fn engine_locations(config: &Config) -> EngineLocations {
         managed_dir: default_dir(&config.data_dir, config.managed_engine_dir.as_deref()),
         target: Target::current(),
         bundled_script: config.bundled_engine_path.clone().unwrap_or_default(),
-        node_path: config
-            .node_path
+        runtime_path: config
+            .runtime_path
             .clone()
             .unwrap_or_else(|| PathBuf::from("node")),
-        node_env: config.node_env.clone(),
+        runtime_env: config.runtime_env.clone(),
     }
 }
 
@@ -245,7 +245,55 @@ impl Core {
     }
 
     /// The internal service methods, by their service names.
+    /// `dispatch` routes async methods by owner: usage accounting, puzzles, engines,
+    /// then storage/services/sync. Each owner below is one function so `core.rs` stays
+    /// composition plus lifecycle instead of one large match.
     pub(crate) async fn dispatch(&self, method: &str, args: Vec<Value>) -> Result<Value> {
+        if method.starts_with("usage.") {
+            return self.usage_dispatch(method).await;
+        }
+        if method.starts_with("puzzles.") {
+            return self.puzzles_dispatch(method, &args).await;
+        }
+        if method.starts_with("engine.")
+            || method.starts_with("analysis.")
+            || method.starts_with("reviews.")
+            || method.starts_with("managedEngine.")
+            || method.starts_with("engines.")
+        {
+            return self.engines_dispatch(method, &args).await;
+        }
+        if method.starts_with("store.") {
+            return self.database.call_async(method, &args).await;
+        }
+        if method == "voiceHistoryDocument" {
+            return self
+                .database
+                .call_async("store.voiceLog.voiceHistoryDocument", &[])
+                .await;
+        }
+        if method == "host.reply" {
+            let id: u64 = arg(&args, 0, "id")?;
+            self.capabilities
+                .reply(id, args.get(1).unwrap_or(&Value::Null));
+            return Ok(Value::Null);
+        }
+        // Test-only: ask the host for a capability and return its answer.
+        if method == "host.ask" && debug::enabled() {
+            let kind: String = arg(&args, 0, "kind")?;
+            return self
+                .capabilities
+                .request(&kind, args.get(1).cloned().unwrap_or(Value::Null))
+                .await;
+        }
+        if let Some(result) = Box::pin(self.services.call(method, &args)).await {
+            return result;
+        }
+        self.call_sync(method, args)
+    }
+
+    /// Usage accounting arms of `dispatch`.
+    async fn usage_dispatch(&self, method: &str) -> Result<Value> {
         match method {
             "usage.flush" => {
                 self.usage.flush().await;
@@ -253,22 +301,16 @@ impl Core {
             }
             "usage.report" => self.usage.report().await,
             "usage.reset" => self.usage.reset().await,
-            "host.reply" => {
-                let id: u64 = arg(&args, 0, "id")?;
-                self.capabilities
-                    .reply(id, args.get(1).unwrap_or(&Value::Null));
-                Ok(Value::Null)
-            }
-            // Test-only: ask the host for a capability and return its answer.
-            "host.ask" if debug::enabled() => {
-                let kind: String = arg(&args, 0, "kind")?;
-                self.capabilities
-                    .request(&kind, args.get(1).cloned().unwrap_or(Value::Null))
-                    .await
-            }
+            _ => self.call_sync(method, vec![]),
+        }
+    }
+
+    /// Puzzle service arms of `dispatch` (the sole owner of `puzzles.db`).
+    async fn puzzles_dispatch(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "puzzles.status" => json(self.puzzles.status().await?),
             "puzzles.install" => {
-                let url: String = arg(&args, 0, "url")?;
+                let url: String = arg(args, 0, "url")?;
                 json(self.puzzles.install(url).await?)
             }
             "puzzles.cancel" => {
@@ -276,39 +318,46 @@ impl Core {
                 Ok(Value::Null)
             }
             "puzzles.delete" => json(self.puzzles.delete().await?),
-            "puzzles.query" => json(self.puzzles.query(arg(&args, 0, "query")?).await?),
-            "puzzles.ladder" => json(self.puzzles.ladder(arg(&args, 0, "query")?).await?),
+            "puzzles.query" => json(self.puzzles.query(arg(args, 0, "query")?).await?),
+            "puzzles.ladder" => json(self.puzzles.ladder(arg(args, 0, "query")?).await?),
+            _ => self.call_sync(method, args.to_vec()),
+        }
+    }
+
+    /// Engine arms of `dispatch`: computer search, analysis, reviews and managed engines.
+    async fn engines_dispatch(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "engine.bestMove" => {
-                let level: String = arg(&args, 1, "level")?;
-                let configured: String = optional(&args, 2, "configured")?;
+                let level: String = arg(args, 1, "level")?;
+                let configured: String = optional(args, 2, "configured")?;
                 let mv = self
                     .search
-                    .best_move(raw(&args, 0), &level, &configured, raw(&args, 3))
+                    .best_move(raw(args, 0), &level, &configured, raw(args, 3))
                     .await?;
                 json(mv)
             }
             "engine.status" => {
-                let configured: String = optional(&args, 0, "configured")?;
+                let configured: String = optional(args, 0, "configured")?;
                 json(engine_status(self.host.as_ref(), &self.ctx.locations, &configured).await)
             }
             "engine.identity" => {
-                let status: EngineStatus = arg(&args, 0, "status")?;
+                let status: EngineStatus = arg(args, 0, "status")?;
                 json(engine_identity(&status).await?)
             }
             "analysis.start" => {
-                let configured: String = optional(&args, 1, "configured")?;
+                let configured: String = optional(args, 1, "configured")?;
                 let host = Arc::clone(&self.host);
                 let sink: AnalysisSink = Arc::new(move |update: AnalysisUpdate| {
                     host.emit(ANALYSIS_EVENT, json!(update));
                 });
                 json(
                     self.analysis
-                        .start_analysis(raw(&args, 0), &configured, sink)?,
+                        .start_analysis(raw(args, 0), &configured, sink)?,
                 )
             }
             "reviews.get" => {
-                let fen: String = arg(&args, 0, "fen")?;
-                let moves: Vec<String> = optional(&args, 1, "moves")?;
+                let fen: String = arg(args, 0, "fen")?;
+                let moves: Vec<String> = optional(args, 1, "moves")?;
                 json(self.reviews.get_review(&fen, &moves).await?)
             }
             "reviews.setup" => {
@@ -317,7 +366,7 @@ impl Core {
             }
             "reviews.request" => json(
                 self.reviews
-                    .request_review(arg::<ReviewRequest>(&args, 0, "request")?)
+                    .request_review(arg::<ReviewRequest>(args, 0, "request")?)
                     .await?,
             ),
             "reviews.changed" => {
@@ -329,21 +378,21 @@ impl Core {
                 Ok(Value::Null)
             }
             "managedEngine.status" => {
-                let dir = self.managed_dir(&location_override(&args, 0)?);
+                let dir = self.managed_dir(&location_override(args, 0)?);
                 json(managed_engine(self.host.as_ref(), &dir).await)
             }
             "managedEngine.install" => {
-                let id: u64 = arg(&args, 0, "requestId")?;
-                let location = location_override(&args, 1)?;
+                let id: u64 = arg(args, 0, "requestId")?;
+                let location = location_override(args, 1)?;
                 self.managed_request(id, Mutation::Install, &location).await
             }
             "managedEngine.delete" => {
-                let id: u64 = arg(&args, 0, "requestId")?;
-                let location = location_override(&args, 1)?;
+                let id: u64 = arg(args, 0, "requestId")?;
+                let location = location_override(args, 1)?;
                 self.managed_request(id, Mutation::Delete, &location).await
             }
             "managedEngine.cancel" => {
-                let id: u64 = arg(&args, 0, "requestId")?;
+                let id: u64 = arg(args, 0, "requestId")?;
                 self.cancel_install(id);
                 Ok(Value::Null)
             }
@@ -358,21 +407,7 @@ impl Core {
                 self.ctx.hub.close_engines().await?;
                 Ok(Value::Null)
             }
-            _ => {
-                if let Some(result) = Box::pin(self.services.call(method, &args)).await {
-                    return result;
-                }
-                if method.starts_with("store.") {
-                    return self.database.call_async(method, &args).await;
-                }
-                if method == "voiceHistoryDocument" {
-                    return self
-                        .database
-                        .call_async("store.voiceLog.voiceHistoryDocument", &[])
-                        .await;
-                }
-                self.call_sync(method, args)
-            }
+            _ => self.call_sync(method, args.to_vec()),
         }
     }
 

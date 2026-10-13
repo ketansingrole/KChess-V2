@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
@@ -22,16 +22,17 @@ use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
 pub const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
 
-/// One running download: cancelled through the flag, woken through `wake`.
+/// One running download: cancelled through the token.
 struct Download {
-    cancelled: AtomicBool,
-    wake: Notify,
+    cancel: CancellationToken,
 }
 
 struct Inner {
     config: Config,
     host: Arc<dyn Host>,
     db: Mutex<Option<Connection>>,
+    execution: Arc<tokio::sync::Semaphore>,
+    work: tokio_util::task::TaskTracker,
     running: Mutex<Option<Arc<Download>>>,
     closed: AtomicBool,
 }
@@ -67,6 +68,8 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     let path = config.data_dir.join("puzzles.db");
     let db = Connection::open(&path)
         .map_err(|e| CoreError::wrap("Could not open the puzzle database", e))?;
+    db.execute_batch("PRAGMA busy_timeout = 5000;")
+        .map_err(|e| CoreError::new(e.to_string()))?;
     queries::create_schema(&db)?;
     restrict(&path, host);
     let migrated = db
@@ -93,7 +96,7 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
             .map_err(|e| CoreError::new(e.to_string()))?;
         if has_tables {
             db.execute_batch(
-                "BEGIN;
+                "BEGIN IMMEDIATE;
                 INSERT OR IGNORE INTO puzzles SELECT * FROM legacy.puzzles;
                 INSERT OR IGNORE INTO puzzle_meta SELECT id, importedAt, count, bytes FROM legacy.puzzle_meta;
                 INSERT OR REPLACE INTO worker_meta VALUES (1);
@@ -165,21 +168,34 @@ impl Write for SamplerSink {
 
 impl Inner {
     /// Run `work` on the database off the async threads, opening it on first use.
+    /// Admission is serialized on the execution semaphore so `close` drains cleanly;
+    /// the closed flag is rechecked while holding the connection lock to close the
+    /// reopen-after-close race.
     async fn with_db<T: Send + 'static>(
         self: &Arc<Self>,
         work: impl FnOnce(&Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        let permit = Arc::clone(&self.execution)
+            .acquire_owned()
+            .await
+            .map_err(|_| CoreError::new("Puzzle service closed."))?;
+        let tracked = self.work.token();
         let inner = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
-            if inner.closed.load(Ordering::SeqCst) {
-                return Err(CoreError::new("Puzzle service closed."));
-            }
+            let (_permit, _tracked) = (permit, tracked);
             let mut db = inner
                 .db
                 .lock()
                 .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?;
+            if inner.closed.load(Ordering::SeqCst) {
+                return Err(CoreError::new("Puzzle service closed."));
+            }
             if db.is_none() {
                 *db = Some(open(&inner.config, inner.host.as_ref())?);
+                if inner.closed.load(Ordering::SeqCst) {
+                    db.take();
+                    return Err(CoreError::new("Puzzle service closed."));
+                }
             }
             match db.as_ref() {
                 Some(connection) => work(connection),
@@ -219,6 +235,8 @@ impl PuzzleService {
                 config,
                 host,
                 db: Mutex::new(None),
+                execution: Arc::new(tokio::sync::Semaphore::new(1)),
+                work: tokio_util::task::TaskTracker::new(),
                 running: Mutex::new(None),
                 closed: AtomicBool::new(false),
             }),
@@ -276,16 +294,18 @@ impl PuzzleService {
     /// Stop a running download; it resolves with the current status.
     pub fn cancel(&self) {
         if let Some(download) = self.inner.running() {
-            download.cancelled.store(true, Ordering::SeqCst);
-            download.wake.notify_one();
+            download.cancel.cancel();
         }
     }
 
     pub async fn close(&self) {
         self.cancel();
         self.inner.closed.store(true, Ordering::SeqCst);
+        self.inner.execution.close();
+        self.inner.work.close();
+        self.inner.work.wait().await;
         let inner = Arc::clone(&self.inner);
-        // Closing waits for an import that holds the database to see the cancellation.
+        // Closing drains admitted workers first, then releases the file.
         let _ = tokio::task::spawn_blocking(move || {
             if let Ok(mut db) = inner.db.lock() {
                 db.take();
@@ -295,6 +315,8 @@ impl PuzzleService {
     }
 
     /// Download, sample and store the puzzle database, reporting `puzzledb:progress`.
+    /// Cancellation resolves with the current status: callers distinguish cancel from
+    /// completion via the `puzzledb:progress` `cancelled`/`done` phase, not the result.
     pub async fn install(&self, url: String) -> Result<PuzzleDbStatus> {
         let download = {
             let mut running = self
@@ -308,8 +330,7 @@ impl PuzzleService {
                 return Err(error);
             }
             let download = Arc::new(Download {
-                cancelled: AtomicBool::new(false),
-                wake: Notify::new(),
+                cancel: CancellationToken::new(),
             });
             *running = Some(Arc::clone(&download));
             download
@@ -321,7 +342,7 @@ impl PuzzleService {
             last: None,
         };
         let result = self.download(&url, &download, &mut progress).await;
-        let aborted = download.cancelled.load(Ordering::SeqCst);
+        let aborted = download.cancel.is_cancelled();
         let outcome = match result {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -358,9 +379,10 @@ impl PuzzleService {
         progress: &mut Progress,
     ) -> Result<()> {
         let cancelled = || CoreError::aborted("Cancelled");
+        let cancel = download.cancel.clone();
         let response = tokio::select! {
             response = reqwest::get(url) => response.map_err(|e| CoreError::new(fetch_failed(&e))),
-            _ = download.wake.notified() => Err(cancelled()),
+            _ = cancel.cancelled() => Err(cancelled()),
         }?;
         self.inner.usage(1, 0);
         if !response.status().is_success() {
@@ -404,15 +426,16 @@ impl PuzzleService {
                 Ok((rows, sampler.count()))
             });
         let mut stream = response.bytes_stream();
+        let cancel = download.cancel.clone();
         let fed: Result<()> = async {
             loop {
                 let chunk = tokio::select! {
                     chunk = stream.next() => chunk,
-                    _ = download.wake.notified() => return Err(cancelled()),
+                    _ = cancel.cancelled() => return Err(cancelled()),
                 };
                 let Some(chunk) = chunk else { return Ok(()) };
                 let chunk = chunk.map_err(|e| CoreError::new(fetch_failed(&e)))?;
-                if download.cancelled.load(Ordering::SeqCst) {
+                if cancel.is_cancelled() {
                     return Err(cancelled());
                 }
                 progress.received += chunk.len() as u64;
@@ -430,17 +453,13 @@ impl PuzzleService {
             .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?;
         fed?;
         let (rows, kept) = sampled?;
-        if download.cancelled.load(Ordering::SeqCst) {
+        if download.cancel.is_cancelled() {
             return Err(cancelled());
         }
         progress.report(Phase::Importing, kept, true);
-        let flag = Arc::clone(download);
+        let cancel = download.cancel.clone();
         self.inner
-            .with_db(move |db| {
-                Ok(queries::store_sample(db, &rows, &|| {
-                    flag.cancelled.load(Ordering::SeqCst)
-                })?)
-            })
+            .with_db(move |db| Ok(queries::store_sample(db, &rows, &|| cancel.is_cancelled())?))
             .await?;
         progress.report(Phase::Done, kept, true);
         Ok(())

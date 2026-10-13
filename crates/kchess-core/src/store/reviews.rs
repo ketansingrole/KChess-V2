@@ -23,6 +23,10 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "store.reviewStore.writeReview" => {
             write_review(ctx.host, db, args.first().unwrap_or(&Value::Null))
         }
+        "store.reviewStore.writeReviews" => {
+            let reviews = args.first().cloned().unwrap_or(Value::Null);
+            write_reviews(ctx.host, db, &reviews)
+        }
         "store.reviewStore.reviewSummaries" => {
             review_summaries(ctx.host, db, &string_list(args.first()))
         }
@@ -245,6 +249,22 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
     .map_err(db_err)?;
     link(db)?;
     Ok(json!({ "review": merged, "summary": summary }))
+}
+
+/// `writeReviews(reviews)`: save a batch atomically; a failure or cancellation
+/// keeps the previous batch. Callers that need per-review cancellability keep
+/// using `writeReview`.
+fn write_reviews(host: &dyn Host, db: &Connection, reviews: &Value) -> Result<Value> {
+    use super::library::transaction;
+    let list = reviews.as_array().cloned().unwrap_or_default();
+    transaction(db, || {
+        let mut stored = Vec::with_capacity(list.len());
+        for review in &list {
+            let written = write_review(host, db, review)?;
+            stored.push(written.get("review").cloned().unwrap_or(Value::Null));
+        }
+        Ok(Value::Array(stored))
+    })
 }
 
 /// A JSON number as a SQLite value (integers stay integers).

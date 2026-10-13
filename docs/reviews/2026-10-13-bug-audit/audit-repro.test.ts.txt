@@ -1,0 +1,52 @@
+import { expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
+import { flushPromises } from '@vue/test-utils'
+import { desktop, deferred } from './fixtures'
+import { useStudyStore } from '../../app/stores/studies'
+import { useAnalysisStore } from '../../app/stores/analysis'
+import type { StudyCommandResult } from '@kchess/rules/library'
+
+it('audit: rapid chapter round trip preserves edits while save is pending', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop({ reviewGet: async () => null, onReviewUpdate: () => () => {} })
+  const studies = useStudyStore()
+  const id = await studies.saveChapters('Study', [{ name: 'One', pgn: '1. e4 *' }, { name: 'Two', pgn: '1. d4 *' }])
+  const [one, two] = studies.items[0]!.chapters
+  const analysis = useAnalysisStore()
+  analysis.openStudy(id, one!.id)
+  analysis.root.comments = ['Keep my edits']
+  await nextTick()
+  const backend = api.studyCommand
+  const gate = deferred<StudyCommandResult>()
+  api.studyCommand = vi.fn(backend).mockImplementationOnce(() => gate.promise)
+  analysis.openStudy(id, two!.id)
+  await flushPromises()
+  analysis.openStudy(id, one!.id)
+  gate.resolve(await backend({ op: 'save', id, chapterId: one!.id, name: 'Study', pgn: '1. e4 {Keep my edits} *' }))
+  await flushPromises()
+  analysis.root.comments = ['Later edit']
+  await nextTick()
+  await analysis.flushStudy()
+  expect((await api.library()).studies[0]!.chapters[0]!.pgn).toContain('Keep my edits')
+})
+
+it('audit: a failed save prevents chapter duplication from throwing away edited board', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop({ reviewGet: async () => null, onReviewUpdate: () => () => {} })
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const analysis = useAnalysisStore()
+  analysis.openStudy(id)
+  analysis.root.comments = ['Keep my edits']
+  await nextTick()
+  const backend = api.studyCommand
+  api.studyCommand = vi.fn(async (command, incremental) => {
+    if (command.op === 'save') throw new Error('Disk unavailable')
+    return backend(command, incremental)
+  })
+  await analysis.flushStudy()
+  const copy = await studies.duplicateChapter(id, analysis.studyChapterId)
+  analysis.openStudy(id, copy)
+  await flushPromises()
+  expect(analysis.pgn()).toContain('Keep my edits')
+})

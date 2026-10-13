@@ -70,12 +70,28 @@ impl Database {
         let database = Arc::clone(self);
         let method = method.to_string();
         let args = args()?;
-        tokio::task::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        let logged_method = method.clone();
+        let result = tokio::task::spawn_blocking(move || {
             let (_permit, _tracked) = (permit, tracked);
             database.call_inner(&method, &args, true)
         })
         .await
-        .map_err(|cause| CoreError::wrap("Database worker failed", cause))?
+        .map_err(|cause| CoreError::wrap("Database worker failed", cause))?;
+        // Structural head-of-line signal: a single connection serializes all storage,
+        // so a slow call blocks UI reads. Log slow calls instead of silently queueing.
+        let elapsed = started.elapsed();
+        if elapsed.as_millis() > 500 {
+            self.host.log(
+                Level::Warn,
+                "db",
+                &format!(
+                    "Slow storage call: method={logged_method} durationMs={}",
+                    elapsed.as_millis()
+                ),
+            );
+        }
+        result
     }
 
     /// Refuses queued/new async work, drains accepted operations, then releases the file.
@@ -161,7 +177,8 @@ pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
          PRAGMA foreign_keys = ON;
          PRAGMA synchronous = NORMAL;
          PRAGMA temp_store = MEMORY;
-         PRAGMA cache_size = -20000;",
+         PRAGMA cache_size = -20000;
+         PRAGMA busy_timeout = 5000;",
     )
     .map_err(|e| CoreError::new(e.to_string()))?;
     migrations::migrate(&db)?;

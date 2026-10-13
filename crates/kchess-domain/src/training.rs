@@ -2,7 +2,7 @@
 //!
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
 //! client clock, engine levels, UCI `info` lines and review coaching. Their constants are data
-//! shared with TypeScript (`crates/kchess-wasm/js/data/`).
+//! shared with TypeScript (`crates/kchess-domain/data/`).
 
 mod clock;
 mod coach;

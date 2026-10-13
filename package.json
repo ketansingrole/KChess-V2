@@ -53,7 +53,7 @@
     "check:rust-coverage": "node tooling/check-rust-coverage.mjs",
     "check:performance": "node tooling/library-benchmark.mjs --check",
     "check:report": "node tooling/guardrail-report.mjs",
-    "cli": "pnpm run build:packages && node apps/cli/dist/cli.js"
+    "cli": "pnpm run build:native && pnpm run build:packages && node apps/cli/dist/cli.js"
   },
   "devDependencies": {
     "@electron/asar": "^4.3.1",

@@ -73,9 +73,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ['rust-coverage', ['run', 'check:rust-coverage']],
     ['native', ['run', 'build:native']],
     ['contracts', ['run', 'check:contracts']],
+    ['release-versions', ['run', 'release:verify']],
     ['smoke', ['run', 'test:smoke']],
     ['core', ['run', 'test:core']],
     ['unit', ['run', 'test:unit']],
     ['performance', ['run', 'check:performance']],
   ])
+  if (process.exitCode === 0)
+    console.info(
+      '[kchess] `check` covers unit regressions; production still needs `pnpm run build && pnpm run test:e2e` (plus `pack && test:packaged` for packaging).',
+    )
 }

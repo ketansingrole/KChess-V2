@@ -1080,6 +1080,8 @@ fn purge_account_data(db: &Connection, account: &str, usage: bool) -> rusqlite::
         params![prefix_length, format!("{account}:")],
     )?;
     // Explorer keys hold the options as JSON; ASCII LIKE ignores case, `_` in names is escaped.
+    // `"` and JSON escapes are not escaped: safe for Lichess usernames
+    // (`[a-zA-Z0-9_-]`), brittle if the key format ever carries other values.
     let mut escaped = String::new();
     for character in account.chars() {
         if matches!(character, '\\' | '%' | '_') {

@@ -33,6 +33,22 @@ Interactive game commands: e2e4, undo, resign, new, status, quit.
 Local games also accept draw and pause. Sessions are saved in the core library.
 `
 
+/**
+ * Engine-assistance methods that need a live-game check first. UX pre-check only:
+ * the authoritative gate lives in the Rust facade (`assistance_allowed`,
+ * `RUST_MIGRATION.md`); the core still refuses these during a live human game
+ * when this list drifts. Keep in sync with the facade.
+ */
+const ASSISTANCE_METHODS: readonly string[] = [
+  'bestMove',
+  'startAnalysis',
+  'reviewGet',
+  'reviewRequest',
+  'cloudEval',
+  'positionLookup',
+  'mastersGame',
+]
+
 export function parseCli(argv: string[]): {
   options: NodeCoreOptions
   args: string[]
@@ -218,6 +234,9 @@ export async function runCli(argv: string[]): Promise<void> {
   process.once('SIGTERM', interrupted)
   try {
     if (engine) {
+      // Intentional, matching desktop `trustEnginePath`: an explicit operator path is
+      // trusted and persisted without a hash prompt. The core validates executability
+      // on use; no fingerprint is stored.
       await core.trustEnginePath(engine)
       await core.saveSettings({ ...(await core.settings()), enginePath: engine })
     }
@@ -236,18 +255,7 @@ export async function runCli(argv: string[]): Promise<void> {
       if (text.length > 2_000_000) throw new Error('Arguments are too large.')
       const parameters: unknown = JSON.parse(text)
       if (!Array.isArray(parameters)) throw new Error('Arguments must be a JSON array.')
-      if (
-        [
-          'bestMove',
-          'startAnalysis',
-          'reviewGet',
-          'reviewRequest',
-          'cloudEval',
-          'positionLookup',
-          'mastersGame',
-        ].includes(method!)
-      )
-        await core.resumeOnline()
+      if (ASSISTANCE_METHODS.includes(method!)) await core.resumeOnline()
       const call = core[method as CoreMethod] as (...args: unknown[]) => Promise<unknown>
       json(await call(...parameters))
     } else if (command === 'analyze') {

@@ -950,3 +950,17 @@ export const useKChessStore = defineStore('kchess', () => {
 })
 
 export type KChessStore = ReturnType<typeof useKChessStore>
+
+/**
+ * Prefer these focused stores in new code over the `kchess` facade spread:
+ * `useOnlineGame` / `useComputerGame` / `useGameHistory` own their game state;
+ * `kchess.ts` keeps navigation, accounts and settings only. Existing pages still
+ * read through the facade; migrate page-by-page to remove the import cycle
+ * (`friends`/`tournaments`/`challenges` import the facade today).
+ */
+export { useOnlineGame } from './kchess/onlineGame'
+export { useComputerGame } from './kchess/computerGame'
+export { useGameHistory } from './kchess/gameHistory'
+export { useEngineSettings } from './kchess/engineSettings'
+export { useSettingsPersistence } from './kchess/settingsPersistence'
+export { useAccountProfile } from './kchess/accountProfile'

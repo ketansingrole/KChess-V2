@@ -683,16 +683,21 @@ impl OnlineSession {
                 None
             } else {
                 let id = std::mem::take(&mut st.pending_id);
-                Some((id, st.current_account.clone()))
+                Some((id, st.current_account.clone(), st.epoch))
             };
             (phase_report, cancel_pending)
         };
         if let Some((session, account, game, phase, message)) = phase_report {
             self.emit_state(session, &account, &game, Lane::Game, phase, message);
         }
-        if let Some((id, account)) = cancel_pending {
+        if let Some((id, account, epoch_at_cancel)) = cancel_pending {
+            // Epoch-guarded: a challenge created by the new session after `cancel_inner`
+            // bumped the epoch must not be cancelled by the old session's teardown.
             let this = self.clone();
             tokio::spawn(async move {
+                if this.st().epoch != epoch_at_cancel {
+                    return;
+                }
                 match this.token(&account).await {
                     Ok(Some(token)) => this.cancel_challenge(&id, &token).await,
                     Ok(None) => {}

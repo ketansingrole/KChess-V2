@@ -1,4 +1,4 @@
-// Builds crates/kchess-wasm/js/data/openings.json from Lichess's CC0 opening names (github.com/lichess-org/chess-openings).
+// Builds crates/kchess-domain/data/openings.json from Lichess's CC0 opening names (github.com/lichess-org/chess-openings).
 // Usage: node tooling/make-openings.mjs [dir-with-a..e.tsv]  (downloads the TSVs when no dir is given)
 import { createRequire } from 'node:module'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -38,7 +38,7 @@ const compact = Object.fromEntries(
     .map(([epd, [eco, name]]) => [epd, `${eco}|${name}`]),
 )
 await writeFile(
-  new URL('../crates/kchess-wasm/js/data/openings.json', import.meta.url),
+  new URL('../crates/kchess-domain/data/openings.json', import.meta.url),
   JSON.stringify(compact) + '\n',
 )
 console.log(`${Object.keys(compact).length} named positions`)

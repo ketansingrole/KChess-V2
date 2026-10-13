@@ -111,3 +111,10 @@ real engine searches, the puzzle service, CLI input/output, persistence and vali
 Production Electron and packaged checks remain required for desktop changes. OAuth and
 OS-keychain integration require a real account/user session; automated fixtures never
 open a browser or access the user's credentials.
+
+Desktop bundles the workspace packages from source (`tooling/package-aliases.ts`) while
+Node/CLI hosts resolve them to built `dist/`: a source edit without `build:native` +
+`build:packages` changes desktop/vitest behavior but leaves Node/CLI on stale output.
+`pnpm run test:core` and `check:fast`'s Rust path rebuild both; `pnpm run cli` builds
+`build:native` first for the same reason. CI's desktop job runs `build` (which runs
+`build:native`) so packaged output is consistent.
