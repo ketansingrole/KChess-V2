@@ -12,7 +12,9 @@ mod patterns;
 mod validate;
 
 pub use constants::MAX_DOCUMENT;
-pub use contracts::{Scope, TV_CHANNEL_KEYS, arities, normalize, validate_arguments};
+pub use contracts::{
+    ASSISTANCE_METHODS, Scope, TV_CHANNEL_KEYS, arities, normalize, validate_arguments,
+};
 
 use engine::J;
 use serde_json::Value;

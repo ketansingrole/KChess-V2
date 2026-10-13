@@ -116,6 +116,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@kchess/contracts':
+        specifier: workspace:*
+        version: link:../../crates/kchess-contracts/ts
       '@kchess/native':
         specifier: workspace:*
         version: link:../../crates/kchess-node

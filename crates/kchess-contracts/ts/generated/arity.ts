@@ -233,3 +233,14 @@ export const IPC_ARITY = {
   "windowMinimize": [0, 0],
   "windowToggleMaximize": [0, 0],
 } as const;
+
+/** Core methods refused during a live human game (`assistance_allowed`). */
+export const ASSISTANCE_METHODS: readonly string[] = [
+  "bestMove",
+  "startAnalysis",
+  "reviewGet",
+  "reviewRequest",
+  "positionLookup",
+  "mastersGame",
+  "cloudEval",
+];

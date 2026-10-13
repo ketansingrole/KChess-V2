@@ -43,6 +43,19 @@ pub enum Scope {
     Ipc,
 }
 
+/// Methods refused during a live human game (engine, review and explorer assistance),
+/// gated by the facade's `assistance_allowed` (`crates/kchess-core/src/facade.rs`). The single
+/// source for the gate and the CLI's pre-call `resumeOnline`: when a facade arm gains the gate,
+/// add its method here and regenerate `ts/generated/arity.ts`.
+pub const ASSISTANCE_METHODS: &[&str] = &[
+    "bestMove",
+    "startAnalysis",
+    "reviewGet",
+    "reviewRequest",
+    "positionLookup",
+    "mastersGame",
+    "cloudEval",
+];
 /// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`, `crates/kchess-wasm/js/tvChannels.ts`).
 pub const TV_CHANNEL_KEYS: &[&str] = &[
     "best",

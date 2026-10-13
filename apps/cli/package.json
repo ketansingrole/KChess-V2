@@ -10,6 +10,7 @@
     "typecheck": "pnpm -w exec tsc --noEmit -p apps/cli/tsconfig.json"
   },
   "dependencies": {
+    "@kchess/contracts": "workspace:*",
     "@kchess/native": "workspace:*",
     "@kchess/node": "workspace:*",
     "@kchess/rules": "workspace:*"
