@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { nativeRules, type NativeCoreHandle } from '@kchess/native/native'
 import { goldenFile } from './golden'
+import { captureAsync } from './helpers/capture.ts'
 
 /**
  * `store.games` (`crates/kchess-core/src/store/games.rs`) and the schema
@@ -30,10 +31,6 @@ const root = mkdtempSync(join(tmpdir(), 'kchess-store-parity-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 const TIME_KEYS = new Set(['fetchedAt', 'dismissedAt', 'updatedAt', 'checkedAt', 'importedAt'])
-
-function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
-}
 
 /** Timestamps written by the core at the current moment read as `<now>`; any other value stays. */
 function maskTimes(value: unknown): unknown {
@@ -69,11 +66,10 @@ async function rustOutcome(
   method: string,
   args: unknown[],
 ): Promise<Outcome> {
-  try {
-    return { ok: JSON.parse(core.callSync(method, JSON.stringify(args))) as unknown }
-  } catch (cause) {
-    return { error: messageOf(cause) }
-  }
+  const result = await captureAsync(
+    async () => JSON.parse(core.callSync(method, JSON.stringify(args))) as unknown,
+  )
+  return 'error' in result ? result : { ok: result.value }
 }
 
 interface TableDump {

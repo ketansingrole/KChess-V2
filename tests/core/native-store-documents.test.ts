@@ -8,6 +8,7 @@ import { assertSession } from '@kchess/rules/library'
 import { reviewKey } from '@kchess/rules/review'
 import { nativeRules, type NativeCoreHandle } from '@kchess/native/native'
 import { goldenFile } from './golden'
+import { captureAsync } from './helpers/capture.ts'
 
 // Insights groups games by local weekday/hour. These golden fixtures were recorded
 // in Tokyo; pin the same timezone even when the test runner starts in UTC.
@@ -156,11 +157,7 @@ function temporary(): string {
 }
 
 async function attempt(work: () => unknown): Promise<Outcome> {
-  try {
-    return { value: await work() }
-  } catch (cause) {
-    return { error: cause instanceof Error ? cause.message : String(cause) }
-  }
+  return captureAsync(async () => work())
 }
 
 function describeOutcome(outcome: Outcome, labels: Labels): string {

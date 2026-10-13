@@ -174,6 +174,7 @@ function processTreeSnapshot(rootPid, metrics) {
       processes: descendants,
     }
   } catch (error) {
+    console.warn(`process tree snapshot failed: ${error?.message ?? error}`)
     return { unavailable: String(error?.message ?? error) }
   }
 }
@@ -228,6 +229,7 @@ async function runOne(variant, ordinal, runIndex) {
         powerMonitor.isOnBatteryPower(),
       )
     } catch (error) {
+      console.warn(`battery query failed: ${error?.message ?? error}`)
       record.onBatteryPowerError = String(error?.message ?? error)
     }
     record.timingsMs.electronLaunchResolved = Math.round(performance.now() - launchStart)
@@ -389,6 +391,7 @@ async function runOne(variant, ordinal, runIndex) {
         record.engineWorkload =
           'started, killed on engine off, then restarted on a different position'
       } catch (error) {
+        console.warn(`engine lifecycle workload failed: ${error?.message ?? error}`)
         record.engineLifecycleWorkloadSucceeded = false
         record.engineWorkload = 'engine did not reach an active depth update'
         record.engineError = String(error?.message ?? error)
@@ -406,6 +409,7 @@ async function runOne(variant, ordinal, runIndex) {
             )
           }
         } catch (cancelError) {
+          console.warn(`engine cancel after failure failed: ${cancelError?.message ?? cancelError}`)
           record.engineCancelledAfterFailure = false
           record.engineCancellationError = String(cancelError?.message ?? cancelError)
         }
@@ -432,6 +436,7 @@ async function runOne(variant, ordinal, runIndex) {
     record.finishedAt = new Date().toISOString()
     record.success = record.engineLifecycleWorkloadSucceeded === true
   } catch (error) {
+    console.warn(`startup run failed: ${error?.stack ?? error}`)
     record.finishedAt = new Date().toISOString()
     record.success = false
     record.errors.push(String(error?.stack ?? error))
@@ -440,6 +445,7 @@ async function runOne(variant, ordinal, runIndex) {
       try {
         await app.close()
       } catch (error) {
+        console.warn(`startup run close failed: ${error?.stack ?? error}`)
         record.errors.push(`close: ${String(error?.stack ?? error)}`)
       }
     }
@@ -447,6 +453,7 @@ async function runOne(variant, ordinal, runIndex) {
       await rm(profile, { recursive: true, force: true })
       record.profileRemoved = true
     } catch (error) {
+      console.warn(`startup profile cleanup failed: ${error?.stack ?? error}`)
       record.profileRemoved = false
       record.errors.push(`profile cleanup: ${String(error?.stack ?? error)}`)
     }

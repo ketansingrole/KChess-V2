@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { testPlatform } from '../fixtures/corePlatform'
 import { createKChessCore, type KChessCore } from '@kchess/native/service'
+import { captureAsync } from './helpers/capture.ts'
 import { assertSession, type ArchivedGame } from '@kchess/rules/library'
 import { STANDARD_SETUP } from '@kchess/rules/variant'
 
@@ -138,13 +139,12 @@ describe('played games', () => {
     const moves = Array.from({ length: 1024 }, (_, n) => shuffle[n % 4]!)
     let saved = 0
     for (;;) {
-      try {
-        await core.saveArchivedGame(game(String(saved), moves))
-        saved++
-      } catch (cause) {
-        expect(String(cause)).toContain('full')
+      const result = await captureAsync(() => core.saveArchivedGame(game(String(saved), moves)))
+      if ('error' in result) {
+        expect(String(result.error)).toContain('full')
         break
       }
+      saved++
     }
     expect(saved).toBeLessThan(500)
     expect((await core.library()).games).toHaveLength(saved)

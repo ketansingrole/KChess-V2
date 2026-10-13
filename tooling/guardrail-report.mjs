@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { attempt } from './capture-error.mjs'
 import { regressionMetrics } from './regression-metrics.mjs'
 
 export function desktopMetrics(report) {
@@ -31,11 +32,11 @@ export async function reportGuardrails() {
   const packaged = await read('test-results/desktop-packaged.json')
   let regressions = null
   if (process.env.GITHUB_REPOSITORY && process.env.GH_TOKEN) {
-    try {
-      regressions = regressionMetrics(process.env.GITHUB_REPOSITORY)
-    } catch {
-      regressions = { count: null, reason: 'GitHub regression metrics could not be read.' }
-    }
+    const metrics = attempt(() => regressionMetrics(process.env.GITHUB_REPOSITORY))
+    regressions =
+      'error' in metrics
+        ? { count: null, reason: 'GitHub regression metrics could not be read.' }
+        : metrics.value
   }
   const report = {
     regressions,

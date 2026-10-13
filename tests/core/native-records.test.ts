@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { goldenFile } from './golden.ts'
 import { rules } from '@kchess/rules/engine'
+import { capture } from './helpers/capture.ts'
 import '@kchess/native/rules'
 import { Position } from '@kchess/rules/position'
 import { defaultFen, VARIANTS, type Variant } from '@kchess/rules/variant'
@@ -22,11 +23,8 @@ const counts: Record<string, number> = {}
 
 /** A call's outcome as the rules report it: a value (undefined is null) or an error message. */
 function outcome(run: () => unknown): { ok: unknown } | { error: string } {
-  try {
-    return { ok: plain(run() ?? null) }
-  } catch (cause) {
-    return { error: cause instanceof Error ? cause.message : String(cause) }
-  }
+  const result = capture(() => plain(run() ?? null))
+  return 'error' in result ? result : { ok: result.value }
 }
 
 /** Compare as values cross the boundary: `undefined` properties are simply absent. */

@@ -39,7 +39,7 @@ describe('analysis engine (bundled Stockfish)', () => {
     for (const line of update.lines) {
       expect(replay(fen, line.pv)).toHaveLength(line.pv.length + 1)
     }
-    core.stopAnalysis()
+    await core.stopAnalysis()
   }, 30_000)
   it('streams several scored lines for a position', async () => {
     const id = await core.startAnalysis({ fen: START, lines: 2, infinite: true })
@@ -67,7 +67,7 @@ describe('analysis engine (bundled Stockfish)', () => {
     updates.length = 0
     const id = await core.startAnalysis({ fen: ITALIAN, lines: 3, infinite: true })
     await until((u) => u.id === id && u.lines.length === 3)
-    core.stopAnalysis()
+    await core.stopAnalysis()
     const last = await until((u) => u.id === id && u.done)
     // Black to move: the scores are still from White's side, so a sound line is near equal.
     expect(last.lines).toHaveLength(3)

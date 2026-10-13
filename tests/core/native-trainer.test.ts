@@ -27,6 +27,7 @@ import {
 import type { EngineLine, Puzzle } from '@kchess/contracts/types'
 import { nativeRules } from '@kchess/native/native'
 import { goldenFile } from './golden'
+import { capture } from './helpers/capture.ts'
 
 /**
  * The trainer rules (`crates/kchess-domain/src/trainer.rs`): puzzle sessions driven through
@@ -70,11 +71,8 @@ const norm = (value: unknown) =>
 
 /** What a call returns or throws, as a comparable value. */
 function attempt(call: () => unknown): unknown {
-  try {
-    return norm(call())
-  } catch (cause) {
-    return { error: (cause as Error).message }
-  }
+  const result = capture(() => norm(call()))
+  return 'error' in result ? result : result.value
 }
 
 const counters = new Map<string, number>()

@@ -1,6 +1,7 @@
 import { describe, it } from 'vitest'
 import { rulesLossless } from '@kchess/rules/engine'
 import { goldenFile } from './golden.ts'
+import { capture } from './helpers/capture.ts'
 
 /**
  * The validators and library decoders (`crates/kchess-wasm/js/validate.ts`, `library.ts`) against the
@@ -40,11 +41,8 @@ function normal(value: unknown): unknown {
 }
 
 function outcome(run: () => unknown): Outcome {
-  try {
-    return { ok: normal(run()) }
-  } catch (cause) {
-    return { error: cause instanceof Error ? cause.message : String(cause) }
-  }
+  const result = capture(() => normal(run()))
+  return 'error' in result ? result : { ok: result.value }
 }
 
 /** The export's bytes stay the caller's; the core returns them as null, so compare its summary. */

@@ -144,6 +144,7 @@ async function launchAndSample(variant, pair, order) {
     record.onBatteryPower = await app
       .evaluate(({ powerMonitor }) => powerMonitor.isOnBatteryPower())
       .catch((error) => {
+        console.warn(`battery query failed: ${error?.message ?? error}`)
         record.onBatteryPowerError = String(error?.message ?? error)
         return null
       })
@@ -206,6 +207,7 @@ async function launchAndSample(variant, pair, order) {
     record.workload = 'engine started and cancelled'
     record.success = true
   } catch (error) {
+    console.warn(`cpu-quiescence run failed: ${error?.stack ?? error}`)
     record.success = false
     record.errors.push(String(error?.stack ?? error))
   } finally {
@@ -224,6 +226,7 @@ async function launchAndSample(variant, pair, order) {
         }
         await app.close()
       } catch (error) {
+        console.warn(`cpu-quiescence close failed: ${error?.stack ?? error}`)
         record.errors.push(`close/cancel: ${String(error?.stack ?? error)}`)
       }
     }

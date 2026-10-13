@@ -342,6 +342,7 @@ async function runOne(variant, pair, order) {
     )
     run.success = true
   } catch (error) {
+    console.warn(`renderer-memory run failed: ${error?.stack ?? error}`)
     run.success = false
     run.errors.push(String(error?.stack ?? error))
   } finally {
@@ -349,6 +350,7 @@ async function runOne(variant, pair, order) {
       try {
         await app.close()
       } catch (error) {
+        console.warn(`renderer-memory close failed: ${error?.message ?? error}`)
         run.errors.push(`close: ${String(error?.message ?? error)}`)
       }
     }

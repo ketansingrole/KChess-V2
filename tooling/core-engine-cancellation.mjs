@@ -4,6 +4,7 @@ import { arch, cpus, hostname, platform, release, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { performance } from 'node:perf_hooks'
+import { attemptAsync } from './capture-error.mjs'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const baselineRoot = resolve(
@@ -73,11 +74,8 @@ async function worker(implementation) {
     const stopCalled = new Promise((resolveStop) => {
       timer = setTimeout(async () => {
         stopRequested = true
-        try {
-          await core.stopEngine()
-        } catch (error) {
-          stopError = String(error?.message ?? error)
-        }
+        const outcome = await attemptAsync(() => core.stopEngine())
+        if ('error' in outcome) stopError = outcome.error
         resolveStop()
       }, 250)
     })
@@ -86,6 +84,7 @@ async function worker(implementation) {
       await pending
       resolved = true
     } catch (error) {
+      console.warn(`engine cancellation probe rejected: ${error?.message ?? error}`)
       cancellationError = { name: error?.name ?? 'Error', message: String(error?.message ?? error) }
     }
     const cancellationMs = performance.now() - cancelStart

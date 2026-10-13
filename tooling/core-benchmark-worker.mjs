@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
+import { attemptAsync } from './capture-error.mjs'
 
 const [implementation, projectRoot, profileBase, ...sizeArgs] = process.argv.slice(2)
 const sizes = sizeArgs.map(Number)
@@ -294,8 +295,8 @@ try {
   let stopRequested = false
   const stopTimer = setTimeout(() => {
     stopRequested = true
-    void engineCore.stopEngine().catch((error) => {
-      signatures.engine.stopError = String(error?.message ?? error)
+    void attemptAsync(() => engineCore.stopEngine()).then((outcome) => {
+      if ('error' in outcome) signatures.engine.stopError = outcome.error
     })
   }, 250)
   try {
@@ -303,6 +304,7 @@ try {
     sample('engine_cancel_250ms', performance.now() - cancelStart)
     signatures.engine.cancelled = false
   } catch (error) {
+    console.warn(`engine cancellation probe rejected: ${error?.message ?? error}`)
     sample('engine_cancel_250ms', performance.now() - cancelStart)
     signatures.engine.cancelled =
       error?.name === 'AbortError' || /cancel|stop/i.test(String(error?.message))

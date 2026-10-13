@@ -5,6 +5,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
+import { attemptAsync } from './capture-error.mjs'
 
 // The Rust core's puzzle service through the built @kchess/native module (the same binding
 // crates/kchess-node/js/native.ts loads), an isolated data directory and a deterministic local
@@ -43,8 +44,8 @@ const core = new native.NativeCore(
     phases.push(progress.phase)
     if (progress.phase === 'importing' && cancelOnImport) {
       cancelOnImport = false
-      call('puzzles.cancel').catch((cause) => {
-        cancelError = cause
+      void attemptAsync(() => call('puzzles.cancel')).then((outcome) => {
+        if ('error' in outcome) cancelError = outcome.error
       })
     }
   },

@@ -90,13 +90,10 @@ async function closeLibrary(): Promise<void> {
 
 /** The core's library methods, validated as the core service validates them. */
 export function libraryApi(): Pick<CoreApi, LibraryMethod> {
-  const run = <T>(work: () => T): Promise<T> => {
-    try {
-      ready()
-      return Promise.resolve(work())
-    } catch (cause) {
-      return Promise.reject(cause instanceof Error ? cause : new Error(String(cause)))
-    }
+  // An async wrapper: a synchronous throw from validation or the core becomes a rejection.
+  const run = async <T>(work: () => T): Promise<T> => {
+    ready()
+    return work()
   }
   return {
     library: () => run(() => library.library()),

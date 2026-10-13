@@ -10,6 +10,7 @@ import {
   type OnlineOptions,
 } from '@kchess/contracts/types'
 import { goldenFile } from './golden.ts'
+import { capture } from './helpers/capture.ts'
 
 /**
  * The online game (`crates/kchess-wasm/js/onlineGame.ts`) against its Rust transitions. Each case is a
@@ -185,71 +186,68 @@ async function play(steps: Step[], account: string): Promise<unknown[]> {
     if (step.ok) call.resolve(step.value ?? settleValue(call.method, step.pick))
     else call.reject(new Error(String(step.value ?? `network failed: ${call.method}`)))
   }
+  const applyStep = (step: Step): void => {
+    switch (step.op) {
+      case 'event':
+        game.readOnlineEvent(step.event as OnlineEvent)
+        break
+      case 'connection':
+        game.readOnlineState(step.connection as OnlineConnection)
+        break
+      case 'checking':
+        game.checkingOnline()
+        break
+      case 'start':
+        void track('start', game.start(step.options))
+        break
+      case 'stop':
+        void track('stop', game.stop())
+        break
+      case 'reconnect':
+        void track('reconnect', game.reconnect())
+        break
+      case 'open':
+        void track('open', game.open(step.account, step.id))
+        break
+      case 'move':
+        void track('move', game.onlineMove(step.uci))
+        break
+      case 'action':
+        void track('action', game.onlineAction(step.action))
+        break
+      case 'chat':
+        void track('chat', game.loadChat(step.id))
+        break
+      case 'finish':
+        game.finish(step.winner, step.reason, step.notify)
+        break
+      case 'reset':
+        game.resetGame()
+        break
+      case 'settle':
+        settle(step)
+        break
+      case 'time':
+        time += step.ms
+        break
+      case 'account':
+        activeAccount = step.name
+        break
+      case 'chatEnabled':
+        chatOn = step.on
+        break
+    }
+  }
   const records: unknown[] = []
   try {
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index]!
-      try {
-        switch (step.op) {
-          case 'event':
-            game.readOnlineEvent(step.event as OnlineEvent)
-            break
-          case 'connection':
-            game.readOnlineState(step.connection as OnlineConnection)
-            break
-          case 'checking':
-            game.checkingOnline()
-            break
-          case 'start':
-            void track('start', game.start(step.options))
-            break
-          case 'stop':
-            void track('stop', game.stop())
-            break
-          case 'reconnect':
-            void track('reconnect', game.reconnect())
-            break
-          case 'open':
-            void track('open', game.open(step.account, step.id))
-            break
-          case 'move':
-            void track('move', game.onlineMove(step.uci))
-            break
-          case 'action':
-            void track('action', game.onlineAction(step.action))
-            break
-          case 'chat':
-            void track('chat', game.loadChat(step.id))
-            break
-          case 'finish':
-            game.finish(step.winner, step.reason, step.notify)
-            break
-          case 'reset':
-            game.resetGame()
-            break
-          case 'settle':
-            settle(step)
-            break
-          case 'time':
-            time += step.ms
-            break
-          case 'account':
-            activeAccount = step.name
-            break
-          case 'chatEnabled':
-            chatOn = step.on
-            break
-        }
-      } catch (cause) {
-        log.push(['threw', step.op, text(cause)])
-      }
+      const outcome = capture(() => applyStep(step))
+      if ('error' in outcome) log.push(['threw', step.op, outcome.error])
       await new Promise((resolve) => setTimeout(resolve, 0))
       const view = (read: () => unknown) => {
-        try {
-          return shown(read())
-        } catch (cause) {
-          return ['threw', text(cause)]
-        }
+        const result = capture(() => shown(read()))
+        return 'error' in result ? ['threw', result.error] : result.value
       }
       records.push(
         shown({

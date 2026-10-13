@@ -8,6 +8,7 @@ import type { GameSetup, Variant } from '@kchess/rules/variant'
 import type { StoredReview } from '@kchess/contracts/types'
 import { nativeRules } from '@kchess/native/native'
 import { goldenFile } from './golden'
+import { capture } from './helpers/capture.ts'
 
 /**
  * The training rules (`crates/kchess-domain/src/training.rs`), checked against golden digests.
@@ -55,11 +56,8 @@ const enc = (n: number): number | string => (Number.isFinite(n) ? n : String(n))
 
 /** What a call returns or throws, as a comparable value. */
 function attempt(call: () => unknown): unknown {
-  try {
-    return call()
-  } catch (cause) {
-    return { error: (cause as Error).message }
-  }
+  const result = capture(call)
+  return 'error' in result ? result : result.value
 }
 
 /** Comparable form: `undefined` is absent (null at the top), non-finite numbers are their text. */

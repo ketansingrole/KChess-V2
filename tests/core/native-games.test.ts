@@ -1,5 +1,6 @@
 import { afterEach, describe, it, vi } from 'vitest'
 import { goldenFile } from './golden.ts'
+import { capture } from './helpers/capture.ts'
 import '@kchess/native/rules'
 import {
   ComputerGame,
@@ -172,11 +173,8 @@ class Log {
 
 /** Runs one action; an error is recorded as the step's outcome, not a test failure. */
 function attempt(run: () => unknown): { ret: unknown } | { error: string } {
-  try {
-    return { ret: run() }
-  } catch (cause) {
-    return { error: cause instanceof Error ? cause.message : String(cause) }
-  }
+  const result = capture(run)
+  return 'error' in result ? result : { ret: result.value }
 }
 
 /** Getters of a computer game, read the way the desktop reads them (no clock reads). */
