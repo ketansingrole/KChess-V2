@@ -58,7 +58,8 @@ export async function flushSavedDocuments(): Promise<void> {
 /** Load the core's library before the app mounts, handing over documents earlier releases kept here. */
 export async function loadLibrary(): Promise<void> {
   if (libraryLoading.value) return
-  libraryReady.value = false
+  // libraryReady stays sticky once true: resetting it here would unmount AppWorkspace
+  // (app.vue gates it on v-if="libraryReady") and dispose live stores on any reload.
   libraryLoading.value = true
   try {
     let snapshot = await window.kchess.library()

@@ -184,6 +184,11 @@ pub struct GameToReview {
 
 /// The store the review reads and writes (`reviewStore.ts`'s functions, as the review calls
 /// them). Implementations must be safe to call from any thread.
+///
+/// Async since the store moved off the executor (`Database::call_async`): every method returns a
+/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
+/// `.await` the trait at call sites. The `write_review_if`/`mark_checked_if` helpers keep their
+/// default bodies; only the five base methods need implementing.
 pub trait ReviewStorage: Send + Sync + 'static {
     /// `readReview(key)`.
     fn read_review<'a>(

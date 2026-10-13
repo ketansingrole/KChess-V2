@@ -4,7 +4,7 @@ use kchess_core::engine::review::{
     GameToReview, ReviewRequest, ReviewStorage, ReviewUpdate, Reviews, StoredReview,
 };
 use kchess_core::error::Result;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::Notify;
 struct Gated {
     read: Notify,
@@ -37,6 +37,9 @@ impl ReviewStorage for Gated {
 }
 #[tokio::test]
 async fn cancel_during_storage_admission_does_not_enqueue_later() {
+    // How long admission may take before the test calls it stuck (a regression
+    // must fail here, not hang CI until the job timeout).
+    const LIMIT: Duration = Duration::from_secs(5);
     let store = Arc::new(Gated {
         read: Notify::new(),
         release: Notify::new(),
@@ -63,22 +66,32 @@ async fn cancel_during_storage_admission_does_not_enqueue_later() {
         account: None,
     });
     tokio::pin!(pending);
-    tokio::select! { _ = &mut pending => panic!("request should wait"), _ = store.read.notified() => {} }
+    tokio::time::timeout(LIMIT, async {
+        tokio::select! { _ = &mut pending => panic!("request should wait"), _ = store.read.notified() => {} }
+    })
+    .await
+    .expect("admission reaches storage");
     reviews.cancel_review(&key);
     store.release.notify_one();
-    pending.await.unwrap();
+    tokio::time::timeout(LIMIT, &mut pending)
+        .await
+        .expect("the cancelled request returns after storage")
+        .unwrap();
     let waiting = reviews.review_status().waiting;
     // A later explicit request of the same key is independent of the cancelled one.
     store.release.notify_one();
-    reviews
-        .request_review(ReviewRequest {
+    tokio::time::timeout(
+        LIMIT,
+        reviews.request_review(ReviewRequest {
             fen: fen.into(),
             moves: vec!["e2e4".into()],
             game_id: None,
             account: None,
-        })
-        .await
-        .unwrap();
+        }),
+    )
+    .await
+    .expect("a later request completes")
+    .unwrap();
     assert_eq!(
         reviews.review_status().waiting,
         1,

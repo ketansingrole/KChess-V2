@@ -433,6 +433,40 @@ describe('library documents', () => {
     }
   })
 
+  it('reports damaged studies from a repeated import without clearing them', async () => {
+    const s = await open()
+    try {
+      value(
+        await s.run('store.library.importLibrary', [
+          {
+            'kchess:studies:v1': JSON.stringify({
+              version: 1,
+              items: [{ id: 'old', name: 'Old study', pgn: '1. e4 *', updatedAt: 1 }],
+            }),
+          },
+        ]),
+      )
+      // The takeover already ran, so a repeated import reports the library as
+      // read: damaged studies stay damaged instead of being overwritten.
+      s.seed("UPDATE documents SET body = '{broken' WHERE key = 'studies'")
+      const damaged = value<{ studyError: string; studies: unknown[] }>(
+        await s.run('store.library.importLibrary', [
+          { 'kchess:studies:v1': JSON.stringify({ version: 1, items: [] }) },
+        ]),
+      )
+      expect(damaged.studyError).toContain('preserved')
+      expect(damaged.studies).toEqual([])
+      expect(
+        failure(await s.run('store.library.studyCommand', [study('After import'), NOW])),
+      ).toContain('preserved')
+      expect(
+        value<{ studyError: string }>(await s.run('store.library.library', [NOW])).studyError,
+      ).toContain('preserved')
+    } finally {
+      await s.close()
+    }
+  })
+
   it('skips a saved document over the size limit, and the import still completes', async () => {
     const s = await open()
     try {
@@ -738,6 +772,63 @@ describe('studies', () => {
           ]),
         ),
       ).toContain('valid chapters')
+    } finally {
+      await s.close()
+    }
+  })
+
+  it('pins the incremental studyCommand subset and order in the golden file', async () => {
+    const s = await open()
+    try {
+      const ids: string[] = []
+      for (let n = 0; n < 50; n++) {
+        const created = value<{ id: string }>(
+          await s.run(
+            'store.library.studyCommand',
+            [
+              {
+                op: 'save',
+                id: `s${n}`,
+                name: `Study ${n}`,
+                pgn: `1. e4 {${'Notes '.repeat(100)}} *`,
+              },
+              NOW,
+              true,
+            ],
+            false,
+          ),
+        )
+        ids.push(created.id)
+      }
+      s.compare()
+      const result = value<{ order: string[]; studies: { id: string; name: string }[] }>(
+        await s.run('store.library.studyCommand', [
+          { op: 'rename', id: ids[0], name: 'Renamed' },
+          NOW,
+          true,
+        ]),
+      )
+      expect(result.order).toHaveLength(50)
+      expect(result.order[0]).toBe(ids[0])
+      expect(result.studies.map((study) => study.id)).toEqual([ids[0]])
+      expect(JSON.stringify(result).length).toBeLessThan(2500)
+      const snapshot = value<{ studies: { id: string; name: string; pgn: string }[] }>(
+        await s.run('store.library.library', [NOW]),
+      )
+      expect(snapshot.studies.map((study) => study.id)).toEqual(result.order)
+      expect(snapshot.studies[0]!.name).toBe('Renamed')
+      expect(snapshot.studies[1]!.pgn).toContain('Notes')
+      const full = value<{ order?: string[]; studies: unknown[] }>(
+        await s.run('store.library.studyCommand', [
+          { op: 'rename', id: ids[0], name: 'Full response' },
+          NOW,
+        ]),
+      )
+      expect(full.order).toBeUndefined()
+      expect(full.studies).toHaveLength(50)
+      expect(
+        failure(await s.run('store.library.studyCommand', [study('One more'), NOW, true])),
+      ).toContain('full')
     } finally {
       await s.close()
     }

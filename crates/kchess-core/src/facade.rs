@@ -519,7 +519,12 @@ impl Core {
                 self.assistance_allowed(
                     "Position lookups are unavailable during a live Lichess game.",
                 )?;
-                self.inner("positionLookup.lookup", args.to_vec()).await
+                let result = self.inner("positionLookup.lookup", args.to_vec()).await?;
+                // A game starting mid-lookup still blocks: the answer must not reach a live game.
+                self.assistance_allowed(
+                    "Position lookups are unavailable during a live Lichess game.",
+                )?;
+                Ok(result)
             }
             "lichessStudies" => self.inner("studies.list", args.to_vec()).await,
             "lichessStudyChapters" => self.inner("studies.chapters", args.to_vec()).await,
@@ -540,8 +545,14 @@ impl Core {
                 self.assistance_allowed(
                     "Position lookups are unavailable during a live Lichess game.",
                 )?;
-                self.inner("positionLookup.mastersGame", args.to_vec())
-                    .await
+                let result = self
+                    .inner("positionLookup.mastersGame", args.to_vec())
+                    .await?;
+                // A game starting mid-lookup still blocks: the answer must not reach a live game.
+                self.assistance_allowed(
+                    "Position lookups are unavailable during a live Lichess game.",
+                )?;
+                Ok(result)
             }
             "cloudEval" => {
                 self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
@@ -551,15 +562,21 @@ impl Core {
                         "Turn on cloud evaluation in Settings → Analysis first.",
                     ));
                 }
+                // A game starting while settings loaded still blocks, as `bestMove` rechecks.
+                self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
                 let request = normal(
                     "assertAnalysisRequest",
                     &json!({ "fen": arg(args, 0), "lines": arg(args, 1) }),
                 )?;
-                self.inner(
-                    "cloudEval.cloudEval",
-                    vec![request["fen"].clone(), request["lines"].clone()],
-                )
-                .await
+                let result = self
+                    .inner(
+                        "cloudEval.cloudEval",
+                        vec![request["fen"].clone(), request["lines"].clone()],
+                    )
+                    .await?;
+                // A game starting mid-lookup still blocks: the answer must not reach a live game.
+                self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
+                Ok(result)
             }
 
             // Accounts, settings and the library of games.

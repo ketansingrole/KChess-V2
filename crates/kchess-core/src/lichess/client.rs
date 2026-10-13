@@ -15,14 +15,15 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::policy::{Admitted, Policy, is_stream};
-use super::stream::{IDLE, LineOptions, read_chunks, read_lines};
+use super::stream::{LineOptions, read_chunks, read_lines};
 use crate::error::{CoreError, Result as CoreResult};
 
 /// `BASE` of `lichess.ts`.
 pub const BASE_URL: &str = "https://lichess.org";
 
 /// Shared transport configuration. Streams have no total response deadline; the policy bounds
-/// headers, ordinary calls bound their bodies, and stream readers bound silence between chunks.
+/// headers, ordinary calls bound their bodies, line-stream readers bound silence between chunks,
+/// and chunk feeds wait until the body ends or is cancelled.
 pub fn http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().connect_timeout(super::policy::REQUEST_TIMEOUT)
 }
@@ -356,7 +357,7 @@ impl LichessClient {
             )));
         }
         let body = self.policy.metered(response.bytes_stream());
-        let outcome = read_chunks(Box::pin(body), cancel, IDLE, on_chunk).await;
+        let outcome = read_chunks(Box::pin(body), cancel, on_chunk).await;
         drop(hold);
         outcome
     }
@@ -423,8 +424,8 @@ fn parse_json<T: DeserializeOwned>(text: &str, path: &str) -> Result<T> {
     })
 }
 
-/// Read the whole body within the request deadline (a stream is exempt; it has its own idle
-/// deadline), abortable through `cancel`.
+/// Read the whole body within the request deadline (a stream is exempt: line readers bound
+/// their own silence and chunk readers wait until the body ends), abortable through `cancel`.
 pub(crate) async fn read_with_deadline(
     response: reqwest::Response,
     cancel: &CancellationToken,
@@ -443,7 +444,7 @@ pub(crate) async fn read_with_deadline(
         }
         let mut text = String::new();
         let mut units = 0usize;
-        read_chunks(Box::pin(response.bytes_stream()), cancel, IDLE, |chunk| {
+        read_chunks(Box::pin(response.bytes_stream()), cancel, |chunk| {
             if let Some(limit) = limit {
                 units = units.saturating_add(chunk.encode_utf16().count());
                 if units > limit.utf16_units {

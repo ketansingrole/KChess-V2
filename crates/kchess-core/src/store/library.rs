@@ -424,7 +424,17 @@ fn migrate_studies(db: &Connection) -> Result<()> {
     let Some(body) = read_document_text(db, STUDIES)? else {
         return Ok(());
     };
-    if parse_text(&body) == Some(json!({ "version": 3 })) {
+    // A migrated marker is any document whose `version` is 3; extra keys,
+    // whitespace and key order must not un-migrate a healthy library.
+    let migrated = parse_text(&body)
+        .and_then(|doc| doc.get("version").cloned())
+        .is_some_and(|version| match &version {
+            Value::Number(n) => {
+                n.as_u64() == Some(3) || n.as_i64() == Some(3) || n.as_f64() == Some(3.0)
+            }
+            _ => false,
+        });
+    if migrated {
         return Ok(());
     }
     let items = stored_studies(&body)?;
@@ -436,14 +446,11 @@ fn migrate_studies(db: &Connection) -> Result<()> {
             return Err(CoreError::new(DAMAGED_STUDIES));
         }
         for (position, study) in items.iter().enumerate() {
+            let body = js_json(study);
+            let units = utf16_len(&body) as i64;
             db.execute(
                 "INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    id_of(study),
-                    js_json(study),
-                    position as i64,
-                    utf16_len(&js_json(study)) as i64
-                ],
+                params![id_of(study), body, position as i64, units],
             )
             .map_err(db_err)?;
         }
@@ -1317,12 +1324,55 @@ fn finish_studies(
         .iter()
         .map(|study| study["id"].clone())
         .collect();
+    // A command that changed nothing (unknown op, empty rename, missing target)
+    // must not take the write lock: skip sizing work and the transaction entirely.
+    // `migrate_studies` already ensured the marker, so there is nothing to write.
+    if studies.items.as_slice() == original {
+        let mut out = result;
+        out.insert(
+            "studies".into(),
+            Value::Array(if incremental { changed } else { studies.items }),
+        );
+        if incremental {
+            out.insert("order".into(), Value::Array(order));
+        }
+        return Ok(Value::Object(out));
+    }
+    // Encode each full study once; placeholders reuse their persisted size.
+    // The map backs both the size guard and the row writes below.
+    let mut encoded: std::collections::HashMap<String, (String, i64)> =
+        std::collections::HashMap::new();
+    for study in studies.items.iter() {
+        if study.as_object().is_some_and(|item| item.len() != 1)
+            && let Some(id) = id_of(study)
+        {
+            let body = js_json(study);
+            let units = utf16_len(&body) as i64;
+            encoded.insert(id.to_string(), (body, units));
+        }
+    }
+    let mut text_units: usize = 2 + studies.items.len().saturating_sub(1);
+    for study in studies.items.iter() {
+        if study.as_object().is_some_and(|item| item.len() == 1) {
+            text_units += studies
+                .sizes
+                .get(id_of(study).unwrap_or_default())
+                .copied()
+                .unwrap_or(0);
+        } else if let Some((_, units)) = id_of(study).and_then(|id| encoded.get(id)) {
+            text_units += *units as usize;
+        } else {
+            // No id (or unexpectedly unencoded): measure directly rather than undercount.
+            text_units += utf16_len(&js_json(study));
+        }
+    }
     let overhead = utf16_len("{\"version\":2,\"items\":}");
-    if overhead + studies.text_size(&studies.items) > MAX_DOCUMENT {
+    if overhead + text_units > MAX_DOCUMENT {
         return Err(CoreError::new(
             "This study is too large to save automatically. Export a PGN copy.",
         ));
     }
+    let changed_ids: std::collections::HashSet<&str> = changed.iter().filter_map(id_of).collect();
     transaction(db, || {
         if read_document_text(db, STUDIES)?.is_none() {
             write_document(db, STUDIES, &json!({ "version": 3 }), "")?;
@@ -1334,9 +1384,18 @@ fn finish_studies(
             }
         }
         for (position, study) in studies.items.iter().enumerate() {
-            if changed.iter().any(|next| id_of(next) == id_of(study)) {
+            let changed = id_of(study).is_some_and(|id| changed_ids.contains(id));
+            if changed {
+                let (body, units) = id_of(study)
+                    .and_then(|id| encoded.get(id))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        let body = js_json(study);
+                        let units = utf16_len(&body) as i64;
+                        (body, units)
+                    });
                 db.execute("INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET body = excluded.body, position = excluded.position, textUnits = excluded.textUnits",
-                    params![id_of(study), js_json(study), position as i64, utf16_len(&js_json(study)) as i64]).map_err(db_err)?;
+                    params![id_of(study), body, position as i64, units]).map_err(db_err)?;
             } else {
                 db.execute(
                     "UPDATE studies SET position = ?2 WHERE id = ?1 AND position != ?2",

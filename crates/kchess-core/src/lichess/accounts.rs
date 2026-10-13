@@ -68,6 +68,11 @@ pub enum Reply<T> {
 /// The storage `lichess.ts` reads and writes, behind a trait so the wiring can plug the store in.
 /// Every method returns the TypeScript result; `current` is the caller's "still signed in"
 /// check, read again by the store right before it writes.
+///
+/// Async since the store moved off the executor (`Database::call_async`): every method returns a
+/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
+/// `.await` the trait at call sites. `save_login` and `mark_checked` also take the caller's
+/// `current` check now, like the other writes.
 pub trait LichessStore: Send + Sync {
     /// `loadData().accounts`.
     fn accounts<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<AccountRow>>>;

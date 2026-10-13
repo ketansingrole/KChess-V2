@@ -34,6 +34,46 @@ impl Host for Wire {
     }
 }
 
+/// Restores the test-only Lichess origin (and debug switch) when dropped, so the
+/// other tests in this binary never inherit one test's fixture origin.
+/// Environment variables are process-global and same-binary tests share them.
+struct LichessOriginGuard {
+    debug: Option<String>,
+    base: Option<String>,
+}
+
+impl LichessOriginGuard {
+    fn set(base: &str) -> Self {
+        let previous = Self {
+            debug: std::env::var("KCHESS_STORE_DEBUG").ok(),
+            base: std::env::var("KCHESS_TEST_LICHESS_BASE").ok(),
+        };
+        // SAFETY: the guard below restores the previous values when the test ends.
+        unsafe {
+            std::env::set_var("KCHESS_STORE_DEBUG", "1");
+            std::env::set_var("KCHESS_TEST_LICHESS_BASE", base);
+        }
+        previous
+    }
+}
+
+impl Drop for LichessOriginGuard {
+    fn drop(&mut self) {
+        // SAFETY: restores what `set` replaced; the guarded test has finished,
+        // so no test in this binary is reading these variables right now.
+        unsafe {
+            match self.debug.take() {
+                Some(value) => std::env::set_var("KCHESS_STORE_DEBUG", value),
+                None => std::env::remove_var("KCHESS_STORE_DEBUG"),
+            }
+            match self.base.take() {
+                Some(value) => std::env::set_var("KCHESS_TEST_LICHESS_BASE", value),
+                None => std::env::remove_var("KCHESS_TEST_LICHESS_BASE"),
+            }
+        }
+    }
+}
+
 fn open(dir: &Path, host: &Arc<Wire>) -> Arc<Core> {
     Arc::new(Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens"))
 }
@@ -117,11 +157,7 @@ async fn closing_ends_a_lichess_request_in_flight() {
         "http://127.0.0.1:{}",
         silent.local_addr().expect("address").port()
     );
-    // SAFETY: only this test in the binary reads the Lichess origin, before it opens its core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", &origin);
-    }
+    let _guard = LichessOriginGuard::set(&origin);
     let dir = tempfile::tempdir().expect("profile");
     let host = Arc::new(Wire::default());
     let core = open(dir.path(), &host);

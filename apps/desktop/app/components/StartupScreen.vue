@@ -5,7 +5,7 @@ defineEmits<{ retry: [] }>()
 
 <template>
   <div class="splash">
-    <img src="./assets/icon-splash.png" alt="" width="72" height="72" class="splash-logo" />
+    <img src="../assets/icon-splash.png" alt="" width="72" height="72" class="splash-logo" />
     <template v-if="error">
       <h1 class="splash-title">KChess couldn't start</h1>
       <p class="splash-text" role="alert">{{ error }}</p>

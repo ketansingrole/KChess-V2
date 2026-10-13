@@ -116,6 +116,24 @@ it('reports a failed study flush and preserves the edited tree for retry', async
   expect((await api.library()).studies[0]!.pgn).toContain('Keep this edit')
 })
 
+it('vetoes quit when a direct study command fails and retries it on the next flush', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const backend = api.studyCommand
+  api.studyCommand = async () => {
+    throw new Error('Disk unavailable')
+  }
+  await expect(studies.rename(id, 'Renamed')).rejects.toThrow('Disk unavailable')
+  expect(studies.error).toBe('Disk unavailable')
+  // No Analysis document is open: only the studies flush can stop the quit.
+  await expect(flushSavedDocuments()).rejects.toThrow('Some changes could not be saved')
+  api.studyCommand = backend
+  await flushSavedDocuments()
+  expect((await api.library()).studies[0]!.name).toBe('Renamed')
+  expect(studies.error).toBe('')
+})
+
 it('retains a failed archived game for retry before completing quit preparation', async () => {
   vi.useFakeTimers()
   const { api } = desktop()

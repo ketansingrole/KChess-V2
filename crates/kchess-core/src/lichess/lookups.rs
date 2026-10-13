@@ -345,6 +345,10 @@ where
 }
 
 /// The stored saved-lookup cache: the newest entries, as the store keeps them.
+///
+/// Async since the store moved off the executor (`Database::call_async`): both methods return a
+/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
+/// `.await` the trait at call sites.
 pub trait LookupCache: Send + Sync {
     /// The saved JSON for `key`, if any (a missing or unreadable entry is None).
     fn read<'a>(

@@ -1,8 +1,19 @@
 import { flushSavedDocuments, loadLibrary } from '../utils/library'
 
+declare global {
+  interface Window {
+    __kchessQuitDispose?: () => void
+  }
+}
+
 /** Stores start from the core's library, so it is loaded before the app mounts. */
 export default defineNuxtPlugin(async () => {
-  window.kchess?.onPrepareQuit((token) => {
+  // Client plugins re-execute on HMR: each run would otherwise add another
+  // prepare-quit listener and the duplicate would answer the same token twice,
+  // surfacing a spurious 'No matching quit request' for the second reply.
+  window.__kchessQuitDispose?.()
+  window.__kchessQuitDispose = undefined
+  window.__kchessQuitDispose = window.kchess?.onPrepareQuit((token) => {
     void flushSavedDocuments()
       .then(() => window.kchess?.completeQuit(token))
       .catch((cause) => {
@@ -12,6 +23,11 @@ export default defineNuxtPlugin(async () => {
       .catch((cause) => {
         console.warn('[library] Reporting quit failure failed:', cause)
       })
+  })
+  const hot = (import.meta as { hot?: { dispose(callback: () => void): void } }).hot
+  hot?.dispose(() => {
+    window.__kchessQuitDispose?.()
+    window.__kchessQuitDispose = undefined
   })
   await loadLibrary()
 })

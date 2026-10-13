@@ -1195,9 +1195,6 @@ schema_validator!(
     ))
 );
 
-// `CORE_CONTRACTS` `optionalFlag` (`recentGames`): nothing, or a boolean.
-schema_validator!(assert_optional_flag_v, optional(Schema::Bool(None)));
-
 // `CORE_CONTRACTS` `boolean` (`answerMistake`): a boolean.
 schema_validator!(assert_boolean_v, Schema::Bool(None));
 
@@ -1363,7 +1360,6 @@ pub fn validator(method: &str) -> Option<Validator> {
         "assertLines" => assert_lines_v,
         "assertLookupKind" => assert_lookup_kind_v,
         "assertOptionalPage" => assert_optional_page_v,
-        "assertOptionalFlag" => assert_optional_flag_v,
         "assertBoolean" => assert_boolean_v,
         "assertChapterName" => assert_chapter_name_v,
         "assertPgnText" => assert_pgn_text_v,

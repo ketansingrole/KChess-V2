@@ -18,8 +18,16 @@ export const useStudyStore = defineStore('studies', () => {
   const items = ref<SavedStudy[]>(initialLibrary().studies)
   const error = ref(initialLibrary().studyError ?? '')
   let changes: Promise<unknown> = Promise.resolve()
+  const failed: { command: StudyCommand; cause: unknown }[] = []
+  const sameCommand = (a: StudyCommand, b: StudyCommand): boolean =>
+    JSON.stringify(a) === JSON.stringify(b)
   function run(command: StudyCommand): Promise<StudyCommandResult> {
     const sent = plain(command)
+    // A manual redo of a failed command supersedes it; drop matches so a later
+    // quit retry does not apply the same intent twice.
+    for (let i = failed.length - 1; i >= 0; i--) {
+      if (sameCommand(failed[i]!.command, sent)) failed.splice(i, 1)
+    }
     const result = changes.then(() => persist(sent))
     // A failed command must not prevent later commands from reaching the core.
     changes = result.then(
@@ -28,14 +36,38 @@ export const useStudyStore = defineStore('studies', () => {
     )
     return result
   }
-  async function flush(): Promise<void> {
+  async function flush(strict = false): Promise<void> {
     let pending: Promise<unknown>
     do {
       pending = changes
       await pending
     } while (pending !== changes)
+    if (!strict || !failed.length) return
+    // Retry what never reached the core, in order; successes stay cleared,
+    // failures re-queue via persist() for the next quit attempt.
+    const retry = failed.splice(0, failed.length)
+    const causes: unknown[] = []
+    for (const { command } of retry) {
+      try {
+        await run(command)
+      } catch (cause) {
+        // persist() logged the save itself; note why the quit is vetoed.
+        console.warn('[studies] quit flush keeps unsaved study changes:', command.op, cause)
+        causes.push(cause)
+      }
+    }
+    do {
+      pending = changes
+      await pending
+    } while (pending !== changes)
+    const remaining = failed.map(({ cause }) => cause)
+    if (causes.length || remaining.length)
+      throw new AggregateError(
+        [...causes, ...remaining.filter((cause) => !causes.includes(cause))],
+        'Some studies could not be saved.',
+      )
   }
-  const unregister = registerPersistenceFlush(flush)
+  const unregister = registerPersistenceFlush(() => flush(true))
   onScopeDispose(unregister)
   async function persist(command: StudyCommand): Promise<StudyCommandResult> {
     try {
@@ -54,6 +86,7 @@ export const useStudyStore = defineStore('studies', () => {
     } catch (cause) {
       console.warn('[studies] saving the study library failed:', command.op, cause)
       error.value = cause instanceof Error ? cause.message : String(cause)
+      failed.push({ command, cause })
       throw cause
     }
   }

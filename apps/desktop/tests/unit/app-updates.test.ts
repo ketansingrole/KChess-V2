@@ -273,6 +273,26 @@ describe('desktop updater', () => {
     expect(line).toContain('available=2026.10.1')
     expect(line).toContain('phase=')
   })
+
+  it('reports when an installer is being applied so shutdown skips a second flush', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { updates } = fixture()
+    expect(updates.isInstalling()).toBe(false)
+    await updates.check()
+    await updates.download()
+    updates.install(false)
+    expect(updates.isInstalling()).toBe(true)
+    expect(updates.shouldInstallOnQuit()).toBe(false)
+    // A failed install resets, so the next quit flushes again.
+    const retry = fixture()
+    await retry.updates.check()
+    await retry.updates.download()
+    retry.updater.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('Installer failed')
+    })
+    expect(() => retry.updates.install(false)).toThrow('Installer failed')
+    expect(retry.updates.isInstalling()).toBe(false)
+  })
 })
 
 it('keeps a newer status event when it overtakes the renderer initial status request', async () => {

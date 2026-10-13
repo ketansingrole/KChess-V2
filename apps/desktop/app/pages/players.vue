@@ -114,8 +114,10 @@ async function lookup(name = query.value.trim()): Promise<void> {
       found.username,
       ...recent.value.filter((n) => n.toLowerCase() !== found.username.toLowerCase()),
     ].slice(0, 8)
-    perf.value = (perfs.value[0]?.key as PerfType | undefined) ?? 'blitz'
-    void loadStats()
+    const nextPerf = (perfs.value[0]?.key as PerfType | undefined) ?? 'blitz'
+    // Assigning perf fires watch(perf) -> loadStats(); call explicitly only when unchanged.
+    if (nextPerf === perf.value) void loadStats()
+    else perf.value = nextPerf
     const me = activeOnlineAccount.value
     if (me && me.toLowerCase() !== found.username.toLowerCase())
       void window.kchess

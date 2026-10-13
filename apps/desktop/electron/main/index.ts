@@ -497,7 +497,9 @@ app.on('before-quit', (event) => {
   if (core && !coreStopped) {
     event.preventDefault()
     coreShutdown ??= (async () => {
-      if (!(await quitPreparation.prepare())) return
+      // An update install already flushed the renderer before calling quitAndInstall;
+      // re-preparing here would only add a second 3s-timeout and retry dialog.
+      if (!appUpdates?.isInstalling() && !(await quitPreparation.prepare())) return
       await core?.close()
       coreStopped = true
       app.quit()

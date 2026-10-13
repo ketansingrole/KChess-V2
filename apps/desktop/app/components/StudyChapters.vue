@@ -71,6 +71,25 @@ async function remove(): Promise<void> {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
+/** The latest chapter requested from the selector, so a superseded switch stays silent. */
+let lastSelected = ''
+async function selectChapter(id: string): Promise<void> {
+  const open = study.value
+  if (!open || id === analysis.studyChapterId) return
+  lastSelected = id
+  error.value = ''
+  try {
+    if (await analysis.openStudy(open.id, id)) return
+  } catch (cause) {
+    if (id !== lastSelected) return
+    console.warn('[study-chapters] Could not open chapter:', cause)
+    error.value = cause instanceof Error ? cause.message : String(cause)
+    return
+  }
+  if (id !== lastSelected) return
+  error.value =
+    analysis.studySaveError || 'Could not open that chapter. Your current edits were kept.'
+}
 const menu = computed<DropdownMenuItem[][]>(() => [
   [
     {
@@ -115,7 +134,7 @@ const menu = computed<DropdownMenuItem[][]>(() => [
         placeholder="Select chapter"
         class="flex-1 min-w-0"
         size="sm"
-        @update:model-value="(id: string) => analysis.openStudy(study!.id, id)"
+        @update:model-value="selectChapter"
       />
       <UDropdownMenu :items="menu">
         <UButton

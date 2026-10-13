@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use fixtures::{Recording, Reply, http_client, serve};
 use kchess_core::lichess::client::{Failure, LichessClient, authorize, urlencoded};
-use kchess_core::lichess::policy::Policy;
+use kchess_core::lichess::policy::{Policy, is_stream};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -277,10 +277,14 @@ async fn streamed_bytes_are_counted_for_the_account_that_read_them() {
     assert_eq!(bytes, body.len() as u64);
 }
 
-/// Exercise the production transport past the old 30-second total deadline with healthy
-/// traffic. A short policy deadline still bounds headers, but must not bound the stream body.
+/// A short policy deadline bounds headers but must not bound the stream body. The old
+/// 30-second total deadline is covered statically (`is_stream` classifies the TV feed,
+/// `http_client_builder` sets only a connect timeout, and `Policy::send` applies its
+/// deadline to headers while `read_with_deadline` exempts streams), so the live part
+/// only needs to outlive its own fixture deadline.
 #[tokio::test]
-async fn active_stream_survives_the_old_total_deadline_and_remains_cancellable() {
+async fn active_stream_outlives_its_header_deadline_and_remains_cancellable() {
+    assert!(is_stream("https://lichess.org/api/tv/blitz/feed", None));
     let (send, receive) = mpsc::unbounded_channel::<String>();
     let mut receive = Some(receive);
     let fixture = serve(move |_| Reply::Stream(receive.take().expect("one stream"))).await;
@@ -289,7 +293,7 @@ async fn active_stream_survives_the_old_total_deadline_and_remains_cancellable()
         Arc::new(Recording::default()),
         http.clone(),
         CancellationToken::new(),
-        Duration::from_secs(5),
+        Duration::from_millis(500),
     );
     let client = LichessClient::with_base(&fixture.base, policy, http);
     let cancel = CancellationToken::new();
@@ -319,9 +323,9 @@ async fn active_stream_survives_the_old_total_deadline_and_remains_cancellable()
         .unwrap()
         .unwrap();
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(31) {
+    while start.elapsed() < Duration::from_millis(1500) {
         send.send("\n".into()).unwrap();
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
             !reading.is_finished(),
             "healthy stream ended before cancellation"

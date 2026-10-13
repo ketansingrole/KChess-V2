@@ -71,6 +71,7 @@ const {
   sidebarUserLabel,
   busy,
   error,
+  initializing,
   searchOpen,
   searchQuery,
   confirmation,
@@ -275,7 +276,12 @@ function toggleMaximize(event?: MouseEvent): void {
           </div>
         </header>
         <div class="main-content">
-          <StartupScreen v-if="!ready" :error="error" @retry="store.init()" />
+          <StartupScreen
+            v-if="!ready"
+            :error="error"
+            :loading="initializing"
+            @retry="store.init()"
+          />
           <div v-else class="page">
             <PageContent>
               <NuxtPage />

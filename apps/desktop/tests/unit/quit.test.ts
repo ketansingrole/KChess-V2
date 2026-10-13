@@ -92,3 +92,23 @@ it('an error presenting the retry choice leaves quitting cancelled', async () =>
   expect(await ready).toBe(false)
   expect(f.warn).toHaveBeenCalledWith('shutdown', 'Quit preparation failed.', expect.any(Error))
 })
+
+it('authorizes quitting immediately when the window is already gone', async () => {
+  const retry = vi.fn(async () => false)
+  const preparation = new QuitPreparation({ window: () => undefined, retry, timeoutMs: 100 })
+  await expect(preparation.prepare()).resolves.toBe(true)
+  expect(retry).not.toHaveBeenCalled()
+})
+
+it('cancels quitting when the window closes before the renderer answers', async () => {
+  const f = fixture()
+  const ready = f.preparation.prepare()
+  await flushPromises()
+  expect(f.tokens).toHaveLength(1)
+  expect(f.closed.size).toBe(1)
+  // Renderer crash or window closed mid-flush resolves the pending flush as failed.
+  for (const onClose of [...f.closed]) onClose()
+  expect(await ready).toBe(false)
+  expect(f.retry).toHaveBeenCalledOnce()
+  expect(f.closed.size).toBe(0)
+})

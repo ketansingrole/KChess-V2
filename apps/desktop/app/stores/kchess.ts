@@ -274,6 +274,8 @@ export const useKChessStore = defineStore('kchess', () => {
   let offOnlineError: (() => void) | undefined
   let offNotification: (() => void) | undefined
   let initialized = false
+  /** True while init() is in flight; drives the startup retry button's loading state. */
+  const initializing = ref(false)
   const date = formatGameDate
   function info(text: string): void {
     message.value = text
@@ -734,68 +736,73 @@ export const useKChessStore = defineStore('kchess', () => {
     }
   }
   async function init(): Promise<void> {
-    if (initialized) return
+    if (initialized || initializing.value) return
+    initializing.value = true
     initialized = true
-    onlineGame.checkingOnline()
     try {
-      data.value = await window.kchess.loadData()
-      settings.value = { ...data.value.settings }
-      selectedAccount.value = defaultAccount(data.value.accounts)
-      // The engine check is not needed to show the app; it flips `engineReady` when it lands.
-      void refreshEngine().catch((error: unknown) => {
-        console.warn('[kchess] initial engine check failed:', error)
+      onlineGame.checkingOnline()
+      try {
+        data.value = await window.kchess.loadData()
+        settings.value = { ...data.value.settings }
+        selectedAccount.value = defaultAccount(data.value.accounts)
+        // The engine check is not needed to show the app; it flips `engineReady` when it lands.
+        void refreshEngine().catch((error: unknown) => {
+          console.warn('[kchess] initial engine check failed:', error)
+        })
+        void reloadThemes()
+        error.value = ''
+      } catch (cause) {
+        initialized = false
+        console.warn('[kchess] initial load failed:', cause)
+        fail(cause)
+        return
+      }
+      systemDark.addEventListener('change', applyCurrentSettings)
+      window.addEventListener('beforeunload', flushSettings)
+      offOnline = window.kchess.onOnlineEvent((event) => {
+        readOnlineEvent(event)
+        // A pairing or an accepted challenge takes you to the board, as Lichess does.
+        if (
+          event.type === 'gameStart' &&
+          event.game.speed !== 'correspondence' &&
+          page.value !== 'online'
+        )
+          selectPage('online')
       })
-      void reloadThemes()
-      error.value = ''
-    } catch (cause) {
-      initialized = false
-      console.warn('[kchess] initial load failed:', cause)
-      fail(cause)
-      return
-    }
-    systemDark.addEventListener('change', applyCurrentSettings)
-    window.addEventListener('beforeunload', flushSettings)
-    offOnline = window.kchess.onOnlineEvent((event) => {
-      readOnlineEvent(event)
-      // A pairing or an accepted challenge takes you to the board, as Lichess does.
-      if (
-        event.type === 'gameStart' &&
-        event.game.speed !== 'correspondence' &&
-        page.value !== 'online'
+      offOnlineError = window.kchess.onOnlineError(fail)
+      offOnlineState = window.kchess.onOnlineState(readOnlineState)
+      offNotification = window.kchess.onNotification(({ title, body }) =>
+        toast.add({ title, description: body, icon: 'i-lucide-bell', duration: 8000 }),
       )
-        selectPage('online')
-    })
-    offOnlineError = window.kchess.onOnlineError(fail)
-    offOnlineState = window.kchess.onOnlineState(readOnlineState)
-    offNotification = window.kchess.onNotification(({ title, body }) =>
-      toast.add({ title, description: body, icon: 'i-lucide-bell', duration: 8000 }),
-    )
-    void window.kchess
-      .resumeOnline()
-      .then((resumed) => {
-        if (resumed) {
-          // The game may belong to any connected account; make that the active one.
-          setOnlineAccount(resumed.account)
-          onlineAccount.value = resumed.account
-          onlineId.value = resumed.id
-          if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
-        } else {
-          onlinePhase.value = 'idle'
-        }
-      })
-      .catch((cause) => {
-        console.warn('[kchess] resuming online game failed:', cause)
-        if (onlineGame.onlineConnection.value?.phase === 'checking')
-          onlineGame.onlineConnection.value = {
-            ...onlineGame.onlineConnection.value,
-            phase: 'disconnected',
+      void window.kchess
+        .resumeOnline()
+        .then((resumed) => {
+          if (resumed) {
+            // The game may belong to any connected account; make that the active one.
+            setOnlineAccount(resumed.account)
+            onlineAccount.value = resumed.account
+            onlineId.value = resumed.id
+            if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
+          } else {
+            onlinePhase.value = 'idle'
           }
-        onlineStatus.value =
-          cause instanceof Error ? cause.message : 'Reconnect to verify your game status.'
-      })
-    ticker.resume()
-    window.addEventListener('keydown', keydown)
-    void loadProfile()
+        })
+        .catch((cause) => {
+          console.warn('[kchess] resuming online game failed:', cause)
+          if (onlineGame.onlineConnection.value?.phase === 'checking')
+            onlineGame.onlineConnection.value = {
+              ...onlineGame.onlineConnection.value,
+              phase: 'disconnected',
+            }
+          onlineStatus.value =
+            cause instanceof Error ? cause.message : 'Reconnect to verify your game status.'
+        })
+      ticker.resume()
+      window.addEventListener('keydown', keydown)
+      void loadProfile()
+    } finally {
+      initializing.value = false
+    }
   }
   function dispose(): void {
     offOnline?.()
@@ -834,6 +841,7 @@ export const useKChessStore = defineStore('kchess', () => {
     trackedAccounts,
     busy,
     error,
+    initializing,
     message,
     searchOpen,
     searchQuery,

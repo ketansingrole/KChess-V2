@@ -181,7 +181,7 @@ const CORE: &[Row] = &[
     (
         "recentGames",
         1,
-        &[Valid("assertUsername"), Valid("assertOptionalFlag")],
+        &[Valid("assertUsername"), Optional("assertBoolean")],
     ),
     (
         "sendMessage",
@@ -313,7 +313,7 @@ const DESKTOP: &[Row] = &[
     (
         "completeQuit",
         1,
-        &[Valid("assertUuid"), Valid("assertOptionalFlag")],
+        &[Valid("assertUuid"), Optional("assertBoolean")],
     ),
     (
         "recordPerformance",

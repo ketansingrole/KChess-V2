@@ -1,12 +1,44 @@
 //! Regression: requests waiting for settings belong to stop, recovery and shutdown.
-#![cfg(unix)]
+//! Runs on every platform: Unix spawns the fake engine through a shell wrapper,
+//! Windows spawns the fake directly (see `engine_launcher`).
 mod support;
 use futures_util::poll;
 use kchess_core::{Config, Core};
-use serde_json::{Value, json};
+#[cfg(unix)]
+use serde_json::Value;
+use serde_json::json;
 use std::{path::Path, sync::Arc, time::Duration};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// The engine the core spawns: a shell wrapper around the fake engine's `search`
+/// mode on Unix. A spawned command takes no wrapper script on Windows, so there
+/// the fake itself is staged and runs in its default handshake mode: it answers
+/// `uci`/`isready` but streams no scored search output.
+#[cfg(unix)]
+fn engine_launcher(dir: &Path) -> String {
+    let script = dir.join("engine.sh");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\nexec '{}' search\n", support::fake_path()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script.display().to_string()
+}
+
+#[cfg(not(unix))]
+fn engine_launcher(dir: &Path) -> String {
+    let name = if cfg!(windows) {
+        "engine-search.exe"
+    } else {
+        "engine-search"
+    };
+    let target = dir.join(name);
+    std::fs::copy(support::fake_path(), &target).unwrap();
+    target.display().to_string()
+}
 
 async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
     let core = Core::open(Config::new(dir.to_path_buf()), host.clone()).unwrap();
@@ -16,21 +48,15 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
         core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
         json!(false)
     );
-    let script = dir.join("engine.sh");
-    std::fs::write(
-        &script,
-        format!("#!/bin/sh\nexec '{}' search\n", support::fake_path()),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let engine = engine_launcher(dir);
     let mut settings = core.call_sync("store.games.getSettings", vec![]).unwrap();
-    settings["enginePath"] = json!(script.to_string_lossy());
+    settings["enginePath"] = json!(engine);
     core.call_sync("store.games.saveSettings", vec![settings])
         .unwrap();
     core
 }
 
+#[cfg(unix)]
 async fn scored(host: &support::Recording) -> Value {
     support::wait_until(Duration::from_secs(5), "a scored update", || {
         host.events
@@ -74,14 +100,26 @@ async fn stopping_cancels_analysis_waiting_for_settings() {
             .all(|(name, _)| name != "engine:analysis")
     );
     // A later explicit start is still allowed and produces usable output.
-    let id = core
+    let _id = core
         .call(
             "startAnalysis",
             vec![json!({"fen": START, "lines": 1, "infinite": true})],
         )
         .await
         .unwrap();
-    assert_eq!(scored(&host).await["id"], id);
+    #[cfg(unix)]
+    assert_eq!(scored(&host).await["id"], _id);
+    #[cfg(not(unix))]
+    {
+        // Without the `search` wrapper the staged fake answers the handshake but
+        // streams no scored lines: recovery here means the start is accepted and
+        // analysis runs.
+        assert_eq!(
+            core.call_sync("analysis.running", vec![]).unwrap(),
+            json!(true)
+        );
+        core.call("stopAnalysis", vec![json!(true)]).await.unwrap();
+    }
     core.close().await;
 }
 

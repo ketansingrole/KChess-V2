@@ -176,6 +176,11 @@ export class AppUpdates {
     )
   }
 
+  /** Reports whether an installer is currently being applied. */
+  isInstalling(): boolean {
+    return this.installing
+  }
+
   /** Applies a verified installer; normal quits must not relaunch the app. */
   install(restart = true): void {
     if (!this.state.canInstall || this.state.phase !== 'downloaded')

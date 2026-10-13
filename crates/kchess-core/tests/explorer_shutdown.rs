@@ -7,14 +7,50 @@ use kchess_core::{Config, Core};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
+/// Restores the test-only Lichess origin (and debug switch) when dropped, so a
+/// later test in this binary never inherits this test's fixture origin.
+/// Environment variables are process-global and same-binary tests share them.
+struct LichessOriginGuard {
+    debug: Option<String>,
+    base: Option<String>,
+}
+
+impl LichessOriginGuard {
+    fn set(base: &str) -> Self {
+        let previous = Self {
+            debug: std::env::var("KCHESS_STORE_DEBUG").ok(),
+            base: std::env::var("KCHESS_TEST_LICHESS_BASE").ok(),
+        };
+        // SAFETY: the guard below restores the previous values when the test ends.
+        unsafe {
+            std::env::set_var("KCHESS_STORE_DEBUG", "1");
+            std::env::set_var("KCHESS_TEST_LICHESS_BASE", base);
+        }
+        previous
+    }
+}
+
+impl Drop for LichessOriginGuard {
+    fn drop(&mut self) {
+        // SAFETY: restores what `set` replaced; no other test in this binary
+        // touches these variables while the guard is alive.
+        unsafe {
+            match self.debug.take() {
+                Some(value) => std::env::set_var("KCHESS_STORE_DEBUG", value),
+                None => std::env::remove_var("KCHESS_STORE_DEBUG"),
+            }
+            match self.base.take() {
+                Some(value) => std::env::set_var("KCHESS_TEST_LICHESS_BASE", value),
+                None => std::env::remove_var("KCHESS_TEST_LICHESS_BASE"),
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn close_cancels_a_stalled_explorer_and_releases_the_profile() {
     let fixture = serve(|_| Reply::Hang).await;
-    // SAFETY: this test binary has one test; the fixture origin is set before opening the core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", &fixture.base);
-    }
+    let _origin = LichessOriginGuard::set(&fixture.base);
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(Recording::default());
     let core = Core::open(Config::new(dir.path().to_path_buf()), host.clone()).unwrap();

@@ -184,3 +184,40 @@ it('keeps edited chapters open when duplication cannot flush their changes', asy
   expect(analysis.pgn()).toContain('Keep this edit')
   wrapper.unmount()
 })
+
+it('shows a local error when switching chapters cannot flush their changes', async () => {
+  const { api } = desktop()
+  const library = useStudyStore()
+  const id = await library.saveChapters('Study', [
+    { name: 'One', pgn: '1. e4 *' },
+    { name: 'Two', pgn: '1. d4 *' },
+  ])
+  const analysis = useAnalysisStore()
+  const [one, two] = library.items[0]!.chapters
+  await analysis.openStudy(id, one!.id)
+  analysis.root.comments = ['Keep this edit']
+  const backend = api.studyCommand
+  api.studyCommand = async (command, incremental) => {
+    if (command.op === 'save') throw new Error('Disk unavailable')
+    return backend(command, incremental)
+  }
+  const wrapper = mount(StudyChapters, {
+    global: {
+      ...global,
+      stubs: { ...global.stubs, USelectMenu: SelectMenu, UDropdownMenu: Dropdown },
+    },
+  })
+  await wrapper.get('select[aria-label="Study chapter"]').setValue(two!.id)
+  await flushPromises()
+  expect(analysis.studyChapterId).toBe(one!.id)
+  expect(analysis.root.comments).toEqual(['Keep this edit'])
+  expect(wrapper.get('[role="alert"]').text()).toBe('Disk unavailable')
+  api.studyCommand = backend
+  await wrapper.get('select[aria-label="Study chapter"]').setValue(two!.id)
+  await flushPromises()
+  expect(analysis.studyChapterId).toBe(two!.id)
+  expect(analysis.pgn()).toContain('d4')
+  expect(library.items[0]!.chapters[0]!.pgn).toContain('Keep this edit')
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  wrapper.unmount()
+})
