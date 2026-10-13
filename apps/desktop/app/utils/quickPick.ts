@@ -119,7 +119,7 @@ const ESCAPES: Record<string, string> = {
   "'": '&#39;',
 }
 export function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => ESCAPES[char]!)
+  return text.replace(/[&<>"']/g, (char) => ESCAPES[char] ?? char)
 }
 
 /** Escaped label HTML with matched ranges wrapped in `<mark>`. */

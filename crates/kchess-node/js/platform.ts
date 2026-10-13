@@ -48,7 +48,9 @@ export function setPlatform(host: CorePlatform): void {
 /** A fresh scope also works when another core creates a host inside an event callback. */
 export function runWithPlatform<T>(host: CorePlatform, work: () => T): T {
   setPlatform(host)
-  return context.run(current!, work)
+  const scope = current
+  if (!scope) throw new Error('The KChess core has not been configured with a platform.')
+  return context.run(scope, work)
 }
 function scope(): PlatformScope {
   const value = context.getStore() ?? current

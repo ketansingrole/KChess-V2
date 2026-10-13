@@ -53,12 +53,16 @@ useSwipeBack({
       reviewGame.value = null
     }
   },
-  canForward: () =>
-    (localHistory.value?.hasRedo ?? false) ||
-    (lichessRedo.value !== null &&
-      reviewGame.value === null &&
-      source.value === 'lichess' &&
-      visibleGames.value.some((game) => game.id === lichessRedo.value!.id)),
+  canForward: () => {
+    const redo = lichessRedo.value
+    return (
+      (localHistory.value?.hasRedo ?? false) ||
+      (redo !== null &&
+        reviewGame.value === null &&
+        source.value === 'lichess' &&
+        visibleGames.value.some((game) => game.id === redo.id))
+    )
+  },
   forward: () => {
     if (localHistory.value?.hasRedo) localHistory.value.goForward()
     else if (lichessRedo.value) {

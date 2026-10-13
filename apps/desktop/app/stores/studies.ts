@@ -26,7 +26,8 @@ export const useStudyStore = defineStore('studies', () => {
     // A manual redo of a failed command supersedes it; drop matches so a later
     // quit retry does not apply the same intent twice.
     for (let i = failed.length - 1; i >= 0; i--) {
-      if (sameCommand(failed[i]!.command, sent)) failed.splice(i, 1)
+      const entry = failed[i]
+      if (entry && sameCommand(entry.command, sent)) failed.splice(i, 1)
     }
     const result = changes.then(() => persist(sent))
     // A failed command must not prevent later commands from reaching the core.
@@ -90,7 +91,11 @@ export const useStudyStore = defineStore('studies', () => {
       throw cause
     }
   }
-  const id = async (command: StudyCommand): Promise<string> => (await run(command)).id!
+  const id = async (command: StudyCommand): Promise<string> => {
+    const result = await run(command)
+    if (!result.id) throw new Error('The study could not be saved.')
+    return result.id
+  }
 
   async function saveChapters(
     name: string,
@@ -126,7 +131,8 @@ export const useStudyStore = defineStore('studies', () => {
       remote: { id: remote.id, name: remote.name },
       chapters: chapters.map((c) => ({ name: c.name, pgn: c.pgn })),
     })
-    return { id: result.id!, conflict: result.conflict === true }
+    if (!result.id) throw new Error('The study could not be saved offline.')
+    return { id: result.id, conflict: result.conflict === true }
   }
   const remove = async (studyId: string): Promise<SavedStudy | undefined> =>
     (await run({ op: 'remove', id: studyId })).removed

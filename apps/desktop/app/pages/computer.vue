@@ -246,7 +246,8 @@ function hearMove(result: VoiceResult): void {
     cancelVoice()
   } else if (parsed.kind === 'confirm') {
     void record(result, 'command', 'confirm')
-    if (voiceChoices.value.length === 1) playVoice(voiceChoices.value[0]!)
+    const only = voiceChoices.value[0]
+    if (voiceChoices.value.length === 1 && only) playVoice(only)
     else voiceFeedback.value = 'Say a move, or choose its number.'
   } else if (parsed.kind === 'invalid') {
     if (voiceChoices.value.length) settle('replaced')
@@ -259,13 +260,17 @@ function hearMove(result: VoiceResult): void {
     const sans = parsed.choices.map((choice) => choice.san).join('|')
     // Repeating the pending move confirms it, which is easier than a separate word.
     const pending = voiceChoices.value
+    const pendingOnly = pending[0]
+    const parsedOnly = parsed.choices[0]
     if (
       pending.length === 1 &&
       parsed.choices.length === 1 &&
-      parsed.choices[0]!.uci === pending[0]!.uci
+      pendingOnly &&
+      parsedOnly &&
+      parsedOnly.uci === pendingOnly.uci
     ) {
       void record(result, 'command', `repeat ${sans}`)
-      playVoice(pending[0]!)
+      playVoice(pendingOnly)
       return
     }
     if (pending.length) settle('replaced')
@@ -273,8 +278,9 @@ function hearMove(result: VoiceResult): void {
     voiceChoices.value = parsed.choices
     // An unsure hearing is never played blind: it always waits for a confirmation.
     if (parsed.choices.length === 1 && !settings.value?.voiceConfirmMoves && !result.unclear) {
+      if (!parsedOnly) return
       void record(result, 'played', sans)
-      playVoice(parsed.choices[0]!)
+      playVoice(parsedOnly)
       return
     }
     pendingEntry = record(result, 'pending', sans)
@@ -282,8 +288,8 @@ function hearMove(result: VoiceResult): void {
       parsed.choices.length > 1
         ? 'Choose a move by saying its number, or select it.'
         : result.unclear
-          ? `Did you mean ${parsed.choices[0]!.san}? Say “confirm”, or repeat the move.`
-          : `Say “confirm” to play ${parsed.choices[0]!.san}, or “cancel”.`
+          ? `Did you mean ${parsedOnly?.san ?? 'that move'}? Say “confirm”, or repeat the move.`
+          : `Say “confirm” to play ${parsedOnly?.san ?? 'that move'}, or “cancel”.`
   }
 }
 const analysis = useAnalysisStore()

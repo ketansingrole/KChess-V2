@@ -448,9 +448,11 @@ function hear(result: VoiceResult): void {
   const sans = parsed.choices.map((choice) => choice.san).join('|')
   // Trying a move in analysis loses nothing (it can be stepped back or deleted), so play it.
   if (parsed.choices.length === 1) {
+    const only = parsed.choices[0]
+    if (!only) return
     log(result, 'played', sans)
-    analysis.play(parsed.choices[0]!.uci)
-    voiceFeedback.value = `Played ${parsed.choices[0]!.san}.`
+    analysis.play(only.uci)
+    voiceFeedback.value = `Played ${only.san}.`
     return
   }
   log(result, 'pending', sans)

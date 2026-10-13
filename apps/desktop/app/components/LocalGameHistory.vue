@@ -38,12 +38,10 @@ function goBack(): void {
   swipeRedo.value = selected.value
   selected.value = null
 }
-const hasRedo = computed(
-  () =>
-    swipeRedo.value !== null &&
-    selected.value === null &&
-    games.value.some((game) => game.id === swipeRedo.value!.id),
-)
+const hasRedo = computed(() => {
+  const redo = swipeRedo.value
+  return redo !== null && selected.value === null && games.value.some((game) => game.id === redo.id)
+})
 function goForward(): void {
   if (!hasRedo.value) return
   selected.value = swipeRedo.value
@@ -69,16 +67,26 @@ watch(
 )
 function pgn(game: ArchivedGame): string {
   const clocks = game.timeControl.split(' / ')
+  const whiteControl = clocks[0]
+  const blackControl = clocks[1]
+  const splitControl =
+    clocks.length > 1 &&
+    whiteControl !== undefined &&
+    blackControl !== undefined &&
+    whiteControl !== blackControl
   return setupPgn(game.setup, game.moves, {
-    ...(clocks.length > 1 && clocks[0] !== clocks[1]
-      ? { WhiteTimeControl: clocks[0]!, BlackTimeControl: clocks[1]! }
+    ...(whiteControl !== undefined &&
+    blackControl !== undefined &&
+    clocks.length > 1 &&
+    whiteControl !== blackControl
+      ? { WhiteTimeControl: whiteControl, BlackTimeControl: blackControl }
       : {}),
     Event: game.source === 'computer' ? 'KChess computer game' : 'KChess over-the-board game',
     White: game.white,
     Black: game.black,
     Result: game.result,
     Date: new Date(game.startedAt).toISOString().slice(0, 10).replaceAll('-', '.'),
-    TimeControl: clocks.length > 1 && clocks[0] !== clocks[1] ? '-' : clocks[0]!,
+    TimeControl: splitControl ? '-' : (whiteControl ?? '-'),
     Termination: game.result === '*' ? 'unterminated' : game.reason,
   })
 }

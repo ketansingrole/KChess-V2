@@ -70,7 +70,7 @@ const icon = computed(() =>
 const line = computed(() => {
   if (state.value === 'error') return error.value
   if (partial.value) return `Hearing “${partial.value}”`
-  if (retry.value || props.feedback) return retry.value || props.feedback!
+  if (retry.value || props.feedback) return retry.value || props.feedback || ''
   if (heard.value) return `Heard “${heard.value}”`
   if (state.value === 'loading' || !props.active) return label.value
   return pushTalk.value ? 'Hold Space to speak' : `Listening · ${props.hint}`

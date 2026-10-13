@@ -39,7 +39,9 @@ const downloadedDescription = computed(() => {
     : 'Official native build'
 })
 const customDescription = computed(() =>
-  engineSource.value === 'custom' ? settings.value!.enginePath : 'Stockfish executable',
+  engineSource.value === 'custom'
+    ? (settings.value?.enginePath ?? 'Stockfish executable')
+    : 'Stockfish executable',
 )
 </script>
 <template>

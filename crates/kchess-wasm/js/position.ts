@@ -100,7 +100,9 @@ export class Position {
 
   /** The standard starting position. */
   static initial(): Position {
-    return Position.fromFen(INITIAL_FEN)!
+    const start = Position.fromFen(INITIAL_FEN)
+    if (!start) throw new Error('The standard position is unavailable.')
+    return start
   }
 
   get setup(): GameSetup {
@@ -163,7 +165,8 @@ export class Position {
   board(): Map<SquareName, Piece> {
     if (this.boardCache) return this.boardCache
     const board = new Map<SquareName, Piece>()
-    const rows = this.info.fen.split(' ')[0]!.replace(/\[.*$/, '').split('/')
+    const placement = this.info.fen.split(' ')[0] ?? ''
+    const rows = placement.replace(/\[.*$/, '').split('/')
     rows.slice(0, 8).forEach((row, index) => {
       let file = 0
       for (const char of row.replace(/~/g, '')) {
@@ -229,7 +232,10 @@ export class Position {
   /** The position after a line from `line()`; this one when it is empty. */
   after(line: readonly LineMove[]): Position {
     const last = line.at(-1)
-    return last ? Position.from({ variant: this.variant, fen: last.fen })! : this
+    if (!last) return this
+    const next = Position.from({ variant: this.variant, fen: last.fen })
+    if (!next) throw new Error('A replayed position is unavailable.')
+    return next
   }
 }
 
@@ -250,11 +256,14 @@ export function pieceOn(board: string, square: string): Piece | undefined {
   let index = 0
   for (const char of row) {
     if (/\d/.test(char)) index += Number(char)
-    else if (ROLES[char.toLowerCase()] && index++ === file)
-      return {
-        color: char === char.toLowerCase() ? 'black' : 'white',
-        role: ROLES[char.toLowerCase()]!,
-      }
+    else {
+      const role = ROLES[char.toLowerCase()]
+      if (role && index++ === file)
+        return {
+          color: char === char.toLowerCase() ? 'black' : 'white',
+          role,
+        }
+    }
     if (index > file) return undefined
   }
   return undefined

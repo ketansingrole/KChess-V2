@@ -28,13 +28,19 @@ const puzzles = usePuzzleStore()
 const { db } = storeToRefs(puzzles)
 
 const choice = ref('storm')
-const config = computed(() => RUSH_CONFIGS[choice.value]!)
+const config = computed(() => {
+  const found = RUSH_CONFIGS[choice.value]
+  if (!found) throw new Error(`Unknown rush mode: ${choice.value}`)
+  return found
+})
 const stage = ref<'menu' | 'loading' | 'running' | 'over'>('menu')
 const error = ref('')
 
 const ladder = ref<Puzzle[]>([])
 const index = ref(0)
-const state = ref<RushState>(newRush(RUSH_CONFIGS.storm!))
+const stormConfig = RUSH_CONFIGS['storm']
+if (!stormConfig) throw new Error('Missing storm rush config.')
+const state = ref<RushState>(newRush(stormConfig))
 const board = ref<InstanceType<typeof PuzzleBoard> | null>(null)
 const saved = ref<RunSaved | null>(null)
 const bonusFlash = ref(0)
@@ -63,9 +69,11 @@ async function loadSummaries(): Promise<void> {
   summaries.value = { storm, streak, rush }
 }
 const bestOf = (key: string): number | undefined => {
-  const cfg = RUSH_CONFIGS[key]!
+  const cfg = RUSH_CONFIGS[key]
+  if (!cfg) return undefined
   return summaries.value[cfg.mode]?.best[cfg.variant]?.score
 }
+const rushTitle = (key: string): string => RUSH_CONFIGS[key]?.title ?? key
 const recent = computed(() => summaries.value[config.value.mode]?.recent ?? [])
 
 onMounted(() => {
@@ -247,7 +255,7 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
             :disabled="stage === 'loading'"
             @click="choice = key"
           >
-            <strong>{{ RUSH_CONFIGS[key]!.title }}</strong>
+            <strong>{{ rushTitle(key) }}</strong>
             <span v-if="bestOf(key) !== undefined" class="tabular">Best: {{ bestOf(key) }}</span>
           </button>
         </div>

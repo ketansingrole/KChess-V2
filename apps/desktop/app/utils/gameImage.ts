@@ -10,7 +10,10 @@ const boards = import.meta.glob<string>('../assets/boards/*.{png,jpg}', {
 })
 function boardUrl(theme: string): string {
   const match = Object.entries(boards).find(([path]) => path.includes(`/boards/${theme}.`))
-  return (match ?? Object.entries(boards).find(([path]) => path.includes('/boards/brown.'))!)[1]
+  const fallback = Object.entries(boards).find(([path]) => path.includes('/boards/brown.'))
+  const found = match ?? fallback
+  if (!found) throw new Error('No board image is available.')
+  return found[1]
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -117,8 +120,10 @@ function positions(
   const line = start.line(options.moves.slice(0, upTo))
   const list: { pos: Position; move?: string }[] = [{ pos: start }]
   line.forEach((step, index) => {
+    const next = Position.from({ variant: start.variant, fen: step.fen })
+    if (!next) throw new Error('That game cannot be replayed.')
     list.push({
-      pos: Position.from({ variant: start.variant, fen: step.fen })!,
+      pos: next,
       move: options.moves[index],
     })
   })
@@ -128,7 +133,8 @@ function positions(
 /** A PNG of the position after `ply` moves. */
 export async function positionPng(options: ImageOptions, ply: number): Promise<Uint8Array> {
   const paint = await painter(options)
-  const shown = positions(options, ply).at(-1)!
+  const shown = positions(options, ply).at(-1)
+  if (!shown) throw new Error('That game cannot be replayed.')
   paint.draw(shown.pos, shown.move)
   const blob = await new Promise<Blob | null>((resolve) =>
     paint.canvas.toBlob(resolve, 'image/png'),

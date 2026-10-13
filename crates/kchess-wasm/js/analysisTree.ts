@@ -62,7 +62,9 @@ export function newTree(fen = INITIAL_FEN): TreeNode {
 export function nodesAlong(root: TreeNode, path: string): TreeNode[] {
   const nodes = [root]
   for (const uci of movesOf(path)) {
-    const next = nodes.at(-1)!.children.find((child) => child.uci === uci)
+    const parent = nodes.at(-1)
+    if (!parent) break
+    const next = parent.children.find((child) => child.uci === uci)
     if (!next) break
     nodes.push(next)
   }
@@ -71,9 +73,17 @@ export function nodesAlong(root: TreeNode, path: string): TreeNode[] {
 
 /** The index of each node along `nodes` among its parent's children (the first child is 0). */
 const indicesAlong = (nodes: readonly TreeNode[]): number[] =>
-  nodes.slice(1).map((node, index) => nodes[index]!.children.indexOf(node))
+  nodes.slice(1).map((node, index) => {
+    const parent = nodes[index]
+    if (!parent) throw new Error('Missing analysis parent node.')
+    return parent.children.indexOf(node)
+  })
 
-export const nodeAt = (root: TreeNode, path: string): TreeNode => nodesAlong(root, path).at(-1)!
+export function nodeAt(root: TreeNode, path: string): TreeNode {
+  const node = nodesAlong(root, path).at(-1)
+  if (!node) throw new Error('Missing analysis node.')
+  return node
+}
 
 /** Play `uci` after `path`, re-using the node when that move was already tried. */
 export function addMove(root: TreeNode, path: string, uci: string): string | undefined {
@@ -126,9 +136,12 @@ export function deleteAt(root: TreeNode, path: string): string {
 export function promoteToMainline(root: TreeNode, path: string): void {
   const nodes = nodesAlong(root, path)
   for (const [depth, from] of rules<[number, number][]>('promotePlan', indicesAlong(nodes))) {
-    const children = nodes[depth]!.children
+    const holder = nodes[depth]
+    if (!holder) throw new Error('Missing analysis node for promotion.')
+    const children = holder.children
     const [child] = children.splice(from, 1)
-    children.unshift(child!)
+    if (!child) throw new Error('Missing analysis child for promotion.')
+    children.unshift(child)
   }
 }
 
@@ -212,6 +225,9 @@ export function pvSan(
     normalized.length,
   )
   pvSanCache.set(key, moves)
-  if (pvSanCache.size > PV_SAN_CACHE_LIMIT) pvSanCache.delete(pvSanCache.keys().next().value!)
+  if (pvSanCache.size > PV_SAN_CACHE_LIMIT) {
+    const oldest = pvSanCache.keys().next().value
+    if (oldest !== undefined) pvSanCache.delete(oldest)
+  }
   return moves
 }

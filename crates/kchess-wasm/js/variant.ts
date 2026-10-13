@@ -78,7 +78,9 @@ export function chess960Fen(n: number): string {
   const queen = rest % 6
   rest = Math.floor(rest / 6)
   const free = (): number[] => rank.flatMap((piece, square) => (piece ? [] : [square]))
-  rank[free()[queen]!] = 'q'
+  const queenSquare = free()[queen]
+  if (queenSquare === undefined) throw new Error('Invalid Chess960 index.')
+  rank[queenSquare] = 'q'
   const knights = [
     [0, 1],
     [0, 2],
@@ -90,14 +92,25 @@ export function chess960Fen(n: number): string {
     [2, 3],
     [2, 4],
     [3, 4],
-  ][rest]!
+  ][rest]
+  if (!knights) throw new Error('Invalid Chess960 index.')
   const open = free()
-  rank[open[knights[0]!]!] = 'n'
-  rank[open[knights[1]!]!] = 'n'
+  const firstKnight = knights[0]
+  const secondKnight = knights[1]
+  if (firstKnight === undefined || secondKnight === undefined)
+    throw new Error('Invalid Chess960 index.')
+  const firstSquare = open[firstKnight]
+  const secondSquare = open[secondKnight]
+  if (firstSquare === undefined || secondSquare === undefined)
+    throw new Error('Invalid Chess960 index.')
+  rank[firstSquare] = 'n'
+  rank[secondSquare] = 'n'
   const [a, b, c] = free()
-  rank[a!] = 'r'
-  rank[b!] = 'k'
-  rank[c!] = 'r'
+  if (a === undefined || b === undefined || c === undefined)
+    throw new Error('Invalid Chess960 index.')
+  rank[a] = 'r'
+  rank[b] = 'k'
+  rank[c] = 'r'
   const black = rank.join('')
   return `${black}/pppppppp/8/8/8/8/PPPPPPPP/${black.toUpperCase()} w KQkq - 0 1`
 }
@@ -125,9 +138,9 @@ export function replaySetup(
   const replayed =
     start && rules<{ played: ReplayedMove[]; fen: string } | null>('setupReplay', setup, moves)
   if (!start || !replayed) return undefined
-  const position = replayed.played.length
-    ? Position.from({ variant: setup.variant, fen: replayed.fen })!
-    : start
+  if (!replayed.played.length) return { position: start, played: replayed.played, start }
+  const position = Position.from({ variant: setup.variant, fen: replayed.fen })
+  if (!position) return undefined
   return { position, played: replayed.played, start }
 }
 

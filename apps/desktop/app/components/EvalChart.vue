@@ -29,8 +29,13 @@ const areas = computed(() => {
   const runs: string[] = []
   let run: string[] = []
   const close = (last: number): void => {
-    if (run.length > 1)
-      runs.push(`${run.join(' ')} ${x(last)},${HEIGHT} ${run[0]!.split(',')[0]},${HEIGHT}`)
+    if (run.length > 1) {
+      const first = run[0]
+      if (first !== undefined) {
+        const x0 = first.split(',')[0]
+        if (x0 !== undefined) runs.push(`${run.join(' ')} ${x(last)},${HEIGHT} ${x0},${HEIGHT}`)
+      }
+    }
     run = []
   }
   props.points.forEach((chances, i) => {
@@ -52,7 +57,8 @@ const dots = computed(() =>
 const svg = ref<SVGSVGElement | null>(null)
 const hover = ref<number | null>(null)
 function positionAt(event: MouseEvent): number {
-  const box = svg.value!.getBoundingClientRect()
+  const box = svg.value?.getBoundingClientRect()
+  if (!box) return 0
   const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width))
   return Math.round(ratio * (props.points.length - 1))
 }

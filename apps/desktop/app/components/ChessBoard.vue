@@ -215,8 +215,9 @@ function trapPromotion(event: KeyboardEvent): void {
   if (event.key !== 'Tab') return
   const buttons = promoDialog.value?.querySelectorAll<HTMLElement>('button')
   if (!buttons?.length) return
-  const first = buttons[0]!,
-    last = buttons[buttons.length - 1]!
+  const first = buttons[0]
+  const last = buttons[buttons.length - 1]
+  if (!first || !last) return
   if (event.shiftKey && document.activeElement === first) {
     event.preventDefault()
     last.focus()

@@ -46,7 +46,9 @@ function openComputer(): void {
 
 const ratingChange = computed(() => {
   const values = chartValues.value
-  return values.length >= 2 ? values[values.length - 1]! - values[0]! : null
+  const first = values[0]
+  const last = values[values.length - 1]
+  return values.length >= 2 && first !== undefined && last !== undefined ? last - first : null
 })
 const blitzProg = computed(() => profile.value?.perfs?.blitz?.prog ?? 0)
 const trackedCount = computed(() => profile.value?.count?.all ?? selectedGameCount.value)

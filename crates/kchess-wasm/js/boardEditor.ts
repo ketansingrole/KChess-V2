@@ -53,6 +53,7 @@ export function setupFromFen(text: string): EditorSetup | undefined {
   if (!parsed) return undefined
   const fields = trimmed.split(/\s+/)
   const rights = fields[2] ?? '-'
+  const ep = fields[3]
   return {
     board: parsed.board,
     turn: parsed.turn,
@@ -62,7 +63,7 @@ export function setupFromFen(text: string): EditorSetup | undefined {
       k: rights.includes('k'),
       q: rights.includes('q'),
     },
-    ep: /^[a-h][36]$/.test(fields[3] ?? '') ? fields[3]! : '',
+    ep: ep && /^[a-h][36]$/.test(ep) ? ep : '',
   }
 }
 

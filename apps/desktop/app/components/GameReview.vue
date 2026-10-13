@@ -55,7 +55,12 @@ const orientation = computed<Color>(() => {
   const color = props.orientation ?? 'white'
   return flipped.value ? (color === 'white' ? 'black' : 'white') : color
 })
-const step = computed(() => replay.value.steps[ply.value] ?? replay.value.steps.at(-1)!)
+const step = computed(() => {
+  const steps = replay.value.steps
+  const current = steps[ply.value] ?? steps.at(-1)
+  if (!current) throw new Error('No review steps available.')
+  return current
+})
 const topName = computed(() =>
   orientation.value === props.orientation ? props.opponentName : props.playerName,
 )

@@ -42,7 +42,8 @@ export const useLichessStudiesStore = defineStore('lichess-studies', () => {
   function refresh(account: string, force = false): Promise<void> {
     if (!account || !connected(account)) return Promise.resolve()
     const key = keyOf(account)
-    if (pending.has(key)) return pending.get(key)!
+    const queued = pending.get(key)
+    if (queued) return queued
     let cached = entries.value[key]
     if (!cached) {
       entries.value[key] = {
@@ -53,7 +54,9 @@ export const useLichessStudiesStore = defineStore('lichess-studies', () => {
         error: '',
         needsReconnect: false,
       }
-      cached = entries.value[key]!
+      // Read back through the store: mutating the raw object would bypass reactivity.
+      cached = entries.value[key]
+      if (!cached) throw new Error('Study cache is unavailable.')
     }
     const now = Date.now()
     if (

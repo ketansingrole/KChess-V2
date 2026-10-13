@@ -121,7 +121,11 @@ export function pgnFromUci(moves: readonly string[]): string {
 
 /** The position after `moves` from `setup` (illegal moves end the replay). */
 export function setupPositionAfter(setup: GameSetup, moves: readonly string[]): Position {
-  return replaySetup(setup, moves)?.position ?? Position.from(STANDARD_SETUP)!
+  const replayed = replaySetup(setup, moves)
+  if (replayed) return replayed.position
+  const fallback = Position.from(STANDARD_SETUP)
+  if (!fallback) throw new Error('The standard position is unavailable.')
+  return fallback
 }
 
 /** SAN of each move from `setup`. */

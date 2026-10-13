@@ -114,7 +114,9 @@ export class ComputerGame {
     readonly state: ComputerState,
     private host: ComputerHost,
   ) {
-    this.runtime = transition<ComputerDone>('computerInit', [], this.read).runtime!
+    const init = transition<ComputerDone>('computerInit', [], this.read)
+    if (!init.runtime) throw new Error('A computer game could not start.')
+    this.runtime = init.runtime
   }
   private read = (kind: HostRead): unknown => {
     if (kind === 'now') return this.host.now()
@@ -272,7 +274,9 @@ export class LocalGame {
     private now: () => number,
     private flagged: () => void = () => {},
   ) {
-    this.runtime = transition<LocalDone>('localInit', [], this.read).runtime!
+    const init = transition<LocalDone>('localInit', [], this.read)
+    if (!init.runtime) throw new Error('A local game could not start.')
+    this.runtime = init.runtime
   }
   private read = (kind: HostRead): unknown => {
     if (kind === 'now') return this.now()

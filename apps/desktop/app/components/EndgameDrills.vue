@@ -15,7 +15,9 @@ import { playMoveSound } from '../utils/sound'
 const store = useKChessStore()
 const { settings, engineReady } = storeToRefs(store)
 
-const drill = ref<EndgameDrill>(ENDGAME_DRILLS[0]!)
+const firstDrill = ENDGAME_DRILLS[0]
+if (!firstDrill) throw new Error('No endgame drills available.')
+const drill = ref<EndgameDrill>(firstDrill)
 const moves = ref<string[]>([])
 const thinking = ref(false)
 const hint = ref<string | undefined>()

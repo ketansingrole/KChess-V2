@@ -101,12 +101,17 @@ async function submit(): Promise<void> {
   if (result.reconnect) reconnect.value = true
   else if (result.error) error.value = result.error
   else {
+    const created = result.created
+    if (!created) {
+      error.value = 'Could not create the arena.'
+      return
+    }
     open.value = false
     name.value = ''
     password.value = ''
     description.value = ''
-    store.notifyInfo(`Created ${result.created!.name}.`)
-    void navigateTo({ path: '/tournaments', query: { system: 'arena', id: result.created!.id } })
+    store.notifyInfo(`Created ${created.name}.`)
+    void navigateTo({ path: '/tournaments', query: { system: 'arena', id: created.id } })
   }
 }
 </script>

@@ -222,7 +222,8 @@ export function useOnlineGame(options: {
   const pingStats = computed(() => {
     const samples = latencySamples.value
     if (!samples.length) return null
-    const current = samples[samples.length - 1]!
+    const current = samples[samples.length - 1]
+    if (current === undefined) return null
     const average = Math.round(samples.reduce((sum, ms) => sum + ms, 0) / samples.length)
     return {
       current,

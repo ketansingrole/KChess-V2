@@ -209,7 +209,9 @@ export class VoiceCapture {
       }: MessageEvent<{ epoch: number; audio?: Float32Array; final?: boolean }>) => {
         if (data.epoch !== this.epoch || !this.active || !this.recognizer) return
         if (data.audio) {
-          this.recognizer.acceptWaveformFloat(data.audio, this.context!.sampleRate)
+          const ctx = this.context
+          if (!ctx) return
+          this.recognizer.acceptWaveformFloat(data.audio, ctx.sampleRate)
           this.reportLevel(data.audio)
         }
         if (data.final) this.recognizer.retrieveFinalResult()

@@ -41,13 +41,20 @@ const BACK_SVG =
 const FORWARD_SVG =
   '<svg class="page-swipe-arrow" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg>'
 
+/** The installing document's window, which detached test documents may lack. */
+function windowOf(document: Document): NonNullable<Document['defaultView']> {
+  const view = document.defaultView
+  if (!view) throw new Error('No window is available for page swipe navigation.')
+  return view
+}
+
 /** Trackpads expose two-finger scrolling as pixel wheel events. */
 export function installPageSwipeNavigation(
   document: Document,
   history: PageHistory,
   options: PageSwipeOptions = {},
 ): () => void {
-  const view = document.defaultView!
+  const view = windowOf(document)
   const threshold = options.threshold ?? DEFAULT_THRESHOLD_PX
   const isEnabled = options.isEnabled ?? (() => true)
   const showFeedback = options.showFeedback ?? (() => true)
@@ -131,8 +138,8 @@ export function installPageSwipeNavigation(
     let oldest = now
     let count = 0
     for (let i = trail.length - 1; i >= 0; i--) {
-      const event = trail[i]!
-      if (event.t <= now - WINDOW_MS) break
+      const event = trail[i]
+      if (!event || event.t <= now - WINDOW_MS) break
       x += event.dx
       y += Math.abs(event.dy)
       oldest = event.t

@@ -58,7 +58,11 @@ export function handleAppProtocol(voiceModelPath: string): void {
         // Only exact generated inline tooling/import maps are permitted, never arbitrary inline code.
         const hashes = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)]
           .filter((match) => match[1])
-          .map((match) => `'sha256-${createHash('sha256').update(match[1]!).digest('base64')}'`)
+          .map((match) => {
+            const body = match[1]
+            if (!body) throw new Error('Missing inline script for CSP hash.')
+            return `'sha256-${createHash('sha256').update(body).digest('base64')}'`
+          })
         headers.set(
           'Content-Security-Policy',
           APP_CSP.replace("script-src 'self'", `script-src 'self' ${hashes.join(' ')}`),

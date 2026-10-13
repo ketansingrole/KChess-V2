@@ -143,7 +143,9 @@ export class OnlineGame {
   }
   get position(): Position {
     const { variant, fen } = this.view().position
-    return Position.from({ variant, fen })!
+    const pos = Position.from({ variant, fen })
+    if (!pos) throw new Error('The online position is unavailable.')
+    return pos
   }
   get history(): string[] {
     return this.view().history
@@ -201,7 +203,9 @@ export class OnlineGame {
     const api = this.host.api as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>
     let value: unknown
     try {
-      value = await api[begun.call.method]!(...begun.call.args)
+      const call = api[begun.call.method]
+      if (!call) throw new Error(`Unknown online method: ${String(begun.call.method)}`)
+      value = await call(...begun.call.args)
     } catch (cause) {
       const settled = this.transition('onlineGameSettle', [begun.pending, { ok: false }], cause)
       if (settled.rethrow) throw cause

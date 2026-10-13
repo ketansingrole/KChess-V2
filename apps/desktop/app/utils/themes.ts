@@ -93,11 +93,11 @@ export function previewColors(
   const palette = paletteFor(theme, dark) ?? defaultPreview[dark ? 'dark' : 'light']
   const vars = themeVars(palette, dark)
   return {
-    bg: vars['--ui-bg']!,
-    elevated: vars['--ui-bg-elevated']!,
-    text: vars['--ui-text']!,
-    primary: vars['--ui-primary']!,
-    border: vars['--ui-border']!,
+    bg: vars['--ui-bg'] ?? palette.bg,
+    elevated: vars['--ui-bg-elevated'] ?? palette.elevated ?? palette.bg,
+    text: vars['--ui-text'] ?? palette.text,
+    primary: vars['--ui-primary'] ?? palette.primary,
+    border: vars['--ui-border'] ?? palette.border ?? palette.bg,
   }
 }
 
@@ -108,14 +108,15 @@ export function oauthPageLook(
   darkTheme: AppTheme,
 ): OAuthPageLook {
   const colors = (theme: AppTheme, dark: boolean): OAuthPageColors => {
-    const vars = themeVars(paletteFor(theme, dark) ?? defaultPreview[dark ? 'dark' : 'light'], dark)
+    const palette = paletteFor(theme, dark) ?? defaultPreview[dark ? 'dark' : 'light']
+    const vars = themeVars(palette, dark)
     return {
-      bg: vars['--ui-bg']!,
-      elevated: vars['--ui-bg-elevated']!,
-      text: vars['--ui-text']!,
-      textMuted: vars['--ui-text-muted']!,
-      primary: vars['--ui-primary']!,
-      border: vars['--ui-border']!,
+      bg: vars['--ui-bg'] ?? palette.bg,
+      elevated: vars['--ui-bg-elevated'] ?? palette.elevated ?? palette.bg,
+      text: vars['--ui-text'] ?? palette.text,
+      textMuted: vars['--ui-text-muted'] ?? palette.text,
+      primary: vars['--ui-primary'] ?? palette.primary,
+      border: vars['--ui-border'] ?? palette.border ?? palette.bg,
     }
   }
   return { appearance, light: colors(lightTheme, false), dark: colors(darkTheme, true) }
