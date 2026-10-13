@@ -34,6 +34,17 @@ export function systemSecrets(dataDir: string, disabled = false): SecretStore {
       (process.platform === 'darwin' && existsSync('/usr/bin/security')) ||
       (process.platform === 'linux' &&
         ['/usr/bin/secret-tool', '/bin/secret-tool'].some(existsSync)))
+  // The detected absolute path: invoking `secret-tool` through PATH could pick up a
+  // different binary than the one support was detected with.
+  const secretTool =
+    process.platform === 'linux'
+      ? ['/usr/bin/secret-tool', '/bin/secret-tool'].find(existsSync)
+      : undefined
+  const credentialTool = (args: string[], input?: string): string => {
+    if (!secretTool)
+      throw new Error('OS credential storage is unavailable. Unlock the system keychain and retry.')
+    return run(secretTool, args, input)
+  }
   function aesKey(create = true): Buffer {
     if (key) return key
     let stored = ''
@@ -41,7 +52,7 @@ export function systemSecrets(dataDir: string, disabled = false): SecretStore {
       stored =
         process.platform === 'darwin'
           ? run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', 'key', '-w'])
-          : run('secret-tool', ['lookup', 'service', service, 'account', 'key'])
+          : credentialTool(['lookup', 'service', service, 'account', 'key'])
     } catch (cause) {
       logDebug(
         'credentials',
@@ -56,15 +67,14 @@ export function systemSecrets(dataDir: string, disabled = false): SecretStore {
       if (process.platform === 'darwin')
         run('/usr/bin/security', ['-i'], `add-generic-password -s ${service} -a key -w ${stored}\n`)
       else
-        run(
-          'secret-tool',
+        credentialTool(
           ['store', '--label=KChess Node credentials', 'service', service, 'account', 'key'],
           stored,
         )
       const verified =
         process.platform === 'darwin'
           ? run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', 'key', '-w'])
-          : run('secret-tool', ['lookup', 'service', service, 'account', 'key'])
+          : credentialTool(['lookup', 'service', service, 'account', 'key'])
       if (verified !== stored)
         throw new Error('The OS credential key could not be saved. Retry login.')
     }

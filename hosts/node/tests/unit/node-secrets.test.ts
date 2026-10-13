@@ -44,6 +44,27 @@ it('disables credentials without invoking the system keychain', () => {
   expect(() => secrets.encrypt('test-token')).toThrow('unavailable')
   expect(exec).not.toHaveBeenCalled()
 })
+it('invokes the detected absolute secret-tool path on Linux', () => {
+  vi.stubGlobal('process', { ...process, platform: 'linux' })
+  exec.mockImplementation((file: string, args: string[], options: { input?: string }) => {
+    if (args[0] === 'lookup') {
+      if (!key) throw new Error('No key')
+      return key
+    }
+    if (args[0] === 'store') {
+      key = options.input
+      return ''
+    }
+    throw new Error('Unexpected credential command')
+  })
+  const secrets = systemSecrets('/tmp/profile')
+  expect(secrets.available()).toBe(true)
+  secrets.encrypt('test-token')
+  expect(exec).toHaveBeenCalled()
+  // Support was detected through the absolute path; PATH resolution must not
+  // substitute a different binary for the calls.
+  for (const call of exec.mock.calls) expect(call[0]).toBe('/usr/bin/secret-tool')
+})
 it('does not expose command arguments or keys when the OS store fails', () => {
   exec.mockImplementation(() => {
     throw new Error('Command failed with secret-key-123')
