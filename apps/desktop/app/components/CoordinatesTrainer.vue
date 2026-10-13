@@ -244,6 +244,7 @@ async function finish(): Promise<void> {
             aria-labelledby="coord-mode"
             :content="false"
             variant="pill"
+            orientation="vertical"
             class="w-full"
             :ui="{ trigger: 'grow' }"
             :disabled="stage === 'running' || starting"

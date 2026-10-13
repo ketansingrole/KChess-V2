@@ -73,7 +73,7 @@ function onOutcome(win: boolean): void {
 </script>
 
 <template>
-  <div class="play-layout">
+  <div class="play-layout puzzle-wide">
     <div>
       <PuzzleBoard
         v-if="current && phase === 'ready'"

@@ -526,6 +526,16 @@ button:disabled {
   /* Player strips plus the review header above the grid. */
   --board-chrome: 260px;
 }
+/* Puzzle train/daily stretch to the page width so their edges match the tab bar. */
+@container page (min-width: 901px) {
+  .play-layout.puzzle-wide {
+    /* No visible header or player strips above the grid here. */
+    --board-chrome: 220px;
+    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 1200px);
+    grid-template-columns: var(--board-size) minmax(320px, 1fr);
+    justify-content: stretch;
+  }
+}
 /* Analysis and broadcasts use the same board and panel dimensions. Reserve the
    evaluation gutter separately so switching it on never shrinks the board. */
 .analysis-surface {

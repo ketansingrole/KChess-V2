@@ -10,7 +10,7 @@ onMounted(() => void puzzles.loadDaily())
 </script>
 
 <template>
-  <div class="play-layout">
+  <div class="play-layout puzzle-wide">
     <div>
       <PuzzleBoard v-if="daily" ref="board" :key="daily.id" :puzzle="daily" :flipped="flipped" />
       <div v-else class="card daily-placeholder">

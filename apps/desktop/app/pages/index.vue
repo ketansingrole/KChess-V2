@@ -278,7 +278,7 @@ const hasConnectedAccount = computed(() =>
             Built from your synced rated games. Lichess has no rating history for this account.
           </p>
           <UEmpty
-            v-else
+            v-if="chartSeries.length < 2"
             variant="naked"
             size="sm"
             icon="i-lucide-chart-line"

@@ -700,6 +700,9 @@ function otbText(side: 'top' | 'bottom'): string {
   gap: 16px;
   min-height: 460px;
   height: calc(100dvh - 190px);
+  width: 100%;
+  max-width: calc(var(--board-size) + 24px + 440px);
+  margin-inline: auto;
 }
 .otb-display-controls,
 .otb-layout-picker,
@@ -711,6 +714,9 @@ function otbText(side: 'top' | 'bottom'): string {
 }
 .otb-display-controls {
   justify-content: space-between;
+}
+.otb-rotation-controls {
+  margin-left: auto;
 }
 .otb-faces {
   flex: 1;
