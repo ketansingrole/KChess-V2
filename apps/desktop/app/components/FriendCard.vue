@@ -31,9 +31,7 @@ defineEmits<{ sync: []; remove: []; clear: []; games: []; challenge: [] }>()
 async function watchGame(): Promise<void> {
   const id = props.presence?.playingId
   if (!id) return
-  localStorage.setItem('kchess:watch-tab', 'friends')
-  await useWatchStore().watch({ gameId: id })
-  void navigateTo('/watch')
+  await useWatchStore().watchGame(id)
 }
 
 const perfs = computed(() => [

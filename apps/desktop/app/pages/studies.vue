@@ -9,6 +9,7 @@ import { summarizeStudy } from '@kchess/rules/studies'
 import { pgnGames } from '@kchess/rules/pgn'
 import StudyCard from '../components/StudyCard.vue'
 import { useLichessStudiesStore } from '../stores/lichessStudies'
+import { PRACTICE_TAB_KEY, REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
 
 /** The study library: browse, search and open saved studies, or bring them in from Lichess. */
 const app = useKChessStore()
@@ -129,8 +130,8 @@ async function copyPgn(study: SavedStudy): Promise<void> {
   }
 }
 // The Practice page's own keys: open its repertoire drill on this study.
-const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
-const repertoire = useLocalStorage('kchess:repertoire-study', '')
+const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
+const repertoire = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
 function drill(study: SavedStudy): void {
   repertoire.value = study.id
   practiceTab.value = 'openings'
@@ -239,13 +240,18 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
     study = library.items.find((item) => item.id === study.id) ?? study
     const pgn = library.documentPgn(study)
     const cloud = study.cloud
-    const linked =
-      !copy && !cloud?.structureChanged && cloud?.account.toLowerCase() === account.toLowerCase()
-    const result = linked
+    const linkedCloud =
+      !copy &&
+      cloud &&
+      !cloud.structureChanged &&
+      cloud.account.toLowerCase() === account.toLowerCase()
+        ? cloud
+        : undefined
+    const result = linkedCloud
       ? await window.kchess.syncLichessStudy({
           account,
-          studyId: cloud!.id,
-          baseline: cloud!.downloadedPgn,
+          studyId: linkedCloud.id,
+          baseline: linkedCloud.downloadedPgn,
           pgn,
         })
       : await window.kchess.exportToLichessStudy(account, '', study.name.slice(0, 100), pgn)
@@ -259,7 +265,7 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
     await library.markCloud(
       study.id,
       account,
-      linked ? cloud!.id : (result as { id: string }).id,
+      linkedCloud ? linkedCloud.id : (result as { id: string }).id,
       chapters.map((c) => c.pgn).join('\n\n'),
     )
     void useLichessStudiesStore().refresh(account, true)

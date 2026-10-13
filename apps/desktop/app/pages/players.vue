@@ -82,7 +82,10 @@ const perfs = computed(() => {
     { games?: number; rating?: number; prov?: boolean; prog?: number }
   >
   return PERF_TYPES.filter((key) => (all[key]?.games ?? 0) > 0)
-    .map((key) => ({ key, ...all[key]! }))
+    .flatMap((key) => {
+      const entry = all[key]
+      return entry ? [{ key, ...entry }] : []
+    })
     .sort((a, b) => (b.games ?? 0) - (a.games ?? 0))
 })
 
@@ -332,9 +335,7 @@ async function reconnect(): Promise<void> {
 
 async function watchGame(): Promise<void> {
   if (!status.value?.playingId) return
-  localStorage.setItem('kchess:watch-tab', 'friends')
-  await watcher.watch({ gameId: status.value.playingId })
-  store.selectPage('watch')
+  await watcher.watchGame(status.value.playingId)
 }
 </script>
 

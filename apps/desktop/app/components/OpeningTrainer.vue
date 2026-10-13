@@ -7,6 +7,7 @@ import { treeFromPgn, type TreeNode } from '@kchess/rules/analysisTree'
 import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { useStudyStore } from '../stores/studies'
 import { playMoveSound } from '../utils/sound'
+import { REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
 
 /**
  * Drill a repertoire: any saved study is a tree of moves. KChess plays the other side's moves
@@ -15,7 +16,7 @@ import { playMoveSound } from '../utils/sound'
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
 const library = useStudyStore()
-const studyId = useLocalStorage('kchess:repertoire-study', '')
+const studyId = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
 const color = useLocalStorage<'white' | 'black'>('kchess:repertoire-color', 'white')
 const stats = ref({ lines: 0, correct: 0, wrong: 0 })
 
@@ -41,7 +42,8 @@ function weakness(start: TreeNode): number {
   let total = 0
   const stack = [start]
   while (stack.length) {
-    const next = stack.pop()!
+    const next = stack.pop()
+    if (!next) break
     total += table[next.fen] ?? 0
     stack.push(...next.children)
   }
@@ -53,10 +55,22 @@ function opponentMove(): void {
   if (!current.children.length) return finishLine()
   const weights = current.children.map((child) => 1 + 2 * weakness(child))
   let pick = Math.random() * weights.reduce((sum, w) => sum + w, 0)
-  const child = current.children.find((_, i) => (pick -= weights[i]!) <= 0) ?? current.children[0]!
-  node.value = child
-  playMoveSound(child.san)
-  if (!child.children.length) finishLine()
+  let child: TreeNode | undefined
+  for (let i = 0; i < current.children.length; i++) {
+    const weight = weights[i]
+    const candidate = current.children[i]
+    if (weight === undefined || candidate === undefined) continue
+    pick -= weight
+    if (pick <= 0) {
+      child = candidate
+      break
+    }
+  }
+  const next = child ?? current.children[0]
+  if (!next) return finishLine()
+  node.value = next
+  playMoveSound(next.san)
+  if (!next.children.length) finishLine()
 }
 function finishLine(): void {
   stats.value.lines++

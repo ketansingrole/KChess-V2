@@ -6,6 +6,7 @@ import TvPanel from '../components/watch/TvPanel.vue'
 import FriendsPanel from '../components/watch/FriendsPanel.vue'
 import BroadcastPanel from '../components/watch/BroadcastPanel.vue'
 import { useBroadcastNav, type WatchTab } from '../composables/useBroadcastNav'
+import { WATCH_TAB_KEY } from '../utils/storageKeys'
 import { useWatchStore } from '../stores/watch'
 import { useFriendsStore } from '../stores/friends'
 import { useKChessStore } from '../stores/kchess'
@@ -15,7 +16,7 @@ const store = useKChessStore()
 const watcher = useWatchStore()
 const friends = useFriendsStore()
 const { onlinePhase } = storeToRefs(store)
-const tab = useLocalStorage<WatchTab>('kchess:watch-tab', 'tv')
+const tab = useLocalStorage<WatchTab>(WATCH_TAB_KEY, 'tv')
 const playingOwnGame = computed(
   () =>
     onlinePhase.value === 'playing' ||

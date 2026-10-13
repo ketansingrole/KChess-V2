@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useLocalStorage } from '@vueuse/core'
+import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
 
-const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
+const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
 
 const tabs = [
   { label: 'Coordinates', value: 'coordinates', icon: 'i-lucide-grid-3x3' },

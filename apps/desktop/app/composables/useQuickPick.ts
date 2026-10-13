@@ -9,6 +9,7 @@ import type { PuzzleTab } from '../stores/puzzles'
 import { useLocalGameStore } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import { useAppUpdatesStore } from '../stores/appUpdates'
+import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
 import {
   escapeHtml,
   highlightRanges,
@@ -101,7 +102,7 @@ export function useQuickPick(query: Ref<string>) {
   const analysis = () => useAnalysisStore()
   // The same keys the Puzzles and Practice pages remember their tab in.
   const puzzleTab = useLocalStorage<PuzzleTab>('kchess:puzzle-tab', 'train')
-  const practiceTab = useLocalStorage('kchess:practice-tab', 'coordinates')
+  const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
   const recent = useLocalStorage<string[]>('kchess:palette-recent', [])
 
   const close = (): void => {

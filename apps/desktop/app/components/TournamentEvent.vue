@@ -86,9 +86,7 @@ const featuredLast = computed<Key[] | undefined>(() => {
 })
 const player = (p: TournamentGame['white']) => `${p.name}${p.rating ? ` (${p.rating})` : ''}`
 async function watchGame(id: string): Promise<void> {
-  localStorage.setItem('kchess:watch-tab', 'friends')
-  await watcher.watch({ gameId: id })
-  store.selectPage('watch')
+  await watcher.watchGame(id)
 }
 const playingOwnGame = computed(() =>
   ['playing', 'seeking', 'disconnected'].includes(store.onlinePhase),

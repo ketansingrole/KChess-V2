@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import { RequestScope, SubscriptionScope } from '@kchess/rules/requestScope'
 import { Clock } from '@kchess/rules/clock'
+import { WATCH_TAB_KEY } from '../utils/storageKeys'
+import { useKChessStore } from './kchess'
 import type {
   BroadcastGame,
   BroadcastUpdate,
@@ -46,8 +48,9 @@ export const useWatchStore = defineStore('watch', () => {
     if (frame.value && connection.value?.phase === 'connected' && next.phase !== 'connected') {
       const current = frame.value
       const turn = current.fen.split(' ')[1] === 'b' ? 'blackClock' : 'whiteClock'
-      if (!current.finished && current.lastMove && current[turn] !== undefined)
-        current[turn] = Math.max(0, current[turn]! - (performance.now() - frameAt.value) / 1000)
+      const remaining = current[turn]
+      if (!current.finished && current.lastMove && remaining !== undefined)
+        current[turn] = Math.max(0, remaining - (performance.now() - frameAt.value) / 1000)
       frameAt.value = performance.now()
     }
     connection.value = next
@@ -168,6 +171,12 @@ export const useWatchStore = defineStore('watch', () => {
       target.value = null
     }
   }
+  /** Watch a live game from a card or list: selects the friends tab, streams it, shows Watch. */
+  async function watchGame(gameId: string): Promise<void> {
+    localStorage.setItem(WATCH_TAB_KEY, 'friends')
+    await watch({ gameId })
+    useKChessStore().selectPage('watch')
+  }
   async function stop(): Promise<void> {
     for (const clock of broadcastClocks.values()) clock.pause()
     requests.invalidate()
@@ -287,6 +296,7 @@ export const useWatchStore = defineStore('watch', () => {
     roundEnded,
     loadChannels,
     watch,
+    watchGame,
     stop,
     loadBroadcasts,
     openTour,
