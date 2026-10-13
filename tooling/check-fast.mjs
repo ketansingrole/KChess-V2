@@ -11,7 +11,11 @@ export function selectChecks(files) {
     ),
   )
   const code = relevant.filter((file) => /\.(?:[cm]?[jt]s|vue)$/.test(file))
-  const tests = code.filter((file) => /^(?:.*\/)?tests\/unit\/.*\.test\./.test(file))
+  const tests = code.filter((file) =>
+    /^(?:tests\/unit\/|tests\/core\/|hosts\/node\/tests\/unit\/|apps\/[^/]+\/tests\/unit\/).*\.test\./.test(
+      file,
+    ),
+  )
   const packages = /^(?:apps|hosts|crates\/kchess-(?:node\/js|wasm\/js|contracts\/ts))\//
   const sources = code.filter((file) => packages.test(file))
   const rust = relevant.some((file) =>

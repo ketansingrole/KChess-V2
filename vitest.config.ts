@@ -40,16 +40,16 @@ export default defineConfig({
         '**/tests/**',
       ],
       // Floors are whole percentages rounded down from the measured totals of `pnpm run test:unit`
-      // (2026-10-10, after the storage tests and the IPC checks moved to Rust: lines 41.36%,
-      // functions 32.47%, branches 24.98%, statements 40.13%; the measure moves by about a point
-      // between runs). They gate the TypeScript that remains (apps,
+      // (2026-10-13, after the rating-point/update-copy/engine-control deduplication and the
+      // contract/auth pins: lines 45.24%, functions 35.32%, branches 28.2%, statements 43.8%).
+      // They gate the TypeScript that remains (apps,
       // bindings, hosts); the Rust workspace has its own gate, `pnpm run check:rust-coverage`.
       // Ratchet them up as the measured totals rise.
       thresholds: {
-        lines: 41,
-        functions: 32,
-        branches: 24,
-        statements: 40,
+        lines: 45,
+        functions: 35,
+        branches: 28,
+        statements: 43,
       },
     },
   },

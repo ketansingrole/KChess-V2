@@ -1156,7 +1156,7 @@ impl Spectator {
                     let message = if cause.message.is_empty() {
                         "The feed disconnected. Retry to reconnect.".to_string()
                     } else {
-                        cause.message.clone()
+                        cause.message
                     };
                     inner.report(session, &token, "error", Some(&message));
                 }
@@ -1198,7 +1198,7 @@ impl Spectator {
                         let message = if cause.message.is_empty() {
                             "The broadcast feed stopped.".to_string()
                         } else {
-                            cause.message.clone()
+                            cause.message
                         };
                         inner.sink.broadcast(BroadcastUpdate {
                             session,

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { themeName } from '../utils/puzzleThemes'
 import { formatCount } from '../utils/format'
+import { toRatingPoints } from '../utils/ratingPoints'
 
 /** The account's puzzle numbers as Lichess reports them. Read-only: nothing here can be changed from KChess. */
 const kchess = useKChessStore()
@@ -31,9 +32,7 @@ const sort = ref('weak')
 const perf = computed(() => profile.value?.perfs?.puzzle)
 const points = computed(() => {
   const entry = ratingHistory.value.find((item) => /^puzzles?$/i.test(item.name ?? ''))
-  return (entry?.points ?? [])
-    .filter((point) => point.length >= 4)
-    .map((point) => ({ date: Date.UTC(point[0]!, point[1]!, point[2]!), rating: point[3]! }))
+  return toRatingPoints(entry?.points ?? [])
 })
 const global = computed(() => dashboard.value?.global)
 const firstTry = computed(() =>

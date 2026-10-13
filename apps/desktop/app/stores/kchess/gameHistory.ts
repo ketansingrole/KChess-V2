@@ -8,6 +8,7 @@ import type {
 import { RequestScope } from '@kchess/rules/requestScope'
 import { pgnFromMoves } from '@kchess/rules/chess'
 import { mergeRatingHistories, normalizeRatingKey } from '@kchess/rules/ratings'
+import { toRatingPoints } from '../../utils/ratingPoints'
 
 export function useGameHistory(options: {
   data: Ref<AppData | null>
@@ -175,10 +176,7 @@ export function useGameHistory(options: {
           ? 0
           : Date.now() - (cutoffDays[chartRange.value] ?? 0) * 86_400_000
     const points = findByMode(ratingHistoriesResolved.value, chartMode.value)?.points ?? []
-    return points
-      .filter((p) => p.length >= 4)
-      .map((p) => ({ date: Date.UTC(p[0]!, p[1]!, p[2]!), rating: p[3]! }))
-      .filter((point) => point.date >= cutoff)
+    return toRatingPoints(points).filter((point) => point.date >= cutoff)
   })
   const chartValues = computed(() => chartSeries.value.map((point) => point.rating))
 

@@ -77,31 +77,55 @@ fn facade_lists_exactly_the_core_api_methods_and_the_extras() {
 
 #[test]
 fn facade_arms_answer_exactly_the_listed_methods() {
-    // The arms of `run_facade`: the names at the arm indentation, up to its unknown-method arm.
-    let source = include_str!("../src/facade.rs");
-    let body = source
-        .split("async fn run_facade")
-        .nth(1)
-        .and_then(|rest| rest.split("Unknown core method").next())
-        .expect("run_facade has an unknown-method arm");
+    // The arms of `run_facade` and its per-domain submodules: the names at the
+    // arm indentation, up to each file's unknown-method arm. `run_facade` itself
+    // is now a thin router delegating to `facade/*.rs`.
+    const SOURCES: &[&str] = &[
+        include_str!("../src/facade.rs"),
+        include_str!("../src/facade/accounts.rs"),
+        include_str!("../src/facade/engine.rs"),
+        include_str!("../src/facade/games.rs"),
+        include_str!("../src/facade/library.rs"),
+        include_str!("../src/facade/online.rs"),
+        include_str!("../src/facade/puzzles.rs"),
+        include_str!("../src/facade/settings.rs"),
+        include_str!("../src/facade/spectate.rs"),
+        include_str!("../src/facade/studies.rs"),
+        include_str!("../src/facade/system.rs"),
+        include_str!("../src/facade/tournaments.rs"),
+    ];
     let mut arms: BTreeSet<String> = BTreeSet::new();
-    for line in body.lines() {
-        let Some(pattern) = line.strip_prefix("            \"") else {
-            continue;
+    let mut saw_unknown = false;
+    for source in SOURCES {
+        let body = if let Some((_, rest)) = source.split_once("async fn run_facade") {
+            rest.split("Unknown core method").next().unwrap_or(rest)
+        } else if let Some(rest) = source.split("Unknown core method").next() {
+            rest
+        } else {
+            *source
         };
-        let Some((names, _)) = pattern.split_once("=>") else {
-            continue;
-        };
-        for name in names.split('|') {
-            let name = name.trim().trim_matches('"');
-            if !name.is_empty() {
-                arms.insert(name.to_string());
+        if source.contains("Unknown core method") {
+            saw_unknown = true;
+        }
+        for line in body.lines() {
+            let Some(pattern) = line.strip_prefix("            \"") else {
+                continue;
+            };
+            let Some((names, _)) = pattern.split_once("=>") else {
+                continue;
+            };
+            for name in names.split('|') {
+                let name = name.trim().trim_matches('"');
+                if !name.is_empty() {
+                    arms.insert(name.to_string());
+                }
             }
         }
     }
+    assert!(saw_unknown, "run_facade has an unknown-method arm");
     // `close` is answered before dispatch, in `facade()` itself.
     assert!(
-        source.contains("if method == \"close\""),
+        SOURCES[0].contains("if method == \"close\""),
         "facade() answers close before dispatch"
     );
     let listed: BTreeSet<String> = listed()

@@ -4,14 +4,18 @@
 //! and migrated on first use, with every storage method dispatched from here.
 
 pub mod debug;
+pub mod documents;
 pub mod games;
 pub mod import;
 pub mod insights;
+pub mod json_codec;
 pub mod library;
+pub mod library_import;
 pub mod lookups;
 pub mod migrations;
 pub mod reviews;
 pub mod runs;
+pub mod studies;
 pub mod usage;
 pub mod voice_log;
 

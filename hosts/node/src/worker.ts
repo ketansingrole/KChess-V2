@@ -9,6 +9,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { errorSummary, logWarn } from '@kchess/native/logger'
 import { nodePlatform, type NodeCoreOptions } from './platform'
 import type { HostRequest, HostResponse } from './protocol'
+import { HOST_METHODS, validateHostArguments, type HostMethod } from './hostArguments'
 
 if (!parentPort) throw new Error('The Node core host requires a worker.')
 const port = parentPort
@@ -33,28 +34,14 @@ try {
     'settings:saved',
   ] as const
   for (const event of events) core.on(event, (payload) => send({ event, payload }))
-  const methods = new Set<string>([
-    ...CORE_METHODS,
-    'settings',
-    'trustEnginePath',
-    'voiceHistoryDocument',
-    'suspend',
-    'close',
-  ])
+  const methods = new Set<string>([...CORE_METHODS, ...HOST_METHODS])
   port.on('message', async ({ id, method, args }: HostRequest) => {
     try {
       if (!Number.isSafeInteger(id) || !methods.has(method) || !Array.isArray(args))
         throw new Error('Invalid Node core request.')
       if ((CORE_METHODS as readonly string[]).includes(method))
         validateCoreArguments(method as CoreMethod, args)
-      if (!(CORE_METHODS as readonly string[]).includes(method)) {
-        const count = method === 'trustEnginePath' ? 1 : 0
-        if (
-          args.length !== count ||
-          (count === 1 && (typeof args[0] !== 'string' || !args[0] || args[0].length > 4096))
-        )
-          throw new Error('Invalid host arguments.')
-      }
+      else validateHostArguments(method as HostMethod, args)
       const call = core[method as keyof KChessCore] as (...args: unknown[]) => unknown
       const result = await call(...args)
       send({ id, result })

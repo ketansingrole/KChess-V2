@@ -111,10 +111,7 @@ function toggleMaximize(event?: MouseEvent): void {
   // Double-clicking a button (e.g. rapidly pressing maximize) must not toggle twice.
   if (event?.target instanceof HTMLElement && event.target.closest('button, input, a')) return
   try {
-    const api = (
-      window as unknown as { kchess?: { windowToggleMaximize?: () => Promise<unknown> } }
-    ).kchess
-    void api?.windowToggleMaximize?.()?.catch((error: unknown) => {
+    void window.kchess.windowToggleMaximize?.()?.catch((error: unknown) => {
       console.warn('[app] toggling maximize failed:', error)
     })
   } catch (cause) {

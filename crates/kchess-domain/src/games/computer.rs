@@ -554,9 +554,9 @@ impl Game {
             .unwrap_or_default();
         let engine = format!("Stockfish ({label})");
         let (white, black) = if self.state.color == "white" {
-            ("You".to_string(), engine.clone())
+            ("You".to_string(), engine)
         } else {
-            (engine.clone(), "You".to_string())
+            (engine, "You".to_string())
         };
         let over = self.over()?;
         let winner = self.winner()?;

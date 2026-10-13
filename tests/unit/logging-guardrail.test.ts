@@ -39,6 +39,8 @@ describe('logging guardrails', () => {
       'apps/desktop/contracts',
       'apps/desktop/electron/preload',
       'apps/desktop/app',
+      'hosts/node/src',
+      'apps/cli/src',
     ]
     const silent: string[] = []
     for (const root of roots) {
@@ -70,6 +72,8 @@ describe('logging guardrails', () => {
       'apps/desktop/contracts',
       'apps/desktop/electron/preload',
       'apps/desktop/app',
+      'hosts/node/src',
+      'apps/cli/src',
     ]
     const silent: string[] = []
     for (const root of roots) {

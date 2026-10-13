@@ -75,16 +75,26 @@ it('authenticates the owned top-level frame before validation or handler effects
   )
   const effect = vi.fn(async () => ({ byAccount: {}, versus: {} }))
   handle('gameLibraryOverview', effect)
-  const listener = mocks.handle.mock.calls[0]![1] as (
-    event: IpcMainInvokeEvent,
-    ...args: unknown[]
-  ) => unknown
+  const firstCall = mocks.handle.mock.calls[0]
+  if (!firstCall) throw new Error('expected ipcMain.handle to be called')
+  const listener = firstCall[1] as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
   const event = { sender: contents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent
   for (const invalid of [
     { ...event, sender: {} },
     { ...event, senderFrame: { url: mainFrame.url } },
+    // A plain https page must never reach a privileged handler.
+    { ...event, senderFrame: { url: 'https://example.com/' } },
+    // A null frame (detached web contents) must never pass either.
+    { ...event, senderFrame: null },
   ])
     expect(() => listener(invalid as IpcMainInvokeEvent)).toThrow('cannot access')
+  setIpcOwner(
+    () => ({ isDestroyed: () => true, webContents: contents }) as unknown as BrowserWindow,
+  )
+  expect(() => listener(event)).toThrow('cannot access')
+  setIpcOwner(
+    () => ({ isDestroyed: () => false, webContents: contents }) as unknown as BrowserWindow,
+  )
   expect(() => listener(event, 'extra')).toThrow('argument count')
   expect(effect).not.toHaveBeenCalled()
   await listener(event)

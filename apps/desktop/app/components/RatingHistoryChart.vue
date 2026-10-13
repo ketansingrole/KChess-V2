@@ -4,6 +4,7 @@ import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@uno
 import type { LichessRatingHistory } from '@kchess/contracts/types'
 import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '@kchess/rules/ratings'
 import { escapeHtml } from '../utils/quickPick'
+import { toRatingPoints } from '../utils/ratingPoints'
 import {
   RATING_DAY_MS,
   formatRatingDate,
@@ -58,10 +59,7 @@ const series = computed<Series[]>(() => {
       return {
         key,
         name: ratingDisplayName(entry.name),
-        points: entry.points!.map(([year, month, day, rating]) => ({
-          date: Date.UTC(year!, month!, day!),
-          rating: rating!,
-        })),
+        points: toRatingPoints(entry.points ?? []),
       }
     })
   const fixed = withPoints
@@ -115,8 +113,14 @@ const rows = computed<Row[]>(() => {
   const all = sorted.map((date) => {
     const row: Row = { date }
     shown.value.forEach((entry, index) => {
-      while (cursors[index]! < entry.points.length && entry.points[cursors[index]!]!.date <= date)
-        last[index] = entry.points[cursors[index]!++]!.rating
+      let cursor = cursors[index] ?? 0
+      let point = entry.points[cursor]
+      while (point && point.date <= date) {
+        last[index] = point.rating
+        cursor += 1
+        point = entry.points[cursor]
+      }
+      cursors[index] = cursor
       row[entry.key] = last[index]
     })
     return row
@@ -188,9 +192,9 @@ const summary = computed(
           <span
             v-if="current?.[entry.key]?.progress"
             class="rh-progress tabular"
-            :class="current[entry.key]!.progress! > 0 ? 'up' : 'down'"
-            >{{ current[entry.key]!.progress! > 0 ? '+' : ''
-            }}{{ current[entry.key]!.progress }}</span
+            :class="(current[entry.key]?.progress ?? 0) > 0 ? 'up' : 'down'"
+            >{{ (current[entry.key]?.progress ?? 0) > 0 ? '+' : ''
+            }}{{ current[entry.key]?.progress }}</span
           >
         </button>
       </div>

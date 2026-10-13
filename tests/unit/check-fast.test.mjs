@@ -23,6 +23,13 @@ it.each([
 })
 it('runs new regression tests directly and tolerates asset-only changes', () => {
   expect(selectChecks(['tests/unit/new.test.ts']).at(-1)[1]).toContain('tests/unit/new.test.ts')
+  expect(selectChecks(['tests/core/new.test.ts']).at(-1)[1]).toContain('tests/core/new.test.ts')
+  expect(selectChecks(['apps/desktop/tests/unit/new.test.ts']).at(-1)[1]).toContain(
+    'apps/desktop/tests/unit/new.test.ts',
+  )
+  expect(selectChecks(['hosts/node/tests/unit/new.test.ts']).at(-1)[1]).toContain(
+    'hosts/node/tests/unit/new.test.ts',
+  )
   expect(selectChecks(['apps/desktop/public/icon.png']).map(([name]) => name)).toEqual(['format'])
   expect(selectChecks([])).toEqual([])
 })

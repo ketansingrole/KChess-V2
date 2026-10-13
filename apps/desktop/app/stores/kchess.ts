@@ -938,7 +938,11 @@ export const useKChessStore = defineStore('kchess', () => {
     connect,
     logout,
     removeAccount,
+    // Non-null by the `ready` contract (`data !== null && settings !== null`);
+    // consumers guard with `ready` or optional chaining before init.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- ready-guarded facade
     data: computed(() => data.value!),
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- ready-guarded facade
     settings: computed(() => settings.value!),
     init,
     dispose,

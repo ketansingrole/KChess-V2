@@ -331,9 +331,9 @@ impl VoiceModelCache {
         let path = self.path();
         let text = tokio::fs::read_to_string(marker_path(&path))
             .await
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
-        let marker: Marker =
-            serde_json::from_str(&text).map_err(|cause| CoreError::new(cause.to_string()))?;
+            .map_err(|cause| CoreError::wrap("voice model marker read", cause))?;
+        let marker: Marker = serde_json::from_str(&text)
+            .map_err(|cause| CoreError::wrap("voice model marker parse", cause))?;
         if marker.source != self.inner.model.sha256 || marker.size == 0 {
             return Ok(false);
         }

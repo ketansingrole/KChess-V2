@@ -27,11 +27,16 @@ export function buildPalette(frames: readonly GifFrame[]): {
     const data = frame.rgba
     // Every pixel of the first frame, then a sample of the rest: later frames differ little.
     const step = frame === frames[0] ? 4 : 16
-    for (let i = 0; i < data.length; i += step) counts[key(data[i]!, data[i + 1]!, data[i + 2]!)]!++
+    for (let i = 0; i < data.length; i += step) {
+      const r = data[i] ?? 0
+      const g = data[i + 1] ?? 0
+      const b = data[i + 2] ?? 0
+      counts[key(r, g, b)] = (counts[key(r, g, b)] ?? 0) + 1
+    }
   }
   const used: number[] = []
   for (let k = 0; k < 32768; k++) if (counts[k]) used.push(k)
-  used.sort((a, b) => counts[b]! - counts[a]!)
+  used.sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0))
   const chosen = used.slice(0, 256)
   const palette = new Uint8Array(256 * 3)
   chosen.forEach((k, i) => {
@@ -53,7 +58,7 @@ export function buildPalette(frames: readonly GifFrame[]): {
     let best = 0,
       bestDistance = Infinity
     for (let i = 0; i < chosen.length; i++) {
-      const c = chosen[i]!
+      const c = chosen[i] ?? 0
       const dr = ((c >> 10) & 31) - r,
         dg = ((c >> 5) & 31) - g,
         db = (c & 31) - b
@@ -77,7 +82,7 @@ class ByteWriter {
     this.buffer[this.length++] = value & 255
   }
   bytes(values: ArrayLike<number>): void {
-    for (let i = 0; i < values.length; i++) this.byte(values[i]!)
+    for (let i = 0; i < values.length; i++) this.byte(values[i] ?? 0)
   }
   short(value: number): void {
     this.byte(value)
@@ -129,9 +134,9 @@ function lzw(writer: ByteWriter, indices: Uint8Array, minCodeSize = 8): void {
   }
   writer.byte(minCodeSize)
   emit(clear)
-  let prefix = indices[0]!
+  let prefix = indices[0] ?? 0
   for (let i = 1; i < indices.length; i++) {
-    const value = indices[i]!
+    const value = indices[i] ?? 0
     const entry = prefix * 256 + value
     const known = dictionary.get(entry)
     if (known !== undefined) {
@@ -189,8 +194,12 @@ export function encodeGif(width: number, height: number, frames: readonly GifFra
     writer.short(height)
     writer.byte(0)
     const data = frame.rgba
-    for (let p = 0, i = 0; p < indices.length; p++, i += 4)
-      indices[p] = lookup[key(data[i]!, data[i + 1]!, data[i + 2]!)]!
+    for (let p = 0, i = 0; p < indices.length; p++, i += 4) {
+      const r = data[i] ?? 0
+      const g = data[i + 1] ?? 0
+      const b = data[i + 2] ?? 0
+      indices[p] = lookup[key(r, g, b)] ?? 0
+    }
     lzw(writer, indices)
   }
   writer.byte(0x3b)
@@ -238,8 +247,12 @@ export class StreamingGifEncoder {
     writer.byte(0x87)
     writer.bytes(palette)
     const indices = new Uint8Array(this.width * this.height)
-    for (let p = 0, i = 0; p < indices.length; p++, i += 4)
-      indices[p] = lookup[key(frame.rgba[i]!, frame.rgba[i + 1]!, frame.rgba[i + 2]!)]!
+    for (let p = 0, i = 0; p < indices.length; p++, i += 4) {
+      const r = frame.rgba[i] ?? 0
+      const g = frame.rgba[i + 1] ?? 0
+      const b = frame.rgba[i + 2] ?? 0
+      indices[p] = lookup[key(r, g, b)] ?? 0
+    }
     lzw(writer, indices)
     this.frames++
   }

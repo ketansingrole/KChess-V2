@@ -246,7 +246,8 @@ export function useQuickPick(query: Ref<string>) {
 
   /** Actions for the page in view; they come first in command mode. */
   const pageCommands = computed<QuickCommand[]>(() => {
-    const zen = settingsCommands.value.find((command) => command.id === 'setting:zenMode')!
+    const zen = settingsCommands.value.find((command) => command.id === 'setting:zenMode')
+    const zenCommands = zen ? [zen] : []
     const inProgress = store.localMoves.length > 0 && !store.localOver
     switch (store.page) {
       case 'computer':
@@ -287,7 +288,7 @@ export function useQuickPick(query: Ref<string>) {
                 },
               ]
             : []),
-          zen,
+          ...zenCommands,
         ]
       case 'local':
         return [
@@ -315,7 +316,7 @@ export function useQuickPick(query: Ref<string>) {
                 },
               ]
             : []),
-          zen,
+          ...zenCommands,
         ]
       case 'analysis':
         return [
@@ -332,7 +333,7 @@ export function useQuickPick(query: Ref<string>) {
           },
         ]
       case 'online':
-        return [zen]
+        return [...zenCommands]
       default:
         return []
     }
@@ -523,13 +524,14 @@ export function useQuickPick(query: Ref<string>) {
 
   function searched(id: string, label: string, text: string, commands: QuickCommand[], limit = 8) {
     const ranked = rankQuickPick(text, commands).slice(0, limit)
-    return ranked.length
+    const top = ranked[0]
+    return ranked.length && top
       ? {
           id,
           label,
           ignoreFilter: true,
           items: ranked.map(({ item, match }) => toItem(item, match.ranges)),
-          score: ranked[0]!.match.score,
+          score: top.match.score,
         }
       : null
   }
@@ -647,12 +649,23 @@ export function useQuickPick(query: Ref<string>) {
         (command) => !resume.value.some((item) => item.id === command.id),
       )
       const firstRecent = recentList[0]
+      if (!firstRecent) {
+        return compact([
+          group('modes', undefined, modes),
+          group('resume', undefined, resume.value),
+          group(
+            'pages',
+            undefined,
+            places.value.filter((command) => command.id.startsWith('page:')),
+          ),
+        ])
+      }
       return compact([
         group('modes', undefined, modes),
         group('resume', undefined, resume.value),
         recentList.length
           ? group('recent', undefined, [
-              { ...firstRecent!, hint: firstRecent!.hint ?? 'recently used' },
+              { ...firstRecent, hint: firstRecent.hint ?? 'recently used' },
               ...recentList.slice(1),
             ])
           : null,

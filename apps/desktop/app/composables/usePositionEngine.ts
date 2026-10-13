@@ -2,6 +2,7 @@ import { onScopeDispose, ref, shallowRef, watch } from 'vue'
 import type { AnalysisRequest, AnalysisUpdate } from '@kchess/contracts/types'
 import { analysisContext } from '@kchess/rules/analysisContext'
 import { RequestScope } from '@kchess/rules/requestScope'
+import { stopAnalysisSafe } from '../utils/engineControl'
 
 let nextClient = Date.now()
 
@@ -39,6 +40,7 @@ export function usePositionEngine(request: () => AnalysisRequest | null) {
       // Cancellation reaches the main-owned UCI search, including when the switch turns off.
       const stopped = window.kchess.stopAnalysis().catch((error: unknown) => {
         console.warn('[position-engine] stopping analysis failed:', error)
+        return undefined
       })
       if (!value) return
       const id = clientId
@@ -62,9 +64,7 @@ export function usePositionEngine(request: () => AnalysisRequest | null) {
     requests.invalidate()
     wanted = null
     off()
-    void window.kchess.stopAnalysis().catch((error: unknown) => {
-      console.warn('[position-engine] stopping analysis failed:', error)
-    })
+    stopAnalysisSafe('position-engine')
   })
   return { update, error, busy }
 }

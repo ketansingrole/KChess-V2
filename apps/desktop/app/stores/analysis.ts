@@ -33,6 +33,7 @@ import {
 } from '@kchess/rules/analysisTree'
 import { playUci, positionFromFen } from '@kchess/rules/chess'
 import { setupFromFen, START_SETUP, type EditorSetup } from '@kchess/rules/boardEditor'
+import { stopAnalysisSafe } from '../utils/engineControl'
 
 /** Evaluations kept per position, so stepping back and forth shows them at once. */
 const CACHE_SIZE = 600
@@ -67,13 +68,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const studies = useStudyStore()
   // A mismatched session remains an unsaved recovery document, never overwrites the library.
   const linked = studies.items.find((item) => item.id === saved?.study)
+  const linkedPgn = linked
+    ? (linked.chapters.find((c) => c.id === saved?.chapter)?.pgn ?? linked.pgn)
+    : undefined
+  const linkedRoot = linkedPgn ? treeFromPgn(linkedPgn) : undefined
   const conflict = Boolean(
-    linked &&
-    saved &&
-    treeToPgn(saved.root) !==
-      treeToPgn(
-        treeFromPgn(linked.chapters.find((c) => c.id === saved?.chapter)?.pgn ?? linked.pgn)!,
-      ),
+    linked && saved && linkedRoot && treeToPgn(saved.root) !== treeToPgn(linkedRoot),
   )
   const root = ref<TreeNode>(saved?.root ?? newTree())
   const documentPgn = computed(() => treeToPgn(root.value))
@@ -113,7 +113,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const tool = useLocalStorage<'moves' | 'review' | 'explorer'>('kchess:analysis-tool', 'moves')
 
   const nodes = computed(() => nodesAlong(root.value, path.value))
-  const node = computed(() => nodes.value.at(-1)!)
+  const node = computed(() => {
+    const trail = nodes.value
+    const last = trail.at(-1)
+    if (!last) throw new Error('[analysis] empty analysis line.')
+    return last
+  })
   const position = computed(() => positionFromFen(node.value.fen))
 
   /* ── Navigation and editing the tree ──────────────────────────────── */
@@ -215,7 +220,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const text = pgn()
     const id = await studies.save(name, text)
     studyId.value = id
-    studyChapterId.value = studies.items.find((s) => s.id === id)!.chapters[0]!.id
+    const saved = studies.items.find((s) => s.id === id)
+    const chapterId = saved?.chapters[0]?.id
+    if (!chapterId) throw new Error('[analysis] saved study has no chapter.')
+    studyChapterId.value = chapterId
     studyPgn = text
     studySaveError.value = ''
     return id
@@ -354,7 +362,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
     if (known && known.depth > update.depth && known.lines.length >= update.lines.length) return
     evaluations.delete(key)
     evaluations.set(key, update)
-    if (evaluations.size > CACHE_SIZE) evaluations.delete(evaluations.keys().next().value!)
+    if (evaluations.size > CACHE_SIZE) {
+      const oldest = evaluations.keys().next().value
+      if (oldest !== undefined) evaluations.delete(oldest)
+    }
   }
 
   function receive(update: AnalysisUpdate): void {
@@ -392,9 +403,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       engineBusy.value = false
       // Turning analysis off releases the engine; other pauses keep it warm.
       const release = !engineOn.value
-      void window.kchess.stopAnalysis(release || undefined).catch((error: unknown) => {
-        console.warn('[analysis] stopping analysis failed:', error)
-      })
+      stopAnalysisSafe('analysis', release || undefined)
       return
     }
     const known = evaluations.get(context())
@@ -407,9 +416,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ) {
       wanted = fen
       engineBusy.value = false
-      void window.kchess.stopAnalysis().catch((error: unknown) => {
-        console.warn('[analysis] stopping analysis failed:', error)
-      })
+      stopAnalysisSafe('analysis')
       return
     }
     wanted = fen
@@ -523,9 +530,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     off = undefined
     wanted = ''
     engineBusy.value = false
-    void window.kchess.stopAnalysis(true).catch((error: unknown) => {
-      console.warn('[analysis] stopping analysis failed:', error)
-    })
+    stopAnalysisSafe('analysis', true)
   }
 
   /* ── Game review ─────────────────────────────────────────────────── */

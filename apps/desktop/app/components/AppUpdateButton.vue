@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useAppUpdatesStore } from '../stores/appUpdates'
+import { RESTART_UPDATE_DESCRIPTION } from '../utils/appUpdate'
 
 const store = useKChessStore()
 const updates = useAppUpdatesStore()
@@ -72,7 +73,7 @@ async function restart(): Promise<void> {
     <ConfirmDialog
       v-model:open="confirmRestart"
       :title="`Restart and install KChess ${status?.version ?? ''}?`"
-      description="KChess will close and reopen. Finish any game or timed puzzle run first; an unfinished local game or run will be lost, and an online game's clock will keep running."
+      :description="RESTART_UPDATE_DESCRIPTION"
       confirm-label="Restart and install"
       @confirm="restart"
     />

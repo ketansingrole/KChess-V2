@@ -46,6 +46,25 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:native
+      # Deep parity search beyond the recorded golden scale; golden pins apply
+      # at SCALE=1 in `pnpm run check`, this job exercises the extra cases.
+      - run: KCHESS_FUZZ_SCALE=20 pnpm exec vitest run tests/core/native-rules.test.ts
+      # A normal run must never rewrite the golden file without --update-golden.
+      - run: git diff --exit-code tests/core/native-golden.json
+
   audit:
     runs-on: ubuntu-latest
     steps:

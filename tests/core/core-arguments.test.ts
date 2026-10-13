@@ -23,4 +23,15 @@ describe('core argument contracts', () => {
       'argument count',
     )
   })
+
+  it('pins engine teardown and empty-sync arities', () => {
+    expect(CORE_CONTRACTS.stopAnalysis).toEqual({ min: 0, max: 1 })
+    expect(() => validateCoreArguments('stopAnalysis', [])).not.toThrow()
+    expect(() => validateCoreArguments('stopAnalysis', [true])).not.toThrow()
+    expect(() => validateCoreArguments('stopAnalysis', ['yes' as never])).toThrow()
+    expect(() => validateCoreArguments('stopAnalysis', [true, false])).toThrow('argument count')
+    expect(() => validateCoreArguments('syncGames', [])).not.toThrow()
+    expect(() => validateCoreArguments('syncGames', ['alice'])).not.toThrow()
+    expect(() => validateCoreArguments('syncGames', ['alice', 'extra'])).toThrow('argument count')
+  })
 })

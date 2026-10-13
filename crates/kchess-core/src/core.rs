@@ -101,7 +101,7 @@ fn raw(args: &[Value], i: usize) -> Value {
 }
 
 fn json<T: serde::Serialize>(value: T) -> Result<Value> {
-    serde_json::to_value(value).map_err(|e| CoreError::new(e.to_string()))
+    serde_json::to_value(value).map_err(|e| CoreError::wrap("core result encoding", e))
 }
 
 /// Where a managed engine call works, for tests only: a directory and a release endpoint. The

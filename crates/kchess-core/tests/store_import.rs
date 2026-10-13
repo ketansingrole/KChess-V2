@@ -137,7 +137,7 @@ fn an_earlier_main_database_is_imported_once_with_its_plaintext_tokens_encrypted
          CREATE TABLE lichess_tokens (username TEXT, token TEXT);
          INSERT INTO lichess_tokens VALUES ('Carol', 'lip_carol');",
     );
-    let store = Store::new(Some(legacy.clone()), Secrets::ON);
+    let store = Store::new(Some(legacy), Secrets::ON);
 
     let settings = store.ok("store.games.getSettings", vec![]);
     assert_eq!(settings["appearance"], json!("light"));

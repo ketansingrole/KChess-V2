@@ -36,14 +36,16 @@ export function verifyEntries(entries, label = 'package') {
     total += size
   }
   if (total > PERFORMANCE_BUDGETS.packageBytes)
-    throw new Error(`${label} payload exceeds the 32 MiB budget.`)
+    throw new Error(
+      `${label} payload exceeds the ${PERFORMANCE_BUDGETS.packageBytes / MiB} MiB budget.`,
+    )
   return total
 }
 
 export function verifyRendererEntries(entries) {
   const bytes = verifyEntries(entries, 'Renderer')
   if (bytes > PERFORMANCE_BUDGETS.rendererBytes)
-    throw new Error('Renderer exceeds the 12 MiB budget.')
+    throw new Error(`Renderer exceeds the ${PERFORMANCE_BUDGETS.rendererBytes / MiB} MiB budget.`)
   return bytes
 }
 
@@ -107,7 +109,8 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
     throw new Error('Missing license texts for the Rust crates in the native rules.')
   if (!(await stat(join(resources, 'app.asar.unpacked', native.path))).size)
     throw new Error(`Native rules are empty: ${native.path}`)
-  if ((await stat(archive)).size > 32 * MiB) throw new Error('app.asar exceeds the 32 MiB budget.')
+  if ((await stat(archive)).size > PERFORMANCE_BUDGETS.packageBytes)
+    throw new Error(`app.asar exceeds the ${PERFORMANCE_BUDGETS.packageBytes / MiB} MiB budget.`)
   console.info(
     `[kchess] Package verified: ${(bytes / MiB).toFixed(1)} MiB of app payload (excluding Electron).`,
   )

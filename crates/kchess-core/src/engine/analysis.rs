@@ -411,7 +411,7 @@ impl Analysis {
                             "analysis",
                             &format!("Analysis failed: {context} {}", error_summary(&cause)),
                         );
-                        session.emit(Some(Reason::Failed), Some(cause.message.clone()));
+                        session.emit(Some(Reason::Failed), Some(cause.message));
                     }
                 }
             }

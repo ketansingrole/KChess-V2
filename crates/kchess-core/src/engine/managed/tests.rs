@@ -946,7 +946,7 @@ fn expected_digest_requires_a_sha256_hex_digest() {
     let hex64 = "ab".repeat(32);
     assert_eq!(
         expected_digest(Some(&format!("sha256:{}", hex64.to_uppercase()))),
-        Some(hex64.clone())
+        Some(hex64)
     );
     assert_eq!(expected_digest(Some("md5:abc")), None);
     assert_eq!(expected_digest(Some("sha256:short")), None);

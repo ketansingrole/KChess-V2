@@ -308,6 +308,7 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
 
 #[tokio::test]
 async fn online_play_pauses_automatic_reviews() {
+    enable_test_locations();
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
