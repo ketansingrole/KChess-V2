@@ -752,14 +752,32 @@ async fn probe_engine(path: &Path) -> Result<()> {
     }
 }
 
+/// Start the staged executable. On Linux, a process forked elsewhere in this process while the
+/// file was still open for writing keeps that write descriptor until it execs, and `execve`
+/// fails with `ETXTBSY` meanwhile; the window is brief, so busy spawns are retried (the probe
+/// deadline still bounds the whole probe).
+async fn spawn_probe(path: &Path) -> Result<tokio::process::Child> {
+    let mut delay = Duration::from_millis(5);
+    loop {
+        let spawned = tokio::process::Command::new(path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn();
+        match spawned {
+            Ok(child) => return Ok(child),
+            Err(cause) if cause.kind() == io::ErrorKind::ExecutableFileBusy => {
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_millis(200));
+            }
+            Err(_) => return Err(CoreError::new(COULD_NOT_START)),
+        }
+    }
+}
+
 async fn run_probe(path: &Path) -> Result<()> {
-    let mut child = tokio::process::Command::new(path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| CoreError::new(COULD_NOT_START))?;
+    let mut child = spawn_probe(path).await?;
     if let Some(mut stdin) = child.stdin.take() {
         // A broken build can exit before reading: the write then fails, and the exit below
         // reports the probe as failed.

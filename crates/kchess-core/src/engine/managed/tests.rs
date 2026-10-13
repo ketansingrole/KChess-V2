@@ -781,6 +781,26 @@ fn safe_relative_keeps_only_normal_components() {
 
 // --- Handoff, cancellation and deadlines ---
 
+/// CI regression (Linux): a descriptor still open for writing makes `execve` fail with
+/// `ETXTBSY`, as when a concurrently forked child inherits it. The probe waits it out.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn the_probe_waits_out_a_busy_executable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(EXE);
+    let mut writer = std::fs::File::create(&path).unwrap();
+    writer.write_all(FAKE_ENGINE.as_bytes()).unwrap();
+    set_executable(&path).unwrap();
+    let busy = tokio::process::Command::new(&path).spawn().unwrap_err();
+    assert_eq!(busy.kind(), std::io::ErrorKind::ExecutableFileBusy);
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(writer);
+    });
+    probe_engine(&path).await.unwrap();
+    release.await.unwrap();
+}
+
 #[tokio::test]
 async fn a_refused_handoff_keeps_the_old_engine_and_resumes_nothing() {
     let archive = tar_gz(&[Member::File("stockfish", FAKE_ENGINE.as_bytes())]);
