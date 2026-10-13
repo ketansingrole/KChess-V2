@@ -168,10 +168,10 @@ export const boundaries = {
       if (
         source === 'node:sqlite' &&
         (file.startsWith('apps/desktop/electron/main/') ||
-          SQLITE_FREE.some((dir) => within(file, dir)))
+          SQLITE_FREE.some((dir) => within(file, dir))) &&
+        // The desktop e2e seeds open a scratch profile directly (see above).
+        !SQLITE_EXEMPT.some((dir) => within(file, dir))
       ) {
-        // `SQLITE_EXEMPT` (desktop e2e seeds) is intentionally not in `SQLITE_FREE`.
-        void SQLITE_EXEMPT
         context.report({
           node,
           messageId: 'boundary',
