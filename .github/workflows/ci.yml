@@ -84,6 +84,13 @@ jobs:
         continue-on-error: true
         run: pnpm audit --audit-level moderate
 
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@cargo-deny
+      - run: cargo deny check
+
   desktop:
     strategy:
       fail-fast: false

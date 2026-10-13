@@ -205,8 +205,7 @@ lookup.`, `Lichess did not create the study.`). Unreadable JSON records keep the
 check:rust-coverage` gates the Rust workspace at the floors in `tooling/check-rust-coverage.mjs`;
   `vitest.config.ts` keeps a floor for the TypeScript that remains, apps, bindings and hosts).
 - ~~Port the internal TypeScript tests of the storage to Rust~~ (done, 2026-10-10:
-  `tests/core/store-accounts.test.ts`, `store-import.test.ts`, `game-library.test.ts` and
-  `review-associations.test.ts` are `crates/kchess-core/tests/store_{accounts,import,games,reviews}.rs`).
+  the storage suites moved to Rust as `crates/kchess-core/tests/store_{accounts,import,games,reviews}.rs`).
   The `store.debug.*` methods stay: the desktop unit tests seed through them, the golden parity
   suites (`native-store-games`, `native-store-documents`) read them, and e2e sets
   `KCHESS_STORE_DEBUG` for its Lichess fixture origin.

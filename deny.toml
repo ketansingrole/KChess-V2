@@ -6,10 +6,15 @@
 yanked = "deny"
 
 [licenses]
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0"]
+# GPL-3.0-or-later is this repo's own license (package.json, workspace crates, shakmaty);
+# Zlib (foldhash) and CDLA-Permissive-2.0 (webpki-roots) are permissive. Anything else
+# needs an explicit review before it lands in the allow list.
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CDLA-Permissive-2.0", "GPL-3.0-or-later"]
 
 [bans]
 wildcards = "deny"
+# Workspace siblings are path dependencies without versions by design.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
