@@ -19,6 +19,17 @@ pnpm run build
 pnpm run test:e2e
 ```
 
+To reproduce CI's Linux jobs locally, start Docker (on macOS, `brew install colima docker` and
+`colima start`) and run them in a container built from the repository pins
+(`tooling/linux/Dockerfile`). The working tree, including uncommitted changes, is synced into
+a cached volume; results are copied to `test-results/linux/`.
+
+```bash
+pnpm run check:linux          # CI's check job
+pnpm run test:e2e:linux       # build, e2e and packaged tests under Xvfb
+pnpm run linux -- <command>   # any command; --amd64 matches CI's x86-64 runners (slower)
+```
+
 ## Guidelines
 
 - Keep changes focused; one topic per pull request. Describe what changed and why, and

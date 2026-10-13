@@ -11,7 +11,10 @@ const candidates =
     ? ['dist/mac-arm64/KChess.app/Contents/MacOS/KChess']
     : process.platform === 'win32'
       ? ['dist/win-unpacked/KChess.exe']
-      : ['dist/linux-unpacked/kchess', 'dist/linux-unpacked/kchess-electron']
+      : ['linux-unpacked', 'linux-arm64-unpacked'].flatMap((dir) => [
+          `dist/${dir}/kchess`,
+          `dist/${dir}/kchess-electron`,
+        ])
 const executable = candidates.map((file) => join(root, file)).find(existsSync)
 if (packaged && !executable) throw new Error('Packaged app missing. Run pnpm run pack first.')
 if (!packaged && !existsSync(join(root, 'apps/desktop/out/main/index.js')))

@@ -15,3 +15,7 @@ rustflags = ["-C", "link-arg=-Wl,-x"]
 # from the shipped core module so it stays within the package's file-size budget.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--strip-all"]
+
+# Not shipped, but `pnpm run linux` on Apple Silicon packages it with the same budget.
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--strip-all"]
