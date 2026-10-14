@@ -20,7 +20,7 @@
     "@kchess/native": "workspace:*",
     "@kchess/rules": "workspace:*",
     "electron-updater": "^6.8.9",
-    "stockfish": "^19.0.0"
+    "stockfish": "^19.0.1"
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.141",
