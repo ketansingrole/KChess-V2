@@ -331,6 +331,7 @@ fn settings_entries() -> Vec<(&'static str, Schema)> {
         ("showOpeningName", boolean("Invalid opening name setting.")),
         ("swipeNavigation", boolean("Invalid swipe setting.")),
         ("swipeIndicator", boolean("Invalid swipe setting.")),
+        ("puzzleAutoNext", boolean("Invalid puzzle setting.")),
     ]
 }
 

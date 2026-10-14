@@ -605,6 +605,39 @@ test('launches with SQLite, sandboxed preload and bundled Stockfish @packaged', 
   expect(policies.worker).toContain("'unsafe-eval'")
 })
 
+test('gives neutral buttons on a card visible hover feedback in both themes', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Play with Computer')
+  await move(page, 'e2', 'e4')
+  await navigate(page, 'Game history')
+  const row = page.locator('.local-history-row').first()
+  const card = page.locator('.local-history-list')
+  // Compare settled colours: mid-fade values would differ from the card even with no feedback.
+  await page.addStyleTag({ content: '* { transition: none !important; }' })
+  const background = (locator: typeof row) =>
+    locator.evaluate((element) => getComputedStyle(element).backgroundColor)
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme })
+    const surface = await background(card)
+    // Ghost (Export PGN) and soft (Replay): each must differ from the card once pointed at.
+    for (const name of ['Export PGN', 'Replay']) {
+      const button = row.getByRole('button', { name, exact: true })
+      await button.hover()
+      expect(await background(button)).not.toBe(surface)
+      await page.mouse.move(0, 0)
+    }
+    await row.getByRole('button', { name: 'Export PGN', exact: true }).hover()
+    await expect
+      .poll(() => background(row.getByRole('button', { name: 'Export PGN', exact: true })))
+      .not.toBe(surface)
+    await row.screenshot({
+      path: join(process.cwd(), 'test-results', `card-button-hover-${colorScheme}.png`),
+    })
+    await page.mouse.move(0, 0)
+  }
+})
+
 test('plays keyboard moves and restores an annotated saved study after reload @packaged', async ({
   desktop: { page },
 }) => {
@@ -724,6 +757,112 @@ test('keeps a failed offline puzzle verdict on remount and opens the promotion p
   await expect(
     page.getByText('Solved after a mistake — not counted', { exact: true }),
   ).toBeVisible()
+})
+
+test('shows puzzle material, voice beside the move box, and hint circles', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Puzzles')
+  await page.getByRole('tab', { name: 'Downloaded', exact: true }).click()
+  await expect(page.locator('cg-board')).toBeVisible()
+  // White, at the bottom, is three pawns up after …h6.
+  const bottom = page.locator('[data-side="bottom"]')
+  await expect(bottom.getByRole('img', { name: 'Up 3: 3 pawns' })).toBeVisible()
+  await expect(
+    bottom.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' }),
+  ).toBeVisible()
+  await expect(bottom.getByRole('button', { name: 'Voice input' })).toBeVisible()
+  await expect(page.locator('[data-side="top"] .material')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Hint', exact: true }).click()
+  await expect(page.locator('.cg-hint')).toHaveCount(1)
+  await move(page, 'f2', 'f3')
+  await expect(page.getByText('That’s not the move — try again', { exact: true })).toBeVisible()
+  // The red outline only flashes; the message stays.
+  await expect(page.locator('.puzzle-board.wrong')).toHaveCount(0)
+  await expect(page.getByText('That’s not the move — try again', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Hint', exact: true }).click()
+  await expect(page.locator('.cg-hint')).toHaveCount(1)
+  await page.screenshot({ path: test.info().outputPath('kchess-puzzle-board.png') })
+  // A second press hides the hint again.
+  const hint = page.getByRole('button', { name: 'Hint', exact: true })
+  await expect(hint).toHaveAttribute('aria-pressed', 'true')
+  await hint.click()
+  await expect(page.locator('.cg-hint')).toHaveCount(0)
+  await expect(hint).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('keeps the focus ring off search fields that show focus themselves', async ({
+  desktop: { page },
+}) => {
+  const outline = (locator: ReturnType<typeof page.locator>) =>
+    locator.evaluate((el) => getComputedStyle(el).outlineStyle)
+  // A menu or palette search field: the global ring was clipped to a stray line beneath it.
+  const search = page.getByRole('textbox', { name: 'Search pages and commands', exact: true })
+  await page.keyboard.press('ControlOrMeta+K')
+  await expect(search).toBeFocused()
+  expect(await outline(search)).toBe('none')
+  await page.keyboard.press('Escape')
+  // Everything else keeps the keyboard focus ring.
+  await navigate(page, 'Puzzles')
+  const hint = page.getByRole('button', { name: 'Hint', exact: true })
+  await page.getByRole('tab', { name: 'Downloaded', exact: true }).click()
+  await expect(hint).toBeVisible()
+  await hint.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(hint).toBeFocused()
+  expect(await outline(hint)).toBe('solid')
+})
+
+// The sidebar's edge showed a resize cursor (Nuxt UI's rail) though the sidebar cannot be
+// resized; the toggle button is the one way to collapse it.
+test('has no resize affordance on the sidebar edge', async ({ desktop: { page } }) => {
+  await expect(page.getByRole('button', { name: 'Hide sidebar' })).toBeVisible()
+  await expect(page.locator('[data-slot="rail"]')).toHaveCount(0)
+})
+
+// Following used one large card per player (nested rating, facts and data panels, seven buttons).
+test('lists followed players in one table, playing and online first', async ({
+  desktop: { page, lichess },
+}) => {
+  const names = ['Offline1', 'Player2', 'Online3']
+  lichess.route = async (request) => {
+    const url = new URL(request.url)
+    if (url.pathname === '/api/users/status')
+      return Response.json(
+        names.map((name) => ({
+          id: name.toLowerCase(),
+          name,
+          online: name !== 'Offline1',
+          playing: name === 'Player2',
+          playingId: name === 'Player2' ? 'Game0001' : undefined,
+        })),
+      )
+    const user = url.pathname.match(/^\/api\/user\/([^/]+)$/)?.[1]
+    if (user)
+      return Response.json({
+        id: user.toLowerCase(),
+        username: user,
+        perfs: { blitz: { rating: 1500, games: 1 } },
+        seenAt: Date.now() - 86_400_000,
+      })
+    if (url.pathname.startsWith('/api/games/user/'))
+      return new Response('', { headers: { 'content-type': 'application/x-ndjson' } })
+    return Response.json({})
+  }
+  for (const name of names) await page.evaluate((n) => window.kchess.addAccount(n), name)
+  await page.reload()
+  await navigate(page, 'Following')
+  const rows = page.locator('.friends-table tbody tr')
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText('Playing now')
+  await expect(rows.nth(0).getByRole('button', { name: 'Watch', exact: true })).toBeVisible()
+  await expect(rows.nth(1)).toContainText('@Online3')
+  await expect(rows.nth(2)).toContainText('@Offline1')
+  await expect(page.getByRole('columnheader', { name: 'Blitz', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'More for @Offline1', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: 'Remove', exact: true })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: 'Clear data', exact: true })).toBeVisible()
 })
 
 test('persists appearance settings after reloading', async ({ desktop: { page } }) => {
@@ -1030,6 +1169,36 @@ test('plays two players on one board, exports the game as a GIF and runs the che
   await expect(page.locator('.analysis-panel')).toBeVisible()
 })
 
+test('shows the material difference beside the player who is ahead', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Over the board')
+  await page.getByRole('tab', { name: 'Shared board', exact: true }).click()
+  const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  const material = page.locator('.player-line .material')
+  await expect(material).toHaveCount(0)
+  for (const move of ['e4', 'd5', 'exd5']) {
+    await input.fill(move)
+    await input.press('Enter')
+  }
+  // Only the side ahead shows anything: the won pawn and its lead.
+  await expect(material).toHaveCount(1)
+  await expect(page.getByRole('img', { name: 'Up 1: pawn' })).toBeVisible()
+  await expect(material.locator('i')).toHaveCount(1)
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme })
+    await page
+      .locator('.player-line')
+      .last()
+      .screenshot({
+        path: join(process.cwd(), 'test-results', `material-diff-${colorScheme}.png`),
+      })
+  }
+  await input.fill('Qxd5')
+  await input.press('Enter')
+  await expect(material).toHaveCount(0)
+})
+
 test('cancels a long GIF export and keeps the renderer responsive while encoding', async ({
   desktop: { app, page, profile },
 }) => {
@@ -1090,11 +1259,20 @@ test('starts a Chess960 game against Stockfish with a clock', async ({ desktop: 
 
 test('summarises a reviewed game on the Insights page @seed:reviewed-game', async ({
   desktop: { page },
-}) => {
+}, testInfo) => {
   await navigate(page, 'Lichess insights')
   await expect(page.getByText('Games', { exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: /^Checkmate: 1 game/ })).toBeVisible()
-  await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
+  // The headline numbers sit in the page header, beside the filters.
+  const stats = page.locator('.page-header .insight-stats')
+  await expect(stats.getByText('Accuracy', { exact: true })).toBeVisible()
+  await expect(stats.getByText(/1 reviewed game\b/)).toBeVisible()
+  // Every headline figure lines up, including Score, which has no detail line.
+  const tops = await stats
+    .locator('dd strong')
+    .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
+  expect(new Set(tops).size).toBe(1)
+  await page.screenshot({ path: testInfo.outputPath('insights.png') })
 })
 
 test('blocks assistance after unverified startup until account status is confirmed @seed:unverified-startup @packaged', async ({
@@ -1384,7 +1562,7 @@ test('recovers a failed reviewed game Insights page and records route diagnostic
   desktop: { app, page, profile },
 }) => {
   await navigate(page, 'Lichess insights')
-  await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
+  await expect(page.getByText(/1 reviewed game\b/)).toBeVisible()
   const corruptInsights = () =>
     page.evaluate(() => {
       const nuxt = (
@@ -1399,7 +1577,7 @@ test('recovers a failed reviewed game Insights page and records route diagnostic
   await expect(page.getByRole('alert')).toHaveText("This page couldn't load")
   await expect(page.locator('aside').getByText('Analysis board', { exact: true })).toBeAttached()
   await page.getByRole('button', { name: 'Try again', exact: true }).click()
-  await expect(page.getByText(/Accuracy \(1 reviewed games\)/)).toBeVisible()
+  await expect(page.getByText(/1 reviewed game\b/)).toBeVisible()
   await corruptInsights()
   await expect(page.getByRole('alert')).toHaveText("This page couldn't load")
   await navigate(page, 'Analysis board')
@@ -1527,6 +1705,10 @@ test('keeps multi-chapter studies together and restores the selected chapter off
   await expect(page.getByRole('dialog', { name: 'Replace the unsaved analysis?' })).toBeVisible()
   await page.getByRole('button', { name: 'Replace', exact: true }).click()
   await page.getByRole('button', { name: 'Study chapter' }).click()
+  // The menu's search field shows focus by itself: no app focus ring clipped under it.
+  const chapterSearch = page.getByRole('combobox', { name: 'Search…', exact: true })
+  await expect(chapterSearch).toBeFocused()
+  expect(await chapterSearch.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('none')
   await page.getByRole('option', { name: '2. Queen pawn', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Study chapter' })).toContainText('Queen pawn')
   await expect(page.getByLabel('Study name', { exact: true })).toHaveValue('Offline repertoire')
@@ -1643,6 +1825,17 @@ test('analyses a broadcast inline and explores lines without changing saved anal
   await expect(gridBar).toHaveAttribute('aria-valuenow', /^\d+$/)
   await page.screenshot({ path: testInfo.outputPath('broadcast-grid-evaluations.png') })
   await page.getByRole('button', { name: /Beta.*Alpha/ }).click()
+  // The tournament toolbar shares the header row with the tabs instead of adding its own row.
+  const tourToolbar = page.locator('.page-header .broadcast-toolbar')
+  await expect(tourToolbar).toContainText('Training broadcast')
+  const middle = (box: { y: number; height: number } | null) => box!.y + box!.height / 2
+  expect(
+    Math.abs(
+      middle(await tourToolbar.boundingBox()) -
+        middle(await page.locator('.page-header .page-actions').boundingBox()),
+    ),
+  ).toBeLessThan(4)
+  await page.screenshot({ path: testInfo.outputPath('broadcast-game-header.png') })
   const whiteClock = page.getByLabel('white clock', { exact: true })
   await expect(page.locator('.player-line.active .player-clock')).toHaveAttribute(
     'aria-label',
@@ -1813,6 +2006,100 @@ test('watches TV channels and followed players without an account', async ({
   await expect(page.getByText('No followed player is playing right now.')).toBeVisible()
   await page.getByRole('tab', { name: 'TV', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Channels', exact: true })).toBeVisible()
+})
+
+// The schedule used a fixed-height box: space was left below it, or its last row was cut off.
+test('fits the arena schedule to the window, with the legend beside the filters', async ({
+  desktop: { page, lichess },
+}) => {
+  const startsAt = Date.now() + 10 * 60_000
+  const created = Array.from({ length: 12 }, (_, i) => ({
+    id: `Arena${String(i).padStart(3, '0')}`,
+    fullName: `Arena number ${i}`,
+    system: 'arena',
+    minutes: 57,
+    startsAt,
+    finishesAt: startsAt + 57 * 60_000,
+    status: 10,
+    nbPlayers: i,
+    rated: true,
+    clock: { limit: 180, increment: 0 },
+    variant: { key: 'standard', short: 'Std', name: 'Standard' },
+    perf: { key: 'blitz', name: 'Blitz', position: 1 },
+  }))
+  lichess.route = async (request) => {
+    if (new URL(request.url).pathname.startsWith('/api/tournament'))
+      return Response.json({ started: [], created, finished: [] })
+    throw new Error('Unexpected request: ' + request.url)
+  }
+  await page.setViewportSize({ width: 1000, height: 450 })
+  await navigate(page, 'Tournaments')
+  await page.getByRole('tab', { name: 'All', exact: true }).click()
+  await expect(page.getByRole('listitem', { name: /Arena number 11/ })).toBeAttached()
+  await expect(page.locator('.page-header .timeline-legend')).toContainText('Rating-limited')
+  const sizes = await page.evaluate(() => {
+    const schedule = document.querySelector('.timeline-scroll')!
+    const content = document.querySelector('.main-content')!
+    return {
+      scheduleScrolls: schedule.scrollHeight > schedule.clientHeight,
+      pageScrolls: content.scrollHeight > content.clientHeight,
+    }
+  })
+  expect(sizes).toEqual({ scheduleScrolls: true, pageScrolls: false })
+})
+
+// In a narrow window, running arenas showed blank bars (their names began before the visible
+// schedule) and, on macOS, the drawer's show-sidebar button sat under the traffic lights.
+test('keeps running arena names and the sidebar button visible in a narrow window', async ({
+  desktop: { page, lichess },
+}, testInfo) => {
+  const startsAt = Date.now() - 50 * 60_000
+  lichess.route = async (request) => {
+    if (new URL(request.url).pathname.startsWith('/api/tournament'))
+      return Response.json({
+        started: [
+          {
+            id: 'Running1',
+            fullName: 'Running Rapid Arena',
+            system: 'arena',
+            minutes: 120,
+            startsAt,
+            finishesAt: startsAt + 120 * 60_000,
+            status: 20,
+            nbPlayers: 91,
+            rated: true,
+            clock: { limit: 600, increment: 0 },
+            variant: { key: 'standard', short: 'Std', name: 'Standard' },
+            perf: { key: 'rapid', name: 'Rapid', position: 2 },
+          },
+        ],
+        created: [],
+        finished: [],
+      })
+    throw new Error('Unexpected request: ' + request.url)
+  }
+  await page.setViewportSize({ width: 800, height: 700 })
+  await navigate(page, 'Tournaments')
+  await page.getByRole('tab', { name: 'All', exact: true }).click()
+  const name = page.locator('.timeline-name', { hasText: 'Running Rapid Arena' })
+  await expect(name).toBeVisible()
+  const schedule = (await page.locator('.timeline-scroll').boundingBox())!
+  const label = (await name.boundingBox())!
+  // The bar began before the visible schedule; its name is pinned inside the visible part.
+  expect(label.x).toBeGreaterThanOrEqual(schedule.x)
+  expect(label.x).toBeLessThan(schedule.x + 80)
+  await page.screenshot({ path: testInfo.outputPath('narrow-tournaments.png') })
+  // The drawer is teleported out of the app shell; its toggle must clear the traffic lights too.
+  const show = page.getByRole('button', { name: 'Show sidebar' })
+  if (process.platform === 'darwin')
+    expect((await show.boundingBox())!.x).toBeGreaterThanOrEqual(80)
+  await show.click()
+  const hide = page.getByRole('button', { name: 'Hide sidebar' })
+  await expect(hide).toBeVisible()
+  // Measured once the drawer has finished sliding in.
+  if (process.platform === 'darwin')
+    await expect.poll(async () => (await hide.boundingBox())!.x).toBeGreaterThanOrEqual(80)
+  await page.screenshot({ path: testInfo.outputPath('narrow-drawer.png') })
 })
 
 test('filters tournaments and guards arena creation offline', async ({

@@ -4,7 +4,6 @@ import type { Key } from '@lichess-org/chessground/types'
 import type { Crosstable, TvPastGame, WatchPlayer } from '@kchess/contracts/types'
 import { isVariant, type GameSetup } from '@kchess/rules/variant'
 import { formatClock } from '@kchess/rules/clock'
-import { materialBalance } from '@kchess/rules/material'
 import {
   lastMoveKeys,
   setupPgn,
@@ -65,7 +64,6 @@ export interface TvBoardSide {
   username: string | undefined
   icon: string
   clock: string | undefined
-  material: number
 }
 
 export interface TvBoardPlayers {
@@ -177,20 +175,17 @@ export function useTvPosition() {
   const framePlayers = computed<TvBoardPlayers | null>(() => {
     const current = frame.value
     if (!current) return null
-    const balance = materialBalance(tvFen.value)
     const white: TvBoardSide = {
       name: label(current.white),
       username: realPlayer(current.white.name) ? current.white.name : undefined,
       icon: 'i-lucide-user',
       clock: clockOf('white'),
-      material: balance > 0 ? balance : 0,
     }
     const black: TvBoardSide = {
       name: label(current.black),
       username: realPlayer(current.black.name) ? current.black.name : undefined,
       icon: 'i-lucide-user',
       clock: clockOf('black'),
-      material: balance < 0 ? -balance : 0,
     }
     return tvOrientation.value === 'white'
       ? { top: black, bottom: white, topColor: 'black' as const, bottomColor: 'white' as const }

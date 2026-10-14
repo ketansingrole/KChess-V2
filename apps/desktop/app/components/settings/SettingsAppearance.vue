@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { useKChessStore } from '../../stores/kchess'
+import { boardThemes } from '../../utils/boards'
 import { pieceSets, pieceVars } from '../../utils/pieces'
 import { animationItems, appearanceItems, coordinateItems } from './options'
 
 const store = useKChessStore()
-const { boardThemes, settings } = storeToRefs(store)
+const { settings } = storeToRefs(store)
 </script>
 
 <template>

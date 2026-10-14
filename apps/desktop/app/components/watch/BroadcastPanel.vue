@@ -371,31 +371,34 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       v-else
       :class="game ? 'play-layout broadcast-layout analysis-surface' : 'flex flex-col gap-4'"
     >
-      <div class="broadcast-toolbar">
-        <UButton
-          variant="ghost"
-          color="neutral"
-          icon="i-lucide-arrow-left"
-          aria-label="All broadcasts"
-          class="-ms-2"
-          @click="emit('leave-tour')"
-        />
-        <h2 class="section-title flex-1 truncate">{{ watcher.tour.name }}</h2>
-        <USwitch
-          v-if="!game"
-          v-model="gridEvaluations"
-          label="Evaluation bars"
-          :disabled="!store.engineReady || !broadcastAssistance"
-        />
-        <USelect
-          v-model="selectedRound"
-          :items="roundItems"
-          :placeholder="roundItems.length ? 'Choose a round' : 'No rounds yet'"
-          :disabled="!roundItems.length"
-          aria-label="Round"
-          class="w-44"
-        />
-      </div>
+      <!-- In the page header's free space beside the tabs, not a row of its own. -->
+      <Teleport defer to="[data-watch-lead]">
+        <div class="broadcast-toolbar">
+          <UButton
+            variant="ghost"
+            color="neutral"
+            icon="i-lucide-arrow-left"
+            aria-label="All broadcasts"
+            class="-ms-2"
+            @click="emit('leave-tour')"
+          />
+          <h2 class="section-title flex-1 truncate">{{ watcher.tour.name }}</h2>
+          <USwitch
+            v-if="!game"
+            v-model="gridEvaluations"
+            label="Evaluation bars"
+            :disabled="!store.engineReady || !broadcastAssistance"
+          />
+          <USelect
+            v-model="selectedRound"
+            :items="roundItems"
+            :placeholder="roundItems.length ? 'Choose a round' : 'No rounds yet'"
+            :disabled="!roundItems.length"
+            aria-label="Round"
+            class="w-44"
+          />
+        </div>
+      </Teleport>
       <p v-if="watcher.roundEnded && !watcher.roundGames.length" class="muted text-sm">
         No games in this round yet.
       </p>
@@ -403,6 +406,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
         <div class="board-stack">
           <PlayerLine
             :player="boardPlayers(game).top"
+            :material-fen="gameFen"
             :color="gameOrientation === 'white' ? 'black' : 'white'"
             :active="
               watcher.broadcastClockRunning(game, gameOrientation === 'white' ? 'black' : 'white')
@@ -432,6 +436,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
           </div>
           <PlayerLine
             :player="boardPlayers(game).bottom"
+            :material-fen="gameFen"
             :color="gameOrientation"
             :active="watcher.broadcastClockRunning(game, gameOrientation)"
           />
@@ -666,7 +671,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
   row-gap: 16px;
 }
 .broadcast-toolbar {
-  grid-column: 1 / -1;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;

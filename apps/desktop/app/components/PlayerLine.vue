@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createReusableTemplate } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
 
 export interface PlayerInfo {
@@ -34,7 +35,16 @@ const STATE_LABEL = {
   unavailable: 'Unavailable',
 } as const
 
-defineProps<{ player: PlayerInfo; color: Color; active?: boolean }>()
+defineProps<{
+  player: PlayerInfo
+  color: Color
+  active?: boolean
+  /** The position whose material difference to show beside the name; omit to show none. */
+  materialFen?: string
+}>()
+
+/** The dot, bars and latency, drawn the same with or without a details popover. */
+const [DefinePresence, PresenceBadge] = createReusableTemplate<{ presence: PlayerPresence }>()
 
 function presenceTitle(presence: PlayerPresence): string {
   const parts: string[] = [presence.label ?? STATE_LABEL[presence.state]]
@@ -45,6 +55,16 @@ function presenceTitle(presence: PlayerPresence): string {
 </script>
 
 <template>
+  <DefinePresence v-slot="{ presence }">
+    <span class="presence-dot" />
+    <span v-if="presence.label" class="presence-label">{{ presence.label }}</span>
+    <span v-if="presence.state === 'online' && presence.signal" class="signal">
+      <i v-for="bar in 4" :key="bar" :class="{ on: bar <= (presence.signal ?? 0) }" />
+    </span>
+    <span v-if="presence.latencyMs !== undefined" class="presence-ms tabular"
+      >{{ presence.latencyMs }} ms</span
+    >
+  </DefinePresence>
   <div class="player-line" :class="{ active }">
     <div class="player-id">
       <span class="player-avatar" :class="color" aria-hidden="true"
@@ -56,23 +76,34 @@ function presenceTitle(presence: PlayerPresence): string {
         }}</PlayerLink
         ><span v-else class="player-name">{{ player.name }}</span></slot
       >
+      <!-- With details, pointing at this player's own bars shows that player's connection. -->
+      <UPopover
+        v-if="player.presence && $slots.presence"
+        mode="hover"
+        :open-delay="150"
+        :close-delay="150"
+      >
+        <button
+          type="button"
+          class="presence"
+          :class="player.presence.state"
+          :aria-label="presenceTitle(player.presence)"
+        >
+          <PresenceBadge :presence="player.presence" />
+        </button>
+        <template #content><slot name="presence" /></template>
+      </UPopover>
       <span
-        v-if="player.presence"
+        v-else-if="player.presence"
         class="presence"
         :class="player.presence.state"
         :title="presenceTitle(player.presence)"
         role="img"
         :aria-label="presenceTitle(player.presence)"
       >
-        <span class="presence-dot" />
-        <span v-if="player.presence.label" class="presence-label">{{ player.presence.label }}</span>
-        <span v-if="player.presence.state === 'online' && player.presence.signal" class="signal">
-          <i v-for="bar in 4" :key="bar" :class="{ on: bar <= (player.presence.signal ?? 0) }" />
-        </span>
-        <span v-if="player.presence.latencyMs !== undefined" class="presence-ms tabular"
-          >{{ player.presence.latencyMs }} ms</span
-        >
+        <PresenceBadge :presence="player.presence" />
       </span>
+      <MaterialDiff v-if="materialFen" :fen="materialFen" :color="color" />
       <span class="sr-only">plays {{ color }}</span>
       <span v-if="player.status" class="player-status" role="status">
         <UIcon v-if="player.busy" name="i-lucide-loader-circle" class="animate-spin" />

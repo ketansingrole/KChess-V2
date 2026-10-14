@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, ref, watch } from 'vue'
+import { useZenSurface } from '../composables/useZenSurface'
 import type { PlayerInfo } from '../components/PlayerLine.vue'
 import {
   GAME_GRAMMAR,
@@ -20,6 +21,7 @@ import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/rules/engineLev
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()
+useZenSurface(true)
 const {
   localMoves,
   localGameEpoch,

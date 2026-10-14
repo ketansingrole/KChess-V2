@@ -125,6 +125,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Result<Value>> {
         "knightChallenge" => knight_challenge_call(args),
         "knightFen" => text(args, 0).map(|s| json!(knight_fen(s))),
         "materialBalance" => text(args, 0).map(|fen| json!(material_balance(fen))),
+        "materialDiff" => text(args, 0).map(material_diff),
         _ => return None,
     };
     Some(result)
@@ -1068,4 +1069,34 @@ fn material_balance(fen: &str) -> i64 {
         }
     }
     balance
+}
+
+/// Roles from most to least valuable, as Lichess lists a material difference.
+const MATERIAL_ROLES: [(char, &str); 6] = [
+    ('k', "king"),
+    ('q', "queen"),
+    ('r', "rook"),
+    ('b', "bishop"),
+    ('n', "knight"),
+    ('p', "pawn"),
+];
+
+/// Lichess's material difference: the pieces each side has beyond the other's, most valuable
+/// first, and `score`, the balance in pawns (positive when White is ahead).
+fn material_diff(fen: &str) -> Value {
+    let placement = fen.split(' ').next().unwrap_or("");
+    let count = |piece: char| placement.chars().filter(|&c| c == piece).count();
+    let mut white = Vec::new();
+    let mut black = Vec::new();
+    for (letter, role) in MATERIAL_ROLES {
+        let ours = count(letter.to_ascii_uppercase());
+        let theirs = count(letter);
+        let (side, extra) = if ours > theirs {
+            (&mut white, ours - theirs)
+        } else {
+            (&mut black, theirs - ours)
+        };
+        side.extend(std::iter::repeat_n(role, extra));
+    }
+    json!({ "white": white, "black": black, "score": material_balance(fen) })
 }

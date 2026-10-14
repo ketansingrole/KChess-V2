@@ -22,6 +22,7 @@ const MAX_STUDIES: usize = 300;
 
 /// A study the account owns or belongs to (`LichessStudy`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LichessStudy {
     pub id: String,
     pub name: String,
@@ -536,5 +537,23 @@ mod tests {
             Some(("Study001".into(), "Chapter1".into()))
         );
         assert_eq!(study_chapter_id("https://lichess.org/study/Study001"), None);
+    }
+
+    #[test]
+    fn lists_studies_with_the_contract_field_names() {
+        let study =
+            study_metadata(r#"{"id":"Study001","name":"Cloud","createdAt":1,"updatedAt":2}"#)
+                .ok()
+                .flatten()
+                .expect("a valid study record");
+        assert_eq!(
+            serde_json::to_value(&study).expect("serializable"),
+            serde_json::json!({ "id": "Study001", "name": "Cloud", "updatedAt": 2 })
+        );
+        let undated = study_metadata(r#"{"id":"Study002","name":"Undated"}"#)
+            .ok()
+            .flatten()
+            .expect("a record without timestamps");
+        assert_eq!(undated.updated_at, 0);
     }
 }

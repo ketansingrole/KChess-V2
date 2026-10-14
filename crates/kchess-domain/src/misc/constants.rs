@@ -63,7 +63,14 @@ pub const RUN_KINDS: &[&str] = &[
     "knightPath",
     "endgame",
 ];
-pub const VOICE_SOURCES: &[&str] = &["computer", "coordinates", "analysis", "editor", "local"];
+pub const VOICE_SOURCES: &[&str] = &[
+    "computer",
+    "coordinates",
+    "analysis",
+    "editor",
+    "local",
+    "puzzles",
+];
 pub const VOICE_OUTCOMES: &[&str] = &[
     "played",
     "pending",

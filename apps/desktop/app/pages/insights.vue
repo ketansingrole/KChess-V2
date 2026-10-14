@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useInsightsReport } from '../composables/useInsightsReport'
+import { formatCount } from '../utils/format'
 
 const store = useKChessStore()
 const { data, activeOnlineAccount } = storeToRefs(store)
@@ -73,6 +74,22 @@ const byTime = computed(() => {
     }
   })
 })
+/** Lichess's speed keys, as titles. */
+const speedName = (key: string): string =>
+  key === 'ultraBullet' ? 'UltraBullet' : key.charAt(0).toUpperCase() + key.slice(1)
+const score = computed(() =>
+  report.value?.total
+    ? Math.round(
+        (100 * (report.value.record.win + report.value.record.draw / 2)) / report.value.total,
+      )
+    : 0,
+)
+const streakNow = computed(() => {
+  const current = report.value?.streaks.current ?? 0
+  if (current > 0) return `${current} ${current === 1 ? 'win' : 'wins'} in a row now`
+  if (current < 0) return `${-current} ${current === -1 ? 'loss' : 'losses'} in a row now`
+  return 'No streak now'
+})
 const best = computed(() => {
   const openings = (report.value?.byOpening ?? []).filter((o) => o.record.total >= 5)
   const score = (o: (typeof openings)[number]) =>
@@ -85,6 +102,58 @@ const best = computed(() => {
 <template>
   <div>
     <PageHeader title="Lichess insights">
+      <!-- The headline numbers sit beside the filters that shape them. -->
+      <template v-if="report?.total && !error" #lead>
+        <dl class="insight-stats">
+          <div>
+            <dt>Games</dt>
+            <dd>
+              <strong class="tabular">{{ formatCount(report.total) }}</strong>
+              <span class="tabular"
+                >{{ formatCount(report.record.win) }} won ·
+                {{ formatCount(report.record.draw) }} drawn ·
+                {{ formatCount(report.record.loss) }} lost</span
+              >
+            </dd>
+          </div>
+          <div>
+            <dt title="Wins plus half the draws">Score</dt>
+            <dd>
+              <strong class="tabular">{{ score }}%</strong>
+            </dd>
+          </div>
+          <div>
+            <dt title="Longest winning and losing runs">Streaks</dt>
+            <dd>
+              <strong class="tabular"
+                >{{ report.streaks.longestWin }} / {{ report.streaks.longestLoss }}</strong
+              >
+              <span>{{ streakNow }}</span>
+            </dd>
+          </div>
+          <div v-if="report.accuracy">
+            <dt>Accuracy</dt>
+            <dd>
+              <strong
+                class="tabular"
+                :title="`${report.accuracy.perGame.blunder.toFixed(1)} blunders and ${report.accuracy.perGame.mistake.toFixed(1)} mistakes a game`"
+                >{{
+                  report.accuracy.average !== undefined
+                    ? `${report.accuracy.average.toFixed(1)}%`
+                    : '–'
+                }}</strong
+              >
+              <span class="tabular"
+                >{{ formatCount(report.accuracy.games) }} reviewed
+                {{ report.accuracy.games === 1 ? 'game' : 'games'
+                }}<template v-if="report.accuracy.acpl !== undefined">
+                  · ACPL {{ Math.round(report.accuracy.acpl) }}</template
+                ></span
+              >
+            </dd>
+          </div>
+        </dl>
+      </template>
       <USelect
         v-if="accounts.length > 1"
         v-model="account"
@@ -134,86 +203,34 @@ const best = computed(() => {
         ]"
       />
     </div>
-    <div v-else-if="report" class="flex flex-col gap-5" :aria-busy="loading">
-      <div class="insight-tiles">
-        <div class="card insight-tile">
-          <span class="muted text-xs">Games</span>
-          <strong class="tabular">{{ report.total.toLocaleString() }}</strong>
-          <span class="text-xs muted tabular"
-            >{{ report.record.win }} won · {{ report.record.draw }} drawn ·
-            {{ report.record.loss }} lost</span
-          >
-        </div>
-        <div class="card insight-tile">
-          <span class="muted text-xs">Score</span>
-          <strong class="tabular"
-            >{{
-              Math.round((100 * (report.record.win + report.record.draw / 2)) / report.total)
-            }}%</strong
-          >
-          <span class="text-xs muted">wins plus half the draws</span>
-        </div>
-        <div class="card insight-tile">
-          <span class="muted text-xs">Streaks</span>
-          <strong class="tabular"
-            >{{ report.streaks.longestWin }} / {{ report.streaks.longestLoss }}</strong
-          >
-          <span class="text-xs muted"
-            >longest winning / losing ·
-            {{
-              report.streaks.current > 0
-                ? `${report.streaks.current} ${report.streaks.current === 1 ? 'win' : 'wins'} in a row now`
-                : report.streaks.current < 0
-                  ? `${-report.streaks.current} ${report.streaks.current === -1 ? 'loss' : 'losses'} in a row now`
-                  : 'no streak now'
-            }}</span
-          >
-        </div>
-        <div v-if="report.accuracy" class="card insight-tile">
-          <span class="muted text-xs">Accuracy ({{ report.accuracy.games }} reviewed games)</span>
-          <strong class="tabular">{{
-            report.accuracy.average !== undefined ? `${report.accuracy.average.toFixed(1)}%` : '–'
-          }}</strong>
-          <span class="text-xs muted tabular"
-            >{{ report.accuracy.perGame.blunder.toFixed(1) }} blunders ·
-            {{ report.accuracy.perGame.mistake.toFixed(1) }} mistakes per game<template
-              v-if="report.accuracy.acpl !== undefined"
-            >
-              · ACPL {{ Math.round(report.accuracy.acpl) }}</template
-            ></span
-          >
-        </div>
-      </div>
-
-      <p class="legend text-xs">
-        <span><i class="swatch win" /> Won</span>
-        <span><i class="swatch draw" /> Drawn</span>
-        <span><i class="swatch loss" /> Lost</span>
-        <span class="muted">· Score counts a draw as half a win · hover a bar for the counts</span>
-      </p>
-
-      <div class="insight-grid">
-        <section class="card">
-          <h2 class="section-title mb-3">By colour</h2>
+    <div v-else-if="report" class="insight-body" :aria-busy="loading">
+      <!-- Short breakdowns flow into balanced columns; openings, the long list, spans them. -->
+      <div class="insight-sections">
+        <section>
+          <h2 class="section-title">By colour</h2>
           <ResultBar label="White" :record="report.byColor.white" />
           <ResultBar label="Black" :record="report.byColor.black" />
-          <h2 class="section-title mt-5 mb-3">By speed</h2>
+        </section>
+        <section>
+          <h2 class="section-title">By speed</h2>
           <ResultBar
             v-for="entry in report.bySpeed"
             :key="entry.speed"
-            :label="entry.speed"
+            :label="speedName(entry.speed)"
             :record="entry.record"
           />
         </section>
-        <section class="card">
-          <h2 class="section-title mb-3">Against stronger and weaker players</h2>
+        <section>
+          <h2 class="section-title">By opponent rating</h2>
           <ResultBar
             v-for="entry in report.byOpponent"
             :key="entry.label"
             :label="entry.label"
             :record="entry.record"
           />
-          <h2 class="section-title mt-5 mb-3">By game length</h2>
+        </section>
+        <section>
+          <h2 class="section-title">By game length</h2>
           <ResultBar
             v-for="entry in report.byLength"
             :key="entry.label"
@@ -221,38 +238,26 @@ const best = computed(() => {
             :record="entry.record"
           />
         </section>
-        <section class="card">
-          <h2 class="section-title mb-1">Openings</h2>
-          <p v-if="best.top && best.bottom && best.top !== best.bottom" class="section-hint mb-3">
-            Best: {{ best.top.name }} · weakest: {{ best.bottom.name }} (at least 5 games)
-          </p>
-          <p v-if="!report.byOpening.length" class="muted text-sm">
-            Lichess names openings of synced games; none have two games yet.
-          </p>
-          <ResultBar
-            v-for="entry in report.byOpening"
-            :key="entry.name"
-            :label="entry.name"
-            :hint="`${entry.asWhite} as White`"
-            :record="entry.record"
-          />
-        </section>
-        <section class="card">
-          <h2 class="section-title mb-3">By day</h2>
+        <section>
+          <h2 class="section-title">By day</h2>
           <ResultBar
             v-for="(record, day) in report.byWeekday"
             :key="day"
             :label="WEEKDAYS[day]!"
             :record="record"
           />
-          <h2 class="section-title mt-5 mb-3">By time of day</h2>
+        </section>
+        <section>
+          <h2 class="section-title">By time of day</h2>
           <ResultBar
             v-for="entry in byTime"
             :key="entry.label"
             :label="entry.label"
             :record="entry.record"
           />
-          <h2 class="section-title mt-5 mb-3">How games ended</h2>
+        </section>
+        <section>
+          <h2 class="section-title">How games ended</h2>
           <ResultBar
             v-for="entry in report.endings"
             :key="entry.status"
@@ -261,55 +266,90 @@ const best = computed(() => {
           />
         </section>
       </div>
+      <section class="insight-openings">
+        <h2 class="section-title">Openings</h2>
+        <p v-if="best.top && best.bottom && best.top !== best.bottom" class="section-hint">
+          Best: {{ best.top.name }} · weakest: {{ best.bottom.name }} (at least 5 games)
+        </p>
+        <p v-if="!report.byOpening.length" class="muted text-sm">
+          Lichess names openings of synced games; none have two games yet.
+        </p>
+        <div v-else class="insight-opening-list">
+          <ResultBar
+            v-for="entry in report.byOpening"
+            :key="entry.name"
+            :label="entry.name"
+            :hint="`${entry.asWhite} as White`"
+            :record="entry.record"
+          />
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.insight-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 14px;
+.insight-stats {
+  display: flex;
+  flex-wrap: wrap;
+  /* Top-aligned, so a figure without a detail line (Score) lines up with the others. */
+  align-items: flex-start;
+  gap: 8px 32px;
+  margin: 0;
 }
-.insight-tile {
+.insight-stats > div {
+  display: grid;
+  gap: 2px;
+}
+.insight-stats dt {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+/* Each figure's detail sits under it, so the four stay side by side beside the filters. */
+.insight-stats dd {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 16px;
+  gap: 2px;
+  margin: 0;
 }
-.insight-tile strong {
-  font-size: 26px;
+.insight-stats strong {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
 }
-.insight-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: 20px;
+.insight-stats dd span {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
-.insight-grid section {
+.insight-body {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.insight-sections {
+  columns: 3 300px;
+  column-gap: 40px;
+}
+.insight-sections section,
+.insight-openings {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 0;
+.insight-sections section {
+  break-inside: avoid;
+  margin-bottom: 28px;
 }
-.swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  vertical-align: -1px;
+.insight-sections .section-title,
+.insight-openings .section-title {
+  margin-bottom: 4px;
 }
-.swatch.win {
-  background: var(--ui-success);
+.insight-opening-list {
+  columns: 2 360px;
+  column-gap: 40px;
 }
-.swatch.draw {
-  background: var(--ui-border-accented);
-}
-.swatch.loss {
-  background: var(--ui-error);
+.insight-opening-list > * {
+  break-inside: avoid;
 }
 </style>

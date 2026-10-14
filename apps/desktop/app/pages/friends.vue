@@ -15,10 +15,6 @@ const { addAccount, removeAccount, sync, selectPage, challengeFriend } = store
 
 const key = (name: string): string => name.toLowerCase()
 
-/** Results of a friend's own stored games, from their point of view. */
-function recordOf(username: string): { win: number; loss: number; draw: number } {
-  return libraryOverview.value.byAccount[key(username)] ?? { win: 0, loss: 0, draw: 0 }
-}
 /** How the connected accounts have fared against a friend. */
 function versusOf(username: string): { win: number; loss: number; draw: number } | undefined {
   return libraryOverview.value.versus[key(username)]
@@ -28,8 +24,17 @@ const stored = (username: string): number => {
   const entry = usage.storageOf(username)
   return entry.bytes + entry.cacheBytes
 }
-const storageShare = (username: string): number =>
-  usage.totalStored ? stored(username) / usage.totalStored : 0
+/** Who can be watched or challenged right now comes first: playing, then online, then the rest. */
+const sortedFriends = computed(() => {
+  const rank = (friend: LichessAccount): number => {
+    const presence = status.value[key(friend.username)]
+    return presence?.playing ? 0 : presence?.online ? 1 : 2
+  }
+  return trackedAccounts.value
+    .map((friend, index) => ({ friend, index }))
+    .sort((a, b) => rank(a.friend) - rank(b.friend) || a.index - b.index)
+    .map(({ friend }) => friend)
+})
 
 const friendsStored = computed(() =>
   trackedAccounts.value.reduce((sum, friend) => sum + stored(friend.username), 0),
@@ -100,6 +105,35 @@ watch(
 <template>
   <div>
     <PageHeader title="Following">
+      <template #lead>
+        <form class="friends-add" @submit.prevent="add">
+          <UInput
+            v-model="usernameInput"
+            icon="i-lucide-user-plus"
+            placeholder="Lichess username"
+            aria-label="Lichess username to follow"
+            autocomplete="off"
+            class="friends-add-input"
+          />
+          <UButton
+            type="submit"
+            title="Follows in KChess and downloads public games; does not change Lichess following."
+            :disabled="!online || !usernameInput.trim() || busy"
+            icon="i-lucide-plus"
+            >Follow player</UButton
+          >
+          <UButton
+            v-if="connectedAccounts.length"
+            variant="outline"
+            color="neutral"
+            icon="i-lucide-download"
+            :disabled="!online"
+            title="Adds players without downloading their games"
+            @click="importOpen = true"
+            >Import from Lichess</UButton
+          >
+        </form>
+      </template>
       <UButton
         v-if="trackedAccounts.length"
         variant="outline"
@@ -113,88 +147,62 @@ watch(
     </PageHeader>
 
     <PublicOnlineNotice offline-message="Offline · showing saved players." />
-    <div class="card friends-add" :class="{ 'friends-empty': !trackedAccounts.length }">
-      <UEmpty
-        v-if="!trackedAccounts.length"
-        variant="naked"
-        size="sm"
-        icon="i-lucide-users"
-        title="Follow your first player"
-      />
-      <form class="toolbar-row flex-nowrap" @submit.prevent="add">
-        <UInput
-          v-model="usernameInput"
-          icon="i-lucide-user-plus"
-          placeholder="Lichess username"
-          aria-label="Lichess username to follow"
-          autocomplete="off"
-          class="flex-1 max-w-sm"
+    <UEmpty
+      v-if="!trackedAccounts.length"
+      variant="naked"
+      icon="i-lucide-users"
+      title="Follow your first player"
+    />
+    <template v-else>
+      <p class="friends-summary tabular" role="status">
+        {{ formatCount(trackedAccounts.length) }}
+        {{ trackedAccounts.length === 1 ? 'player' : 'players' }} · {{ onlineCount }}
+        {{ online ? 'online' : 'last known online' }} · {{ formatBytes(friendsStored) }} on this
+        computer · {{ formatBytes(friendsDownloaded) }} downloaded
+        <UIcon
+          v-if="loading"
+          name="i-lucide-loader-circle"
+          class="animate-spin align-[-2px] ms-1"
+          aria-label="Refreshing profiles"
         />
-        <UButton
-          type="submit"
-          title="Follows in KChess and downloads public games; does not change Lichess following."
-          :disabled="!online || !usernameInput.trim() || busy"
-          icon="i-lucide-plus"
-          >Follow player</UButton
-        >
-        <UButton
-          v-if="connectedAccounts.length"
-          variant="outline"
-          color="neutral"
-          icon="i-lucide-download"
-          :disabled="!online"
-          title="Adds players without downloading their games"
-          @click="importOpen = true"
-          >Import from Lichess</UButton
-        >
-      </form>
-    </div>
-
-    <div v-if="trackedAccounts.length" class="friends-summary" role="status">
-      <div>
-        <span class="stat-label">Following</span>
-        <strong class="tabular">{{ trackedAccounts.length }}</strong>
+      </p>
+      <div class="friends-frame">
+        <table class="friends-table">
+          <thead>
+            <tr>
+              <th scope="col">Player</th>
+              <th scope="col" class="friend-num col-minor">Bullet</th>
+              <th scope="col" class="friend-num col-rating">Blitz</th>
+              <th scope="col" class="friend-num col-rating">Rapid</th>
+              <th scope="col" class="friend-num col-minor">Classical</th>
+              <th scope="col" class="friend-num col-versus">You vs them</th>
+              <th scope="col" class="col-synced">Synced</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <FriendRow
+              v-for="friend in sortedFriends"
+              :key="friend.username"
+              :account="friend"
+              :profile="profiles[key(friend.username)]"
+              :presence="status[key(friend.username)]"
+              :versus="versusOf(friend.username)"
+              :storage="usage.storageOf(friend.username)"
+              :usage="usage.usageOf(friend.username)"
+              :busy="busy"
+              @sync="sync(friend.username)"
+              @remove="askRemove(friend)"
+              @clear="askClear(friend)"
+              @games="showGames(friend)"
+              @challenge="challengeFriend(friend.username)"
+            />
+          </tbody>
+        </table>
       </div>
-      <div>
-        <span class="stat-label">{{ online ? 'Online now' : 'Last known online' }}</span>
-        <strong class="tabular">{{ onlineCount }}</strong>
-      </div>
-      <div>
-        <span class="stat-label">Stored for followed players</span>
-        <strong class="tabular">{{ formatBytes(friendsStored) }}</strong>
-      </div>
-      <div>
-        <span class="stat-label">Downloaded for followed players</span>
-        <strong class="tabular">{{ formatBytes(friendsDownloaded) }}</strong>
-      </div>
-      <span v-if="loading" class="muted text-xs friends-loading"
-        ><UIcon name="i-lucide-loader-circle" class="animate-spin" /> Refreshing profiles…</span
-      >
-    </div>
-
-    <div v-if="trackedAccounts.length" class="friends-grid">
-      <FriendCard
-        v-for="friend in trackedAccounts"
-        :key="friend.username"
-        :account="friend"
-        :profile="profiles[key(friend.username)]"
-        :presence="status[key(friend.username)]"
-        :record="recordOf(friend.username)"
-        :versus="versusOf(friend.username)"
-        :storage="usage.storageOf(friend.username)"
-        :usage="usage.usageOf(friend.username)"
-        :storage-share="storageShare(friend.username)"
-        :busy="busy"
-        @sync="sync(friend.username)"
-        @remove="askRemove(friend)"
-        @clear="askClear(friend)"
-        @games="showGames(friend)"
-        @challenge="challengeFriend(friend.username)"
-      />
-    </div>
+    </template>
 
     <FriendImportDialog v-model:open="importOpen" />
-
     <ConfirmDialog
       v-model:open="confirmClear"
       title="Clear this player's synced data?"

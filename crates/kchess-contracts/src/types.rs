@@ -136,6 +136,7 @@ wire_enum!(#[doc = "Where a spoken phrase was said."] VoiceSource, VOICE_SOURCES
     Analysis = "analysis",
     Editor = "editor",
     Local = "local",
+    Puzzles = "puzzles",
 });
 wire_enum!(#[doc = "What became of a spoken phrase. Moves: `played` at once, `pending` a choice that then was"] #[doc = "`confirmed` (by voice), `picked` (clicked), `cancelled`, `replaced` by another phrase or"] #[doc = "`abandoned` (the position moved on). `invalid` matched no legal move, `unclear` was too uncertain"] #[doc = "to use, `command` was “confirm”/“cancel”. Coordinates: `correct` or `wrong`."] VoiceOutcome, VOICE_OUTCOMES {
     Played = "played",
@@ -416,6 +417,8 @@ pub struct FrontendPreferences {
     pub swipe_navigation: bool,
     /// Show an edge hint that follows the swipe.
     pub swipe_indicator: bool,
+    /// Load the next training puzzle as soon as one is solved.
+    pub puzzle_auto_next: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.

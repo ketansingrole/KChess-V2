@@ -486,6 +486,18 @@ describe('the Rust voice rules match the recorded TypeScript outputs', () => {
       '8/8/8/8/8/8/8/8 w - - 0 1',
     ]
     fens.forEach((fen, i) => golden.check('materialBalance', i, rules('materialBalance', fen)))
+    fens.forEach((fen, i) => golden.check('materialDiff', i, rules('materialDiff', fen)))
+    // White is a queen and two pawns up for a knight: Lichess shows Q P P +8 and N.
+    expect(rules('materialDiff', 'k7/8/8/8/8/8/PPP5/KQ1n4 w - - 0 1')).toEqual({
+      white: ['queen', 'pawn', 'pawn', 'pawn'],
+      black: ['knight'],
+      score: 9,
+    })
+    expect(rules('materialDiff', '8/8/8/8/8/8/8/8 w - - 0 1')).toEqual({
+      white: [],
+      black: [],
+      score: 0,
+    })
   })
 
   it('exports the same grammars and constants as the Rust rules', () => {

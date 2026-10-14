@@ -313,6 +313,7 @@ const SETTINGS = {
   showOpeningName: true,
   swipeNavigation: true,
   swipeIndicator: true,
+  puzzleAutoNext: true,
 }
 const CORE_SETTINGS = {
   enginePath: '',

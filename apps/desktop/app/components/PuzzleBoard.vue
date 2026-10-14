@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
@@ -31,8 +31,11 @@ const props = withDefaults(
     replyDelay?: number
     /** A training verdict retained by the parent when this board is remounted. */
     initialOutcome?: boolean | null
+    /** Show each side's captured material above and below the board (off for timed runs). */
+    material?: boolean
   }>(),
-  { retry: true, replyDelay: 350 },
+  // Without a default, Vue casts an absent `initialOutcome` to false: an attempt already failed.
+  { retry: true, replyDelay: 350, initialOutcome: null, material: false },
 )
 
 const emit = defineEmits<{
@@ -55,6 +58,9 @@ const outcome = ref<boolean | null>(props.initialOutcome ?? null)
 const revealed = ref(false)
 const hinted = ref(false)
 const feedback = ref<'' | 'good' | 'wrong'>('')
+/** The board's red outline: a brief flash on a wrong move, while the panel keeps the message. */
+const flash = ref(false)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 /** Bumped whenever the puzzle changes, so a late timer from the old one does nothing. */
 let generation = 0
@@ -69,18 +75,26 @@ function begin(): void {
   revealed.value = false
   hinted.value = false
   feedback.value = ''
+  flash.value = false
+  clearTimeout(flashTimer)
   resetKey.value++
 }
 watch(() => props.puzzle, begin)
 onBeforeUnmount(() => {
   generation++
   clearTimeout(timer)
+  clearTimeout(flashTimer)
 })
 
 const color = computed(() => playerColor(props.puzzle))
 const orientation = computed(() =>
   props.flipped ? (color.value === 'white' ? 'black' : 'white') : color.value,
 )
+/** The move box joins the bottom material row, as in a game's bottom player line. */
+const entry = useId()
+/** Where the page puts controls that outlive this board, such as voice input (`PuzzleVoice`). */
+const controls = ref<HTMLElement | null>(null)
+const topColor = computed(() => (orientation.value === 'white' ? 'black' : 'white'))
 const position = computed(() => positionFromFen(state.value.fen))
 const playing = computed(() => state.value.status === 'playing' && !waiting.value && !props.frozen)
 const dests = computed(() =>
@@ -88,12 +102,22 @@ const dests = computed(() =>
 )
 const check = computed(() => (position.value ? checkColor(position.value) : false))
 
+/*
+ * The hint: a thick green ring on a soft-white halo, over a faint green tint, under the piece.
+ * Chessground's own circle is a thin fixed-width stroke that disappears on busy or green boards;
+ * this scales with the square (a 100×100 box) and reads on every board theme.
+ */
+const HINT_MARK = `<g class="cg-hint">
+  <circle cx="50" cy="50" r="42" fill="#16a34a" fill-opacity="0.22" stroke="#fff" stroke-opacity="0.8" stroke-width="14"/>
+  <circle cx="50" cy="50" r="42" fill="none" stroke="#16a34a" stroke-width="9"/>
+</g>`
+
 const shapes = computed<DrawShape[]>(() => {
   const squares = nextSolutionSquares(props.puzzle, state.value)
   if (!squares || state.value.status !== 'playing') return []
   const [from, to] = squares as [Key, Key]
   if (revealed.value) return [{ orig: from, dest: to, brush: 'green' }]
-  return hinted.value ? [{ orig: from, brush: 'yellow' }] : []
+  return hinted.value ? [{ orig: from, customSvg: { html: HINT_MARK }, below: true }] : []
 })
 
 function decide(win: boolean): void {
@@ -108,6 +132,9 @@ function onMove(uci: string): void {
   if (!result.correct) {
     mistakes.value++
     feedback.value = 'wrong'
+    flash.value = true
+    clearTimeout(flashTimer)
+    flashTimer = setTimeout(() => (flash.value = false), 900)
     hinted.value = false
     resetKey.value++
     emit('move', false)
@@ -132,6 +159,13 @@ function onMove(uci: string): void {
   if (result.reply) reply(result.reply)
 }
 
+/** A move made off the board (spoken); false when the board takes no move now. */
+function playMove(uci: string): boolean {
+  if (!playing.value) return false
+  onMove(uci)
+  return true
+}
+
 function reply(uci: string): void {
   waiting.value = true
   const mine = generation
@@ -143,9 +177,9 @@ function reply(uci: string): void {
   }, props.replyDelay)
 }
 
-/** Light up the piece to move. */
+/** Light up the piece to move, or hide it again. */
 function hint(): void {
-  if (state.value.status === 'playing') hinted.value = true
+  if (state.value.status === 'playing') hinted.value = !hinted.value
 }
 
 /** Play out the rest of the solution; the puzzle then counts as failed. */
@@ -177,12 +211,28 @@ async function showSolution(): Promise<void> {
 const status = computed(() => (revealed.value ? 'revealed' : state.value.status))
 const lastMove = computed(() => state.value.lastMove as Key[] | undefined)
 
-defineExpose({ hint, showSolution, status, mistakes, feedback, waiting, outcome })
+defineExpose({
+  hint,
+  hinted,
+  showSolution,
+  playMove,
+  status,
+  mistakes,
+  feedback,
+  waiting,
+  outcome,
+  position,
+  playing,
+  controls,
+})
 </script>
 
 <template>
-  <div class="board-stack">
-    <div class="board-shell puzzle-board" :class="feedback">
+  <div class="board-stack" :class="{ 'with-material': material }">
+    <div v-if="material" class="puzzle-material" data-side="top">
+      <MaterialDiff :fen="state.fen" :color="topColor" />
+    </div>
+    <div class="board-shell puzzle-board" :class="{ wrong: flash }">
       <ChessBoard
         :fen="state.fen"
         :orientation="orientation"
@@ -202,8 +252,33 @@ defineExpose({ hint, showSolution, status, mistakes, feedback, waiting, outcome 
         :turn-color="position?.turn"
         :shapes="shapes"
         :reset-key="resetKey"
+        :input-to="material ? `[data-move-entry='${entry}']` : undefined"
         @move="onMove"
       />
     </div>
+    <div v-if="material" class="player-line puzzle-material" data-side="bottom">
+      <MaterialDiff :fen="state.fen" :color="orientation" />
+      <div class="player-middle"><div :data-move-entry="entry" class="move-entry" /></div>
+      <div ref="controls" class="puzzle-controls" />
+    </div>
   </div>
 </template>
+
+<style scoped>
+.with-material {
+  gap: 4px;
+}
+/* A fixed height, so the board does not shift when a capture adds or removes the row's content. */
+.puzzle-material[data-side='top'] {
+  display: flex;
+  align-items: center;
+  height: 18px;
+}
+.puzzle-controls {
+  display: flex;
+  min-width: 0;
+}
+.puzzle-controls:empty {
+  display: none;
+}
+</style>

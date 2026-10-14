@@ -121,20 +121,11 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       </section>
       <template v-if="frame && framePlayers">
         <div class="board-stack">
-          <PlayerLine :player="framePlayers.top" :color="framePlayers.topColor">
-            <template #name>
-              <PlayerLink
-                v-if="framePlayers.top.username"
-                :username="framePlayers.top.username"
-                class="player-name"
-                >{{ framePlayers.top.name }}</PlayerLink
-              >
-              <span v-else class="player-name">{{ framePlayers.top.name }}</span>
-              <span v-if="framePlayers.top.material" class="material-diff"
-                >+{{ framePlayers.top.material }}</span
-              >
-            </template>
-          </PlayerLine>
+          <PlayerLine
+            :player="framePlayers.top"
+            :color="framePlayers.topColor"
+            :material-fen="frame.variant === 'crazyhouse' ? undefined : tvFen"
+          />
           <ChessBoard
             :fen="tvFen"
             :orientation="tvOrientation"
@@ -145,20 +136,11 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             :interactive="false"
             :last-move="tvLast"
           />
-          <PlayerLine :player="framePlayers.bottom" :color="framePlayers.bottomColor">
-            <template #name>
-              <PlayerLink
-                v-if="framePlayers.bottom.username"
-                :username="framePlayers.bottom.username"
-                class="player-name"
-                >{{ framePlayers.bottom.name }}</PlayerLink
-              >
-              <span v-else class="player-name">{{ framePlayers.bottom.name }}</span>
-              <span v-if="framePlayers.bottom.material" class="material-diff"
-                >+{{ framePlayers.bottom.material }}</span
-              >
-            </template>
-          </PlayerLine>
+          <PlayerLine
+            :player="framePlayers.bottom"
+            :color="framePlayers.bottomColor"
+            :material-fen="frame.variant === 'crazyhouse' ? undefined : tvFen"
+          />
         </div>
         <MovePanel
           :moves="tvSan"
@@ -247,12 +229,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 </template>
 
 <style scoped>
-.material-diff {
-  margin-inline-start: 6px;
-  color: var(--ui-text-muted);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-}
 .watch-h2h {
   display: flex;
   flex-wrap: wrap;

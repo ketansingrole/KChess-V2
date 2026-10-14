@@ -72,6 +72,9 @@ struct Attempt {
     account: String,
     angle: String,
     mode: String,
+    /// Drawn without the account (practice when it lacks the puzzle permission): never reported.
+    #[serde(default)]
+    anonymous: bool,
 }
 
 /// What the class kept private: replies are matched against these counters.
@@ -164,8 +167,12 @@ fn initial_state() -> State {
     }
 }
 
+/// Rated results move the Lichess rating; practice ones are sent unrated, so that Lichess counts
+/// the puzzle as played and draws a new one next time.
 fn syncs_to_lichess(state: &State, selection: &Selection) -> bool {
-    selection.mode == "rated" && !state.is_retry && !selection.account.is_empty()
+    (selection.mode == "rated" || selection.mode == "practice")
+        && !state.is_retry
+        && !selection.account.is_empty()
 }
 
 /// The arguments of `puzzleNext`: the colour is left out when it is random.
@@ -211,6 +218,7 @@ impl Session {
             account: selection.account.clone(),
             angle: selection.angle.clone(),
             mode: selection.mode.clone(),
+            anonymous: false,
         });
         self.state.phase = "ready".into();
     }
@@ -313,6 +321,9 @@ impl Session {
                 if !is_reconnect(&value) {
                     let puzzle = value.get("puzzle").cloned().unwrap_or(Value::Null);
                     self.show(puzzle, &selection);
+                    if let Some(attempt) = self.internal.attempt.as_mut() {
+                        attempt.anonymous = true;
+                    }
                 }
             }
         }
@@ -339,7 +350,7 @@ impl Session {
         } else {
             self.state.session.failed += 1.0;
         }
-        if !syncs_to_lichess(&self.state, selection) {
+        if !syncs_to_lichess(&self.state, selection) || started.anonymous {
             return;
         }
         let puzzle_id = puzzle.get("id").cloned().unwrap_or(Value::Null);
@@ -350,7 +361,7 @@ impl Session {
             args.insert("id".into(), id.clone());
         }
         args.insert("win".into(), json!(win));
-        args.insert("rated".into(), json!(true));
+        args.insert("rated".into(), json!(started.mode == "rated"));
         let mut token = resume("solve", self.internal.load_gen, selection);
         token.version = self.internal.session_version;
         token.key = started.key;
@@ -392,8 +403,12 @@ impl Session {
                 return;
             }
         };
+        let rated = token.selection.mode == "rated";
         if is_reconnect(&result) {
-            self.state.phase = "reconnect".into();
+            // Practice goes on without the account; only rated puzzles need it back.
+            if rated {
+                self.state.phase = "reconnect".into();
+            }
             self.state.last_report = Some(Report {
                 win,
                 rating_diff: None,
@@ -414,7 +429,8 @@ impl Session {
             .as_ref()
             .and_then(|puzzle| puzzle.get("id"))
             .is_some_and(|id| *id == token.puzzle_id);
-        if same_puzzle {
+        // A practice result changes nothing to show; only a rated one has a rating change.
+        if same_puzzle && rated {
             self.state.last_report = Some(Report {
                 win,
                 rating_diff,

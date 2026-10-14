@@ -135,8 +135,8 @@ function puzzles(overrides = {}) {
   })
   return { state, selection, api, trainer }
 }
-it('reports a rated attempt once and keeps retries/practice local', async () => {
-  const { state, selection, api, trainer } = puzzles()
+it('reports a rated attempt once and keeps retries local', async () => {
+  const { state, api, trainer } = puzzles()
   await trainer.loadNext()
   await Promise.all([trainer.report(true), trainer.report(false)])
   expect(api.puzzleSolve).toHaveBeenCalledOnce()
@@ -144,11 +144,43 @@ it('reports a rated attempt once and keeps retries/practice local', async () => 
   trainer.retry(puzzle)
   await trainer.report(true)
   expect(api.puzzleSolve).toHaveBeenCalledOnce()
+})
+// Lichess draws the account's next unplayed puzzle: an unreported one came back on every Next.
+it('sends practice results unrated so the next draw is a new puzzle', async () => {
+  const { state, selection, api, trainer } = puzzles({
+    puzzleSolve: vi.fn(async (): Promise<PuzzleSolveResult> => ({})),
+  })
   selection.mode = 'practice'
   await trainer.loadNext()
   await trainer.report(false)
   expect(api.puzzleSolve).toHaveBeenCalledOnce()
-  expect(state.session.failed).toBe(1)
+  expect(api.puzzleSolve).toHaveBeenCalledWith(
+    expect.objectContaining({ account: 'Alice', id: 'p1', win: false, rated: false }),
+  )
+  expect(state.session).toEqual({ solved: 0, failed: 1, ratingChange: 0 })
+  expect(state.lastReport).toBeNull()
+})
+it('keeps practice going when Lichess rejects an unrated result', async () => {
+  const { state, selection, trainer } = puzzles({
+    puzzleSolve: vi.fn(async () => ({ needsReconnect: true }) as never),
+  })
+  selection.mode = 'practice'
+  await trainer.loadNext()
+  await trainer.report(true)
+  expect(state.phase).toBe('ready')
+  expect(state.lastReport?.failed).toBeTruthy()
+})
+it('does not report a practice puzzle drawn without the account', async () => {
+  let draws = 0
+  const { selection, api, trainer } = puzzles({
+    puzzleNext: vi.fn(async () =>
+      draws++ === 0 ? { needsReconnect: true } : { puzzle, glicko: null },
+    ),
+  })
+  selection.mode = 'practice'
+  await trainer.loadNext()
+  await trainer.report(true)
+  expect(api.puzzleSolve).not.toHaveBeenCalled()
 })
 it('ignores a late rated result after an account/session changes', async () => {
   const pending = deferred<PuzzleSolveResult>()

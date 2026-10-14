@@ -5,10 +5,10 @@ import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
 import { pickConnectedAccount } from '@kchess/rules/accounts'
 import { nearestEngineLevel } from '@kchess/rules/engineLevels'
 import { canPlayOnline } from '@kchess/rules/timeControl'
-import { boardThemes } from '../utils/boards'
 import { allThemes, applyTheme, findTheme, oauthPageLook } from '../utils/themes'
 import { fen, navigatePly } from '@kchess/rules/chess'
 import { configure } from '../utils/sound'
+import { redundantGameAlert } from '../utils/gameAlerts'
 import { formatGameDate } from '../utils/games'
 import { useOnlineGame } from './kchess/onlineGame'
 import { useComputerGame } from './kchess/computerGame'
@@ -265,6 +265,8 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   /** Ask the main process for a desktop notification; it applies the Settings and window-state rules. */
   function notifyDesktop(kind: NotificationKind, title: string, body: string): void {
+    const watching = document.visibilityState === 'visible' && document.hasFocus()
+    if (redundantGameAlert(kind, page.value, watching)) return
     void window.kchess.notify({ kind, title, body }).catch((error: unknown) => {
       console.warn('[kchess] desktop notification failed:', error)
     })
@@ -679,10 +681,18 @@ export const useKChessStore = defineStore('kchess', () => {
   function toggleSetting(key: 'zenMode' | 'blindfold' | 'cloudEval' | 'showOpeningName'): void {
     if (settings.value) settings.value = { ...settings.value, [key]: !settings.value[key] }
   }
-  /** Zen mode applies on the pages where games are played. */
-  const zenActive = computed(
-    () => Boolean(settings.value?.zenMode) && ['online', 'computer', 'local'].includes(page.value),
-  )
+  /**
+   * Pages showing a game board with its zen toggle (`useZenSurface`); zen mode applies only then.
+   * Each page holds its own token: during navigation the next page can register before the last
+   * one leaves.
+   */
+  const zenSurfaces = ref(new Set<symbol>())
+  function setZenSurface(token: symbol, shown: boolean): void {
+    if (shown) zenSurfaces.value.add(token)
+    else zenSurfaces.value.delete(token)
+  }
+  const zenSurface = computed(() => zenSurfaces.value.size > 0)
+  const zenActive = computed(() => Boolean(settings.value?.zenMode) && zenSurface.value)
   function keydown(event: KeyboardEvent): void {
     if ((event.metaKey || event.ctrlKey) && event.key === ',') {
       event.preventDefault()
@@ -709,13 +719,13 @@ export const useKChessStore = defineStore('kchess', () => {
       event.target instanceof HTMLTextAreaElement
     )
       return
-    // Z toggles zen mode on game pages, as on Lichess.
+    // Z toggles zen mode beside a game board, as on Lichess.
     if (
       event.key === 'z' &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.altKey &&
-      ['online', 'computer', 'local'].includes(page.value)
+      zenSurface.value
     ) {
       event.preventDefault()
       toggleSetting('zenMode')
@@ -827,6 +837,7 @@ export const useKChessStore = defineStore('kchess', () => {
     prepareForGame,
     toggleSetting,
     zenActive,
+    setZenSurface,
     page,
     runAction: run,
     notifyInfo: info,
@@ -921,7 +932,6 @@ export const useKChessStore = defineStore('kchess', () => {
     visibleGames,
     historyPageCount,
     save,
-    boardThemes,
     themeList,
     themeProblems,
     themesDir,

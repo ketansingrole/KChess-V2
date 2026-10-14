@@ -180,6 +180,7 @@ function randomSettings(random: Random): Record<string, unknown> {
     showOpeningName: random() < 0.5,
     swipeNavigation: random() < 0.5,
     swipeIndicator: random() < 0.5,
+    puzzleAutoNext: random() < 0.5,
   }
 }
 

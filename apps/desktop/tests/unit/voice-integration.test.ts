@@ -4,6 +4,7 @@ import { defineComponent } from 'vue'
 import Computer from '../../app/pages/computer.vue'
 import Local from '../../app/pages/local.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
+import VoiceMoveInput from '../../app/components/VoiceMoveInput.vue'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useLocalGameStore } from '../../app/stores/local'
 import { desktop, deferred, componentStubs } from './fixtures'
@@ -58,7 +59,7 @@ describe('voice feature integration', () => {
       white: { minutes: 5, increment: 3 },
       black: { minutes: 5, increment: 3 },
     })
-    const wrapper = mount(Local, { global: { stubs } })
+    const wrapper = mount(Local, { global: { stubs, components: { VoiceMoveInput } } })
     await flushPromises()
     const voice = wrapper.findComponent(VoiceStub)
     voice.vm.$emit('update:enabled', true)

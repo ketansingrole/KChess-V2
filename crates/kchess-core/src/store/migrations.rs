@@ -235,6 +235,7 @@ pub const MIGRATIONS: &[&str] = &[
     textUnits INTEGER NOT NULL
   );
   CREATE INDEX idx_studies_position ON studies(position);"#,
+    "ALTER TABLE settings ADD COLUMN puzzleAutoNext INTEGER NOT NULL DEFAULT 1;",
 ];
 
 fn storage_error(cause: rusqlite::Error) -> CoreError {

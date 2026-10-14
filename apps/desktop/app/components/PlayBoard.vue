@@ -44,13 +44,21 @@ const emit = defineEmits<{ move: [uci: string] }>()
 /** The typed-move box sits in the bottom player's line rather than on a row of its own. */
 const entry = useId()
 const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' : 'white'))
+/** Hidden while blindfolded: counting the pieces would give the position away. */
+const materialFen = computed(() => (props.blindfold ? undefined : props.fen))
 </script>
 
 <template>
   <div class="board-stack">
-    <PlayerLine :player="top" :color="topColor" :active="live && turnColor === topColor">
+    <PlayerLine
+      :player="top"
+      :color="topColor"
+      :active="live && turnColor === topColor"
+      :material-fen="materialFen"
+    >
       <template v-if="$slots['top-name']" #name><slot name="top-name" /></template>
       <template v-if="$slots['top-aside']" #aside><slot name="top-aside" /></template>
+      <template v-if="$slots['top-presence']" #presence><slot name="top-presence" /></template>
     </PlayerLine>
     <div class="board-shell">
       <ChessBoard
@@ -77,9 +85,17 @@ const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' 
         @move="emit('move', $event)"
       />
     </div>
-    <PlayerLine :player="bottom" :color="orientation" :active="live && turnColor === orientation">
+    <PlayerLine
+      :player="bottom"
+      :color="orientation"
+      :active="live && turnColor === orientation"
+      :material-fen="materialFen"
+    >
       <template v-if="$slots['bottom-name']" #name><slot name="bottom-name" /></template>
       <template v-if="$slots['bottom-aside']" #aside><slot name="bottom-aside" /></template>
+      <template v-if="$slots['bottom-presence']" #presence
+        ><slot name="bottom-presence"
+      /></template>
       <template #middle><div :data-move-entry="entry" class="move-entry" /></template>
     </PlayerLine>
   </div>

@@ -12,7 +12,11 @@ useIntervalFn(() => {
 }, 60_000)
 const due = computed(() => practice.items.filter((item) => item.dueAt <= now.value))
 const done = ref(false)
-const board = ref<{ hint: () => void; showSolution: () => Promise<void> } | null>(null)
+const board = ref<{
+  hint: () => void
+  hinted: boolean
+  showSolution: () => Promise<void>
+} | null>(null)
 function next(all = false): void {
   const item = [...(all ? practice.items : due.value)]
     .sort((a, b) => a.dueAt - b.dueAt)
@@ -66,7 +70,11 @@ function next(all = false): void {
       @done="done = true"
     />
     <div v-if="current && !done" class="mt-3 flex gap-2">
-      <UButton variant="outline" color="neutral" @click="board?.hint()"
+      <UButton
+        :variant="board?.hinted ? 'soft' : 'outline'"
+        :color="board?.hinted ? 'primary' : 'neutral'"
+        :aria-pressed="board?.hinted ?? false"
+        @click="board?.hint()"
         >Hint: piece to move</UButton
       >
       <UButton variant="ghost" color="neutral" @click="board?.showSolution()"

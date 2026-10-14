@@ -9,7 +9,29 @@ const controlSizes = {
 
 export default defineAppConfig({
   ui: {
-    button: { variants: { size: controlSizes } },
+    button: {
+      variants: { size: controlSizes },
+      // Cards are painted `bg-elevated`, which is also Nuxt UI's neutral hover and soft fill, so
+      // those buttons gave no feedback on a card. One step brighter reads on every surface.
+      compoundVariants: [
+        {
+          color: 'neutral',
+          variant: 'ghost',
+          class: 'hover:bg-accented active:bg-accented',
+        },
+        {
+          color: 'neutral',
+          variant: 'outline',
+          class: 'hover:bg-accented active:bg-accented',
+        },
+        {
+          color: 'neutral',
+          variant: 'soft',
+          class:
+            'bg-accented/50 hover:bg-accented active:bg-accented disabled:bg-accented/50 aria-disabled:bg-accented/50',
+        },
+      ],
+    },
     input: { variants: { size: controlSizes } },
     select: {
       variants: { size: controlSizes },

@@ -21,5 +21,6 @@
   "CREATE TABLE game_reviews (\n    gameId TEXT NOT NULL,\n    reviewKey TEXT NOT NULL REFERENCES reviews(key) ON DELETE CASCADE,\n    PRIMARY KEY (gameId, reviewKey)\n  );\n  CREATE INDEX idx_game_reviews_key ON game_reviews(reviewKey);\n  INSERT INTO game_reviews SELECT gameId, key FROM reviews WHERE gameId IS NOT NULL;",
   "ALTER TABLE settings ADD COLUMN swipeNavigation INTEGER NOT NULL DEFAULT 1;\n  ALTER TABLE settings ADD COLUMN swipeIndicator INTEGER NOT NULL DEFAULT 1;",
   "CREATE TABLE documents (\n    key TEXT PRIMARY KEY,\n    body TEXT NOT NULL,\n    updatedAt INTEGER NOT NULL\n  );\n  CREATE TABLE archived_games (\n    id TEXT PRIMARY KEY,\n    body TEXT NOT NULL,\n    seq INTEGER NOT NULL\n  );\n  CREATE INDEX idx_archived_games_seq ON archived_games(seq);",
-  "CREATE TABLE studies (\n    id TEXT PRIMARY KEY,\n    body TEXT NOT NULL,\n    position INTEGER NOT NULL,\n    textUnits INTEGER NOT NULL\n  );\n  CREATE INDEX idx_studies_position ON studies(position);"
+  "CREATE TABLE studies (\n    id TEXT PRIMARY KEY,\n    body TEXT NOT NULL,\n    position INTEGER NOT NULL,\n    textUnits INTEGER NOT NULL\n  );\n  CREATE INDEX idx_studies_position ON studies(position);",
+  "ALTER TABLE settings ADD COLUMN puzzleAutoNext INTEGER NOT NULL DEFAULT 1;"
 ]

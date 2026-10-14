@@ -48,8 +48,11 @@ const arenas = computed(() =>
 </script>
 
 <template>
-  <div>
+  <div :class="{ 'arena-schedule-page': !event }">
     <PageHeader title="Tournaments">
+      <template v-if="!event" #lead
+        ><div data-tournaments-lead class="arena-schedule-lead"
+      /></template>
       <UTabs
         v-if="!event"
         v-model="filter"
@@ -99,16 +102,16 @@ const arenas = computed(() =>
       <p v-if="tournaments.error" class="text-error text-sm mb-4" role="alert">
         {{ tournaments.error }}
       </p>
-      <section class="card mb-5" aria-labelledby="arena-schedule-title">
-        <div class="card-header">
-          <h2 id="arena-schedule-title" class="section-title">Arenas</h2>
-        </div>
+      <!-- The schedule's own box is the frame; a card around it only added a second one. -->
+      <section class="arena-schedule" aria-labelledby="arena-schedule-title">
+        <h2 id="arena-schedule-title" class="sr-only">Arenas</h2>
         <p v-if="!tournaments.list" class="muted text-sm">Loading…</p>
         <p v-else-if="!arenas.length" class="muted text-sm">No arenas to show right now.</p>
         <TournamentTimeline
           v-else
           :arenas="arenas"
           :is-joined="(id: string) => tournaments.isJoined('arena', id)"
+          legend-to="[data-tournaments-lead]"
           @select="(id: string) => openEvent('arena', id)"
         />
       </section>

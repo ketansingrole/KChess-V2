@@ -5,7 +5,8 @@ import { timeAgo } from '../utils/format'
 const app = useKChessStore()
 const props = defineProps<{
   name: string
-  updatedAt: number
+  /** When the study was last edited; the card omits the date when it is unknown. */
+  updatedAt?: number
   pgn?: string
   chapterCount?: number
   location: string
@@ -51,7 +52,7 @@ const emit = defineEmits<{ open: [] }>()
               .join(' · ')
           }}
         </p>
-        <p class="study-edited text-xs muted">Edited {{ timeAgo(updatedAt) }}</p>
+        <p v-if="updatedAt" class="study-edited text-xs muted">Edited {{ timeAgo(updatedAt) }}</p>
       </div>
       <div class="study-actions"><slot /></div>
     </div>

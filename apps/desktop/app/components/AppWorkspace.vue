@@ -137,8 +137,11 @@ function toggleMaximize(event?: MouseEvent): void {
       <USidebar
         v-model:open="sidebarOpen"
         collapsible="icon"
-        rail
-        :menu="{ ui: { content: 'max-w-[85vw] sm:max-w-xs' } }"
+        :menu="{
+          // The narrow-window drawer is teleported out of .app-shell: carry the platform class so
+          // its sidebar toggle also clears the macOS traffic lights.
+          ui: { content: ['max-w-[85vw] sm:max-w-xs', isMac && 'is-mac'] },
+        }"
         :ui="{
           header: 'h-(--topbar-height) min-h-(--topbar-height)',
           container: 'kchess-sidebar-container',
@@ -286,16 +289,6 @@ function toggleMaximize(event?: MouseEvent): void {
           </div>
         </div>
       </main>
-      <UButton
-        v-if="zenActive"
-        class="zen-exit"
-        size="sm"
-        variant="soft"
-        color="neutral"
-        icon="i-lucide-minimize"
-        @click="store.toggleSetting('zenMode')"
-        >Leave zen mode</UButton
-      >
       <ConfirmDialog
         v-model:open="confirmOpen"
         :title="asked?.title ?? ''"

@@ -12,7 +12,15 @@ onMounted(() => void puzzles.loadDaily())
 <template>
   <div class="play-layout puzzle-wide">
     <div>
-      <PuzzleBoard v-if="daily" ref="board" :key="daily.id" :puzzle="daily" :flipped="flipped" />
+      <PuzzleBoard
+        v-if="daily"
+        ref="board"
+        :key="daily.id"
+        :puzzle="daily"
+        :flipped="flipped"
+        material
+      />
+      <PuzzleVoice v-if="daily" :board="board" :context-key="daily.id" />
       <div v-else class="card daily-placeholder">
         <UEmpty
           v-if="dailyError"
@@ -51,6 +59,7 @@ onMounted(() => void puzzles.loadDaily())
           :feedback="board?.feedback ?? ''"
           :waiting="board?.waiting ?? false"
           :mistakes="board?.mistakes ?? 0"
+          :hinted="board?.hinted ?? false"
           @hint="board?.hint()"
           @solution="board?.showSolution()"
         >

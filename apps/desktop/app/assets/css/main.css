@@ -54,7 +54,13 @@ button {
 button:disabled {
   cursor: not-allowed;
 }
-:focus-visible {
+/*
+ * The keyboard focus ring. It is unlayered, so it outranks Tailwind's utilities: leave out the
+ * controls that opt out of an outline (Nuxt UI's borderless search fields in menus and the command
+ * palette, list items), whose surroundings already show focus. Forcing it on them drew a ring the
+ * menu clipped to a stray line under the field.
+ */
+:focus-visible:not(.outline-none, .focus\:outline-none, .focus-visible\:outline-none) {
   outline: 2px solid var(--ui-primary);
   outline-offset: 2px;
 }
@@ -288,6 +294,31 @@ button:disabled {
   flex-wrap: wrap;
   gap: 12px 16px;
   margin-bottom: 20px;
+}
+.page-lead {
+  display: flex;
+  flex: 1 1 20rem;
+  align-self: center;
+  min-width: 0;
+}
+/* The arena schedule (Tournaments) fills the window below the header and scrolls inside itself,
+   rather than a fixed-height box that left space below it or cut off its last row. */
+.page:has(.arena-schedule-page) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.arena-schedule-page,
+.arena-schedule {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.arena-schedule-lead {
+  display: flex;
+  flex: 1;
+  min-width: 0;
 }
 .page-actions {
   display: flex;
@@ -529,8 +560,8 @@ button:disabled {
 /* Puzzle train/daily stretch to the page width so their edges match the tab bar. */
 @container page (min-width: 901px) {
   .play-layout.puzzle-wide {
-    /* No visible header or player strips above the grid here. */
-    --board-chrome: 220px;
+    /* No visible header or player strips; a slim material row sits above the board. */
+    --board-chrome: 244px;
     --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 1200px);
     grid-template-columns: var(--board-size) minmax(320px, 1fr);
     justify-content: stretch;
@@ -1067,6 +1098,30 @@ coords .coord-dark {
 .signal i.on {
   background: var(--ui-win);
 }
+/* Material difference beside a player: won pieces grouped by kind, then the lead in pawns. */
+.material {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-text-toned);
+  font-size: 12px;
+  font-weight: 600;
+}
+.material-group {
+  display: inline-flex;
+}
+/* A silhouette in the text colour, legible on any theme and with any piece set. */
+.material-group i {
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--piece) center / contain no-repeat;
+}
+/* Pieces of one kind overlap like a small stack, as on Lichess. */
+.material-group i + i {
+  margin-inline-start: -5px;
+}
 .player-clock {
   min-width: 72px;
   padding: 4px 10px;
@@ -1345,131 +1400,117 @@ button.move-cell:hover {
 }
 
 /* ── Friends ───────────────────────────────────────────────────────────── */
+/* The follow form sits in the page header, beside Sync all. */
 .friends-add {
-  display: grid;
+  display: flex;
+  flex: 1;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  min-width: 0;
 }
-.friends-empty {
-  justify-items: center;
-  gap: 4px;
-  padding-block: 28px 32px;
-}
-.friends-empty form {
-  justify-content: center;
-  width: min(100%, 560px);
+.friends-add-input {
+  flex: 1;
+  min-width: 10rem;
+  max-width: 22rem;
 }
 .friends-summary {
+  margin: 0 0 10px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+/* One framed list, one row per player: columns are labelled once, not in every row. */
+.friends-frame {
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+}
+.friends-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.friends-table thead th {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+.friends-table td,
+.friends-table tbody th {
+  padding: 10px 12px;
+  vertical-align: middle;
+  text-align: left;
+  font-weight: 400;
+}
+.friend-row + .friend-row {
+  border-top: 1px solid var(--ui-border);
+}
+.friend-row:hover {
+  background: var(--ui-bg-elevated);
+}
+.friends-table .friend-num {
+  text-align: right;
+  white-space: nowrap;
+}
+.friend-player {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 32px;
-  margin-bottom: 16px;
-  padding: 0 4px;
+  gap: 10px;
+  min-width: 13rem;
 }
-.friends-summary > div {
-  display: grid;
-  gap: 2px;
-}
-.friends-summary strong {
-  font-size: 18px;
-}
-.friends-loading {
-  margin-left: auto;
-  display: inline-flex;
+.friend-name {
+  display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  font-weight: 600;
 }
-.friends-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
-  gap: 16px;
-}
-.friend-card {
-  display: grid;
-  gap: 14px;
-  align-content: start;
-}
-.friend-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.friend-state,
+.friend-sub {
+  color: var(--ui-text-muted);
+  font-size: 12px;
 }
 .friend-state {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--ui-text-muted);
-}
-.friend-state .presence-dot {
-  background: var(--ui-text-dimmed);
-}
-.friend-state.online .presence-dot {
-  background: var(--ui-win);
+  gap: 5px;
+  white-space: nowrap;
 }
 .friend-state.online {
   color: var(--ui-win);
 }
-.friend-ratings {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
-  gap: 8px;
+.friend-state.online .presence-dot {
+  background: var(--ui-win);
 }
-.friend-rating {
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+.friends-table .col-synced {
+  white-space: nowrap;
 }
-.friend-facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px 16px;
-  margin: 0;
-  font-size: 13px;
+.friend-actions {
+  white-space: nowrap;
+  text-align: right;
 }
-.friend-facts dt {
-  font-size: 11px;
-  color: var(--ui-text-muted);
+.friends-table td.friend-actions {
+  text-align: right;
 }
-.friend-facts dd {
-  margin: 0;
-  font-weight: 600;
+/* Narrower windows drop the least needed columns first. */
+@container page (max-width: 860px) {
+  .friends-table .col-synced {
+    display: none;
+  }
 }
-.friend-data {
-  display: grid;
-  gap: 6px;
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  font-size: 12px;
+@container page (max-width: 700px) {
+  .friends-table .col-minor,
+  .friends-table .col-versus {
+    display: none;
+  }
 }
-.friend-data-head,
-.friend-data-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-.friend-data-line span {
-  color: var(--ui-text-muted);
-}
-.friend-data-kinds {
-  list-style: none;
-  margin: 2px 0 0;
-  padding: 6px 0 0;
-  border-top: 1px dashed var(--ui-border);
-  display: grid;
-  gap: 2px;
-  color: var(--ui-text-muted);
-}
-.friend-data-kinds li {
-  display: flex;
-  justify-content: space-between;
+@container page (max-width: 520px) {
+  .friends-table .col-rating {
+    display: none;
+  }
 }
 /* Import-from-Lichess dialog. */
 .import-body {
@@ -1529,12 +1570,6 @@ button.move-cell:hover {
 }
 .import-ratings {
   white-space: nowrap;
-}
-.friend-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
 }
 /* A thin bar showing a share of something (storage, downloads). */
 .meter {
@@ -1712,15 +1747,30 @@ button.move-cell:hover {
   text-underline-offset: 2px;
 }
 
-/* ── Connection panel (live game) ──────────────────────────────────────── */
+/* ── Connection details (live game) ──────────────────────────────────────── */
 .connection {
   display: grid;
   gap: 8px;
+  width: 18rem;
   padding: 12px;
-  border-radius: 10px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
   font-size: 12px;
+}
+/* A player's bars open their connection details; the button keeps the badge's look. */
+button.presence {
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font-family: inherit;
+  cursor: default;
+}
+button.presence:hover,
+button.presence:focus-visible {
+  background: var(--ui-bg-elevated);
+}
+.connection-name {
+  font-size: 13px;
 }
 .connection-head {
   display: flex;
@@ -1871,6 +1921,13 @@ button.move-cell:hover {
     padding-inline: 12px;
   }
 }
+/* Below Tailwind's lg the sidebar is a drawer and the topbar starts at the window edge: on macOS
+   its show-sidebar button keeps the sidebar toggle's x84, clear of the traffic lights. */
+@media (max-width: 1023.98px) {
+  .is-mac .topbar {
+    padding-left: 84px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
@@ -1923,6 +1980,23 @@ button.move-cell:hover {
 }
 .puzzle-board.wrong {
   outline-color: color-mix(in srgb, var(--ui-loss) 55%, transparent);
+}
+/* The puzzle hint ring (PuzzleBoard) settles onto its square so the eye catches it. */
+.cg-hint {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cg-hint-in 0.35s ease-out;
+}
+@keyframes cg-hint-in {
+  from {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cg-hint {
+    animation: none;
+  }
 }
 .session-line {
   display: flex;
@@ -2077,12 +2151,6 @@ button.move-cell:hover {
 .app-shell.zen .page-header,
 .app-shell.zen .zen-hide {
   display: none !important;
-}
-.zen-exit {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 40;
 }
 
 /* ── Two-finger swipe feedback ───────────────────────────────────────────
@@ -2275,12 +2343,15 @@ button.move-cell:hover {
 .quickpick:not(.open) .quickpick-panel:hover {
   background: var(--ui-bg-elevated);
 }
+/* Open, the palette is plainly where focus is: it needs separation from the page, not an accent
+   frame. A neutral edge and a shadow raise it; on dark backgrounds, where shadows barely show,
+   the elevated surface does. */
 .quickpick.open .quickpick-panel {
   max-height: min(560px, calc(100dvh - 16px));
-  border-color: var(--ui-primary);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--ui-primary) 20%, transparent),
-    0 16px 36px -10px rgb(0 0 0 / 0.3);
+  box-shadow: 0 18px 40px -12px rgb(0 0 0 / 0.35);
+}
+.dark .quickpick.open .quickpick-panel {
+  background: var(--ui-bg-elevated);
 }
 .quickpick-panel > .kchess-search-palette {
   flex: 1;
@@ -2293,10 +2364,6 @@ button.move-cell:hover {
 }
 .quickpick.open .kchess-quickpick-input > input {
   cursor: text;
-}
-/* The panel's border is the focus indicator; the global outline would be clipped by it. */
-.kchess-quickpick-input > input:focus-visible {
-  outline: none;
 }
 .quickpick-results {
   border-top: 1px solid var(--ui-border);

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
+import { useZenSurface } from '../composables/useZenSurface'
 import { formatBytes } from '../utils/format'
 import { canDirectChallenge, canPlayOnline, perfFor, totalSeconds } from '@kchess/rules/timeControl'
 import { CORRESPONDENCE_DAYS } from '@kchess/contracts/types'
@@ -63,6 +64,13 @@ const {
   onlineId,
   zenActive,
 } = storeToRefs(store)
+// The game view (not the lobby or a seek) has the board and its zen toggle.
+useZenSurface(
+  () =>
+    data.value.accounts.some((a) => a.connected) &&
+    onlinePhase.value !== 'idle' &&
+    onlinePhase.value !== 'seeking',
+)
 const usage = useUsageStore()
 /** Bytes this account has downloaded for playing and status checks. */
 const playDownloaded = computed(() => {
@@ -171,6 +179,8 @@ const canTakeback = computed(() => playing.value && onlineHistory.value.length >
 const confirmResign = ref(false)
 const opponentColor = computed(() => (onlineColor.value === 'white' ? 'black' : 'white'))
 const hasClock = computed(() => Boolean(onlineClockConfig.value) || onlineCorrespondence.value)
+/** The board puts your side at the bottom unless it is flipped. */
+const youAtBottom = computed(() => onlineOrientation.value === onlineColor.value)
 /** Players follow the board orientation, so flipping never mislabels a side. */
 const players = computed(() => {
   const opponent = {
@@ -189,9 +199,7 @@ const players = computed(() => {
     clock: hasClock.value ? clockText(onlineColor.value) : undefined,
     presence: onlinePresence.value.self,
   }
-  return onlineOrientation.value === onlineColor.value
-    ? { top: opponent, bottom: you }
-    : { top: you, bottom: opponent }
+  return youAtBottom.value ? { top: opponent, bottom: you } : { top: you, bottom: opponent }
 })
 const topPlayer = computed(() => players.value.top)
 const bottomPlayer = computed(() => players.value.bottom)
@@ -546,7 +554,40 @@ function backToTournament(): void {
         :blindfold="settings.blindfold && playing"
         :variant="onlineSetup.variant"
         @move="onlineMove"
-      />
+      >
+        <template v-if="playing && !onlineCorrespondence" #top-presence>
+          <ConnectionPanel
+            v-if="!youAtBottom"
+            side="you"
+            :ping="pingStats"
+            :move-ack-ms="moveAckMs"
+            :downloaded="playDownloaded"
+            :interval-seconds="presenceIntervalSeconds"
+          />
+          <ConnectionPanel
+            v-else
+            side="opponent"
+            :name="onlineOpponent"
+            :presence="onlinePresence.opponent"
+          />
+        </template>
+        <template v-if="playing && !onlineCorrespondence" #bottom-presence>
+          <ConnectionPanel
+            v-if="youAtBottom"
+            side="you"
+            :ping="pingStats"
+            :move-ack-ms="moveAckMs"
+            :downloaded="playDownloaded"
+            :interval-seconds="presenceIntervalSeconds"
+          />
+          <ConnectionPanel
+            v-else
+            side="opponent"
+            :name="onlineOpponent"
+            :presence="onlinePresence.opponent"
+          />
+        </template>
+      </PlayBoard>
       <MovePanel
         title="Live game"
         :moves="onlineHistory"
@@ -657,15 +698,6 @@ function backToTournament(): void {
               >Decline</UButton
             >
           </div>
-          <ConnectionPanel
-            v-if="playing && !onlineCorrespondence"
-            class="zen-hide"
-            :ping="pingStats"
-            :move-ack-ms="moveAckMs"
-            :opponent="onlinePresence.opponent"
-            :downloaded="playDownloaded"
-            :interval-seconds="presenceIntervalSeconds"
-          />
         </template>
         <template #bottom>
           <div class="panel-actions panel-divider pt-3.5">

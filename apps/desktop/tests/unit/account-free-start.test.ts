@@ -80,7 +80,9 @@ describe('account-free start', () => {
       expect(next).toHaveBeenCalledOnce()
       expect(local).not.toHaveBeenCalled()
       await puzzles.report(true)
-      expect(solve).not.toHaveBeenCalled()
+      // With an account, practice is sent unrated so Lichess moves on to a new puzzle.
+      if (connected) expect(solve).toHaveBeenCalledWith(expect.objectContaining({ rated: false }))
+      else expect(solve).not.toHaveBeenCalled()
     },
   )
 

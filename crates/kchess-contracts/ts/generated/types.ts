@@ -30,7 +30,7 @@ export const PUZZLE_DIFFICULTIES = ["easiest", "easier", "normal", "harder", "ha
 
 export const RUN_KINDS = ["storm", "streak", "rush", "coordinates", "squareColor", "knightPath", "endgame"] as const;
 
-export const VOICE_SOURCES = ["computer", "coordinates", "analysis", "editor", "local"] as const;
+export const VOICE_SOURCES = ["computer", "coordinates", "analysis", "editor", "local", "puzzles"] as const;
 
 export const VOICE_OUTCOMES = ["played", "pending", "confirmed", "picked", "cancelled", "replaced", "abandoned", "invalid", "unclear", "command", "correct", "wrong"] as const;
 
@@ -70,7 +70,7 @@ export type PuzzleDifficulty = "easiest" | "easier" | "normal" | "harder" | "har
 
 export type RunKind = "storm" | "streak" | "rush" | "coordinates" | "squareColor" | "knightPath" | "endgame";
 
-export type VoiceSource = "computer" | "coordinates" | "analysis" | "editor" | "local";
+export type VoiceSource = "computer" | "coordinates" | "analysis" | "editor" | "local" | "puzzles";
 
 export type VoiceOutcome = "played" | "pending" | "confirmed" | "picked" | "cancelled" | "replaced" | "abandoned" | "invalid" | "unclear" | "command" | "correct" | "wrong";
 
@@ -304,7 +304,11 @@ swipeNavigation: boolean,
 /**
  * Show an edge hint that follows the swipe.
  */
-swipeIndicator: boolean, };
+swipeIndicator: boolean, 
+/**
+ * Load the next training puzzle as soon as one is solved.
+ */
+puzzleAutoNext: boolean, };
 
 export type Settings = { enginePath: string, 
 /**
@@ -434,7 +438,11 @@ swipeNavigation: boolean,
 /**
  * Show an edge hint that follows the swipe.
  */
-swipeIndicator: boolean, };
+swipeIndicator: boolean, 
+/**
+ * Load the next training puzzle as soon as one is solved.
+ */
+puzzleAutoNext: boolean, };
 
 export type AppUpdateProgress = { percent: number, transferred: number, total: number, bytesPerSecond: number, };
 

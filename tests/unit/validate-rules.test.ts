@@ -288,6 +288,7 @@ describe('game options, themes and notifications', () => {
       showOpeningName: true,
       swipeNavigation: true,
       swipeIndicator: true,
+      puzzleAutoNext: true,
     }
     expect(assertSettings(settings)).toEqual(settings)
     expect(() => assertSettings({})).toThrow('Invalid settings.')

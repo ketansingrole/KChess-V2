@@ -163,3 +163,25 @@ it('downloads a cloud study as one offline study with all chapters', async () =>
   expect(library.items).toHaveLength(1)
   wrapper.unmount()
 })
+
+it('shows when a Lichess study was edited and omits the date when Lichess sends none', async () => {
+  const now = Date.now()
+  const warn = vi.spyOn(console, 'warn')
+  desktop({
+    lichessStudies: async () => [
+      { id: 'Study001', name: 'Dated study', updatedAt: now - 3 * 3_600_000 },
+      { id: 'Study002', name: 'Undated study', updatedAt: 0 },
+    ],
+  })
+  await useKChessStore().init()
+  const wrapper = mount(LichessStudies, {
+    global: { stubs: { ...componentStubs, ConfirmDialog: true, USelect: SelectStub } },
+  })
+  await flushPromises()
+  const [dated, undated] = wrapper.findAll('article.study-card')
+  expect(dated!.get('.study-edited').text()).toBe('Edited 3 h ago')
+  expect(undated!.find('.study-edited').exists()).toBe(false)
+  expect(undated!.text()).not.toContain('never')
+  expect(warn.mock.calls.flat().join('\n')).not.toContain('updatedAt')
+  wrapper.unmount()
+})

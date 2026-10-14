@@ -51,5 +51,6 @@ export const DEFAULT_SETTINGS: Settings = {
   "blindfold": false,
   "showOpeningName": true,
   "swipeNavigation": true,
-  "swipeIndicator": true
+  "swipeIndicator": true,
+  "puzzleAutoNext": true
 };

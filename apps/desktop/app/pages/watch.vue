@@ -68,6 +68,8 @@ watchValue(online, (connected) => {
 <template>
   <div :class="{ 'broadcast-page analysis-surface': broadcastGameOpen }">
     <PageHeader title="Watch">
+      <!-- An open tournament's toolbar (BroadcastPanel) sits here, beside the tabs. -->
+      <template #lead><div data-watch-lead class="watch-lead" /></template>
       <UTabs
         v-model="tab"
         :items="[
@@ -145,6 +147,11 @@ watchValue(online, (connected) => {
 </template>
 
 <style scoped>
+.watch-lead {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
 /* While a broadcast game is open the whole page, header tabs included, is as wide as the
    board and panel below it, so every right-hand control shares one edge. */
 .broadcast-page {

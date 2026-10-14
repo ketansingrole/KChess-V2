@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useOnline } from '@vueuse/core'
 import { themeItems } from '../utils/puzzleThemes'
 import type PuzzleBoard from './PuzzleBoard.vue'
@@ -70,6 +70,21 @@ const ratingText = computed(() => {
 function onOutcome(win: boolean): void {
   void puzzles.report(win)
 }
+
+/** A pause on the final position before the next puzzle replaces it. */
+const AUTO_NEXT_DELAY = 800
+let autoNext: ReturnType<typeof setTimeout> | undefined
+function onDone(): void {
+  clearTimeout(autoNext)
+  if (board.value?.status !== 'solved' || !kchess.settings?.puzzleAutoNext) return
+  const key = puzzleKey.value
+  autoNext = setTimeout(() => {
+    // Moving on by hand, or changing what to train, already replaced the puzzle.
+    if (puzzleKey.value === key && phase.value === 'ready') void puzzles.loadNext()
+  }, AUTO_NEXT_DELAY)
+}
+watch(puzzleKey, () => clearTimeout(autoNext))
+onBeforeUnmount(() => clearTimeout(autoNext))
 </script>
 
 <template>
@@ -82,7 +97,9 @@ function onOutcome(win: boolean): void {
         :puzzle="current"
         :initial-outcome="attemptOutcome"
         :flipped="flipped"
+        material
         @outcome="onOutcome"
+        @done="onDone"
       />
       <div v-else class="card puzzle-placeholder">
         <UEmpty
@@ -154,6 +171,7 @@ function onOutcome(win: boolean): void {
           <UIcon name="i-lucide-loader-circle" class="animate-spin" /> Finding a puzzle…
         </div>
       </div>
+      <PuzzleVoice :board="board" :context-key="String(puzzleKey)" />
     </div>
 
     <div class="card side-panel puzzle-panel">
@@ -235,6 +253,7 @@ function onOutcome(win: boolean): void {
           :feedback="board?.feedback ?? ''"
           :waiting="board?.waiting ?? false"
           :mistakes="board?.mistakes ?? 0"
+          :hinted="board?.hinted ?? false"
           @hint="board?.hint()"
           @solution="board?.showSolution()"
         >
@@ -255,15 +274,15 @@ function onOutcome(win: boolean): void {
             >
           </template>
         </PuzzleStatusPanel>
-        <p
-          v-if="ratingText"
-          class="section-hint"
-          :class="{ 'text-error': lastReport?.failed }"
-          role="status"
-        >
-          {{ ratingText }}
-        </p>
       </template>
+      <p
+        v-if="current && phase === 'ready' && ratingText"
+        class="section-hint"
+        :class="{ 'text-error': lastReport?.failed }"
+        role="status"
+      >
+        {{ ratingText }}
+      </p>
 
       <div class="panel-divider" />
       <div class="session-line tabular" role="status">

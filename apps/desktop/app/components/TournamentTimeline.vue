@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useElementSize, useIntervalFn } from '@vueuse/core'
 import LichessIcon from './LichessIcon.vue'
 import type { TournamentSummary } from '@kchess/contracts/types'
 
@@ -9,11 +9,16 @@ const props = defineProps<{
   arenas: TournamentSummary[]
   selectedId?: string
   isJoined: (id: string) => boolean
+  /** Where to show the colour legend instead of above the schedule (a selector). */
+  legendTo?: string
 }>()
 const emit = defineEmits<{ select: [id: string] }>()
 
 const MINUTE = 60_000
-const PX_PER_MINUTE = 9
+/** About this much of the schedule fits across the box, so the scale follows the window. */
+const VISIBLE_SPAN = 3 * 60
+const MIN_PX_PER_MINUTE = 9
+const MAX_PX_PER_MINUTE = 14
 const BEFORE_NOW = 60 * MINUTE
 const MIN_AHEAD = 3 * 60 * MINUTE
 const MAX_AHEAD = 8 * 60 * MINUTE
@@ -63,7 +68,12 @@ const range = computed(() => {
 })
 // Match Lichess's schedule: second-level differences do not shift bars or split lanes.
 const minuteOf = (time: number) => Math.floor(time / MINUTE) * MINUTE
-const x = (time: number) => ((minuteOf(time) - range.value.start) / MINUTE) * PX_PER_MINUTE
+const scroller = ref<HTMLElement | null>(null)
+const { width: boxWidth } = useElementSize(scroller)
+const pxPerMinute = computed(() =>
+  Math.min(MAX_PX_PER_MINUTE, Math.max(MIN_PX_PER_MINUTE, boxWidth.value / VISIBLE_SPAN)),
+)
+const x = (time: number) => ((minuteOf(time) - range.value.start) / MINUTE) * pxPerMinute.value
 const width = computed(() => x(range.value.end))
 
 /**
@@ -127,24 +137,31 @@ function describe(t: TournamentSummary): string {
   return `${t.name}, ${control(t)} ${t.rated ? 'rated' : 'casual'}, ${t.nbPlayers} players, ${state}${t.playable ? '' : ', watch only in KChess'}`
 }
 
-const scroller = ref<HTMLElement | null>(null)
 async function scrollToNow(): Promise<void> {
   await nextTick()
   const el = scroller.value
-  if (el) el.scrollLeft = Math.max(0, x(now.value) - 30 * PX_PER_MINUTE)
+  if (el) el.scrollLeft = Math.max(0, x(now.value) - 30 * pxPerMinute.value)
 }
 onMounted(scrollToNow)
 watch(() => props.arenas.length > 0, scrollToNow)
+// The box is measured after mounting; place "now" again once the real scale is known.
+watch(
+  () => boxWidth.value > 0,
+  (measured) => measured && scrollToNow(),
+)
 defineExpose({ scrollToNow })
 </script>
 
 <template>
   <div class="timeline">
-    <div class="timeline-legend text-xs">
-      <span v-for="category in CATEGORIES" :key="category.key"
-        ><i class="timeline-swatch" :class="category.key" /> {{ category.label }}</span
-      >
-    </div>
+    <!-- Beside the page's controls when the page offers a place (`legendTo`), else above. -->
+    <Teleport defer :to="legendTo" :disabled="!legendTo">
+      <div class="timeline-legend text-xs">
+        <span v-for="category in CATEGORIES" :key="category.key"
+          ><i class="timeline-swatch" :class="category.key" /> {{ category.label }}</span
+        >
+      </div>
+    </Teleport>
     <div ref="scroller" class="timeline-scroll">
       <div class="timeline-canvas" :style="{ width: `${width}px` }">
         <div class="timeline-axis" aria-hidden="true">
@@ -178,23 +195,26 @@ defineExpose({ scrollToNow })
               :title="describe(t)"
               @click="emit('select', t.id)"
             >
-              <LichessIcon
-                :name="t.freq === 'shield' ? 'shield' : (t.perf ?? 'trophy')"
-                class="timeline-icon"
-              />
-              <span class="timeline-text">
-                <span class="timeline-name">{{ t.name }}</span>
-                <span class="timeline-sub">
-                  {{ control(t) }} {{ t.rated ? 'Rated' : 'Casual' }}
-                  <template v-if="t.nbPlayers">
-                    · <LichessIcon name="user" class="text-xs align-[-2px]" />
-                    {{ t.nbPlayers }}</template
-                  >
-                  <LichessIcon
-                    v-if="isJoined(t.id)"
-                    name="check"
-                    class="text-xs align-[-2px] ms-1"
-                  />
+              <!-- Pinned to the schedule's left edge, so a running arena keeps its name in view. -->
+              <span class="timeline-label">
+                <LichessIcon
+                  :name="t.freq === 'shield' ? 'shield' : (t.perf ?? 'trophy')"
+                  class="timeline-icon"
+                />
+                <span class="timeline-text">
+                  <span class="timeline-name">{{ t.name }}</span>
+                  <span class="timeline-sub">
+                    {{ control(t) }} {{ t.rated ? 'Rated' : 'Casual' }}
+                    <template v-if="t.nbPlayers">
+                      · <LichessIcon name="user" class="text-xs align-[-2px]" />
+                      {{ t.nbPlayers }}</template
+                    >
+                    <LichessIcon
+                      v-if="isJoined(t.id)"
+                      name="check"
+                      class="text-xs align-[-2px] ms-1"
+                    />
+                  </span>
                 </span>
               </span>
             </button>
@@ -207,15 +227,22 @@ defineExpose({ scrollToNow })
 </template>
 
 <style scoped>
-.timeline {
+.timeline,
+.timeline-legend {
   --tl-standard: #3a8a30;
   --tl-special: #1a6fb8;
   --tl-capped: #6152e0;
   --tl-variant: #7f5232;
-  display: grid;
+}
+/* A column that takes the height its parent gives it, scrolling the schedule inside. */
+.timeline {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  min-height: 0;
 }
 .timeline-legend {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 16px;
@@ -245,7 +272,7 @@ defineExpose({ scrollToNow })
   background: var(--tl-variant);
 }
 .timeline-scroll {
-  max-height: min(70dvh, 760px);
+  min-height: 200px;
   overflow: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--ui-border);
@@ -298,7 +325,8 @@ defineExpose({ scrollToNow })
   gap: 8px;
   min-width: 0;
   padding: 0 10px;
-  overflow: hidden;
+  /* Clips like hidden, but is no scroll container, so the label can stick to the schedule. */
+  overflow: clip;
   border-radius: 6px;
   color: #fff;
   text-align: left;
@@ -316,6 +344,15 @@ defineExpose({ scrollToNow })
   box-shadow:
     0 0 0 2px var(--ui-bg),
     0 0 0 4px var(--ui-text-highlighted);
+}
+.timeline-label {
+  position: sticky;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 .timeline-icon {
   flex: none;

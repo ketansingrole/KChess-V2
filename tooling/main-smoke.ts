@@ -192,6 +192,7 @@ const settings = {
   showOpeningName: true,
   swipeNavigation: true,
   swipeIndicator: true,
+  puzzleAutoNext: true,
 }
 assert('settings clamp volume', assertSettings(settings).soundVolume, 1)
 throws('settings reject bad review mode', () =>

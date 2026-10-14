@@ -84,6 +84,10 @@ export const gameplaySwitches = [
     title: 'Zen mode',
     hint: 'Board and game controls only · Z to toggle.',
   },
+  {
+    key: 'puzzleAutoNext',
+    title: 'Next puzzle after solving',
+  },
 ] as const
 
 export const onlineSwitches = [

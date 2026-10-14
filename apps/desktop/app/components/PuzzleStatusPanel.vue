@@ -13,6 +13,8 @@ const props = defineProps<{
   feedback: string
   waiting: boolean
   mistakes: number
+  /** The piece to move is lit up. */
+  hinted?: boolean
 }>()
 
 const emit = defineEmits<{ hint: []; solution: [] }>()
@@ -73,9 +75,10 @@ const banner = computed<{
   </div>
   <div class="panel-actions">
     <UButton
-      variant="outline"
-      color="neutral"
+      :variant="hinted ? 'soft' : 'outline'"
+      :color="hinted ? 'primary' : 'neutral'"
       icon="i-lucide-lightbulb"
+      :aria-pressed="hinted"
       :disabled="status !== 'playing'"
       @click="emit('hint')"
       >Hint</UButton
