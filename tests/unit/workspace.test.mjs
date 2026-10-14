@@ -95,3 +95,12 @@ it('creates the draft release only after the full check passes', () => {
   expect(workflow.jobs.release.needs).toEqual(expect.arrayContaining(['validate', 'package']))
   expect(workflow.jobs.validate.steps.some((step) => step.run === 'pnpm run check')).toBe(true)
 })
+
+it('ships installers built with the release profile as Cargo.toml defines it', () => {
+  const workflow = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'))
+  const env = { ...workflow.env, ...workflow.jobs.package.env }
+  // Faster profile overrides are for test builds only (CI and release validation).
+  for (const key of Object.keys(env)) expect(key).not.toMatch(/^CARGO_PROFILE_/)
+  for (const step of workflow.jobs.package.steps)
+    for (const key of Object.keys(step.env ?? {})) expect(key).not.toMatch(/^CARGO_PROFILE_/)
+})
