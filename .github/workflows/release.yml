@@ -36,13 +36,21 @@ jobs:
       - name: Verify the release commit belongs to main
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor HEAD origin/main
+      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
+      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The Rust coverage gate (`check:rust-coverage`) runs inside `pnpm run check`.
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: rustup component add llvm-tools-preview
       - run: pnpm run check
 
+  # Packaging runs alongside validation rather than after it; the draft release waits for both,
+  # so a failing check still stops it.
   package:
-    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +77,13 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
+      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm run build
       # afterPack rejects nested installers/apps, redundant dependencies, and oversized payloads.
       - name: Build installers and verify package contents
@@ -121,7 +136,7 @@ jobs:
           retention-days: 14
 
   release:
-    needs: package
+    needs: [validate, package]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

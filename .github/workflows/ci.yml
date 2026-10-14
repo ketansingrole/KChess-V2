@@ -25,6 +25,13 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
+      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The Rust coverage gate (`check:rust-coverage`) runs inside `pnpm run check`.
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: rustup component add llvm-tools-preview
@@ -58,6 +65,13 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
+      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fuzz
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm run build:native
       # Deep parity search beyond the recorded golden scale; golden pins apply
       # at SCALE=1 in `pnpm run check`, this job exercises the extra cases.
@@ -109,6 +123,13 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
+      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm run build
       - run: pnpm run test:puzzle-worker
       # Windows Server runners deny microphone access in privacy settings, which the app

@@ -100,11 +100,14 @@ failure; keep a concrete reproducer when a generated case finds a defect.
 ## Coverage gates
 
 - Rust: `pnpm run check:rust-coverage` runs `cargo llvm-cov --workspace --locked` (the same
-  tests as `check:rust`) and fails below the floors in `tooling/check-rust-coverage.mjs`, which
+  tests as `check:rust`, plus any doc-tests) and fails below the floors in
+  `tooling/check-rust-coverage.mjs`, which
   are rounded down from the measured totals and dated there. It runs inside `pnpm run check`
   (about a minute and a half locally) and in CI after `taiki-e/install-action@cargo-llvm-cov`
   and `llvm-tools-preview`. Its summary is kept in `test-results/rust-coverage/summary.json`
-  and uploaded with the CI measurements; nothing is sent elsewhere.
+  and uploaded with the CI measurements; nothing is sent elsewhere. In `pnpm run check` it is
+  the Rust test run (the `rust` stage there is `check:rust-lint`: format and clippy only);
+  `check:fast` keeps `check:rust`, tests included, as it skips coverage.
 - TypeScript: `vitest.config.ts` gates the TypeScript that remains (apps, bindings, hosts) at
   the floors dated there. Ratchet both gates up when the measured totals rise; lower them only
   with a measurement that explains the drop.

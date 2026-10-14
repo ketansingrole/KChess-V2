@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -34,9 +35,21 @@ export function belowFloors(measured, floors = FLOORS) {
     )
 }
 
-function runCargoLlvmCov(args) {
+/** Whether any Rust doc comment holds a code block: doc-tests, which llvm-cov does not run on stable. */
+export async function hasDocTests(directory = 'crates') {
+  const docBlock = /^\s*\/\/[/!].*```/m
+  for (const entry of await readdir(directory, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.rs')) continue
+    const path = join(entry.parentPath, entry.name)
+    if (path.includes('/target/') || path.includes('node_modules')) continue
+    if (docBlock.test(await readFile(path, 'utf8'))) return true
+  }
+  return false
+}
+
+function runCargo(args) {
   return new Promise((resolve) => {
-    const child = spawn('cargo', ['llvm-cov', ...args], { stdio: 'inherit' })
+    const child = spawn('cargo', args, { stdio: 'inherit' })
     child.once('error', (cause) => {
       console.error(cause)
       resolve(1)
@@ -44,6 +57,7 @@ function runCargoLlvmCov(args) {
     child.once('exit', (code) => resolve(code ?? 1))
   })
 }
+const runCargoLlvmCov = (args) => runCargo(['llvm-cov', ...args])
 
 export async function checkRustCoverage(outputDirectory = 'test-results/rust-coverage') {
   const available = await runCargoLlvmCov(['--version'])
@@ -66,6 +80,14 @@ export async function checkRustCoverage(outputDirectory = 'test-results/rust-cov
   if (code !== 0) {
     console.error('[kchess] The Rust tests failed under coverage.')
     return code
+  }
+  // This run is `check`'s Rust test run, so doc-tests (outside llvm-cov on stable) run here too.
+  if (await hasDocTests()) {
+    const docs = await runCargo(['test', '--doc', '--workspace', '--locked'])
+    if (docs !== 0) {
+      console.error('[kchess] The Rust doc-tests failed.')
+      return docs
+    }
   }
   const measured = percentages(JSON.parse(await readFile(output, 'utf8')))
   console.info(

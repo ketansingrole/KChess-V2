@@ -69,7 +69,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ['lint', ['run', 'lint']],
     ['notices', ['run', 'check:notices']],
     ['types', ['run', 'typecheck']],
-    ['rust', ['run', 'check:rust']],
+    // The coverage run is the Rust test run: `check:rust` would compile and run the same tests
+    // once more without instrumentation (`check:fast` still uses it, as it skips coverage).
+    ['rust', ['run', 'check:rust-lint']],
     ['rust-coverage', ['run', 'check:rust-coverage']],
     ['native', ['run', 'build:native']],
     ['contracts', ['run', 'check:contracts']],

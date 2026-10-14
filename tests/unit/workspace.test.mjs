@@ -70,3 +70,28 @@ it('installs dependencies before every release job that runs a command', () => {
     ).toBe(true)
   }
 })
+
+it('restores the Rust build cache before every workflow step that compiles Rust', () => {
+  const compiles = /^(?:pnpm run (?:check|build|build:native)|xvfb-run .*pnpm run build)$/
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    const workflow = parse(readFileSync(join(root, file), 'utf8'))
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      const steps = job.steps ?? []
+      const first = steps.findIndex((step) => compiles.test(String(step.run ?? '')))
+      if (first === -1) continue
+      const cache = steps
+        .slice(0, first)
+        .find((step) => String(step.uses ?? '').startsWith('Swatinem/rust-cache@'))
+      expect(cache, `${file} job ${name} must restore the Rust cache first`).toBeDefined()
+      // Saved from main only: the repository's cache quota is shared by every branch and tag.
+      expect(cache.with?.['save-if']).toBe("${{ github.ref == 'refs/heads/main' }}")
+    }
+  }
+})
+
+it('creates the draft release only after the full check passes', () => {
+  const workflow = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'))
+  // Packaging runs alongside validation; the release job must still wait for both.
+  expect(workflow.jobs.release.needs).toEqual(expect.arrayContaining(['validate', 'package']))
+  expect(workflow.jobs.validate.steps.some((step) => step.run === 'pnpm run check')).toBe(true)
+})
