@@ -1267,12 +1267,23 @@ test('summarises a reviewed game on the Insights page @seed:reviewed-game', asyn
   const stats = page.locator('.page-header .insight-stats')
   await expect(stats.getByText('Accuracy', { exact: true })).toBeVisible()
   await expect(stats.getByText(/1 reviewed game\b/)).toBeVisible()
-  // Every headline figure lines up, including Score, which has no detail line.
-  const tops = await stats
-    .locator('dd strong')
-    .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
-  expect(new Set(tops).size).toBe(1)
+  // Every figure's number sits the same distance under its label, including Score, which has no
+  // detail line; checked wide and narrow, where the strip wraps onto two rows.
+  const offsets = () =>
+    stats
+      .locator(':scope > div')
+      .evaluateAll((figures) =>
+        figures.map((figure) =>
+          Math.round(
+            figure.querySelector('strong')!.getBoundingClientRect().top -
+              figure.querySelector('dt')!.getBoundingClientRect().top,
+          ),
+        ),
+      )
+  expect(new Set(await offsets()).size).toBe(1)
   await page.screenshot({ path: testInfo.outputPath('insights.png') })
+  await page.setViewportSize({ width: 900, height: 700 })
+  expect(new Set(await offsets()).size).toBe(1)
 })
 
 test('blocks assistance after unverified startup until account status is confirmed @seed:unverified-startup @packaged', async ({
