@@ -96,11 +96,22 @@ it('creates the draft release only after the full check passes', () => {
   expect(workflow.jobs.validate.steps.some((step) => step.run === 'pnpm run check')).toBe(true)
 })
 
-it('ships installers built with the release profile as Cargo.toml defines it', () => {
-  const workflow = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'))
-  const env = { ...workflow.env, ...workflow.jobs.package.env }
-  // Faster profile overrides are for test builds only (CI and release validation).
-  for (const key of Object.keys(env)) expect(key).not.toMatch(/^CARGO_PROFILE_/)
-  for (const step of workflow.jobs.package.steps)
-    for (const key of Object.keys(step.env ?? {})) expect(key).not.toMatch(/^CARGO_PROFILE_/)
+it('packages only builds made with the release profile as Cargo.toml defines it', () => {
+  // Faster profile overrides are for unpackaged test builds: a thin-LTO native module is larger,
+  // so packaging and its size checks must see the profile the installers ship with.
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    const workflow = parse(readFileSync(join(root, file), 'utf8'))
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      const steps = job.steps ?? []
+      if (!steps.some((step) => String(step.run ?? '').includes('electron-builder'))) continue
+      const keys = [
+        ...Object.keys({ ...workflow.env, ...job.env }),
+        ...steps.flatMap((step) => Object.keys(step.env ?? {})),
+      ]
+      expect(
+        keys.filter((key) => key.startsWith('CARGO_PROFILE_')),
+        `${file} job ${name}`,
+      ).toEqual([])
+    }
+  }
 })
