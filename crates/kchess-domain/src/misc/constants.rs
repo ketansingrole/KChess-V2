@@ -66,6 +66,7 @@ pub const RUN_KINDS: &[&str] = &[
 pub const VOICE_SOURCES: &[&str] = &[
     "computer",
     "coordinates",
+    "squareColor",
     "analysis",
     "editor",
     "local",

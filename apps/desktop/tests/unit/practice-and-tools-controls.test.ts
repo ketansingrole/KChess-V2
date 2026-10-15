@@ -96,13 +96,15 @@ describe('square colour trainer', () => {
     wrapper.unmount()
   })
 
-  // The square colour drill had no voice answers, unlike Coordinates.
+  // The square colour drill had no voice answers, unlike Coordinates, and then kept them out of
+  // the voice history.
   it('takes “light” and “dark” by voice once the microphone is ready', async () => {
     const prepare = vi.fn(async () => true)
+    const saveVoiceAttempt = vi.fn(async () => 1)
     const VoiceStub = defineComponent({
       name: 'VoiceInput',
       props: ['enabled', 'active', 'feedback'],
-      emits: ['update:enabled', 'result'],
+      emits: ['update:enabled', 'result', 'unclear'],
       setup: () => ({ prepare }),
       template: '<div data-voice>{{ feedback }}</div>',
     })
@@ -111,7 +113,9 @@ describe('square colour trainer', () => {
         isBest: false,
         summary: { kind: run.kind, best: {}, recent: [], total: 1 },
       })),
+      saveVoiceAttempt,
     })
+    await useKChessStore().init()
     const wrapper = mount(SquareColorTrainer, {
       global: { stubs: { ...componentStubs, VoiceInput: VoiceStub } },
     })
@@ -126,12 +130,44 @@ describe('square colour trainer', () => {
     await flushPromises()
     expect(prepare).toHaveBeenCalled()
     const shown = wrapper.find('.drill-square').text() as Square
-    voice.vm.$emit('result', { text: squareColor(shown) })
+    const said = { confidence: 0.9, words: [] }
+    voice.vm.$emit('result', { ...said, text: squareColor(shown) })
     await flushPromises()
     expect(wrapper.text()).toContain('1 correct')
-    voice.vm.$emit('result', { text: 'banana' })
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        source: 'squareColor',
+        heard: squareColor(shown),
+        parsed: squareColor(shown),
+        expected: squareColor(shown),
+        outcome: 'correct',
+      }),
+    )
+    const next = wrapper.find('.drill-square').text() as Square
+    voice.vm.$emit('result', { ...said, text: 'banana' })
     await flushPromises()
     expect(wrapper.find('[data-voice]').text()).toBe('Say “light” or “dark”.')
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: 'squareColor', outcome: 'invalid', parsed: undefined }),
+    )
+    // Saying it again for the same square points back at the miss.
+    const wrong = squareColor(next) === 'light' ? 'dark' : 'light'
+    voice.vm.$emit('result', { ...said, text: wrong })
+    await flushPromises()
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        source: 'squareColor',
+        expected: squareColor(next),
+        parsed: wrong,
+        outcome: 'wrong',
+        retryOf: 1,
+      }),
+    )
+    voice.vm.$emit('unclear', { ...said, text: 'light' })
+    await flushPromises()
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: 'squareColor', outcome: 'unclear' }),
+    )
     wrapper.unmount()
   })
 })

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { RunSaved, RunSummary } from '@kchess/contracts/types'
+import type { RunSaved, RunSummary, VoiceOutcome } from '@kchess/contracts/types'
 import { randomSquare, squareColor, type Square } from '@kchess/rules/coordinates'
 import { useCountdown } from '../utils/countdown'
 import { formatRunClock } from '@kchess/rules/rush'
 import { play } from '../utils/sound'
 import type { VoiceResult } from '../utils/voiceCapture'
+import { heardFields, logVoice } from '../utils/voiceLog'
 import VoiceInput from './VoiceInput.vue'
 
 /**
@@ -22,6 +23,8 @@ let mounted = true
 const stage = ref<'idle' | 'running' | 'over'>('idle')
 const square = ref<Square>('e4')
 const score = ref(0)
+/** Counts squares asked, so a phrase said again after a miss can point at the first one. */
+const question = ref(0)
 const mistakes = ref(0)
 const flash = ref<'' | 'good' | 'bad'>('')
 const saved = ref<RunSaved | null>(null)
@@ -59,6 +62,7 @@ async function start(): Promise<void> {
   score.value = 0
   mistakes.value = 0
   saved.value = null
+  question.value++
   square.value = randomSquare()
   stage.value = 'running'
   countdown.start()
@@ -75,18 +79,41 @@ function answer(color: 'light' | 'dark'): void {
     mistakes.value++
     void play('lowTime', 0.5)
   }
+  question.value++
   square.value = randomSquare(square.value)
 }
 
+/** The asked square is known, so every phrase logged here says exactly what was meant. */
+let lastMiss: { asked: number; entry: Promise<number | undefined> } | undefined
+function logAnswer(result: VoiceResult, outcome: VoiceOutcome, parsed?: string): void {
+  const asked = question.value
+  const retryOf = lastMiss?.asked === asked ? lastMiss.entry : undefined
+  const expected = squareColor(square.value)
+  const entry = (async () =>
+    logVoice({
+      source: 'squareColor',
+      ...heardFields(result),
+      outcome,
+      parsed,
+      expected,
+      retryOf: (await retryOf) ?? undefined,
+    }))()
+  if (outcome !== 'correct') lastMiss = { asked, entry }
+}
+function voiceMissed(result: VoiceResult): void {
+  if (stage.value === 'running') logAnswer(result, 'unclear')
+}
 function voiceAnswer(result: VoiceResult): void {
   if (stage.value !== 'running') return
   const words = result.text.toLowerCase().split(/\s+/)
   const color = words.includes('light') ? 'light' : words.includes('dark') ? 'dark' : undefined
   if (!color) {
+    logAnswer(result, 'invalid')
     voiceFeedback.value = 'Say “light” or “dark”.'
     return
   }
   const asked = square.value
+  logAnswer(result, squareColor(asked) === color ? 'correct' : 'wrong', color)
   answer(color)
   voiceFeedback.value = `${color} · ${squareColor(asked) === color ? 'correct' : 'wrong'}`
 }
@@ -176,6 +203,7 @@ async function finish(): Promise<void> {
         hint="Say “light” or “dark”."
         :feedback="voiceFeedback"
         @result="voiceAnswer"
+        @unclear="voiceMissed"
       />
     </div>
   </div>
