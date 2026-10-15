@@ -5,8 +5,20 @@ import { randomSquare, squareColor, type Square } from '@kchess/rules/coordinate
 import { useCountdown } from '../utils/countdown'
 import { formatRunClock } from '@kchess/rules/rush'
 import { play } from '../utils/sound'
+import type { VoiceResult } from '../utils/voiceCapture'
+import VoiceInput from './VoiceInput.vue'
 
-/** Is this square light or dark? Thirty seconds; the best score stays on this computer. */
+/**
+ * Is this square light or dark? Answer with the buttons, L / D, or by voice. Thirty seconds; the
+ * best score stays on this computer.
+ */
+/** Only the two answers, so the recognizer never has to choose between near-sounding words. */
+const COLOR_GRAMMAR = ['light', 'dark', '[unk]']
+const voiceEnabled = ref(false)
+const voiceControl = ref<InstanceType<typeof VoiceInput>>()
+const voiceFeedback = ref('')
+const starting = ref(false)
+let mounted = true
 const stage = ref<'idle' | 'running' | 'over'>('idle')
 const square = ref<Square>('e4')
 const score = ref(0)
@@ -29,11 +41,21 @@ onMounted(async () => {
   window.addEventListener('keydown', keydown)
 })
 onBeforeUnmount(() => {
+  mounted = false
   window.removeEventListener('keydown', keydown)
   clearTimeout(flashTimer)
 })
 
-function start(): void {
+async function start(): Promise<void> {
+  if (starting.value || stage.value === 'running') return
+  if (voiceEnabled.value) {
+    // The microphone and model are ready before the clock starts, as in Coordinates.
+    starting.value = true
+    const ready = await voiceControl.value?.prepare()
+    starting.value = false
+    if (!mounted || !ready) return
+  }
+  voiceFeedback.value = ''
   score.value = 0
   mistakes.value = 0
   saved.value = null
@@ -54,6 +76,19 @@ function answer(color: 'light' | 'dark'): void {
     void play('lowTime', 0.5)
   }
   square.value = randomSquare(square.value)
+}
+
+function voiceAnswer(result: VoiceResult): void {
+  if (stage.value !== 'running') return
+  const words = result.text.toLowerCase().split(/\s+/)
+  const color = words.includes('light') ? 'light' : words.includes('dark') ? 'dark' : undefined
+  if (!color) {
+    voiceFeedback.value = 'Say “light” or “dark”.'
+    return
+  }
+  const asked = square.value
+  answer(color)
+  voiceFeedback.value = `${color} · ${squareColor(asked) === color ? 'correct' : 'wrong'}`
 }
 
 function keydown(event: KeyboardEvent): void {
@@ -83,51 +118,77 @@ async function finish(): Promise<void> {
 </script>
 
 <template>
-  <div class="card drill-card">
-    <h2 class="sr-only">Square colours</h2>
-    <p class="section-hint">Name each square’s color · 30 seconds</p>
+  <div class="drill-center">
+    <div class="card drill-card">
+      <h2 class="sr-only">Square colours</h2>
+      <p class="section-hint">Name each square’s color · 30 seconds</p>
 
-    <div class="drill-stage" :class="flash" role="status" aria-live="polite">
-      <template v-if="stage === 'running'">
-        <span
-          class="drill-clock tabular"
-          :class="{ low: countdown.left.value < 10_000 }"
-          role="timer"
-          >{{ formatRunClock(countdown.left.value) }}</span
-        >
-        <strong class="drill-square">{{ square }}</strong>
-        <span class="muted tabular">{{ score }} correct</span>
-      </template>
-      <template v-else-if="stage === 'over'">
-        <strong class="drill-square small">{{ score }} correct</strong>
-        <span class="muted">{{ accuracy }}% accuracy</span>
-        <span :class="saved?.isBest ? 'text-success' : 'muted'">{{
-          saved?.isBest ? 'A new personal best!' : `Best so far: ${best ?? score}`
-        }}</span>
-      </template>
-      <template v-else>
-        <strong class="drill-square small">Ready?</strong>
-        <span class="muted tabular">Best: {{ best ?? '—' }}</span>
-      </template>
-    </div>
+      <div class="drill-stage" :class="flash" role="status" aria-live="polite">
+        <template v-if="stage === 'running'">
+          <span
+            class="drill-clock tabular"
+            :class="{ low: countdown.left.value < 10_000 }"
+            role="timer"
+            >{{ formatRunClock(countdown.left.value) }}</span
+          >
+          <strong class="drill-square">{{ square }}</strong>
+          <span class="muted tabular">{{ score }} correct</span>
+        </template>
+        <template v-else-if="stage === 'over'">
+          <strong class="drill-square small">{{ score }} correct</strong>
+          <span class="muted">{{ accuracy }}% accuracy</span>
+          <span :class="saved?.isBest ? 'text-success' : 'muted'">{{
+            saved?.isBest ? 'A new personal best!' : `Best so far: ${best ?? score}`
+          }}</span>
+        </template>
+        <template v-else>
+          <strong class="drill-square small">Ready?</strong>
+          <span class="muted tabular">Best: {{ best ?? '—' }}</span>
+        </template>
+      </div>
 
-    <div v-if="stage === 'running'" class="drill-answers">
-      <UButton
-        size="xl"
-        color="neutral"
-        variant="outline"
-        class="answer-light"
-        @click="answer('light')"
-        >Light <UKbd value="L"
-      /></UButton>
-      <UButton size="xl" color="neutral" variant="solid" @click="answer('dark')"
-        >Dark <UKbd value="D"
-      /></UButton>
-    </div>
-    <div v-else class="drill-answers">
-      <UButton size="lg" icon="i-lucide-play" @click="start">{{
-        stage === 'over' ? 'Play again' : 'Start'
-      }}</UButton>
+      <div v-if="stage === 'running'" class="drill-answers">
+        <UButton
+          size="xl"
+          color="neutral"
+          variant="outline"
+          class="answer-light"
+          @click="answer('light')"
+          >Light <UKbd value="L"
+        /></UButton>
+        <UButton size="xl" color="neutral" variant="solid" @click="answer('dark')"
+          >Dark <UKbd value="D"
+        /></UButton>
+      </div>
+      <div v-else class="drill-answers">
+        <UButton size="lg" icon="i-lucide-play" :loading="starting" @click="start">{{
+          stage === 'over' ? 'Play again' : 'Start'
+        }}</UButton>
+      </div>
+
+      <VoiceInput
+        ref="voiceControl"
+        v-model:enabled="voiceEnabled"
+        class="mt-4"
+        :active="stage === 'running'"
+        :context-key="`${stage}:${square}`"
+        :grammar="COLOR_GRAMMAR"
+        hint="Say “light” or “dark”."
+        :feedback="voiceFeedback"
+        @result="voiceAnswer"
+      />
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Practice has no page header: the card sits in the middle of what is left under the tabs. */
+.drill-center {
+  display: grid;
+  place-items: center;
+  min-height: calc(100dvh - var(--topbar-height) - 128px);
+}
+.drill-card {
+  width: 100%;
+}
+</style>

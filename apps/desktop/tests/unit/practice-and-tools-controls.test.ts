@@ -95,6 +95,45 @@ describe('square colour trainer', () => {
     expect(wrapper.text()).toContain('1 correct')
     wrapper.unmount()
   })
+
+  // The square colour drill had no voice answers, unlike Coordinates.
+  it('takes “light” and “dark” by voice once the microphone is ready', async () => {
+    const prepare = vi.fn(async () => true)
+    const VoiceStub = defineComponent({
+      name: 'VoiceInput',
+      props: ['enabled', 'active', 'feedback'],
+      emits: ['update:enabled', 'result'],
+      setup: () => ({ prepare }),
+      template: '<div data-voice>{{ feedback }}</div>',
+    })
+    desktop({
+      saveRun: vi.fn(async (run: RunInput) => ({
+        isBest: false,
+        summary: { kind: run.kind, best: {}, recent: [], total: 1 },
+      })),
+    })
+    const wrapper = mount(SquareColorTrainer, {
+      global: { stubs: { ...componentStubs, VoiceInput: VoiceStub } },
+    })
+    await flushPromises()
+    const voice = wrapper.findComponent(VoiceStub)
+    voice.vm.$emit('update:enabled', true)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Start'))!
+      .trigger('click')
+    await flushPromises()
+    expect(prepare).toHaveBeenCalled()
+    const shown = wrapper.find('.drill-square').text() as Square
+    voice.vm.$emit('result', { text: squareColor(shown) })
+    await flushPromises()
+    expect(wrapper.text()).toContain('1 correct')
+    voice.vm.$emit('result', { text: 'banana' })
+    await flushPromises()
+    expect(wrapper.find('[data-voice]').text()).toBe('Say “light” or “dark”.')
+    wrapper.unmount()
+  })
 })
 
 describe('over-the-board board turning', () => {
