@@ -52,8 +52,15 @@ async function trainer(saveRun = vi.fn()) {
   const wrapper = mount(CoordinatesTrainer, { global: { stubs } })
   await flushPromises()
   const board = () => wrapper.findComponent(BoardStub)
-  const [modeTabs, sideTabs] = wrapper.findAllComponents(TabsStub)
-  return { wrapper, board, modeTabs: modeTabs!, sideTabs: sideTabs!, saveRun }
+  const [modeTabs, lengthTabs, sideTabs] = wrapper.findAllComponents(TabsStub)
+  return {
+    wrapper,
+    board,
+    modeTabs: modeTabs!,
+    lengthTabs: lengthTabs!,
+    sideTabs: sideTabs!,
+    saveRun,
+  }
 }
 
 describe('coordinates trainer controls', () => {
@@ -108,6 +115,34 @@ describe('coordinates trainer controls', () => {
     wrapper.unmount()
   })
 
+  // Runs were always 30 seconds. Longer runs keep their own best; untimed practice keeps none.
+  it('keeps a best per run length and none for untimed practice', async () => {
+    const { wrapper, board, lengthTabs, saveRun } = await trainer()
+    lengthTabs.vm.$emit('update:modelValue', 120)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Best (find, 2 min)')
+    await button(wrapper, 'Start').trigger('click')
+    expect(lengthTabs.props('disabled')).toBe(true)
+    board().vm.$emit('select', wrapper.find('.coord-target').text())
+    await button(wrapper, 'End run').trigger('click')
+    await flushPromises()
+    expect(saveRun).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: 'find-120s', score: 1 }),
+    )
+
+    saveRun.mockClear()
+    lengthTabs.vm.$emit('update:modelValue', 0)
+    await flushPromises()
+    await button(wrapper, 'Play again').trigger('click')
+    board().vm.$emit('select', wrapper.find('.coord-target').text())
+    await button(wrapper, 'End run').trigger('click')
+    await flushPromises()
+    expect(saveRun).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('1 correct · 100% accuracy')
+    lengthTabs.vm.$emit('update:modelValue', 30)
+    wrapper.unmount()
+  })
+
   it('answers with the file and rank buttons and the keyboard in name mode', async () => {
     const { wrapper, board, modeTabs } = await trainer()
     modeTabs.vm.$emit('update:modelValue', 'name')
@@ -116,7 +151,7 @@ describe('coordinates trainer controls', () => {
     const target = () => (board().props('shapes') as { orig: string }[])[0]!.orig
     const first = target()
     await button(wrapper, first[0]!).trigger('click')
-    expect(wrapper.find('.coord-target').text()).toBe(`${first[0]}?`)
+    expect(wrapper.find('[role="status"]').text()).toBe(`Name the marked square: ${first[0]}`)
     await button(wrapper, first[1]!).trigger('click')
     expect(wrapper.find('.run-score strong').text()).toBe('1')
     const second = target()

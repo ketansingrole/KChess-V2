@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSaved, RunSummary, VoiceOutcome } from '@kchess/contracts/types'
@@ -15,12 +16,27 @@ import VoiceInput from './VoiceInput.vue'
 
 /**
  * Board coordinates, the way Lichess trains them: name a square shown on the board, or find one that is
- * named for you. Thirty seconds, best score kept on this computer.
+ * named for you. A timed run (30 seconds, as on Lichess, or longer) keeps a best score per length on
+ * this computer; untimed practice runs until it is ended and keeps none.
  */
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
 
-const RUN_MS = 30_000
+/** Run lengths in seconds; 0 is untimed practice. */
+const LENGTHS = [
+  { label: '30s', value: 30 },
+  { label: '1 min', value: 60 },
+  { label: '2 min', value: 120 },
+  { label: '5 min', value: 300 },
+  { label: 'Untimed', value: 0 },
+]
+const length = useLocalStorage('kchess:coordinates-length', 30)
+const untimed = computed(() => length.value === 0)
+/** Whether the run on screen (or just ended) was untimed, whatever is chosen since. */
+const runUntimed = ref(false)
+const lengthLabel = computed(
+  () => LENGTHS.find((item) => item.value === length.value)?.label ?? `${length.value}s`,
+)
 const mode = ref<'find' | 'name' | 'voice'>('find')
 const voiceEnabled = ref(false)
 const voiceControl = ref<InstanceType<typeof VoiceInput>>()
@@ -43,10 +59,19 @@ const summary = ref<RunSummary | null>(null)
 let flashTimer: ReturnType<typeof setTimeout> | undefined
 let mounted = true
 
-const countdown = useCountdown(RUN_MS, () => void finish())
-const best = computed(
-  () => summary.value?.best[mode.value === 'voice' ? 'name-voice' : mode.value]?.score,
-)
+const countdown = useCountdown(30_000, () => void finish())
+/** Untimed practice counts up instead. */
+const startedAt = ref(0)
+const elapsed = ref(0)
+const stopwatch = useIntervalFn(() => (elapsed.value = performance.now() - startedAt.value), 250, {
+  immediate: false,
+})
+/** 30-second runs keep their original record names, so earlier bests still count. */
+const recordVariant = computed(() => {
+  const base = mode.value === 'voice' ? 'name-voice' : mode.value
+  return length.value === 30 ? base : `${base}-${length.value}s`
+})
+const best = computed(() => summary.value?.best[recordVariant.value]?.score)
 const accuracy = computed(() =>
   score.value + mistakes.value
     ? Math.round((score.value / (score.value + mistakes.value)) * 100)
@@ -104,7 +129,12 @@ async function start(): Promise<void> {
   target.value = randomSquare()
   upcoming.value = randomSquare(target.value)
   stage.value = 'running'
-  countdown.start()
+  runUntimed.value = untimed.value
+  if (untimed.value) {
+    startedAt.value = performance.now()
+    elapsed.value = 0
+    stopwatch.resume()
+  } else countdown.start(length.value * 1000)
 }
 
 function advance(): void {
@@ -183,11 +213,14 @@ function keydown(event: KeyboardEvent): void {
 async function finish(): Promise<void> {
   if (stage.value !== 'running') return
   countdown.stop()
+  stopwatch.pause()
   stage.value = 'over'
+  // An untimed score only grows with time, so it is never a record.
+  if (runUntimed.value) return
   try {
     saved.value = await window.kchess.saveRun({
       kind: 'coordinates',
-      variant: mode.value === 'voice' ? 'name-voice' : mode.value,
+      variant: recordVariant.value,
       score: score.value,
       detail: { mistakes: mistakes.value, accuracy: accuracy.value, side: orientation.value },
     })
@@ -202,18 +235,21 @@ async function finish(): Promise<void> {
 <template>
   <div v-board-fit class="play-layout">
     <div class="board-stack">
-      <div class="coord-prompt" role="status" aria-live="polite">
-        <template v-if="stage === 'running' && mode === 'find'">
+      <p class="sr-only" role="status" aria-live="polite">
+        {{
+          stage !== 'running'
+            ? ''
+            : mode === 'find'
+              ? `Find ${target}`
+              : `Name the marked square${pendingFile ? `: ${pendingFile}` : ''}`
+        }}
+      </p>
+      <div class="board-shell coord-shell">
+        <!-- As on Lichess: the square to find over the board, so no row above it takes height. -->
+        <div v-if="stage === 'running' && mode === 'find'" class="coord-prompt" aria-hidden="true">
           <strong class="coord-target">{{ target }}</strong>
-          <span class="muted tabular">next: {{ upcoming }}</span>
-        </template>
-        <template v-else-if="stage === 'running'">
-          <strong class="coord-target">{{ pendingFile || '?' }}?</strong>
-          <span class="muted">Name the marked square</span>
-        </template>
-        <span v-else class="muted">30-second run</span>
-      </div>
-      <div class="board-shell">
+          <span class="coord-next">{{ upcoming }}</span>
+        </div>
         <ChessBoard
           :fen="boardFen"
           :orientation="orientation"
@@ -244,7 +280,25 @@ async function finish(): Promise<void> {
             aria-labelledby="coord-mode"
             :content="false"
             variant="pill"
-            orientation="vertical"
+            class="w-full"
+            :ui="{
+              // Two modes on top, the third across the whole row: a grid the sliding highlight
+              // cannot follow, so the active mode is coloured directly instead.
+              list: 'grid grid-cols-2 w-full',
+              indicator: 'hidden',
+              trigger: 'rounded-md data-[state=active]:bg-primary last:col-span-2',
+            }"
+            :disabled="stage === 'running' || starting"
+          />
+        </div>
+        <div class="field">
+          <span id="coord-length" class="field-label">Length</span>
+          <UTabs
+            v-model="length"
+            :items="LENGTHS"
+            aria-labelledby="coord-length"
+            :content="false"
+            variant="pill"
             class="w-full"
             :ui="{ trigger: 'grow' }"
             :disabled="stage === 'running' || starting"
@@ -290,8 +344,12 @@ async function finish(): Promise<void> {
       <div class="panel-divider" />
       <template v-if="stage === 'running'">
         <div class="run-hud">
-          <div class="run-clock" :class="{ low: countdown.left.value < 10_000 }" role="timer">
-            {{ formatRunClock(countdown.left.value) }}
+          <div
+            class="run-clock"
+            :class="{ low: !runUntimed && countdown.left.value < 10_000 }"
+            role="timer"
+          >
+            {{ formatRunClock(runUntimed ? elapsed : countdown.left.value) }}
           </div>
           <div class="run-score">
             <strong class="tabular">{{ score }}</strong>
@@ -331,20 +389,27 @@ async function finish(): Promise<void> {
         <div
           v-if="stage === 'over'"
           class="status-banner"
-          :class="saved?.isBest ? 'win' : ''"
+          :class="!runUntimed && saved?.isBest ? 'win' : ''"
           role="status"
         >
-          <UIcon :name="saved?.isBest ? 'i-lucide-trophy' : 'i-lucide-timer'" class="status-icon" />
+          <UIcon
+            :name="!runUntimed && saved?.isBest ? 'i-lucide-trophy' : 'i-lucide-timer'"
+            class="status-icon"
+          />
           <div>
             <strong>{{ score }} correct · {{ accuracy }}% accuracy</strong>
             <span class="detail">{{
-              saved?.isBest ? 'A new personal best!' : `Best so far: ${best ?? score}`
+              runUntimed
+                ? `in ${formatRunClock(elapsed)}`
+                : saved?.isBest
+                  ? 'A new personal best!'
+                  : `Best so far: ${best ?? score}`
             }}</span>
           </div>
         </div>
-        <p v-else class="section-hint tabular">
-          Best ({{ mode === 'find' ? 'find' : mode === 'voice' ? 'voice' : 'name' }}):
-          {{ best ?? '—' }}
+        <p v-else-if="!untimed" class="section-hint tabular">
+          Best ({{ mode === 'find' ? 'find' : mode === 'voice' ? 'voice' : 'name' }},
+          {{ lengthLabel }}): {{ best ?? '—' }}
         </p>
         <UButton
           size="lg"
@@ -360,17 +425,34 @@ async function finish(): Promise<void> {
 </template>
 
 <style scoped>
+.coord-shell {
+  position: relative;
+}
 .coord-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  min-height: 44px;
-  padding: 0 4px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Clicks go through to the squares underneath. */
+  pointer-events: none;
+  color: #fff;
+  text-shadow:
+    0 2px 12px rgb(0 0 0 / 55%),
+    0 0 2px rgb(0 0 0 / 70%);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 .coord-target {
-  font-size: 34px;
+  font-size: calc(var(--board-size) * 0.2);
   letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+.coord-next {
+  font-size: calc(var(--board-size) * 0.08);
+  opacity: 0.6;
 }
 .coord-pad {
   display: flex;
