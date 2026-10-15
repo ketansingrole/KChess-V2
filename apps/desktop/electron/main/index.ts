@@ -1,6 +1,6 @@
 import { QuitPreparation, type QuitRetryChoice } from './quit'
 import { PERFORMANCE_NAMES, type PerformanceName } from '../../contracts/rendererDiagnostics'
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, screen, shell } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle, setIpcOwner, assertIpcComplete } from './ipc'
@@ -32,6 +32,13 @@ import {
 } from '@kchess/native'
 import { electronPlatform } from './platform'
 import { saveWithDialog } from './saveDialog'
+import {
+  applyWindowMode,
+  MIN_SIZE,
+  readWindowState,
+  restoredBounds,
+  trackWindowState,
+} from './windowState'
 import { assertExport, assertNotification } from '@kchess/rules/validate'
 import type { ChallengeInfo } from '../../contracts/types'
 
@@ -205,12 +212,18 @@ function createWindow(): void {
   // minimize/maximize/close buttons in the topbar. The menu bar stays available
   // via Alt but is hidden so the window doesn't look like a legacy Win32 app.
   const frameless = process.platform === 'win32' || process.platform === 'linux'
+  // Reopen where and how the window was left, if a connected display can still show it.
+  const stateFile = join(app.getPath('userData'), 'window-state.json')
+  const saved = readWindowState(stateFile)
   window = new BrowserWindow({
     title: 'KChess',
-    width: 1320,
-    height: 880,
-    minWidth: 640,
-    minHeight: 620,
+    ...restoredBounds(
+      saved,
+      screen.getAllDisplays().map((display) => display.workArea),
+      screen.getPrimaryDisplay().workArea,
+    ),
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     backgroundColor: '#111827',
     icon,
     frame: frameless ? false : undefined,
@@ -236,6 +249,8 @@ function createWindow(): void {
       sandbox: true,
     },
   })
+  applyWindowMode(window, saved)
+  trackWindowState(window, stateFile)
   window.on('closed', () => {
     window = null
   })
