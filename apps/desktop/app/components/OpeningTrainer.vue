@@ -8,6 +8,8 @@ import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { useStudyStore } from '../stores/studies'
 import { playMoveSound } from '../utils/sound'
 import { REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
+import { useZenSurface } from '../composables/useZenSurface'
+import BoardViewToggles from './BoardViewToggles.vue'
 
 /**
  * Drill a repertoire: any saved study is a tree of moves. KChess plays the other side's moves
@@ -16,6 +18,8 @@ import { REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
 const library = useStudyStore()
+// The board (and its zen toggle) shows once there is a study to train from.
+useZenSurface(() => library.items.length > 0)
 const studyId = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
 const color = useLocalStorage<'white' | 'black'>('kchess:repertoire-color', 'white')
 const stats = ref({ lines: 0, correct: 0, wrong: 0 })
@@ -174,11 +178,15 @@ const accuracy = computed(() => {
         :turn-color="position?.turn"
         :shapes="hint"
         :reset-key="resetKey"
+        :blindfold="settings.blindfold"
         @move="play"
       />
     </div>
     <div class="card side-panel">
-      <h2 class="section-title">Opening trainer</h2>
+      <div class="flex items-start justify-between gap-2">
+        <h2 class="section-title">Opening trainer</h2>
+        <div class="flex gap-1"><BoardViewToggles /></div>
+      </div>
       <UFormField label="Repertoire (a saved study)">
         <USelect
           v-model="studyId"

@@ -23,7 +23,7 @@ const tabs = [
       :items="tabs"
       :content="false"
       variant="pill"
-      class="mb-5"
+      class="mb-5 zen-hide"
       @update:model-value="practiceTab = $event as string"
     />
     <LazyMistakeTrainer v-if="practiceTab === 'mistakes'" />

@@ -67,6 +67,7 @@ pub const VOICE_SOURCES: &[&str] = &[
     "computer",
     "coordinates",
     "squareColor",
+    "knightPath",
     "analysis",
     "editor",
     "local",

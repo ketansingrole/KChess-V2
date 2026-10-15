@@ -134,12 +134,13 @@ wire_enum!(#[doc = "Where a spoken phrase was said."] VoiceSource, VOICE_SOURCES
     Computer = "computer",
     Coordinates = "coordinates",
     SquareColor = "squareColor",
+    KnightPath = "knightPath",
     Analysis = "analysis",
     Editor = "editor",
     Local = "local",
     Puzzles = "puzzles",
 });
-wire_enum!(#[doc = "What became of a spoken phrase. Moves: `played` at once, `pending` a choice that then was"] #[doc = "`confirmed` (by voice), `picked` (clicked), `cancelled`, `replaced` by another phrase or"] #[doc = "`abandoned` (the position moved on). `invalid` matched no legal move, `unclear` was too uncertain"] #[doc = "to use, `command` was “confirm”/“cancel”. Coordinates and square colours: `correct` or `wrong`."] VoiceOutcome, VOICE_OUTCOMES {
+wire_enum!(#[doc = "What became of a spoken phrase. Moves: `played` at once, `pending` a choice that then was"] #[doc = "`confirmed` (by voice), `picked` (clicked), `cancelled`, `replaced` by another phrase or"] #[doc = "`abandoned` (the position moved on). `invalid` matched no legal move, `unclear` was too uncertain"] #[doc = "to use, `command` was “confirm”/“cancel”. Coordinates and square colours: `correct` or `wrong`;"] #[doc = "knight paths: `played` for a jump, `invalid` for a square the knight cannot reach."] VoiceOutcome, VOICE_OUTCOMES {
     Played = "played",
     Pending = "pending",
     Confirmed = "confirmed",

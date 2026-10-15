@@ -43,6 +43,11 @@ const props = defineProps<{
   variant?: Variant
   /** Show the typed-move row elsewhere (a CSS selector), such as in the player's own line. */
   inputTo?: string
+  /**
+   * Drills with a lone piece (knight paths): a typed square (`f3`, or `Nf3`) is the move when one
+   * piece can go there. Games keep full moves, so a stray square never plays a piece.
+   */
+  squareInput?: boolean
 }>()
 
 const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
@@ -68,8 +73,21 @@ function submitMove(uci: string): void {
   })
 }
 function keyboardMove(): void {
-  const pos = setupStart({ variant: props.variant ?? 'standard', fen: props.fen })
   const text = moveInput.value.trim()
+  if (props.squareInput) {
+    const square = text.replace(/^[nbrqk]/i, '').toLowerCase() as SquareName
+    const from = [...(props.dests ?? [])].filter(([, to]) => to.includes(square))
+    const origin = from.length === 1 ? from[0]?.[0] : undefined
+    if (!origin) {
+      moveMessage.value = 'Enter a square the piece can reach, such as f3.'
+      return
+    }
+    moveMessage.value = `Move submitted: ${text}`
+    moveInput.value = ''
+    put(origin as Key, square as Key)
+    return
+  }
+  const pos = setupStart({ variant: props.variant ?? 'standard', fen: props.fen })
   const isUci =
     /^[a-h][1-8][a-h][1-8][pnbrqkPNBRQK]?$/.test(text) || /^[pnbrqkPNBRQK]@[a-h][1-8]$/.test(text)
   const played = pos && (isUci ? pos.play(text) : pos.playSan(text))
@@ -261,8 +279,10 @@ onBeforeUnmount(() => {
           <input
             ref="keyboardInput"
             v-model="moveInput"
-            aria-label="Enter a chess move in SAN or UCI"
-            placeholder="Type a move: Nf3 or g1f3"
+            :aria-label="
+              squareInput ? 'Enter the square to move to' : 'Enter a chess move in SAN or UCI'
+            "
+            :placeholder="squareInput ? 'Type a square: f3' : 'Type a move: Nf3 or g1f3'"
             autocomplete="off"
             class="board-move-input"
           />

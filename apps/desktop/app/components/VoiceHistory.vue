@@ -168,8 +168,8 @@ async function clearLog(): Promise<void> {
 
     <p v-if="error" class="voice-history-error" role="alert">{{ error }}</p>
     <p v-else-if="!loading && !entries.length" class="muted text-sm">
-      Nothing yet. Speak a few moves in Play with Computer or a Coordinates or Square colours run,
-      then come back.
+      Nothing yet. Speak a few moves in Play with Computer or answer a practice drill by voice, then
+      come back.
     </p>
 
     <template v-if="entries.length">

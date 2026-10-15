@@ -7,6 +7,8 @@ import { ENDGAME_DRILLS, evaluateEndgame, sanFrom, type EndgameDrill } from '@kc
 import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { moveSquares } from '@kchess/rules/puzzle'
 import { playMoveSound } from '../utils/sound'
+import { useZenSurface } from '../composables/useZenSurface'
+import BoardViewToggles from './BoardViewToggles.vue'
 
 /**
  * Endgames you must convert (or hold) against Stockfish at full strength, from positions checked to be
@@ -14,6 +16,7 @@ import { playMoveSound } from '../utils/sound'
  */
 const store = useKChessStore()
 const { settings, engineReady } = storeToRefs(store)
+useZenSurface(true)
 
 const firstDrill = ENDGAME_DRILLS[0]
 if (!firstDrill) throw new Error('No endgame drills available.')
@@ -184,13 +187,17 @@ async function showHint(): Promise<void> {
           :check="position ? checkColor(position) : false"
           :turn-color="status.turn"
           :shapes="shapes"
+          :blindfold="settings.blindfold && !status.over"
           @move="onMove"
         />
       </div>
     </div>
 
     <div class="card side-panel puzzle-panel">
-      <h2 class="section-title">{{ drill.title }}</h2>
+      <div class="flex items-start justify-between gap-2">
+        <h2 class="section-title">{{ drill.title }}</h2>
+        <div class="flex gap-1"><BoardViewToggles /></div>
+      </div>
       <p class="section-hint">
         {{ drill.goal === 'win' ? 'Checkmate within 50 moves.' : 'Hold the draw.' }}
         {{ drill.idea }}

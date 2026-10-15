@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSaved, RunSummary, VoiceOutcome } from '@kchess/contracts/types'
 import { INITIAL_FEN } from '@kchess/rules/position'
 import { EMPTY_FEN, FILES, RANKS, randomSquare, type Square } from '@kchess/rules/coordinates'
-import { useCountdown } from '../utils/countdown'
+import { useRunLength } from '../composables/useRunLength'
+import RunLengthPicker from './RunLengthPicker.vue'
+import { useZenSurface } from '../composables/useZenSurface'
+import BoardViewToggles from './BoardViewToggles.vue'
 import { play } from '../utils/sound'
-import { formatRunClock } from '@kchess/rules/rush'
 import { COORDINATE_GRAMMAR, spokenSquare } from '@kchess/rules/voiceCommands'
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
@@ -21,22 +22,8 @@ import VoiceInput from './VoiceInput.vue'
  */
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
+useZenSurface(true)
 
-/** Run lengths in seconds; 0 is untimed practice. */
-const LENGTHS = [
-  { label: '30s', value: 30 },
-  { label: '1 min', value: 60 },
-  { label: '2 min', value: 120 },
-  { label: '5 min', value: 300 },
-  { label: 'Untimed', value: 0 },
-]
-const length = useLocalStorage('kchess:coordinates-length', 30)
-const untimed = computed(() => length.value === 0)
-/** Whether the run on screen (or just ended) was untimed, whatever is chosen since. */
-const runUntimed = ref(false)
-const lengthLabel = computed(
-  () => LENGTHS.find((item) => item.value === length.value)?.label ?? `${length.value}s`,
-)
 const mode = ref<'find' | 'name' | 'voice'>('find')
 const voiceEnabled = ref(false)
 const voiceControl = ref<InstanceType<typeof VoiceInput>>()
@@ -59,18 +46,11 @@ const summary = ref<RunSummary | null>(null)
 let flashTimer: ReturnType<typeof setTimeout> | undefined
 let mounted = true
 
-const countdown = useCountdown(30_000, () => void finish())
-/** Untimed practice counts up instead. */
-const startedAt = ref(0)
-const elapsed = ref(0)
-const stopwatch = useIntervalFn(() => (elapsed.value = performance.now() - startedAt.value), 250, {
-  immediate: false,
-})
-/** 30-second runs keep their original record names, so earlier bests still count. */
-const recordVariant = computed(() => {
-  const base = mode.value === 'voice' ? 'name-voice' : mode.value
-  return length.value === 30 ? base : `${base}-${length.value}s`
-})
+const run = useRunLength('kchess:coordinates-length', 30, () => void finish())
+const { length, untimed, runUntimed, clock, low, label: lengthLabel } = run
+const recordVariant = computed(() =>
+  run.recordVariant(mode.value === 'voice' ? 'name-voice' : mode.value),
+)
 const best = computed(() => summary.value?.best[recordVariant.value]?.score)
 const accuracy = computed(() =>
   score.value + mistakes.value
@@ -129,12 +109,7 @@ async function start(): Promise<void> {
   target.value = randomSquare()
   upcoming.value = randomSquare(target.value)
   stage.value = 'running'
-  runUntimed.value = untimed.value
-  if (untimed.value) {
-    startedAt.value = performance.now()
-    elapsed.value = 0
-    stopwatch.resume()
-  } else countdown.start(length.value * 1000)
+  run.start()
 }
 
 function advance(): void {
@@ -212,8 +187,7 @@ function keydown(event: KeyboardEvent): void {
 
 async function finish(): Promise<void> {
   if (stage.value !== 'running') return
-  countdown.stop()
-  stopwatch.pause()
+  run.stop()
   stage.value = 'over'
   // An untimed score only grows with time, so it is never a record.
   if (runUntimed.value) return
@@ -260,16 +234,21 @@ async function finish(): Promise<void> {
           :movable="false"
           :interactive="false"
           :shapes="shapes"
+          :blindfold="settings.blindfold"
           @select="onSelect"
         />
       </div>
     </div>
 
     <div class="card side-panel puzzle-panel">
-      <h2 class="sr-only">Board coordinates</h2>
       <div class="form-stack">
         <div class="field">
-          <span id="coord-mode" class="field-label">Mode</span>
+          <!-- The view toggles share the first label's row rather than taking one of their own. -->
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="sr-only">Board coordinates</h2>
+            <span id="coord-mode" class="field-label">Mode</span>
+            <div class="flex gap-1"><BoardViewToggles /></div>
+          </div>
           <UTabs
             v-model="mode"
             :items="[
@@ -291,19 +270,7 @@ async function finish(): Promise<void> {
             :disabled="stage === 'running' || starting"
           />
         </div>
-        <div class="field">
-          <span id="coord-length" class="field-label">Length</span>
-          <UTabs
-            v-model="length"
-            :items="LENGTHS"
-            aria-labelledby="coord-length"
-            :content="false"
-            variant="pill"
-            class="w-full"
-            :ui="{ trigger: 'grow' }"
-            :disabled="stage === 'running' || starting"
-          />
-        </div>
+        <RunLengthPicker v-model="length" :disabled="stage === 'running' || starting" />
         <div class="field">
           <span id="coord-side" class="field-label">Board from the side of</span>
           <UTabs
@@ -344,12 +311,8 @@ async function finish(): Promise<void> {
       <div class="panel-divider" />
       <template v-if="stage === 'running'">
         <div class="run-hud">
-          <div
-            class="run-clock"
-            :class="{ low: !runUntimed && countdown.left.value < 10_000 }"
-            role="timer"
-          >
-            {{ formatRunClock(runUntimed ? elapsed : countdown.left.value) }}
+          <div class="run-clock" :class="{ low }" role="timer">
+            {{ clock }}
           </div>
           <div class="run-score">
             <strong class="tabular">{{ score }}</strong>
@@ -400,7 +363,7 @@ async function finish(): Promise<void> {
             <strong>{{ score }} correct · {{ accuracy }}% accuracy</strong>
             <span class="detail">{{
               runUntimed
-                ? `in ${formatRunClock(elapsed)}`
+                ? `in ${clock}`
                 : saved?.isBest
                   ? 'A new personal best!'
                   : `Best so far: ${best ?? score}`
