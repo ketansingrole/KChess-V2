@@ -125,6 +125,8 @@ const emit = defineEmits<{ open: [] }>()
   cursor: pointer;
 }
 .study-preview :deep(.cg-host) {
+  /* The board is the card's picture: the card rounds its top corners, its bottom meets the title. */
+  --board-radius: 0;
   width: 100%;
   pointer-events: none;
 }
