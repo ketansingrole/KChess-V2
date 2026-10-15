@@ -553,6 +553,18 @@ button:disabled {
   width: 100%;
   margin: 0 auto;
 }
+/* Live games (computer and Lichess): no visible page header, and the typed-move box shares the
+   bottom player's line. The chrome is the topbar (52), the page's top and bottom padding (24 + 40)
+   and two player lines with their gaps (2 × 46). */
+.play-layout.game-surface {
+  --board-chrome: 208px;
+}
+/* Pages wide enough for a board past 760px grow it to fill the height instead of leaving it empty. */
+@container page (min-width: 1105px) {
+  .play-layout.game-surface {
+    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 1200px);
+  }
+}
 .play-layout.review {
   /* Player strips plus the review header above the grid. */
   --board-chrome: 260px;
@@ -994,6 +1006,9 @@ coords .coord-dark {
 .player-link:hover {
   color: var(--ui-text-highlighted);
   text-decoration-color: currentColor;
+}
+button.player-link {
+  cursor: pointer;
 }
 .player-avatar {
   position: relative;

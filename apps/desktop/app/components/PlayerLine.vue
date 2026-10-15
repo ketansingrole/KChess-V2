@@ -6,6 +6,8 @@ export interface PlayerInfo {
   name: string
   /** Lichess username; when set the name opens the player's profile. */
   username?: string
+  /** Show the profile as a card in place instead of leaving the page (during a live game). */
+  card?: boolean
   icon: string
   /** Short secondary text, e.g. "Thinking…". */
   status?: string
@@ -71,7 +73,16 @@ function presenceTitle(presence: PlayerPresence): string {
         ><UIcon :name="player.icon"
       /></span>
       <slot name="name"
-        ><PlayerLink v-if="player.username" :username="player.username" class="player-name">{{
+        ><UPopover v-if="player.username && player.card">
+          <button
+            type="button"
+            class="player-name player-link"
+            :aria-label="`${player.name}: show profile`"
+          >
+            {{ player.name }}
+          </button>
+          <template #content><PlayerCard :username="player.username" /></template> </UPopover
+        ><PlayerLink v-else-if="player.username" :username="player.username" class="player-name">{{
           player.name
         }}</PlayerLink
         ><span v-else class="player-name">{{ player.name }}</span></slot

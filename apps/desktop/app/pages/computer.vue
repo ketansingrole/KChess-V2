@@ -42,7 +42,6 @@ const {
   localResult,
   localGame,
   localSetup,
-  zenActive,
   settings,
 } = storeToRefs(store)
 const { newGame, takeback, resign, makeMove, selectPage, fen, recheckEngine } = store
@@ -427,7 +426,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 
     <PageHeader title="Play with Computer" />
 
-    <div class="play-layout">
+    <div class="play-layout game-surface">
       <PlayBoard
         :fen="fen(localDisplay)"
         :orientation="orientation"
@@ -534,28 +533,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
               @click="optionsOpen = true"
               >Game options</UButton
             >
-            <UTooltip text="Blindfold: hide the pieces">
-              <UButton
-                size="xs"
-                :variant="settings.blindfold ? 'soft' : 'ghost'"
-                :color="settings.blindfold ? 'primary' : 'neutral'"
-                icon="i-lucide-eye-off"
-                aria-label="Blindfold"
-                :aria-pressed="settings.blindfold"
-                @click="store.toggleSetting('blindfold')"
-              />
-            </UTooltip>
-            <UTooltip text="Zen mode (Z)">
-              <UButton
-                size="xs"
-                :variant="zenActive ? 'soft' : 'ghost'"
-                :color="zenActive ? 'primary' : 'neutral'"
-                icon="i-lucide-maximize"
-                aria-label="Zen mode"
-                :aria-pressed="settings.zenMode"
-                @click="store.toggleSetting('zenMode')"
-              />
-            </UTooltip>
+            <BoardViewToggles />
           </div>
           <OpeningName
             v-if="localSetup.variant === 'standard'"
@@ -683,10 +661,6 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 </template>
 
 <style scoped>
-.play-layout {
-  /* No visible page header here, and the move box shares the player's line: the board takes that height. */
-  --board-chrome: 206px;
-}
 .level-select {
   min-width: 13rem;
 }

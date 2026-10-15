@@ -11,11 +11,11 @@ import type {
   PerfType,
   UserPresence,
 } from '@kchess/contracts/types'
-import { PERF_TYPES } from '@kchess/contracts/types'
 import { USERNAME } from '@kchess/rules/patterns'
 import { useWatchStore } from '../stores/watch'
 import { useAnalysisStore } from '../stores/analysis'
 import { mergeRatingHistories, ratingHistoryFromGames } from '@kchess/rules/ratings'
+import { PERF_LABELS, playedPerfs } from '../utils/perfs'
 
 const online = useOnline()
 const store = useKChessStore()
@@ -59,35 +59,7 @@ onScopeDispose(() => {
   statsRequests.invalidate()
 })
 
-const PERF_LABELS: Record<PerfType, string> = {
-  ultraBullet: 'UltraBullet',
-  bullet: 'Bullet',
-  blitz: 'Blitz',
-  rapid: 'Rapid',
-  classical: 'Classical',
-  correspondence: 'Correspondence',
-  chess960: 'Chess960',
-  kingOfTheHill: 'King of the Hill',
-  threeCheck: 'Three-check',
-  antichess: 'Antichess',
-  atomic: 'Atomic',
-  horde: 'Horde',
-  racingKings: 'Racing Kings',
-  crazyhouse: 'Crazyhouse',
-}
-/** Categories the player has games in, most played first. */
-const perfs = computed(() => {
-  const all = (profile.value?.perfs ?? {}) as Record<
-    string,
-    { games?: number; rating?: number; prov?: boolean; prog?: number }
-  >
-  return PERF_TYPES.filter((key) => (all[key]?.games ?? 0) > 0)
-    .flatMap((key) => {
-      const entry = all[key]
-      return entry ? [{ key, ...entry }] : []
-    })
-    .sort((a, b) => (b.games ?? 0) - (a.games ?? 0))
-})
+const perfs = computed(() => playedPerfs(profile.value))
 
 async function lookup(name = query.value.trim()): Promise<void> {
   if (!online.value) {

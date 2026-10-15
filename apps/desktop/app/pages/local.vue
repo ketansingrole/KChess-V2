@@ -24,7 +24,7 @@ const archive = useGameArchiveStore()
 const store = useKChessStore()
 const game = useLocalGameStore()
 const analysis = useAnalysisStore()
-const { settings, zenActive } = storeToRefs(store)
+const { settings } = storeToRefs(store)
 const route = useRoute()
 const mode = useLocalStorage<'board' | 'clock'>('kchess:local-mode', 'board')
 // The chess clock has no board, so no zen toggle: zen mode is for the board.
@@ -296,26 +296,7 @@ function otbText(side: 'top' | 'bottom'): string {
             >
             <span class="flex-1" />
             <USwitch v-model="game.autoFlip" size="xs" label="Flip after each move" />
-            <UTooltip text="Blindfold: hide the pieces">
-              <UButton
-                size="xs"
-                :variant="settings.blindfold ? 'soft' : 'ghost'"
-                :color="settings.blindfold ? 'primary' : 'neutral'"
-                icon="i-lucide-eye-off"
-                aria-label="Blindfold"
-                @click="store.toggleSetting('blindfold')"
-              />
-            </UTooltip>
-            <UTooltip text="Zen mode (Z)">
-              <UButton
-                size="xs"
-                :variant="zenActive ? 'soft' : 'ghost'"
-                :color="zenActive ? 'primary' : 'neutral'"
-                icon="i-lucide-maximize"
-                aria-label="Zen mode"
-                @click="store.toggleSetting('zenMode')"
-              />
-            </UTooltip>
+            <BoardViewToggles />
           </div>
           <OpeningName
             v-if="game.setup.variant === 'standard'"

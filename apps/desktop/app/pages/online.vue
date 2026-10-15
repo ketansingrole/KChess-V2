@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
 import { useZenSurface } from '../composables/useZenSurface'
 import { formatBytes } from '../utils/format'
@@ -98,7 +98,6 @@ const {
   fen,
   setOnlineAccount,
   rematch,
-  toggleSetting,
 } = store
 
 /** Which connected account plays; only shown when there is a choice. */
@@ -187,8 +186,9 @@ const players = computed(() => {
     name: onlineOpponentRating.value
       ? `${onlineOpponent.value} (${onlineOpponentRating.value})`
       : onlineOpponent.value,
-    // Linked once the game is over, so a stray click never leaves a live game.
-    username: !playing.value && store.opponentId ? onlineOpponent.value : undefined,
+    username: store.opponentId ? onlineOpponent.value : undefined,
+    // A live game shows the profile in place, so a click never leaves the board.
+    card: playing.value,
     icon: 'i-lucide-user',
     clock: hasClock.value ? clockText(opponentColor.value) : undefined,
     presence: onlinePresence.value.opponent,
@@ -250,29 +250,6 @@ function analyse(): void {
   selectPage('analysis')
 }
 const rematchOffer = computed(() => challenges.rematchOffer)
-/** Your lifetime score against this opponent, as Lichess shows it beside the board. */
-const record = ref<{ mine: number; theirs: number; games: number } | null>(null)
-watch(
-  () => [store.opponentId, onlineId.value] as const,
-  async ([opponent, game]) => {
-    record.value = null
-    const me = store.onlineAccount || activeOnlineAccount.value
-    if (!opponent || !me || opponent.toLowerCase() === me.toLowerCase()) return
-    try {
-      const table = await window.kchess.crosstable(me, opponent)
-      if (onlineId.value !== game || !table.nbGames) return
-      record.value = {
-        mine: table.users[me.toLowerCase()] ?? 0,
-        theirs: table.users[opponent.toLowerCase()] ?? 0,
-        games: table.nbGames,
-      }
-    } catch (cause) {
-      console.warn('[online] Crosstable unavailable:', cause)
-      // A courtesy line; nothing to report when it is unavailable.
-    }
-  },
-  { immediate: true },
-)
 const tournaments = useTournamentStore()
 function backToTournament(): void {
   void tournaments.open('arena', onlineTournament.value)
@@ -507,7 +484,7 @@ function backToTournament(): void {
       </div>
     </div>
 
-    <div v-else class="play-layout">
+    <div v-else class="play-layout game-surface">
       <div v-if="onlinePhase === 'disconnected'" class="card col-span-full" role="status">
         <h2 class="section-title">
           {{
@@ -597,6 +574,14 @@ function backToTournament(): void {
         @flip="onlineFlipped = !onlineFlipped"
       >
         <template #top>
+          <div class="flex flex-wrap items-center gap-2 text-xs muted">
+            <span class="font-semibold"
+              >{{ variantName ? `${variantName} · ` : ''
+              }}{{ onlineGameRated ? 'Rated' : 'Casual' }}</span
+            >
+            <span class="flex-1" />
+            <BoardViewToggles />
+          </div>
           <div class="status-banner" :role="playing ? 'status' : 'alert'">
             <UIcon :name="banner.icon" class="status-icon" />
             <div>
@@ -604,21 +589,16 @@ function backToTournament(): void {
               <span class="detail">{{ banner.detail }}</span>
             </div>
           </div>
-          <p v-if="record" class="text-xs muted tabular zen-hide">
-            Lifetime score against {{ onlineOpponent }}: {{ record.mine }} – {{ record.theirs }} in
-            {{ record.games }} games
-          </p>
+          <!-- Named only after the game: during it, the name is help from outside the board. -->
           <OpeningName
-            v-if="onlineSetup.variant === 'standard'"
+            v-if="!playing && onlineSetup.variant === 'standard'"
             :setup="onlineSetup"
             :moves="onlineMoves"
             :ply="onlinePly"
           />
           <div v-if="playing && firstMoveIn !== null" class="offer-banner" role="status">
             <UIcon name="i-lucide-timer" />
-            <span class="offer-text"
-              >{{ firstMoveIn }}s to make the first move, or Lichess aborts the game.</span
-            >
+            <span class="offer-text">Move within {{ firstMoveIn }}s or the game is aborted.</span>
           </div>
           <div v-if="playing && drawOffer === 'theirs'" class="offer-banner" role="alert">
             <UIcon name="i-lucide-handshake" />
@@ -793,38 +773,9 @@ function backToTournament(): void {
               >Close game</UButton
             >
           </div>
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <p class="muted text-xs tabular flex-1">
-              {{ variantName ? `${variantName} · ` : ''
-              }}{{ onlineGameRated ? 'Rated' : 'Casual' }} · Game {{ onlineId
-              }}{{ onlineTournament ? ` · Tournament ${onlineTournament}` : '' }}
-            </p>
-            <UTooltip text="Blindfold: hide the pieces">
-              <UButton
-                size="xs"
-                :variant="settings.blindfold ? 'soft' : 'ghost'"
-                :color="settings.blindfold ? 'primary' : 'neutral'"
-                icon="i-lucide-eye-off"
-                aria-label="Blindfold"
-                :aria-pressed="settings.blindfold"
-                @click="toggleSetting('blindfold')"
-              />
-            </UTooltip>
-            <UTooltip text="Zen mode (Z)">
-              <UButton
-                size="xs"
-                :variant="zenActive ? 'soft' : 'ghost'"
-                :color="zenActive ? 'primary' : 'neutral'"
-                icon="i-lucide-maximize"
-                aria-label="Zen mode"
-                :aria-pressed="settings.zenMode"
-                @click="toggleSetting('zenMode')"
-              />
-            </UTooltip>
-          </div>
-          <OnlineChat v-if="settings.onlineChat && !zenActive" />
         </template>
       </MovePanel>
+      <OnlineChat v-if="settings.onlineChat && !zenActive" />
     </div>
 
     <ConfirmDialog
