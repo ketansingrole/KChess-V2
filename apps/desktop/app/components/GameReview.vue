@@ -99,7 +99,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 </script>
 
 <template>
-  <div class="play-layout review">
+  <div v-board-fit class="play-layout review">
     <PlayBoard
       :fen="step.fen"
       :orientation="orientation"

@@ -472,7 +472,7 @@ function missed(result: VoiceResult): void {
     <PageHeader :title="analysis.study?.name ?? 'Analysis board'" />
     <StudyBar />
 
-    <div class="play-layout analysis-layout analysis-surface">
+    <div v-board-fit class="play-layout analysis-layout analysis-surface">
       <div class="board-stack">
         <div class="analysis-board">
           <EvalBar

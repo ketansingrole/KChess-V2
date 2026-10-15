@@ -426,7 +426,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 
     <PageHeader title="Play with Computer" />
 
-    <div class="play-layout game-surface">
+    <div v-board-fit class="play-layout">
       <PlayBoard
         :fen="fen(localDisplay)"
         :orientation="orientation"

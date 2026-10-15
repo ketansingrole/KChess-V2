@@ -484,7 +484,7 @@ function backToTournament(): void {
       </div>
     </div>
 
-    <div v-else class="play-layout game-surface">
+    <div v-else v-board-fit class="play-layout">
       <div v-if="onlinePhase === 'disconnected'" class="card col-span-full" role="status">
         <h2 class="section-title">
           {{

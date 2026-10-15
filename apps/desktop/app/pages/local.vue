@@ -27,6 +27,10 @@ const analysis = useAnalysisStore()
 const { settings } = storeToRefs(store)
 const route = useRoute()
 const mode = useLocalStorage<'board' | 'clock'>('kchess:local-mode', 'board')
+const modeItems = [
+  { label: 'Shared board', value: 'board', icon: 'i-lucide-users-round' },
+  { label: 'Chess clock', value: 'clock', icon: 'i-lucide-timer' },
+]
 // The chess clock has no board, so no zen toggle: zen mode is for the board.
 useZenSurface(() => mode.value === 'board')
 const clockLayout = useLocalStorage<'horizontal' | 'vertical'>('kchess:clock-layout', 'horizontal')
@@ -223,15 +227,10 @@ function otbText(side: 'top' | 'bottom'): string {
 <template>
   <div class="local-page">
     <PageHeader title="Over the board">
-      <UTabs
-        v-model="mode"
-        :items="[
-          { label: 'Shared board', value: 'board', icon: 'i-lucide-users-round' },
-          { label: 'Chess clock', value: 'clock', icon: 'i-lucide-timer' },
-        ]"
-        :content="false"
-        variant="pill"
-      />
+      <!-- Beside the board the tabs head its side panel, so no header row shrinks the board. -->
+      <template v-if="mode === 'clock'" #default>
+        <UTabs v-model="mode" :items="modeItems" :content="false" variant="pill" />
+      </template>
     </PageHeader>
     <p v-if="archive.error" role="alert" class="p-3 text-error">
       History saving: {{ archive.error }}
@@ -240,7 +239,7 @@ function otbText(side: 'top' | 'bottom'): string {
       Automatic saving: {{ game.saveError }}
     </p>
 
-    <div v-if="mode === 'board'" class="play-layout">
+    <div v-if="mode === 'board'" v-board-fit class="play-layout">
       <PlayBoard
         :fen="fenOf(game.display)"
         :orientation="game.orientation"
@@ -286,6 +285,7 @@ function otbText(side: 'top' | 'bottom'): string {
         @flip="game.flip()"
       >
         <template #top>
+          <UTabs v-model="mode" :items="modeItems" :content="false" variant="pill" class="w-full" />
           <div class="flex flex-wrap items-center gap-2 text-xs muted">
             <span v-if="variantLabel" class="font-semibold">{{ variantLabel }}</span>
             <span v-if="game.clock"
@@ -550,10 +550,6 @@ function otbText(side: 'top' | 'bottom'): string {
 </template>
 
 <style scoped>
-.local-page :deep(.page-header) {
-  max-width: calc(var(--board-size) + 24px + 440px);
-  margin-inline: auto;
-}
 .otb-clock {
   display: flex;
   flex-direction: column;
@@ -561,8 +557,6 @@ function otbText(side: 'top' | 'bottom'): string {
   min-height: 460px;
   height: calc(100dvh - 190px);
   width: 100%;
-  max-width: calc(var(--board-size) + 24px + 440px);
-  margin-inline: auto;
 }
 .otb-display-controls,
 .otb-layout-picker,

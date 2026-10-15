@@ -298,7 +298,7 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
     </div>
 
     <!-- Running and finished -->
-    <div v-else class="play-layout">
+    <div v-else v-board-fit class="play-layout">
       <div>
         <div class="run-board">
           <PuzzleBoard

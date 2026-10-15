@@ -13,6 +13,8 @@
   --ui-win: #246b37;
   --ui-loss: #d05f5f;
   --topbar-height: 52px;
+  /* Boards fill the window's height up to this; the height and width limits bind first below it. */
+  --board-max: 1200px;
   /* Game review labels, in Lichess's colors: ?! inaccuracy, ? mistake, ?? blunder. */
   --judgment-inaccuracy: #3d9ad6;
   --judgment-mistake: #d48a00;
@@ -540,30 +542,21 @@ button:disabled {
 /* ── Playing surface ───────────────────────────────────────────────────── */
 .play-layout,
 .local-page {
-  /* Board is as large as the viewport height and the page width allow. */
-  --board-chrome: 300px; /* vertical space taken by everything but the board */
-  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 760px);
+  /* Board is as large as the viewport height and the page width allow. `v-board-fit` measures
+     the chrome (everything in the board's column but the board); this is only its first guess. */
+  --board-chrome: 300px;
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), var(--board-max));
 }
 .play-layout {
   display: grid;
-  grid-template-columns: var(--board-size) minmax(300px, 440px);
+  /* The panel takes the rest of the page's width, so every board page spans the same width
+     whatever its board size; a page with more rows around its board just has a wider panel. */
+  grid-template-columns: var(--board-size) minmax(300px, 1fr);
   gap: 24px;
-  justify-content: center;
+  justify-content: stretch;
   align-items: stretch;
   width: 100%;
   margin: 0 auto;
-}
-/* Live games (computer and Lichess): no visible page header, and the typed-move box shares the
-   bottom player's line. The chrome is the topbar (52), the page's top and bottom padding (24 + 40)
-   and two player lines with their gaps (2 × 46). */
-.play-layout.game-surface {
-  --board-chrome: 208px;
-}
-/* Pages wide enough for a board past 760px grow it to fill the height instead of leaving it empty. */
-@container page (min-width: 1105px) {
-  .play-layout.game-surface {
-    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 1200px);
-  }
 }
 .play-layout.review {
   /* Player strips plus the review header above the grid. */
@@ -574,7 +567,7 @@ button:disabled {
   .play-layout.puzzle-wide {
     /* No visible header or player strips; a slim material row sits above the board. */
     --board-chrome: 244px;
-    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), 1200px);
+    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 344px), var(--board-max));
     grid-template-columns: var(--board-size) minmax(320px, 1fr);
     justify-content: stretch;
   }
@@ -584,10 +577,10 @@ button:disabled {
 .analysis-surface {
   /* Topbar, page padding, study/tour bar and the input/player rows below the board. */
   --board-chrome: 260px;
-  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 366px), 760px);
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 366px), var(--board-max));
 }
 .play-layout.analysis-surface {
-  grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 440px);
+  grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 1fr);
 }
 .board-stack {
   display: flex;

@@ -163,7 +163,7 @@ async function showHint(): Promise<void> {
 </script>
 
 <template>
-  <div class="play-layout">
+  <div v-board-fit class="play-layout">
     <div class="board-stack">
       <div class="board-shell">
         <ChessBoard

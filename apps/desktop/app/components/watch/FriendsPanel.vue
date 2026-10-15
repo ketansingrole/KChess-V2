@@ -77,7 +77,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 
 <template>
   <div class="flex flex-col gap-6">
-    <div class="tv-layout">
+    <div v-board-fit class="tv-layout">
       <section class="card watch-channels">
         <div class="card-header">
           <div>
@@ -250,7 +250,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 }
 .tv-layout {
   --board-chrome: 300px;
-  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 620px), 760px);
+  --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 620px), var(--board-max));
   display: grid;
   grid-template-columns: 240px var(--board-size) minmax(260px, 340px);
   grid-template-areas: 'list board panel';
@@ -292,7 +292,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 }
 @container page (max-width: 1100px) {
   .tv-layout {
-    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 320px), 760px);
+    --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 320px), var(--board-max));
     grid-template-columns: var(--board-size) minmax(260px, 340px);
     grid-template-areas:
       'board panel'

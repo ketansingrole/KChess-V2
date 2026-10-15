@@ -164,7 +164,7 @@ function missed(result: VoiceResult): void {
   <div>
     <PageHeader title="Board editor" />
 
-    <div class="play-layout editor-layout">
+    <div v-board-fit class="play-layout editor-layout">
       <div class="board-stack">
         <EditorBoard
           v-model:tool="tool"

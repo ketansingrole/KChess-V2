@@ -369,6 +369,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
     </div>
     <div
       v-else
+      v-board-fit
       :class="game ? 'play-layout broadcast-layout analysis-surface' : 'flex flex-col gap-4'"
     >
       <!-- In the page header's free space beside the tabs, not a row of its own. -->

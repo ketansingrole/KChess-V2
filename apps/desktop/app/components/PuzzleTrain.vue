@@ -88,7 +88,7 @@ onBeforeUnmount(() => clearTimeout(autoNext))
 </script>
 
 <template>
-  <div class="play-layout puzzle-wide">
+  <div v-board-fit class="play-layout puzzle-wide">
     <div>
       <PuzzleBoard
         v-if="current && phase === 'ready'"

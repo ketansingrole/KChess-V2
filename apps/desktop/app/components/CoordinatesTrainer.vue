@@ -200,7 +200,7 @@ async function finish(): Promise<void> {
 </script>
 
 <template>
-  <div class="play-layout">
+  <div v-board-fit class="play-layout">
     <div class="board-stack">
       <div class="coord-prompt" role="status" aria-live="polite">
         <template v-if="stage === 'running' && mode === 'find'">

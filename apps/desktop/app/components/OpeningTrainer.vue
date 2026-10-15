@@ -154,7 +154,7 @@ const accuracy = computed(() => {
       :actions="[{ label: 'Open the analysis board', onClick: () => store.selectPage('analysis') }]"
     />
   </div>
-  <div v-else class="play-layout">
+  <div v-else v-board-fit class="play-layout">
     <div class="board-stack">
       <ChessBoard
         v-if="node"
