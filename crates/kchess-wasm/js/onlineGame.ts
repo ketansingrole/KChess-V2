@@ -34,6 +34,7 @@ export function onlineGameState() {
     onlineColor: 'white' as 'white' | 'black',
     onlineOpponent: 'Opponent',
     onlineOpponentRating: undefined as number | undefined,
+    onlineRating: undefined as number | undefined,
     onlineStatus: '',
     onlineInitial: 0,
     onlineGameRated: false,
@@ -115,7 +116,11 @@ interface View {
 }
 
 /** The fields the rules report as `null` where the class keeps `undefined`. */
-const UNDEFINED_WHEN_NULL: readonly string[] = ['onlineOpponentRating', 'onlineDaysPerTurn']
+const UNDEFINED_WHEN_NULL: readonly string[] = [
+  'onlineOpponentRating',
+  'onlineRating',
+  'onlineDaysPerTurn',
+]
 
 /** Equal as the state compares them: same value, or the same JSON for an object. */
 function same(a: unknown, b: unknown): boolean {

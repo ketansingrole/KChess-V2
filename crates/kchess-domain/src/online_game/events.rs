@@ -114,6 +114,7 @@ impl Run {
         m.online_days_per_turn = None;
         m.online_tournament = String::new();
         m.online_opponent_rating = None;
+        m.online_rating = None;
     }
 
     /// `finish`: the game is over. A rated or casual finish is remembered for a rematch, and a
@@ -416,6 +417,12 @@ impl Run {
         } else {
             event.get("white")
         };
+        let own = if self.m.online_color == "white" {
+            event.get("white")
+        } else {
+            event.get("black")
+        };
+        self.m.online_rating = at(own, "rating").and_then(Value::as_f64);
         self.m.online_opponent = match nullish(at(opponent, "name")) {
             Some(name) => js::to_string(Some(name)),
             None => {

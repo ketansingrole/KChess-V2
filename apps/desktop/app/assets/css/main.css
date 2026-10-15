@@ -183,6 +183,32 @@ button:disabled {
    is fixed to the window (OpenChamber-style) so it never migrates between the
    sidebar and the topbar while the sidebar animates: on macOS the traffic
    lights float over this header and the toggle sits right beside them. */
+/* Play on Lichess while a game is on: a dot at the item's right, on the icon when collapsed. */
+.nav-game-dot {
+  width: 8px;
+  height: 8px;
+  margin-inline-start: auto;
+  border-radius: 50%;
+  background: var(--ui-text-muted);
+}
+.nav-game.turn .nav-game-dot,
+.nav-collapsed .nav-game.turn::after {
+  background: var(--ui-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-primary) 25%, transparent);
+}
+.nav-collapsed .nav-game {
+  position: relative;
+}
+.nav-collapsed .nav-game::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-text-muted);
+}
 .sidebar-titlebar {
   display: flex;
   align-items: center;

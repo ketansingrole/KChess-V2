@@ -544,6 +544,31 @@ mod tests {
     }
 
     #[test]
+    fn a_game_reads_both_players_ratings() {
+        let mut model = Model::idle();
+        model.online_phase = "playing".into();
+        model.online_id = "AbCd1234".into();
+        model.online_account = "Alice".into();
+        let result = transition(
+            "onlineGameEvent",
+            vec![
+                state_json(&model),
+                json!({
+                    "type": "gameFull",
+                    "id": "AbCd1234",
+                    "white": { "id": "bob", "name": "Bob", "rating": 1590 },
+                    "black": { "id": "alice", "name": "Alice", "rating": 1580 },
+                    "state": { "moves": "" },
+                }),
+                ctx(0.0),
+            ],
+        );
+        assert_eq!(result["state"]["onlineColor"], json!("black"));
+        assert_eq!(result["state"]["onlineRating"], json!(1580.0));
+        assert_eq!(result["state"]["onlineOpponentRating"], json!(1590.0));
+    }
+
+    #[test]
     fn a_finished_game_announces_its_result_and_is_kept_for_a_rematch() {
         let mut model = Model::idle();
         model.online_phase = "playing".into();

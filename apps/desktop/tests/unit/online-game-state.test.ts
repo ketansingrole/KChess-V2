@@ -4,6 +4,8 @@ import { useKChessStore } from '../../app/stores/kchess'
 import { desktop } from './fixtures'
 import { chess960Fen } from '@kchess/rules/variant'
 import type { OnlineEvent } from '@kchess/contracts/types'
+// Mocked for every test in setup.ts.
+import { play } from '../../app/utils/sound'
 
 const full = (overrides: Record<string, unknown> = {}, state: Record<string, unknown> = {}) =>
   ({
@@ -115,6 +117,27 @@ it('remembers the finished game for a rematch with colours swapped', async () =>
   expect(start).toHaveBeenCalledWith(
     expect.objectContaining({ target: 'bob', color: 'black', minutes: 10 }),
   )
+})
+
+// Only the opponent's rating was read, so your own player line had none, and a game that ended
+// while it was played (mate, resignation, time) made no sound.
+it('shows your rating and sounds when the game ends', async () => {
+  const { store, emit } = await setup()
+  emit(full({ white: { id: 'alice', name: 'Alice', rating: 1580 } }))
+  await flushPromises()
+  expect(store.onlineRating).toBe(1580)
+  expect(store.onlineOpponentRating).toBe(1800)
+  vi.mocked(play).mockClear()
+  emit({
+    type: 'gameState',
+    id: 'AbCd1234',
+    moves: 'f2f3 e7e5 g2g4 d8h4',
+    status: 'mate',
+    winner: 'black',
+  } as unknown as OnlineEvent)
+  await flushPromises()
+  expect(store.onlinePhase).toBe('finished')
+  expect(play).toHaveBeenCalledWith('genericNotify')
 })
 
 it('runs the computer game clock and loses on time', async () => {

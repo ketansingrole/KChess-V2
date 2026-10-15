@@ -33,6 +33,7 @@ const {
   onlineConnection,
   onlineOpponent,
   onlineOpponentRating,
+  onlineRating,
   onlineColor,
   onlineHistory,
   onlineMoves,
@@ -194,7 +195,7 @@ const players = computed(() => {
     presence: onlinePresence.value.opponent,
   }
   const you = {
-    name: 'You',
+    name: onlineRating.value ? `You (${onlineRating.value})` : 'You',
     icon: 'i-lucide-user',
     clock: hasClock.value ? clockText(onlineColor.value) : undefined,
     presence: onlinePresence.value.self,
@@ -218,11 +219,8 @@ const banner = computed(() =>
           detail: 'Go to the last move to keep playing.',
         }
       : playing.value
-        ? {
-            icon: onlineInteractive.value ? 'i-lucide-mouse-pointer-click' : 'i-lucide-hourglass',
-            title: onlineInteractive.value ? 'Your move' : 'Waiting for opponent',
-            detail: onlineStatus.value,
-          }
+        ? // Whose move it is already shows on the clocks; announced for screen readers below.
+          null
         : onlinePhase.value === 'disconnected'
           ? {
               icon: 'i-lucide-triangle-alert',
@@ -582,7 +580,10 @@ function backToTournament(): void {
             <span class="flex-1" />
             <BoardViewToggles />
           </div>
-          <div class="status-banner" :role="playing ? 'status' : 'alert'">
+          <p v-if="playing" class="sr-only" role="status">
+            {{ onlineInteractive ? 'Your move' : 'Waiting for opponent' }}
+          </p>
+          <div v-if="banner" class="status-banner" :role="playing ? 'status' : 'alert'">
             <UIcon :name="banner.icon" class="status-icon" />
             <div>
               <strong>{{ banner.title }}</strong>

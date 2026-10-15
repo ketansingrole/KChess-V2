@@ -75,6 +75,7 @@ export function useOnlineGame(options: {
     onlineColor,
     onlineOpponent,
     onlineOpponentRating,
+    onlineRating,
     onlineStatus,
     onlineGameRated,
     onlineSetup,
@@ -280,6 +281,10 @@ export function useOnlineGame(options: {
     { immediate: true },
   )
   watch(opponentId, () => void pollPresence())
+  // A game that ends while it is played (mate, resignation, time, a draw) sounds, as on Lichess.
+  watch(onlinePhase, (phase, before) => {
+    if (before === 'playing' && phase === 'finished') void play('genericNotify')
+  })
 
   /** Everything about one game, forgotten when another takes the board. */
 
@@ -353,6 +358,7 @@ export function useOnlineGame(options: {
     onlineColor,
     onlineOpponent,
     onlineOpponentRating,
+    onlineRating,
     onlineStatus,
     onlineMinutes,
     onlineIncrement,

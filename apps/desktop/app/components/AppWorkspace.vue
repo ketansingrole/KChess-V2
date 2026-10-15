@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useOnline } from '@vueuse/core'
 import { useKChessStore } from '../stores/kchess'
@@ -78,6 +78,21 @@ const {
   zenActive,
 } = storeToRefs(store)
 const { groups: searchGroups, mode: searchMode } = useQuickPick(searchQuery)
+const challengeStore = useChallengeStore()
+/** Play on Lichess carries a dot while a game is on, in the primary colour when it is your move. */
+const lichessGame = computed<'turn' | 'live' | null>(() => {
+  const live = store.onlinePhase === 'playing'
+  if ((live && store.onlineTurn === store.onlineColor) || challengeStore.myTurnCount > 0)
+    return 'turn'
+  return live ? 'live' : null
+})
+const sidebarItems = computed(() =>
+  navItems.value.map((item) =>
+    item.to === '/online' && lichessGame.value
+      ? { ...item, class: `nav-game ${lichessGame.value}` }
+      : item,
+  ),
+)
 watch(searchOpen, (open) => {
   if (!open) searchQuery.value = ''
 })
@@ -167,12 +182,22 @@ function toggleMaximize(event?: MouseEvent): void {
         <template #default="{ state }">
           <UNavigationMenu
             :key="state"
-            :items="navItems"
+            :items="sidebarItems"
             orientation="vertical"
             :collapsed="state === 'collapsed'"
             :tooltip="state === 'collapsed'"
             :ui="{ link: 'p-1.5 overflow-hidden' }"
-          />
+            :class="{ 'nav-collapsed': state === 'collapsed' }"
+          >
+            <template #item-trailing="{ item }">
+              <span
+                v-if="item.to === '/online' && lichessGame"
+                class="nav-game-dot"
+                role="img"
+                :aria-label="lichessGame === 'turn' ? 'Your move' : 'Game in progress'"
+              />
+            </template>
+          </UNavigationMenu>
         </template>
         <template #footer="{ state }">
           <div class="flex w-full min-w-0 flex-col gap-1">

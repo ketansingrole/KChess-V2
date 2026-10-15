@@ -81,7 +81,7 @@ function presenceTitle(presence: PlayerPresence): string {
           >
             {{ player.name }}
           </button>
-          <template #content><PlayerCard :username="player.username" /></template> </UPopover
+          <template #content><PlayerCard :username="player.username" full /></template> </UPopover
         ><PlayerLink v-else-if="player.username" :username="player.username" class="player-name">{{
           player.name
         }}</PlayerLink

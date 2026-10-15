@@ -4,8 +4,8 @@ import type { LichessUser } from '@kchess/contracts/types'
 import { PERF_LABELS, playedPerfs } from '../utils/perfs'
 
 /**
- * A player's profile at a glance, shown in place so a live game is never left to look someone up.
- * `full` adds a way to the Players page for when leaving is fine.
+ * A player's profile at a glance, shown in place beside the board. `full` adds a way to the
+ * player's full profile on the Players page.
  */
 const props = defineProps<{ username: string; full?: boolean }>()
 const store = useKChessStore()
@@ -84,7 +84,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  width: 15rem;
+  width: 16rem;
   padding: 0.75rem;
 }
 .player-card-name {
@@ -97,8 +97,7 @@ onMounted(async () => {
 }
 .player-card-ratings {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.25rem 0.75rem;
+  gap: 0.25rem;
   margin: 0;
   font-size: 0.75rem;
 }

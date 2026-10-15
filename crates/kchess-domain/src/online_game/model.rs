@@ -81,6 +81,9 @@ pub struct Model {
     pub online_color: String,
     pub online_opponent: String,
     pub online_opponent_rating: Option<f64>,
+    /// Our own rating in this game, as Lichess sent it with the players.
+    #[serde(default)]
+    pub online_rating: Option<f64>,
     pub online_status: String,
     pub online_initial: f64,
     pub online_game_rated: bool,
@@ -334,6 +337,7 @@ impl Model {
             online_color: "white".into(),
             online_opponent: "Opponent".into(),
             online_opponent_rating: None,
+            online_rating: None,
             online_status: String::new(),
             online_initial: 0.0,
             online_game_rated: false,
