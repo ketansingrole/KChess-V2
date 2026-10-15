@@ -575,11 +575,13 @@ button:disabled {
 }
 .play-layout {
   display: grid;
-  /* The panel takes the rest of the page's width, so every board page spans the same width
-     whatever its board size; a page with more rows around its board just has a wider panel. */
-  grid-template-columns: var(--board-size) minmax(300px, 1fr);
+  /* The panel takes the width the board leaves, so board pages share their edges even when one
+     has more rows around its board, up to a width that still reads as a side panel. Past that
+     (a wide window, or zen mode without the sidebar) the board and panel are centred instead. */
+  --panel-max: 560px;
+  grid-template-columns: var(--board-size) minmax(300px, var(--panel-max));
   gap: 24px;
-  justify-content: stretch;
+  justify-content: center;
   align-items: stretch;
   width: 100%;
   margin: 0 auto;
@@ -606,7 +608,7 @@ button:disabled {
   --board-size: clamp(260px, min(100dvh - var(--board-chrome), 100cqw - 366px), var(--board-max));
 }
 .play-layout.analysis-surface {
-  grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, 1fr);
+  grid-template-columns: calc(var(--board-size) + 22px) minmax(300px, var(--panel-max));
 }
 .board-stack {
   display: flex;
@@ -618,6 +620,7 @@ button:disabled {
   width: 100%;
 }
 .side-panel {
+  container: side-panel / inline-size;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1289,6 +1292,16 @@ button.move-cell:hover {
 .panel-actions > * {
   flex: 1;
   justify-content: center;
+}
+/* A narrow panel (zen mode, small windows) puts two actions per row instead of clipping the
+   last one; an odd one out takes the whole row. */
+@container side-panel (max-width: 400px) {
+  .panel-actions {
+    flex-wrap: wrap;
+  }
+  .panel-actions > * {
+    flex: 1 1 calc(50% - 4px);
+  }
 }
 .panel-divider {
   border-top: 1px solid var(--ui-border);
@@ -2185,6 +2198,10 @@ button.presence:focus-visible {
 .app-shell.zen .page-header,
 .app-shell.zen .zen-hide {
   display: none !important;
+}
+/* The board leads: a compact panel beside it, the freed width left as margins. */
+.app-shell.zen .play-layout {
+  --panel-max: 340px;
 }
 
 /* ── Two-finger swipe feedback ───────────────────────────────────────────

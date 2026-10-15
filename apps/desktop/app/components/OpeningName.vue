@@ -34,7 +34,7 @@ const opening = computed(() =>
 
 <style scoped>
 .opening-name {
-  margin: 0;
+  /* No margin of its own: it takes the spacing of the panel it sits in. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

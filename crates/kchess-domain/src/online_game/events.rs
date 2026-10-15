@@ -122,7 +122,7 @@ impl Run {
     pub fn finish(&mut self, winner: Option<&str>, reason: &str, notify: bool) {
         let previous = self.m.online_phase.clone();
         self.m.online_phase = "finished".into();
-        self.m.online_status = format!("Game ended: {reason}");
+        self.m.online_status = outcome_line(winner, reason, &self.m.online_color);
         self.m.draw_offer = "none".into();
         self.m.takeback_offer = "none".into();
         self.m.claim_at = None;
@@ -436,5 +436,37 @@ impl Run {
         };
         self.m.online_opponent_rating = at(opponent, "rating").and_then(Value::as_f64);
         self.m.opponent_id = string_or(at(opponent, "id"), "");
+    }
+}
+
+/// One line for a finished game: who won and how, from Lichess's status name (`mate`,
+/// `resign`, `outoftime`, ...). The "how" is kept only when it fits the result, so a status that
+/// contradicts the winner (or an unfamiliar one) still says who won and nothing false.
+pub(crate) fn outcome_line(winner: Option<&str>, reason: &str, ours: &str) -> String {
+    if matches!(reason, "aborted" | "noStart") {
+        return "Game aborted".into();
+    }
+    let decided = winner.is_some();
+    let how = match reason {
+        "mate" if decided => "by checkmate",
+        "resign" if decided => "by resignation",
+        "timeout" if decided => "by abandonment",
+        "cheat" if decided => "by cheat detection",
+        "variantEnd" if decided => "by the variant's rules",
+        "stalemate" if !decided => "by stalemate",
+        "draw" if !decided => "by agreement",
+        "outoftime" => "on time",
+        _ => "",
+    };
+    let result = match winner {
+        Some(side) if side == ours => "You won",
+        Some(_) => "You lost",
+        None if how.is_empty() => return "Game over".into(),
+        None => "Draw",
+    };
+    if how.is_empty() {
+        result.into()
+    } else {
+        format!("{result} {how}")
     }
 }

@@ -544,6 +544,33 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_game_says_who_won_and_how_in_one_line() {
+        use super::events::outcome_line;
+        assert_eq!(
+            outcome_line(Some("white"), "mate", "white"),
+            "You won by checkmate"
+        );
+        assert_eq!(
+            outcome_line(Some("white"), "outoftime", "black"),
+            "You lost on time"
+        );
+        assert_eq!(
+            outcome_line(None, "stalemate", "white"),
+            "Draw by stalemate"
+        );
+        assert_eq!(outcome_line(None, "draw", "black"), "Draw by agreement");
+        assert_eq!(outcome_line(None, "aborted", "white"), "Game aborted");
+        assert_eq!(
+            outcome_line(Some("black"), "unknownFinish", "black"),
+            "You won"
+        );
+        assert_eq!(outcome_line(None, "finished", "white"), "Game over");
+        // A status that contradicts the result is left out rather than stated.
+        assert_eq!(outcome_line(None, "mate", "white"), "Game over");
+        assert_eq!(outcome_line(Some("white"), "stalemate", "white"), "You won");
+    }
+
+    #[test]
     fn a_game_reads_both_players_ratings() {
         let mut model = Model::idle();
         model.online_phase = "playing".into();
@@ -590,7 +617,10 @@ mod tests {
             ],
         );
         assert_eq!(result["state"]["onlinePhase"], json!("finished"));
-        assert_eq!(result["state"]["onlineStatus"], json!("Game ended: resign"));
+        assert_eq!(
+            result["state"]["onlineStatus"],
+            json!("You lost by resignation")
+        );
         assert_eq!(
             effects(&result)[1],
             json!({

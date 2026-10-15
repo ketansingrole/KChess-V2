@@ -227,7 +227,8 @@ const banner = computed(() =>
               title: 'Connection interrupted',
               detail: onlineStatus.value,
             }
-          : { icon: 'i-lucide-flag', title: 'Game over', detail: onlineStatus.value },
+          : // The result already says it all: "You won by resignation".
+            { icon: 'i-lucide-flag', title: onlineStatus.value || 'Game over', detail: '' },
 )
 const variantName = computed(() =>
   onlineSetup.value.variant === 'standard' ? '' : VARIANT_LABELS[onlineSetup.value.variant],
@@ -587,7 +588,7 @@ function backToTournament(): void {
             <UIcon :name="banner.icon" class="status-icon" />
             <div>
               <strong>{{ banner.title }}</strong>
-              <span class="detail">{{ banner.detail }}</span>
+              <span v-if="banner.detail" class="detail">{{ banner.detail }}</span>
             </div>
           </div>
           <!-- Named only after the game: during it, the name is help from outside the board. -->
