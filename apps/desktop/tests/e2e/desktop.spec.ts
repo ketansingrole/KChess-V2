@@ -1859,8 +1859,8 @@ test('analyses a broadcast inline and explores lines without changing saved anal
   await toggle.click()
   await expect(page.getByRole('meter', { name: 'Evaluation' })).toBeVisible()
   const broadcastBoardWidth = (await page.locator('.broadcast-board .cg-wrap').boundingBox())!.width
-  const broadcastPanelWidth = (await page.locator('.broadcast-layout .side-panel').boundingBox())!
-    .width
+  const broadcastPanel = (await page.locator('.broadcast-layout .side-panel').boundingBox())!
+  const broadcastLayout = (await page.locator('.broadcast-layout').boundingBox())!
   const lines = page.getByRole('list', { name: 'Engine lines' })
   await expect(lines.locator('li')).toHaveCount(3)
   await page.getByRole('button', { name: 'Move 1, white, e4', exact: true }).click()
@@ -1899,10 +1899,12 @@ test('analyses a broadcast inline and explores lines without changing saved anal
   await toggle.click()
   await expect(lines).toHaveCount(0)
   await navigate(page, 'Analysis board')
-  expect((await page.locator('.analysis-board .cg-wrap').boundingBox())!.width).toBe(
-    broadcastBoardWidth,
-  )
-  expect((await page.locator('.analysis-panel').boundingBox())!.width).toBe(broadcastPanelWidth)
+  // Each page fits its board to the window (the broadcast's tour toolbar leaves it less height),
+  // but board pages share their outer edges.
+  const analysisLayout = (await page.locator('.analysis-panel').locator('xpath=..').boundingBox())!
+  const analysisPanel = (await page.locator('.analysis-panel').boundingBox())!
+  expect(analysisLayout.x).toBe(broadcastLayout.x)
+  expect(analysisPanel.x + analysisPanel.width).toBe(broadcastPanel.x + broadcastPanel.width)
   await expect(page.getByText('Unsaved analysis', { exact: true })).toBeVisible()
   await expect(
     page.getByRole('group', { name: 'Moves', exact: true }).locator('.tree-move'),

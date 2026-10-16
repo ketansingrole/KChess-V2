@@ -50,3 +50,26 @@ it('leaves a layout without a shown board alone', () => {
 
   expect(layout.style.getPropertyValue('--board-chrome')).toBe('')
 })
+
+/*
+ * The grid stretches the board's column to a taller side panel (broadcast engine lines). Counting
+ * that stretch as chrome shrank the board, which kept the stretch, so switching the evaluation bar
+ * off left the board at its 260px floor in a 1024×700 window.
+ */
+it('ignores the stretch of a column beside a taller side panel', () => {
+  // The page ends 40px under the layout, as above.
+  const page = place(element('div', 'page', element('main')), { top: 52, height: 1016 })
+  const layout = place(element('div', 'play-layout', page), { top: 128, height: 900 })
+  const column = place(element('div', 'board-stack', layout), { top: 128, height: 900 })
+  place(element('div', 'player-line', column), { top: 128, height: 36 })
+  const host = place(element('div', 'broadcast-board', column), { top: 174, height: 400 })
+  place(element('cg-container', '', host), { top: 174, height: 400, width: 400 })
+  place(element('div', 'player-line', column), { top: 584, height: 36 })
+  place(element('div', 'hidden-row', column), { top: 0, height: 0, width: 0 })
+  place(element('aside', 'side-panel', layout), { top: 128, height: 900 })
+
+  fitBoard(layout)
+
+  // 128 above + 92 of player lines and gaps + 40 below; not the 400px of stretch under them.
+  expect(layout.style.getPropertyValue('--board-chrome')).toBe('260px')
+})

@@ -18,8 +18,16 @@ export function fitBoard(layout: HTMLElement): void {
   while (column.parentElement && column.parentElement !== layout) column = column.parentElement
   if (column.parentElement !== layout) return
   const scrolled = page.parentElement?.scrollTop ?? 0
-  const above = column.getBoundingClientRect().top + scrolled
-  const around = column.getBoundingClientRect().height - board.getBoundingClientRect().height
+  // The column's content, not its box: the grid stretches the column to a taller side panel, and
+  // counting that stretch as chrome would shrink the board, which keeps the stretch, for good.
+  // Hidden rows (no box) would otherwise pull the top to the viewport's edge.
+  const rows = (column === board ? [board] : [...column.children])
+    .map((row) => row.getBoundingClientRect())
+    .filter((row) => row.width || row.height)
+  const top = Math.min(...rows.map((row) => row.top))
+  const bottom = Math.max(...rows.map((row) => row.bottom))
+  const above = top + scrolled
+  const around = bottom - top - board.getBoundingClientRect().height
   // Rows under the whole layout (and the page's bottom padding); a side panel taller than the
   // board stays inside the layout, so it scrolls rather than shrinking the board to nothing.
   const below = page.getBoundingClientRect().bottom - layout.getBoundingClientRect().bottom
