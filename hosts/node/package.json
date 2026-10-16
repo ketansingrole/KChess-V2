@@ -1,6 +1,6 @@
 {
   "name": "@kchess/node",
-  "version": "2026.10.10",
+  "version": "2026.10.11",
   "private": true,
   "type": "module",
   "license": "GPL-3.0-or-later",
