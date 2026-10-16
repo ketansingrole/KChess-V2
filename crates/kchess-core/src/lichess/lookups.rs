@@ -465,6 +465,8 @@ pub struct PositionLookups {
     /// The login the explorer is asked with; None sends no login (tests).
     login: Option<Arc<dyn ExplorerLogin>>,
     lifetime: CancellationToken,
+    /// Per origin, when (by `now`) a 429's cooldown ends; until then that origin is not asked.
+    cooldowns: Mutex<HashMap<String, i64>>,
 }
 
 /// Removing a pending lookup must also happen when its caller is cancelled or dropped.
@@ -502,6 +504,7 @@ impl PositionLookups {
             pending: Mutex::new(HashMap::new()),
             login: None,
             lifetime: CancellationToken::new(),
+            cooldowns: Mutex::new(HashMap::new()),
         }
     }
 
@@ -527,6 +530,31 @@ impl PositionLookups {
             CoreError::new("Connect a Lichess account in Settings to use the opening explorer.")
         })?;
         Ok(self.http.get(url).bearer_auth(token))
+    }
+
+    /// Refuses a request to an origin that answered 429 until its cooldown ends, so the saved
+    /// lookup (or the error) comes back at once instead of prolonging the rate limit.
+    fn paced(&self, url: &reqwest::Url) -> CoreResult<()> {
+        let origin = url.origin().ascii_serialization();
+        let until = lock(&self.cooldowns).get(&origin).copied();
+        match until {
+            Some(until) if until > (self.now)() => Err(slow_down(until - (self.now)())),
+            _ => Ok(()),
+        }
+    }
+
+    /// After a 429, starts its origin's cooldown (`Retry-After`, as the Lichess API's policy
+    /// reads it) and fails the request.
+    fn note_rate_limit(&self, url: &reqwest::Url, response: &reqwest::Response) -> CoreResult<()> {
+        if response.status().as_u16() != 429 {
+            return Ok(());
+        }
+        let wait = i64::try_from(super::policy::cooldown_for(response.headers()).as_millis())
+            .unwrap_or(i64::MAX);
+        let until = (self.now)().saturating_add(wait);
+        let origin = url.origin().ascii_serialization();
+        lock(&self.cooldowns).insert(origin, until);
+        Err(slow_down(wait))
     }
 
     /// `lookup(kind, fen, options)`.
@@ -756,14 +784,16 @@ impl PositionLookups {
     /// Requests a lookup and reads its body, bounded by the kind's size limit.
     async fn fetch(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<String> {
         let url = self.url(kind, fen, options)?;
+        self.paced(&url)?;
         let request = if kind == Kind::Tablebase {
-            self.http.get(url)
+            self.http.get(url.clone())
         } else {
-            self.explorer_request(url).await?
+            self.explorer_request(url.clone()).await?
         };
         let mut response = request.send().await.map_err(|_| {
             CoreError::new("Position lookup failed. Check your connection and retry.")
         })?;
+        self.note_rate_limit(&url, &response)?;
         let status = response.status().as_u16();
         if status == 401 || status == 403 {
             return Err(CoreError::new(
@@ -810,16 +840,17 @@ impl PositionLookups {
         if !valid {
             return Err(CoreError::new("Invalid id."));
         }
-        let url = format!("{}/{id}", self.endpoints.masters_game);
+        let url = reqwest::Url::parse(&format!("{}/{id}", self.endpoints.masters_game))
+            .map_err(|_| CoreError::new("Invalid id."))?;
+        self.paced(&url)?;
         let attempt = async {
             let response = self
-                .explorer_request(
-                    reqwest::Url::parse(&url).map_err(|_| CoreError::new("Invalid id."))?,
-                )
+                .explorer_request(url.clone())
                 .await?
                 .send()
                 .await
                 .map_err(|_| CoreError::new("The master game could not be loaded."))?;
+            self.note_rate_limit(&url, &response)?;
             let status = response.status().as_u16();
             if status == 401 || status == 403 {
                 return Err(CoreError::new(
@@ -844,6 +875,13 @@ impl PositionLookups {
         }
         Ok(text)
     }
+}
+
+/// The error while an origin's 429 cooldown of `wait_ms` runs.
+fn slow_down(wait_ms: i64) -> CoreError {
+    let seconds = (wait_ms.max(1) + 999) / 1000;
+    let unit = if seconds == 1 { "second" } else { "seconds" };
+    CoreError::new(format!("Too many lookups. Try again in {seconds} {unit}."))
 }
 
 /// The lossless sidecar of a validator call whose arguments are plain JSON (no `undefined`, NaN or

@@ -252,6 +252,102 @@ async fn shows_a_saved_result_as_stale_after_a_failed_refresh() {
 }
 
 #[tokio::test]
+async fn a_429_pauses_every_explorer_request_until_its_retry_after_ends() {
+    let mut calls = 0;
+    let fixture = serve(move |_| {
+        calls += 1;
+        if calls == 1 {
+            Reply::WithHeaders(429, vec![("retry-after", "30".into())], "{}".into())
+        } else {
+            Reply::Json(200, opening_body().to_string())
+        }
+    })
+    .await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let kind = json!("opening");
+    let fen = json!(INITIAL);
+    let limited = lookups.service.lookup(&kind, &fen, None).await.unwrap_err();
+    assert!(
+        limited.message.contains("30 seconds"),
+        "{}",
+        limited.message
+    );
+    // Neither the lookup nor the opening page's history asks again during the cooldown.
+    lookups.clock.store(21_000, Ordering::SeqCst);
+    let waiting = lookups.service.lookup(&kind, &fen, None).await.unwrap_err();
+    assert!(
+        waiting.message.contains("10 seconds"),
+        "{}",
+        waiting.message
+    );
+    assert!(
+        lookups
+            .service
+            .opening_popularity(&json!(["e2e4"]))
+            .await
+            .is_err()
+    );
+    assert_eq!(fixture.requests().len(), 1);
+    lookups.clock.store(31_000, Ordering::SeqCst);
+    let result = lookups.service.lookup(&kind, &fen, None).await.unwrap();
+    assert!(!result.cached);
+    assert_eq!(fixture.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn sibling_openings_reuse_their_shared_positions_history() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({ "history": [{ "month": "2024-01", "white": 400, "draws": 200, "black": 400 }] })
+                .to_string(),
+        )
+    })
+    .await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let king = lookups
+        .service
+        .opening_popularity(&json!(["e2e4", "e7e5", "f2f4"]))
+        .await
+        .unwrap();
+    assert_eq!(king.len(), 1);
+    // The Vienna shares 1. e4 e5 with the King's Gambit: only its own position is asked.
+    lookups
+        .service
+        .opening_popularity(&json!(["e2e4", "e7e5", "b1c3"]))
+        .await
+        .unwrap();
+    assert_eq!(fixture.to("/lichess/history").len(), 3);
+}
+
+#[tokio::test]
+async fn a_saved_lookup_is_shown_without_asking_during_a_cooldown() {
+    let mut calls = 0;
+    let fixture = serve(move |_| {
+        calls += 1;
+        if calls == 1 {
+            Reply::Json(200, opening_body().to_string())
+        } else {
+            Reply::Json(429, "{}".into())
+        }
+    })
+    .await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let kind = json!("opening");
+    let fen = json!(INITIAL);
+    lookups.service.lookup(&kind, &fen, None).await.unwrap();
+    lookups
+        .clock
+        .store(1_000 + 2 * 86_400_000, Ordering::SeqCst);
+    for _ in 0..3 {
+        let result = lookups.service.lookup(&kind, &fen, None).await.unwrap();
+        assert!(result.stale && result.cached);
+    }
+    // Without Retry-After the cooldown is a minute; only the first refresh was sent.
+    assert_eq!(fixture.requests().len(), 2);
+}
+
+#[tokio::test]
 async fn rejects_malformed_and_illegal_remote_moves() {
     let bodies = [
         json!({ "moves": [{ "uci": "e2e5", "white": 10, "draws": 0, "black": 1 }] }),

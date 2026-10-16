@@ -301,7 +301,7 @@ const accuracy = computed(() => {
         Loading popular replies…
       </p>
       <p v-else-if="drillsOpening && drillNote" class="text-sm muted" role="status">
-        Only the named line: {{ drillNote }}
+        {{ drillNote }}
       </p>
       <div
         v-if="feedback && node"

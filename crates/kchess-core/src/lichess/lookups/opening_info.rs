@@ -75,6 +75,15 @@ struct SavedPopularity {
     months: Vec<PopularityMonth>,
 }
 
+/// One position's explorer history, saved apart from the lines it is part of: a line's parent is
+/// its sibling lines' parent too, and the child of the line before it.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedHistory {
+    fetched_at: i64,
+    history: Value,
+}
+
 /// The UCI moves of a line, as the methods receive them.
 fn line_of(raw: &Value) -> CoreResult<Vec<String>> {
     let moves: Vec<String> = raw
@@ -297,8 +306,8 @@ impl PositionLookups {
             return Ok(saved.months.clone());
         }
         let attempt = async {
-            let parent = self.fetch_history(parent).await?;
-            let child = self.fetch_history(child).await?;
+            let parent = self.history(parent, now).await?;
+            let child = self.history(child, now).await?;
             Ok::<_, CoreError>(popularity(&parent, &child))
         };
         match attempt.await {
@@ -312,6 +321,36 @@ impl PositionLookups {
             }
             Err(cause) => match saved {
                 Some(saved) => Ok(saved.months),
+                None => Err(cause),
+            },
+        }
+    }
+
+    /// A position's history, the saved one while it is fresh (or when asking again fails).
+    async fn history(&self, fen: &str, now: i64) -> CoreResult<Value> {
+        let key = format!("history:{fen}");
+        let saved: Option<SavedHistory> = self
+            .cache
+            .read(&key)
+            .await?
+            .and_then(|value| serde_json::from_value(value).ok());
+        if let Some(saved) = &saved
+            && now - saved.fetched_at < FRESH_MS
+        {
+            return Ok(json!({ "history": saved.history }));
+        }
+        match self.fetch_history(fen).await {
+            Ok(raw) => {
+                let history = raw.get("history").cloned().unwrap_or_else(|| json!([]));
+                let value = json!(SavedHistory {
+                    fetched_at: now,
+                    history,
+                });
+                self.cache.write(&key, &value).await?;
+                Ok(raw)
+            }
+            Err(cause) => match saved {
+                Some(saved) => Ok(json!({ "history": saved.history })),
                 None => Err(cause),
             },
         }
@@ -336,12 +375,18 @@ impl PositionLookups {
         request: reqwest::RequestBuilder,
         what: &str,
     ) -> CoreResult<String> {
+        let request = request
+            .build()
+            .map_err(|_| CoreError::new(format!("{what} could not be loaded.")))?;
+        let url = request.url().clone();
+        self.paced(&url)?;
         let attempt = async {
-            let mut response = request.send().await.map_err(|_| {
+            let mut response = self.http.execute(request).await.map_err(|_| {
                 CoreError::new(format!(
                     "{what} could not be loaded. Check your connection."
                 ))
             })?;
+            self.note_rate_limit(&url, &response)?;
             let status = response.status().as_u16();
             if status == 401 || status == 403 {
                 return Err(CoreError::new(

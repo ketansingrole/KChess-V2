@@ -20,7 +20,8 @@ const LOOKUP_BUDGET = 16
  * The tree an opening is drilled from: its named line, then the explorer's popular moves for a
  * few more moves (the most played one for the player, the popular replies for the opponent).
  * Without the explorer (offline, or no Lichess account) the named line alone is drilled, and
- * `note` says why. Lookups are the explorer's saved ones when they are fresh.
+ * `note` says why; it also says so when a later lookup fails and the drill is cut short.
+ * Lookups are the explorer's saved ones when they are fresh.
  */
 export function useOpeningDrill(choice: Ref<OpeningChoice | null>, color: Ref<'white' | 'black'>) {
   const tree = shallowRef<TreeNode | null>(null)
@@ -54,8 +55,11 @@ export function useOpeningDrill(choice: Ref<OpeningChoice | null>, color: Ref<'w
         } catch (cause) {
           console.warn('[opening-drill] Looking up popular replies failed:', cause)
           if (!request.current()) return
-          // The named line is still worth drilling; only a drill with nothing past it says why.
-          if (entry.path === path) note.value = errorText(cause)
+          // The named line is still worth drilling; a drill cut short says why.
+          note.value =
+            entry.path === path
+              ? `Only the named line: ${errorText(cause)}`
+              : `Some popular replies are missing: ${errorText(cause)}`
           break
         }
         if (!request.current()) return
