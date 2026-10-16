@@ -1,6 +1,6 @@
 {
   "name": "@kchess/native",
-  "version": "2026.10.8",
+  "version": "2026.10.9",
   "private": true,
   "type": "module",
   "license": "GPL-3.0-or-later",
