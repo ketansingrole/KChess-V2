@@ -154,6 +154,13 @@ Without signing credentials, Windows releases are unsigned and macOS builds are 
 first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
 and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).
 
+### Snap Store
+
+The existing [`kchess` listing](https://snapcraft.io/kchess) now follows this project.
+Release builds include a Snap package; publishing a stable GitHub release triggers a
+checksum-verified upload to Snap Store once its repository credential is configured.
+See [Snap Store setup and migration](docs/snap-store.md).
+
 ### App updates
 
 **Settings → Updates** shows the installed version, update status, last successful check,

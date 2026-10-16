@@ -27,6 +27,19 @@ describe('update capability matrix', () => {
     }
   })
 
+  it('leaves updates to Snap Store even if a Debian feed is present', () => {
+    const capabilities = resolveUpdateCapabilities({
+      dev: false,
+      hasFeed: true,
+      platform: 'linux',
+      packageType: 'deb',
+      snap: '/snap/kchess/current',
+      macSigned: false,
+    })
+    expect(capabilities).toMatchObject({ canCheck: false, canInstall: false })
+    expect(capabilities.reason).toContain('Snap Store')
+  })
+
   it('checks but never self-installs unsigned Mac builds', () => {
     const capabilities = resolveUpdateCapabilities({
       dev: false,
