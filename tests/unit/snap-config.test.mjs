@@ -28,7 +28,9 @@ describe('Snap package descriptor', () => {
     expect(snap.apps.kchess.extensions).toEqual(['gnome'])
     // snap/gui/kchess.desktop is discovered automatically. meta/gui is not present at build time.
     expect(snap.apps.kchess).not.toHaveProperty('desktop')
-    expect(snap.plugs['browser-support']['allow-sandbox']).toBe(true)
-    expect(core.commandArgs).not.toContain('--no-sandbox')
+    // allow-sandbox needs manual Store review, so Chromium's own sandbox is off inside the Snap.
+    expect(snap.plugs?.['browser-support']).toBeUndefined()
+    expect(snap.apps.kchess.plugs).toContain('browser-support')
+    expect(core.commandArgs).toContain('--no-sandbox')
   })
 })

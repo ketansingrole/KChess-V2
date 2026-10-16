@@ -19,7 +19,13 @@ rerun the failed Publish Snap job; do not move the tag or replace published asse
 Snap Store manages installed Snap updates. KChess disables its GitHub updater inside a Snap.
 The sandbox needs network access, a localhost listener for Lichess OAuth, desktop/GPU/audio
 interfaces, and home access for PGNs. Microphone and password-manager interfaces may need
-manual connection or Store approval:
+manual connection or Store approval.
+
+The Snap omits `browser-support`'s `allow-sandbox` attribute because the Store sends it to
+manual review (2026.10.10's upload was held). Electron Builder therefore launches KChess
+with `--no-sandbox` and drops `chrome-sandbox`: Chromium's inner sandbox is off, while
+strict confinement still applies to the whole app. Renderer windows keep Electron's
+`sandbox: true` preload restrictions and context isolation.
 
 ```sh
 sudo snap connect kchess:audio-record

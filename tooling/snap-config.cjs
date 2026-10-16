@@ -33,7 +33,9 @@ module.exports = {
         'audio-playback',
         'audio-record',
         'password-manager-service',
-        { 'browser-support': { interface: 'browser-support', 'allow-sandbox': true } },
+        // Without allow-sandbox (which the Store holds for manual review), Electron Builder
+        // launches with --no-sandbox and drops chrome-sandbox; strict confinement still applies.
+        'browser-support',
       ],
     },
   },
