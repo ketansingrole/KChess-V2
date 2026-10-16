@@ -228,6 +228,17 @@ describe('desktop updater', () => {
     expect(dev.updates.status().phase).toBe('disabled')
   })
 
+  it('checks at launch so a known update is offered without waiting or opening settings', async () => {
+    vi.useFakeTimers()
+    const { updates, updater } = fixture({ settings: { updateAutoDownload: false } })
+    updates.start()
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(updates.status()).toMatchObject({ phase: 'available', version: release.version })
+    updates.stop()
+  })
+
   it('respects automatic-check opt-out, still allows manual checks, and stops its scheduler', async () => {
     vi.useFakeTimers()
     const { updates, updater, preferences } = fixture({

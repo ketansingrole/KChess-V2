@@ -200,8 +200,9 @@ export class AppUpdates {
   /** Schedules preference-aware background checks without delaying app startup. */
   start(): void {
     if (!this.state.canCheck || this.startup || this.interval) return
-    // Let startup, engine loading and the online-game reconnection finish first.
-    this.startup = setTimeout(() => void this.checkAutomatically(), 10_000)
+    // Check as soon as the window is opening so a known update is offered at launch; the
+    // check is a small asynchronous feed request and never blocks startup.
+    this.startup = setTimeout(() => void this.checkAutomatically(), 0)
     this.interval = setInterval(() => void this.checkAutomatically(), 6 * 60 * 60 * 1000)
     this.startup.unref?.()
     this.interval.unref?.()
