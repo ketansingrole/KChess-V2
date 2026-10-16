@@ -613,7 +613,10 @@ fn extract(zip: &Path, root: &Path, name: &str, cancel: &AtomicBool) -> Result<(
         if entry.unix_mode().is_some_and(archive::is_symlink_mode) {
             return Err(CoreError::new(INVALID_MESSAGE));
         }
-        let member = entry.name().to_string();
+        let member = entry
+            .name()
+            .map_err(|_| CoreError::new(INVALID_MESSAGE))?
+            .into_owned();
         if !member.starts_with(&folder) {
             return Err(CoreError::new(INVALID_MESSAGE));
         }

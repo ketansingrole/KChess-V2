@@ -673,7 +673,8 @@ fn unpack_zip<R: Read + io::Seek>(reader: R, root: &Path, budget: &mut u64) -> R
         if entry.unix_mode().is_some_and(archive::is_symlink_mode) {
             return Err(CoreError::new("Stockfish archive contains a link."));
         }
-        let relative = safe_relative(entry.name())?;
+        let name = entry.name().map_err(|cause| extract_error(&cause))?;
+        let relative = safe_relative(&name)?;
         if entry.is_dir() {
             create_dir(root, &relative)?;
         } else {

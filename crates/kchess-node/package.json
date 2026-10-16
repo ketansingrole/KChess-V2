@@ -12,7 +12,7 @@
   "dependencies": {
     "@kchess/contracts": "workspace:*",
     "@kchess/rules": "workspace:*",
-    "stockfish": "^19.0.0"
+    "stockfish": "^19.0.1"
   },
   "exports": {
     ".": {
