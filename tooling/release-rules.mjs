@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { parse } from 'yaml'
 
 const VERSION = /^(20[0-9]{2})\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$/
 
@@ -56,6 +55,7 @@ export function validateReleaseVersion(pkg, lock, tag, importerName = '.', deskt
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { parse } = await import('yaml')
   const root = new URL('..', import.meta.url)
   const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
   const lock = parse(readFileSync(new URL('pnpm-lock.yaml', root), 'utf8'))
