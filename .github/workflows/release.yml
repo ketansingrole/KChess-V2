@@ -65,7 +65,7 @@ jobs:
             platform: --mac --arm64
           - os: windows-latest
             platform: --win
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform: --linux
     runs-on: ${{ matrix.os }}
     env:
@@ -100,6 +100,16 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Prepare isolated Snap build environment
+        if: runner.os == 'Linux'
+        run: |
+          sudo snap install snapcraft --classic
+          sudo snap install lxd
+          sudo lxd init --auto
+          sudo usermod -aG lxd "$USER"
+      - name: Build Snap package
+        if: runner.os == 'Linux'
+        run: sg lxd -c 'pnpm exec electron-builder --projectDir apps/desktop --linux snap --x64 --config ../../tooling/snap-config.cjs --publish never'
       - name: Verify Mac signing and notarization
         if: runner.os == 'macOS' && env.KCHESS_MAC_SIGNING == 'true'
         shell: bash
@@ -133,6 +143,7 @@ jobs:
             dist/*.exe
             dist/*.AppImage
             dist/*.deb
+            dist/*.snap
             dist/latest*.yml
             dist/*-mac-arm64.*.blockmap
             dist/*.exe.blockmap

@@ -16,6 +16,7 @@ export interface UpdateHost {
   platform: NodeJS.Platform
   /** Contents of `<resources>/package-type` on Linux (`deb`, `AppImage`, …); undefined elsewhere. */
   packageType?: string
+  snap?: string
   appImage?: string
   macSigned: boolean
 }
@@ -27,16 +28,19 @@ export function resolveUpdateCapabilities(host: UpdateHost): {
   reason?: string
 } {
   let supported = host.platform === 'darwin' || host.platform === 'win32'
-  if (host.platform === 'linux') supported = Boolean(host.appImage) || host.packageType === 'deb'
+  if (host.platform === 'linux')
+    supported = !host.snap && (Boolean(host.appImage) || host.packageType === 'deb')
   const canCheck = !host.dev && host.hasFeed && supported
   const canInstall = canCheck && (host.platform !== 'darwin' || host.macSigned)
   const reason = host.dev
     ? 'Updates are available in installed release builds. Development builds do not check or install updates.'
-    : !canCheck
-      ? 'This installation cannot update itself. Download and install the latest release.'
-      : !canInstall
-        ? 'This Mac build can check for updates. Download and install new releases manually until you install a Developer ID signed version.'
-        : undefined
+    : host.snap
+      ? 'Snap Store manages updates for this installation.'
+      : !canCheck
+        ? 'This installation cannot update itself. Download and install the latest release.'
+        : !canInstall
+          ? 'This Mac build can check for updates. Download and install new releases manually until you install a Developer ID signed version.'
+          : undefined
   return { canCheck, canInstall, reason }
 }
 
@@ -75,6 +79,7 @@ export async function setupAppUpdates(
     platform: process.platform,
     packageType,
     appImage: process.env.APPIMAGE,
+    snap: process.env.SNAP,
     macSigned,
   })
   const updates = new AppUpdates(
