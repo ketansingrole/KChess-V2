@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { verifyReleaseSnap } from '../../tooling/download-release-snap.mjs'
 
 const bytes = Buffer.from('release snap fixture')
-const line = `${createHash('sha256').update(bytes).digest('hex')}  KChess-2026.10.9-linux-x64.snap`
+const line = `${createHash('sha256').update(bytes).digest('hex')}  KChess-2026.10.9-linux-amd64.snap`
 
 describe('published Snap verification', () => {
   it('accepts the exact versioned artifact covered by the release checksum', () => {
     expect(verifyReleaseSnap('v2026.10.9', line + '\n', bytes)).toBe(
-      'KChess-2026.10.9-linux-x64.snap',
+      'KChess-2026.10.9-linux-amd64.snap',
     )
   })
 

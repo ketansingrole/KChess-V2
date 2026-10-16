@@ -7,7 +7,7 @@ import { parseReleaseVersion } from './release-rules.mjs'
 export function verifyReleaseSnap(tag, checksums, bytes) {
   if (!tag?.startsWith('v')) throw new Error('Missing release tag.')
   parseReleaseVersion(tag.slice(1))
-  const name = `KChess-${tag.slice(1)}-linux-x64.snap`
+  const name = `KChess-${tag.slice(1)}-linux-amd64.snap`
   const entries = checksums.split('\n').filter((line) => line.endsWith(`  ${name}`))
   const digest = createHash('sha256').update(bytes).digest('hex')
   if (entries.length !== 1 || entries[0] !== `${digest}  ${name}`)
@@ -19,7 +19,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const tag = process.env.RELEASE_TAG
   if (!tag?.startsWith('v')) throw new Error('Missing release tag.')
   parseReleaseVersion(tag.slice(1))
-  const name = `KChess-${tag.slice(1)}-linux-x64.snap`
+  const name = `KChess-${tag.slice(1)}-linux-amd64.snap`
   const latest = JSON.parse(
     execFileSync('gh', ['api', `repos/${process.env.GH_REPO}/releases/latest`], {
       encoding: 'utf8',
