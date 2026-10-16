@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
 
-const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
+const storedTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
 
 const tabs = [
   { label: 'Coordinates', value: 'coordinates', icon: 'i-lucide-grid-3x3' },
@@ -11,8 +12,12 @@ const tabs = [
   { label: 'Endgames', value: 'endgames', icon: 'i-lucide-swords' },
   { label: 'Openings', value: 'openings', icon: 'i-lucide-book-marked' },
   { label: 'Your mistakes', value: 'mistakes', icon: 'i-lucide-book-open' },
-  { label: 'Puzzle themes', value: 'themes', icon: 'i-lucide-puzzle' },
 ]
+// A tab saved by an earlier release (the removed puzzle themes) falls back to the first trainer.
+const practiceTab = computed({
+  get: () => (tabs.some((tab) => tab.value === storedTab.value) ? storedTab.value : 'coordinates'),
+  set: (value: string) => (storedTab.value = value),
+})
 </script>
 
 <template>
@@ -28,10 +33,9 @@ const tabs = [
     />
     <LazyMistakeTrainer v-if="practiceTab === 'mistakes'" />
     <LazyOpeningTrainer v-else-if="practiceTab === 'openings'" />
-    <CoordinatesTrainer v-else-if="practiceTab === 'coordinates'" />
     <LazySquareColorTrainer v-else-if="practiceTab === 'colors'" />
     <LazyKnightPath v-else-if="practiceTab === 'knight'" />
     <LazyEndgameDrills v-else-if="practiceTab === 'endgames'" />
-    <LazyPuzzleThemeTiles v-else />
+    <CoordinatesTrainer v-else />
   </div>
 </template>

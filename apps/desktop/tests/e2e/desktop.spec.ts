@@ -1925,8 +1925,7 @@ test('practices every trainer offline without leaving the page', async ({ deskto
   await expect(page.getByText('Save a repertoire first', { exact: true })).toBeVisible()
   await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Analyze a game', exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: 'Puzzle themes', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Mate patterns', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Puzzle themes', exact: true })).toHaveCount(0)
 })
 
 test('scores coordinates and square-colour runs from board and keyboard', async ({

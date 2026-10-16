@@ -47,10 +47,9 @@ const PRACTICE_TABS = [
   ['endgames', 'Endgame drills', 'i-lucide-swords', 'mate technique'],
   ['openings', 'Opening trainer', 'i-lucide-book-marked', 'repertoire'],
   ['mistakes', 'Your mistakes', 'i-lucide-book-open', 'blunders review'],
-  ['themes', 'Puzzle themes', 'i-lucide-shapes', 'tactics motifs'],
 ] as const
 const PUZZLE_TABS: readonly [PuzzleTab, string, string, string][] = [
-  ['train', 'Puzzle training', 'i-lucide-puzzle', 'tactics solve'],
+  ['train', 'Puzzle training', 'i-lucide-puzzle', 'tactics solve themes motifs mate patterns'],
   ['daily', 'Daily puzzle', 'i-lucide-calendar-days', 'today'],
   ['rush', 'Puzzle Storm, Streak and Rush', 'i-lucide-zap', 'timed race survival'],
   ['stats', 'Puzzle stats', 'i-lucide-chart-column', 'rating progress'],
