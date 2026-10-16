@@ -31,6 +31,15 @@ Stockfish, log in to Lichess, restart with saved credentials, import/export a PG
 voice input. Existing users should back up important PGNs before the first V2 update; this
 project does not promise migration of the legacy 2020 application's data format.
 
+## Electron Builder desktop-entry patch
+
+`patches/app-builder-lib@26.17.0.patch` removes the core24 generator's premature
+`desktop: meta/gui/kchess.desktop` field. Snapcraft discovers the desktop file that
+Electron Builder writes to `snap/gui` and creates `meta/gui` while packing. Without
+this patch, Snapcraft 9 fails after priming because that output path does not exist
+yet. The installed-generator regression test covers the generated descriptor. Recheck
+this patch when upgrading Electron Builder and remove it once upstream handles the path.
+
 ## One-time publishing credential
 
 On a trusted Linux machine with Snapcraft, export a credential scoped to this package and
