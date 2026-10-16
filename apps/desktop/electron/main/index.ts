@@ -1,6 +1,16 @@
 import { QuitPreparation, type QuitRetryChoice } from './quit'
 import { PERFORMANCE_NAMES, type PerformanceName } from '../../contracts/rendererDiagnostics'
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, screen, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  screen,
+  shell,
+  type MenuItemConstructorOptions,
+} from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle, setIpcOwner, assertIpcComplete } from './ipc'
@@ -40,10 +50,13 @@ import {
   trackWindowState,
 } from './windowState'
 import { assertExport, assertNotification } from '@kchess/rules/validate'
+import { InterfaceZoomController } from './interfaceZoom'
+import { isInterfaceZoom } from '../../contracts/interfaceZoom'
 import type { ChallengeInfo } from '../../contracts/types'
 
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
+let interfaceZoom: InterfaceZoomController | undefined
 let core: KChessCore | undefined
 /** Set when the renderer process exits; cleared on a new or reloaded window. */
 let rendererGone = false
@@ -251,6 +264,7 @@ function createWindow(): void {
   })
   applyWindowMode(window, saved)
   trackWindowState(window, stateFile)
+  interfaceZoom?.attach(window)
   window.on('closed', () => {
     window = null
   })
@@ -321,28 +335,51 @@ function createWindow(): void {
 }
 
 function setupAppMenu(): void {
+  // View keeps the standard items, but zoom goes through the interface zoom so it is saved,
+  // shown in Settings and reached by Ctrl/Cmd with "=" as well as "+". The accelerators are
+  // labels: the window handles the keys itself (see InterfaceZoomController).
+  const zoom = (direction: 1 | -1 | 0) => () => interfaceZoom?.step(direction)
+  const view: MenuItemConstructorOptions = {
+    label: 'View',
+    submenu: [
+      { role: 'reload' },
+      { role: 'forceReload' },
+      { role: 'toggleDevTools' },
+      { type: 'separator' },
+      { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: zoom(0) },
+      { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: zoom(1) },
+      { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: zoom(-1) },
+      { type: 'separator' },
+      { role: 'togglefullscreen' },
+    ],
+  }
   // macOS: label the application menu with the app name (About KChess,
   // Hide KChess, Quit KChess, …) instead of leaving Electron defaults.
-  if (process.platform !== 'darwin') return
+  const appMenu: MenuItemConstructorOptions[] =
+    process.platform === 'darwin'
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' },
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          },
+        ]
+      : []
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      {
-        label: app.name,
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' },
-        ],
-      },
-      { role: 'editMenu' },
+      ...appMenu,
       { role: 'fileMenu' },
-      { role: 'viewMenu' },
+      { role: 'editMenu' },
+      view,
       { role: 'windowMenu' },
     ]),
   )
@@ -413,6 +450,23 @@ void app
     handle('windowIsMaximized', () =>
       Boolean(window && !window.isDestroyed() && window.isMaximized()),
     )
+    const zoom = new InterfaceZoomController(join(app.getPath('userData'), 'interface-zoom.json'), {
+      workAreaOf: (bounds) => screen.getDisplayMatching(bounds).workArea,
+      onDisplaysChanged(listener) {
+        const events = ['display-added', 'display-removed', 'display-metrics-changed'] as const
+        for (const event of events) screen.on(event as 'display-added', listener)
+        return () => {
+          for (const event of events) screen.removeListener(event as 'display-added', listener)
+        }
+      },
+    })
+    interfaceZoom = zoom
+    zoom.onChange((state) => send(IPC_EVENTS.interfaceZoom, state))
+    handle('interfaceZoom', () => zoom.state())
+    handle('setInterfaceZoom', (_event, setting: unknown) => {
+      if (!isInterfaceZoom(setting)) throw new Error('Invalid interface zoom.')
+      return zoom.set(setting)
+    })
     // Themed app icon (Dock / Mission Control / Cmd-Tab), live-updated when
     // the system appearance changes. Packaged builds fall back to the bundle
     // .icns until this override applies.

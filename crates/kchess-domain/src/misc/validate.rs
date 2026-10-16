@@ -1199,6 +1199,24 @@ schema_validator!(
 // `CORE_CONTRACTS` `boolean` (`answerMistake`): a boolean.
 schema_validator!(assert_boolean_v, Schema::Bool(None));
 
+/// `setInterfaceZoom`: `auto` or one of the zoom steps (`ZOOM_PERCENTS` in `interfaceZoom.ts`).
+fn assert_interface_zoom_v(mut args: Vec<J>) -> Result<J, String> {
+    const PERCENTS: [f64; 13] = [
+        50.0, 67.0, 75.0, 80.0, 90.0, 100.0, 110.0, 125.0, 150.0, 175.0, 200.0, 250.0, 300.0,
+    ];
+    let value = take(&mut args, 0);
+    let valid = match &value {
+        J::Str(text) => text == "auto",
+        J::Num(percent) => PERCENTS.contains(percent),
+        _ => false,
+    };
+    if valid {
+        Ok(value)
+    } else {
+        Err("Invalid interface zoom.".into())
+    }
+}
+
 // `CORE_CONTRACTS` `chapterName`: a trimmed name of 1 to 100 characters.
 schema_validator!(
     assert_chapter_name_v,
@@ -1362,6 +1380,7 @@ pub fn validator(method: &str) -> Option<Validator> {
         "assertLookupKind" => assert_lookup_kind_v,
         "assertOptionalPage" => assert_optional_page_v,
         "assertBoolean" => assert_boolean_v,
+        "assertInterfaceZoom" => assert_interface_zoom_v,
         "assertChapterName" => assert_chapter_name_v,
         "assertPgnText" => assert_pgn_text_v,
         "assertSessionObject" => assert_session_object_v,

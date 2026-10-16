@@ -24,6 +24,7 @@ import type {
   WatchState,
 } from '@kchess/contracts/types'
 import type { PerformanceName, RendererErrorReport } from './rendererDiagnostics'
+import type { InterfaceZoom, InterfaceZoomState } from './interfaceZoom'
 export * from '@kchess/contracts/types'
 
 /** The desktop frontend: the core plus window, OS integration and event subscriptions. */
@@ -56,6 +57,11 @@ export interface DesktopApi extends CoreApi {
   windowClose(): Promise<void>
   windowIsMaximized(): Promise<boolean>
   onWindowMaximized(callback: (state: { maximized: boolean }) => void): () => void
+  /** The interface zoom: the saved setting and the zoom it shows on the current display. */
+  interfaceZoom(): Promise<InterfaceZoomState>
+  setInterfaceZoom(setting: InterfaceZoom): Promise<InterfaceZoomState>
+  /** The zoom changed: from Settings, a shortcut, the View menu, or `auto` on another display. */
+  onInterfaceZoom(callback: (state: InterfaceZoomState) => void): () => void
   appUpdateStatus(): Promise<AppUpdateStatus>
   checkAppUpdate(): Promise<AppUpdateStatus>
   downloadAppUpdate(): Promise<AppUpdateStatus>

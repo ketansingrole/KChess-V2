@@ -235,8 +235,9 @@ button:disabled {
   /* Clear the traffic lights (x12 + up to ~68px cluster on recent macOS).
      Identical open or collapsed so the button never migrates; collapsed, it
      floats over the main topbar, which reserves matching space beside the
-     64px rail (see .mac-toggle-spacer). */
-  left: 84px;
+     64px rail (see .mac-toggle-spacer). The lights are native and do not
+     zoom, so the offset divides by the interface zoom to stay beside them. */
+  left: calc(84px / var(--interface-zoom, 1));
 }
 /* Reserve in the main topbar for the overlaid toggle while the macOS sidebar
    is collapsed to its 64px rail. The toggle spans x84..x112, i.e. rel. 20..48
@@ -246,7 +247,8 @@ button:disabled {
    the main topbar's native drag region unless this spacer excludes it. */
 .mac-toggle-spacer {
   flex: none;
-  width: 36px;
+  /* 36px at 100%: the toggle's left edge, its 28px width and 8px clearance, less the rail and padding. */
+  width: max(0px, calc(84px / var(--interface-zoom, 1) - 48px));
   height: calc(var(--topbar-height) - 1px);
   -webkit-app-region: no-drag;
 }
@@ -2000,7 +2002,7 @@ button.presence:focus-visible {
    its show-sidebar button keeps the sidebar toggle's x84, clear of the traffic lights. */
 @media (max-width: 1023.98px) {
   .is-mac .topbar {
-    padding-left: 84px;
+    padding-left: calc(84px / var(--interface-zoom, 1));
   }
 }
 @media (prefers-reduced-motion: reduce) {

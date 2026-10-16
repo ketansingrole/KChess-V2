@@ -344,6 +344,8 @@ const DESKTOP: &[Row] = &[
     ("windowToggleMaximize", 0, &[]),
     ("windowClose", 0, &[]),
     ("windowIsMaximized", 0, &[]),
+    ("interfaceZoom", 0, &[]),
+    ("setInterfaceZoom", 1, &[Valid("assertInterfaceZoom")]),
     ("appUpdateStatus", 0, &[]),
     ("checkAppUpdate", 0, &[]),
     ("downloadAppUpdate", 0, &[]),

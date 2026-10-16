@@ -1,5 +1,6 @@
 import type { CoreEvents } from '@kchess/contracts/core'
 import type { AppUpdateStatus, DesktopApi, VoiceModelProgress } from './types'
+import type { InterfaceZoomState } from './interfaceZoom'
 
 /** Core events the shell handles itself instead of forwarding. */
 type ShellHandledCoreEvent = 'challenge:received' | 'settings:saved'
@@ -11,6 +12,7 @@ export interface IpcEvents extends Pick<CoreEvents, ForwardedCoreEvent> {
   'app:update': AppUpdateStatus
   'voice:model-progress': VoiceModelProgress
   'window:maximized-changed': { maximized: boolean }
+  'window:zoom-changed': InterfaceZoomState
 }
 
 const forwarded: Record<ForwardedCoreEvent, true> = {
@@ -41,6 +43,7 @@ export const IPC_EVENTS = {
   appUpdate: 'app:update',
   voiceModelProgress: 'voice:model-progress',
   windowMaximized: 'window:maximized-changed',
+  interfaceZoom: 'window:zoom-changed',
   analysis: 'engine:analysis',
   reviewUpdate: 'review:update',
   reviewStatus: 'review:status',
@@ -62,6 +65,7 @@ type Subscription =
   | 'onPuzzleDbProgress'
   | 'onVoiceModelProgress'
   | 'onWindowMaximized'
+  | 'onInterfaceZoom'
   | 'onAnalysis'
   | 'onReviewUpdate'
   | 'onReviewStatus'
@@ -202,6 +206,8 @@ export const IPC_CHANNELS = {
   windowToggleMaximize: 'window:toggle-maximize',
   windowClose: 'window:close',
   windowIsMaximized: 'window:is-maximized',
+  interfaceZoom: 'window:zoom',
+  setInterfaceZoom: 'window:set-zoom',
 } as const satisfies Record<InvokeMethod, string>
 
 export type IpcArguments<K extends InvokeMethod> = Parameters<DesktopApi[K]>

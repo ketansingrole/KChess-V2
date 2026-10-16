@@ -15,6 +15,7 @@ import type {
   ReviewUpdate,
   VoiceModelProgress,
 } from '../../contracts/types'
+import type { InterfaceZoomState } from '../../contracts/interfaceZoom'
 
 import {
   IPC_CHANNELS,
@@ -68,6 +69,13 @@ const api: DesktopApi = {
     const listener = (_: unknown, state: { maximized: boolean }): void => callback(state)
     ipcRenderer.on(IPC_EVENTS.windowMaximized, listener)
     return () => ipcRenderer.removeListener(IPC_EVENTS.windowMaximized, listener)
+  },
+  interfaceZoom: () => invoke('interfaceZoom'),
+  setInterfaceZoom: (setting) => invoke('setInterfaceZoom', setting),
+  onInterfaceZoom: (callback) => {
+    const listener = (_: unknown, state: InterfaceZoomState): void => callback(state)
+    ipcRenderer.on(IPC_EVENTS.interfaceZoom, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.interfaceZoom, listener)
   },
   loadData: () => invoke('loadData'),
   saveSettings: (settings) => invoke('saveSettings', settings),

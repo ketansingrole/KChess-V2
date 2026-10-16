@@ -1,11 +1,25 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useKChessStore } from '../../stores/kchess'
 import { boardThemes } from '../../utils/boards'
 import { pieceSets, pieceVars } from '../../utils/pieces'
 import { animationItems, appearanceItems, coordinateItems } from './options'
+import { useInterfaceZoom } from '../../composables/useInterfaceZoom'
+import { useWindowChrome } from '../../composables/useWindowChrome'
+import { ZOOM_PERCENTS, type InterfaceZoom } from '../../../contracts/interfaceZoom'
 
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
+const { zoom, setZoom } = useInterfaceZoom()
+const { isMac } = useWindowChrome()
+const zoomItems = computed(() => [
+  { label: `Auto (${zoom.value.autoPercent}%)`, value: 'auto' as InterfaceZoom },
+  ...ZOOM_PERCENTS.map((percent) => ({ label: `${percent}%`, value: percent as InterfaceZoom })),
+])
+const zoomKey = computed(() => (isMac.value ? '⌘' : 'Ctrl'))
+function chooseZoom(setting: InterfaceZoom): void {
+  void store.runAction(() => setZoom(setting))
+}
 </script>
 
 <template>
@@ -23,6 +37,19 @@ const { settings } = storeToRefs(store)
         variant="pill"
         class="setting-control"
         :ui="{ trigger: 'grow' }"
+      />
+    </div>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span id="zoom-label" class="setting-title">Interface size</span>
+        <span class="setting-hint">{{ zoomKey }} + and {{ zoomKey }} − adjust it anywhere.</span>
+      </div>
+      <USelect
+        :model-value="zoom.setting"
+        :items="zoomItems"
+        aria-labelledby="zoom-label"
+        class="setting-control"
+        @update:model-value="chooseZoom"
       />
     </div>
     <div class="setting-row">

@@ -19,6 +19,7 @@ import { captureAsync } from '../unit/capture.ts'
 import { setRulesBinding } from '@kchess/rules/engine'
 import { reviewKey } from '@kchess/rules/review'
 import { positionAfter } from '@kchess/rules/chess'
+import { stepZoom } from '../../contracts/interfaceZoom'
 import type { StoredReview } from '@kchess/contracts/types'
 
 // The domain rules this test process calls run on the native module. Bind them on the rules engine
@@ -1088,6 +1089,72 @@ test('persists appearance settings after reloading', async ({ desktop: { page } 
   expect(
     await page.evaluate(async () => (await window.kchess.loadData()).settings.appearance),
   ).toBe('dark')
+})
+
+test('zooms the interface from shortcuts and Settings, and keeps the choice @zoom', async ({
+  desktop: { app, page, profile },
+}) => {
+  const factor = () =>
+    app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]!.webContents.getZoomFactor(),
+    )
+  const state = () => page.evaluate(() => window.kchess.interfaceZoom())
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  // Native input, as a keyboard sends it: the window handles zoom keys before the page sees them.
+  const press = (keyCode: string) =>
+    app.evaluate(
+      ({ BrowserWindow }, { keyCode, mac }) => {
+        const { webContents } = BrowserWindow.getAllWindows()[0]!
+        const modifiers = [mac ? 'meta' : 'control'] as const
+        webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: [...modifiers] })
+        webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: [...modifiers] })
+      },
+      { keyCode, mac: process.platform === 'darwin' },
+    )
+  const start = await state()
+  expect(start.setting).toBe('auto')
+  expect(await factor()).toBeCloseTo(start.percent / 100)
+  // Ctrl/Cmd with "=" (no Shift) zooms in on a US layout, where the menu's "Plus" alone did not.
+  await press('=')
+  await expect.poll(async () => (await state()).setting).toBe(stepZoom(start.percent, 1))
+  await expect.poll(factor).toBeCloseTo(stepZoom(start.percent, 1) / 100)
+  await press('-')
+  await press('-')
+  await expect.poll(async () => (await state()).setting).toBe(stepZoom(start.percent, -1))
+  await press('0')
+  await expect.poll(async () => (await state()).setting).toBe('auto')
+  await expect.poll(factor).toBeCloseTo(start.autoPercent / 100)
+
+  await page.keyboard.press(`${modifier}+Comma`)
+  const select = page.getByRole('combobox', { name: 'Interface size' })
+  await expect(select).toHaveText(`Auto (${start.autoPercent}%)`)
+  await select.click()
+  await page.getByRole('option', { name: '125%', exact: true }).click()
+  await expect.poll(factor).toBeCloseTo(1.25)
+  await expect(select).toHaveText('125%')
+  expect(
+    await page.evaluate(() => document.documentElement.style.getPropertyValue('--interface-zoom')),
+  ).toBe('1.25')
+  expect(JSON.parse(await readFile(join(profile, 'interface-zoom.json'), 'utf8'))).toEqual({
+    zoom: 125,
+  })
+  if (process.platform === 'darwin') {
+    // The traffic lights do not zoom: they stay centred on the taller topbar, and the sidebar
+    // toggle keeps its on-screen x84 beside them.
+    expect(
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0]!.getWindowButtonPosition(),
+      ),
+    ).toEqual({ x: 12, y: 27 })
+    const toggle = page.getByRole('button', { name: /^(Hide|Show) sidebar$/ })
+    const parent = (await toggle.locator('xpath=ancestor::div[1]').boundingBox())!
+    expect(parent.x * 1.25).toBeCloseTo(84, 0)
+  }
+  // A reload keeps the zoom; the main process rejects values that are not zoom steps.
+  await page.reload()
+  await expect.poll(factor).toBeCloseTo(1.25)
+  await expect(page.evaluate(() => window.kchess.setInterfaceZoom(133 as never))).rejects.toThrow()
+  expect((await state()).setting).toBe(125)
 })
 
 test('shows update capabilities and persists update preferences @packaged', async ({
