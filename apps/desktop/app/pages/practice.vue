@@ -35,7 +35,7 @@ const practiceTab = computed({
     <LazyOpeningTrainer v-else-if="practiceTab === 'openings'" />
     <LazySquareColorTrainer v-else-if="practiceTab === 'colors'" />
     <LazyKnightPath v-else-if="practiceTab === 'knight'" />
-    <LazyEndgameDrills v-else-if="practiceTab === 'endgames'" />
+    <LazyEndgameTraining v-else-if="practiceTab === 'endgames'" />
     <CoordinatesTrainer v-else />
   </div>
 </template>

@@ -97,7 +97,8 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
         if has_tables {
             db.execute_batch(
                 "BEGIN IMMEDIATE;
-                INSERT OR IGNORE INTO puzzles SELECT * FROM legacy.puzzles;
+                INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes)
+                    SELECT id, fen, moves, rating, plays, themes FROM legacy.puzzles;
                 INSERT OR IGNORE INTO puzzle_meta SELECT id, importedAt, count, bytes FROM legacy.puzzle_meta;
                 INSERT OR REPLACE INTO worker_meta VALUES (1);
                 COMMIT;",
@@ -421,6 +422,7 @@ impl PuzzleService {
                         rating: row.rating,
                         plays: Some(row.plays),
                         themes: row.themes.clone(),
+                        openings: row.openings.clone(),
                     })
                     .collect();
                 Ok((rows, sampler.count()))

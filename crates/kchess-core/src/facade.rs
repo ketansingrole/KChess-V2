@@ -45,6 +45,8 @@ pub const FACADE_METHODS: &[&str] = &[
     "exportToLichessStudy",
     "exportGame",
     "mastersGame",
+    "openingDescription",
+    "openingPopularity",
     "cloudEval",
     "loadData",
     "saveSettings",
@@ -548,6 +550,8 @@ impl Core {
             | "exportToLichessStudy"
             | "exportGame"
             | "mastersGame"
+            | "openingDescription"
+            | "openingPopularity"
             | "cloudEval" => self.run_studies(method, args).await,
             "loadData"
             | "settings"

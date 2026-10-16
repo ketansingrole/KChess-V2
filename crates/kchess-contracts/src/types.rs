@@ -129,6 +129,7 @@ wire_enum!(#[doc = "Everything the runs table (local scores) records."] RunKind,
     SquareColor = "squareColor",
     KnightPath = "knightPath",
     Endgame = "endgame",
+    Lesson = "lesson",
 });
 wire_enum!(#[doc = "Where a spoken phrase was said."] VoiceSource, VOICE_SOURCES {
     Computer = "computer",
@@ -1976,6 +1977,36 @@ pub struct CloudEval {
     pub lines: Vec<EngineLine>,
 }
 
+/// A paragraph, or a section heading, of an opening description.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct DescriptionBlock {
+    pub heading: Option<bool>,
+    pub text: String,
+}
+
+/// A line's Wikibooks “Chess Opening Theory” page as plain text (CC BY-SA 4.0): shown with its
+/// title, a link to `url` and the licence.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningDescription {
+    pub title: String,
+    pub url: String,
+    pub blocks: Vec<DescriptionBlock>,
+    pub fetched_at: f64,
+}
+
+/// One month of a line's popularity: of the Lichess games at the position before its last move,
+/// the share (0–1) that went on with it, and how many games that was.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+pub struct PopularityMonth {
+    /// `YYYY-MM`.
+    pub month: String,
+    pub share: f64,
+    pub games: f64,
+}
+
 /// Every declaration and `as const` array of `types.ts`, in the file's order.
 pub fn items(cfg: &Config) -> Vec<Item> {
     use crate::strs;
@@ -2191,6 +2222,9 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         LichessStudyChapter,
         ExportRequest,
         CloudEval,
+        DescriptionBlock,
+        OpeningDescription,
+        PopularityMonth,
     );
     out.extend(crate::raw::types_items());
     out

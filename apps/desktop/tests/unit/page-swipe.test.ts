@@ -20,6 +20,7 @@ describe('trackpad page history', () => {
 
   beforeEach(() => {
     time = 0
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     vi.spyOn(window.performance, 'now').mockImplementation(() => time)
     canGo.mockReturnValue(true)
     dispose = installPageSwipeNavigation(document, { go, canGo })
@@ -27,7 +28,19 @@ describe('trackpad page history', () => {
   afterEach(() => {
     dispose()
     document.body.replaceChildren()
+    vi.useRealTimers()
   })
+
+  /** The fingers lift: the stream pauses, which is when a swipe decides. */
+  function lift(): void {
+    time += 100
+    vi.advanceTimersByTime(100)
+  }
+  function swipe(deltaX: number) {
+    const event = wheel(deltaX)
+    lift()
+    return event
+  }
 
   function wheel(
     deltaX: number,
@@ -52,35 +65,35 @@ describe('trackpad page history', () => {
   }
 
   it('accumulates a swipe and moves once, ignoring its momentum on the next page', () => {
-    wheel(-40)
+    swipe(-40)
     expect(go).not.toHaveBeenCalled()
-    wheel(-70)
+    swipe(-70)
     expect(go).toHaveBeenCalledExactlyOnceWith(-1)
     document.body.replaceChildren(document.createElement('main'))
     for (let i = 0; i < 40; i++) wheel(-20)
     expect(go).toHaveBeenCalledTimes(1)
     time += 301
-    wheel(110)
+    swipe(110)
     expect(go).toHaveBeenLastCalledWith(1)
     expect(go).toHaveBeenCalledTimes(2)
   })
 
   it('swallows a discrete repeat like Playwright momentum, then navigates again after a pause', () => {
-    wheel(-120)
+    swipe(-120)
     expect(go).toHaveBeenCalledExactlyOnceWith(-1)
-    wheel(-120)
+    swipe(-120)
     expect(go).toHaveBeenCalledTimes(1)
     time += 350
-    wheel(120)
+    swipe(120)
     expect(go).toHaveBeenLastCalledWith(1)
     expect(go).toHaveBeenCalledTimes(2)
   })
 
   it('does not leave the app or navigate beyond either end of history', () => {
     canGo.mockReturnValue(false)
-    wheel(-120)
+    swipe(-120)
     time += 301
-    wheel(120)
+    swipe(120)
     expect(canGo.mock.calls).toEqual([[-1], [1]])
     expect(go).not.toHaveBeenCalled()
   })
@@ -90,16 +103,16 @@ describe('trackpad page history', () => {
     wheel(140, 1)
     time += 301
     expect(wheel(90, 90).defaultPrevented).toBe(false)
-    wheel(140)
+    swipe(140)
     expect(go).not.toHaveBeenCalled()
   })
 
   it('requires deliberate travel and lets direction reversals cancel it', () => {
-    wheel(-50)
-    wheel(50)
-    wheel(60)
+    swipe(-50)
+    swipe(50)
+    swipe(60)
     expect(go).not.toHaveBeenCalled()
-    wheel(50)
+    swipe(50)
     expect(go).toHaveBeenCalledExactlyOnceWith(1)
   })
 
@@ -131,7 +144,7 @@ describe('trackpad page history', () => {
     scroller.append(child)
     document.body.append(scroller)
     expect(wheel(-120, 0, child).defaultPrevented).toBe(false)
-    wheel(-120)
+    swipe(-120)
     expect(go).not.toHaveBeenCalled()
   })
 
@@ -152,7 +165,7 @@ describe('trackpad page history', () => {
 
   it('removes its listener on disposal', () => {
     dispose()
-    wheel(150)
+    swipe(150)
     expect(go).not.toHaveBeenCalled()
   })
 
@@ -165,7 +178,7 @@ describe('trackpad page history', () => {
     expect(back?.style.getPropertyValue('--swipe-progress')).toBe('0.400')
     expect(forward?.classList.contains('is-visible')).toBe(false)
     expect(go).not.toHaveBeenCalled()
-    wheel(-70)
+    swipe(-70)
     expect(go).toHaveBeenCalledExactlyOnceWith(-1)
     expect(back?.classList.contains('is-committed')).toBe(true)
   })
@@ -194,12 +207,12 @@ describe('trackpad page history', () => {
     dispose = installPageSwipeNavigation(document, { go, canGo }, { showFeedback: () => false })
     wheel(-40)
     expect(document.querySelector('.page-swipe-edge')).toBeNull()
-    wheel(-70)
+    swipe(-70)
     expect(go).toHaveBeenCalledExactlyOnceWith(-1)
   })
 
   it('removes its edge nodes on disposal', () => {
-    wheel(-40)
+    swipe(-40)
     expect(document.querySelectorAll('.page-swipe-edge')).toHaveLength(2)
     dispose()
     dispose = () => {}
@@ -211,19 +224,19 @@ describe('trackpad page history', () => {
     const state = { back: null as string | null, forward: null as string | null }
     vi.stubGlobal('useRouter', () => ({ options: { history: { state } }, go }))
     const wrapper = mount(defineComponent({ setup: usePageSwipeNavigation, render: () => null }))
-    wheel(-150)
+    swipe(-150)
     expect(go).not.toHaveBeenCalled()
     state.back = '/analysis'
     time += 301
-    wheel(-150)
+    swipe(-150)
     expect(go).toHaveBeenCalledExactlyOnceWith(-1)
     state.forward = '/settings'
     time += 301
-    wheel(150)
+    swipe(150)
     expect(go).toHaveBeenLastCalledWith(1)
     wrapper.unmount()
     time += 301
-    wheel(-150)
+    swipe(-150)
     expect(go).toHaveBeenCalledTimes(2)
   })
 
@@ -243,7 +256,7 @@ describe('trackpad page history', () => {
         },
       }),
     )
-    wheel(-150)
+    swipe(-150)
     expect(localBack).toHaveBeenCalledTimes(1)
     expect(routerGo).not.toHaveBeenCalled()
     const back = document.querySelector('.page-swipe-edge.is-back')
@@ -253,7 +266,7 @@ describe('trackpad page history', () => {
     canLocal = false
     state.back = '/analysis'
     time += 301
-    wheel(-150)
+    swipe(-150)
     expect(localBack).toHaveBeenCalledTimes(1)
     expect(routerGo).toHaveBeenCalledExactlyOnceWith(-1)
     wrapper.unmount()
@@ -289,11 +302,11 @@ describe('trackpad page history', () => {
         },
       }),
     )
-    wheel(-150)
+    swipe(-150)
     expect(localBack).toHaveBeenCalledTimes(1)
     expect(routerGo).not.toHaveBeenCalled()
     time += 301
-    wheel(150)
+    swipe(150)
     expect(localForward).toHaveBeenCalledTimes(1)
     expect(routerGo).not.toHaveBeenCalled()
     const forward = document.querySelector('.page-swipe-edge.is-forward')
@@ -301,7 +314,7 @@ describe('trackpad page history', () => {
     // Redo consumed: the next swipe falls back to router history.
     state.forward = '/settings'
     time += 301
-    wheel(150)
+    swipe(150)
     expect(localForward).toHaveBeenCalledTimes(1)
     expect(routerGo).toHaveBeenCalledExactlyOnceWith(1)
     wrapper.unmount()
@@ -319,6 +332,7 @@ describe('trackpad page history', () => {
       })
       document.body.dispatchEvent(event)
     }
+    lift()
   }
   const rep = (dx: number, dy: number, dt: number, n: number): [number, number, number][] =>
     Array.from({ length: n }, () => [dx, dy, dt] as [number, number, number])
@@ -353,6 +367,46 @@ describe('trackpad page history', () => {
   it('commits a steady swipe with vertical wobble', () => {
     trackpad(rep(-12, 4, 25, 9))
     expect(go).toHaveBeenCalledExactlyOnceWith(-1)
+  })
+
+  it('waits for the fingers to lift before navigating', () => {
+    wheel(-60)
+    wheel(-60)
+    expect(go).not.toHaveBeenCalled()
+    expect(document.querySelector('.page-swipe-edge.is-back.is-ready')).not.toBeNull()
+    lift()
+    expect(go).toHaveBeenCalledExactlyOnceWith(-1)
+  })
+
+  it('cancels when the fingers slide back before lifting', () => {
+    wheel(-60)
+    wheel(-60)
+    wheel(40)
+    wheel(30)
+    expect(document.querySelector('.page-swipe-edge.is-ready')).toBeNull()
+    lift()
+    expect(go).not.toHaveBeenCalled()
+  })
+
+  it('commits as soon as momentum starts after an armed swipe', () => {
+    // A steady swipe stays undecided while the fingers keep moving.
+    for (let i = 0; i < 6; i++) wheel(-30)
+    expect(go).not.toHaveBeenCalled()
+    wheel(-24)
+    expect(go).toHaveBeenCalledExactlyOnceWith(-1)
+  })
+
+  it('moves the page with the fingers and settles it afterwards', () => {
+    dispose()
+    const page = document.createElement('div')
+    document.body.append(page)
+    dispose = installPageSwipeNavigation(document, { go, canGo }, { surface: () => page })
+    wheel(-60)
+    const moved = Number(/translateX\(([-\d.]+)px\)/.exec(page.style.transform)?.[1])
+    expect(moved).toBeGreaterThan(0)
+    expect(moved).toBeLessThan(28)
+    lift()
+    expect(page.style.transform).toBe('')
   })
 })
 

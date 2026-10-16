@@ -9,10 +9,28 @@ import type {
   PositionLookupKind,
 } from '@kchess/contracts/types'
 import { EXPLORER_RATINGS, EXPLORER_SPEEDS } from '@kchess/contracts/types'
+import { positionFromFen } from '@kchess/rules/chess'
+import { openingAt } from '@kchess/rules/openings'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+import { uciSquares } from '@kchess/rules/position'
+import type { Key } from '@lichess-org/chessground/types'
 import { useAnalysisStore } from '../stores/analysis'
+import { errorText } from '../utils/format'
+
+const props = defineProps<{
+  /** The position to look up; the analysis board's when omitted. */
+  fen?: string
+  /** The moves from the starting position to `fen`: each continuation is named after its opening. */
+  moves?: readonly string[]
+  /** Continuations as a grid of boards, looked up whenever the position changes. */
+  grid?: boolean
+}>()
+/** A move chosen from the results, when the explorer is given its own position. */
+const emit = defineEmits<{ play: [uci: string] }>()
 
 const analysis = useAnalysisStore()
 const store = useKChessStore()
+const fen = computed(() => props.fen ?? analysis.node.fen)
 const result = ref<PositionLookup | null>(null)
 const error = ref('')
 const busy = ref(false)
@@ -41,12 +59,17 @@ const prefs = useLocalStorage<{
 const showFilters = ref(false)
 let epoch = 0
 
-const KINDS: { value: PositionLookupKind; label: string }[] = [
+const ALL_KINDS: { value: PositionLookupKind; label: string }[] = [
   { value: 'opening', label: 'Lichess' },
   { value: 'masters', label: 'Masters' },
   { value: 'player', label: 'Player' },
   { value: 'tablebase', label: 'Tablebase' },
 ]
+// Opening positions have too many pieces for the tablebase.
+const KINDS = props.grid ? ALL_KINDS.filter((kind) => kind.value !== 'tablebase') : ALL_KINDS
+if (!KINDS.some((kind) => kind.value === prefs.value.kind)) prefs.value.kind = 'opening'
+/** The grid looks up every position it is shown; the list does when asked, or when following. */
+const following = computed(() => props.grid || prefs.value.follow)
 const SPEED_LABELS: Record<ExplorerSpeed, string> = {
   ultraBullet: 'UltraBullet',
   bullet: 'Bullet',
@@ -73,16 +96,13 @@ function options(): LookupOptions {
   return {}
 }
 
-watch(
-  () => analysis.node.fen,
-  () => {
-    epoch++
-    result.value = null
-    error.value = ''
-    busy.value = false
-    if (prefs.value.follow) void followLookup()
-  },
-)
+watch(fen, () => {
+  epoch++
+  result.value = null
+  error.value = ''
+  busy.value = false
+  if (following.value) void followLookup()
+})
 watch(
   () => prefs.value.kind,
   () => {
@@ -106,21 +126,20 @@ async function lookup(kind: PositionLookupKind = prefs.value.kind, asked = true)
     return
   }
   const request = ++epoch
-  const fen = analysis.node.fen
+  const position = fen.value
   busy.value = true
   error.value = ''
   try {
     // A plain copy: Vue's reactive arrays cannot cross IPC.
     const data = await window.kchess.positionLookup(
       kind,
-      fen,
+      position,
       JSON.parse(JSON.stringify(options())),
     )
     if (request === epoch) result.value = data
   } catch (cause) {
     console.warn('[position-explorer] Lookup failed:', cause)
-    if (request === epoch)
-      error.value = cause instanceof Error ? cause.message : 'Lookup failed. Retry.'
+    if (request === epoch) error.value = errorText(cause) || 'Lookup failed. Retry.'
   } finally {
     if (request === epoch) busy.value = false
   }
@@ -128,8 +147,20 @@ async function lookup(kind: PositionLookupKind = prefs.value.kind, asked = true)
 const followLookup = useDebounceFn(() => void lookup(prefs.value.kind, false), 350)
 // Opening the explorer while following moves looks up the position shown.
 onMounted(() => {
-  if (prefs.value.follow) void lookup(prefs.value.kind, false)
+  if (following.value) void lookup(prefs.value.kind, false)
 })
+// The grid follows its position: choosing a database looks it up straight away.
+watch(
+  () => [prefs.value.speeds, prefs.value.ratings, prefs.value.since, prefs.value.color],
+  () => {
+    if (props.grid) void followLookup()
+  },
+  { deep: true },
+)
+function playMove(uci: string): void {
+  if (props.fen === undefined) analysis.play(uci)
+  else emit('play', uci)
+}
 function toggle<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value]
 }
@@ -142,13 +173,28 @@ function category(value: string | undefined, opponent = false): string {
       .replace('cursed-loss', 'blessed-loss')
   return value.replace(/-/g, ' ')
 }
-function percent(part = 0, entry: { white?: number; draws?: number; black?: number }): number {
-  const total = (entry.white ?? 0) + (entry.draws ?? 0) + (entry.black ?? 0)
-  return total ? Math.round((100 * part) / total) : 0
-}
 function games(entry: { white?: number; draws?: number; black?: number }): number {
   return (entry.white ?? 0) + (entry.draws ?? 0) + (entry.black ?? 0)
 }
+/** Each continuation's board, share of the games and opening name, for the grid. */
+const tiles = computed(() => {
+  const data = result.value
+  if (!props.grid || !data || data.kind === 'tablebase') return []
+  const start = positionFromFen(data.fen)
+  const total = data.total || data.moves.reduce((sum, move) => sum + games(move), 0)
+  return data.moves.map((move) => {
+    const squares = uciSquares(move.uci)
+    return {
+      move,
+      fen: start?.play(move.uci)?.position.fen ?? data.fen,
+      lastMove: squares as Key[] | undefined,
+      share: total ? Math.round((100 * games(move)) / total) : 0,
+      opening: props.moves
+        ? openingAt(STANDARD_SETUP, [...props.moves, move.uci])?.name
+        : undefined,
+    }
+  })
+})
 const toast = useToast()
 async function openGame(game: ExplorerGame): Promise<void> {
   try {
@@ -162,6 +208,8 @@ async function openGame(game: ExplorerGame): Promise<void> {
       black: game.black,
       gameId: result.value?.kind === 'masters' ? undefined : game.id,
     }
+    // Away from the analysis board, the game opens on it.
+    if (props.fen !== undefined) store.selectPage('analysis')
   } catch (cause) {
     console.warn('[position-explorer] Could not open the game:', cause)
     toast.add({
@@ -174,7 +222,8 @@ async function openGame(game: ExplorerGame): Promise<void> {
 const heading = computed(() => {
   const data = result.value
   if (!data) return ''
-  if (data.opening) return data.opening
+  // The grid's page already names the opening.
+  if (data.opening && !props.grid) return data.opening
   if (data.kind === 'tablebase')
     return `Tablebase · ${category(data.category)} for the side to move`
   if (data.kind === 'masters') return 'Master games (over the board)'
@@ -273,7 +322,7 @@ const heading = computed(() => {
         />
       </label>
     </div>
-    <div class="mt-2 flex items-center gap-3">
+    <div v-if="!grid" class="mt-2 flex items-center gap-3">
       <UButton
         size="xs"
         variant="outline"
@@ -316,33 +365,55 @@ const heading = computed(() => {
         {{ new Date(result.fetchedAt).toLocaleDateString() }}
       </p>
       <p v-if="!result.moves.length" class="mt-2">No moves found for this position.</p>
-      <ul class="mt-2 space-y-1">
+      <ul v-if="grid" class="explorer-grid mt-2" aria-label="Popular continuations">
+        <li v-for="tile in tiles" :key="tile.move.uci">
+          <button
+            type="button"
+            class="explorer-tile"
+            :aria-label="`${tile.move.san}${tile.opening ? `, ${tile.opening}` : ''}`"
+            @click="playMove(tile.move.uci)"
+          >
+            <span class="explorer-tile-board" aria-hidden="true">
+              <ChessBoard
+                :fen="tile.fen"
+                :theme="store.settings.boardTheme"
+                coordinates="none"
+                :piece-set="store.settings.pieceSet"
+                animation="none"
+                :interactive="false"
+                :last-move="tile.lastMove"
+              />
+            </span>
+            <span class="flex items-baseline justify-between gap-2">
+              <strong>{{ tile.move.san }}</strong>
+              <span class="muted tabular text-xs">{{ tile.share }}%</span>
+            </span>
+            <span v-if="tile.opening" class="explorer-tile-name text-xs muted">{{
+              tile.opening
+            }}</span>
+            <ExplorerBar
+              :white="tile.move.white"
+              :draws="tile.move.draws"
+              :black="tile.move.black"
+              :min-label="20"
+            />
+          </button>
+        </li>
+      </ul>
+      <ul v-else class="mt-2 space-y-1">
         <li v-for="move in result.moves" :key="move.uci" class="explorer-row">
           <UButton
             size="xs"
             variant="link"
             class="w-14 justify-start"
-            @click="analysis.play(move.uci)"
+            @click="playMove(move.uci)"
             >{{ move.san }}</UButton
           >
           <template v-if="result.kind !== 'tablebase'">
             <span class="muted tabular text-xs w-16 text-right">{{
               games(move).toLocaleString()
             }}</span>
-            <span
-              class="explorer-bar"
-              :title="`White ${move.white} · Draw ${move.draws} · Black ${move.black}`"
-            >
-              <span class="w" :style="{ width: `${percent(move.white, move)}%` }">{{
-                percent(move.white, move) > 12 ? `${percent(move.white, move)}%` : ''
-              }}</span>
-              <span class="d" :style="{ width: `${percent(move.draws, move)}%` }">{{
-                percent(move.draws, move) > 12 ? `${percent(move.draws, move)}%` : ''
-              }}</span>
-              <span class="b" :style="{ width: `${percent(move.black, move)}%` }">{{
-                percent(move.black, move) > 12 ? `${percent(move.black, move)}%` : ''
-              }}</span>
-            </span>
+            <ExplorerBar :white="move.white" :draws="move.draws" :black="move.black" />
           </template>
           <span v-else class="text-xs"
             >{{ category(move.category, true) }} for the current player</span
@@ -379,31 +450,36 @@ const heading = computed(() => {
   align-items: center;
   gap: 8px;
 }
-.explorer-bar {
+.explorer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(120px, 100%), 1fr));
+  gap: 10px;
+}
+.explorer-tile {
   display: flex;
-  flex: 1;
-  height: 16px;
-  border-radius: 4px;
-  overflow: hidden;
-  font-size: 10px;
-  line-height: 16px;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 6px;
   border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
 }
-.explorer-bar > span {
-  text-align: center;
+.explorer-tile:hover {
+  background: var(--ui-bg-accented);
+}
+.explorer-tile-board {
+  display: block;
+  pointer-events: none;
+}
+.explorer-tile-name {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.explorer-bar .w {
-  background: #f5f5f5;
-  color: #222;
-}
-.explorer-bar .d {
-  background: #9e9e9e;
-  color: #fff;
-}
-.explorer-bar .b {
-  background: #333;
-  color: #eee;
+.explorer-tile > :deep(.explorer-bar) {
+  flex: none;
 }
 .explorer-game {
   display: flex;

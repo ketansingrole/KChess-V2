@@ -244,7 +244,13 @@ function analyse(): void {
   if (!analysis.loadPgn(setupPgn(onlineSetup.value, onlineMoves.value), onlineMoves.value.length))
     return
   analysis.orientation = onlineColor.value
-  analysis.origin = { gameId: onlineId.value, account: store.onlineAccount, white, black }
+  analysis.origin = {
+    gameId: onlineId.value,
+    account: store.onlineAccount,
+    white,
+    black,
+    player: onlineColor.value,
+  }
   void analysis.requestReview()
   selectPage('analysis')
 }

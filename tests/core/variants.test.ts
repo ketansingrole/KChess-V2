@@ -8,7 +8,7 @@ import {
   variantFromLichess,
 } from '@kchess/rules/variant'
 import { setupDrawReason, setupPgn, setupSanHistory } from '@kchess/rules/chess'
-import { loadOpenings, openingAt } from '@kchess/rules/openings'
+import { openingAt, openingKey, openingReplies, openingTree } from '@kchess/rules/openings'
 
 describe('variants', () => {
   it('numbers Chess960 starts as the Scharnagl scheme does', () => {
@@ -67,20 +67,39 @@ describe('variants', () => {
     expect(setupSanHistory(STANDARD_SETUP, ['e2e4', 'e7e5'])).toEqual(['e4', 'e5'])
   })
 
-  it('names openings by stepping back to the last named position', async () => {
-    const table = await loadOpenings()
-    expect(openingAt(table, STANDARD_SETUP, ['e2e4', 'a7a6', 'h2h3'])).toEqual({
+  it('names openings by stepping back to the last named position', () => {
+    expect(openingAt(STANDARD_SETUP, ['e2e4', 'a7a6', 'h2h3'])).toEqual({
       eco: 'B00',
       name: 'St. George Defense',
     })
-    expect(openingAt(table, STANDARD_SETUP, ['e2e4'])).toEqual({
+    expect(openingAt(STANDARD_SETUP, ['e2e4'])).toEqual({
       eco: 'B00',
       name: "King's Pawn Game",
     })
-    expect(openingAt(table, STANDARD_SETUP, ['d2d4'])).toEqual({
+    expect(openingAt(STANDARD_SETUP, ['d2d4'])).toEqual({
       eco: 'A40',
       name: "Queen's Pawn Game",
     })
-    expect(openingAt(table, { variant: 'chess960', fen: INITIAL_FEN }, ['e2e4'])).toBeUndefined()
+    expect(openingAt({ variant: 'chess960', fen: INITIAL_FEN }, ['e2e4'])).toBeUndefined()
+  })
+
+  it('browses openings by family and picks the replies a drill continues with', () => {
+    const gambit = openingTree().find((family) => family.name === "King's Gambit")
+    expect(gambit).toMatchObject({ eco: 'C30', moves: ['e2e4', 'e7e5', 'f2f4'] })
+    const accepted = gambit?.children.find((child) => child.label === 'Accepted')
+    expect(accepted?.name).toBe("King's Gambit Accepted")
+    // Every named line opens on the position the name is given to.
+    for (const node of accepted?.children ?? [])
+      if (node.moves) expect(openingAt(STANDARD_SETUP, node.moves)?.name).toBe(node.name)
+    const stats = [
+      { uci: 'e5f4', white: 45, draws: 5, black: 45 },
+      { uci: 'f8c5', white: 2, draws: 0, black: 3 },
+      { uci: 'd7d5', white: 10, draws: 2, black: 8 },
+    ]
+    expect(openingReplies(stats, true)).toEqual(['e5f4'])
+    expect(openingReplies(stats, false)).toEqual(['e5f4', 'd7d5'])
+    expect(openingKey("King's Gambit Accepted: Kieseritzky Gambit, Long Whip")).toBe(
+      'Kings_Gambit_Accepted_Kieseritzky_Gambit',
+    )
   })
 })

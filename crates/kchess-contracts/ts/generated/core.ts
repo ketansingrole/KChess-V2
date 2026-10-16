@@ -2,7 +2,7 @@
 // Do not edit: change the Rust contract types and run `pnpm run build:native`.
 
 import type { ArchivedGame, JoinedTournament, LegacyDocuments, LibrarySnapshot, MistakeExercise, RepertoireMisses, SessionDocuments, SessionKind, StudyCommand, StudyCommandResult } from './library'
-import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, PerfStats, PerfType, PlayerColor, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, WatchFrame, WatchState } from './types'
+import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, WatchFrame, WatchState } from './types'
 
 export type CoreEvents = { "online:state": OnlineConnection, "online:event": OnlineEvent, "online:error": string, "puzzledb:progress": PuzzleDbProgress, "engine:analysis": AnalysisUpdate, "review:update": ReviewUpdate, "review:status": ReviewStatus, "challenges:update": Array<ChallengeInfo>, "online:lobby": LobbyState, "online:ongoing-changed": null, "watch:state": WatchState, "watch:frame": WatchFrame, "watch:broadcast": BroadcastUpdate, 
 /**
@@ -30,6 +30,14 @@ export interface CoreApi {
    * A master game's PGN from the masters database, for the analysis board.
    */
   mastersGame(id: string): Promise<string>
+  /**
+   * The Wikibooks description of a line of UCI moves from the starting position, or null when it has no page.
+   */
+  openingDescription(moves: string[]): Promise<OpeningDescription | null>
+  /**
+   * Month by month, the share of the Lichess games at the position before the line's last move that went on with it.
+   */
+  openingPopularity(moves: string[]): Promise<PopularityMonth[]>
   /**
    * Lichess's cached cloud evaluation of a position, or null when it has none.
    */
@@ -293,6 +301,8 @@ export const CORE_METHODS: CoreMethod[] = [
   'exportToLichessStudy',
   'exportGame',
   'mastersGame',
+  'openingDescription',
+  'openingPopularity',
   'cloudEval',
   'loadData',
   'saveSettings',

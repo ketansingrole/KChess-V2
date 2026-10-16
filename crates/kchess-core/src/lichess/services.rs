@@ -519,6 +519,14 @@ impl Services {
                 Ok(id) => to_json(self.lookups.masters_game(&id).await),
                 Err(cause) => Err(cause),
             },
+            "positionLookup.openingDescription" => {
+                let moves = args.first().cloned().unwrap_or(Value::Null);
+                to_json(self.lookups.opening_description(&moves).await)
+            }
+            "positionLookup.openingPopularity" => {
+                let moves = args.first().cloned().unwrap_or(Value::Null);
+                to_json(self.lookups.opening_popularity(&moves).await)
+            }
             _ => return None,
         };
         Some(result)

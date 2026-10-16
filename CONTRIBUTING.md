@@ -11,6 +11,10 @@ pnpm install --frozen-lockfile
 pnpm run dev        # Nuxt + Electron together, with hot reload
 ```
 
+While editing, `pnpm run check:fast` checks only what changed, and
+`pnpm run test:e2e --grep <tag or title>` runs selected desktop tests after a build.
+Pushing to `main` runs `pnpm run check` through the pre-push hook that `pnpm install` sets up.
+
 Before opening a pull request, run the same checks CI runs:
 
 ```bash

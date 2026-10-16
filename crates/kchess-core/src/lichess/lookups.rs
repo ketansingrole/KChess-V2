@@ -21,6 +21,9 @@ use super::reviews::split_whitespace;
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, misc, position, replay};
 
+mod opening_info;
+pub use opening_info::{DescriptionBlock, OpeningDescription, PopularityMonth};
+
 /// `POSITION_LOOKUP_KINDS` of the contracts.
 pub const LOOKUP_KINDS: [&str; 4] = ["opening", "masters", "player", "tablebase"];
 /// `EXPLORER_SPEEDS` of the contracts, in their order.
@@ -417,6 +420,8 @@ pub struct Endpoints {
     pub player: String,
     pub tablebase: String,
     pub masters_game: String,
+    /// The Wikibooks API, for opening descriptions.
+    pub wikibooks: String,
 }
 
 impl Endpoints {
@@ -429,6 +434,7 @@ impl Endpoints {
             player: format!("{origin}/explorer/player"),
             tablebase: format!("{origin}/tablebase/standard"),
             masters_game: format!("{origin}/explorer/masters/pgn"),
+            wikibooks: format!("{origin}/wikibooks/w/api.php"),
         }
     }
 }
@@ -441,6 +447,7 @@ impl Default for Endpoints {
             player: "https://explorer.lichess.org/player".into(),
             tablebase: "https://tablebase.lichess.org/standard".into(),
             masters_game: "https://explorer.lichess.org/masters/pgn".into(),
+            wikibooks: "https://en.wikibooks.org/w/api.php".into(),
         }
     }
 }

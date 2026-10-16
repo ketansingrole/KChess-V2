@@ -18,6 +18,7 @@ import { nativeRules } from '../../../../crates/kchess-node/js/native'
 import { captureAsync } from '../unit/capture.ts'
 import { setRulesBinding } from '@kchess/rules/engine'
 import { reviewKey } from '@kchess/rules/review'
+import { positionAfter } from '@kchess/rules/chess'
 import type { StoredReview } from '@kchess/contracts/types'
 
 // The domain rules this test process calls run on the native module. Bind them on the rules engine
@@ -178,6 +179,7 @@ const test = base.extend<{
     const wantQuickLogout = has('@seed:quick-logout')
     const wantPagedHistory = has('@seed:paged-history')
     const wantPositionLookup = has('@seed:position-lookup')
+    const wantOpeningLookups = has('@seed:opening-lookups')
     const wantLibraryRecovery = has('@seed:library-recovery')
     const wantUnverifiedStartup = has('@seed:unverified-startup')
     const profile = await mkdtemp(join(tmpdir(), 'kchess-e2e-'))
@@ -250,6 +252,51 @@ const test = base.extend<{
         'opening:' + START_FEN,
         JSON.stringify(saved),
         1,
+      )
+    }
+    if (wantOpeningLookups) {
+      // Fresh saved explorer results for the King's Gambit and its accepted line.
+      const save = db.prepare(
+        'INSERT INTO position_lookups (key, data, fetchedAt) VALUES (?, ?, ?)',
+      )
+      const lookups = [
+        {
+          moves: ['e2e4', 'e7e5', 'f2f4'],
+          total: 1000,
+          games: [{ id: 'kgGame01', white: 'Alpha', black: 'Beta', winner: 'white', year: 2024 }],
+          next: [
+            { uci: 'e5f4', san: 'exf4', white: 400, draws: 50, black: 400 },
+            { uci: 'f8c5', san: 'Bc5', white: 50, draws: 10, black: 40 },
+            { uci: 'd7d5', san: 'd5', white: 20, draws: 10, black: 20 },
+          ],
+        },
+        {
+          moves: ['e2e4', 'e7e5', 'f2f4', 'e5f4'],
+          total: 600,
+          games: [],
+          next: [
+            { uci: 'g1f3', san: 'Nf3', white: 250, draws: 50, black: 200 },
+            { uci: 'f1c4', san: 'Bc4', white: 50, draws: 10, black: 40 },
+          ],
+        },
+      ]
+      for (const { moves, total, games, next } of lookups) {
+        const fen = positionAfter(moves).fen
+        const data = { kind: 'opening', fen, fetchedAt: Date.now(), total, games, moves: next }
+        save.run('opening:' + fen, JSON.stringify(data), Date.now())
+      }
+      // A year of the King's Gambit's popularity after 1. e4 e5.
+      const parent = positionAfter(['e2e4', 'e7e5']).fen
+      const child = positionAfter(['e2e4', 'e7e5', 'f2f4']).fen
+      const months = Array.from({ length: 12 }, (_, i) => ({
+        month: `2024-${String(i + 1).padStart(2, '0')}`,
+        share: 0.02 + i * 0.001,
+        games: 2000 + i * 100,
+      }))
+      save.run(
+        `popularity:${parent}:${child}`,
+        JSON.stringify({ fetchedAt: Date.now(), months }),
+        Date.now(),
       )
     }
     if (wantLibraryRecovery) {
@@ -452,8 +499,8 @@ test('offers account-free actions and manages offline downloads without signing 
   await expect(page.getByText('No saved Lichess games to explore', { exact: true })).toBeVisible()
   await navigate(page, 'Practice')
   await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
-  await page.getByRole('button', { name: 'Analyze a game', exact: true }).click()
-  await expect(page.locator('cg-board')).toBeVisible()
+  await page.getByRole('button', { name: 'Review a game', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Lichess', exact: true })).toBeVisible()
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
   await navigate(page, 'Offline downloads')
   await expect(page.getByText('Included with KChess', { exact: true })).toBeVisible()
@@ -685,12 +732,28 @@ test('turns a reviewed game mistake into a scheduled practice position @seed:rev
   await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
   await page.getByRole('button', { name: /against rival/ }).click()
   await page.getByRole('button', { name: 'Review', exact: true }).click()
-  await page.getByRole('button', { name: "Practice Black's mistakes", exact: true }).click()
-  await expect(page.getByText(/positions added to Practice/)).toBeVisible()
-  await navigate(page, 'Practice')
-  await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
+  // Your own side (Black) is saved without asking; the review links to its practice.
+  await expect(page.getByText('1 position in practice', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: "Practice Black's mistakes", exact: true }),
+  ).toHaveCount(0)
+  // The opponent's side is offered once, then counted; it never stays as a dead button.
+  const opponent = page.getByRole('button', { name: "Practice rival's mistakes", exact: true })
+  await opponent.click()
+  await expect(page.getByText('2 positions in practice', { exact: true })).toBeVisible()
+  await expect(opponent).toHaveCount(0)
+  await page.getByRole('button', { name: 'Practice now', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Your mistakes', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
   await page.getByRole('button', { name: 'Start practice', exact: true }).click()
   await expect(page.locator('cg-board')).toBeVisible()
+  // The board fits the window beside its panel, as on the puzzle pages.
+  const board = await page.locator('cg-board').boundingBox()
+  const height = await page.evaluate(() => window.innerHeight)
+  expect(board!.y + board!.height).toBeLessThanOrEqual(height)
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'mistake-practice.png') })
   await page.getByRole('button', { name: 'Show engine line', exact: true }).click()
   await expect(
     page.getByText('Position completed. Your next revisit has been scheduled.', { exact: true }),
@@ -711,6 +774,150 @@ test('recovers a saved position lookup offline and rejects unsupported tablebase
   await expect(page.getByTitle('White 100 · Draw 20 · Black 50', { exact: true })).toBeVisible()
   await page.getByRole('tab', { name: 'Tablebase', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('seven pieces')
+})
+
+test('browses openings offline and drills one without a saved study', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Openings')
+  const families = page.getByRole('list', { name: 'Opening families', exact: true })
+  await families.getByRole('button', { name: "Show King's Gambit variations", exact: true }).click()
+  await expect(families.getByRole('link', { name: 'Accepted', exact: true })).toBeVisible()
+  await page.getByRole('textbox', { name: 'Search openings', exact: true }).fill('kieseritzky')
+  await page
+    .getByRole('list', { name: 'Search results', exact: true })
+    .getByRole('link', { name: "King's Gambit Accepted: Kieseritzky Gambit", exact: true })
+    .click()
+  await expect(
+    page.getByRole('heading', { name: "King's Gambit Accepted: Kieseritzky Gambit", exact: true }),
+  ).toBeVisible()
+  await expect(page.getByText('C39', { exact: true })).toBeVisible()
+  // Names are offline; the explorer's statistics need a Lichess account.
+  await expect(page.getByRole('alert')).toHaveText(
+    'Connect a Lichess account in Settings to use the opening explorer.',
+  )
+  await page
+    .getByRole('list', { name: 'Moves', exact: true })
+    .getByRole('button', { name: 'f4', exact: true })
+    .click()
+  await expect(page.getByRole('heading', { name: "King's Gambit", exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'All openings', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Search openings', exact: true })).toHaveValue(
+    'kieseritzky',
+  )
+  await page.goBack()
+  await expect(page.getByRole('heading', { name: "King's Gambit", exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Train this line', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Openings', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(
+    page.getByText(
+      'Only the named line: Connect a Lichess account in Settings to use the opening explorer.',
+    ),
+  ).toBeVisible()
+  await expect(page.getByText("Play the white moves of “King's Gambit”.")).toBeVisible()
+  await move(page, 'e2', 'e4')
+  // Black answers from the line; the board takes White's next move once it has.
+  await expect(async () => {
+    await move(page, 'f2', 'f4')
+    await expect(page.getByText(/^End of this line/)).toBeVisible({ timeout: 500 })
+  }).toPass()
+  await page.getByRole('button', { name: 'Save as study', exact: true }).click()
+  await expect(page.getByText('Saved to Studies', { exact: true })).toBeVisible()
+  await navigate(page, 'Studies')
+  await expect(page.getByText("King's Gambit", { exact: true }).first()).toBeVisible()
+})
+
+test('shows an opening’s continuations and games, and drills its popular replies @seed:opening-lookups', async ({
+  desktop: { page, lichess },
+}) => {
+  const asked: string[] = []
+  lichess.route = (request) => {
+    const url = new URL(request.url)
+    asked.push(url.pathname + url.search)
+    if (url.pathname === '/game/export/kgGame01')
+      return new Response('[White "Alpha"]\n[Black "Beta"]\n\n1. e4 e5 2. f4 exf4 1-0\n', {
+        headers: { 'content-type': 'application/x-chess-pgn' },
+      })
+    if (
+      url.pathname === '/wikibooks/w/api.php' &&
+      url.searchParams.get('titles') === 'Chess_Opening_Theory/1._e4/1...e5/2._f4'
+    )
+      return Response.json({
+        query: {
+          pages: [
+            {
+              title: 'Chess Opening Theory/1. e4/1...e5/2. f4',
+              extract:
+                "\n2. f4 · King's gambit\nWhite attacks the e5 pawn.\nIt weakens the king.\n\n\nAccept the gambit\n2...exf4 is the main move.\n\n\nReferences\nA book.",
+            },
+          ],
+        },
+      })
+    if (url.pathname === '/wikibooks/w/api.php')
+      return Response.json({ query: { pages: [{ title: 'x', missing: true }] } })
+    return new Response(null, { status: 503 })
+  }
+  await navigate(page, 'Openings')
+  await page.getByRole('textbox', { name: 'Search openings', exact: true }).fill("king's gambit")
+  await page.getByRole('link', { name: "King's Gambit", exact: true }).click()
+  const grid = page.getByRole('list', { name: 'Popular continuations', exact: true })
+  const accepted = grid.getByRole('button', { name: "exf4, King's Gambit Accepted", exact: true })
+  await expect(accepted).toContainText('85%')
+  await expect(grid.getByRole('listitem')).toHaveCount(3)
+  // The Wikibooks excerpt, attributed, opens at its first paragraph.
+  const description = page.getByRole('region', { name: 'Description', exact: true })
+  await expect(description).toContainText('White attacks the e5 pawn.')
+  await expect(description).not.toContainText('2...exf4 is the main move.')
+  await description.getByRole('button', { name: 'More', exact: true }).click()
+  await expect(description.getByRole('heading', { name: 'Accept the gambit' })).toBeVisible()
+  await expect(description).not.toContainText('A book.')
+  await expect(description.getByRole('link', { name: 'Wikibooks', exact: true })).toHaveAttribute(
+    'href',
+    'https://en.wikibooks.org/wiki/Chess_Opening_Theory/1._e4/1...e5/2._f4',
+  )
+  await expect(description.getByRole('link', { name: 'CC BY-SA 4.0', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('img', {
+      name: 'f4 was chosen in 2.0% of games in 2024-01 and 3.1% in 2024-12',
+    }),
+  ).toBeVisible()
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'opening-page.png') })
+  await accepted.click()
+  await expect(
+    page.getByRole('heading', { name: "King's Gambit Accepted", exact: true }),
+  ).toBeVisible()
+  await expect(grid.getByRole('button', { name: /^Nf3, / })).toBeVisible()
+  // A page Wikibooks does not have shows no description, and no placeholder.
+  await expect(page.getByRole('region', { name: 'Description', exact: true })).toHaveCount(0)
+  await page.goBack()
+  await page.getByRole('button', { name: /Alpha/ }).click()
+  await expect(page.getByRole('tab', { name: 'Explorer', exact: true })).toBeVisible()
+
+  await page.goBack()
+  // Puzzles of the opening: Lichess is asked for its key as the angle.
+  await page.getByRole('button', { name: 'Train with puzzles', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Theme', exact: true })).toContainText(
+    "King's Gambit",
+  )
+  await expect.poll(() => asked.some((path) => path.includes('Kings_Gambit'))).toBe(true)
+  await page.goBack()
+  await page.getByRole('button', { name: 'Train this line', exact: true }).click()
+  await expect(page.getByText("Play the white moves of “King's Gambit”.")).toBeVisible()
+  await expect(page.getByText(/^Only the named line/)).toHaveCount(0)
+  await move(page, 'e2', 'e4')
+  await expect(async () => {
+    await move(page, 'f2', 'f4')
+    await expect(page.getByText('f4 ✓', { exact: true })).toBeVisible({ timeout: 500 })
+  }).toPass()
+  // Past the named line: Black's popular reply, then White's most played answer.
+  await expect(async () => {
+    await move(page, 'g1', 'f3')
+    await expect(page.getByText(/^End of this line/)).toBeVisible({ timeout: 500 })
+  }).toPass()
 })
 
 test('plays a move through the board and keeps the game when navigating', async ({
@@ -1074,7 +1281,16 @@ test('shows a reviewed game’s accuracy in History and opens its review @seed:r
   await expect(row).toContainText('%')
   await row.click()
   await expect(page.locator('.review-line')).toContainText('accuracy')
-  await page.getByRole('button', { name: 'Review', exact: true }).click()
+  // The review summary never pushes Review off the header row, at any window width.
+  const back = page.getByRole('button', { name: 'All games', exact: true })
+  const reviewButton = page.getByRole('button', { name: 'Review', exact: true })
+  for (const width of [1400, 820]) {
+    await page.setViewportSize({ width, height: 900 })
+    const [backBox, reviewBox] = await Promise.all([back.boundingBox(), reviewButton.boundingBox()])
+    expect(Math.abs((reviewBox?.y ?? 0) - (backBox?.y ?? 1))).toBeLessThan(4)
+  }
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'history-game-header.png') })
+  await reviewButton.click()
   const review = page.getByRole('region', { name: 'Game review' })
   await expect(review.getByRole('table')).toContainText('tester')
   await expect(review.getByRole('table')).toContainText('rival')
@@ -1920,12 +2136,42 @@ test('practices every trainer offline without leaving the page', async ({ deskto
   await page.getByRole('tab', { name: 'Knight paths', exact: true }).click()
   await expect(page.getByText('Reach the green square in the fewest moves.')).toBeVisible()
   await page.getByRole('tab', { name: 'Endgames', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Checkmates', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: /Endgame drills/ }).click()
   await expect(page.getByRole('heading', { name: 'Basic mates', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'All courses', exact: true }).click()
   await page.getByRole('tab', { name: 'Openings', exact: true }).click()
-  await expect(page.getByText('Save a repertoire first', { exact: true })).toBeVisible()
+  await expect(page.getByText('Choose an opening', { exact: true })).toBeVisible()
   await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Analyze a game', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Review a game', exact: true })).toBeVisible()
   await expect(page.getByRole('tab', { name: 'Puzzle themes', exact: true })).toHaveCount(0)
+})
+
+test('finishes a checkmate lesson chapter and shows it on the course card', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Endgames', exact: true }).click()
+  const card = page.getByRole('button', { name: /Checkmate Patterns II\b/ })
+  await expect(card).toContainText('0 / 9')
+  await card.click()
+  const chapters = page.getByRole('navigation', { name: 'Chapters' })
+  await chapters.getByRole('button', { name: /Balestra mate/ }).click()
+  await expect(page.getByRole('heading', { name: 'Balestra mate', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  const banner = page.locator('.status-banner')
+  await expect(banner).toContainText('Your turn')
+  await expect(banner).toContainText('Checkmate in one move.')
+  // A move that does not mate is taken back.
+  await move(page, 'd3', 'c4')
+  await expect(banner).toContainText('Not the move — try again')
+  await move(page, 'd3', 'b5')
+  await expect(banner).toContainText('Checkmate!')
+  await expect(
+    chapters.getByRole('button', { name: /Balestra mate/ }).getByLabel('Done'),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'All courses', exact: true }).click()
+  await expect(page.getByRole('button', { name: /Checkmate Patterns II\b/ })).toContainText('1 / 9')
 })
 
 test('scores coordinates and square-colour runs from board and keyboard', async ({
@@ -1953,6 +2199,50 @@ test('scores coordinates and square-colour runs from board and keyboard', async 
   const rank = Number(name[1]) - 1
   await page.keyboard.press((file + rank) % 2 === 0 ? 'd' : 'l')
   await expect(page.locator('.drill-stage')).toContainText('1 correct')
+})
+
+test('averages coordinate runs per side and limits them to chosen files and ranks', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Coordinates', exact: true }).click()
+  const target = page.locator('.coord-target')
+  // Two timed runs as White give an average and a chart of them.
+  for (let run = 0; run < 2; run++) {
+    await page.getByRole('button', { name: /^(Start|Play again)$/ }).click()
+    await clickSquare(page, (await target.innerText()).trim())
+    await expect(page.locator('.run-score strong')).toHaveText('1')
+    await page.getByRole('button', { name: 'End run', exact: true }).click()
+  }
+  await expect(page.locator('.coord-averages')).toContainText('Average as White: 1')
+  await expect(page.getByRole('img', { name: 'Recent scores as White: 1, 1' })).toBeVisible()
+
+  // Only a1, with the pieces on the board: every question is a1, and the run is no record.
+  await page.getByRole('switch', { name: 'Practice only some files & ranks' }).click()
+  const files = page.getByRole('group', { name: 'Files to practice' })
+  const ranks = page.getByRole('group', { name: 'Ranks to practice' })
+  for (const file of 'bcdefgh') await files.getByRole('button', { name: file, exact: true }).click()
+  for (const rank of '2345678') await ranks.getByRole('button', { name: rank, exact: true }).click()
+  // The last file and rank stay on.
+  await files.getByRole('button', { name: 'a', exact: true }).click()
+  await expect(files.getByRole('button', { name: 'a', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await page.getByRole('switch', { name: 'Show pieces' }).click()
+  await page.getByRole('switch', { name: 'Coordinates on every square' }).click()
+  await expect(page.locator('.cg-wrap coords.squares').first()).toBeAttached()
+  await page.getByRole('button', { name: 'Play again', exact: true }).click()
+  await expect(target).toHaveText('a1')
+  await expect(page.locator('cg-board piece').first()).toBeAttached()
+  await clickSquare(page, 'a1')
+  await expect(page.locator('.run-score strong')).toHaveText('1')
+  await expect(target).toHaveText('a1')
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'coordinates-options.png') })
+  await page.getByRole('button', { name: 'End run', exact: true }).click()
+  await expect(page.getByText('Not saved: some files & ranks only', { exact: true })).toBeVisible()
+  await expect(page.locator('.coord-averages')).toContainText('Average as White: 1')
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'coordinates-averages.png') })
 })
 
 test('starts a knight run and skips a round', async ({ desktop: { page } }) => {

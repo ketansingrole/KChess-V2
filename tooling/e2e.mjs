@@ -6,6 +6,8 @@ import { prepareVoiceModel } from './prepare-voice-model.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packaged = process.argv.includes('--packaged')
+// Remaining arguments go to Playwright, e.g. `pnpm run test:e2e --grep @seed:reviewed-game`.
+const playwrightArgs = process.argv.slice(2).filter((arg) => arg !== '--packaged' && arg !== '--')
 const candidates =
   process.platform === 'darwin'
     ? ['dist/mac-arm64/KChess.app/Contents/MacOS/KChess']
@@ -36,6 +38,7 @@ const child = spawn(
     join(root, 'node_modules/@playwright/test/cli.js'),
     'test',
     ...(packaged ? ['--grep', '@packaged'] : []),
+    ...playwrightArgs,
   ],
   { cwd: root, env, stdio: 'inherit' },
 )

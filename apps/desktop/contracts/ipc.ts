@@ -80,6 +80,8 @@ export const IPC_CHANNELS = {
   reportRendererError: 'diagnostics:renderer-error',
   positionLookup: 'analysis:position-lookup',
   mastersGame: 'analysis:masters-game',
+  openingDescription: 'analysis:opening-description',
+  openingPopularity: 'analysis:opening-popularity',
   exportGame: 'games:export',
   saveExport: 'games:save-export',
   lichessStudies: 'studies:list',

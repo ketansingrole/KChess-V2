@@ -62,6 +62,7 @@ pub const RUN_KINDS: &[&str] = &[
     "squareColor",
     "knightPath",
     "endgame",
+    "lesson",
 ];
 pub const VOICE_SOURCES: &[&str] = &[
     "computer",

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch, onScopeDispose } from 'vue'
-import { useLocalStorage, useOnline } from '@vueuse/core'
+import { StorageSerializers, useLocalStorage, useOnline } from '@vueuse/core'
 import { pickConnectedAccount } from '@kchess/rules/accounts'
 import type {
   LichessRatingHistory,
@@ -78,6 +78,17 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const retry = (puzzle: Puzzle): void => {
     trainer.retry(puzzle)
     tab.value = 'train'
+  }
+  /** The opening an opening page asked for puzzles of: its key is the angle while it is chosen. */
+  const openingAngle = useLocalStorage<{ key: string; name: string } | null>(
+    'kchess:puzzle-opening',
+    null,
+    { serializer: StorageSerializers.object },
+  )
+  /** Puzzles from one opening: from Lichess when online, else from the downloaded database. */
+  function startOpening(key: string, name: string): void {
+    openingAngle.value = { key, name }
+    startTheme(key, online.value || mode.value === 'offline' ? undefined : 'offline')
   }
   function startTheme(theme: string, nextMode?: TrainMode): void {
     angle.value = theme
@@ -277,6 +288,8 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     loadNext,
     retry,
     startTheme,
+    startOpening,
+    openingAngle,
     report,
     resetSession,
     daily,

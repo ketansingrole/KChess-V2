@@ -14,7 +14,9 @@ creating/pushing a tag or publishing a release.
   If fetching fails, restore access and retry; do not select a version from stale tags.
   Commit all workspace `package.json` manifests and `pnpm-lock.yaml`; the lockfile must match the declared dependencies.
 - Changes may land on `main` directly or through a pull request; a PR is optional. Before
-  pushing to `main`, run `pnpm run check` locally, and after pushing, confirm CI is green and
+  pushing to `main`, run `pnpm run check` locally (the `.githooks/pre-push` hook, installed by
+  `pnpm install`, runs it and refuses a dirty tree; skip it only on purpose with
+  `KCHESS_SKIP_PRE_PUSH=1`), and after pushing, confirm CI is green and
   fix any failure with a follow-up commit (never force-push `main`).
 - Release only a commit on `origin/main` whose CI is green. Include every intended file,
   including new/untracked files; explicitly stage the files instead of relying on
@@ -142,7 +144,12 @@ pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOW
 ## Executable guardrails
 
 - Read GUARDRAILS.md for the verification ladder and lifecycle helpers.
-- Use `pnpm run check:fast` during editing; it never replaces full merge checks.
+- Test in tiers. While editing, run `pnpm run check:fast` (changed-file format, lint and
+  related unit tests) and, after a build, only the affected desktop tests with
+  `pnpm run test:e2e --grep <tag or title>`. Before pushing to `main`, run the full
+  `pnpm run check` (the pre-push hook enforces it). Releases and CI run everything,
+  including `pnpm run build && pnpm run test:e2e` and packaged tests. `check:fast` never
+  replaces full merge checks.
 - New IPC invocations require an IPC_CONTRACTS validator tuple and main registration.
   Startup checks registration completeness before opening the window.
 - Use RequestScope / SubscriptionScope for replaceable requests and listener ownership,

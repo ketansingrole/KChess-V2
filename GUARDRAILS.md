@@ -8,6 +8,15 @@ for changed source. Shared contracts, configuration, scripts, dependencies and
 deleted files broaden verification to all unit tests and types. This is an editing
 aid; related tests do not establish complete regression coverage.
 
+After `pnpm run build`, run only the affected desktop tests: arguments after
+`test:e2e` go to Playwright, e.g. `pnpm run test:e2e --grep @seed:reviewed-game` or
+`--grep "study"`. The full desktop suite runs in CI and before releases.
+
+`pnpm install` points Git at `.githooks`. Its pre-push hook runs the full `pnpm run check`
+when a push updates `main`, and refuses if the pushed commit is not HEAD or the working
+tree has uncommitted or untracked files, since `check` would test those instead. Other
+branches push without it. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git push …`.
+
 Before merging, run `pnpm run check`. It checks formatting, lint, renderer/main/test
 types, smoke tests, all unit tests and structural performance budgets. Production
 verification remains `pnpm run build && pnpm run test:e2e`. Packaging changes also

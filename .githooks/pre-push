@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs the full `pnpm run check` before a push to main (see tooling/pre-push.mjs).
+exec node "$(git rev-parse --show-toplevel)/tooling/pre-push.mjs" "$@"

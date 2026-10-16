@@ -54,6 +54,8 @@ pub const ASSISTANCE_METHODS: &[&str] = &[
     "reviewRequest",
     "positionLookup",
     "mastersGame",
+    "openingDescription",
+    "openingPopularity",
     "cloudEval",
 ];
 /// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`, `crates/kchess-wasm/js/tvChannels.ts`).
@@ -102,6 +104,8 @@ const CORE: &[Row] = &[
     ),
     ("exportGame", 1, &[Valid("assertGameId")]),
     ("mastersGame", 1, &[Valid("assertGameId")]),
+    ("openingDescription", 1, &[Valid("assertMoves")]),
+    ("openingPopularity", 1, &[Valid("assertMoves")]),
     ("cloudEval", 2, &[Position, Valid("assertLines")]),
     ("loadData", 0, &[]),
     ("saveSettings", 1, &[Valid("assertCoreSettings")]),

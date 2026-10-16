@@ -303,6 +303,7 @@ function reviewGame(): void {
   analysis.origin = {
     white: userColor.value === 'white' ? 'You' : computer,
     black: userColor.value === 'black' ? 'You' : computer,
+    player: userColor.value,
   }
   void analysis.requestReview()
   selectPage('analysis')

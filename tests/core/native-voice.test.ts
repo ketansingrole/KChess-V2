@@ -523,6 +523,24 @@ describe('the Rust voice rules match the recorded TypeScript outputs', () => {
   })
 })
 
+describe('random squares from some files and ranks', () => {
+  it('only draws allowed squares, never the previous one while another remains', () => {
+    const allowed = coordinates.squaresOn(['a', 'h'], ['1', '8'])
+    expect(allowed).toEqual(['a1', 'a8', 'h1', 'h8'])
+    for (let seed = 1; seed < 50; seed++) {
+      const square = coordinates.randomSquare('a1', rng(seed), allowed)
+      expect(allowed).toContain(square)
+      expect(square).not.toBe('a1')
+    }
+  })
+  it('returns the only allowed square even when it was the previous one', () => {
+    expect(coordinates.randomSquare('e4', rng(1), ['e4'])).toBe('e4')
+  })
+  it('rejects anything but squares', () => {
+    expect(() => rules('randomSquare', null, [0.5], ['e4', 'z9'])).toThrow()
+  })
+})
+
 describe('the retry loops over the draws', () => {
   it('never repeat the previous square and return a legal knight pair', () => {
     for (let seed = 1; seed < 50; seed++) {

@@ -48,6 +48,19 @@ impl Core {
                 )?;
                 Ok(result)
             }
+            "openingDescription" | "openingPopularity" => {
+                // Opening theory is assistance too: none of it reaches a live game.
+                self.assistance_allowed(
+                    "Position lookups are unavailable during a live Lichess game.",
+                )?;
+                let result = self
+                    .inner(&format!("positionLookup.{method}"), args.to_vec())
+                    .await?;
+                self.assistance_allowed(
+                    "Position lookups are unavailable during a live Lichess game.",
+                )?;
+                Ok(result)
+            }
             "cloudEval" => {
                 self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
                 // Each request sends the position to Lichess, so it needs the setting turned on.

@@ -31,6 +31,7 @@
     "start": "node tooling/with-branded-electron.mjs electron apps/desktop",
     "pack:mac": "pnpm run build && electron-builder --projectDir apps/desktop --mac dir --arm64",
     "postinstall": "install-electron",
+    "prepare": "node tooling/install-hooks.mjs",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:smoke": "pnpm run test:chess && pnpm run test:puzzles && node --experimental-strip-types tooling/main-smoke.ts",

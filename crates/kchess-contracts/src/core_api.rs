@@ -138,6 +138,18 @@ pub fn methods() -> Vec<Method> {
             string,
         ),
         method(
+            "openingDescription",
+            "The Wikibooks description of a line of UCI moves from the starting position, or null when it has no page.",
+            vec![req("moves", array(string))],
+            format!("{} | null", t::<OpeningDescription>()),
+        ),
+        method(
+            "openingPopularity",
+            "Month by month, the share of the Lichess games at the position before the line's last move that went on with it.",
+            vec![req("moves", array(string))],
+            array(t::<PopularityMonth>()),
+        ),
+        method(
             "cloudEval",
             "Lichess's cached cloud evaluation of a position, or null when it has none.",
             vec![req("fen", string), req("lines", number)],

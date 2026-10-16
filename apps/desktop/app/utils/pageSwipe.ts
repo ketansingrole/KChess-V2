@@ -10,6 +10,8 @@ export interface PageSwipeOptions {
   showFeedback?: () => boolean
   /** Horizontal travel in pixels that commits the navigation. */
   threshold?: number
+  /** The page that follows the fingers a little, as the window does in Safari. */
+  surface?: () => HTMLElement | null
 }
 
 // Trackpads stream ~30-60 wheel events/s while fingers move, with fractional
@@ -25,8 +27,20 @@ const VERTICAL_RATIO = 2
 /** Long travel that never resolved horizontal is a diagonal scroll, not a swipe. */
 const POISON_TRAVEL_PX = 56
 const DEFAULT_THRESHOLD_PX = 100
-const READY_RATIO = 0.8
+/** Past the threshold the swipe is armed; falling back below this share of it disarms. */
+const DISARM_RATIO = 0.8
+/**
+ * The DOM never says when the fingers lift. A pause in the stream, or momentum (deltas that
+ * only shrink), is the release: an armed swipe commits then, and reversing first cancels it.
+ */
+const RELEASE_IDLE_MS = 90
+const DECAY_EVENTS = 3
+const DECAY_RATIO = 0.9
 const COMMIT_FLASH_MS = 220
+/** How far the page follows the fingers, with growing resistance. */
+const SHIFT_MAX_PX = 28
+const BLOCKED_SHIFT_MAX_PX = 8
+const SHIFT_SETTLE = 'transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)'
 /** A flick commits early: fast, deliberate, still short of the full distance. */
 const VELOCITY_COMMIT_PX_S = 2000
 const FLICK_TRAVEL_PX = 48
@@ -61,10 +75,12 @@ export function installPageSwipeNavigation(
   let lastEvent = -Infinity
   let travelX = 0
   let travelY = 0
-  let state: 'pending' | 'horizontal' | 'blocked' | 'finished' = 'pending'
+  let state: 'pending' | 'horizontal' | 'armed' | 'blocked' | 'finished' = 'pending'
   let cachedDirection: -1 | 1 | null = null
   let canNavigate = false
   let commitTimer: ReturnType<typeof setTimeout> | undefined
+  let releaseTimer: ReturnType<typeof setTimeout> | undefined
+  let shifted: HTMLElement | null = null
   let backEdge: HTMLElement | null = null
   let forwardEdge: HTMLElement | null = null
   /** Recent events; the pointer stays put during a wheel gesture, so the hit test is cached per target. */
@@ -101,19 +117,50 @@ export function installPageSwipeNavigation(
     }
   }
 
-  /** The tab slides in with the swipe: hidden off-edge at rest, fully in at commit. */
+  /** Moves the page toward the swipe; it eases back when `distance` is 0. */
+  function shift(distance: number): void {
+    const surface = distance ? (shifted ?? options.surface?.() ?? null) : shifted
+    if (!surface) return
+    if (distance) {
+      shifted = surface
+      surface.style.transition = 'none'
+      surface.style.transform = `translateX(${distance.toFixed(1)}px)`
+      return
+    }
+    surface.style.transition = SHIFT_SETTLE
+    surface.style.transform = ''
+    // No transform is left behind: it would re-anchor the page's fixed descendants.
+    const settled = surface
+    settled.addEventListener(
+      'transitionend',
+      () => {
+        if (!settled.style.transform) settled.style.removeProperty('transition')
+      },
+      { once: true },
+    )
+    shifted = null
+  }
+
+  /**
+   * The tab slides in with the swipe: hidden off-edge at rest, fully in once letting go would
+   * navigate. The page follows with resistance, barely at either end of history.
+   */
   function paint(direction: -1 | 1): void {
     if (!showFeedback()) return
-    const progress = Math.min(1, Math.abs(travelX) / threshold)
+    const ratio = Math.abs(travelX) / threshold
+    const progress = Math.min(1, ratio)
     const { back, forward } = edges()
     const active = direction < 0 ? back : forward
     const idle = direction < 0 ? forward : back
     idle.classList.remove('is-visible', 'is-ready', 'is-blocked')
     idle.style.removeProperty('--swipe-progress')
     active.classList.add('is-visible')
-    active.classList.toggle('is-ready', canNavigate && progress >= READY_RATIO)
+    active.classList.toggle('is-ready', canNavigate && state === 'armed')
     active.classList.toggle('is-blocked', !canNavigate)
     active.style.setProperty('--swipe-progress', progress.toFixed(3))
+    const reach = canNavigate ? SHIFT_MAX_PX : BLOCKED_SHIFT_MAX_PX
+    // Fingers move right to go back, and the page moves with them.
+    shift(-direction * reach * (1 - Math.exp(-ratio)))
   }
 
   function resetGesture(): void {
@@ -128,7 +175,49 @@ export function installPageSwipeNavigation(
       clearTimeout(commitTimer)
       commitTimer = undefined
     }
+    clearRelease()
     hideEdges()
+    shift(0)
+  }
+
+  function clearRelease(): void {
+    if (releaseTimer === undefined) return
+    clearTimeout(releaseTimer)
+    releaseTimer = undefined
+  }
+
+  /** The latest deltas toward `direction` only shrink: the fingers have lifted (or are settling). */
+  function decaying(direction: -1 | 1): boolean {
+    const recent = trail.slice(-DECAY_EVENTS).map((event) => event.dx * direction)
+    if (recent.length < DECAY_EVENTS) return false
+    let previous = Infinity
+    for (const dx of recent) {
+      if (dx <= 0 || dx > previous) return false
+      previous = dx
+    }
+    return previous <= (recent[0] ?? 0) * DECAY_RATIO
+  }
+
+  /** Navigates an armed swipe, or lets a disarmed one settle back. */
+  function release(direction: -1 | 1): void {
+    clearRelease()
+    if (state !== 'armed') {
+      hideEdges()
+      shift(0)
+      return
+    }
+    state = 'finished'
+    if (showFeedback()) {
+      if (canNavigate) {
+        const edge = activeEdge(direction)
+        edge.classList.add('is-committed')
+        edge.classList.remove('is-ready')
+      }
+      if (commitTimer !== undefined) clearTimeout(commitTimer)
+      commitTimer = setTimeout(hideEdges, COMMIT_FLASH_MS)
+    }
+    shift(0)
+    if (canNavigate) history.go(direction)
   }
 
   /** Horizontal and vertical travel inside the trailing window. */
@@ -228,33 +317,42 @@ export function installPageSwipeNavigation(
     if (cachedDirection !== direction) {
       cachedDirection = direction
       canNavigate = history.canGo(direction)
+      // Reversing past the start is a new swipe the other way, not yet armed.
+      if (state === 'armed') state = 'horizontal'
     }
     event.preventDefault()
-    paint(direction)
     const window = windowSums(now)
     const flick =
       window.count >= 2 &&
       window.dt > 0 &&
       Math.abs(window.x) / (window.dt / 1000) >= VELOCITY_COMMIT_PX_S
-    if (Math.abs(travelX) < (flick ? FLICK_TRAVEL_PX : threshold)) return
-    if (Math.abs(travelX) < travelY) return
-    state = 'finished'
-    if (showFeedback()) {
-      if (canNavigate) {
-        const edge = activeEdge(direction)
-        edge.classList.add('is-committed')
-        edge.classList.remove('is-ready')
-      }
-      if (commitTimer !== undefined) clearTimeout(commitTimer)
-      commitTimer = setTimeout(hideEdges, COMMIT_FLASH_MS)
+    const distance = Math.abs(travelX)
+    const straight = distance >= travelY
+    if (state === 'horizontal') {
+      if (canNavigate && straight && distance >= (flick ? FLICK_TRAVEL_PX : threshold))
+        state = 'armed'
+    } else if (state === 'armed' && (distance < threshold * DISARM_RATIO || !straight)) {
+      // Sliding back cancels, as it does in Safari.
+      if (!(flick && distance >= FLICK_TRAVEL_PX)) state = 'horizontal'
     }
-    if (canNavigate) history.go(direction)
+    paint(direction)
+    clearRelease()
+    if (state === 'armed' && decaying(direction)) {
+      release(direction)
+      return
+    }
+    releaseTimer = setTimeout(() => {
+      releaseTimer = undefined
+      release(direction)
+    }, RELEASE_IDLE_MS)
   }
 
   document.addEventListener('wheel', wheel, { passive: false })
   return () => {
     document.removeEventListener('wheel', wheel)
     if (commitTimer !== undefined) clearTimeout(commitTimer)
+    clearRelease()
+    shift(0)
     backEdge?.remove()
     forwardEdge?.remove()
     backEdge = null

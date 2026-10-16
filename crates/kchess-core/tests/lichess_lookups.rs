@@ -67,6 +67,7 @@ fn lookups(base: &str, start: i64) -> Lookups {
         player: format!("{base}/player"),
         tablebase: format!("{base}/standard"),
         masters_game: format!("{base}/masters/pgn"),
+        wikibooks: format!("{base}/wikibooks/w/api.php"),
     };
     let now_clock = Arc::clone(&clock);
     let service = PositionLookups::new(

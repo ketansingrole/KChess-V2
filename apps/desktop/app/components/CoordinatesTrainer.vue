@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useLocalStorage } from '@vueuse/core'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSaved, RunSummary, VoiceOutcome } from '@kchess/contracts/types'
 import { INITIAL_FEN } from '@kchess/rules/position'
-import { EMPTY_FEN, FILES, RANKS, randomSquare, type Square } from '@kchess/rules/coordinates'
+import {
+  EMPTY_FEN,
+  FILES,
+  RANKS,
+  randomSquare,
+  squaresOn,
+  type Square,
+} from '@kchess/rules/coordinates'
 import { useRunLength } from '../composables/useRunLength'
 import RunLengthPicker from './RunLengthPicker.vue'
 import { useZenSurface } from '../composables/useZenSurface'
@@ -32,7 +40,27 @@ const starting = ref(false)
 const runEpoch = ref(0)
 const question = ref(0)
 const side = ref<'white' | 'black' | 'random'>('white')
-const showCoordinates = ref(false)
+const showCoordinates = useLocalStorage('kchess:coordinates-show', false)
+const onSquares = useLocalStorage('kchess:coordinates-on-squares', false)
+const showPieces = useLocalStorage('kchess:coordinates-pieces', false)
+/** Practice only some files and ranks; such runs are not records. */
+const limited = useLocalStorage('kchess:coordinates-limited', false)
+const storedFiles = useLocalStorage<string[]>('kchess:coordinates-files', [...FILES])
+const storedRanks = useLocalStorage<string[]>('kchess:coordinates-ranks', [...RANKS])
+/** The stored choice, in board order; all of them when nothing valid was stored. */
+function chosen<T extends string>(all: readonly T[], stored: unknown): T[] {
+  const list = all.filter((item) => Array.isArray(stored) && stored.includes(item))
+  return list.length ? list : [...all]
+}
+const files = computed(() => chosen(FILES, storedFiles.value))
+const ranks = computed(() => chosen(RANKS, storedRanks.value))
+/** Turn one file or rank on or off, always keeping at least one. */
+function toggle(list: readonly string[], item: string): string[] {
+  if (!list.includes(item)) return [...list, item]
+  return list.length > 1 ? list.filter((other) => other !== item) : [...list]
+}
+const allowed = computed(() => (limited.value ? squaresOn(files.value, ranks.value) : undefined))
+const runLimited = ref(false)
 const stage = ref<'idle' | 'running' | 'over'>('idle')
 const orientation = ref<'white' | 'black'>('white')
 const target = ref<Square>('e4')
@@ -58,7 +86,7 @@ const accuracy = computed(() =>
     : 0,
 )
 const boardCoordinates = computed(() =>
-  showCoordinates.value
+  showCoordinates.value || onSquares.value
     ? settings.value.coordinates === 'none'
       ? 'inside'
       : settings.value.coordinates
@@ -69,7 +97,24 @@ watch(side, (value) => {
   if (stage.value !== 'running' && value !== 'random') orientation.value = value
 })
 // An empty board looks the same from both sides, so between runs the pieces show which side is chosen.
-const boardFen = computed(() => (stage.value === 'running' ? EMPTY_FEN : INITIAL_FEN))
+const boardFen = computed(() =>
+  stage.value === 'running' && !showPieces.value ? EMPTY_FEN : INITIAL_FEN,
+)
+/** Each side's recent timed runs of this mode and length, oldest first, and their average. */
+const sideScores = computed(() => {
+  const variant = recordVariant.value
+  const runs = (summary.value?.recent ?? []).filter((entry) => entry.variant === variant)
+  return (['white', 'black'] as const)
+    .map((color) => {
+      const scores = runs
+        .filter((entry) => entry.detail.side === color)
+        .map((entry) => entry.score)
+        .reverse()
+      const average = scores.reduce((sum, value) => sum + value, 0) / (scores.length || 1)
+      return { color, scores, average: Math.round(average * 100) / 100 }
+    })
+    .filter((side) => side.scores.length)
+})
 const shapes = computed<DrawShape[]>(() => {
   const list: DrawShape[] = []
   if (stage.value === 'running' && mode.value !== 'find')
@@ -112,8 +157,9 @@ async function start(): Promise<void> {
   mistakes.value = 0
   pendingFile.value = ''
   saved.value = null
-  target.value = randomSquare()
-  upcoming.value = randomSquare(target.value)
+  runLimited.value = limited.value
+  target.value = randomSquare(undefined, Math.random, allowed.value)
+  upcoming.value = randomSquare(target.value, Math.random, allowed.value)
   stage.value = 'running'
   run.start()
 }
@@ -121,7 +167,7 @@ async function start(): Promise<void> {
 function advance(): void {
   question.value++
   target.value = upcoming.value
-  upcoming.value = randomSquare(target.value)
+  upcoming.value = randomSquare(target.value, Math.random, allowed.value)
   pendingFile.value = ''
 }
 
@@ -195,8 +241,8 @@ async function finish(): Promise<void> {
   if (stage.value !== 'running') return
   run.stop()
   stage.value = 'over'
-  // An untimed score only grows with time, so it is never a record.
-  if (runUntimed.value) return
+  // An untimed score only grows with time, and some files and ranks are easier: never records.
+  if (runUntimed.value || runLimited.value) return
   try {
     saved.value = await window.kchess.saveRun({
       kind: 'coordinates',
@@ -235,6 +281,7 @@ async function finish(): Promise<void> {
           :orientation="orientation"
           :theme="settings.boardTheme"
           :coordinates="boardCoordinates"
+          :coordinates-on-squares="onSquares"
           :piece-set="settings.pieceSet"
           :animation="settings.pieceAnimation"
           :movable="false"
@@ -295,10 +342,49 @@ async function finish(): Promise<void> {
           />
         </div>
         <USwitch
-          v-model="showCoordinates"
-          label="Show coordinates on the board"
+          v-model="limited"
+          label="Practice only some files & ranks"
           :disabled="stage === 'running'"
         />
+        <div v-if="limited" class="coord-pad">
+          <div class="coord-row" role="group" aria-label="Files to practice">
+            <UButton
+              v-for="file in FILES"
+              :key="file"
+              size="sm"
+              :variant="files.includes(file) ? 'solid' : 'outline'"
+              :color="files.includes(file) ? 'primary' : 'neutral'"
+              :aria-pressed="files.includes(file)"
+              :disabled="stage === 'running'"
+              @click="storedFiles = toggle(files, file)"
+              >{{ file }}</UButton
+            >
+          </div>
+          <div class="coord-row" role="group" aria-label="Ranks to practice">
+            <UButton
+              v-for="rank in RANKS"
+              :key="rank"
+              size="sm"
+              :variant="ranks.includes(rank) ? 'solid' : 'outline'"
+              :color="ranks.includes(rank) ? 'primary' : 'neutral'"
+              :aria-pressed="ranks.includes(rank)"
+              :disabled="stage === 'running'"
+              @click="storedRanks = toggle(ranks, rank)"
+              >{{ rank }}</UButton
+            >
+          </div>
+        </div>
+        <USwitch
+          v-model="showCoordinates"
+          label="Show coordinates"
+          :disabled="stage === 'running'"
+        />
+        <USwitch
+          v-model="onSquares"
+          label="Coordinates on every square"
+          :disabled="stage === 'running'"
+        />
+        <USwitch v-model="showPieces" label="Show pieces" :disabled="stage === 'running'" />
       </div>
 
       <VoiceInput
@@ -368,15 +454,30 @@ async function finish(): Promise<void> {
           <div>
             <strong>{{ score }} correct · {{ accuracy }}% accuracy</strong>
             <span class="detail">{{
-              runUntimed
-                ? `in ${clock}`
-                : saved?.isBest
-                  ? 'A new personal best!'
-                  : `Best so far: ${best ?? score}`
+              runLimited
+                ? 'Not saved: some files & ranks only'
+                : runUntimed
+                  ? `in ${clock}`
+                  : saved?.isBest
+                    ? 'A new personal best!'
+                    : `Best so far: ${best ?? score}`
             }}</span>
           </div>
         </div>
-        <p v-else-if="!untimed" class="section-hint tabular">
+        <div v-if="!untimed && sideScores.length" class="coord-averages">
+          <div v-for="row in sideScores" :key="row.color">
+            <p class="text-sm">
+              Average as {{ row.color === 'white' ? 'White' : 'Black' }}:
+              <strong class="tabular">{{ row.average }}</strong>
+            </p>
+            <ScoreSparkline
+              v-if="row.scores.length > 1"
+              :scores="row.scores"
+              :label="`Recent scores as ${row.color === 'white' ? 'White' : 'Black'}: ${row.scores.join(', ')}`"
+            />
+          </div>
+        </div>
+        <p v-if="stage !== 'over' && !untimed" class="section-hint tabular">
           Best ({{ mode === 'find' ? 'find' : mode === 'voice' ? 'voice' : 'name' }},
           {{ lengthLabel }}): {{ best ?? '—' }}
         </p>
@@ -396,6 +497,10 @@ async function finish(): Promise<void> {
 <style scoped>
 .coord-shell {
   position: relative;
+}
+/* Every square named the way the drill asks for it (e4, not E4). */
+.coord-shell :deep(coords.squares) {
+  text-transform: none;
 }
 .coord-prompt {
   position: absolute;
@@ -427,6 +532,11 @@ async function finish(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.coord-averages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 .coord-row {
   display: grid;

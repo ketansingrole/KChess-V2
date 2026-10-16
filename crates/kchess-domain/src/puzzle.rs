@@ -1,5 +1,5 @@
 //! The puzzle database sampler (`crates/kchess-node/js/puzzleSampler.ts`): reads Lichess's puzzle
-//! CSV as decompressed bytes and keeps a random sample spread over every rating and theme.
+//! CSV as decompressed bytes and keeps a random sample spread over every rating, theme and opening.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -12,6 +12,10 @@ const PER_BUCKET: usize = 1800;
 const PER_THEME: usize = 400;
 const MAX_LINE: usize = 16_000;
 const MAX_THEMES: usize = 256;
+/// Puzzles kept per opening family (the first of a row's `OpeningTags`), so each opening page
+/// can offer some offline.
+const PER_OPENING: usize = 120;
+const MAX_OPENINGS: usize = 512;
 pub const OVERSIZED: &str = "Puzzle database contains an oversized CSV line.";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -22,6 +26,10 @@ pub struct DbPuzzle {
     pub rating: f64,
     pub plays: f64,
     pub themes: String,
+    /// Lichess's `OpeningTags`: the opening family, then the family and variation, as keys
+    /// (`Kings_Gambit_Accepted Kings_Gambit_Accepted_Abbazia_Defense`). Empty when untagged.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub openings: String,
 }
 
 /// The generator the TypeScript tests use (a 32-bit mix of a Weyl sequence), so a seeded
@@ -125,6 +133,8 @@ pub struct Sampler {
     bucket_index: FastMap<i64, usize>,
     themes: Vec<Reservoir>,
     theme_index: FastMap<String, usize>,
+    openings: Vec<Reservoir>,
+    opening_index: FastMap<String, usize>,
     tail: Vec<u8>,
     /// The kept count once `release` has freed the rows.
     released: Option<usize>,
@@ -139,13 +149,16 @@ impl Sampler {
             bucket_index: FastMap::default(),
             themes: Vec::new(),
             theme_index: FastMap::default(),
+            openings: Vec::new(),
+            opening_index: FastMap::default(),
             tail: Vec::new(),
             released: None,
             lines: 0,
         }
     }
 
-    /// One CSV line: `PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,…`.
+    /// One CSV line: `PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,
+    /// OpeningTags`; the last two may be missing.
     pub fn add(&mut self, line: &str) -> Result<(), &'static str> {
         self.add_bytes(line.as_bytes())
     }
@@ -157,16 +170,20 @@ impl Sampler {
         if line.len() > MAX_LINE && js::utf16_len(&String::from_utf8_lossy(line)) > MAX_LINE {
             return Err(OVERSIZED);
         }
-        let mut cells: [&[u8]; 8] = [&[]; 8];
+        let mut cells: [&[u8]; 10] = [&[]; 10];
         let mut rest = line;
         for (i, cell) in cells.iter_mut().enumerate() {
             match memchr::memchr(b',', rest) {
-                Some(at) => {
+                Some(at) if i < 9 => {
                     *cell = &rest[..at];
                     rest = &rest[at + 1..];
                 }
-                None if i == 7 => *cell = rest,
-                None => return Ok(()),
+                // The last cell keeps the rest of the line, as the themes cell did.
+                _ if i >= 7 => {
+                    *cell = rest;
+                    break;
+                }
+                _ => return Ok(()),
             }
         }
         if cells[0] == b"PuzzleId" {
@@ -195,6 +212,17 @@ impl Sampler {
             std::str::from_utf8(cells[0]).unwrap_or_default(),
             std::str::from_utf8(cells[7]).unwrap_or_default(),
         );
+        // Opening keys are letters, digits and underscores; anything else leaves the row untagged.
+        let tags = cells[9];
+        let openings = if tags.len() <= 256
+            && tags
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b' ')
+        {
+            std::str::from_utf8(tags).unwrap_or_default().trim()
+        } else {
+            ""
+        };
         self.lines += 1;
         let popularity = number(cells[5]);
         let plays = number(cells[6]);
@@ -214,6 +242,7 @@ impl Sampler {
                 rating,
                 plays,
                 themes: themes.to_string(),
+                openings: openings.to_string(),
             })
         };
         if is_solid {
@@ -245,6 +274,28 @@ impl Sampler {
                 if let Some(place) = self.themes[index].offer(&mut self.random) {
                     let kept = row.get_or_insert_with(&mut build);
                     self.themes[index].place(place, kept);
+                }
+            }
+            if let Some(family) = openings
+                .split(' ')
+                .next()
+                .filter(|f| !f.is_empty() && f.len() <= 80)
+            {
+                let index = match self.opening_index.get(family) {
+                    Some(&index) => Some(index),
+                    None if self.openings.len() >= MAX_OPENINGS => None,
+                    None => {
+                        self.openings.push(Reservoir::new(PER_OPENING));
+                        self.opening_index
+                            .insert(family.to_string(), self.openings.len() - 1);
+                        Some(self.openings.len() - 1)
+                    }
+                };
+                if let Some(index) = index
+                    && let Some(place) = self.openings[index].offer(&mut self.random)
+                {
+                    let kept = row.get_or_insert_with(&mut build);
+                    self.openings[index].place(place, kept);
                 }
             }
         }
@@ -290,8 +341,10 @@ impl Sampler {
         self.released = Some(self.count());
         self.buckets = Vec::new();
         self.themes = Vec::new();
+        self.openings = Vec::new();
         self.bucket_index = FastMap::default();
         self.theme_index = FastMap::default();
+        self.opening_index = FastMap::default();
         self.tail = Vec::new();
     }
 
@@ -299,7 +352,12 @@ impl Sampler {
     pub fn kept(&self) -> Vec<&DbPuzzle> {
         let mut order: Vec<&str> = Vec::new();
         let mut latest: HashMap<&str, &DbPuzzle> = HashMap::new();
-        for reservoir in self.buckets.iter().chain(&self.themes) {
+        for reservoir in self
+            .buckets
+            .iter()
+            .chain(&self.themes)
+            .chain(&self.openings)
+        {
             for row in &reservoir.rows {
                 let id = row.id.as_str();
                 if latest.insert(id, row).is_none() {
@@ -339,5 +397,38 @@ mod tests {
         assert_eq!(sampler.count(), 1);
         assert_eq!(sampler.kept().len(), 1);
         assert_eq!(sampler.kept()[0].themes, "fork mate");
+        assert_eq!(sampler.kept()[0].openings, "");
+    }
+
+    #[test]
+    fn keeps_opening_tags_and_a_sample_per_opening() {
+        let mut sampler = Sampler::new(Random::new(3));
+        let mut csv = String::from(
+            "PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags\n",
+        );
+        // Solid only for themes (and so for openings): no rating bucket keeps them.
+        for i in 0..200 {
+            csv.push_str(&format!(
+                "k{i},8/8 w - - 0 1,e2e4,1500,100,80,200,fork,https://lichess.org/x#1,Kings_Gambit_Accepted Kings_Gambit_Accepted_Abbazia_Defense\n"
+            ));
+        }
+        csv.push_str(
+            "bad1,8/8 w - - 0 1,e2e4,1500,100,80,200,pin,https://lichess.org/x#1,Bad-Tag\n",
+        );
+        sampler.push(csv.as_bytes()).unwrap();
+        sampler.finish().unwrap();
+        let kept = sampler.kept();
+        let tagged: Vec<_> = kept.iter().filter(|row| !row.openings.is_empty()).collect();
+        assert!(tagged.len() >= PER_OPENING);
+        assert_eq!(
+            tagged[0].openings,
+            "Kings_Gambit_Accepted Kings_Gambit_Accepted_Abbazia_Defense"
+        );
+        assert_eq!(tagged[0].themes, "fork");
+        let bad = kept
+            .iter()
+            .find(|row| row.id == "bad1")
+            .expect("kept for its theme");
+        assert_eq!(bad.openings, "");
     }
 }

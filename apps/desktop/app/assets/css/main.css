@@ -548,6 +548,34 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   color: var(--ui-text-muted);
 }
+/* An open game's header: its title gives way first, so Review keeps its place at the end. */
+.game-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.game-toolbar > * {
+  flex: none;
+}
+.game-toolbar .game-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-toolbar .review-line {
+  white-space: nowrap;
+}
+@container page (max-width: 900px) {
+  .game-toolbar {
+    flex-wrap: wrap;
+  }
+  .game-toolbar .review-line {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
 .rating-diff.up {
   color: var(--ui-win);
 }
@@ -2267,6 +2295,11 @@ button.presence:focus-visible {
 .page-swipe-edge .page-swipe-arrow {
   position: relative;
   filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.25));
+  transition: scale 120ms ease-out;
+}
+/* Armed: letting go now navigates. */
+.page-swipe-edge.is-ready .page-swipe-arrow {
+  scale: 1.18;
 }
 .page-swipe-edge.is-blocked .page-swipe-arrow {
   filter: none;

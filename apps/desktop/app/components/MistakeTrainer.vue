@@ -26,63 +26,66 @@ function next(all = false): void {
 }
 </script>
 <template>
-  <div>
-    <div class="card mb-4">
-      <h2 class="section-title">Practice your mistakes</h2>
-      <p class="section-hint">{{ due.length }} due · {{ practice.items.length }} saved</p>
-      <p v-if="practice.error" role="alert">{{ practice.error }}</p>
-      <UEmpty
-        v-if="!practice.items.length"
-        variant="naked"
-        icon="i-lucide-book-open"
-        title="Build your mistake practice"
-        description="Save positions from a game review to practice them here."
-        :actions="[
-          {
-            label: 'Analyze a game',
-            icon: 'i-lucide-microscope',
-            onClick: () => app.selectPage('analysis'),
-          },
-        ]"
+  <!-- A position on the board: the puzzle pages' layout, so the board fits the window. -->
+  <div v-if="current" v-board-fit class="play-layout puzzle-wide">
+    <div>
+      <PuzzleBoard
+        ref="board"
+        :key="current.id"
+        :puzzle="current"
+        @outcome="practice.answered(current!.id, $event)"
+        @done="done = true"
       />
-      <p v-else-if="!due.length && !current" class="section-hint mt-3" role="status">
-        You're caught up.
-      </p>
-      <div v-if="practice.items.length" class="mt-3 flex gap-2">
-        <UButton :disabled="!due.length" @click="next()">{{
-          current ? 'Next due position' : 'Start practice'
-        }}</UButton>
+    </div>
+    <div class="card side-panel puzzle-panel">
+      <div>
+        <h2 class="section-title">Practice your mistakes</h2>
+        <p class="section-hint">{{ due.length }} due · {{ practice.items.length }} saved</p>
+      </div>
+      <p v-if="practice.error" role="alert">{{ practice.error }}</p>
+      <p v-if="done" role="status">Position completed. Your next revisit has been scheduled.</p>
+      <div v-else class="panel-actions flex gap-2">
         <UButton
-          variant="outline"
-          color="neutral"
-          :disabled="!practice.items.length"
-          @click="next(true)"
-          >Review early</UButton
+          :variant="board?.hinted ? 'soft' : 'outline'"
+          :color="board?.hinted ? 'primary' : 'neutral'"
+          :aria-pressed="board?.hinted ?? false"
+          @click="board?.hint()"
+          >Hint: piece to move</UButton
+        >
+        <UButton variant="ghost" color="neutral" @click="board?.showSolution()"
+          >Show engine line</UButton
         >
       </div>
+      <div class="panel-actions flex gap-2">
+        <UButton :disabled="!due.length" @click="next()">Next due position</UButton>
+        <UButton variant="outline" color="neutral" @click="next(true)">Review early</UButton>
+      </div>
     </div>
-    <PuzzleBoard
-      v-if="current"
-      ref="board"
-      :key="current.id"
-      :puzzle="current"
-      @outcome="practice.answered(current!.id, $event)"
-      @done="done = true"
+  </div>
+  <div v-else class="card">
+    <h2 class="section-title">Practice your mistakes</h2>
+    <p class="section-hint">{{ due.length }} due · {{ practice.items.length }} saved</p>
+    <p v-if="practice.error" role="alert">{{ practice.error }}</p>
+    <UEmpty
+      v-if="!practice.items.length"
+      variant="naked"
+      icon="i-lucide-book-open"
+      title="No mistakes yet"
+      description="When you review one of your games, its mistakes are added here."
+      :actions="[
+        {
+          label: 'Review a game',
+          icon: 'i-lucide-history',
+          onClick: () => app.selectPage('history'),
+        },
+      ]"
     />
-    <div v-if="current && !done" class="mt-3 flex gap-2">
-      <UButton
-        :variant="board?.hinted ? 'soft' : 'outline'"
-        :color="board?.hinted ? 'primary' : 'neutral'"
-        :aria-pressed="board?.hinted ?? false"
-        @click="board?.hint()"
-        >Hint: piece to move</UButton
-      >
-      <UButton variant="ghost" color="neutral" @click="board?.showSolution()"
-        >Show engine line</UButton
-      >
-    </div>
-    <p v-if="done" role="status" class="mt-3">
-      Position completed. Your next revisit has been scheduled.
-    </p>
+    <template v-else>
+      <p v-if="!due.length" class="section-hint mt-3" role="status">You're caught up.</p>
+      <div class="mt-3 flex gap-2">
+        <UButton :disabled="!due.length" @click="next()">Start practice</UButton>
+        <UButton variant="outline" color="neutral" @click="next(true)">Review early</UButton>
+      </div>
+    </template>
   </div>
 </template>

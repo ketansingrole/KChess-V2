@@ -11,16 +11,28 @@ export const ALL_SQUARES: readonly Square[] = FILES.flatMap((file) =>
 )
 
 /**
- * A random square that is not `previous`. The rules pick from the draws in order; this draws
- * one more number each time the first ones give `previous`.
+ * A random square that is not `previous`, from `allowed` when given (all squares otherwise). The
+ * rules pick from the draws in order; this draws one more number each time the first ones give
+ * `previous`. A single allowed square is returned even when it is `previous`.
  */
-export function randomSquare(previous?: string, random: () => number = Math.random): Square {
+export function randomSquare(
+  previous?: string,
+  random: () => number = Math.random,
+  allowed?: readonly Square[],
+): Square {
   const draws: number[] = []
   for (;;) {
     draws.push(random())
-    const square = rules<Square | null>('randomSquare', previous ?? null, draws)
+    const square = rules<Square | null>('randomSquare', previous ?? null, draws, allowed ?? null)
     if (square) return square
   }
+}
+
+/** The squares on the given files and ranks. */
+export function squaresOn(files: readonly string[], ranks: readonly string[]): Square[] {
+  return ALL_SQUARES.filter(
+    (square) => files.includes(square.charAt(0)) && ranks.includes(square.charAt(1)),
+  )
 }
 
 /** a1 is dark, h1 is light. */

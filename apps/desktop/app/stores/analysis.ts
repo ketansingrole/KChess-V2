@@ -16,6 +16,7 @@ import { RequestScope } from '@kchess/rules/requestScope'
 import { analysisContext } from '@kchess/rules/analysisContext'
 import { analyseReview, reviewKey, type GameAnalysis } from '@kchess/rules/review'
 import { useKChessStore } from './kchess'
+import { useMistakeStore } from './mistakes'
 import { useReviewStore } from './review'
 import { useStudyStore } from './studies'
 import {
@@ -44,6 +45,8 @@ export interface GameOrigin {
   account?: string
   white?: string
   black?: string
+  /** The side you played: its mistakes are saved for practice once the review completes. */
+  player?: Color
 }
 
 /** What the review says about one main-line move. */
@@ -628,6 +631,27 @@ export const useAnalysisStore = defineStore('analysis', () => {
   function cancelReview(): void {
     void reviews.cancel(mainlineKey.value)
   }
+  /** The review whose player's mistakes were last saved for practice. */
+  let savedMistakes = ''
+  const mistakes = useMistakeStore()
+  watch(
+    () => {
+      const stored = review.value
+      const player = origin.value?.player
+      return stored?.complete && reviewWhole.value && player ? { stored, player } : null
+    },
+    async (done) => {
+      if (!done || savedMistakes === done.stored.key) return
+      savedMistakes = done.stored.key
+      try {
+        await mistakes.add(done.stored, done.player)
+      } catch (cause) {
+        console.warn('[analysis] Saving your mistakes failed:', cause)
+        savedMistakes = ''
+      }
+    },
+    { immediate: true },
+  )
 
   /* ── Handing positions between the editor and analysis ────────────── */
 

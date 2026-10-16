@@ -9,7 +9,8 @@ mod coach;
 mod data;
 mod endgames;
 mod engine_levels;
-mod openings;
+mod lessons;
+pub mod openings;
 mod puzzle;
 mod rush;
 mod uci_info;
@@ -25,10 +26,11 @@ pub(super) type Out = Result<Value, String>;
 /// This module's methods for `api::call`; None when the method is not one of them.
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     type Module = fn(&str, &[Value]) -> Option<Out>;
-    let modules: [Module; 8] = [
+    let modules: [Module; 9] = [
         rush::call,
         puzzle::call,
         endgames::call,
+        lessons::call,
         openings::call,
         clock::call,
         engine_levels::call,
@@ -160,6 +162,7 @@ mod tests {
             "correctMove",
             "puzzleFromApi",
             "evaluateEndgame",
+            "lessonStatus",
             "openingAt",
             "formatClock",
             "normalizeEngineLevels",

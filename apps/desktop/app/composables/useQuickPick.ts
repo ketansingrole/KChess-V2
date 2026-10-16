@@ -59,6 +59,7 @@ const PAGE_KEYWORDS: Partial<Record<Page, string>> = {
   dashboard: 'start overview',
   computer: 'stockfish bot ai engine vs',
   local: 'otb friend two players pass and play clock',
+  openings: 'eco gambit defense variation explorer repertoire',
   analysis: 'engine evaluate position fen pgn',
   history: 'past games archive',
   studies: 'pgn chapters notes',

@@ -99,6 +99,7 @@ function openGameReview(): void {
     account: game.account,
     white: game.color === 'white' ? game.account : game.opponent,
     black: game.color === 'black' ? game.account : game.opponent,
+    player: game.color,
   }
   void analysis.requestReview()
   selectPage('analysis')
@@ -164,6 +165,15 @@ const reviewColor = computed(() =>
 <template>
   <div>
     <PageHeader title="Game history">
+      <template #lead>
+        <UTabs
+          v-model="source"
+          :items="sourceItems"
+          :content="false"
+          aria-label="Game source"
+          class="w-full"
+        />
+      </template>
       <UButton
         v-if="source === 'lichess' && data.accounts.length"
         icon="i-lucide-refresh-cw"
@@ -176,13 +186,6 @@ const reviewColor = computed(() =>
       >
     </PageHeader>
 
-    <UTabs
-      v-model="source"
-      :items="sourceItems"
-      :content="false"
-      aria-label="Game source"
-      class="mb-4"
-    />
     <LocalGameHistory
       v-if="source !== 'lichess'"
       ref="localHistory"
@@ -193,7 +196,7 @@ const reviewColor = computed(() =>
         Offline · reconnect to sync new games.
       </p>
       <template v-if="reviewGame">
-        <div class="toolbar-row mb-4">
+        <div class="game-toolbar mb-4">
           <UButton
             icon="i-lucide-arrow-left"
             variant="ghost"
@@ -204,15 +207,14 @@ const reviewColor = computed(() =>
           >
           <USeparator orientation="vertical" class="h-5" />
           <UBadge :color="reviewColor" variant="soft" size="sm">{{ reviewResult }}</UBadge>
-          <span class="text-sm"
+          <span class="game-title text-sm" :title="reviewGame.opening"
             ><strong><PlayerLink :username="reviewGame.account" /></strong> vs
             <strong><PlayerLink :username="reviewGame.opponent" /></strong
-          ></span>
-          <span class="muted text-sm">
-            · {{ date(reviewGame.createdAt) }}
-            <template v-if="reviewGame.opening"> · {{ reviewGame.opening }}</template>
-          </span>
-          <span class="ms-auto" />
+            ><span class="muted">
+              · {{ date(reviewGame.createdAt) }}
+              <template v-if="reviewGame.opening"> · {{ reviewGame.opening }}</template>
+            </span></span
+          >
           <span v-if="reviewSide" class="review-line text-sm">
             <template v-if="reviewSide.accuracy !== undefined"
               >{{ reviewSide.accuracy }}% accuracy</template
@@ -226,6 +228,7 @@ const reviewColor = computed(() =>
             variant="soft"
             color="neutral"
             size="sm"
+            class="shrink-0"
             @click="openGameReview"
             >Review</UButton
           >

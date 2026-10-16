@@ -1,17 +1,21 @@
 // Builds crates/kchess-domain/data/openings.json from Lichess's CC0 opening names (github.com/lichess-org/chess-openings).
 // Usage: node tooling/make-openings.mjs [dir-with-a..e.tsv]  (downloads the TSVs when no dir is given)
+//
+// Every named line is kept as `[eco, name, uciMoves]`, in the source's order (volumes a–e, row by
+// row). The Rust rules (`crates/kchess-domain/src/training/openings.rs`) derive the rest from it: the
+// name of each position (the shortest line naming it wins, the first on a tie, like Lichess) and the
+// family tree (`Family: Variation, Subvariation`).
 import { createRequire } from 'node:module'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const SOURCE = 'https://raw.githubusercontent.com/lichess-org/chess-openings/master'
-const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 // The Rust rules (`pgnMainline`), loaded as `tooling/native-rules.ts` loads them.
 const native = createRequire(new URL('../crates/kchess-node/js/native.ts', import.meta.url))(
   '@kchess/native/binding',
 )
 const dir = process.argv[2]
-const entries = {}
+const lines = []
 for (const volume of ['a', 'b', 'c', 'd', 'e']) {
   const text = dir
     ? await readFile(join(dir, `${volume}.tsv`), 'utf8')
@@ -24,21 +28,11 @@ for (const volume of ['a', 'b', 'c', 'd', 'e']) {
     const plies = pgn.split(/\s+/).filter((token) => !/^\d+\.$/.test(token)).length
     // Played until the first illegal move, which the line must not have.
     if (main.moves.length !== plies) throw new Error(`Illegal line for ${name}: ${pgn}`)
-    const fen = main.moves.at(-1)?.fen ?? main.start ?? START
-    // EPD: placement, side, castling, en passant (the FEN writes it only when legal).
-    const epd = fen.split(' ').slice(0, 4).join(' ')
-    // Several lines may name one position; the shortest line's name wins, like Lichess.
-    const known = entries[epd]
-    if (!known || plies < known[2]) entries[epd] = [eco, name, plies]
+    lines.push([eco, name, main.moves.map((move) => move.uci).join(' ')])
   }
 }
-const compact = Object.fromEntries(
-  Object.entries(entries)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([epd, [eco, name]]) => [epd, `${eco}|${name}`]),
-)
 await writeFile(
   new URL('../crates/kchess-domain/data/openings.json', import.meta.url),
-  JSON.stringify(compact) + '\n',
+  JSON.stringify({ lines }) + '\n',
 )
-console.log(`${Object.keys(compact).length} named positions`)
+console.log(`${lines.length} named lines`)

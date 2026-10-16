@@ -22,6 +22,7 @@ const {
   difficulty,
   color,
   account,
+  openingAngle,
 } = storeToRefs(puzzles)
 const { data } = storeToRefs(kchess)
 
@@ -45,7 +46,20 @@ const colors = [
   { label: 'White', value: 'white' },
   { label: 'Black', value: 'black' },
 ]
-const themes = themeItems()
+/** The themes, and the opening an opening page chose puzzles of. */
+const themes = computed(() => {
+  const [mix, ...rest] = themeItems()
+  const opening = openingAngle.value
+  return opening
+    ? [
+        ...(mix ? [mix] : []),
+        { type: 'separator' as const },
+        { type: 'label' as const, label: 'Opening' },
+        { label: opening.name, value: opening.key },
+        ...rest,
+      ]
+    : [...(mix ? [mix] : []), ...rest]
+})
 const accounts = computed(() =>
   data.value.accounts.filter((entry) => entry.connected).map((entry) => entry.username),
 )

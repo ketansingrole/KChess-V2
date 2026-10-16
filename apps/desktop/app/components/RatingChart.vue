@@ -9,12 +9,24 @@ export interface RatingPoint {
   rating: number
 }
 
-const props = defineProps<{ points: RatingPoint[]; label: string }>()
+/**
+ * A value over time, drawn as a rating history by default. Other series (an opening's
+ * popularity) pass their own value format, range, height and accessible summary.
+ */
+const props = defineProps<{
+  points: RatingPoint[]
+  label: string
+  format?: (value: number) => string
+  yDomain?: [number, number]
+  height?: number
+  summary?: string
+}>()
 
 const x = (point: RatingPoint): number => point.date
 const y = (point: RatingPoint): number => point.rating
 
-const domain = computed<[number, number]>(() => ratingYDomain(props.points.map(y)))
+const domain = computed<[number, number]>(() => props.yDomain ?? ratingYDomain(props.points.map(y)))
+const value = (rating: number): string => props.format?.(rating) ?? String(rating)
 
 /** Short spans need the day; longer ones read better as month and year. */
 const spansYears = computed(() => {
@@ -25,7 +37,7 @@ const formatDate = (timestamp: number, long = false): string =>
   formatRatingDate(timestamp, long, spansYears.value)
 
 const tooltip = (point: RatingPoint): string =>
-  `<strong>${point.rating}</strong><br><span>${formatDate(point.date, true)}</span>`
+  `<strong>${value(point.rating)}</strong><br><span>${formatDate(point.date, true)}</span>`
 const primary = (): string => 'var(--ui-primary)'
 </script>
 
@@ -33,9 +45,12 @@ const primary = (): string => 'var(--ui-primary)'
   <div
     class="rating-chart"
     role="img"
-    :aria-label="`${label} rating history from ${Math.min(...points.map(y))} to ${Math.max(...points.map(y))}`"
+    :aria-label="
+      summary ??
+      `${label} rating history from ${Math.min(...points.map(y))} to ${Math.max(...points.map(y))}`
+    "
   >
-    <VisXYContainer :data="points" :height="240" :y-domain="domain" :padding="{ top: 8 }">
+    <VisXYContainer :data="points" :height="height ?? 240" :y-domain="domain" :padding="{ top: 8 }">
       <VisArea :x="x" :y="y" :color="primary" :opacity="0.14" />
       <VisLine :x="x" :y="y" :color="primary" :line-width="2" />
       <VisAxis
@@ -44,7 +59,12 @@ const primary = (): string => 'var(--ui-primary)'
         :num-ticks="5"
         :grid-line="false"
       />
-      <VisAxis type="y" :num-ticks="4" :domain-line="false" />
+      <VisAxis
+        type="y"
+        :num-ticks="4"
+        :domain-line="false"
+        :tick-format="format ? (tick: number | Date) => value(+tick) : undefined"
+      />
       <VisCrosshair :x="x" :y="y" :template="tooltip" :color="primary" />
       <VisTooltip />
     </VisXYContainer>

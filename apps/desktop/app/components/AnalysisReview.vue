@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { explainReviewedMove } from '@kchess/rules/coach'
+import { useLocalStorage } from '@vueuse/core'
 import { useMistakeStore } from '../stores/mistakes'
+import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
 import { movesOf, pathOf } from '@kchess/rules/analysisTree'
 import { useAnalysisStore, type ReviewMark } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
@@ -68,17 +70,51 @@ const canReview = computed(
 )
 const practice = useMistakeStore()
 const practiceFeedback = ref('')
-async function addPractice(color: 'white' | 'black'): Promise<void> {
-  if (!review.value || !complete.value) return
+/** Sides asked for that had nothing new to add, by review. */
+const tried = ref(new Set<string>())
+/** This review's positions already in practice, and the sides they are from. */
+const saved = computed(() => {
+  const key = review.value?.key
+  const items = key ? practice.items.filter((item) => item.id.startsWith(`${key}:`)) : []
+  const sides = new Set(items.map((item) => (item.fen.split(' ')[1] === 'b' ? 'black' : 'white')))
+  return { count: items.length, sides }
+})
+/** Sides with labelled moves not yet in practice. */
+const unsaved = computed(() => {
+  const result = gameAnalysis.value
+  const key = review.value?.key
+  if (!complete.value || !result || !key) return []
+  return (['white', 'black'] as const).filter(
+    (color) =>
+      !saved.value.sides.has(color) &&
+      !tried.value.has(`${key}:${color}`) &&
+      result[color].inaccuracy + result[color].mistake + result[color].blunder > 0,
+  )
+})
+const addLabel = computed(() => {
+  const [only, other] = unsaved.value
+  if (!only) return ''
+  if (other) return 'Practice all mistakes'
+  const name = origin.value?.[only] ?? (only === 'white' ? 'White' : 'Black')
+  return `Practice ${name}'s mistakes`
+})
+async function addPractice(): Promise<void> {
+  const stored = review.value
+  const sides = unsaved.value
+  if (!stored || !sides.length) return
   try {
-    const count = await practice.add(review.value, color)
-    practiceFeedback.value = count
-      ? `${count} positions added to Practice → Your mistakes.`
-      : 'No new verified mistakes to add.'
+    const count = await practice.add(stored, sides.length === 1 ? sides[0] : undefined)
+    practiceFeedback.value = count ? '' : 'No new verified mistakes to add.'
+    if (!count) for (const color of sides) tried.value.add(`${stored.key}:${color}`)
   } catch (cause) {
     console.warn('[analysis-review] Adding mistakes failed:', cause)
     practiceFeedback.value = cause instanceof Error ? cause.message : String(cause)
   }
+}
+const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
+function openPractice(): void {
+  practiceTab.value = 'mistakes'
+  store.selectPage('practice')
 }
 const explanation = computed(() =>
   review.value && currentIndex.value > 0
@@ -227,13 +263,17 @@ function showBest(): void {
       </tbody>
     </table>
 
-    <div v-if="complete" class="flex flex-wrap gap-2">
-      <UButton size="xs" variant="outline" @click="addPractice('white')"
-        >Practice White's mistakes</UButton
+    <div v-if="complete && (saved.count || addLabel)" class="practice-row">
+      <span v-if="saved.count" role="status"
+        >{{ saved.count }} {{ saved.count === 1 ? 'position' : 'positions' }} in practice</span
       >
-      <UButton size="xs" variant="outline" @click="addPractice('black')"
-        >Practice Black's mistakes</UButton
+      <UButton v-if="saved.count" size="xs" variant="link" class="px-0" @click="openPractice"
+        >Practice now</UButton
       >
+      <span class="flex-1" />
+      <UButton v-if="addLabel" size="xs" variant="outline" @click="addPractice">{{
+        addLabel
+      }}</UButton>
     </div>
     <p v-if="practiceFeedback" role="status" class="review-note">{{ practiceFeedback }}</p>
     <p v-if="explanation" class="review-note">{{ explanation }}</p>
@@ -277,6 +317,14 @@ function showBest(): void {
 }
 .review-source,
 .review-note {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+.practice-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   color: var(--ui-text-muted);
   font-size: 12px;
 }

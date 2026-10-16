@@ -25,6 +25,9 @@ pub struct DbPuzzle {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plays: Option<f64>,
     pub themes: String,
+    /// Lichess's `OpeningTags` (opening keys); empty for puzzles imported before they were kept.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub openings: String,
 }
 
 /// One puzzle, whichever source it came from (`Puzzle` in `contracts/types.ts`).
@@ -67,6 +70,7 @@ pub struct PuzzleDbStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalPuzzleQuery {
+    /// A theme or, as Lichess's puzzle angles allow, an opening key.
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
@@ -109,7 +113,9 @@ fn serialize_js_number_opt<S: Serializer>(
     }
 }
 
-const COLUMNS: &str = "SELECT id, fen, moves, rating, plays, themes FROM puzzles";
+const COLUMNS: &str = "SELECT id, fen, moves, rating, plays, themes, openings FROM puzzles";
+/// A row's angles, padded for whole-token `LIKE` matching: its themes and its opening keys.
+const ANGLES: &str = "(' ' || themes || ' ' || openings || ' ')";
 
 /// The `CREATE` statements and PRAGMAs of `puzzleWorker.ts`, run in the same order.
 pub fn create_schema(db: &Connection) -> Result<(), String> {
@@ -120,7 +126,17 @@ CREATE INDEX IF NOT EXISTS idx_puzzles_rating ON puzzles(rating);
 CREATE TABLE IF NOT EXISTS puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS worker_meta (id INTEGER PRIMARY KEY CHECK(id = 1));",
     )
-    .map_err(|cause| cause.to_string())
+    .map_err(|cause| cause.to_string())?;
+    // Appended migration: the opening keys of each puzzle, filled by the next download.
+    let has_openings = db
+        .prepare("SELECT 1 FROM pragma_table_info('puzzles') WHERE name = 'openings'")
+        .and_then(|mut statement| statement.exists([]))
+        .map_err(|cause| cause.to_string())?;
+    if !has_openings {
+        db.execute_batch("ALTER TABLE puzzles ADD COLUMN openings TEXT NOT NULL DEFAULT ''")
+            .map_err(|cause| cause.to_string())?;
+    }
+    Ok(())
 }
 
 fn sql_error(cause: rusqlite::Error) -> String {
@@ -171,7 +187,7 @@ pub fn store_sample(
 ) -> Result<usize, String> {
     let mut insert = db
         .prepare(
-            "INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes, openings) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .map_err(sql_error)?;
     db.execute_batch("BEGIN IMMEDIATE").map_err(sql_error)?;
@@ -209,13 +225,19 @@ fn write_sample(
                 row.moves,
                 row.rating,
                 row.plays.unwrap_or(0.0),
-                row.themes
+                row.themes,
+                row.openings
             ])
             .map_err(sql_error)?;
         count += changes;
         if changes > 0 {
             // Buffer.byteLength of the concatenation is the sum of the UTF-8 lengths.
-            let length = row.id.len() + row.fen.len() + row.moves.len() + row.themes.len() + 24;
+            let length = row.id.len()
+                + row.fen.len()
+                + row.moves.len()
+                + row.themes.len()
+                + row.openings.len()
+                + 24;
             bytes += i64::try_from(length).unwrap_or(i64::MAX);
         }
     }
@@ -301,6 +323,7 @@ fn fetch(db: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<DbPuzz
                 rating: row.get(3)?,
                 plays: Some(row.get(4)?),
                 themes: row.get(5)?,
+                openings: row.get(6)?,
             })
         })
         .map_err(sql_error)?;
@@ -326,9 +349,9 @@ fn take_random<T: Clone>(items: &mut [T], count: f64, random: &mut dyn FnMut() -
     items.iter().take(keep.trunc() as usize).cloned().collect()
 }
 
-/// Whole-token theme match (`' ' + themes + ' '` contains `' ' + theme + ' '`).
+/// Whole-token angle match: `theme` is one of the row's themes or opening keys.
 fn has_theme(row: &DbPuzzle, theme: &str) -> bool {
-    format!(" {} ", row.themes).contains(&format!(" {theme} "))
+    format!(" {} {} ", row.themes, row.openings).contains(&format!(" {theme} "))
 }
 
 /// Random unused rows from one rating window with indexed seeks (no COUNT, no OFFSET walk, no
@@ -393,7 +416,7 @@ pub fn query_puzzles(
         Some(theme) => fetch(
             db,
             &format!(
-                "{COLUMNS} WHERE rating BETWEEN ? AND ? AND (' ' || themes || ' ' LIKE ' %' || ? || ' %') LIMIT ?"
+                "{COLUMNS} WHERE rating BETWEEN ? AND ? AND ({ANGLES} LIKE '% ' || ? || ' %') LIMIT ?"
             ),
             params![min, max, theme, CANDIDATE_CAP],
         )?,
@@ -417,7 +440,7 @@ pub fn query_puzzles(
         && (picked.len() as f64) < count
     {
         let mut seen: HashSet<String> = pool.iter().map(|row| row.id.clone()).collect();
-        let like = "(' ' || themes || ' ' LIKE ' %' || ? || ' %')";
+        let like = format!("({ANGLES} LIKE '% ' || ? || ' %')");
         let mut attempt = 0;
         while attempt < 25 && (picked.len() as f64) < count {
             attempt += 1;
@@ -522,13 +545,14 @@ mod tests {
             rating,
             plays: Some(10.0),
             themes: themes.to_string(),
+            openings: String::new(),
         }
     }
 
     fn setup(count: usize) -> Connection {
         let db = Connection::open_in_memory().expect("in-memory database");
         db.execute_batch(
-            "CREATE TABLE puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL); CREATE INDEX idx_puzzles_rating ON puzzles(rating); CREATE TABLE puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);",
+            "CREATE TABLE puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL, openings TEXT NOT NULL DEFAULT ''); CREATE INDEX idx_puzzles_rating ON puzzles(rating); CREATE TABLE puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);",
         )
         .expect("test schema");
         let themes = ["mate", "fork", "pin", "mate mateIn2", "fork pin"];
@@ -543,6 +567,56 @@ mod tests {
             .collect();
         store_sample(&db, &rows, &|| false).expect("store sample");
         db
+    }
+
+    #[test]
+    fn adds_the_openings_column_to_an_earlier_database() {
+        let db = Connection::open_in_memory().expect("in-memory database");
+        db.execute_batch(
+            "CREATE TABLE puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL); INSERT INTO puzzles VALUES ('old', 'x', 'e2e4', 1500, 0, 'fork');",
+        )
+        .expect("earlier schema");
+        create_schema(&db).expect("migrated");
+        // A second open finds the column and leaves it alone.
+        create_schema(&db).expect("migrated again");
+        let openings: String = db
+            .query_row("SELECT openings FROM puzzles WHERE id = 'old'", [], |row| {
+                row.get(0)
+            })
+            .expect("old row");
+        assert_eq!(openings, "");
+    }
+
+    #[test]
+    fn an_opening_key_selects_puzzles_like_a_theme() {
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        let mut rows: Vec<DbPuzzle> = (0..30)
+            .map(|i| row(&format!("q{i:03}"), 1500.0, "fork"))
+            .collect();
+        for row in rows.iter_mut().take(5) {
+            row.openings = "Kings_Gambit_Accepted Kings_Gambit_Accepted_Abbazia_Defense".into();
+        }
+        // A longer key that merely starts with the family's must not match it.
+        rows[5].openings = "Kings_Gambit_Accepted_Other".into();
+        store_sample(&db, &rows, &|| false).expect("store sample");
+        let mut random = seeded(4);
+        let puzzles = query_puzzles(
+            &db,
+            &LocalPuzzleQuery {
+                theme: Some("Kings_Gambit_Accepted".into()),
+                min_rating: None,
+                max_rating: None,
+                count: 20.0,
+            },
+            &mut random,
+        )
+        .expect("query");
+        let mut ids: Vec<&str> = puzzles.iter().map(|p| p.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["q000", "q001", "q002", "q003", "q004"]);
+        // Opening keys are not themes.
+        assert_eq!(puzzles[0].themes, ["fork"]);
     }
 
     #[test]

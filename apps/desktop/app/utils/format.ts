@@ -32,3 +32,9 @@ export function signalFromLatency(ms: number): 1 | 2 | 3 | 4 {
   if (ms < 500) return 2
   return 1
 }
+
+/** An error's message without the wrapper Electron adds to errors from `ipcRenderer.invoke`. */
+export function errorText(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause)
+  return text.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '')
+}

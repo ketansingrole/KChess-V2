@@ -904,14 +904,22 @@ fn square_index(draw: f64) -> Option<usize> {
 }
 
 /// The first draw whose square is not `previous`, as `randomSquare` retries; null when the
-/// draws run out.
-fn random_square(previous: Option<&str>, draws: &[f64]) -> Value {
-    let squares = all_squares();
+/// draws run out. With `allowed`, draws pick among those squares only (in the given order); a
+/// single allowed square is returned even when it is `previous`, since there is no other.
+fn random_square(previous: Option<&str>, draws: &[f64], allowed: Option<&[String]>) -> Value {
+    let squares = match allowed {
+        Some(allowed) if !allowed.is_empty() => allowed.to_vec(),
+        _ => all_squares(),
+    };
+    if squares.len() == 1 {
+        return json!(squares[0]);
+    }
     for draw in draws {
-        let Some(index) = square_index(*draw) else {
+        let index = (draw * squares.len() as f64).floor();
+        if !(0.0..squares.len() as f64).contains(&index) {
             continue;
-        };
-        let square = &squares[index];
+        }
+        let square = &squares[index as usize];
         if Some(square.as_str()) != previous {
             return json!(square);
         }
@@ -921,7 +929,28 @@ fn random_square(previous: Option<&str>, draws: &[f64]) -> Value {
 
 fn random_square_call(args: &[Value]) -> Result<Value> {
     let previous = args.first().and_then(Value::as_str);
-    Ok(random_square(previous, &numbers(args, 1)?))
+    let allowed: Option<Vec<String>> = match args.get(2) {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(items)) => {
+            let valid = all_squares();
+            let mut list = Vec::new();
+            for item in items {
+                match item.as_str() {
+                    Some(square) if valid.iter().any(|known| known == square) => {
+                        list.push(square.to_string());
+                    }
+                    _ => return Err("argument 2 must be a list of squares".into()),
+                }
+            }
+            Some(list)
+        }
+        Some(_) => return Err("argument 2 must be a list of squares".into()),
+    };
+    Ok(random_square(
+        previous,
+        &numbers(args, 1)?,
+        allowed.as_deref(),
+    ))
 }
 
 fn square_color(square: &str) -> &'static str {

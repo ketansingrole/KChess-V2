@@ -28,7 +28,7 @@ export const CHALLENGE_COLORS = ["random", "white", "black"] as const;
 
 export const PUZZLE_DIFFICULTIES = ["easiest", "easier", "normal", "harder", "hardest"] as const;
 
-export const RUN_KINDS = ["storm", "streak", "rush", "coordinates", "squareColor", "knightPath", "endgame"] as const;
+export const RUN_KINDS = ["storm", "streak", "rush", "coordinates", "squareColor", "knightPath", "endgame", "lesson"] as const;
 
 export const VOICE_SOURCES = ["computer", "coordinates", "squareColor", "knightPath", "analysis", "editor", "local", "puzzles"] as const;
 
@@ -68,7 +68,7 @@ export type ChallengeColor = "random" | "white" | "black";
 
 export type PuzzleDifficulty = "easiest" | "easier" | "normal" | "harder" | "hardest";
 
-export type RunKind = "storm" | "streak" | "rush" | "coordinates" | "squareColor" | "knightPath" | "endgame";
+export type RunKind = "storm" | "streak" | "rush" | "coordinates" | "squareColor" | "knightPath" | "endgame" | "lesson";
 
 export type VoiceSource = "computer" | "coordinates" | "squareColor" | "knightPath" | "analysis" | "editor" | "local" | "puzzles";
 
@@ -1325,6 +1325,16 @@ export type ExportRequest = {
 name: string, kind: ExportKind, data: Uint8Array | string, };
 
 export type CloudEval = { fen: string, depth: number, knodes: number, lines: Array<EngineLine>, };
+
+export type DescriptionBlock = { heading?: boolean, text: string, };
+
+export type OpeningDescription = { title: string, url: string, blocks: Array<DescriptionBlock>, fetchedAt: number, };
+
+export type PopularityMonth = { 
+/**
+ * `YYYY-MM`.
+ */
+month: string, share: number, games: number, };
 
 export const CORRESPONDENCE_DAYS = [1, 2, 3, 5, 7, 10, 14] as const;
 

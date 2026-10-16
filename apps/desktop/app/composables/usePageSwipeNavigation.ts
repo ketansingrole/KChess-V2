@@ -52,6 +52,7 @@ export function usePageSwipeNavigation(): void {
             // Settings load after first paint; the swipe stays on until they say otherwise.
             isEnabled: () => store?.settings?.swipeNavigation ?? true,
             showFeedback: () => store?.settings?.swipeIndicator ?? true,
+            surface: () => document.querySelector<HTMLElement>('.main-content > .page'),
           },
         ),
     ])

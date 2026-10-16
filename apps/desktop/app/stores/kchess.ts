@@ -40,6 +40,7 @@ export type Page =
   | 'editor'
   | 'puzzles'
   | 'practice'
+  | 'openings'
   | 'history'
   | 'insights'
   | 'friends'
@@ -73,6 +74,7 @@ export const useKChessStore = defineStore('kchess', () => {
     { id: 'local', label: 'Over the board', icon: 'i-lucide-users-round' },
     { id: 'puzzles', label: 'Puzzles', icon: 'i-lucide-puzzle' },
     { id: 'practice', label: 'Practice', icon: 'i-lucide-graduation-cap' },
+    { id: 'openings', label: 'Openings', icon: 'i-lucide-book-open-text' },
     { id: 'analysis', label: 'Analysis board', icon: 'i-lucide-microscope' },
     { id: 'history', label: 'Game history', icon: 'i-lucide-history' },
     { id: 'studies', label: 'Studies', icon: 'i-lucide-library-big' },
@@ -98,6 +100,7 @@ export const useKChessStore = defineStore('kchess', () => {
       'editor',
       'puzzles',
       'practice',
+      'openings',
       'history',
       'insights',
       'friends',

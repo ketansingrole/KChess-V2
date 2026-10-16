@@ -31,6 +31,8 @@ const props = defineProps<{
   turnColor?: Color
   theme?: string
   coordinates?: CoordinateMode
+  /** Label every square with its name (coordinate drills), not just the edges. */
+  coordinatesOnSquares?: boolean
   pieceSet?: string
   animation?: PieceAnimation
   /** Arrows and circles the app draws (hints, targets); the player's own right-click drawings are separate. */
@@ -173,6 +175,7 @@ function configuration(): Config {
     check: props.check ?? false,
     lastMove: props.lastMove,
     coordinates: props.coordinates !== 'none',
+    coordinatesOnSquares: Boolean(props.coordinatesOnSquares),
     highlight: { lastMove: true, check: true },
     animation: {
       enabled: reducedMotion.value !== 'reduce' && animationMs[props.animation ?? 'normal'] > 0,
@@ -202,10 +205,12 @@ function configuration(): Config {
 }
 
 /** Chessground draws coordinate labels only when it rebuilds the board, not on `set`. */
-let shownCoordinates = false
+let shownCoordinates = ''
+const coordinateLayout = (): string =>
+  `${props.coordinates !== 'none'}:${Boolean(props.coordinatesOnSquares)}`
 onMounted(() => {
   shownReset = props.resetKey
-  shownCoordinates = props.coordinates !== 'none'
+  shownCoordinates = coordinateLayout()
   if (el.value) ground = Chessground(el.value, configuration())
 })
 
@@ -218,8 +223,8 @@ watch(
       shownFen = undefined
     }
     ground.set(configuration())
-    if ((props.coordinates !== 'none') !== shownCoordinates) {
-      shownCoordinates = props.coordinates !== 'none'
+    if (coordinateLayout() !== shownCoordinates) {
+      shownCoordinates = coordinateLayout()
       ground.redrawAll()
     }
     // A queued premove plays as soon as it is our turn; if nothing can be queued any more, drop it.

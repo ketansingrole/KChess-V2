@@ -11,7 +11,7 @@ import type { RunInput, RunSummary } from '@kchess/contracts/types'
 
 const BoardStub = defineComponent({
   name: 'ChessBoard',
-  props: ['fen', 'orientation', 'coordinates', 'shapes'],
+  props: ['fen', 'orientation', 'coordinates', 'coordinatesOnSquares', 'shapes'],
   emits: ['select'],
   template: '<div data-board />',
 })
@@ -67,10 +67,44 @@ describe('coordinates trainer controls', () => {
   it('shows and hides coordinates on the board with the switch', async () => {
     const { wrapper, board } = await trainer()
     expect(board().props('coordinates')).toBe('none')
-    await wrapper.find('[role="switch"]').trigger('click')
+    await button(wrapper, 'Show coordinates').trigger('click')
     expect(board().props('coordinates')).not.toBe('none')
-    await wrapper.find('[role="switch"]').trigger('click')
+    await button(wrapper, 'Show coordinates').trigger('click')
     expect(board().props('coordinates')).toBe('none')
+    // Labels on every square need the board's coordinates on as well.
+    await button(wrapper, 'Coordinates on every square').trigger('click')
+    expect(board().props('coordinatesOnSquares')).toBe(true)
+    expect(board().props('coordinates')).not.toBe('none')
+    wrapper.unmount()
+  })
+
+  it('keeps the pieces on the board during a run when asked', async () => {
+    const { wrapper, board } = await trainer()
+    await button(wrapper, 'Show pieces').trigger('click')
+    await button(wrapper, 'Start').trigger('click')
+    expect(board().props('fen')).toBe(INITIAL_FEN)
+    wrapper.unmount()
+  })
+
+  it('asks only the chosen files and ranks, keeps one of each, and saves no record', async () => {
+    const { wrapper, board, saveRun } = await trainer()
+    await button(wrapper, 'Practice only some files & ranks').trigger('click')
+    for (const file of 'bcdefgh') await button(wrapper, file).trigger('click')
+    for (const rank of '345678') await button(wrapper, rank).trigger('click')
+    // The last file cannot be turned off.
+    await button(wrapper, 'a').trigger('click')
+    expect(button(wrapper, 'a').attributes('aria-pressed')).toBe('true')
+    await button(wrapper, 'Start').trigger('click')
+    for (let i = 0; i < 6; i++) {
+      const target = wrapper.find('.coord-target').text()
+      expect(['a1', 'a2']).toContain(target)
+      board().vm.$emit('select', target)
+      await flushPromises()
+    }
+    await button(wrapper, 'End run').trigger('click')
+    await flushPromises()
+    expect(saveRun).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Not saved: some files & ranks only')
     wrapper.unmount()
   })
 

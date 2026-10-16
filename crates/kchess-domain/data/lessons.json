@@ -1,0 +1,3404 @@
+{
+  "courses": [
+    {
+      "id": "piece-checkmates-1",
+      "group": "Checkmates",
+      "title": "Piece Checkmates I",
+      "subtitle": "Basic checkmates",
+      "chapters": [
+        {
+          "id": "pm1-queen-rook",
+          "title": "Queen and rook mate",
+          "steps": [
+            {
+              "fen": "8/8/8/3k4/Q7/7R/8/6K1 w - - 0 1",
+              "text": "A queen and a rook mate without help from their king. They take turns: one piece checks along a rank while the other guards the rank behind, so the king is pushed back one rank at a time.\n\nPlay the rook check first. The queen already guards the 4th rank.",
+              "shapes": [
+                {
+                  "orig": "a4",
+                  "dest": "h4",
+                  "brush": "red"
+                },
+                {
+                  "orig": "h3",
+                  "dest": "h5",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "line",
+                "moves": ["h3h5", "d5d6", "a4a6", "d6d7", "h5h7", "d7d8", "a6a8"]
+              }
+            },
+            {
+              "fen": "8/8/8/4k3/8/8/8/R2QK3 w - - 0 1",
+              "text": "Now against the engine. Keep both pieces away from the king so it cannot attack them, and switch them to the far side of the board if it comes close.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 12
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm1-two-rooks",
+          "title": "Two rook mate",
+          "steps": [
+            {
+              "fen": "8/8/8/8/4k3/R7/1R6/6K1 w - - 0 1",
+              "text": "Two rooks climb the same ladder. When the king walks toward your rooks, check from the far side instead so it can never capture one.",
+              "shapes": [
+                {
+                  "orig": "a3",
+                  "dest": "h3",
+                  "brush": "red"
+                },
+                {
+                  "orig": "b2",
+                  "dest": "b4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "line",
+                "moves": ["b2b4", "e4f5", "a3a5", "f5g6", "b4b6", "g6g7", "a5a7", "g7g8", "b6b8"]
+              }
+            },
+            {
+              "fen": "8/8/3k4/8/8/8/8/R3K2R w - - 0 1",
+              "text": "Mate the engine with the two rooks.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 12
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm1-queen-bishop",
+          "title": "Queen and bishop mate",
+          "steps": [
+            {
+              "fen": "7k/8/7B/8/8/8/8/6QK w - - 0 1",
+              "text": "With a minor piece the queen does almost all the work: the bishop only has to guard the square where the queen lands next to the king.\n\nMate in one.",
+              "shapes": [
+                {
+                  "orig": "h6",
+                  "dest": "g7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "8/8/4k3/8/8/8/2B5/3QK3 w - - 0 1",
+              "text": "Push the king to the edge with the queen alone, then bring the bishop or your king to support the final check.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm1-queen-knight",
+          "title": "Queen and knight mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/5N2/8/8/8/Q6K w - - 0 1",
+              "text": "A knight supports the queen just as well, as long as it reaches a square that guards the queen's landing square.\n\nMate in one.",
+              "shapes": [
+                {
+                  "orig": "f5",
+                  "dest": "g7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "8/8/8/4k3/8/8/3N4/3QK3 w - - 0 1",
+              "text": "Mate the engine with queen and knight.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm1-queen",
+          "title": "Queen mate",
+          "steps": [
+            {
+              "fen": "8/4k3/8/8/2Q5/8/8/2K5 w - - 0 1",
+              "text": "With only a queen, use it to shrink the king's box: stay a knight's move away from the king and follow it, so each move leaves it fewer squares.\n\nWhen the king is on the edge, stop. Bring your own king next to it and only then give mate. A queen move that leaves the king no moves and no check is stalemate, a draw.",
+              "shapes": [
+                {
+                  "orig": "c4",
+                  "dest": "c8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c4",
+                  "dest": "h4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7k/8/5K2/8/8/8/8/6Q1 w - - 0 1",
+              "text": "Your king is close enough. Mate in one.",
+              "shapes": [
+                {
+                  "orig": "f6",
+                  "dest": "g7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "8/8/8/4k3/8/8/8/3QK3 w - - 0 1",
+              "text": "Mate the engine with king and queen.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm1-rook",
+          "title": "Rook mate",
+          "steps": [
+            {
+              "fen": "8/8/8/4k3/7R/4K3/8/8 w - - 0 1",
+              "text": "A rook cuts the king off along a rank or file. Your king then takes the opposition, standing in front of the enemy king with one square between them, and the rook checks it back toward the edge.\n\nWhen the kings are not facing each other, a quiet rook move along its line passes the move to the defender.",
+              "shapes": [
+                {
+                  "orig": "h4",
+                  "dest": "a4",
+                  "brush": "red"
+                },
+                {
+                  "orig": "e3",
+                  "dest": "e4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "4k3/8/4K3/8/8/8/8/7R w - - 0 1",
+              "text": "The kings face each other. Mate in one.",
+              "shapes": [
+                {
+                  "orig": "e6",
+                  "dest": "e7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "8/8/8/4k3/8/8/8/R3K3 w - - 0 1",
+              "text": "Mate the engine with king and rook.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 30
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "checkmate-patterns-1",
+      "group": "Checkmates",
+      "title": "Checkmate Patterns I",
+      "subtitle": "Recognise the patterns",
+      "chapters": [
+        {
+          "id": "cp1-back-rank",
+          "title": "Back-rank mate",
+          "steps": [
+            {
+              "fen": "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1",
+              "text": "A king behind its own unmoved pawns has no way out. A rook or queen arriving on the back rank gives mate if nothing can block or capture it.",
+              "shapes": [
+                {
+                  "orig": "a1",
+                  "dest": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f7",
+                  "brush": "red"
+                },
+                {
+                  "orig": "g7",
+                  "brush": "red"
+                },
+                {
+                  "orig": "h7",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/p4ppp/8/8/8/P7/1q3PPP/3R2K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "3r2k1/pb3ppp/8/8/8/8/P3R1PP/4R2K w - - 0 1",
+              "text": "The back rank is guarded once. Attack it twice.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            },
+            {
+              "fen": "3r2k1/p1q2ppp/1p6/8/3Q4/8/5PPP/3R2K1 w - - 0 1",
+              "text": "Remove the defenders of the back rank.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp1-hook",
+          "title": "Hook mate",
+          "steps": [
+            {
+              "fen": "7R/pk4p1/N7/1P6/8/8/3r1PPP/6K1 w - - 0 1",
+              "text": "In the hook mate a rook checks next to the king, a knight protects the rook, and a pawn protects the knight. The king's own pawn blocks the last square.",
+              "shapes": [
+                {
+                  "orig": "h8",
+                  "dest": "b8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "a6",
+                  "dest": "b8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b5",
+                  "dest": "a6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/R4ppp/8/8/4p3/1P3n2/P3KP2/7r b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp1-anastasia",
+          "title": "Anastasia's mate",
+          "steps": [
+            {
+              "fen": "1r6/p3N1pk/8/8/8/3R4/5PPP/6K1 w - - 0 1",
+              "text": "A knight on e7 covers g8 and g6, and the king's own pawn on g7 closes the box. A rook or queen checking down the h-file then mates.",
+              "shapes": [
+                {
+                  "orig": "d3",
+                  "dest": "h3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "dest": "g8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "dest": "g6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/2Q5/8/3r4/P4P2/4n1PK/R7 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "5rk1/pp3pp1/8/3N4/8/3R4/5PPP/6K1 w - - 0 1",
+              "text": "Check with the knight first.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            },
+            {
+              "fen": "1q3r1k/pp2N1pp/8/7Q/8/3R4/5PPP/6K1 w - - 0 1",
+              "text": "Open the h-file with a sacrifice.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp1-blind-swine",
+          "title": "Blind swine mate",
+          "steps": [
+            {
+              "fen": "5rk1/1RR3pp/p7/8/8/8/PP6/1K6 w - - 0 1",
+              "text": "Two rooks on the seventh rank eat the pawns in front of the king with check after check. Once both pawns are gone, the rooks mate side by side.",
+              "shapes": [
+                {
+                  "orig": "c7",
+                  "dest": "g7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b7",
+                  "dest": "h7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "5rk1/3RR1pp/p7/8/8/8/PP6/1K6 w - - 0 1",
+              "text": "Mate in three.",
+              "task": {
+                "kind": "mate",
+                "within": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp1-smothered",
+          "title": "Smothered mate",
+          "steps": [
+            {
+              "fen": "6rk/6pp/8/6N1/8/8/8/6K1 w - - 0 1",
+              "text": "A king surrounded by its own pieces can be mated by a lone knight, since nothing can block a knight check.",
+              "shapes": [
+                {
+                  "orig": "g5",
+                  "dest": "f7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g8",
+                  "brush": "red"
+                },
+                {
+                  "orig": "g7",
+                  "brush": "red"
+                },
+                {
+                  "orig": "h7",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "3q2rk/pp4pp/8/4N3/8/1Q6/5PPP/6K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "5r1k/p5pp/1q5N/8/2Q5/8/5PPP/6K1 w - - 0 1",
+              "text": "Sacrifice the queen so a rook blocks the king in.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            },
+            {
+              "fen": "r4rk1/pp4pp/8/6N1/8/8/PP2QPPP/6K1 w - - 0 1",
+              "text": "The full smothered-mate combination: check with the queen, drive the king into the corner with knight checks, sacrifice the queen on g8, and mate with the knight.",
+              "task": {
+                "kind": "line",
+                "moves": ["e2c4", "g8h8", "g5f7", "h8g8", "f7h6", "g8h8", "c4g8", "f8g8", "h6f7"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "checkmate-patterns-2",
+      "group": "Checkmates",
+      "title": "Checkmate Patterns II",
+      "subtitle": "Recognise the patterns",
+      "chapters": [
+        {
+          "id": "cp2-double-bishop",
+          "title": "Double bishop mate",
+          "steps": [
+            {
+              "fen": "7k/7p/8/8/2BB4/8/8/6K1 b - - 0 1",
+              "text": "Two bishops on neighbouring diagonals sweep two lines at once: one checks, the other covers the squares beside it.",
+              "shapes": [
+                {
+                  "orig": "c4",
+                  "dest": "g8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d4",
+                  "dest": "h8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "r6k/pp5p/8/8/2B5/4B3/P4PP1/6K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "2b3k1/5ppp/8/2b5/8/8/PP5P/2N4K b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-boden",
+          "title": "Boden's mate",
+          "steps": [
+            {
+              "fen": "2kr4/3n4/B7/8/5B2/8/8/6K1 b - - 0 1",
+              "text": "Two bishops on crossing diagonals mate a king that has castled long and is hemmed in by its own pieces on d7 and d8.",
+              "shapes": [
+                {
+                  "orig": "a6",
+                  "dest": "c8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f4",
+                  "dest": "b8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d7",
+                  "brush": "red"
+                },
+                {
+                  "orig": "d8",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "2kr3r/pp1nqppp/8/1Q6/5B2/3B4/5PPP/6K1 w - - 0 1",
+              "text": "Clear the b7 pawn out of the way.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            },
+            {
+              "fen": "6k1/5ppp/8/5b2/1b6/2P5/P2N1PPP/2KR4 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-balestra",
+          "title": "Balestra mate",
+          "steps": [
+            {
+              "fen": "4k3/8/5Q2/1B6/8/8/8/6K1 b - - 0 1",
+              "text": "A bishop checks from a distance while the queen, a knight's jump away, takes every square around the king.",
+              "shapes": [
+                {
+                  "orig": "b5",
+                  "dest": "e8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "dest": "f8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "dest": "d8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "r3k3/pp5p/5Q2/8/8/3B4/8/6K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-arabian",
+          "title": "Arabian mate",
+          "steps": [
+            {
+              "fen": "7k/7R/5N2/8/8/8/8/6K1 b - - 0 1",
+              "text": "One of the oldest patterns: a knight protects the rook and covers the last escape square of a king in the corner.",
+              "shapes": [
+                {
+                  "orig": "f6",
+                  "dest": "h7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "dest": "g8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/8/7Q/8/2n5/1r6/K5R1 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "7k/1R6/7p/p7/1p2N3/8/5PPP/6K1 w - - 0 1",
+              "text": "Bring the knight in first. The king has nowhere to go.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-corner",
+          "title": "Corner mate",
+          "steps": [
+            {
+              "fen": "1R6/8/8/8/8/8/p1N5/k5K1 b - - 0 1",
+              "text": "A rook holds the file next to a cornered king while a knight gives the check. The king's own pawn blocks the corner.",
+              "shapes": [
+                {
+                  "orig": "b8",
+                  "dest": "b1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c2",
+                  "dest": "a1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "1r4k1/5ppp/8/8/3n4/8/P4PPP/K6R b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-morphy",
+          "title": "Morphy's mate",
+          "steps": [
+            {
+              "fen": "k7/p7/8/8/4B3/8/8/1R4K1 b - - 0 1",
+              "text": "A bishop checks along the long diagonal while a rook holds the file next to the cornered king.",
+              "shapes": [
+                {
+                  "orig": "e4",
+                  "dest": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b1",
+                  "dest": "b8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "k6r/p4ppp/8/8/8/3B4/5PPP/1R4K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-pillsbury",
+          "title": "Pillsbury's mate",
+          "steps": [
+            {
+              "fen": "5rk1/5p1p/8/8/8/8/1B6/1K4R1 b - - 0 1",
+              "text": "With the g-pawn gone, a rook checks down the open file and a bishop on the long diagonal covers the corner.",
+              "shapes": [
+                {
+                  "orig": "g1",
+                  "dest": "g8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b2",
+                  "dest": "h8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "5rk1/pp3p1p/8/8/8/1P6/PB6/1K1R4 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-damiano",
+          "title": "Damiano's mate",
+          "steps": [
+            {
+              "fen": "5rk1/5p1Q/6P1/8/8/8/8/6K1 b - - 0 1",
+              "text": "A pawn on g6 protects the queen on h7, right next to the king.",
+              "shapes": [
+                {
+                  "orig": "g6",
+                  "dest": "h7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h7",
+                  "dest": "g8",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "5rk1/ppq2p2/6P1/7Q/8/8/5PP1/6K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp2-lolli",
+          "title": "Lolli's mate",
+          "steps": [
+            {
+              "fen": "6k1/5pQ1/5Pp1/8/8/8/8/6K1 b - - 0 1",
+              "text": "A pawn on f6 protects the queen landing on g7 in front of a fianchettoed king.",
+              "shapes": [
+                {
+                  "orig": "f6",
+                  "dest": "g7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/pp4pp/8/8/8/5pPq/P4P1P/R5K1 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "6k1/ppb2p1p/5Pp1/8/8/6P1/3Q1P1P/6K1 w - - 0 1",
+              "text": "Bring the queen next to the pawn. Black cannot stop the mate.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "checkmate-patterns-3",
+      "group": "Checkmates",
+      "title": "Checkmate Patterns III",
+      "subtitle": "Recognise the patterns",
+      "chapters": [
+        {
+          "id": "cp3-opera",
+          "title": "Opera mate",
+          "steps": [
+            {
+              "fen": "3Rk3/5p2/8/6B1/8/8/8/6K1 b - - 0 1",
+              "text": "A rook mates on the back rank, protected by a bishop on the diagonal behind it, while the king's own pieces block the other squares.",
+              "shapes": [
+                {
+                  "orig": "g5",
+                  "dest": "d8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d1",
+                  "dest": "d8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "4r1k1/5ppp/8/7Q/1b6/8/PPP2PPP/3K4 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            },
+            {
+              "fen": "4kb1r/p2n1ppp/8/6B1/8/1Q6/5PPP/3R2K1 w - - 0 1",
+              "text": "Deflect the knight from the d-file.",
+              "task": {
+                "kind": "mate",
+                "within": 2
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp3-anderssen",
+          "title": "Anderssen's mate",
+          "steps": [
+            {
+              "fen": "6kR/6P1/5K2/8/8/8/8/8 b - - 0 1",
+              "text": "A rook mates in the corner protected by a pawn on the seventh rank, and the king guards the pawn.",
+              "shapes": [
+                {
+                  "orig": "g7",
+                  "dest": "h8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "dest": "g7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "r7/7R/8/8/8/2k5/1p4PP/1K6 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp3-dovetail",
+          "title": "Dovetail mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/8/8/3n4/5q2/6KR w - - 0 1",
+              "text": "A queen checks from the square diagonally next to the king, protected from behind, and the king's own piece blocks its retreat.",
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/5q2/8/8/1P1n4/P7/6KR b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp3-cozio",
+          "title": "Cozio's mate",
+          "steps": [
+            {
+              "fen": "8/8/6qp/6pk/6Q1/5K2/8/8 b - - 0 1",
+              "text": "An upside-down dovetail: the queen checks diagonally next to the king while the king's own pieces fill the squares behind it.",
+              "shapes": [
+                {
+                  "orig": "f3",
+                  "dest": "g4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "2Q5/p7/6qp/6pk/8/5K2/PP6/8 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp3-swallow",
+          "title": "Swallow's tail mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/2b5/8/4q3/4K3/3R1R2 w - - 0 1",
+              "text": "The queen checks from directly in front of the king, protected from behind, while the king's own rooks block both back corners like the tail of a swallow.",
+              "shapes": [
+                {
+                  "orig": "c5",
+                  "dest": "e3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/7q/2b5/8/8/PP2K1PP/3R1R2 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp3-epaulette",
+          "title": "Epaulette mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/8/8/3q4/8/2RKR3 w - - 0 1",
+              "text": "The king's own rooks sit on both sides of it like epaulettes, and a queen checking from two squares in front takes the rest.",
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/p4ppq/8/8/8/8/PP3P2/2RKR3 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp3-pawn",
+          "title": "Pawn mate",
+          "steps": [
+            {
+              "fen": "8/8/6pp/7k/5KP1/8/5B2/8 b - - 0 1",
+              "text": "Even a pawn can give mate when the king's own pawns and your pieces take away every escape square.",
+              "shapes": [
+                {
+                  "orig": "g4",
+                  "dest": "h5",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "r7/p7/6pp/7k/5K2/6P1/P4B2/8 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "checkmate-patterns-4",
+      "group": "Checkmates",
+      "title": "Checkmate Patterns IV",
+      "subtitle": "Recognise the patterns",
+      "chapters": [
+        {
+          "id": "cp4-suffocation",
+          "title": "Suffocation mate",
+          "steps": [
+            {
+              "fen": "6k1/1b6/8/8/8/8/4nP1P/5RK1 w - - 0 1",
+              "text": "A knight checks a king hemmed in by its own pieces, while a bishop covers the squares the knight cannot.",
+              "shapes": [
+                {
+                  "orig": "b7",
+                  "dest": "h1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e2",
+                  "dest": "g1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/1b3ppp/8/8/3n4/P7/5P1P/5RK1 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-greco",
+          "title": "Greco's mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/2b5/7r/8/6P1/7K w - - 0 1",
+              "text": "A bishop covers the only square beside a cornered king, and a rook or queen mates on the edge file.",
+              "shapes": [
+                {
+                  "orig": "c5",
+                  "dest": "g1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h4",
+                  "dest": "h1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/8/2b5/3r4/8/PP4P1/R6K b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-max-lange",
+          "title": "Max Lange's mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/8/8/7P/5bPK/6q1 w - - 0 1",
+              "text": "A bishop protects the queen as it lands diagonally next to the king, and also covers the king's escape square.",
+              "shapes": [
+                {
+                  "orig": "f2",
+                  "dest": "g1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f2",
+                  "dest": "g3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/8/8/8/7P/PP3bPK/2q5 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-blackburne",
+          "title": "Blackburne's mate",
+          "steps": [
+            {
+              "fen": "7k/6b1/8/8/1n6/8/b7/1KR5 w - - 0 1",
+              "text": "Two bishops and a knight: one bishop checks, the other covers the long diagonal, and the knight protects the checking bishop.",
+              "shapes": [
+                {
+                  "orig": "g7",
+                  "dest": "a1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b4",
+                  "dest": "a2",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7k/5bbp/6p1/8/1n5P/6P1/P7/1KR5 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-reti",
+          "title": "Réti's mate",
+          "steps": [
+            {
+              "fen": "3r2k1/8/8/8/8/2P5/1PK5/1NBb4 w - - 0 1",
+              "text": "A king boxed in by its own pieces. A bishop checks from the diagonal next to it while a rook holds the open file.",
+              "shapes": [
+                {
+                  "orig": "d8",
+                  "dest": "d2",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d1",
+                  "dest": "b3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "3r2k1/5ppp/8/7b/8/2P5/PPK4P/1NB5 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-legal",
+          "title": "Légal's mate",
+          "steps": [
+            {
+              "fen": "6k1/8/8/8/3nn3/3P4/4Kb2/3Q1B2 w - - 0 1",
+              "text": "Two knights and a bishop surround a king whose own pieces block it in. It is named after a famous trap in which the queen is sacrificed.",
+              "shapes": [
+                {
+                  "orig": "f2",
+                  "dest": "e1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f2",
+                  "dest": "e3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e4",
+                  "dest": "d2",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/p4ppp/2n5/8/4n3/3P4/PP2Kb2/3Q1B2 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-kill-box",
+          "title": "Kill box mate",
+          "steps": [
+            {
+              "fen": "kR6/2Q5/8/8/8/8/8/6K1 b - - 0 1",
+              "text": "A rook checks next to the king and the queen, diagonally behind it, protects the rook and closes the box.",
+              "shapes": [
+                {
+                  "orig": "c7",
+                  "dest": "b8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c7",
+                  "dest": "a7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "k7/2Q2ppp/8/7r/8/8/5PPP/1R4K1 w - - 0 1",
+              "text": "Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-triangle",
+          "title": "Triangle mate",
+          "steps": [
+            {
+              "fen": "7k/8/8/8/4r1q1/5K2/5P2/8 w - - 0 1",
+              "text": "The queen and rook form a triangle around the king. Each protects the other, and together they take every square.",
+              "shapes": [
+                {
+                  "orig": "e4",
+                  "dest": "g4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6qk/pR5p/8/8/4r3/5K2/P4P2/8 b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "cp4-vukovic",
+          "title": "Vukovic mate",
+          "steps": [
+            {
+              "fen": "6k1/8/7b/8/8/3n4/3r4/3K4 w - - 0 1",
+              "text": "A rook checks next to the king, protected from a distance, while a knight covers the squares on either side.",
+              "shapes": [
+                {
+                  "orig": "h6",
+                  "dest": "d2",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d3",
+                  "dest": "c1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d3",
+                  "dest": "e1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/5ppp/7b/8/8/3n2P1/r7/3K3R b - - 0 1",
+              "text": "Black to play. Mate in one.",
+              "task": {
+                "kind": "mate",
+                "within": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "piece-checkmates-2",
+      "group": "Checkmates",
+      "title": "Piece Checkmates II",
+      "subtitle": "Challenging checkmates",
+      "chapters": [
+        {
+          "id": "pm2-queen-bishop",
+          "title": "Queen vs bishop",
+          "steps": [
+            {
+              "fen": "8/8/3b4/3k4/8/8/4KQ2/8 w - - 0 1",
+              "text": "A queen beats a lone bishop. Use checks and your king to drive the enemy king away from its bishop, then win the bishop with a double attack or mate the king directly.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm2-queen-knight",
+          "title": "Queen vs knight",
+          "steps": [
+            {
+              "fen": "8/8/8/2nk4/8/8/4KQ2/8 w - - 0 1",
+              "text": "A knight is harder to trap than a bishop, because it can fork. Keep your queen and king off squares the knight can reach with check, and look for the moment the knight strays from its king.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm2-queen-rook",
+          "title": "Queen vs rook",
+          "steps": [
+            {
+              "fen": "8/8/2r5/3k4/8/3K4/8/5Q2 w - - 0 1",
+              "text": "Queen against rook is won but takes patience. Push the king to the edge with your king and queen together, keep the rook from checking at close range, and wait for a fork of king and rook.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm2-two-bishops",
+          "title": "Two bishop mate",
+          "steps": [
+            {
+              "fen": "8/8/5k2/8/3KB3/8/3B4/8 w - - 0 1",
+              "text": "Two bishops side by side make a wall the king cannot cross. Move them together with your king to squeeze the enemy king into a corner, then mate there. Avoid stalemate when the king has only one or two squares left.",
+              "shapes": [
+                {
+                  "orig": "e4",
+                  "dest": "h7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d2",
+                  "dest": "h6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/8/8/4k3/8/8/8/2B1KB2 w - - 0 1",
+              "text": "Mate the engine with two bishops.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 30
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm2-bishop-knight",
+          "title": "Bishop and knight mate",
+          "steps": [
+            {
+              "fen": "8/8/2k5/8/3K4/2BN4/8/8 w - - 0 1",
+              "text": "The hardest basic mate: drive the king toward a corner of your bishop's colour. The Knight & Bishop Mate course takes it step by step.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 45
+              }
+            }
+          ]
+        },
+        {
+          "id": "pm2-two-knights-pawn",
+          "title": "Two knights vs pawn",
+          "steps": [
+            {
+              "fen": "7k/8/5K2/8/6Np/8/8/4N3 w - - 0 1",
+              "text": "Two knights alone cannot force mate, but with an enemy pawn on the board stalemate is no longer possible: the pawn can always move. Blockade the pawn with one knight far behind, mate the king with your king and the other knight, and only then free the blockading knight for the final check.",
+              "shapes": [
+                {
+                  "orig": "h4",
+                  "dest": "h3",
+                  "brush": "red"
+                },
+                {
+                  "orig": "g4",
+                  "dest": "h2",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "k7/2K5/8/1N6/p7/8/8/3N4 w - - 0 1",
+              "text": "Mate in three.",
+              "task": {
+                "kind": "mate",
+                "within": 3
+              }
+            },
+            {
+              "fen": "7k/8/5K2/8/6Np/8/8/4N3 w - - 0 1",
+              "text": "Mate the engine. You have time, but not forever.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 35
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "knight-bishop-mate",
+      "group": "Checkmates",
+      "title": "Knight & Bishop Mate",
+      "subtitle": "Interactive lesson",
+      "chapters": [
+        {
+          "id": "kb-intro",
+          "title": "Introduction",
+          "steps": [
+            {
+              "fen": "8/8/8/3k4/8/8/8/4KBN1 w - - 0 1",
+              "text": "A king, bishop and knight can force mate against a lone king, but only in a corner your bishop controls. With a light-squared bishop that means a8 or h1.\n\nThe defending king will stay in the centre as long as it can, and when it is pushed back it heads for the other corners, a1 or h8, where no mate is possible.",
+              "shapes": [
+                {
+                  "orig": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "a1",
+                  "brush": "red"
+                },
+                {
+                  "orig": "h8",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/8/8/3k4/8/8/8/4KBN1 w - - 0 1",
+              "text": "The plan has three steps. First the bishop takes a long diagonal and splits the board. Then the king, knight and bishop shrink the triangle the enemy king is kept in. Finally the king is walked along the edge into the right corner and mated.\n\nYou have fifty moves before the game is drawn, so every move should make the box smaller.",
+              "shapes": [
+                {
+                  "orig": "h1",
+                  "dest": "a8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/8/8/3k4/8/8/8/4KBN1 w - - 0 1",
+              "text": "Every piece is needed, starting with your king. Bring it toward the centre.",
+              "shapes": [
+                {
+                  "orig": "d3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 3,
+                "squares": ["d3", "e3", "f3"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-right-corner",
+          "title": "The right corner",
+          "steps": [
+            {
+              "fen": "k7/8/1K6/2N2B2/8/8/8/8 b - - 0 1",
+              "text": "In the right corner the enemy king is boxed in by your king, and the bishop and knight take turns giving check from squares the king cannot reach.",
+              "shapes": [
+                {
+                  "orig": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b6",
+                  "dest": "a7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c5",
+                  "dest": "b7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "k7/8/1K6/2N2B2/8/8/8/8 w - - 0 1",
+              "text": "Mate in three.",
+              "task": {
+                "kind": "mate",
+                "within": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-triangle-1",
+          "title": "The first triangle",
+          "steps": [
+            {
+              "fen": "8/8/5k2/8/3K4/8/8/5BN1 w - - 0 1",
+              "text": "Place the bishop on the long diagonal from h1 to a8. The enemy king can no longer cross it, so it is shut in one half of the board, a large triangle with your mating corners at its ends.",
+              "shapes": [
+                {
+                  "orig": "h1",
+                  "dest": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "a8",
+                  "dest": "h8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h8",
+                  "dest": "h1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/8/5k2/8/3K4/8/8/5BN1 w - - 0 1",
+              "text": "Take the long diagonal.",
+              "shapes": [
+                {
+                  "orig": "h1",
+                  "dest": "a8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "confine",
+                "within": 3,
+                "squares": [
+                  "a1",
+                  "a2",
+                  "a3",
+                  "a4",
+                  "a5",
+                  "a6",
+                  "a7",
+                  "b1",
+                  "b2",
+                  "b3",
+                  "b4",
+                  "b5",
+                  "b6",
+                  "b8",
+                  "c1",
+                  "c2",
+                  "c3",
+                  "c4",
+                  "c5",
+                  "c7",
+                  "c8",
+                  "d1",
+                  "d2",
+                  "d3",
+                  "d4",
+                  "d6",
+                  "d7",
+                  "d8",
+                  "e1",
+                  "e2",
+                  "e3",
+                  "e5",
+                  "e6",
+                  "e7",
+                  "e8",
+                  "f1",
+                  "f2",
+                  "f4",
+                  "f5",
+                  "f6",
+                  "f7",
+                  "f8",
+                  "g1",
+                  "g3",
+                  "g4",
+                  "g5",
+                  "g6",
+                  "g7",
+                  "g8",
+                  "h2",
+                  "h3",
+                  "h4",
+                  "h5",
+                  "h6",
+                  "h7",
+                  "h8"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-triangle-1-ex",
+          "title": "Exercise: the first triangle",
+          "steps": [
+            {
+              "fen": "8/8/8/8/4k3/8/2K5/5BN1 w - - 0 1",
+              "text": "The king stands on the long diagonal itself. Drive it off, then shut the diagonal behind it.",
+              "shapes": [
+                {
+                  "orig": "h1",
+                  "dest": "a8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "confine",
+                "within": 8,
+                "squares": [
+                  "a1",
+                  "a2",
+                  "a3",
+                  "a4",
+                  "a5",
+                  "a6",
+                  "a7",
+                  "b1",
+                  "b2",
+                  "b3",
+                  "b4",
+                  "b5",
+                  "b6",
+                  "b8",
+                  "c1",
+                  "c2",
+                  "c3",
+                  "c4",
+                  "c5",
+                  "c7",
+                  "c8",
+                  "d1",
+                  "d2",
+                  "d3",
+                  "d4",
+                  "d6",
+                  "d7",
+                  "d8",
+                  "e1",
+                  "e2",
+                  "e3",
+                  "e5",
+                  "e6",
+                  "e7",
+                  "e8",
+                  "f1",
+                  "f2",
+                  "f4",
+                  "f5",
+                  "f6",
+                  "f7",
+                  "f8",
+                  "g1",
+                  "g3",
+                  "g4",
+                  "g5",
+                  "g6",
+                  "g7",
+                  "g8",
+                  "h2",
+                  "h3",
+                  "h4",
+                  "h5",
+                  "h6",
+                  "h7",
+                  "h8"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-triangle-2",
+          "title": "The second triangle",
+          "steps": [
+            {
+              "fen": "8/6k1/8/4K3/8/8/6B1/6N1 w - - 0 1",
+              "text": "Now shrink the box. The bishop moves to the next light diagonal, from c8 to h3, while your king and knight guard the dark squares along it. The enemy king is left in the small triangle around h8.",
+              "shapes": [
+                {
+                  "orig": "c8",
+                  "dest": "h3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h3",
+                  "dest": "h8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h8",
+                  "dest": "c8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/6k1/8/4K3/8/8/6B1/6N1 w - - 0 1",
+              "text": "Box the king into the triangle around a corner.",
+              "shapes": [
+                {
+                  "orig": "c8",
+                  "dest": "h3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "confine",
+                "within": 10,
+                "squares": [
+                  "a1",
+                  "a2",
+                  "a3",
+                  "a4",
+                  "a5",
+                  "b1",
+                  "b2",
+                  "b3",
+                  "b4",
+                  "c1",
+                  "c2",
+                  "c3",
+                  "d1",
+                  "d2",
+                  "d8",
+                  "e1",
+                  "e7",
+                  "e8",
+                  "f6",
+                  "f7",
+                  "f8",
+                  "g5",
+                  "g6",
+                  "g7",
+                  "g8",
+                  "h4",
+                  "h5",
+                  "h6",
+                  "h7",
+                  "h8"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-triangle-2-ex",
+          "title": "Exercise: the second triangle",
+          "steps": [
+            {
+              "fen": "8/5k2/8/3K4/8/8/4N1B1/8 w - - 0 1",
+              "text": "Same task from a new position.",
+              "shapes": [
+                {
+                  "orig": "c8",
+                  "dest": "h3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "confine",
+                "within": 12,
+                "squares": [
+                  "a1",
+                  "a2",
+                  "a3",
+                  "a4",
+                  "a5",
+                  "b1",
+                  "b2",
+                  "b3",
+                  "b4",
+                  "c1",
+                  "c2",
+                  "c3",
+                  "d1",
+                  "d2",
+                  "d8",
+                  "e1",
+                  "e7",
+                  "e8",
+                  "f6",
+                  "f7",
+                  "f8",
+                  "g5",
+                  "g6",
+                  "g7",
+                  "g8",
+                  "h4",
+                  "h5",
+                  "h6",
+                  "h7",
+                  "h8"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-triangle-3",
+          "title": "The third triangle",
+          "steps": [
+            {
+              "fen": "7k/8/5K2/8/8/5B2/8/6N1 w - - 0 1",
+              "text": "The king sits by the wrong corner. Walk it along the edge toward h1: your king follows it down the file while the knight and bishop take away the squares it would use to come back.\n\nWhen the king reaches the little triangle beside the right corner, the mate is close.",
+              "shapes": [
+                {
+                  "orig": "h8",
+                  "dest": "h1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f1",
+                  "dest": "h3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7k/8/5K2/8/8/5B2/8/6N1 w - - 0 1",
+              "text": "Drive the king into a small triangle beside one of your mating corners.",
+              "shapes": [
+                {
+                  "orig": "f1",
+                  "dest": "h3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c8",
+                  "dest": "a6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "confine",
+                "within": 30,
+                "squares": ["a6", "a7", "a8", "b7", "b8", "c8", "f1", "g1", "g2", "h1", "h2", "h3"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-triangle-3-ex",
+          "title": "Exercise: the third triangle",
+          "steps": [
+            {
+              "fen": "6k1/8/5K2/4N3/8/8/8/3B4 w - - 0 1",
+              "text": "Same task from a new position.",
+              "shapes": [
+                {
+                  "orig": "f1",
+                  "dest": "h3",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c8",
+                  "dest": "a6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "confine",
+                "within": 30,
+                "squares": ["a6", "a7", "a8", "b7", "b8", "c8", "f1", "g1", "g2", "h1", "h2", "h3"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-delivering-mate",
+          "title": "Delivering mate",
+          "steps": [
+            {
+              "fen": "8/8/8/8/8/5NK1/6B1/6k1 b - - 0 1",
+              "text": "In the corner, your king takes away the squares in front of the enemy king, and the bishop and knight check in turn. Here the knight gives the last check while the bishop covers h1 and f1.",
+              "shapes": [
+                {
+                  "orig": "f3",
+                  "dest": "g1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g2",
+                  "dest": "h1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g2",
+                  "dest": "f1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/8/8/8/8/6K1/7N/5Bk1 w - - 0 1",
+              "text": "Mate in three.",
+              "task": {
+                "kind": "mate",
+                "within": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-delivering-mate-ex",
+          "title": "Exercise: delivering mate",
+          "steps": [
+            {
+              "fen": "k7/8/2K5/1N6/8/8/8/5B2 w - - 0 1",
+              "text": "Finish the job against the engine.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 8
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-engine",
+          "title": "Checkmate the engine",
+          "steps": [
+            {
+              "fen": "8/8/8/3k4/8/8/8/4KBN1 w - - 0 1",
+              "text": "The whole mate from the start. Use the plan: diagonal, triangle, edge, corner.",
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 50
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-engine-dark",
+          "title": "Dark-squared bishop",
+          "steps": [
+            {
+              "fen": "8/8/8/4k3/8/8/8/2B1K1N1 w - - 0 1",
+              "text": "With a dark-squared bishop the mating corners are a1 and h8.",
+              "shapes": [
+                {
+                  "orig": "a1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 50
+              }
+            }
+          ]
+        },
+        {
+          "id": "kb-engine-black",
+          "title": "Playing Black",
+          "steps": [
+            {
+              "fen": "4kbn1/8/8/8/3K4/8/8/8 b - - 0 1",
+              "text": "The same mate with the black pieces and the board turned around.",
+              "shapes": [
+                {
+                  "orig": "a1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "mate",
+                "within": 50
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "key-squares",
+      "group": "Pawn endgames",
+      "title": "Key Squares",
+      "subtitle": "Reach a key square",
+      "chapters": [
+        {
+          "id": "ks-rank-2",
+          "title": "Pawn on the 2nd rank",
+          "steps": [
+            {
+              "fen": "8/8/6k1/8/8/3K4/5P2/8 w - - 0 1",
+              "text": "A key square is one where your king wins the pawn ending, whoever is to move. Reach one with the pawn still alive and the pawn will promote.\n\nFor a pawn on the 2nd, 3rd or 4th rank, the key squares are the three squares two ranks in front of it.",
+              "shapes": [
+                {
+                  "orig": "e4",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f4",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/8/6k1/8/8/3K4/5P2/8 w - - 0 1",
+              "text": "Reach a key square.",
+              "shapes": [
+                {
+                  "orig": "e4",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f4",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 3,
+                "squares": ["e4", "f4", "g4"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-rank-3",
+          "title": "Pawn on the 3rd rank",
+          "steps": [
+            {
+              "fen": "8/2k5/8/8/8/3PK3/8/8 w - - 0 1",
+              "text": "The key squares are again two ranks ahead of the pawn. Go straight for them; the pawn can wait.",
+              "shapes": [
+                {
+                  "orig": "c5",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d5",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e5",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 5,
+                "squares": ["c5", "d5", "e5"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-rank-4",
+          "title": "Pawn on the 4th rank",
+          "steps": [
+            {
+              "fen": "8/8/2k5/8/4P1K1/8/8/8 w - - 0 1",
+              "text": "With the pawn on the 4th rank the key squares are on the 6th.",
+              "shapes": [
+                {
+                  "orig": "d6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 4,
+                "squares": ["d6", "e6", "f6"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-rank-5",
+          "title": "Pawn on the 5th rank",
+          "steps": [
+            {
+              "fen": "8/3k4/8/4PK2/8/8/8/8 w - - 0 1",
+              "text": "Once the pawn reaches the 5th rank there are six key squares: the three squares in front of it and the three beyond those.",
+              "shapes": [
+                {
+                  "orig": "d6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/3k4/8/4PK2/8/8/8/8 w - - 0 1",
+              "text": "Reach a key square.",
+              "shapes": [
+                {
+                  "orig": "d6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "f7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 3,
+                "squares": ["d6", "e6", "f6", "d7", "e7", "f7"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-rank-6",
+          "title": "Pawn on the 6th rank",
+          "steps": [
+            {
+              "fen": "4k3/8/2KP4/8/8/8/8/8 w - - 0 1",
+              "text": "With the pawn on the 6th, the key squares are the squares beside and in front of it on the 7th and 8th ranks. Here the king reaches one at once.",
+              "shapes": [
+                {
+                  "orig": "c7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "4k3/8/2KP4/8/8/8/8/8 w - - 0 1",
+              "text": "Reach a key square.",
+              "shapes": [
+                {
+                  "orig": "c7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 2,
+                "squares": ["c7", "e7", "c8", "d8", "e8"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-knight-pawn",
+          "title": "Knight pawn exception",
+          "steps": [
+            {
+              "fen": "7k/5K2/8/6P1/8/8/8/8 w - - 0 1",
+              "text": "A knight pawn near the corner is an exception. With the enemy king stuck in front of it, squares that would normally be key can lead to stalemate, so take care how your king and pawn approach.",
+              "shapes": [
+                {
+                  "orig": "g5",
+                  "dest": "g6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h7",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7k/5K2/8/6P1/8/8/8/8 w - - 0 1",
+              "text": "Promote the pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-rook-pawn",
+          "title": "Rook pawn",
+          "steps": [
+            {
+              "fen": "8/4k3/6K1/8/7P/8/8/8 w - - 0 1",
+              "text": "A rook pawn has only two key squares, on the knight file next to the queening square. A defending king that reaches the corner first holds the draw.",
+              "shapes": [
+                {
+                  "orig": "g7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/4k3/6K1/8/7P/8/8/8 w - - 0 1",
+              "text": "Reach a key square.",
+              "shapes": [
+                {
+                  "orig": "g7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 2,
+                "squares": ["g7", "g8"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-rook-pawn-defence",
+          "title": "Defending against a rook pawn",
+          "steps": [
+            {
+              "fen": "8/8/8/8/6kp/8/4K3/8 w - - 0 1",
+              "text": "Now you defend. Get your king to the corner in front of the pawn and Black can never promote.",
+              "shapes": [
+                {
+                  "orig": "g1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h1",
+                  "brush": "green"
+                },
+                {
+                  "orig": "g2",
+                  "brush": "green"
+                },
+                {
+                  "orig": "h2",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 12
+              }
+            }
+          ]
+        },
+        {
+          "id": "ks-any-route",
+          "title": "Any key square by any route",
+          "steps": [
+            {
+              "fen": "5k2/8/8/8/8/2P5/8/3K4 w - - 0 1",
+              "text": "Pick the key square the defending king cannot reach in time.",
+              "shapes": [
+                {
+                  "orig": "b5",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c5",
+                  "brush": "green"
+                },
+                {
+                  "orig": "d5",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "reach",
+                "within": 8,
+                "squares": ["b5", "c5", "d5"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "opposition",
+      "group": "Pawn endgames",
+      "title": "Opposition",
+      "subtitle": "Take the opposition",
+      "chapters": [
+        {
+          "id": "op-direct-1",
+          "title": "Direct opposition",
+          "steps": [
+            {
+              "fen": "8/4k3/8/3K4/2P5/8/8/8 w - - 0 1",
+              "text": "Two kings facing each other on a file or rank with one square between them are in opposition. The side that does not have to move holds it: the other king must step aside and let it through.",
+              "shapes": [
+                {
+                  "orig": "d5",
+                  "dest": "d6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e7",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/4k3/8/3K4/2P5/8/8/8 w - - 0 1",
+              "text": "Win the pawn ending.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "op-direct-2",
+          "title": "Defending with the opposition",
+          "steps": [
+            {
+              "fen": "8/8/8/3p4/3k4/8/8/3K4 w - - 0 1",
+              "text": "The opposition also defends. Keep facing the enemy king and it can never get in front of its pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 12
+              }
+            }
+          ]
+        },
+        {
+          "id": "op-direct-3",
+          "title": "Opposition ahead of the pawn",
+          "steps": [
+            {
+              "fen": "8/5k2/8/8/4KP2/8/8/8 w - - 0 1",
+              "text": "Use the opposition to bring your king in front of the pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "op-direct-4",
+          "title": "Holding a blocked king",
+          "steps": [
+            {
+              "fen": "8/8/8/5p2/5k2/8/8/5K2 w - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 12
+              }
+            }
+          ]
+        },
+        {
+          "id": "op-distant",
+          "title": "Distant opposition",
+          "steps": [
+            {
+              "fen": "2k5/8/8/p5p1/P5P1/8/8/2K5 w - - 0 1",
+              "text": "Kings facing each other with three or five squares between them are in distant opposition. Keep it as they come closer and it turns into the ordinary opposition at the right moment.",
+              "shapes": [
+                {
+                  "orig": "c1",
+                  "dest": "c8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "2k5/8/8/p5p1/P5P1/8/8/2K5 w - - 0 1",
+              "text": "Win the pawn ending.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 30
+              }
+            }
+          ]
+        },
+        {
+          "id": "op-distant-defence",
+          "title": "Distant opposition in defence",
+          "steps": [
+            {
+              "fen": "8/8/8/6pk/8/8/8/7K w - - 0 1",
+              "text": "Hold the draw. Watch the distance between the kings.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "op-means",
+          "title": "Opposition as a means to an end",
+          "steps": [
+            {
+              "fen": "8/8/3k4/8/4KP2/8/8/8 w - - 0 1",
+              "text": "The opposition is only a tool. Sometimes it is better to give it up and walk around the enemy king toward a key square.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 15
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rook-pawn-vs-queen",
+      "group": "Pawn endgames",
+      "title": "7th-Rank Pawn",
+      "subtitle": "Versus a queen",
+      "chapters": [
+        {
+          "id": "rq-queen-in-front",
+          "title": "Queen in front of the pawn",
+          "steps": [
+            {
+              "fen": "K7/6Q1/8/8/8/3k4/2p5/8 w - - 0 1",
+              "text": "A queen that reaches the square in front of the pawn stops it for good. Get there with checks or a pin before the pawn promotes.",
+              "shapes": [
+                {
+                  "orig": "c1",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "rq-centre-pawn",
+          "title": "Centre pawn",
+          "steps": [
+            {
+              "fen": "8/7Q/8/8/8/8/4pk2/K7 w - - 0 1",
+              "text": "Against a centre or knight pawn the queen wins even with her king far away. Check or pin until the defending king must stand in front of its own pawn, and use each such moment to bring your king one step closer.",
+              "shapes": [
+                {
+                  "orig": "h7",
+                  "dest": "h4",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/7Q/8/8/8/8/4pk2/K7 w - - 0 1",
+              "text": "Win against the pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "rq-knight-pawn",
+          "title": "Knight pawn",
+          "steps": [
+            {
+              "fen": "7K/8/8/Q7/8/8/1pk5/8 w - - 0 1",
+              "text": "The same technique against a knight pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 30
+              }
+            }
+          ]
+        },
+        {
+          "id": "rq-rook-pawn",
+          "title": "Rook pawn",
+          "steps": [
+            {
+              "fen": "8/1K6/P7/4q3/8/8/8/6k1 w - - 0 1",
+              "text": "A rook pawn with its king beside it draws against a queen whose king is far away. When the defending king hides in the corner in front of its pawn, the queen cannot come closer without giving stalemate.",
+              "shapes": [
+                {
+                  "orig": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "a7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/1K6/P7/4q3/8/8/8/6k1 w - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "rq-bishop-pawn",
+          "title": "Bishop pawn",
+          "steps": [
+            {
+              "fen": "8/2P5/1K6/8/8/6q1/8/7k w - - 0 1",
+              "text": "A bishop pawn draws too: the defending king can step into the corner, because taking the pawn would leave it stalemated.",
+              "shapes": [
+                {
+                  "orig": "c7",
+                  "dest": "c8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/2P5/1K6/8/8/6q1/8/7k w - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 15
+              }
+            }
+          ]
+        },
+        {
+          "id": "rq-rook-pawn-king",
+          "title": "Rook pawn with your king near",
+          "steps": [
+            {
+              "fen": "8/8/8/4Q3/5K2/8/7p/6k1 w - - 0 1",
+              "text": "With your king close enough, the stalemate defence does not work. Bring the king in and mate.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "rq-bishop-pawn-king",
+          "title": "Bishop pawn with your king near",
+          "steps": [
+            {
+              "fen": "8/8/8/6K1/3Q4/8/4kp2/8 w - - 0 1",
+              "text": "Your king is near. Win against the bishop pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 20
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rook-pawn-vs-rook",
+      "group": "Rook endgames",
+      "title": "7th-Rank Rook Pawn",
+      "subtitle": "And passive rook vs rook",
+      "chapters": [
+        {
+          "id": "rr-king-far",
+          "title": "The skewer",
+          "steps": [
+            {
+              "fen": "7R/2k4P/8/8/8/7r/1K6/8 w - - 0 1",
+              "text": "Your rook is stuck in front of the rook pawn and the enemy rook is behind it. If the defending king is not on one of the two squares next to the pawn, move the rook away: when the enemy rook takes the pawn, a check along the 7th rank wins it.",
+              "shapes": [
+                {
+                  "orig": "h8",
+                  "dest": "a8",
+                  "brush": "green"
+                },
+                {
+                  "orig": "a8",
+                  "dest": "a7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b7",
+                  "brush": "red"
+                },
+                {
+                  "orig": "a7",
+                  "brush": "red"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7R/2k4P/8/8/8/7r/1K6/8 w - - 0 1",
+              "text": "Win the rook.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "rr-king-close",
+          "title": "The drawing squares",
+          "steps": [
+            {
+              "fen": "7R/1k5P/8/8/8/7r/1K6/8 b - - 0 1",
+              "text": "With the defending king next to the pawn's corner, the skewer does not work. Keep the king there and the rook behind the pawn.",
+              "shapes": [
+                {
+                  "orig": "a7",
+                  "brush": "green"
+                },
+                {
+                  "orig": "b7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "rr-extra-knight-pawn",
+          "title": "An extra knight pawn",
+          "steps": [
+            {
+              "fen": "7R/1k5P/8/8/7r/1P6/2K5/8 b - - 0 1",
+              "text": "An extra pawn on the far side does not always help. Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "rr-extra-centre-pawn",
+          "title": "An extra centre pawn",
+          "steps": [
+            {
+              "fen": "7R/1k5P/8/8/7r/4P3/2K5/8 w - - 0 1",
+              "text": "A second passed pawn in the centre forces the defending rook or king to give way.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "basic-rook-endgames",
+      "group": "Rook endgames",
+      "title": "Basic Rook Endgames",
+      "subtitle": "Lucena and Philidor",
+      "chapters": [
+        {
+          "id": "br-lucena",
+          "title": "Lucena: building a bridge",
+          "steps": [
+            {
+              "fen": "2K5/2P1k3/8/8/8/8/1r6/3R4 w - - 0 1",
+              "text": "In the Lucena position your king stands in front of its pawn on the 7th and the enemy king is cut off. To bring your king out without endless checks, lift the rook to the 4th rank first: when the checks come, the rook blocks them like a bridge.",
+              "shapes": [
+                {
+                  "orig": "d1",
+                  "dest": "d4",
+                  "brush": "green"
+                },
+                {
+                  "orig": "c8",
+                  "dest": "d7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "2K5/2P1k3/8/8/8/8/1r6/3R4 w - - 0 1",
+              "text": "Promote the pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-lucena-alt",
+          "title": "Lucena: other wins",
+          "steps": [
+            {
+              "fen": "1K6/1P1k4/8/8/8/8/r7/4R3 w - - 0 1",
+              "text": "The bridge is not the only way. With the rook far from the enemy king, you can also check it away first.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-reach-lucena-1",
+          "title": "Reaching the Lucena",
+          "steps": [
+            {
+              "fen": "8/8/4k3/2P5/2K5/8/7r/3R4 w - - 0 1",
+              "text": "Keep the enemy king cut off while your king and pawn advance together.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-reach-lucena-2",
+          "title": "Reaching the Lucena II",
+          "steps": [
+            {
+              "fen": "8/8/3k4/5P2/5K2/8/7r/4R3 w - - 0 1",
+              "text": "Same task on the other wing.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-philidor",
+          "title": "Philidor position",
+          "steps": [
+            {
+              "fen": "4k3/R7/7r/4P3/4K3/8/8/8 b - - 0 1",
+              "text": "The Philidor defence: keep your king on the queening square and your rook on the 6th rank so the enemy king cannot come forward. Once the pawn steps to the 6th, the king has no shelter left, so swing your rook back and check from behind.",
+              "shapes": [
+                {
+                  "orig": "h6",
+                  "dest": "b6",
+                  "brush": "green"
+                },
+                {
+                  "orig": "e8",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "4k3/R7/7r/4P3/4K3/8/8/8 b - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-avoid-philidor",
+          "title": "Avoiding the Philidor",
+          "steps": [
+            {
+              "fen": "3k4/6R1/8/2KP3r/8/8/8/8 w - - 0 1",
+              "text": "The defending rook is not on its best rank yet. Advance before it gets there.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-rook-vs-pawn",
+          "title": "Rook vs pawn",
+          "steps": [
+            {
+              "fen": "8/5K2/8/4k3/4p3/8/8/4R3 w - - 0 1",
+              "text": "A rook beats a pawn when your king can get in front of it in time. Approach from the side, shouldering the enemy king away from the pawn.",
+              "shapes": [
+                {
+                  "orig": "f7",
+                  "dest": "f5",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "8/5K2/8/4k3/4p3/8/8/4R3 w - - 0 1",
+              "text": "Win the pawn.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 20
+              }
+            }
+          ]
+        },
+        {
+          "id": "br-rook-vs-pawn-draw",
+          "title": "Rook vs pawn: the draw",
+          "steps": [
+            {
+              "fen": "8/8/2K5/8/8/2p5/3k4/7R b - - 0 1",
+              "text": "A far-advanced pawn with its king beside it holds the rook. Keep king and pawn together.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 15
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "intermediate-rook-endings",
+      "group": "Rook endgames",
+      "title": "Intermediate Rook Endings",
+      "subtitle": "Broaden your knowledge",
+      "chapters": [
+        {
+          "id": "ir-vancura",
+          "title": "Vančura position",
+          "steps": [
+            {
+              "fen": "7R/1k6/2r4P/3K4/8/8/8/8 b - - 0 1",
+              "text": "Against a rook pawn on the 6th with the enemy rook in front of it, attack the pawn from the side. Your rook ties the enemy rook to its pawn and checks the king whenever it comes to help.",
+              "shapes": [
+                {
+                  "orig": "c6",
+                  "dest": "h6",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7R/1k6/2r4P/3K4/8/8/8/8 b - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-long-side",
+          "title": "Long side defence",
+          "steps": [
+            {
+              "fen": "7r/1k1KR3/3P4/8/8/8/8/8 b - - 0 1",
+              "text": "Keep your king on the short side of the pawn and your rook on the long side. Checks from far away cannot be blocked by approaching.",
+              "shapes": [
+                {
+                  "orig": "h8",
+                  "dest": "h7",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "7r/1k1KR3/3P4/8/8/8/8/8 b - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-frontal",
+          "title": "Frontal defence",
+          "steps": [
+            {
+              "fen": "6r1/8/3k4/8/6P1/4R1K1/8/8 b - - 0 1",
+              "text": "While the pawn has not crossed the middle, a rook in front of it holds, as long as your king is not cut off too far.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-frontal-fails",
+          "title": "When the frontal defence fails",
+          "steps": [
+            {
+              "fen": "5r2/8/1k6/8/5P2/5K2/8/3R4 w - - 0 1",
+              "text": "The defending king is cut off by more than two files. Shelter your king with the rook and push.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-back-rank",
+          "title": "Back-rank defence",
+          "steps": [
+            {
+              "fen": "7R/8/8/1p6/8/k7/6r1/1K6 w - - 0 1",
+              "text": "Against a knight pawn, a king in front of the pawn with the rook ready to check from the side can hold.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-rook-pawn-win",
+          "title": "Rook and rook pawn",
+          "steps": [
+            {
+              "fen": "7K/3k3P/8/8/8/8/5R2/1r6 w - - 0 1",
+              "text": "The defending king is far away. Free your king from the corner.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-two-pawns",
+          "title": "Rook vs two pawns",
+          "steps": [
+            {
+              "fen": "6k1/8/P7/1PK5/8/8/8/r7 w - - 0 1",
+              "text": "Two connected passed pawns on the 6th rank beat a lone rook. Escort them with your king.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 30
+              }
+            }
+          ]
+        },
+        {
+          "id": "ir-saavedra",
+          "title": "Saavedra's study",
+          "steps": [
+            {
+              "fen": "8/8/1KP5/3r4/8/8/8/k7 w - - 0 1",
+              "text": "A famous study from 1895. Walk the king down the board to escape the checks, and when Black sets a stalemate trap, promote to a rook instead of a queen.",
+              "task": {
+                "kind": "line",
+                "moves": [
+                  "c6c7",
+                  "d5d6",
+                  "b6b5",
+                  "d6d5",
+                  "b5b4",
+                  "d5d4",
+                  "b4b3",
+                  "d4d3",
+                  "b3c2",
+                  "d3d4",
+                  "c7c8r",
+                  "d4a4",
+                  "c2b3"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "practical-rook-endings",
+      "group": "Rook endgames",
+      "title": "Practical Rook Endings",
+      "subtitle": "Rook endings with several pawns",
+      "chapters": [
+        {
+          "id": "pr-three-two",
+          "title": "Three vs two on one side",
+          "steps": [
+            {
+              "fen": "6k1/R4p2/6p1/7p/1r6/8/6PP/6K1 w - - 0 1",
+              "text": "An extra pawn with every pawn on one wing is usually a draw. Keep your pawns where they cannot be fixed as targets and your rook active.",
+              "shapes": [
+                {
+                  "orig": "h2",
+                  "dest": "h3",
+                  "brush": "green"
+                }
+              ],
+              "task": {
+                "kind": "read"
+              }
+            },
+            {
+              "fen": "6k1/R4p2/6p1/7p/1r6/8/6PP/6K1 w - - 0 1",
+              "text": "Hold the draw.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "pr-four-three",
+          "title": "Four vs three on one side",
+          "steps": [
+            {
+              "fen": "3R4/6k1/5pp1/4p2p/1r5P/6P1/5PK1/8 w - - 0 1",
+              "text": "Four against three on the same wing is still a draw with an active rook.",
+              "task": {
+                "kind": "play",
+                "goal": "draw",
+                "within": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "pr-outside-passer",
+          "title": "Outside passed pawn",
+          "steps": [
+            {
+              "fen": "r7/5pkp/6p1/P7/8/6P1/5PKP/R7 w - - 0 1",
+              "text": "Your rook belongs behind your passed pawn. Push it, and when the enemy king comes over to stop it, your king goes after the kingside pawns.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 50
+              }
+            }
+          ]
+        },
+        {
+          "id": "pr-connected",
+          "title": "Two connected pawns",
+          "steps": [
+            {
+              "fen": "6k1/3R4/8/5P2/4PK2/8/r7/8 w - - 0 1",
+              "text": "Two connected passed pawns with king and rook behind them win against a lone rook.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 30
+              }
+            }
+          ]
+        },
+        {
+          "id": "pr-gh-pawns",
+          "title": "Knight and rook pawns",
+          "steps": [
+            {
+              "fen": "5k2/1R6/8/6PP/6K1/8/8/r7 w - - 0 1",
+              "text": "Advance the pawns together and keep your king sheltered from checks.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 30
+              }
+            }
+          ]
+        },
+        {
+          "id": "pr-cut-off",
+          "title": "Cut off the king",
+          "steps": [
+            {
+              "fen": "8/6k1/8/8/Pr6/8/4K3/R7 w - - 0 1",
+              "text": "The defending king is far from the pawn. Keep it that way and promote.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        },
+        {
+          "id": "pr-fg-pawns",
+          "title": "Bishop and knight pawns",
+          "steps": [
+            {
+              "fen": "8/1R6/7k/8/6P1/5PK1/r7/8 w - - 0 1",
+              "text": "Two connected pawns against a lone rook: use the king and rook to escort them.",
+              "task": {
+                "kind": "play",
+                "goal": "win",
+                "within": 40
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

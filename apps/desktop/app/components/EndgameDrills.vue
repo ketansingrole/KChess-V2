@@ -8,26 +8,27 @@ import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { moveSquares } from '@kchess/rules/puzzle'
 import { playMoveSound } from '../utils/sound'
 import { useZenSurface } from '../composables/useZenSurface'
+import { useEngineMove } from '../composables/useEngineMove'
 import BoardViewToggles from './BoardViewToggles.vue'
+import TrainingList from './TrainingList.vue'
 
 /**
  * Endgames you must convert (or hold) against Stockfish at full strength, from positions checked to be
  * won or drawn. The result is kept on this computer only.
  */
+const emit = defineEmits<{ back: [] }>()
 const store = useKChessStore()
 const { settings, engineReady } = storeToRefs(store)
 useZenSurface(true)
+const { thinking, error: engineError, ask, cancel } = useEngineMove('endgame-drills')
 
 const firstDrill = ENDGAME_DRILLS[0]
 if (!firstDrill) throw new Error('No endgame drills available.')
 const drill = ref<EndgameDrill>(firstDrill)
 const moves = ref<string[]>([])
-const thinking = ref(false)
 const hint = ref<string | undefined>()
 const flipped = ref(false)
 const summary = ref<RunSummary | null>(null)
-const engineError = ref('')
-let epoch = 0
 let recorded = false
 
 const status = computed(() =>
@@ -55,13 +56,18 @@ const shapes = computed<DrawShape[]>(() => {
   const squares = moveSquares(status.value.fen, hint.value)
   return squares ? [{ orig: squares[0] as Key, dest: squares[1] as Key, brush: 'green' }] : []
 })
+const solved = (id: string): boolean => (summary.value?.best[id]?.score ?? 0) > 0
 const groups = computed(() =>
   (['Basic mates', 'Pawn endings', 'Rook endings'] as const).map((label) => ({
     label,
-    drills: ENDGAME_DRILLS.filter((entry) => entry.group === label),
+    items: ENDGAME_DRILLS.filter((entry) => entry.group === label).map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      done: solved(entry.id),
+      aside: entry.level,
+    })),
   })),
 )
-const solved = (id: string): boolean => (summary.value?.best[id]?.score ?? 0) > 0
 
 onMounted(async () => {
   summary.value = await window.kchess.runSummary('endgame')
@@ -69,38 +75,26 @@ onMounted(async () => {
 })
 
 function restart(next: EndgameDrill = drill.value): void {
-  epoch++
+  cancel()
   drill.value = next
   moves.value = []
   hint.value = undefined
-  thinking.value = false
-  engineError.value = ''
   recorded = false
   flipped.value = false
   void engine()
 }
 
+function pick(id: string): void {
+  restart(ENDGAME_DRILLS.find((entry) => entry.id === id))
+}
+
 /** Stockfish answers whenever it is its turn. */
 async function engine(): Promise<void> {
   if (status.value.over || status.value.turn === drill.value.player || thinking.value) return
-  const mine = epoch
-  thinking.value = true
-  try {
-    const reply = await window.kchess.bestMove([...moves.value], 'max', {
-      fen: drill.value.fen,
-      movetime: 350,
-    })
-    if (mine !== epoch) return
-    moves.value = [...moves.value, reply]
-    playMoveSound(sanFrom(drill.value.fen, moves.value).at(-1))
-  } catch (cause) {
-    if (mine === epoch) {
-      console.warn('[endgame-drills] Engine move failed:', cause)
-      engineError.value = cause instanceof Error ? cause.message : String(cause)
-    }
-  } finally {
-    if (mine === epoch) thinking.value = false
-  }
+  const reply = await ask(drill.value.fen, moves.value, 350)
+  if (!reply) return
+  moves.value = [...moves.value, reply]
+  playMoveSound(sanFrom(drill.value.fen, moves.value).at(-1))
 }
 
 function onMove(uci: string): void {
@@ -136,7 +130,7 @@ watch(
 
 function takeback(): void {
   if (thinking.value) return
-  epoch++
+  cancel()
   hint.value = undefined
   const kept = moves.value.slice(0, -1)
   while (
@@ -151,17 +145,8 @@ function takeback(): void {
 
 async function showHint(): Promise<void> {
   if (!yourTurn.value || thinking.value) return
-  const mine = epoch
-  try {
-    const best = await window.kchess.bestMove([...moves.value], 'max', {
-      fen: drill.value.fen,
-      movetime: 600,
-    })
-    if (mine === epoch && yourTurn.value) hint.value = best
-  } catch (cause) {
-    console.warn('[endgame-drills] Hint failed:', cause)
-    engineError.value = cause instanceof Error ? cause.message : String(cause)
-  }
+  const best = await ask(drill.value.fen, moves.value, 600, { busy: false })
+  if (best && yourTurn.value) hint.value = best
 }
 </script>
 
@@ -195,7 +180,17 @@ async function showHint(): Promise<void> {
 
     <div class="card side-panel puzzle-panel">
       <div class="flex items-start justify-between gap-2">
-        <h2 class="section-title">{{ drill.title }}</h2>
+        <div class="flex items-center gap-1 min-w-0">
+          <UButton
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            icon="i-lucide-chevron-left"
+            aria-label="All courses"
+            @click="emit('back')"
+          />
+          <h2 class="section-title">{{ drill.title }}</h2>
+        </div>
         <div class="flex gap-1"><BoardViewToggles /></div>
       </div>
       <p class="section-hint">
@@ -276,55 +271,7 @@ async function showHint(): Promise<void> {
       </p>
 
       <div class="panel-divider" />
-      <div v-for="group in groups" :key="group.label" class="drill-group">
-        <h3 class="section-title">{{ group.label }}</h3>
-        <button
-          v-for="entry in group.drills"
-          :key="entry.id"
-          type="button"
-          class="drill-item"
-          :class="{ active: entry.id === drill.id }"
-          :aria-current="entry.id === drill.id ? 'true' : undefined"
-          @click="restart(entry)"
-        >
-          <UIcon
-            :name="solved(entry.id) ? 'i-lucide-circle-check' : 'i-lucide-circle'"
-            :class="solved(entry.id) ? 'text-success' : 'muted'"
-          />
-          <span class="drill-title">{{ entry.title }}</span>
-          <span class="drill-level muted text-xs">{{ entry.level }}</span>
-        </button>
-      </div>
+      <TrainingList :groups="groups" :active-id="drill.id" @select="pick" />
     </div>
   </div>
 </template>
-
-<style scoped>
-.drill-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.drill-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font-size: 13px;
-  text-align: left;
-}
-.drill-level {
-  margin-left: auto;
-}
-.drill-item:hover {
-  background: var(--ui-bg-accented);
-}
-.drill-item.active {
-  border-color: var(--ui-primary);
-  background: color-mix(in srgb, var(--ui-primary) 10%, transparent);
-}
-</style>
