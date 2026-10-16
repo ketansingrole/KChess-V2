@@ -735,6 +735,23 @@ async fn rejects_a_symbolic_link_in_a_tar_archive() {
 }
 
 #[test]
+fn zip_archives_extract_named_files_and_directories() {
+    let root = tempfile::tempdir().unwrap();
+    let archive = root.path().join("engine.zip");
+    std::fs::write(
+        &archive,
+        zip_bytes(&[("stockfish/bin/stockfish.exe", b"engine")], None),
+    )
+    .unwrap();
+    let out = root.path().join("out");
+    extract(ArchiveKind::Zip, &archive, &out).unwrap();
+    assert_eq!(
+        std::fs::read(out.join("stockfish/bin/stockfish.exe")).unwrap(),
+        b"engine"
+    );
+}
+
+#[test]
 fn zip_archives_refuse_traversal_absolute_paths_and_links() {
     let root = tempfile::tempdir().unwrap();
     let archive = root.path().join("a.zip");
