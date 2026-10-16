@@ -40,8 +40,14 @@ const accuracy = computed(() =>
 )
 
 onMounted(async () => {
-  summary.value = await window.kchess.runSummary('squareColor')
+  // Keys work at once; the saved scores are optional and may arrive after the drill has closed.
   window.addEventListener('keydown', keydown)
+  try {
+    const loaded = await window.kchess.runSummary('squareColor')
+    if (mounted) summary.value = loaded
+  } catch (cause) {
+    console.warn('[square-color-trainer] Could not load saved runs:', cause)
+  }
 })
 onBeforeUnmount(() => {
   mounted = false

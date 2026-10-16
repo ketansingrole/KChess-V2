@@ -6,8 +6,8 @@ import ChessBoard from '../../app/components/ChessBoard.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
 import { EMPTY_FEN } from '@kchess/rules/coordinates'
-import { desktop, componentStubs } from './fixtures'
-import type { RunInput } from '@kchess/contracts/types'
+import { desktop, componentStubs, deferred, keydownListeners } from './fixtures'
+import type { RunInput, RunSummary } from '@kchess/contracts/types'
 
 const BoardStub = defineComponent({
   name: 'ChessBoard',
@@ -177,4 +177,32 @@ describe('chess board coordinates', () => {
     expect(wrapper.find('coords').exists()).toBe(false)
     wrapper.unmount()
   })
+})
+
+// The keyboard listener was added only after the saved scores loaded: after leaving the drill if
+// they were slow, and never if they failed.
+it('leaves no keyboard listener behind when its scores load after it closes', async () => {
+  const summary = deferred<RunSummary>()
+  desktop({ runSummary: () => summary.promise })
+  await useKChessStore().init()
+  const listeners = keydownListeners()
+  const wrapper = mount(CoordinatesTrainer, { global: { stubs } })
+  expect(listeners.count()).toBe(1)
+  wrapper.unmount()
+  summary.resolve({ kind: 'coordinates', best: {}, recent: [], total: 0 })
+  await flushPromises()
+  expect(listeners.count()).toBe(0)
+  listeners.restore()
+})
+
+it('keeps keyboard controls when its saved scores cannot be read', async () => {
+  desktop({ runSummary: () => Promise.reject(new Error('Disk unavailable')) })
+  await useKChessStore().init()
+  const listeners = keydownListeners()
+  const wrapper = mount(CoordinatesTrainer, { global: { stubs } })
+  await flushPromises()
+  expect(listeners.count()).toBe(1)
+  wrapper.unmount()
+  expect(listeners.count()).toBe(0)
+  listeners.restore()
 })

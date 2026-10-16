@@ -5,8 +5,9 @@ import { INITIAL_FEN } from '@kchess/rules/position'
 import { useGameHistory } from '../../app/stores/kchess/gameHistory'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
-import { useReviewStore } from '../../app/stores/review'
+import { REVIEW_CACHE_SIZE, useReviewStore } from '../../app/stores/review'
 import { analysisContext } from '@kchess/rules/analysisContext'
+import { reviewKey } from '@kchess/rules/review'
 import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
 import type {
   AnalysisRequest,
@@ -295,5 +296,58 @@ describe('review summaries for the visible page', () => {
     expect(reviews.summaries.Page2Aaa?.white.accuracy).toBe(95)
     expect(reviews.summaries.Gone0001).toBeUndefined()
     reviews.dispose()
+  })
+  // Every streamed review stayed in memory for the session, including a background review of
+  // every game. Reviews are stored by the core, so only recent ones and the one shown are kept.
+  it('keeps a bounded number of full reviews and always the one on the board', () => {
+    let stream: (update: ReviewUpdate) => void = () => {}
+    desktop({
+      reviewStatus: async () => ({ waiting: 0 }),
+      onReviewUpdate: (callback) => {
+        stream = callback
+        return vi.fn()
+      },
+      onReviewStatus: () => vi.fn(),
+    })
+    const reviews = useReviewStore()
+    reviews.listen()
+    reviews.pin('review0')
+    const total = REVIEW_CACHE_SIZE + 10
+    for (let i = 0; i < total; i++)
+      stream({
+        review: { key: `review${i}`, gameId: `Game${i}` } as ReviewUpdate['review'],
+        summary: summary(i),
+      })
+    expect(reviews.reviews.size).toBe(REVIEW_CACHE_SIZE)
+    expect(reviews.reviews.has('review0')).toBe(true)
+    expect(reviews.reviews.has('review1')).toBe(false)
+    expect(reviews.reviews.has(`review${total - 1}`)).toBe(true)
+    // The list's accuracy figures are small and stay.
+    expect(Object.keys(reviews.summaries)).toHaveLength(total)
+    reviews.dispose()
+  })
+
+  it('keeps the review on the analysis board while a background review streams others', async () => {
+    let stream: (update: ReviewUpdate) => void = () => {}
+    const stored = (key: string, fen: string, moves: string[]) =>
+      ({ key, fen, moves, gameId: key }) as ReviewUpdate['review']
+    desktop({
+      reviewStatus: async () => ({ waiting: 0 }),
+      reviewGet: async (fen, moves) => stored(reviewKey(fen, moves), fen, moves),
+      onReviewUpdate: (callback) => {
+        stream = callback
+        return vi.fn()
+      },
+      onReviewStatus: () => vi.fn(),
+    })
+    const analysis = useAnalysisStore()
+    analysis.loadPgn('1. e4 e5 *')
+    await flushPromises()
+    const shown = reviewKey(INITIAL_FEN, ['e2e4', 'e7e5'])
+    expect(analysis.review?.key).toBe(shown)
+    for (let i = 0; i < REVIEW_CACHE_SIZE + 10; i++)
+      stream({ review: stored(`other${i}`, INITIAL_FEN, ['d2d4']), summary: summary(i) })
+    expect(useReviewStore().reviews.size).toBe(REVIEW_CACHE_SIZE)
+    expect(analysis.review?.key).toBe(shown)
   })
 })

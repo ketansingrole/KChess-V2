@@ -18,7 +18,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 
 use crate::api;
 use crate::js;
@@ -221,6 +223,71 @@ pub(crate) fn position_after<S: AsRef<str>>(
         .ok_or_else(|| "the standard start is not a position".to_string())
 }
 
+/// Values derived from a setup and its moves, kept for the few games most recently asked about. A
+/// clock ticks several times a second and asks for the turn, the result and the draw each time;
+/// without this, every question replays the whole game. A changed setup or move list is a miss.
+pub(crate) struct Memo<T>(RefCell<VecDeque<(Setup, Vec<String>, T)>>);
+
+impl<T: Clone> Memo<T> {
+    /// Room for both clocked games (local and computer) and the moves just before a takeback.
+    const CAPACITY: usize = 4;
+
+    pub(crate) const fn new() -> Self {
+        Self(RefCell::new(VecDeque::new()))
+    }
+
+    /// The value for this setup and these moves; computed again only when they changed.
+    pub(crate) fn get(
+        &self,
+        setup: &Setup,
+        moves: &[String],
+        compute: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        {
+            let mut entries = self.0.borrow_mut();
+            let known = entries.iter().position(|(known_setup, known_moves, _)| {
+                known_setup == setup && known_moves.as_slice() == moves
+            });
+            // The most recently asked about is dropped last.
+            if let Some(entry) = known.and_then(|i| entries.remove(i)) {
+                let value = entry.2.clone();
+                entries.push_back(entry);
+                return Ok(value);
+            }
+        }
+        let value = compute()?;
+        let mut entries = self.0.borrow_mut();
+        if entries.len() == Self::CAPACITY {
+            entries.pop_front();
+        }
+        entries.push_back((setup.clone(), moves.to_vec(), value.clone()));
+        Ok(value)
+    }
+}
+
+thread_local! {
+    /// The position a setup and its moves reach.
+    pub(crate) static POSITIONS: Memo<Rc<Info>> = const { Memo::new() };
+    /// `setupDrawReason` of a setup and its moves.
+    pub(crate) static DRAWS: Memo<Option<String>> = const { Memo::new() };
+}
+
+/// `position::info` of the position a setup and its moves reach.
+pub(crate) fn position_info(setup: &Setup, moves: &[String]) -> Result<Rc<Info>, String> {
+    POSITIONS.with(|memo| {
+        memo.get(setup, moves, || {
+            Ok(Rc::new(crate::position::info(&position_after(
+                setup, moves,
+            )?)))
+        })
+    })
+}
+
+/// `setupDrawReason` of a setup and its moves.
+pub(crate) fn draw_reason(setup: &Setup, moves: &[String]) -> Result<Option<String>, String> {
+    DRAWS.with(|memo| memo.get(setup, moves, || setup_draw_reason(setup, moves)))
+}
+
 /// Call a rule this crate already provides through another module's dispatcher.
 fn rule(method: &str, args: &[Value]) -> Result<Value, String> {
     crate::records::call(method, args)
@@ -345,6 +412,41 @@ mod tests {
         };
         let start = position_after(&illegal, &[] as &[String]).expect("the standard start");
         assert_eq!(rules::make_fen(&start), INITIAL_FEN);
+    }
+
+    #[test]
+    fn a_memo_is_worked_out_again_when_the_setup_or_moves_change() {
+        let start = Setup {
+            variant: "standard".into(),
+            fen: INITIAL_FEN.into(),
+        };
+        let memo = Memo::new();
+        let computed = std::cell::Cell::new(0);
+        let get = |setup: &Setup, moves: &[String]| {
+            memo.get(setup, moves, || {
+                computed.set(computed.get() + 1);
+                Ok(moves.len())
+            })
+        };
+        let e4 = vec!["e2e4".to_string()];
+        assert_eq!(get(&start, &e4), Ok(1));
+        assert_eq!(get(&start, &e4), Ok(1));
+        assert_eq!(computed.get(), 1);
+        assert_eq!(get(&start, &[]), Ok(0));
+        assert_eq!(get(&start, &["d2d4".to_string()]), Ok(1));
+        let chess960 = Setup {
+            variant: "chess960".into(),
+            ..start.clone()
+        };
+        assert_eq!(get(&chess960, &["d2d4".to_string()]), Ok(1));
+        assert_eq!(computed.get(), 4);
+        // The four most recent are kept: e4 is still known, the empty start was dropped.
+        assert_eq!(get(&start, &e4), Ok(1));
+        assert_eq!(computed.get(), 4);
+        let extra = vec!["g1f3".to_string()];
+        assert_eq!(get(&start, &extra), Ok(1));
+        assert_eq!(get(&start, &[]), Ok(0));
+        assert_eq!(computed.get(), 6);
     }
 
     #[test]

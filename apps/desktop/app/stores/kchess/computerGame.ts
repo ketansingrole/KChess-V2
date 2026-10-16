@@ -62,7 +62,10 @@ export function useComputerGame(options: {
   onScopeDispose(() => game.dispose())
   watch([engineReady, allowed], ([ready, permitted]) => {
     game.availabilityChanged()
-    if (ready && permitted && saved) void game.computerTurn()
+    if (!ready || !permitted) return
+    // The game decides whether a turn is due. A cancelled search may still be settling, so ask
+    // again once it has; its reply no longer counts.
+    void game.computerTurn().then(() => game.computerTurn())
   })
   const localGame = computed(() => game.position)
   const localDraw = computed(() => game.draw)

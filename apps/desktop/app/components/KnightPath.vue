@@ -39,8 +39,9 @@ const starting = ref(false)
 const rounds = ref(0)
 let mounted = true
 const stage = ref<'idle' | 'running' | 'over'>('idle')
-const knight = ref<Square>('a1')
-const goal = ref<Square>('h8')
+// The idle board: a knight in the centre.
+const knight = ref<Square>('e4')
+const goal = ref<Square>('e4')
 const best = ref(0)
 const jumps = ref(0)
 const optimal = ref(0)
@@ -54,19 +55,26 @@ const run = useRunLength('kchess:knight-length', 60, () => void finish())
 const { length, untimed, runUntimed, clock, low, label: lengthLabel } = run
 const bestScore = computed(() => summary.value?.best[run.recordVariant(level.value)]?.score)
 const fen = computed(() => knightFen(knight.value))
+/** The knight is on the goal: the round is done and the next one is about to start. */
+const reachedGoal = computed(() => knight.value === goal.value)
 const dests = computed(
   () =>
-    new Map<SquareName, SquareName[]>([
-      [knight.value as SquareName, knightMoves(knight.value) as SquareName[]],
-    ]),
+    new Map<SquareName, SquareName[]>(
+      reachedGoal.value
+        ? []
+        : [[knight.value as SquareName, knightMoves(knight.value) as SquareName[]]],
+    ),
 )
 const shapes = computed<DrawShape[]>(() =>
   stage.value === 'running' ? [{ orig: goal.value, brush: 'green' }] : [],
 )
 
 onMounted(async () => {
-  summary.value = await window.kchess.runSummary('knightPath')
-  setBoard('e4', 'e4', 0)
+  try {
+    summary.value = await window.kchess.runSummary('knightPath')
+  } catch (cause) {
+    console.warn('[knight-path] Could not load saved runs:', cause)
+  }
 })
 
 function setBoard(from: Square, to: Square, shortest: number): void {
@@ -75,9 +83,19 @@ function setBoard(from: Square, to: Square, shortest: number): void {
   best.value = shortest
   jumps.value = 0
 }
-onBeforeUnmount(() => (mounted = false))
+/** Starts the next round after a reached goal; anything else that changes the round cancels it. */
+let advance: ReturnType<typeof setTimeout> | undefined
+function cancelAdvance(): void {
+  clearTimeout(advance)
+  advance = undefined
+}
+onBeforeUnmount(() => {
+  mounted = false
+  cancelAdvance()
+})
 
 function nextRound(): void {
+  cancelAdvance()
   rounds.value++
   const { min, max } = LEVELS[level.value]
   const round = knightChallenge(min, max)
@@ -110,7 +128,8 @@ function onMove(uci: string): void {
 
 /** Takes the jump when it is one; says whether it was. */
 function jump(to: Square): boolean {
-  if (stage.value !== 'running' || !knightMoves(knight.value).includes(to)) return false
+  if (stage.value !== 'running' || reachedGoal.value || !knightMoves(knight.value).includes(to))
+    return false
   knight.value = to
   jumps.value++
   playMoveSound()
@@ -123,7 +142,7 @@ function jump(to: Square): boolean {
     missedRounds.value++
     notice.value = `Reached it in ${jumps.value}; the shortest was ${best.value}.`
   }
-  setTimeout(() => stage.value === 'running' && nextRound(), 450)
+  advance = setTimeout(nextRound, 450)
   return true
 }
 
@@ -148,7 +167,7 @@ function voiceMissed(result: VoiceResult): void {
 }
 /** A spoken square is where the knight jumps to. */
 function voiceAnswer(result: VoiceResult): void {
-  if (stage.value !== 'running') return
+  if (stage.value !== 'running' || reachedGoal.value) return
   const square = spokenSquare(result.text)
   if (!square) {
     logAnswer(result, 'invalid')
@@ -166,6 +185,8 @@ function voiceAnswer(result: VoiceResult): void {
 }
 
 function skipRound(): void {
+  // The goal is already reached: only move on sooner.
+  if (reachedGoal.value) return nextRound()
   missedRounds.value++
   notice.value = `Skipped — the shortest path was ${best.value} jumps.`
   nextRound()
@@ -173,6 +194,7 @@ function skipRound(): void {
 
 async function finish(): Promise<void> {
   if (stage.value !== 'running') return
+  cancelAdvance()
   run.stop()
   stage.value = 'over'
   // An untimed score only grows with time, so it is never a record.

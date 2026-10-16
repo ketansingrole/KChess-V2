@@ -67,3 +67,51 @@ it('rejects a failed flush, preserves the board on a blocked switch, and recover
   expect(await analysis.openStudy(id, two!.id)).toBe(true)
   expect(studies.items[0]!.chapters[0]!.pgn).toContain('Keep my edits')
 })
+
+it('leaves a board loaded while "Save as study" was pending unlinked from the new study', async () => {
+  const { api } = desktop({ reviewGet: async () => null, onReviewUpdate: () => () => {} })
+  const analysis = useAnalysisStore()
+  const backend = api.studyCommand
+  const gate = deferred<undefined>()
+  api.studyCommand = vi.fn(async (...args: Parameters<typeof backend>) => {
+    await gate.promise
+    return backend(...args)
+  })
+  analysis.loadPgn('1. e4 *')
+  const saving = analysis.saveAsStudy('Original')
+  await flushPromises()
+  analysis.loadPgn('1. d4 *')
+  gate.resolve(undefined)
+  const id = await saving
+  await analysis.flushStudy()
+  expect(analysis.studyId).toBe('')
+  const original = (await api.library()).studies.find((s) => s.id === id)!
+  expect(original.name).toBe('Original')
+  expect(original.pgn).toContain('e4')
+  expect(original.pgn).not.toContain('d4')
+})
+
+it('keeps a study rename when an autosave is queued behind it', async () => {
+  const { api } = desktop({ reviewGet: async () => null, onReviewUpdate: () => () => {} })
+  const analysis = useAnalysisStore(),
+    studies = useStudyStore()
+  analysis.loadPgn('1. e4 *')
+  const id = await analysis.saveAsStudy('Old name')
+  const backend = api.studyCommand
+  const gate = deferred<undefined>()
+  api.studyCommand = vi.fn(async (...args: Parameters<typeof backend>) => {
+    if (args[0].op === 'rename') await gate.promise
+    return backend(...args)
+  })
+  const rename = studies.rename(id, 'New name')
+  await flushPromises()
+  analysis.root.comments = ['New notes']
+  await nextTick()
+  const save = analysis.flushStudy()
+  gate.resolve(undefined)
+  await rename
+  await save
+  const [study] = (await api.library()).studies
+  expect(study!.name).toBe('New name')
+  expect(study!.pgn).toContain('New notes')
+})

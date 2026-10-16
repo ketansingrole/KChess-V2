@@ -12,8 +12,13 @@ import type {
  * Game reviews, as the main process works them out: reviews already seen, the summaries the game
  * list shows, and the review queue's progress. Updates stream in from the main process.
  */
+/** Full reviews kept in memory, least recently seen dropped first; the core keeps them all. */
+export const REVIEW_CACHE_SIZE = 24
+
 export const useReviewStore = defineStore('review', () => {
   const reviews = shallowRef(new Map<string, StoredReview>())
+  /** The review on the board, kept however many others stream in. */
+  let pinned = ''
   /** Summaries of reviewed Lichess games, by game id, for the games the list has shown. */
   const summaries = ref<Record<string, ReviewSummary>>({})
   /** When each game's summary last streamed in, so an older lookup cannot overwrite it. */
@@ -24,8 +29,17 @@ export const useReviewStore = defineStore('review', () => {
   const subscriptions: (() => void)[] = []
 
   function remember(review: StoredReview): void {
-    reviews.value.set(review.key, review)
+    const cache = reviews.value
+    cache.delete(review.key)
+    cache.set(review.key, review)
+    for (const key of cache.keys()) {
+      if (cache.size <= REVIEW_CACHE_SIZE) break
+      if (key !== pinned) cache.delete(key)
+    }
     triggerRef(reviews)
+  }
+  function pin(key: string): void {
+    pinned = key
   }
 
   function receive(update: ReviewUpdate): void {
@@ -108,5 +122,16 @@ export const useReviewStore = defineStore('review', () => {
   }
   onScopeDispose(dispose)
 
-  return { dispose, reviews, summaries, status, listen, load, request, cancel, loadSummaries }
+  return {
+    dispose,
+    reviews,
+    pin,
+    summaries,
+    status,
+    listen,
+    load,
+    request,
+    cancel,
+    loadSummaries,
+  }
 })

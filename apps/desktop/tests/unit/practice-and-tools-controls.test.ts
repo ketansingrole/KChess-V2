@@ -7,8 +7,8 @@ import { useLocalGameStore } from '../../app/stores/local'
 import { useAnalysisStore } from '../../app/stores/analysis'
 import { useKChessStore } from '../../app/stores/kchess'
 import { squareColor, type Square } from '@kchess/rules/coordinates'
-import { desktop, componentStubs } from './fixtures'
-import type { RunInput } from '@kchess/contracts/types'
+import { desktop, componentStubs, deferred, keydownListeners } from './fixtures'
+import type { RunInput, RunSummary } from '@kchess/contracts/types'
 
 const InputStub = defineComponent({
   name: 'UInput',
@@ -76,6 +76,37 @@ describe('board editor FEN box', () => {
 })
 
 describe('square colour trainer', () => {
+  // The keyboard listener was added only after the saved scores loaded: after leaving the drill
+  // if they were slow, and never if they failed.
+  it('leaves no keyboard listener behind when its scores load after it closes', async () => {
+    const summary = deferred<RunSummary>()
+    desktop({ runSummary: () => summary.promise })
+    await useKChessStore().init()
+    const listeners = keydownListeners()
+    const wrapper = mount(SquareColorTrainer, { global: { stubs: componentStubs } })
+    expect(listeners.count()).toBeGreaterThan(0)
+    wrapper.unmount()
+    summary.resolve({ kind: 'squareColor', best: {}, recent: [], total: 0 })
+    await flushPromises()
+    expect(listeners.count()).toBe(0)
+    listeners.restore()
+  })
+
+  it('answers by keyboard when its saved scores cannot be read', async () => {
+    desktop({ runSummary: () => Promise.reject(new Error('Disk unavailable')) })
+    const wrapper = mount(SquareColorTrainer, { global: { stubs: componentStubs } })
+    await flushPromises()
+    const shown = () => wrapper.find('.drill-square').text() as Square
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Start'))!
+      .trigger('click')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: squareColor(shown())[0] }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('1 correct')
+    wrapper.unmount()
+  })
+
   it('scores the light and dark buttons and the L and D keys', async () => {
     const saveRun = vi.fn(async (run: RunInput) => ({
       isBest: false,

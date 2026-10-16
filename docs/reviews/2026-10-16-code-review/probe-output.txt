@@ -1,0 +1,186 @@
+
+ RUN  v4.1.11 /Users/ketansingrole/git/kchess
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: quit replays an obsolete failed save over a newer successful save
+[studies] saving the study library failed: save Error: Disk unavailable
+    at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:30:59
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: importing another PGN discards the only copy of failed study edits at quit
+[review] loading review failed: TypeError: window.kchess.onReviewUpdate is not a function
+    at listen (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/review.ts:43:38)
+    at Proxy.load (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/review.ts:81:7)
+    at Proxy.wrappedAction (file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/pinia@4.0.3_@vue+devtools-api@8.2.1_typescript@6.0.3_vue@3.5.43_typescript@6.0.3_/node_modules/pinia/dist/pinia.js:1124:14)
+    at immediate (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/analysis.ts:554:35)
+    at callWithErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:200:19)
+    at callWithAsyncErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:207:17)
+    at baseWatchOptions.call (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:890:47)
+    at job (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+reactivity@3.5.43/node_modules/@vue/reactivity/dist/reactivity.cjs.js:1930:18)
+    at callWithErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:200:33)
+    at flushJobs (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:409:9)
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: importing another PGN discards the only copy of failed study edits at quit
+[studies] saving the study library failed: save Error: Disk unavailable
+    at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:45:48
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: importing another PGN discards the only copy of failed study edits at quit
+[analysis] saving study failed: Error: Disk unavailable
+    at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:45:48
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: importing another PGN discards the only copy of failed study edits at quit
+[studies] saving the study library failed: save Error: Disk unavailable
+    at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:45:48
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: importing another PGN discards the only copy of failed study edits at quit
+[studies] quit flush keeps unsaved study changes: save Error: Disk unavailable
+    at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:45:48
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: importing another PGN discards the only copy of failed study edits at quit
+[library] Quit flush failed: AggregateError: Some studies could not be saved.
+    at flush (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/studies.ts:66:13)
+    at async Promise.allSettled (index 4)
+    at flushSavedDocuments (/Users/ketansingrole/git/kchess/apps/desktop/app/utils/library.ts:46:19)
+    at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:51:3
+    at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20 {
+  [errors]: [
+    Error: Disk unavailable
+        at /Users/ketansingrole/git/kchess/apps/desktop/tests/unit/audit-2026-10-16.test.ts:45:48
+        at processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/@vitest+runner@4.1.11/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+  ]
+}
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: save-as reply links a different document loaded while the save was pending
+[review] loading review failed: TypeError: window.kchess.onReviewUpdate is not a function
+    at listen (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/review.ts:43:38)
+    at Proxy.load (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/review.ts:81:7)
+    at Proxy.wrappedAction (file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/pinia@4.0.3_@vue+devtools-api@8.2.1_typescript@6.0.3_vue@3.5.43_typescript@6.0.3_/node_modules/pinia/dist/pinia.js:1124:14)
+    at immediate (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/analysis.ts:554:35)
+    at callWithErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:200:19)
+    at callWithAsyncErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:207:17)
+    at baseWatchOptions.call (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:890:47)
+    at job (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+reactivity@3.5.43/node_modules/@vue/reactivity/dist/reactivity.cjs.js:1930:18)
+    at callWithErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:200:33)
+    at flushJobs (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:409:9)
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: autosave queued behind a rename restores the old study name
+[review] loading review failed: TypeError: window.kchess.onReviewUpdate is not a function
+    at listen (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/review.ts:43:38)
+    at Proxy.load (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/review.ts:81:7)
+    at Proxy.wrappedAction (file:///Users/ketansingrole/git/kchess/node_modules/.pnpm/pinia@4.0.3_@vue+devtools-api@8.2.1_typescript@6.0.3_vue@3.5.43_typescript@6.0.3_/node_modules/pinia/dist/pinia.js:1124:14)
+    at immediate (/Users/ketansingrole/git/kchess/apps/desktop/app/stores/analysis.ts:554:35)
+    at callWithErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:200:19)
+    at callWithAsyncErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:207:17)
+    at baseWatchOptions.call (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:890:47)
+    at job (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+reactivity@3.5.43/node_modules/@vue/reactivity/dist/reactivity.cjs.js:1930:18)
+    at callWithErrorHandling (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:200:33)
+    at flushJobs (/Users/ketansingrole/git/kchess/node_modules/.pnpm/@vue+runtime-core@3.5.43/node_modules/@vue/runtime-core/dist/runtime-core.cjs.js:409:9)
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: late knight summary resets an already running challenge to an impossible zero-jump goal
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: late knight summary resets an already running challenge to an impossible zero-jump goal
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: a square-colour summary arriving after unmount installs an orphan keyboard listener
+[Vue warn]: Failed to resolve component: UKbd
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <SquareColorTrainer ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: repertoire trainer offers only the first chapter of a multi-chapter study
+[Vue warn]: Failed to resolve component: UEmpty
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <OpeningTrainer ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <OpeningTrainer ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: repertoire trainer offers only the first chapter of a multi-chapter study
+[Vue warn]: Failed to resolve component: UEmpty
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <OpeningTrainer ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <OpeningTrainer ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: reaching then skipping leaves a timer that replaces the next challenge
+[Vue warn]: Failed to resolve directive: board-fit 
+  at <KnightPath ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stdout | apps/desktop/tests/unit/audit-2026-10-16.test.ts > audit: measure the renderer clock path against game length
+AUDIT_CLOCK {"plies":10,"millisecondsPerTick":0.14859443333333314}
+AUDIT_CLOCK {"plies":40,"millisecondsPerTick":0.2598541666666658}
+AUDIT_CLOCK {"plies":160,"millisecondsPerTick":0.6617610999999992}
+
+ ✓ apps/desktop/tests/unit/audit-2026-10-16.test.ts (10 tests) 119ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  09:25:52
+   Duration  518ms (transform 208ms, setup 134ms, import 133ms, tests 119ms, environment 80ms)
+

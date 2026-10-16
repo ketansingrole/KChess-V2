@@ -3,12 +3,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::rc::Rc;
 
 use super::{
-    Clock, Done, Flow, Reads, Setup, Times, arg, board_result, number_text, opponent, optional_arg,
-    pgn_result, position_after, setup_draw_reason, timeout_winner, to_value, transition,
+    Clock, Done, Flow, Reads, Setup, Times, arg, board_result, draw_reason, number_text, opponent,
+    optional_arg, pgn_result, position_info, timeout_winner, to_value, transition,
 };
-use crate::position::{self, Info};
+use crate::position::Info;
 use crate::replay;
 
 /// Both sides' clocks, as a session keeps them.
@@ -100,12 +101,8 @@ impl Game {
         })
     }
 
-    fn position(&self) -> Result<shakmaty::variant::VariantPosition, String> {
-        position_after(&self.state.setup, &self.state.moves)
-    }
-
-    fn info(&self) -> Result<Info, String> {
-        Ok(position::info(&self.position()?))
+    fn info(&self) -> Result<Rc<Info>, String> {
+        position_info(&self.state.setup, &self.state.moves)
     }
 
     fn turn(&self) -> Result<&'static str, String> {
@@ -113,7 +110,7 @@ impl Game {
     }
 
     fn draw(&self) -> Result<Option<String>, String> {
-        setup_draw_reason(&self.state.setup, &self.state.moves)
+        draw_reason(&self.state.setup, &self.state.moves)
     }
 
     /// `result`: the decided result, else how the position ended, else null.

@@ -4,8 +4,8 @@ import { defineComponent } from 'vue'
 import KnightPath from '../../app/components/KnightPath.vue'
 import ChessBoard from '../../app/components/ChessBoard.vue'
 import { useKChessStore } from '../../app/stores/kchess'
-import { desktop, componentStubs } from './fixtures'
-import type { RunInput } from '@kchess/contracts/types'
+import { desktop, componentStubs, deferred } from './fixtures'
+import type { RunInput, RunSummary } from '@kchess/contracts/types'
 import { ALL_SQUARES } from '@kchess/rules/coordinates'
 import { knightFen, knightMoves } from '@kchess/rules/knight'
 import type { SquareName } from '@kchess/rules/position'
@@ -158,4 +158,97 @@ it('takes a typed square as the move on a drill board, and blindfolds the knight
   await board.find('form.board-move-form').trigger('submit')
   expect(board.emitted('move')).toEqual([[`${from}${reach[0]}`]])
   board.unmount()
+})
+
+/** The squares of a shortest knight route, after the start square. */
+function route(from: SquareName, goal: SquareName): SquareName[] {
+  const queue: SquareName[][] = [[from]]
+  const seen = new Set([from])
+  for (let path = queue.shift(); path; path = queue.shift()) {
+    const last = path.at(-1)!
+    if (last === goal) return path.slice(1)
+    for (const to of knightMoves(last) as SquareName[])
+      if (!seen.has(to)) {
+        seen.add(to)
+        queue.push([...path, to])
+      }
+  }
+  throw new Error(`No route from ${from} to ${goal}`)
+}
+const knightSquare = (fen: string) => ALL_SQUARES.find((s) => knightFen(s) === fen) as SquareName
+
+// The saved scores load while Start is usable; a late load reset the running challenge to the
+// idle board, "Reach e4 in 0 jumps".
+it('keeps a running challenge when the saved scores load late', async () => {
+  const summary = deferred<RunSummary>()
+  desktop({ runSummary: () => summary.promise })
+  await useKChessStore().init()
+  const wrapper = mount(KnightPath, { global: { stubs } })
+  await button(wrapper, 'Start').trigger('click')
+  const target = wrapper.find('.side-panel .knight-target').text()
+  const board = wrapper.findComponent(BoardStub)
+  const fen = board.props('fen')
+  summary.resolve({ kind: 'knightPath', best: {}, recent: [], total: 0 })
+  await flushPromises()
+  expect(wrapper.find('.side-panel .knight-target').text()).toBe(target)
+  expect(target).not.toContain('in 0 jumps')
+  expect(board.props('fen')).toBe(fen)
+  wrapper.unmount()
+})
+
+// The 450 ms advance after a reached goal outlived Skip and restarts, and replaced a later round.
+it('does not let the advance after a reached goal replace the next challenge', async () => {
+  vi.useFakeTimers()
+  desktop({
+    saveRun: async (run: RunInput) => ({
+      isBest: false,
+      summary: { kind: run.kind, best: {}, recent: [], total: 1 },
+    }),
+  })
+  await useKChessStore().init()
+  const wrapper = mount(KnightPath, { global: { stubs } })
+  await flushPromises()
+  const board = wrapper.findComponent(BoardStub)
+  const reachGoal = async () => {
+    let from = knightSquare(board.props('fen'))
+    for (const to of route(from, board.props('shapes')[0].orig)) {
+      board.vm.$emit('move', `${from}${to}`)
+      from = to
+      await flushPromises()
+    }
+  }
+  const jumpOnce = async () => {
+    const from = knightSquare(board.props('fen'))
+    const goal = board.props('shapes')[0].orig
+    const to = (knightMoves(from) as SquareName[]).find((s) => s !== goal)!
+    board.vm.$emit('move', `${from}${to}`)
+    await flushPromises()
+  }
+
+  await button(wrapper, 'Start').trigger('click')
+  await reachGoal()
+  const reached = knightSquare(board.props('fen'))
+  // The reached goal takes no more jumps while the next round is pending.
+  board.vm.$emit('move', `${reached}${knightMoves(reached)[0]}`)
+  await flushPromises()
+  expect(knightSquare(board.props('fen'))).toBe(reached)
+  await button(wrapper, 'Skip').trigger('click')
+  await jumpOnce()
+  const fen = board.props('fen')
+  expect(wrapper.text()).toContain('1 so far')
+  await vi.advanceTimersByTimeAsync(450)
+  expect(board.props('fen')).toBe(fen)
+  expect(wrapper.text()).toContain('1 so far')
+
+  // Ending and restarting the run cancels it too.
+  await reachGoal()
+  await button(wrapper, 'End run').trigger('click')
+  await flushPromises()
+  await button(wrapper, 'Play again').trigger('click')
+  await jumpOnce()
+  const restarted = board.props('fen')
+  await vi.advanceTimersByTimeAsync(450)
+  expect(board.props('fen')).toBe(restarted)
+  expect(wrapper.text()).toContain('1 so far')
+  wrapper.unmount()
 })

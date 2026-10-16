@@ -1,6 +1,8 @@
 import { it, expect, vi } from 'vitest'
 import { seedSaved } from './libraryBackend'
 import { flushPromises } from '@vue/test-utils'
+import { effectScope, nextTick, ref } from 'vue'
+import { useComputerGame } from '../../app/stores/kchess/computerGame'
 import { useKChessStore } from '../../app/stores/kchess'
 import { desktop, deferred } from './fixtures'
 
@@ -84,4 +86,63 @@ it('pauses a restored computer clock while startup recovery is unverified', asyn
   await vi.advanceTimersByTimeAsync(0)
   await vi.advanceTimersByTimeAsync(1200)
   expect(store.localResult?.detail).toBe('You ran out of time')
+})
+
+/** A fresh computer game (nothing restored) whose engine turn online play cancels. */
+function freshGame(bestMove: () => Promise<string>) {
+  desktop({ bestMove })
+  const scope = effectScope()
+  const allowed = ref(true)
+  const game = scope.run(() =>
+    useComputerGame({
+      engineReady: ref(true),
+      assistanceAllowed: () => allowed.value,
+      fail: vi.fn(),
+      recheckEngine: async () => {},
+      notifyDesktop: vi.fn(),
+    }),
+  )!
+  return { game, allowed, scope }
+}
+
+it('resumes a cancelled computer turn in a fresh game when assistance returns', async () => {
+  const first = deferred<string>()
+  const bestMove = vi
+    .fn()
+    .mockImplementationOnce(() => first.promise)
+    .mockResolvedValue('e7e5')
+  const { game, allowed, scope } = freshGame(bestMove)
+  game.makeMove('e2e4')
+  await nextTick()
+  expect(bestMove).toHaveBeenCalledTimes(1)
+  allowed.value = false
+  await nextTick()
+  first.resolve('c7c5')
+  await flushPromises()
+  allowed.value = true
+  await flushPromises()
+  expect(bestMove).toHaveBeenCalledTimes(2)
+  expect(game.localMoves.value).toEqual(['e2e4', 'e7e5'])
+  expect(game.localInteractive.value).toBe(true)
+  scope.stop()
+})
+
+it('resumes the computer turn when assistance returns before the cancelled reply settles', async () => {
+  const first = deferred<string>()
+  const bestMove = vi
+    .fn()
+    .mockImplementationOnce(() => first.promise)
+    .mockResolvedValue('e7e5')
+  const { game, allowed, scope } = freshGame(bestMove)
+  game.makeMove('e2e4')
+  await nextTick()
+  allowed.value = false
+  await nextTick()
+  allowed.value = true
+  await nextTick()
+  first.resolve('c7c5')
+  await flushPromises()
+  expect(bestMove).toHaveBeenCalledTimes(2)
+  expect(game.localMoves.value).toEqual(['e2e4', 'e7e5'])
+  scope.stop()
 })

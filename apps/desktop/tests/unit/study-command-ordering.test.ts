@@ -49,3 +49,41 @@ it('retains an earlier renderer recovery copy when the core reports damaged stud
   await loadLibrary()
   expect(localStorage.getItem('kchess:studies:v1')).toBe(recovery)
 })
+
+it('does not replay an obsolete failed save over newer study content at quit', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const backend = api.studyCommand
+  api.studyCommand = vi.fn(backend).mockRejectedValueOnce(new Error('Disk unavailable'))
+  await expect(studies.save('Study', '1. d4 *', id)).rejects.toThrow('Disk unavailable')
+  await studies.save('Study', '1. c4 *', id)
+  await studies.flush(true)
+  expect((await api.library()).studies[0]!.pgn).toContain('c4')
+})
+
+it('does not replay failed edits to a study or chapter removed since', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.saveChapters('Study', [
+    { name: 'One', pgn: '1. e4 *' },
+    { name: 'Two', pgn: '1. d4 *' },
+  ])
+  const two = studies.items[0]!.chapters[1]!.id
+  const other = await studies.save('Other', '1. Nf3 *')
+  const backend = api.studyCommand
+  const studyCommand = vi.fn(backend)
+  studyCommand.mockRejectedValueOnce(new Error('Disk unavailable'))
+  studyCommand.mockRejectedValueOnce(new Error('Disk unavailable'))
+  api.studyCommand = studyCommand
+  await expect(studies.saveChapter(id, two, '1. d4 d5 *')).rejects.toThrow()
+  await expect(studies.saveChapter(other, '', '1. Nf3 d5 *')).rejects.toThrow()
+  await studies.removeChapter(id, two)
+  await studies.remove(other)
+  const calls = studyCommand.mock.calls.length
+  await studies.flush(true)
+  expect(studyCommand).toHaveBeenCalledTimes(calls)
+  const library = await api.library()
+  expect(library.studies.map((study) => study.name)).toEqual(['Study'])
+  expect(library.studies[0]!.chapters).toHaveLength(1)
+})

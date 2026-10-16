@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { useAnalysisStore } from '../stores/analysis'
-import { useStudyStore } from '../stores/studies'
+import { chapterItems, useStudyStore } from '../stores/studies'
 const analysis = useAnalysisStore()
 const library = useStudyStore()
 const study = computed(() => analysis.study)
@@ -127,9 +127,7 @@ const menu = computed<DropdownMenuItem[][]>(() => [
       <USelectMenu
         :model-value="analysis.studyChapterId"
         value-key="value"
-        :items="
-          study.chapters.map((c, index) => ({ label: `${index + 1}. ${c.name}`, value: c.id }))
-        "
+        :items="chapterItems(study)"
         aria-label="Study chapter"
         placeholder="Select chapter"
         class="flex-1 min-w-0"

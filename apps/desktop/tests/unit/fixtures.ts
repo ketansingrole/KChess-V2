@@ -14,6 +14,31 @@ export const puzzle: Puzzle = {
 
 export { deferred } from '../../../../tests/fixtures/deferred'
 
+/** Counts the window keydown listeners added from now on and not removed after being added. */
+export function keydownListeners(): { count: () => number; restore: () => void } {
+  const add = vi.spyOn(window, 'addEventListener')
+  const remove = vi.spyOn(window, 'removeEventListener')
+  const keydown = (spy: typeof add | typeof remove, added: boolean) =>
+    spy.mock.calls.flatMap(([type, listener], i) =>
+      type === 'keydown' ? [{ listener, added, order: spy.mock.invocationCallOrder[i]! }] : [],
+    )
+  return {
+    count: () => {
+      const live = new Set<unknown>()
+      for (const { listener, added } of [...keydown(add, true), ...keydown(remove, false)].sort(
+        (a, b) => a.order - b.order,
+      ))
+        if (added) live.add(listener)
+        else live.delete(listener)
+      return live.size
+    },
+    restore: () => {
+      add.mockRestore()
+      remove.mockRestore()
+    },
+  }
+}
+
 export function desktop(overrides: Partial<DesktopApi> = {}) {
   let onEvent: (event: OnlineEvent) => void = () => {}
   const api = {

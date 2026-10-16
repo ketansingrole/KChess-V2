@@ -1,0 +1,269 @@
+import { expect, it, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, nextTick } from 'vue'
+import { desktop, deferred, componentStubs } from './fixtures'
+import { useStudyStore } from '../../app/stores/studies'
+import { useAnalysisStore } from '../../app/stores/analysis'
+import { flushSavedDocuments } from '../../app/utils/library'
+import { useKChessStore } from '../../app/stores/kchess'
+import KnightPath from '../../app/components/KnightPath.vue'
+import { ALL_SQUARES } from '@kchess/rules/coordinates'
+import { knightFen, knightMoves } from '@kchess/rules/knight'
+import { effectScope, ref } from 'vue'
+import { useComputerGame } from '../../app/stores/kchess/computerGame'
+import type { RunSummary } from '@kchess/contracts/types'
+import type { StudyCommandResult } from '@kchess/rules/library'
+import SquareColorTrainer from '../../app/components/SquareColorTrainer.vue'
+import OpeningTrainer from '../../app/components/OpeningTrainer.vue'
+import { REPERTOIRE_STUDY_KEY } from '../../app/utils/storageKeys'
+import { readFileSync } from 'node:fs'
+import { wasmBinding } from '@kchess/rules/engine'
+import { Position } from '@kchess/rules/position'
+import { setupDrawReason } from '@kchess/rules/chess'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+
+it('audit: quit replays an obsolete failed save over a newer successful save', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const backend = api.studyCommand
+  api.studyCommand = vi.fn(backend).mockRejectedValueOnce(new Error('Disk unavailable'))
+  await expect(studies.save('Study', '1. d4 *', id)).rejects.toThrow()
+  await studies.save('Study', '1. c4 *', id)
+  expect((await api.library()).studies[0]!.pgn).toContain('c4')
+  await studies.flush(true)
+  expect((await api.library()).studies[0]!.pgn).toContain('d4')
+})
+
+it('audit: importing another PGN discards the only copy of failed study edits at quit', async () => {
+  const { api } = desktop({ reviewGet: async () => null })
+  const analysis = useAnalysisStore()
+  analysis.loadPgn('1. e4 *')
+  const id = await analysis.saveAsStudy('Study')
+  analysis.root.comments = ['UNSAVED EDIT']
+  await nextTick()
+  api.studyCommand = vi.fn().mockRejectedValue(new Error('Disk unavailable'))
+  analysis.loadPgn('1. d4 *')
+  await flushPromises()
+  expect(analysis.studyId).toBe('')
+  expect(analysis.pgn()).not.toContain('UNSAVED EDIT')
+  expect((await api.library()).studies.find((s) => s.id === id)!.pgn).not.toContain('UNSAVED EDIT')
+  await expect(flushSavedDocuments()).rejects.toThrow()
+  expect((await api.library()).sessions.analysis!.pgn).not.toContain('UNSAVED EDIT')
+})
+
+it('audit: save-as reply links a different document loaded while the save was pending', async () => {
+  const { api } = desktop({ reviewGet: async () => null })
+  const analysis = useAnalysisStore()
+  const backend = api.studyCommand
+  const gate = deferred<StudyCommandResult>()
+  api.studyCommand = vi.fn().mockImplementationOnce(() => gate.promise)
+  analysis.loadPgn('1. e4 *')
+  const saving = analysis.saveAsStudy('Original')
+  await flushPromises()
+  analysis.loadPgn('1. d4 *')
+  gate.resolve(await backend({ op: 'save', name: 'Original', pgn: '1. e4 *' }, true))
+  const id = await saving
+  api.studyCommand = backend
+  await analysis.flushStudy()
+  expect((await api.library()).studies.find((s) => s.id === id)!.pgn).toContain('d4')
+})
+
+it('audit: autosave queued behind a rename restores the old study name', async () => {
+  const { api } = desktop({ reviewGet: async () => null })
+  const analysis = useAnalysisStore(),
+    studies = useStudyStore()
+  analysis.loadPgn('1. e4 *')
+  const id = await analysis.saveAsStudy('Old name')
+  const backend = api.studyCommand
+  const gate = deferred<StudyCommandResult>()
+  api.studyCommand = vi.fn(backend).mockImplementationOnce(() => gate.promise)
+  const rename = studies.rename(id, 'New name')
+  await flushPromises()
+  analysis.root.comments = ['New notes']
+  await nextTick()
+  const save = analysis.flushStudy()
+  gate.resolve(await backend({ op: 'rename', id, name: 'New name' }, true))
+  await rename
+  await save
+  expect((await api.library()).studies[0]!.name).toBe('Old name')
+  expect((await api.library()).studies[0]!.pgn).toContain('New notes')
+})
+
+const Board = defineComponent({
+  name: 'ChessBoard',
+  props: ['fen', 'shapes'],
+  emits: ['move'],
+  template: '<div />',
+})
+const stubs = {
+  ...componentStubs,
+  ChessBoard: Board,
+  VoiceInput: true,
+  RunLengthPicker: true,
+  BoardViewToggles: true,
+}
+function button(w: ReturnType<typeof mount>, name: string) {
+  return w.findAll('button').find((b) => b.text() === name)!
+}
+
+it('audit: a fresh computer game never resumes its cancelled turn when assistance returns', async () => {
+  const gate = deferred<string>()
+  const bestMove = vi.fn(() => gate.promise)
+  desktop({ bestMove })
+  const scope = effectScope()
+  const allowed = ref(true)
+  const game = scope.run(() =>
+    useComputerGame({
+      engineReady: ref(true),
+      assistanceAllowed: () => allowed.value,
+      fail: vi.fn(),
+      recheckEngine: async () => {},
+      notifyDesktop: vi.fn(),
+    }),
+  )!
+  game.makeMove('e2e4')
+  await nextTick()
+  expect(bestMove).toHaveBeenCalledTimes(1)
+  allowed.value = false
+  await nextTick()
+  gate.resolve('e7e5')
+  await flushPromises()
+  allowed.value = true
+  await nextTick()
+  await flushPromises()
+  expect(bestMove).toHaveBeenCalledTimes(1)
+  expect(game.localMoves.value).toEqual(['e2e4'])
+  expect(game.localInteractive.value).toBe(false)
+  scope.stop()
+})
+
+it('audit: late knight summary resets an already running challenge to an impossible zero-jump goal', async () => {
+  const gate = deferred<RunSummary>()
+  desktop({ runSummary: () => gate.promise })
+  await useKChessStore().init()
+  const wrapper = mount(KnightPath, { global: { stubs } })
+  await button(wrapper, 'Start').trigger('click')
+  expect(wrapper.text()).not.toContain('Reach e4 in 0 jumps')
+  gate.resolve({ kind: 'knightPath', best: {}, recent: [], total: 0 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('Reach e4 in 0 jumps')
+  wrapper.unmount()
+})
+
+it('audit: a square-colour summary arriving after unmount installs an orphan keyboard listener', async () => {
+  const gate = deferred<RunSummary>()
+  desktop({ runSummary: () => gate.promise })
+  await useKChessStore().init()
+  const wrapper = mount(SquareColorTrainer, { global: { stubs } })
+  wrapper.unmount()
+  const add = vi.spyOn(window, 'addEventListener')
+  gate.resolve({ kind: 'squareColor', best: {}, recent: [], total: 0 })
+  await flushPromises()
+  const added = add.mock.calls.filter(([name]) => name === 'keydown')
+  expect(added).toHaveLength(1)
+  for (const [name, fn] of added) window.removeEventListener(name, fn)
+})
+
+it('audit: repertoire trainer offers only the first chapter of a multi-chapter study', async () => {
+  desktop()
+  await useKChessStore().init()
+  const id = await useStudyStore().saveChapters('Repertoire', [
+    { name: 'Kings pawn', pgn: '1. e4 *' },
+    { name: 'Queens pawn', pgn: '1. d4 *' },
+  ])
+  localStorage.setItem(REPERTOIRE_STUDY_KEY, id)
+  const wrapper = mount(OpeningTrainer, {
+    global: { stubs: { ...stubs, UFormField: { template: '<div><slot /></div>' }, UTabs: true } },
+  })
+  await flushPromises()
+  wrapper.findComponent(Board).vm.$emit('move', 'd2d4')
+  await nextTick()
+  expect(wrapper.text()).toContain('Not in your repertoire. Expected e4.')
+  wrapper.unmount()
+})
+
+it('audit: reaching then skipping leaves a timer that replaces the next challenge', async () => {
+  vi.useFakeTimers()
+  desktop()
+  await useKChessStore().init()
+  const wrapper = mount(KnightPath, { global: { stubs } })
+  await flushPromises()
+  await button(wrapper, 'Start').trigger('click')
+  const board = wrapper.findComponent(Board)
+  let from = ALL_SQUARES.find((s) => knightFen(s) === board.props('fen'))!
+  const goal = board.props('shapes')[0].orig
+  const queue: string[][] = [[from]],
+    seen = new Set([from])
+  let route: string[] = []
+  while (queue.length) {
+    const path = queue.shift()!
+    if (path.at(-1) === goal) {
+      route = path
+      break
+    }
+    for (const to of knightMoves(path.at(-1)! as typeof from)) {
+      if (!seen.has(to)) {
+        seen.add(to)
+        queue.push([...path, to])
+      }
+    }
+  }
+  for (const to of route.slice(1)) {
+    board.vm.$emit('move', `${from}${to}`)
+    from = to as typeof from
+    await nextTick()
+  }
+  await button(wrapper, 'Skip').trigger('click')
+  const next = ALL_SQUARES.find((s) => knightFen(s) === board.props('fen'))!
+  const jump = knightMoves(next)[0]!
+  board.vm.$emit('move', `${next}${jump}`)
+  await nextTick()
+  expect(wrapper.text()).toContain('1 so far')
+  await vi.advanceTimersByTimeAsync(450)
+  expect(wrapper.text()).toContain('0 so far')
+  wrapper.unmount()
+})
+
+it('audit: measure the renderer clock path against game length', () => {
+  const wasm = wasmBinding(
+    new WebAssembly.Instance(
+      new WebAssembly.Module(readFileSync('apps/desktop/app/assets/rules/kchess.wasm')),
+    ).exports,
+  )
+  const invoke = (method: string, ...args: unknown[]) =>
+    JSON.parse(wasm.invoke(method, JSON.stringify(args)))
+  let pos = Position.initial()
+  const moves: string[] = []
+  let seed = 4016
+  for (let i = 0; i < 160; i++) {
+    const choices = pos.legalMoves()
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    const chosen = choices[seed % choices.length]!
+    const step = pos.playSan(chosen.san)!
+    if (step.position.isEnd() || setupDrawReason(STANDARD_SETUP, [...moves, step.uci])) break
+    moves.push(step.uci)
+    pos = step.position
+  }
+  for (const plies of [10, 40, moves.length]) {
+    const state = invoke('localState', {
+      moves: moves.slice(0, plies),
+      clock: { white: { minutes: 5, increment: 3 }, black: { minutes: 5, increment: 3 } },
+      times: { white: 300000, black: 300000 },
+    })
+    const rt = { turnStarted: 0 },
+      reads = { now: [100] }
+    const cycle = () => {
+      invoke('localExpire', state, rt, 100, {})
+      invoke('localView', state, rt, { view: 'remaining', color: 'white' }, reads)
+      invoke('localView', state, rt, { view: 'remaining', color: 'black' }, reads)
+    }
+    for (let i = 0; i < 5; i++) cycle()
+    const began = performance.now()
+    for (let i = 0; i < 30; i++) cycle()
+    console.info(
+      'AUDIT_CLOCK',
+      JSON.stringify({ plies, millisecondsPerTick: (performance.now() - began) / 30 }),
+    )
+  }
+})

@@ -3,13 +3,14 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::rc::Rc;
 
 use super::{
-    Clock, Done, Flow, Reads, Setup, Times, arg, board_result, engine_level, number_text, opponent,
-    optional_arg, outcome_winner, pgn_result, position_after, setup_draw_reason, timeout_winner,
+    Clock, Done, Flow, Reads, Setup, Times, arg, board_result, draw_reason, engine_level,
+    number_text, opponent, optional_arg, outcome_winner, pgn_result, position_info, timeout_winner,
     to_value, transition,
 };
-use crate::position::{self, Info};
+use crate::position::Info;
 use crate::replay;
 
 /// `ComputerState`: the session document and the engine turn's bookkeeping.
@@ -116,12 +117,8 @@ impl Game {
         })
     }
 
-    fn position(&self) -> Result<shakmaty::variant::VariantPosition, String> {
-        position_after(&self.state.setup, &self.state.moves)
-    }
-
-    fn info(&self) -> Result<Info, String> {
-        Ok(position::info(&self.position()?))
+    fn info(&self) -> Result<Rc<Info>, String> {
+        position_info(&self.state.setup, &self.state.moves)
     }
 
     fn turn(&self) -> Result<&'static str, String> {
@@ -129,7 +126,7 @@ impl Game {
     }
 
     fn draw(&self) -> Result<Option<String>, String> {
-        setup_draw_reason(&self.state.setup, &self.state.moves)
+        draw_reason(&self.state.setup, &self.state.moves)
     }
 
     /// `over`: resigned, flagged, the position ended, or a draw reached.
@@ -459,8 +456,7 @@ impl Game {
         let mut kept = self.state.moves.clone();
         kept.pop();
         while !kept.is_empty()
-            && position::info(&position_after(&self.state.setup, &kept)?).turn
-                != self.state.color.as_str()
+            && position_info(&self.state.setup, &kept)?.turn != self.state.color.as_str()
         {
             kept.pop();
         }

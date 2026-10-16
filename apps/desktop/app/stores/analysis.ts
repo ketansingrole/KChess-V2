@@ -216,9 +216,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
   /** Keep the board as a study (named), and save its edits to it from now on. */
   async function saveAsStudy(name: string): Promise<string> {
+    // Edits to this board keep the link; loading another document while saving does not.
+    const request = studyNavigation.next()
     await flushStudy()
     const text = pgn()
     const id = await studies.save(name, text)
+    // The new study stays in the library either way; only the board it was made from links to it.
+    if (!request.current()) return id
     studyId.value = id
     const saved = studies.items.find((s) => s.id === id)
     const chapterId = saved?.chapters[0]?.id
@@ -266,7 +270,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     // Counted as saved while the core writes it; a failure makes it unsaved again.
     studyPgn = text
     try {
-      await studies.save(open.name, text, open.id, studyChapterId.value)
+      await studies.saveChapter(open.id, studyChapterId.value, text)
       studySaveError.value = ''
     } catch (cause) {
       console.warn('[analysis] saving study failed:', cause)
@@ -542,6 +546,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /** The review shown: of the main line, or of the game before moves were added to it. */
   const reviewShown = ref('')
   const review = computed(() => reviews.reviews.get(reviewShown.value) ?? null)
+  watch(reviewShown, (key) => reviews.pin(key), { immediate: true })
   // Moves along a shared start are the same positions, so an earlier review of the line still
   // labels them correctly; it is only replaced once a review of this exact line turns up.
   watch(

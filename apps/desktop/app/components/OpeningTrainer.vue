@@ -5,7 +5,7 @@ import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { treeFromPgn, type TreeNode } from '@kchess/rules/analysisTree'
 import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
-import { useStudyStore } from '../stores/studies'
+import { chapterItems, useStudyStore } from '../stores/studies'
 import { playMoveSound } from '../utils/sound'
 import { REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
 import { useZenSurface } from '../composables/useZenSurface'
@@ -14,6 +14,8 @@ import BoardViewToggles from './BoardViewToggles.vue'
 /**
  * Drill a repertoire: any saved study is a tree of moves. KChess plays the other side's moves
  * from the tree (favouring the lines you get wrong) and you must answer with one of yours.
+ * One chapter can be drilled, or all of them: chapters from the same starting position are one
+ * tree, and each line starts from one of the starting positions.
  */
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
@@ -24,8 +26,33 @@ const studyId = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
 const color = useLocalStorage<'white' | 'black'>('kchess:repertoire-color', 'white')
 const stats = ref({ lines: 0, correct: 0, wrong: 0 })
 
+const ALL_CHAPTERS = 'all'
+const chapterId = useLocalStorage('kchess:repertoire-chapter', ALL_CHAPTERS)
+
 const study = computed(() => library.items.find((item) => item.id === studyId.value))
-const root = computed(() => (study.value ? treeFromPgn(study.value.pgn) : undefined))
+const chapter = computed(() => study.value?.chapters.find((c) => c.id === chapterId.value))
+/** The trees drilled: one per starting position among the chosen chapters. */
+const roots = computed(() => {
+  const byStart = new Map<string, TreeNode>()
+  for (const { pgn } of chapter.value ? [chapter.value] : (study.value?.chapters ?? [])) {
+    const tree = treeFromPgn(pgn)
+    if (!tree) continue
+    const same = byStart.get(tree.fen)
+    if (same) merge(same, tree)
+    else byStart.set(tree.fen, tree)
+  }
+  return [...byStart.values()]
+})
+/** Adds another chapter's moves (and comments) from the same position to a tree. */
+function merge(into: TreeNode, from: TreeNode): void {
+  for (const comment of from.comments ?? [])
+    if (!into.comments?.includes(comment)) (into.comments ??= []).push(comment)
+  for (const child of from.children) {
+    const same = into.children.find((entry) => entry.uci === child.uci)
+    if (same) merge(same, child)
+    else into.children.push(child)
+  }
+}
 const node = ref<TreeNode | null>(null)
 const feedback = ref<{ kind: 'ok' | 'wrong' | 'done' | 'info'; text: string } | null>(null)
 const hint = ref<DrawShape[]>([])
@@ -53,24 +80,24 @@ function weakness(start: TreeNode): number {
   }
   return total
 }
+/** One of the nodes, more often those with weak lines below them. */
+function pickWeak(nodes: TreeNode[]): TreeNode | undefined {
+  const weights = nodes.map((entry) => 1 + 2 * weakness(entry))
+  let pick = Math.random() * weights.reduce((sum, w) => sum + w, 0)
+  for (let i = 0; i < nodes.length; i++) {
+    const weight = weights[i]
+    const candidate = nodes[i]
+    if (weight === undefined || candidate === undefined) continue
+    pick -= weight
+    if (pick <= 0) return candidate
+  }
+  return nodes[0]
+}
 function opponentMove(): void {
   const current = node.value
   if (!current) return
   if (!current.children.length) return finishLine()
-  const weights = current.children.map((child) => 1 + 2 * weakness(child))
-  let pick = Math.random() * weights.reduce((sum, w) => sum + w, 0)
-  let child: TreeNode | undefined
-  for (let i = 0; i < current.children.length; i++) {
-    const weight = weights[i]
-    const candidate = current.children[i]
-    if (weight === undefined || candidate === undefined) continue
-    pick -= weight
-    if (pick <= 0) {
-      child = candidate
-      break
-    }
-  }
-  const next = child ?? current.children[0]
+  const next = pickWeak(current.children)
   if (!next) return finishLine()
   node.value = next
   playMoveSound(next.san)
@@ -84,15 +111,16 @@ function finishLine(): void {
 function startLine(): void {
   clearTimeout(reply)
   hint.value = []
-  if (!root.value) return
-  node.value = root.value
+  const start = pickWeak(roots.value)
+  if (!start) return
+  node.value = start
   feedback.value = {
     kind: 'info',
     text: `Play the ${color.value} moves of “${study.value?.name}”.`,
   }
   if (!yourTurn.value) reply = setTimeout(opponentMove, 400)
 }
-watch([studyId, color], () => startLine(), { immediate: true })
+watch([studyId, chapterId, color], () => startLine(), { immediate: true })
 onUnmounted(() => clearTimeout(reply))
 
 function play(uci: string): void {
@@ -139,6 +167,14 @@ function showAnswer(): void {
 function clearMisses(): void {
   library.clearMisses(missKey.value)
 }
+/** A chapter that is gone (or from another study) means all chapters. */
+const chapterChoice = computed({
+  get: () => (chapter.value ? chapterId.value : ALL_CHAPTERS),
+  set: (value: string) => (chapterId.value = value),
+})
+const chapterChoices = computed(() =>
+  study.value ? [{ label: 'All chapters', value: ALL_CHAPTERS }, ...chapterItems(study.value)] : [],
+)
 const studyItems = computed(() =>
   library.items.map((item) => ({ label: item.name, value: item.id })),
 )
@@ -194,6 +230,9 @@ const accuracy = computed(() => {
           placeholder="Choose a study"
           class="w-full"
         />
+      </UFormField>
+      <UFormField v-if="(study?.chapters.length ?? 0) > 1" label="Chapter">
+        <USelect v-model="chapterChoice" :items="chapterChoices" class="w-full" />
       </UFormField>
       <UFormField label="You play">
         <UTabs
