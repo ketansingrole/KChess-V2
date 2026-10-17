@@ -17,6 +17,9 @@ use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
 
+/// What a viewer is told when a feed's task panicked (the panic hook logged it).
+const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
+
 /* ── Spectator ── */
 
 #[derive(Default)]
@@ -89,18 +92,18 @@ impl Spectator {
         tokio::spawn(async move {
             inner.report(session, &token, "connecting", None);
             let lichess = Arc::clone(&inner.lichess);
-            let result = lichess
-                .client()
-                .policy()
-                .with_usage("", "watch", async {
-                    match &target {
-                        WatchTarget::Channel(channel) => {
-                            inner.follow_tv(channel, session, &token).await
-                        }
-                        WatchTarget::Game(id) => inner.follow_game(id, session, &token).await,
+            let followed = lichess.client().policy().with_usage("", "watch", async {
+                match &target {
+                    WatchTarget::Channel(channel) => {
+                        inner.follow_tv(channel, session, &token).await
                     }
-                })
-                .await;
+                    WatchTarget::Game(id) => inner.follow_game(id, session, &token).await,
+                }
+            });
+            // A panic ends the feed as a failure, so the viewer is offered a retry.
+            let result = crate::tasks::caught(followed)
+                .await
+                .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
             match result {
                 Ok(()) => inner.report(
                     session,
@@ -136,11 +139,14 @@ impl Spectator {
         let round_id = round_id.to_string();
         tokio::spawn(async move {
             let lichess = Arc::clone(&inner.lichess);
-            let result = lichess
-                .client()
-                .policy()
-                .with_usage("", "watch", inner.follow_round(&round_id, session, &token))
-                .await;
+            let followed = lichess.client().policy().with_usage(
+                "",
+                "watch",
+                inner.follow_round(&round_id, session, &token),
+            );
+            let result = crate::tasks::caught(followed)
+                .await
+                .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
             match result {
                 Ok(()) => {
                     if inner.is_current(session) {

@@ -160,6 +160,7 @@ impl Core {
         let claim = ProfileClaim::claim(&config.data_dir)?;
         let closed = Arc::new(AtomicBool::new(false));
         let host: Arc<dyn Host> = Arc::new(GatedHost::new(host, Arc::clone(&closed)));
+        crate::panics::report_to(&host);
         let database = Arc::new(Database::new(config.clone(), Arc::clone(&host)));
         let capabilities = Arc::new(Capabilities::new(Arc::clone(&host)));
         let battery = Battery::new(Arc::clone(&host));

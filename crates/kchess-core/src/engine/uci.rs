@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -209,11 +210,24 @@ impl UciController {
             ready_tx,
         });
         hub.register(&inner);
-        tokio::spawn(reap(Arc::clone(&inner), child, kill_requests));
-        tokio::spawn(write_commands(Arc::clone(&inner), stdin, write_queue));
-        tokio::spawn(read_lines(Arc::clone(&inner), stdout));
-        tokio::spawn(read_stderr(Arc::clone(&inner), stderr));
-        tokio::spawn(initialize(Arc::clone(&inner)));
+        // A panicking pipe task fails the engine, so its waiters are answered and it is stopped.
+        let guarded = |work: Pin<Box<dyn Future<Output = ()> + Send>>| {
+            let inner = Arc::clone(&inner);
+            crate::tasks::spawn_guarded(work, move || {
+                inner.fail(CoreError::new(
+                    "The engine stopped after an internal error.",
+                ));
+            });
+        };
+        guarded(Box::pin(reap(Arc::clone(&inner), child, kill_requests)));
+        guarded(Box::pin(write_commands(
+            Arc::clone(&inner),
+            stdin,
+            write_queue,
+        )));
+        guarded(Box::pin(read_lines(Arc::clone(&inner), stdout)));
+        guarded(Box::pin(read_stderr(Arc::clone(&inner), stderr)));
+        guarded(Box::pin(initialize(Arc::clone(&inner))));
         Ok(UciController { inner })
     }
 

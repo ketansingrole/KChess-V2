@@ -243,6 +243,7 @@ impl OnlineSession {
 
     /// `listen(open, signal, emit, options)`: keeps one stream open, validates its events and
     /// reconnects with backoff as `options` says, until it ends, fails permanently or is cancelled.
+    /// A panic ends it as a lost connection, so the game or lobby does not wait on a dead stream.
     async fn listen(
         &self,
         request: StreamRequest,
@@ -250,8 +251,29 @@ impl OnlineSession {
         emit: Emitter,
         options: Listen,
     ) {
+        let listened = crate::tasks::caught(self.listen_loop(&request, &cancel, &emit, &options));
+        if listened.await.is_err() {
+            self.listen_state(
+                &options,
+                &cancel,
+                "disconnected",
+                Some("Lost connection to Lichess. Reconnect to recover the game."),
+            );
+            if options.quiet.is_none() && !cancel.is_cancelled() {
+                self.emit_error(LOST_CONNECTION);
+            }
+        }
+    }
+
+    async fn listen_loop(
+        &self,
+        request: &StreamRequest,
+        cancel: &CancellationToken,
+        emit: &Emitter,
+        options: &Listen,
+    ) {
         let mut failures: u32 = 0;
-        self.listen_state(&options, &cancel, "connecting", None);
+        self.listen_state(options, cancel, "connecting", None);
         while !cancel.is_cancelled() {
             let mut received = false;
             // A malformed line ends the read the way a thrown error does: the line error wins.
@@ -259,7 +281,7 @@ impl OnlineSession {
             let mut line_error: Option<String> = None;
             let mut on_open = || {
                 if options.quiet.is_some() {
-                    self.listen_state(&options, &cancel, "connected", None);
+                    self.listen_state(options, cancel, "connected", None);
                 }
             };
             let mut on_line = |line: &str| -> Result<(), CoreError> {
@@ -273,7 +295,7 @@ impl OnlineSession {
                 };
                 match parsed {
                     Ok(Some(event)) => {
-                        self.listen_state(&options, &cancel, "connected", None);
+                        self.listen_state(options, cancel, "connected", None);
                         emit(event);
                     }
                     Ok(None) => {}
@@ -285,7 +307,7 @@ impl OnlineSession {
                 Ok(())
             };
             let outcome = self
-                .read_stream(&request, &line_cancel, &mut on_open, &mut on_line)
+                .read_stream(request, &line_cancel, &mut on_open, &mut on_line)
                 .await;
             let outcome = match line_error.take() {
                 Some(message) => Err(core(message)),
@@ -311,7 +333,7 @@ impl OnlineSession {
                         } else {
                             "disconnected"
                         };
-                        self.listen_state(&options, &cancel, phase, Some(&cause.message()));
+                        self.listen_state(options, cancel, phase, Some(&cause.message()));
                         if options.quiet.is_none() {
                             self.report(&cause);
                         }
@@ -329,8 +351,8 @@ impl OnlineSession {
             }
             if !options.reconnect {
                 self.listen_state(
-                    &options,
-                    &cancel,
+                    options,
+                    cancel,
                     "disconnected",
                     Some("The seek ended. Try finding a game again."),
                 );
@@ -346,8 +368,8 @@ impl OnlineSession {
                     ),
                 );
                 self.listen_state(
-                    &options,
-                    &cancel,
+                    options,
+                    cancel,
                     "disconnected",
                     Some("Lost connection to Lichess. Reconnect to recover the game."),
                 );
@@ -357,8 +379,8 @@ impl OnlineSession {
                 return;
             }
             self.listen_state(
-                &options,
-                &cancel,
+                options,
+                cancel,
                 "reconnecting",
                 Some("Connection interrupted. Reconnecting…"),
             );

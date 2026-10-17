@@ -9,7 +9,7 @@ use crate::host::Level;
 
 use crate::lichess::online::events::is_challenge_event;
 use crate::lichess::online::requests::{Emitter, Listen, Quiet};
-use crate::lichess::online::state::{Lane, OnlineSession};
+use crate::lichess::online::state::{Lane, OnlineSession, core};
 
 impl OnlineSession {
     /* ── The idle event stream ─────────────────────────────────────────── */
@@ -117,7 +117,10 @@ impl OnlineSession {
                 let this = this.clone();
                 let account = for_account.clone();
                 tokio::spawn(async move {
-                    if let Err(cause) = this.attach(&account, &game_id).await {
+                    let attached = crate::tasks::caught(this.attach(&account, &game_id))
+                        .await
+                        .unwrap_or_else(|_| Err(core("The game could not be opened.")));
+                    if let Err(cause) = attached {
                         this.log(
                             Level::Warn,
                             format!(

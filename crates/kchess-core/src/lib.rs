@@ -9,8 +9,10 @@ pub mod error;
 pub mod facade;
 pub mod host;
 pub mod lichess;
+mod panics;
 pub mod puzzles;
 pub mod store;
+mod tasks;
 pub mod usage;
 pub mod voice;
 
