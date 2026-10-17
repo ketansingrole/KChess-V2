@@ -15,6 +15,7 @@ import { EDITOR_GRAMMAR, spokenEdit, type PieceColor } from '@kchess/rules/voice
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 const { settings } = storeToRefs(useKChessStore())
 const analysis = useAnalysisStore()
@@ -84,10 +85,14 @@ function playLocal(): void {
   if (problem.value) return
   void navigateTo({ path: '/local', query: { fen: fen.value } })
 }
+const replaceAnalysis = useReplaceAnalysis()
 function analyse(): void {
   if (problem.value) return
-  analysis.analyseSetup(fen.value)
-  void navigateTo('/analysis')
+  const position = fen.value
+  replaceAnalysis(() => {
+    analysis.analyseSetup(position)
+    void navigateTo('/analysis')
+  })
 }
 async function copyFen(): Promise<void> {
   try {

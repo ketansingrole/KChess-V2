@@ -5,6 +5,7 @@
 //! Puzzles are read with `kchess_domain` (`puzzleFromApi`). Requests that need a login run through
 //! `Lichess::as_account`, so a refused login answers `Reply::NeedsReconnect`.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -76,6 +77,31 @@ fn readable_puzzle(raw: &Value) -> CoreResult<Value> {
         .ok_or_else(|| CoreError::new("Lichess sent a puzzle KChess could not read."))
 }
 
+/// Puzzles asked for per draw. Lichess serves its next unplayed puzzles until a result reaches it,
+/// so a puzzle left with Next (or drawn again before its result arrived) would come back first.
+const DRAW_BATCH: usize = 10;
+/// Puzzle ids remembered per account as recently drawn.
+const RECENT_DRAWS: usize = 50;
+
+/// The index in `ids` to show: the first not drawn recently, else the one drawn longest ago.
+/// Records it in `recent` (oldest first).
+fn pick_unseen(recent: &mut VecDeque<String>, ids: &[&str]) -> usize {
+    let age = |id: &str| recent.iter().position(|seen| seen == id);
+    let chosen = ids
+        .iter()
+        .position(|id| age(id).is_none())
+        .or_else(|| (0..ids.len()).min_by_key(|&index| age(ids[index])))
+        .unwrap_or(0);
+    if let Some(id) = ids.get(chosen).filter(|id| !id.is_empty()) {
+        recent.retain(|seen| seen != id);
+        recent.push_back((*id).to_string());
+        while recent.len() > RECENT_DRAWS {
+            recent.pop_front();
+        }
+    }
+    chosen
+}
+
 /// `puzzleNext(request)`: with an account, a puzzle chosen for its rating and one it has not seen;
 /// without, a random puzzle.
 pub async fn puzzle_next(
@@ -106,7 +132,7 @@ pub async fn puzzle_next(
         }));
     }
     let batch_query: Vec<(&str, String)> = {
-        let mut list = vec![("nb", "1".to_string())];
+        let mut list = vec![("nb", DRAW_BATCH.to_string())];
         list.extend(query.iter().skip(1).cloned());
         list
     };
@@ -117,17 +143,31 @@ pub async fn puzzle_next(
                 .client()
                 .get_json(&path, &batch_query, Some(&authorize(&token)), &cancel)
                 .await?;
-            let first = batch
+            let items = batch
                 .get("puzzles")
                 .and_then(Value::as_array)
-                .and_then(|items| items.first())
+                .filter(|items| !items.is_empty())
                 .ok_or_else(|| {
                     Failure::Core(CoreError::new(
                         "Lichess has no more puzzles for this theme and difficulty.",
                     ))
                 })?;
+            let ids: Vec<&str> = items
+                .iter()
+                .map(|item| {
+                    item.get("puzzle")
+                        .and_then(|puzzle| puzzle.get("id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                })
+                .collect();
+            let chosen = {
+                let mut drawn = lichess.drawn_puzzles();
+                let recent = drawn.entry(request.account.to_lowercase()).or_default();
+                pick_unseen(recent, &ids)
+            };
             Ok(PuzzleDraw {
-                puzzle: readable_puzzle(first)?,
+                puzzle: readable_puzzle(items.get(chosen).unwrap_or(&Value::Null))?,
                 glicko: batch.get("glicko").cloned(),
             })
         })

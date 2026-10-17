@@ -7,6 +7,7 @@ import type { LichessGame } from '@kchess/contracts/types'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import { judgmentCounts } from '../utils/review'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 type HistorySource = 'computer' | 'board' | 'lichess'
 const route = useRoute()
@@ -106,10 +107,21 @@ watch(visibleGames, (games) => void reviews.loadSummaries(games.map((game) => ga
   immediate: true,
 })
 const reviewer = ref<{ ply: number } | null>(null)
+const replaceAnalysis = useReplaceAnalysis()
 /** Review the game on the analysis board, opened at the move being looked at. */
 function openGameReview(): void {
   const game = reviewGame.value
-  if (!game || !analysis.loadPgn(reviewPgn.value, reviewer.value?.ply ?? 0)) return
+  if (!game) return
+  const pgn = reviewPgn.value
+  const ply = reviewer.value?.ply ?? 0
+  replaceAnalysis(() => loadGameReview(game, pgn, ply))
+}
+function loadGameReview(
+  game: NonNullable<typeof reviewGame.value>,
+  pgn: string,
+  ply: number,
+): void {
+  if (!analysis.loadPgn(pgn, ply)) return
   analysis.orientation = game.color
   analysis.origin = {
     gameId: game.id,

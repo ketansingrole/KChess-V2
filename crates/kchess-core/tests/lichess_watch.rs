@@ -144,6 +144,10 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
                 Some(rx) => Reply::Stream(rx),
                 None => Reply::Hang,
             }
+        } else if seen.header("Accept") != Some("application/json") {
+            // Lichess exports a game as PGN unless JSON is asked for; reading that as JSON
+            // failed every time, so TV moves stayed "Loading moves…".
+            Reply::Json(200, "[Event \"Rated rapid game\"]\n\n1. e4 *\n".into())
         } else {
             // The delayed export has only the first move so far.
             Reply::Json(

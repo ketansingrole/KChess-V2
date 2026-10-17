@@ -1266,7 +1266,9 @@ async fn search_once(
                 return Err(search_cancelled());
             }
             // Threads is constant within a job (1 in the background, the budget otherwise), so
-            // confirming it once avoids a round-trip per position.
+            // confirming it once avoids a round-trip per position. Chess960 is always on, as for
+            // analysis: castling is king-takes-rook in the moves, and an engine in standard mode
+            // reads that as an illegal move (the bundled engine then never answers `go`).
             let threads = if job.background.load(Ordering::SeqCst) {
                 1
             } else {
@@ -1275,7 +1277,7 @@ async fn search_once(
             let threads_text = threads.to_string();
             target
                 .uci
-                .ensure_options(&[("Threads", threads_text.as_str())])
+                .ensure_options(&[("Threads", threads_text.as_str()), ("UCI_Chess960", "true")])
                 .await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useGameArchiveStore, type ArchivedGame } from '../stores/gameArchive'
 import { useAnalysisStore } from '../stores/analysis'
 import { setupPgn } from '@kchess/rules/chess'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 const props = defineProps<{ source: 'computer' | 'board'; openGame?: string | null }>()
 const archive = useGameArchiveStore()
@@ -103,10 +104,15 @@ function pgn(game: ArchivedGame): string {
     Termination: game.result === '*' ? 'unterminated' : game.reason,
   })
 }
+const replaceAnalysis = useReplaceAnalysis()
 function review(): void {
-  if (!selected.value || !analysis.loadPgn(pgn(selected.value))) return
-  analysis.origin = null
-  store.selectPage('analysis')
+  const game = selected.value
+  if (!game) return
+  replaceAnalysis(() => {
+    if (!analysis.loadPgn(pgn(game))) return
+    analysis.origin = null
+    store.selectPage('analysis')
+  })
 }
 function timeLabel(control: string): string {
   if (control === '-') return 'No clock'

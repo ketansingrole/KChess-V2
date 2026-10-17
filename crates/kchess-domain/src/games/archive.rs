@@ -92,6 +92,15 @@ impl Archive {
             self.written.push("hadPlay");
             return Ok(());
         }
+        // The entry starts with its first move, not when the previous game was replaced: a
+        // session can wait days for that move, and History orders games by `startedAt`.
+        if !self.state.had_play {
+            let games = reads.games()?;
+            if entry_of(&games, &self.state.identity.id).is_none() {
+                self.state.identity.started_at = reads.now()?;
+                self.written.push("identity");
+            }
+        }
         self.state.had_play = true;
         self.written.push("hadPlay");
         let snapshot = reads.source()?;

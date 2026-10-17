@@ -83,6 +83,48 @@ describe('local game history', () => {
     expect(useGameArchiveStore().games.find((g) => g.id === id)?.finished).toBe(true)
     scope.stop()
   })
+  it('dates a game from its first move, also when a takeback emptied it', async () => {
+    // A computer game started after "New game" sat idle for days, with a takeback: its entry
+    // kept the old date and History (ordered by start) buried it, so it looked unsaved.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-14T02:16:41Z'))
+    const snapshot = ref<GameSnapshot>({
+      source: 'computer',
+      setup: STANDARD_SETUP,
+      moves: [],
+      white: 'You',
+      black: 'Stockfish (Club Player)',
+      result: '*',
+      reason: 'In progress',
+      timeControl: '-',
+    })
+    const scope = effectScope()
+    scope.run(() =>
+      useGameArchive(
+        () => snapshot.value,
+        () => snapshot.value.moves.length > 0,
+      ),
+    )
+    const played = Date.parse('2026-10-17T09:50:00Z')
+    vi.setSystemTime(played)
+    snapshot.value = { ...snapshot.value, moves: ['e2e4', 'e7e5'] }
+    await nextTick()
+    snapshot.value = { ...snapshot.value, moves: [] }
+    await nextTick()
+    expect(useGameArchiveStore().games).toHaveLength(0)
+    vi.setSystemTime(played + 60_000)
+    snapshot.value = { ...snapshot.value, moves: ['e2e4', 'e7e5'] }
+    await nextTick()
+    snapshot.value = { ...snapshot.value, result: '0-1', reason: 'You resigned' }
+    await nextTick()
+    await useGameArchiveStore().flush()
+    const games = (await window.kchess.library()).games
+    expect(games).toHaveLength(1)
+    expect(games[0]).toMatchObject({ moves: ['e2e4', 'e7e5'], result: '0-1', finished: true })
+    expect(games[0]!.startedAt).toBe(played + 60_000)
+    scope.stop()
+    vi.useRealTimers()
+  })
   it('preserves custom starts and exports result headers, rejecting illegal saved moves', async () => {
     const board = useLocalGameStore()
     board.start({ variant: 'standard', fen: '7k/8/8/8/8/8/8/KR6 w - - 0 1' })

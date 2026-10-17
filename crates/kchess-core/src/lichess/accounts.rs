@@ -10,7 +10,7 @@
 //! sessions and challenges (`online.rs`, `challenges.rs`), tournaments, and the puzzle, study,
 //! watch and lookup services in their own modules.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -316,6 +316,8 @@ pub struct Lichess {
     last_following_epoch: AtomicU64,
     syncs: Mutex<HashMap<String, (u64, SyncOutcome)>>,
     next_sync: AtomicU64,
+    /// Puzzle ids recently drawn per account, oldest first (see `puzzles::puzzle_next`).
+    drawn_puzzles: Mutex<HashMap<String, VecDeque<String>>>,
 }
 
 type SyncOutcome = watch::Receiver<Option<Result<usize, CoreError>>>;
@@ -347,7 +349,13 @@ impl Lichess {
             last_following_epoch: AtomicU64::new(0),
             syncs: Mutex::new(HashMap::new()),
             next_sync: AtomicU64::new(0),
+            drawn_puzzles: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Puzzle ids recently drawn per lowercased account, oldest first.
+    pub(crate) fn drawn_puzzles(&self) -> MutexGuard<'_, HashMap<String, VecDeque<String>>> {
+        lock(&self.drawn_puzzles)
     }
 
     pub fn client(&self) -> &LichessClient {

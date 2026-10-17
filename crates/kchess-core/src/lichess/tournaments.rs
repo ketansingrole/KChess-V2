@@ -966,22 +966,11 @@ async fn arena_detail(
     let object = raw
         .as_object()
         .ok_or_else(|| Failure::Core(CoreError::new("Lichess sent an unreadable tournament.")))?;
-    let clock = clock_of(object.get("clock").unwrap_or(&Value::Null)).ok_or_else(|| {
+    let summary = arena_detail_summary(id, &raw).ok_or_else(|| {
         Failure::Core(CoreError::new(
             "Lichess sent an unreadable tournament clock.",
         ))
     })?;
-    let variant_key = match object.get("variant") {
-        Some(Value::String(key)) => key.clone(),
-        _ => "standard".to_string(),
-    };
-    let status = if truthy(object.get("isFinished")) {
-        "finished"
-    } else if truthy(object.get("secondsToStart")) {
-        "created"
-    } else {
-        "started"
-    };
     let standing: Vec<Standing> = object
         .get("standing")
         .and_then(|standing| standing.get("players"))
@@ -1017,40 +1006,6 @@ async fn arena_detail(
         })
     });
     let extras = arena_extras(&raw);
-    let (playable, problem) = compatibility(&clock, &variant_key);
-    let summary = TournamentSummary {
-        id: id.to_string(),
-        system: ARENA.into(),
-        name: first_chars(
-            &object
-                .get("fullName")
-                .filter(|name| !name.is_null())
-                .map(js_text)
-                .unwrap_or_else(|| id.to_string()),
-            120,
-        ),
-        status: status.into(),
-        variant: variant_key.clone(),
-        variant_name: variant_key,
-        // `raw.rated !== false`.
-        rated: object.get("rated") != Some(&Value::Bool(false)),
-        clock,
-        minutes: num_at(&raw, "minutes"),
-        round: None,
-        nb_rounds: None,
-        nb_players: num_at(&raw, "nbPlayers").unwrap_or_else(|| Number::from(0)),
-        starts_at: object
-            .get("startsAt")
-            .map(|value| parse_date(&js_text(value)))
-            .unwrap_or(0),
-        finishes_at: None,
-        team: None,
-        playable,
-        problem,
-        perf: None,
-        freq: None,
-        max_rating: None,
-    };
     Ok(TournamentDetail {
         summary,
         description: object
@@ -1069,6 +1024,59 @@ async fn arena_detail(
         duels: extras.duels,
         podium: extras.podium,
         stats: extras.stats,
+    })
+}
+
+/// The summary of one arena as Lichess sends it on its own (`GET` or `POST /api/tournament`):
+/// a string variant, an ISO start date and `isFinished`/`secondsToStart` in place of a status.
+/// None when its clock is unreadable.
+fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
+    let object = raw.as_object()?;
+    let clock = clock_of(object.get("clock").unwrap_or(&Value::Null))?;
+    let variant_key = match object.get("variant") {
+        Some(Value::String(key)) => key.clone(),
+        _ => "standard".to_string(),
+    };
+    let status = if truthy(object.get("isFinished")) {
+        "finished"
+    } else if truthy(object.get("secondsToStart")) {
+        "created"
+    } else {
+        "started"
+    };
+    let (playable, problem) = compatibility(&clock, &variant_key);
+    Some(TournamentSummary {
+        id: id.to_string(),
+        system: ARENA.into(),
+        name: first_chars(
+            &object
+                .get("fullName")
+                .filter(|name| !name.is_null())
+                .map(js_text)
+                .unwrap_or_else(|| id.to_string()),
+            120,
+        ),
+        status: status.into(),
+        variant: variant_key.clone(),
+        variant_name: variant_key,
+        // `raw.rated !== false`.
+        rated: object.get("rated") != Some(&Value::Bool(false)),
+        clock,
+        minutes: num_at(raw, "minutes"),
+        round: None,
+        nb_rounds: None,
+        nb_players: num_at(raw, "nbPlayers").unwrap_or_else(|| Number::from(0)),
+        starts_at: object
+            .get("startsAt")
+            .map(|value| parse_date(&js_text(value)))
+            .unwrap_or(0),
+        finishes_at: None,
+        team: None,
+        playable,
+        problem,
+        perf: None,
+        freq: None,
+        max_rating: None,
     })
 }
 
@@ -1259,11 +1267,23 @@ pub async fn create_tournament(
                 .client()
                 .post_form::<Value>("/api/tournament", &pairs, Some(&authorize(&token)), &cancel)
                 .await?;
-            arena_summary(&raw).ok_or_else(|| {
-                Failure::Core(CoreError::new(
-                    "Lichess created the arena but sent details KChess could not read.",
-                ))
-            })
+            // Lichess answers with the arena on its own (as `GET /api/tournament/{id}` does), not
+            // with an entry of the arena list.
+            let id = raw
+                .get("id")
+                .and_then(|id| text(id, 12))
+                .unwrap_or_default();
+            arena_summary(&raw)
+                .or_else(|| {
+                    (!id.is_empty())
+                        .then(|| arena_detail_summary(id, &raw))
+                        .flatten()
+                })
+                .ok_or_else(|| {
+                    Failure::Core(CoreError::new(
+                        "Lichess created the arena but sent details KChess could not read.",
+                    ))
+                })
         })
         .await
         .map_err(Failure::from)

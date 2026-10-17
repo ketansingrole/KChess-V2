@@ -20,6 +20,7 @@ import { fen as fenOf, navigatePly, setupPgn } from '@kchess/rules/chess'
 import { positionProblem } from '@kchess/rules/boardEditor'
 import { useLocalGameStore, type LocalClock } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()
@@ -172,11 +173,14 @@ const voiceActive = computed(
     mode.value === 'board' && !game.over && game.atLive && !formOpen.value && !confirmOpen.value,
 )
 
+const replaceAnalysis = useReplaceAnalysis()
 function analyse(): void {
   if (game.setup.variant !== 'standard') return
-  if (!analysis.loadPgn(setupPgn(game.setup, game.moves), game.shownPly)) return
-  analysis.origin = { white: 'White', black: 'Black' }
-  store.selectPage('analysis')
+  replaceAnalysis(() => {
+    if (!analysis.loadPgn(setupPgn(game.setup, game.moves), game.shownPly)) return
+    analysis.origin = { white: 'White', black: 'Black' }
+    store.selectPage('analysis')
+  })
 }
 const toast = useToast()
 async function copyPgn(): Promise<void> {

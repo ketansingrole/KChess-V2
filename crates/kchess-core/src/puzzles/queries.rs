@@ -272,7 +272,7 @@ fn require_installed(db: &Connection) -> Result<(), String> {
         .optional()
         .map_err(sql_error)?;
     found.ok_or_else(|| {
-        "Download the puzzle database first (Settings → Data & storage, or the Rush tab)."
+        "Download the puzzle database first (Settings → Offline downloads, or the Rush tab)."
             .to_string()
     })
 }
@@ -747,7 +747,7 @@ mod tests {
         .expect_err("not installed");
         assert_eq!(
             error,
-            "Download the puzzle database first (Settings → Data & storage, or the Rush tab)."
+            "Download the puzzle database first (Settings → Offline downloads, or the Rush tab)."
         );
     }
 

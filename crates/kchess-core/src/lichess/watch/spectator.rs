@@ -16,6 +16,7 @@ use super::{
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
+use crate::lichess::client::parse_json;
 
 /// What a viewer is told when a feed's task panicked (the panic hook logged it).
 const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
@@ -533,12 +534,14 @@ impl Inner {
             ("evals", "false".to_string()),
             ("opening", "false".to_string()),
         ];
-        let raw: Value = self
+        // Lichess exports a game as PGN unless the request asks for JSON.
+        let text = self
             .lichess
             .client()
-            .get_json(&path, &query, None, token)
+            .get_text(&path, &query, "application/json", None, token)
             .await
             .map_err(CoreError::from)?;
+        let raw: Value = parse_json(&text, &path).map_err(CoreError::from)?;
         Ok(parse_tv_game(&raw))
     }
 

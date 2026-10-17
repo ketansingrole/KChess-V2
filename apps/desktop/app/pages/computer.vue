@@ -18,6 +18,7 @@ import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
 import type { VoiceOutcome } from '@kchess/contracts/types'
 import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/rules/engineLevels'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()
@@ -296,18 +297,21 @@ function hearMove(result: VoiceResult): void {
 }
 const analysis = useAnalysisStore()
 /** Review the game on the analysis board, opened at the move being looked at. */
+const replaceAnalysis = useReplaceAnalysis()
 function reviewGame(): void {
   if (!canReview.value) return
-  if (!analysis.loadPgn(setupPgn(localSetup.value, localMoves.value), localPly.value)) return
-  analysis.orientation = userColor.value
-  const computer = `Stockfish (${engineLevelLabel(level.value)})`
-  analysis.origin = {
-    white: userColor.value === 'white' ? 'You' : computer,
-    black: userColor.value === 'black' ? 'You' : computer,
-    player: userColor.value,
-  }
-  analysis.startReview()
-  selectPage('analysis')
+  replaceAnalysis(() => {
+    if (!analysis.loadPgn(setupPgn(localSetup.value, localMoves.value), localPly.value)) return
+    analysis.orientation = userColor.value
+    const computer = `Stockfish (${engineLevelLabel(level.value)})`
+    analysis.origin = {
+      white: userColor.value === 'white' ? 'You' : computer,
+      black: userColor.value === 'black' ? 'You' : computer,
+      player: userColor.value,
+    }
+    analysis.startReview()
+    selectPage('analysis')
+  })
 }
 
 /** The analysis board and reviews play standard rules (from any position). */

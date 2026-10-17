@@ -319,6 +319,7 @@ function toggleMaximize(event?: MouseEvent): void {
         :title="asked?.title ?? ''"
         :description="asked?.description"
         :confirm-label="asked?.label"
+        :color="asked?.color"
         @confirm="asked?.run()"
       />
     </div>

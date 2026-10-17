@@ -7,6 +7,8 @@ mod fixtures;
 
 use std::sync::Arc;
 
+use serde_json::{Value, json};
+
 use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, lichess_service, serve};
 use kchess_core::lichess::accounts::Reply as Outcome;
 use kchess_core::lichess::puzzles::{PuzzleRequest, PuzzleSolveRequest, puzzle_next, puzzle_solve};
@@ -163,7 +165,7 @@ async fn a_signed_in_batch_without_puzzles_says_so() {
     let error = puzzle_next(&lichess, &request).await.unwrap_err();
     assert!(error.message.contains("no more puzzles"));
     let sent = &fixture.requests()[0];
-    assert_eq!(sent.query("nb").as_deref(), Some("1"));
+    assert_eq!(sent.query("nb").as_deref(), Some("10"));
     assert_eq!(sent.query("color").as_deref(), Some("white"));
 }
 
@@ -181,4 +183,42 @@ async fn an_answer_that_is_not_a_puzzle_is_refused() {
     assert!(error.message.contains("could not read"));
     // Anonymous training sends no login.
     assert!(fixture.requests()[0].header("authorization").is_none());
+}
+
+/// A puzzle `puzzleFromApi` reads, as an entry of a Lichess batch.
+fn batch_entry(id: &str) -> Value {
+    json!({
+        "game": {},
+        "puzzle": { "id": id, "rating": 1500, "solution": ["f2f4"], "themes": [], "initialPly": 0 }
+    })
+}
+
+#[tokio::test]
+async fn next_moves_on_while_lichess_still_serves_the_puzzle_just_shown() {
+    // Lichess serves its next unplayed puzzles until a result reaches it: Next on a puzzle left
+    // unfinished (or before its result arrived) drew the same puzzle again, so Next looked dead.
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({ "puzzles": [batch_entry("AAAAA"), batch_entry("BBBBB"), batch_entry("CCCCC")] })
+                .to_string(),
+        )
+    })
+    .await;
+    let lichess = service(&fixture.base);
+    let request = PuzzleRequest {
+        account: "Alice".into(),
+        angle: "pawnEndgame".into(),
+        difficulty: "harder".into(),
+        color: None,
+    };
+    let mut drawn = Vec::new();
+    for _ in 0..4 {
+        let Outcome::Done(draw) = puzzle_next(&lichess, &request).await.unwrap() else {
+            panic!("a puzzle");
+        };
+        drawn.push(draw.puzzle["id"].as_str().unwrap().to_string());
+    }
+    // Each Next shows another puzzle; once all were shown, the one shown longest ago returns.
+    assert_eq!(drawn, ["AAAAA", "BBBBB", "CCCCC", "AAAAA"]);
 }

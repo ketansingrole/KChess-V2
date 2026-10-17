@@ -10,6 +10,7 @@ import { pgnGames } from '@kchess/rules/pgn'
 import StudyCard from '../components/StudyCard.vue'
 import { useLichessStudiesStore } from '../stores/lichessStudies'
 import { PRACTICE_TAB_KEY, REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 /** The study library: browse, search and open saved studies, or bring them in from Lichess. */
 const app = useKChessStore()
@@ -50,13 +51,7 @@ const cards = computed(() => {
 })
 const uploading = ref('')
 /* ── Opening: never silently throw away an unsaved board ── */
-const pending = ref<(() => void) | null>(null)
-const unsavedBoard = computed(() => !analysis.study && analysis.root.children.length > 0)
-function guard(action: () => void | Promise<void>): void {
-  const run = (): void => void action()
-  if (unsavedBoard.value) pending.value = run
-  else run()
-}
+const guard = useReplaceAnalysis()
 function open(study: SavedStudy, chapterId?: string): void {
   if (analysis.studyId === study.id && (!chapterId || analysis.studyChapterId === chapterId))
     return app.selectPage('analysis')
@@ -372,16 +367,6 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
         </li>
       </ul>
     </template>
-
-    <ConfirmDialog
-      :open="pending !== null"
-      title="Replace the unsaved analysis?"
-      description="The analysis board has moves that are not saved as a study. Opening another study replaces them."
-      confirm-label="Replace"
-      color="error"
-      @update:open="!$event && (pending = null)"
-      @confirm="(pending?.(), (pending = null))"
-    />
 
     <UModal
       :open="renaming !== null"

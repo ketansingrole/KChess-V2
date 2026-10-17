@@ -7,6 +7,7 @@ import { useLichessStudiesStore } from '../stores/lichessStudies'
 import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore } from '../stores/studies'
 import type { LichessStudyChapter } from '@kchess/contracts/types'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 /** Studies on the player's Lichess accounts: open or keep their chapters, or send the board to one. */
 const analysis = useAnalysisStore()
@@ -26,11 +27,7 @@ const busy = ref(false)
 const message = ref('')
 const NEW_STUDY = 'new-study'
 const target = ref(NEW_STUDY)
-const pendingOpen = ref<(() => void | Promise<void>) | null>(null)
-function guardOpen(action: () => void | Promise<void>): void {
-  if (!analysis.study && analysis.root.children.length) pendingOpen.value = action
-  else void action()
-}
+const guardOpen = useReplaceAnalysis()
 
 function reconnectNote(result: unknown): boolean {
   if (result && typeof result === 'object' && 'needsReconnect' in result) {
@@ -242,15 +239,6 @@ function send(): Promise<void> {
       />
       <UButton type="submit" size="sm" icon="i-lucide-upload" :loading="busy">Send</UButton>
     </form>
-    <ConfirmDialog
-      :open="pendingOpen !== null"
-      title="Replace the unsaved analysis?"
-      description="Opening this chapter replaces the unsaved analysis board."
-      confirm-label="Replace"
-      color="error"
-      @update:open="!$event && (pendingOpen = null)"
-      @confirm="(pendingOpen?.(), (pendingOpen = null))"
-    />
   </div>
 </template>
 

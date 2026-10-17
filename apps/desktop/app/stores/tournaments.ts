@@ -9,6 +9,7 @@ import type {
 } from '@kchess/contracts/types'
 import { useKChessStore } from './kchess'
 import { initialLibrary } from '../utils/library'
+import { errorText } from '../utils/format'
 import type { JoinedTournament } from '@kchess/rules/library'
 
 export const useTournamentStore = defineStore('tournaments', () => {
@@ -33,7 +34,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
       list.value = await window.kchess.tournaments(app.activeOnlineAccount)
     } catch (cause) {
       console.warn('[tournaments] loading tournaments failed:', cause)
-      error.value = cause instanceof Error ? cause.message : String(cause)
+      error.value = errorText(cause)
     } finally {
       loading.value = false
     }
@@ -61,7 +62,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
     } catch (cause) {
       if (request === detailRequest) {
         console.warn('[tournaments] loading tournament failed:', cause)
-        detailError.value = cause instanceof Error ? cause.message : String(cause)
+        detailError.value = errorText(cause)
       }
     }
   }
@@ -137,7 +138,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
       return { created: result }
     } catch (cause) {
       console.warn('[tournaments] creating tournament failed:', cause)
-      return { error: cause instanceof Error ? cause.message : String(cause) }
+      return { error: errorText(cause) }
     }
   }
   return {

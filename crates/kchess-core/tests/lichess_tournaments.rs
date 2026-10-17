@@ -157,6 +157,70 @@ async fn creates_an_arena_as_the_chosen_account_and_returns_it() {
 }
 
 #[tokio::test]
+async fn reads_the_created_arena_lichess_sends_on_its_own() {
+    // `POST /api/tournament` answers with the full arena (as `GET /api/tournament/{id}`): a
+    // string variant, an ISO start and no `status`. Reading it as a list entry failed after
+    // Lichess had already created the arena.
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament" if seen.method == "POST" => Reply::Json(
+            200,
+            json!({
+                "id": "QITRjufu",
+                "fullName": "KChess button QA Arena",
+                "rated": false,
+                "clock": { "limit": 600, "increment": 0 },
+                "minutes": 60,
+                "createdBy": "alice",
+                "system": "arena",
+                "secondsToStart": 300,
+                "isFinished": false,
+                "startsAt": "2026-10-17T10:24:16Z",
+                "nbPlayers": 0,
+                "perf": { "key": "rapid", "name": "Rapid", "icon": "#" },
+                "variant": "standard",
+                "berserkable": true,
+                "standing": { "page": 1, "players": [] },
+            })
+            .to_string(),
+        ),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(
+        &fixture.base,
+        &host,
+        MemoryTokens::with(&[("Alice", "Alice-token")]),
+    );
+    let created = create_tournament(
+        &lichess,
+        "Alice",
+        &NewArena {
+            name: Some("KChess button QA".into()),
+            clock_time: serde_json::Number::from(10),
+            clock_increment: serde_json::Number::from(0),
+            minutes: serde_json::Number::from(60),
+            wait_minutes: Some(serde_json::Number::from(5)),
+            start_date: None,
+            variant: "standard".into(),
+            rated: false,
+            password: Some("entry".into()),
+            description: None,
+        },
+    )
+    .await
+    .unwrap();
+    let Outcome::Done(summary) = created else {
+        panic!("the arena was created");
+    };
+    assert_eq!(summary.id, "QITRjufu");
+    assert_eq!(summary.name, "KChess button QA Arena");
+    assert_eq!(summary.status, "created");
+    assert!(!summary.rated);
+    assert_eq!(summary.starts_at, 1_792_232_656_000);
+}
+
+#[tokio::test]
 async fn asks_to_reconnect_when_the_login_lacks_the_tournament_permission() {
     let fixture =
         serve(|_| Reply::Json(403, json!({ "error": "Missing scope" }).to_string())).await;

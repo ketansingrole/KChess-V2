@@ -409,7 +409,7 @@ fn body_value(text: &str) -> Option<Value> {
 }
 
 /// `unwrap`: an empty body is an error that names the path; otherwise the JSON is parsed.
-fn parse_json<T: DeserializeOwned>(text: &str, path: &str) -> Result<T> {
+pub(crate) fn parse_json<T: DeserializeOwned>(text: &str, path: &str) -> Result<T> {
     if text.trim().is_empty() {
         return Err(Failure::Lichess(LichessError {
             status: 200,

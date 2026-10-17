@@ -10,6 +10,7 @@ import { setupPgn } from '@kchess/rules/chess'
 import { useChallengeStore } from '../stores/challenges'
 import { useAnalysisStore } from '../stores/analysis'
 import { useTournamentStore } from '../stores/tournaments'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 
 const online = useOnline()
 const store = useKChessStore()
@@ -238,21 +239,24 @@ const canAnalyse = computed(
   () => onlinePhase.value === 'finished' && onlineSetup.value.variant === 'standard',
 )
 const analysis = useAnalysisStore()
+const replaceAnalysis = useReplaceAnalysis()
 function analyse(): void {
-  const white = onlineColor.value === 'white' ? 'You' : onlineOpponent.value
-  const black = onlineColor.value === 'black' ? 'You' : onlineOpponent.value
-  if (!analysis.loadPgn(setupPgn(onlineSetup.value, onlineMoves.value), onlineMoves.value.length))
-    return
-  analysis.orientation = onlineColor.value
-  analysis.origin = {
-    gameId: onlineId.value,
-    account: store.onlineAccount,
-    white,
-    black,
-    player: onlineColor.value,
-  }
-  analysis.startReview()
-  selectPage('analysis')
+  replaceAnalysis(() => {
+    const white = onlineColor.value === 'white' ? 'You' : onlineOpponent.value
+    const black = onlineColor.value === 'black' ? 'You' : onlineOpponent.value
+    const pgn = setupPgn(onlineSetup.value, onlineMoves.value)
+    if (!analysis.loadPgn(pgn, onlineMoves.value.length)) return
+    analysis.orientation = onlineColor.value
+    analysis.origin = {
+      gameId: onlineId.value,
+      account: store.onlineAccount,
+      white,
+      black,
+      player: onlineColor.value,
+    }
+    analysis.startReview()
+    selectPage('analysis')
+  })
 }
 const rematchOffer = computed(() => challenges.rematchOffer)
 const tournaments = useTournamentStore()

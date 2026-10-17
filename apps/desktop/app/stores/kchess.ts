@@ -186,6 +186,7 @@ export const useKChessStore = defineStore('kchess', () => {
     title: string
     description: string
     label: string
+    color?: 'error'
     run: () => void
   } | null>(null)
   const onlineGame = useOnlineGame({

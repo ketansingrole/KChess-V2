@@ -18,6 +18,7 @@ import { formatClock } from '@kchess/rules/clock'
 import { useWatchStore } from '../../stores/watch'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useKChessStore } from '../../stores/kchess'
+import { useReplaceAnalysis } from '../../composables/useReplaceAnalysis'
 
 defineProps<{
   online: boolean
@@ -260,11 +261,16 @@ function resultText(entry: BroadcastGame): string {
   if (entry.result === '1/2-1/2') return 'Draw · ½–½'
   return entry.result
 }
+const replaceAnalysis = useReplaceAnalysis()
 function analyse(entry: BroadcastGame): void {
-  if (!analysis.loadPgn(entry.pgn, shownPly.value)) return
-  analysis.orientation = gameOrientation.value
-  analysis.origin = { white: entry.white.name, black: entry.black.name }
-  store.selectPage('analysis')
+  const ply = shownPly.value
+  const orientation = gameOrientation.value
+  replaceAnalysis(() => {
+    if (!analysis.loadPgn(entry.pgn, ply)) return
+    analysis.orientation = orientation
+    analysis.origin = { white: entry.white.name, black: entry.black.name }
+    store.selectPage('analysis')
+  })
 }
 /** Arrow keys step through the open broadcast game. */
 function keydown(event: KeyboardEvent): void {

@@ -17,6 +17,7 @@ import {
   REPERTOIRE_STUDY_KEY,
 } from '../../utils/storageKeys'
 import { openingLink } from './openingLink'
+import { useReplaceAnalysis } from '../../composables/useReplaceAnalysis'
 
 /** One opening: its board and moves, its popular continuations and games, and its drill. */
 const props = defineProps<{ moves: readonly string[] }>()
@@ -110,8 +111,12 @@ watch(
 )
 onUnmounted(() => extras.invalidate())
 
+const replaceAnalysis = useReplaceAnalysis()
 function analyse(): void {
-  if (analysis.loadPgn(pgnFromUci(line.value), line.value.length)) store.selectPage('analysis')
+  const moves = line.value
+  replaceAnalysis(() => {
+    if (analysis.loadPgn(pgnFromUci(moves), moves.length)) store.selectPage('analysis')
+  })
 }
 </script>
 
