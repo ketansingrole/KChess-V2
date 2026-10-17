@@ -12,7 +12,6 @@ hosts/node/              Reusable isolated Node host and OS capabilities
 apps/desktop/            Electron + Nuxt application
   electron/main/         Windows, native integration and authenticated IPC
   electron/preload/      Sandboxed renderer bridge
-  electron/renderer/     Electron build entry; the UI lives in app/
   app/                   Nuxt views, components and reactive stores
   contracts/             Desktop API, IPC and renderer diagnostics
   public/                Static renderer assets

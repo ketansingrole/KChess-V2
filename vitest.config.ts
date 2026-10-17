@@ -33,12 +33,7 @@ export default defineConfig({
         'apps/cli/src/**/*.ts',
         'apps/desktop/contracts/**/*.ts',
       ],
-      exclude: [
-        'crates/kchess-node/js/appIconSvg.ts',
-        'apps/desktop/electron/renderer/**',
-        '**/*.d.ts',
-        '**/tests/**',
-      ],
+      exclude: ['crates/kchess-node/js/appIconSvg.ts', '**/*.d.ts', '**/tests/**'],
       // Floors are whole percentages rounded down from the measured totals of `pnpm run test:unit`
       // (2026-10-13, after the rating-point/update-copy/engine-control deduplication and the
       // contract/auth pins: lines 45.24%, functions 35.32%, branches 28.2%, statements 43.8%).

@@ -25,11 +25,4 @@ export default defineConfig({
       rollupOptions: { input: entry('electron/preload/index.ts'), output: { format: 'cjs' } },
     },
   },
-  renderer: {
-    resolve: { alias: packageAliases },
-    root: entry('electron/renderer'),
-    build: { rollupOptions: { input: entry('electron/renderer/index.html') } },
-    server: { open: false },
-    preview: { open: false },
-  },
 })

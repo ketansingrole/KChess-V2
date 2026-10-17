@@ -81,8 +81,7 @@ export const boundaries = {
               ),
             )
           : (packagePath(source) ?? (source === '@kchess/node' ? 'hosts/node/src' : source))
-      const renderer =
-        file.startsWith('apps/desktop/app/') || file.startsWith('apps/desktop/electron/renderer/')
+      const renderer = file.startsWith('apps/desktop/app/')
       const shared =
         within(file, RULES) || within(file, CONTRACTS) || file.startsWith('apps/desktop/contracts/')
       const preload = file.startsWith('apps/desktop/electron/preload/')

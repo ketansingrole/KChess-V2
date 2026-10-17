@@ -23,7 +23,6 @@ export default withNuxt(
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
-      'apps/desktop/electron/renderer/*.d.ts',
       'crates/kchess-contracts/ts/generated/**',
     ],
   },
