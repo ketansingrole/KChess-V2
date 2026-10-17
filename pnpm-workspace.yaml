@@ -20,12 +20,12 @@ allowBuilds:
 # Explicitly selected stable Nuxt upgrade; keep release-age exceptions version-specific.
 minimumReleaseAgeExclude:
   - '@nuxt/cli@4.0.0'
-  - '@nuxt/kit@4.6.0'
-  - '@nuxt/nitro-server@4.6.0'
-  - '@nuxt/schema@4.6.0'
-  - '@nuxt/vite-builder@4.6.0'
-  - '@nuxt/vite-server@4.6.0'
-  - nuxt@4.6.0
+  - '@nuxt/kit@4.6.0 || 4.6.2'
+  - '@nuxt/nitro-server@4.6.0 || 4.6.2'
+  - '@nuxt/schema@4.6.0 || 4.6.2'
+  - '@nuxt/vite-builder@4.6.0 || 4.6.2'
+  - '@nuxt/vite-server@4.6.0 || 4.6.2'
+  - nuxt@4.6.0 || 4.6.2
   - '@nuxt/ui@4.12.0'
 patchedDependencies:
   app-builder-lib@26.17.0: patches/app-builder-lib@26.17.0.patch
