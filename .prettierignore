@@ -17,3 +17,8 @@ crates/kchess-domain/data/openings.json
 tests/core/native-golden.json
 tests/core/golden/
 crates/kchess-contracts/ts/generated/
+# Fuzzer inputs are kept byte for byte.
+fuzz/seeds/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/target/

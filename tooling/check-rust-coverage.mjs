@@ -5,12 +5,12 @@ import { fileURLToPath } from 'node:url'
 
 /**
  * Coverage floors for the Rust workspace, as whole percentages rounded down from the measured
- * totals of `cargo llvm-cov --workspace` (2026-10-13, after the facade/library/online
- * splits and the core_wiring debug-gate fix: lines 65.03%, regions 61.28%, functions
- * 62.18%). The run fails below a floor. Ratchet them up when the measured totals rise; do not lower
- * them without a measurement that explains the drop.
+ * totals of `cargo llvm-cov --workspace` (2026-10-17, after the argument-depth, panic-hook and
+ * task-guard tests: lines 66.82%, regions 63.29%, functions 63.99%). The run fails below a floor.
+ * Ratchet them up when the measured totals rise; do not lower them without a measurement that
+ * explains the drop.
  */
-export const FLOORS = { lines: 65, regions: 61, functions: 62 }
+export const FLOORS = { lines: 66, regions: 63, functions: 63 }
 
 /** The summary's totals, as `{ lines, regions, functions }` percentages. */
 export function percentages(report) {
