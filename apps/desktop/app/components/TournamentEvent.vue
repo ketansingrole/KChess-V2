@@ -14,6 +14,11 @@ const emit = defineEmits<{ connect: [] }>()
 const online = useOnline()
 const store = useKChessStore()
 const { activeOnlineAccount, busy, settings } = storeToRefs(store)
+/** Open this event's game on the Play page, as the ongoing games list does. */
+async function goToGame(gameId: string): Promise<void> {
+  await store.openOngoing(activeOnlineAccount.value, gameId)
+  store.selectPage('online')
+}
 const tournaments = useTournamentStore()
 const watcher = useWatchStore()
 const password = ref('')
@@ -147,7 +152,7 @@ const playingOwnGame = computed(() =>
               <UButton
                 v-if="detail.me?.gameId"
                 icon="i-lucide-swords"
-                @click="store.openOngoing(activeOnlineAccount, detail.me.gameId)"
+                @click="goToGame(detail.me.gameId)"
                 >Go to your game</UButton
               >
               <UButton

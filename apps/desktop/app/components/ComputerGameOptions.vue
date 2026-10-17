@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { INITIAL_FEN } from '@kchess/rules/position'
 import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/rules/engineLevels'
-import { chess960Fen, setupStart, type GameSetup } from '@kchess/rules/variant'
+import { chess960Fen, setupStart, valid960, type GameSetup } from '@kchess/rules/variant'
 import { positionProblem } from '@kchess/rules/boardEditor'
 
 const open = defineModel<boolean>('open', { default: false })
@@ -54,6 +54,10 @@ const fenProblem = computed(() => {
     (setupStart({ variant: 'standard', fen: text }) ? '' : 'That FEN is not a legal position.')
   )
 })
+/** Chess960 numbers run 0–959; anything else would quietly wrap to another position. */
+const numberProblem = computed(() =>
+  start.value === 'chess960' && !valid960(number960.value) ? 'Enter a number from 0 to 959.' : '',
+)
 const chosenSetup = computed<GameSetup>(() =>
   start.value === 'chess960'
     ? { variant: 'chess960', fen: chess960Fen(number960.value) }
@@ -65,15 +69,24 @@ function randomize(): void {
   number960.value = Math.floor(Math.random() * 960)
 }
 function begin(): void {
-  if (fenProblem.value) return
+  if (fenProblem.value || numberProblem.value) return
   const [minutes, increment] = clock.value === 'none' ? [] : clock.value.split('+').map(Number)
-  level.value = chosenLevel.value
-  userColor.value = color.value
-  store.newGame(
-    chosenSetup.value,
-    minutes === undefined ? null : { minutes, increment: increment ?? 0 },
-  )
+  const setup = chosenSetup.value
+  const startGame = (): void => {
+    level.value = chosenLevel.value
+    userColor.value = color.value
+    store.newGame(setup, minutes === undefined ? null : { minutes, increment: increment ?? 0 })
+  }
   open.value = false
+  // Like the page's own New game: a game in progress is only thrown away when confirmed.
+  if (store.localMoves.length && !store.localOver)
+    store.ask({
+      title: 'Start a new game?',
+      description: 'Your computer game is still in progress and will be lost.',
+      label: 'New game',
+      run: startGame,
+    })
+  else startGame()
 }
 </script>
 
@@ -95,7 +108,11 @@ function begin(): void {
           />
         </UFormField>
         <div v-if="start === 'chess960'" class="flex items-end gap-2">
-          <UFormField label="Position number (0–959)" class="flex-1">
+          <UFormField
+            label="Position number (0–959)"
+            class="flex-1"
+            :error="numberProblem || undefined"
+          >
             <UInput v-model.number="number960" type="number" :min="0" :max="959" />
           </UFormField>
           <UButton variant="outline" color="neutral" icon="i-lucide-shuffle" @click="randomize"
@@ -141,7 +158,9 @@ function begin(): void {
         </UFormField>
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" @click="open = false">Cancel</UButton>
-          <UButton type="submit" :disabled="Boolean(fenProblem)">Start game</UButton>
+          <UButton type="submit" :disabled="Boolean(fenProblem || numberProblem)"
+            >Start game</UButton
+          >
         </div>
       </form>
     </template>

@@ -257,8 +257,14 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   }
   const cancelDb = (): Promise<void> => window.kchess.puzzleDbCancel()
   async function deleteDb(): Promise<void> {
-    db.value = await window.kchess.puzzleDbDelete()
-    dbProgress.value = null
+    dbError.value = ''
+    try {
+      db.value = await window.kchess.puzzleDbDelete()
+      dbProgress.value = null
+    } catch (cause) {
+      console.warn('[puzzles] deleting puzzle database failed:', cause)
+      dbError.value = message(cause)
+    }
   }
   const dbBusy = computed(
     () =>

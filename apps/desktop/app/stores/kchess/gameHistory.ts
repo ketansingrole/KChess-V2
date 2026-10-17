@@ -17,7 +17,7 @@ export function useGameHistory(options: {
   chartMode: Ref<string>
   chartRange: Ref<string>
   page?: Ref<string>
-  selectPage: (page: 'history') => void
+  selectPage: (page: 'history', query: { source: 'lichess' }) => void
 }) {
   const { data, selectedAccount, ratingHistories, chartMode, chartRange, selectPage } = options
   const historyResult = ref('all')
@@ -191,7 +191,7 @@ export function useGameHistory(options: {
       }))
     if (!request.current()) return
     reviewGame.value = pgn ? { ...game, pgn } : game
-    selectPage('history')
+    selectPage('history', { source: 'lichess' })
   }
 
   return {

@@ -39,11 +39,14 @@ export function useEngineSettings(options: {
     })
   }
   async function chooseEngine(): Promise<void> {
-    const path = await window.kchess.chooseEngine()
-    if (path && settings.value) {
-      settings.value.enginePath = path
-      await save()
-    }
+    const path = await run(() => window.kchess.chooseEngine())
+    if (!path || !settings.value) return
+    settings.value.enginePath = path
+    await save()
+    // Any file can be picked; say at once when it does not start as an engine.
+    await recheckEngine()
+    if (!engineReady.value)
+      info('That file did not start as a chess engine. Choose a UCI engine such as Stockfish.')
   }
   async function useBundledEngine(): Promise<void> {
     if (!settings.value) return

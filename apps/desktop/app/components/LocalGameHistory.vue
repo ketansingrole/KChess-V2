@@ -4,7 +4,7 @@ import { useGameArchiveStore, type ArchivedGame } from '../stores/gameArchive'
 import { useAnalysisStore } from '../stores/analysis'
 import { setupPgn } from '@kchess/rules/chess'
 
-const props = defineProps<{ source: 'computer' | 'board' }>()
+const props = defineProps<{ source: 'computer' | 'board'; openGame?: string | null }>()
 const archive = useGameArchiveStore()
 const store = useKChessStore()
 const analysis = useAnalysisStore()
@@ -64,6 +64,19 @@ watch(
     swipeRedo.value = null
     page.value = 1
   },
+)
+// Open the game a link asked for once the archive has it. Clock-only sessions have no replay.
+let openedFromLink: string | null = null
+watch(
+  [() => props.openGame, games],
+  ([id]) => {
+    if (!id || openedFromLink === id) return
+    const game = games.value.find((candidate) => candidate.id === id)
+    if (!game) return
+    openedFromLink = id
+    if (game.source !== 'clock') selectGame(game)
+  },
+  { immediate: true },
 )
 function pgn(game: ArchivedGame): string {
   const clocks = game.timeControl.split(' / ')
@@ -227,7 +240,7 @@ async function exportGame(game: ArchivedGame): Promise<void> {
             variant="outline"
             color="neutral"
             @click="pendingDelete && exportGame(pendingDelete)"
-            >Export copy</UButton
+            >{{ pendingDelete?.source === 'clock' ? 'Copy summary' : 'Export copy' }}</UButton
           ><UButton color="error" @click="deleteGame">Delete game</UButton
           ><UButton variant="ghost" color="neutral" @click="pendingDelete = null">Cancel</UButton>
         </div></template

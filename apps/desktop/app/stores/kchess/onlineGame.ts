@@ -298,7 +298,8 @@ export function useOnlineGame(options: {
       color: onlineChoice.value,
       rated: onlineRated.value,
       target: onlineTarget.value.trim() || undefined,
-      account: onlineAccount.value || activeAccount() || undefined,
+      // The form plays as the account it shows; a rematch stays with the last game's account.
+      account: (override ? onlineAccount.value : '') || activeAccount() || undefined,
       variant: onlineVariant.value === 'standard' ? undefined : onlineVariant.value,
       days: correspondence && !override ? onlineDays.value : undefined,
       ...override,

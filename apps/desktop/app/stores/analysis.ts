@@ -199,18 +199,26 @@ export const useAnalysisStore = defineStore('analysis', () => {
       ? 'Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.'
       : '',
   )
+  /** Why the last `openStudy` could not open its study; empty when it opened or was superseded. */
+  const studyOpenError = ref('')
   async function openStudy(id: string, chapterId?: string): Promise<boolean> {
     const request = studyNavigation.next()
+    studyOpenError.value = ''
     try {
       await flushStudy()
     } catch (cause) {
       console.warn('[analysis] opening study blocked by unsaved changes:', cause)
+      if (request.current())
+        studyOpenError.value = `The open study could not be saved: ${cause instanceof Error ? cause.message : String(cause)}`
       return false
     }
     if (!request.current()) return false
     const found = studies.items.find((item) => item.id === id)
     const chapter = found?.chapters.find((c) => c.id === chapterId) ?? found?.chapters[0]
-    if (!found || !chapter || !loadPgn(chapter.pgn)) return false
+    if (!found || !chapter || !loadPgn(chapter.pgn)) {
+      studyOpenError.value = 'This study could not be opened.'
+      return false
+    }
     studyId.value = id
     studyChapterId.value = chapter.id
     studyPgn = pgn()
@@ -615,8 +623,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const current = reviews.status.current
     return current && current.key === mainlineKey.value ? current : null
   })
+  /** Why the last review asked for could not even be queued; shown on the Review tab. */
+  const reviewRequestError = ref('')
+  watch(mainlineKey, () => (reviewRequestError.value = ''))
   async function requestReview(): Promise<void> {
     tool.value = 'review'
+    reviewRequestError.value = ''
     if (!mainline.value.length) return
     wanted = ''
     await window.kchess.stopAnalysis()
@@ -627,6 +639,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
       account: origin.value?.account,
     })
     reviewShown.value = stored?.key ?? mainlineKey.value
+  }
+  /** Start a review for a page that opens the board on it; a failure shows on the Review tab. */
+  function startReview(): void {
+    requestReview().catch((cause: unknown) => {
+      console.warn('[analysis] Review request failed:', cause)
+      reviewRequestError.value = cause instanceof Error ? cause.message : String(cause)
+    })
   }
   function cancelReview(): void {
     void reviews.cancel(mainlineKey.value)
@@ -720,6 +739,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     reviewWhole,
     reviewProgress,
     requestReview,
+    startReview,
+    studyOpenError,
+    reviewRequestError,
     cancelReview,
   }
 })

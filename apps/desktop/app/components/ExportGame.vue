@@ -100,7 +100,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
       color="neutral"
       icon="i-lucide-download"
       :loading="busy"
-      :disabled="!moves.length && ply === undefined"
+      :disabled="busy || (!moves.length && ply === undefined)"
       >Export</UButton
     >
   </UDropdownMenu>

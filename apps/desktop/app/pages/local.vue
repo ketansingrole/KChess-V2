@@ -10,6 +10,7 @@ import {
   VARIANTS,
   chess960Fen,
   defaultFen,
+  valid960,
   setupStart,
   type GameSetup,
   type Variant,
@@ -64,12 +65,23 @@ const CLOCKS = [
   { label: '30+0', value: '30+0' },
   { label: '90+30', value: '90+30' },
 ]
+/** Start a game, asking first when one on the board is still being played. */
+function replaceGame(start: () => void): void {
+  if (game.moves.length && !game.over)
+    store.ask({
+      title: 'Start a new game?',
+      description: 'The game on the board is still in progress and will be lost.',
+      label: 'New game',
+      run: start,
+    })
+  else start()
+}
 // The editor and analysis board send a position: start a game from it at once.
 onMounted(() => {
   const fen = typeof route.query.fen === 'string' ? route.query.fen : ''
   if (fen && !positionProblem(fen)) {
     mode.value = 'board'
-    game.start({ variant: 'standard', fen }, null)
+    replaceGame(() => game.start({ variant: 'standard', fen }, null))
   }
   window.addEventListener('keydown', keydown)
 })
@@ -78,7 +90,9 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
 const variantItems = VARIANTS.map((key) => ({ label: VARIANT_LABELS[key], value: key }))
 const chosenSetup = computed<GameSetup | null>(() => {
   if (variant.value === 'chess960')
-    return { variant: 'chess960', fen: chess960Fen(number960.value) }
+    return valid960(number960.value)
+      ? { variant: 'chess960', fen: chess960Fen(number960.value) }
+      : null
   if (variant.value === 'standard' && startFen.value.trim()) {
     const fen = startFen.value.trim()
     return positionProblem(fen) ? null : { variant: 'standard', fen }
@@ -94,9 +108,11 @@ const chosenClock = computed<LocalClock | null>(() => {
   }
 })
 function begin(): void {
-  if (!chosenSetup.value) return
-  game.start(chosenSetup.value, chosenClock.value)
+  const setup = chosenSetup.value
+  if (!setup) return
+  const clock = chosenClock.value
   formOpen.value = false
+  replaceGame(() => game.start(setup, clock))
 }
 
 /* ── Board ─────────────────────────────────────────────────────────── */
@@ -318,7 +334,7 @@ function otbText(side: 'top' | 'bottom'): string {
               variant="outline"
               color="neutral"
               icon="i-lucide-undo-2"
-              :disabled="!game.moves.length"
+              :disabled="!game.moves.length || game.timedOut"
               @click="game.takeback()"
               >Take back</UButton
             >
@@ -445,7 +461,7 @@ function otbText(side: 'top' | 'bottom'): string {
           variant="outline"
           color="neutral"
           :icon="game.otbRunning ? 'i-lucide-pause' : 'i-lucide-play'"
-          @click="game.otbRunning ? game.otbPause() : game.otbPress('top')"
+          @click="game.otbRunning ? game.otbPause() : game.otbStart()"
           >{{ game.otbRunning ? 'Pause' : 'Start' }}</UButton
         >
         <UButton
@@ -499,7 +515,11 @@ function otbText(side: 'top' | 'bottom'): string {
             <USelect v-model="variant" :items="variantItems" class="w-full" />
           </UFormField>
           <div v-if="variant === 'chess960'" class="flex items-end gap-2">
-            <UFormField label="Position number (0–959)" class="flex-1">
+            <UFormField
+              label="Position number (0–959)"
+              class="flex-1"
+              :error="valid960(number960) ? undefined : 'Enter a number from 0 to 959.'"
+            >
               <UInput v-model.number="number960" type="number" :min="0" :max="959" />
             </UFormField>
             <UButton

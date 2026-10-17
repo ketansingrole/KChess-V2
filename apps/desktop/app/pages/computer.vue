@@ -36,6 +36,7 @@ const {
   localLast,
   localDests,
   localTurn,
+  localCanTakeback,
   localCheck,
   localInteractive,
   localCanPlay,
@@ -44,7 +45,7 @@ const {
   localSetup,
   settings,
 } = storeToRefs(store)
-const { newGame, takeback, resign, makeMove, selectPage, fen, recheckEngine } = store
+const { newGame, takeback, resign, makeMove, selectPage, openSettings, fen, recheckEngine } = store
 
 // The engine can be removed or replaced while the app is open; look again whenever this page opens.
 onMounted(() => void recheckEngine())
@@ -169,7 +170,7 @@ const COMMAND_NAMES: Record<GameCommand, string> = {
 function runCommand(command: GameCommand, result: VoiceResult): void {
   void record(result, 'command', COMMAND_NAMES[command], false)
   if (command === 'takeback') {
-    if (localMoves.value.length < 2) voiceFeedback.value = 'Nothing to take back yet.'
+    if (!localCanTakeback.value) voiceFeedback.value = 'Nothing to take back.'
     else {
       takeback()
       voiceFeedback.value = 'Took back your last move.'
@@ -305,7 +306,7 @@ function reviewGame(): void {
     black: userColor.value === 'black' ? 'You' : computer,
     player: userColor.value,
   }
-  void analysis.requestReview()
+  analysis.startReview()
   selectPage('analysis')
 }
 
@@ -575,7 +576,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
                   variant="link"
                   color="neutral"
                   class="px-0"
-                  @click="selectPage('settings')"
+                  @click="openSettings('engine')"
                   >Set up Stockfish</UButton
                 >
               </div>
@@ -598,7 +599,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
               variant="outline"
               color="neutral"
               icon="i-lucide-undo-2"
-              :disabled="localMoves.length < 2"
+              :disabled="!localCanTakeback"
               @click="takeback"
               >Take back</UButton
             >

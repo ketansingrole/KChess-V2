@@ -27,6 +27,7 @@ const {
   reviewedPlies,
   reviewWhole,
   reviewProgress,
+  reviewRequestError,
 } = storeToRefs(analysis)
 
 const GLYPHS: Record<Judgment, string> = { inaccuracy: '?!', mistake: '?', blunder: '??' }
@@ -40,7 +41,7 @@ const reviews = useReviewStore()
 /** Why the review asked for could not be done. */
 const failure = computed(() => {
   const failed = reviews.status.failed
-  return failed?.key === mainlineKey.value ? failed.message : ''
+  return failed?.key === mainlineKey.value ? failed.message : reviewRequestError.value
 })
 const queued = computed(
   () =>
@@ -56,6 +57,7 @@ async function start(): Promise<void> {
   } catch (cause) {
     console.warn('[analysis-review] Review request failed:', cause)
     requested.value = ''
+    reviewRequestError.value = cause instanceof Error ? cause.message : String(cause)
   }
 }
 function stop(): void {

@@ -5,8 +5,9 @@ import { RESTART_UPDATE_DESCRIPTION } from '../utils/appUpdate'
 
 const store = useKChessStore()
 const updates = useAppUpdatesStore()
-const { status } = storeToRefs(updates)
+const { status, error } = storeToRefs(updates)
 const confirmRestart = ref(false)
+const toast = useToast()
 
 const percent = computed(() =>
   Math.round(Math.max(0, Math.min(100, status.value?.progress?.percent ?? 0))),
@@ -20,6 +21,9 @@ const label = computed(() => {
     case 'error':
       return 'Retry update'
     default:
+      // Without self-update the click opens the release page, so the label says download.
+      if (!status.value?.canInstall)
+        return status.value?.version ? `Download ${status.value.version}` : 'Update available'
       return status.value?.version ? `Update to ${status.value.version}` : 'Update available'
   }
 })
@@ -40,17 +44,28 @@ const tooltip = computed(() => {
   }
 })
 
+/** The store keeps a failed action's error for Settings; say it here too, where it was clicked. */
+async function run(kind: 'download' | 'install' | 'releases'): Promise<void> {
+  await updates.action(kind)
+  if (error.value)
+    toast.add({
+      title: kind === 'releases' ? 'Could not open the release page' : 'Could not update KChess',
+      description: error.value,
+      icon: 'i-lucide-circle-alert',
+      color: 'error',
+    })
+}
 function click(): void {
   const current = status.value
   if (!current) return
   if (current.phase === 'downloaded') confirmRestart.value = true
-  else if (!current.canInstall) void updates.action('releases')
-  else void updates.action('download')
+  else if (!current.canInstall) void run('releases')
+  else void run('download')
 }
 /** Saves settings before the confirmed restart closes this renderer. */
 async function restart(): Promise<void> {
   await store.save()
-  await updates.action('install')
+  await run('install')
 }
 </script>
 
@@ -61,7 +76,13 @@ async function restart(): Promise<void> {
         size="sm"
         :variant="status?.phase === 'downloaded' ? 'solid' : 'soft'"
         :color="status?.phase === 'error' ? 'error' : 'primary'"
-        :icon="status?.phase === 'downloaded' ? 'i-lucide-rotate-cw' : 'i-lucide-download'"
+        :icon="
+          status?.phase === 'downloaded'
+            ? 'i-lucide-rotate-cw'
+            : status?.canInstall === false && status.phase !== 'error'
+              ? 'i-lucide-external-link'
+              : 'i-lucide-download'
+        "
         :loading="status?.phase === 'downloading'"
         :disabled="status?.phase === 'downloading'"
         :label="label"

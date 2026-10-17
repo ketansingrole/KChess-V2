@@ -205,6 +205,7 @@ export const useKChessStore = defineStore('kchess', () => {
     userColor,
     thinking,
     localOver,
+    localCanTakeback,
     localDisplay,
     localHistory,
     localLast,
@@ -314,10 +315,18 @@ export const useKChessStore = defineStore('kchess', () => {
       activeOperations.value--
     }
   }
-  function selectPage(next: Page): void {
-    void navigateTo(next === 'dashboard' ? '/' : `/${next}`)
+  /** Open a page; `query` picks what it shows first (History's `source`/`game`). */
+  function selectPage(next: Page, query?: Record<string, string>): void {
+    const path = next === 'dashboard' ? '/' : `/${next}`
+    void navigateTo(query ? { path, query } : path)
     error.value = ''
     message.value = ''
+  }
+  /** Open Settings at one section, e.g. the engine setup a "Set up Stockfish" link points at. */
+  function openSettings(section: SettingsSection): void {
+    settingsSection.value = section
+    selectPage('settings')
+    document.querySelector('.main-content')?.scrollTo({ top: 0 })
   }
   function choosePage(next: Page): void {
     selectPage(next)
@@ -521,12 +530,15 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   /** True while the form differs from what is stored; auto-save clears it. */
   async function addAccount(): Promise<void> {
+    const typed = usernameInput.value.trim().replace(/^@/, '').toLowerCase()
     const result = await run(() => window.kchess.addAccount(usernameInput.value))
     if (result) {
       data.value = result
       usernameInput.value = ''
       selectedAccount.value ||= defaultAccount(result.accounts)
-      await sync(result.accounts.at(-1)?.username)
+      // Following someone already listed keeps their row where it is, so find it by name.
+      const added = result.accounts.find((account) => account.username.toLowerCase() === typed)
+      await sync(added?.username ?? result.accounts.at(-1)?.username)
     }
   }
   /** Free the space a friend's synced games and profile take, keeping them as a friend. */
@@ -886,9 +898,11 @@ export const useKChessStore = defineStore('kchess', () => {
     selectPage,
     choosePage,
     jumpToSection,
+    openSettings,
     openReview,
     localMoves,
     localOver,
+    localCanTakeback,
     localSaveError,
     localGameEpoch,
     localPly,

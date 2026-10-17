@@ -113,7 +113,7 @@ const hasConnectedAccount = computed(() =>
         </button>
         <button type="button" class="home-tile" @click="selectPage('analysis')">
           <UIcon name="i-lucide-microscope" class="home-tile-icon" />
-          <span class="home-tile-label">Open analysis</span>
+          <span class="home-tile-label">Analysis board</span>
         </button>
         <button type="button" class="home-tile" @click="selectPage('online')">
           <UIcon name="i-lucide-globe-2" class="home-tile-icon" />
@@ -175,7 +175,16 @@ const hasConnectedAccount = computed(() =>
         />
         <ul v-else class="home-local-games">
           <li v-for="game in localGames" :key="game.id">
-            <button type="button" class="home-local-game" @click="selectPage('history')">
+            <button
+              type="button"
+              class="home-local-game"
+              @click="
+                selectPage('history', {
+                  source: game.source === 'computer' ? 'computer' : 'board',
+                  game: game.id,
+                })
+              "
+            >
               <UIcon
                 :name="game.source === 'computer' ? 'i-lucide-monitor' : 'i-lucide-users-round'"
                 class="home-local-source"
@@ -200,7 +209,12 @@ const hasConnectedAccount = computed(() =>
           icon="i-lucide-chart-line"
           title="Ratings, games and puzzle progress"
           :actions="[
-            { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => store.connect() },
+            {
+              label: 'Connect Lichess',
+              icon: 'i-lucide-log-in',
+              disabled: !online || busy,
+              onClick: () => store.connect(),
+            },
           ]"
         />
       </div>

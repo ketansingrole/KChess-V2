@@ -18,9 +18,10 @@ const board = ref<{
   showSolution: () => Promise<void>
 } | null>(null)
 function next(all = false): void {
-  const item = [...(all ? practice.items : due.value)]
-    .sort((a, b) => a.dueAt - b.dueAt)
-    .find((item) => done.value || item.id !== current.value?.id)
+  const candidates = [...(all ? practice.items : due.value)].sort((a, b) => a.dueAt - b.dueAt)
+  const item = candidates.find((item) => done.value || item.id !== current.value?.id)
+  // The position on the board is the only one left: keep it rather than blank the board.
+  if (!item && candidates.some((candidate) => candidate.id === current.value?.id)) return
   current.value = item ? practice.puzzle(item) : null
   done.value = false
 }
@@ -53,7 +54,7 @@ function next(all = false): void {
           >Hint: piece to move</UButton
         >
         <UButton variant="ghost" color="neutral" @click="board?.showSolution()"
-          >Show engine line</UButton
+          >Show solution</UButton
         >
       </div>
       <div class="panel-actions flex gap-2">

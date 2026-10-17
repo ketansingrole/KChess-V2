@@ -264,12 +264,24 @@ const moveMenu = computed<ContextMenuItem[][]>(() => {
         label: 'Delete from here',
         icon: 'i-lucide-scissors',
         color: 'error' as const,
-        onSelect: () => analysis.remove(at),
+        onSelect: () => removeFrom(at),
       },
     ],
     [{ label: 'Copy FEN', icon: 'i-lucide-copy', onSelect: () => void copy(target.fen, 'FEN') }],
   ]
 })
+
+/** Cutting a line has no undo, so it asks first. */
+function removeFrom(at: string): void {
+  if (!at) return
+  store.ask({
+    title: 'Delete from here?',
+    description:
+      'This move and every move after it, with their variations and comments, are removed.',
+    label: 'Delete',
+    run: () => analysis.remove(at),
+  })
+}
 
 /* ── Import and export ─────────────────────────────────────────────── */
 
@@ -339,7 +351,7 @@ const menu = computed<DropdownMenuItem[][]>(() => [
       label: 'Delete from here',
       icon: 'i-lucide-scissors',
       disabled: !path.value,
-      onSelect: () => analysis.remove(),
+      onSelect: () => removeFrom(path.value),
     },
   ],
   [
@@ -632,7 +644,7 @@ function missed(result: VoiceResult): void {
               variant="link"
               color="neutral"
               class="px-0"
-              @click="store.selectPage('settings')"
+              @click="store.openSettings('engine')"
               >Set up Stockfish</UButton
             >
             to see evaluations.

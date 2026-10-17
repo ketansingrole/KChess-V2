@@ -538,7 +538,9 @@ void app
     handle('loadThemes', () => loadCustomThemes())
     handle('openThemesFolder', async () => {
       await loadCustomThemes() // makes sure the folder exists
-      await shell.openPath(themesDir())
+      // openPath reports failure as a message rather than a rejection.
+      const problem = await shell.openPath(themesDir())
+      if (problem) throw new Error(`Could not open the themes folder: ${problem}`)
     })
     handle('openNotificationSettings', async () => {
       // Fixed URLs only: nothing from the renderer reaches openExternal.

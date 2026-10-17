@@ -114,5 +114,20 @@ export function useOtbClock(now: { value: number }) {
     }
     Object.assign(otbShownStart, otb.value)
   }
-  return { otbConfig, otbRunning, otbFlagged, otbMoves, otbLeft, otbPress, otbPause, otbReset }
+  /** Start (or resume) the clock; after a flag, Start begins a fresh session at the set times. */
+  function otbStart(): void {
+    if (otbFlagged.value) otbReset()
+    otbPress('top')
+  }
+  return {
+    otbConfig,
+    otbRunning,
+    otbFlagged,
+    otbMoves,
+    otbLeft,
+    otbPress,
+    otbPause,
+    otbReset,
+    otbStart,
+  }
 }

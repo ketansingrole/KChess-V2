@@ -62,6 +62,8 @@ function open(study: SavedStudy, chapterId?: string): void {
     return app.selectPage('analysis')
   guard(async () => {
     if (await analysis.openStudy(study.id, chapterId)) app.selectPage('analysis')
+    else if (analysis.studyOpenError)
+      toast.add({ title: analysis.studyOpenError, color: 'error', icon: 'i-lucide-circle-alert' })
   })
 }
 function create(): void {

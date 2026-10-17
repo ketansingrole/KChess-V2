@@ -77,6 +77,17 @@ export const useTournamentStore = defineStore('tournaments', () => {
       console.warn('[tournaments] loading joined tournaments failed:', cause)
     }
   }
+  /**
+   * Whether a game's tournament id is an arena or a Swiss event. Lichess game streams give only
+   * the id, so look it up among the events KChess knows; arenas are the common case.
+   */
+  function systemOf(id: string): TournamentSystem {
+    const known =
+      stored.value.find((entry) => entry.id === id)?.system ??
+      (selected.value?.id === id ? selected.value.system : undefined) ??
+      list.value?.swiss.find((entry) => entry.id === id)?.system
+    return known ?? 'arena'
+  }
   function isJoined(system: TournamentSystem, id: string): boolean {
     return joined.value.some((entry) => entry.system === system && entry.id === id)
   }
@@ -147,5 +158,6 @@ export const useTournamentStore = defineStore('tournaments', () => {
     leave,
     create,
     isJoined,
+    systemOf,
   }
 })

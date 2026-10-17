@@ -45,6 +45,9 @@ const playingFriends = computed(() =>
           @click="friends.refreshStatus()"
         />
       </template>
+      <p v-if="friends.statusError" class="text-error text-sm" role="alert">
+        Could not refresh followed players: {{ friends.statusError }}
+      </p>
       <p v-if="!playingFriends.length" class="muted text-sm">
         No followed player is playing right now.
       </p>

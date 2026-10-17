@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { createReusableTemplate } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
 
@@ -46,6 +47,8 @@ defineProps<{
 }>()
 
 /** The dot, bars and latency, drawn the same with or without a details popover. */
+/** The connection details open on hover, and on click or Enter for touch and keyboard. */
+const presenceOpen = ref(false)
 const [DefinePresence, PresenceBadge] = createReusableTemplate<{ presence: PlayerPresence }>()
 
 function presenceTitle(presence: PlayerPresence): string {
@@ -90,6 +93,7 @@ function presenceTitle(presence: PlayerPresence): string {
       <!-- With details, pointing at this player's own bars shows that player's connection. -->
       <UPopover
         v-if="player.presence && $slots.presence"
+        v-model:open="presenceOpen"
         mode="hover"
         :open-delay="150"
         :close-delay="150"
@@ -99,6 +103,8 @@ function presenceTitle(presence: PlayerPresence): string {
           class="presence"
           :class="player.presence.state"
           :aria-label="presenceTitle(player.presence)"
+          :aria-expanded="presenceOpen"
+          @click="presenceOpen = !presenceOpen"
         >
           <PresenceBadge :presence="player.presence" />
         </button>

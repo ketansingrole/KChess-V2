@@ -379,8 +379,14 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
             />
             <div>
               <strong>{{ overText }}</strong>
-              <span class="detail">{{
-                saved?.isBest ? 'A new personal best!' : 'Saved on this computer.'
+              <span class="detail" :class="{ 'text-error': error && !saved }">{{
+                saved?.isBest
+                  ? 'A new personal best!'
+                  : saved
+                    ? 'Saved on this computer.'
+                    : error
+                      ? `Not saved: ${error}`
+                      : 'Saving…'
               }}</span>
             </div>
           </div>

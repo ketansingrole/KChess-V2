@@ -86,6 +86,10 @@ export const useLocalGameStore = defineStore('local', () => {
     (on) => (on ? ticker.resume() : ticker.pause()),
     { immediate: true },
   )
+  /** A clock ran out; taking back cannot refill it, so the game stays lost on time. */
+  const timedOut = computed(() =>
+    Boolean(times.value && (!times.value.white || !times.value.black)),
+  )
   function clockText(color: Color): string | undefined {
     if (!times.value) return undefined
     void now.value
@@ -131,8 +135,17 @@ export const useLocalGameStore = defineStore('local', () => {
   }
 
   /* ── Stand-alone chess clock (extracted; API unchanged) ──────────── */
-  const { otbConfig, otbRunning, otbFlagged, otbMoves, otbLeft, otbPress, otbPause, otbReset } =
-    useOtbClock(now)
+  const {
+    otbConfig,
+    otbRunning,
+    otbFlagged,
+    otbMoves,
+    otbLeft,
+    otbPress,
+    otbPause,
+    otbReset,
+    otbStart,
+  } = useOtbClock(now)
 
   return {
     setup,
@@ -151,6 +164,7 @@ export const useLocalGameStore = defineStore('local', () => {
     check,
     result,
     over,
+    timedOut,
     atLive,
     orientation,
     running,
@@ -171,6 +185,7 @@ export const useLocalGameStore = defineStore('local', () => {
     otbPress,
     otbPause,
     otbReset,
+    otbStart,
     standardStart: INITIAL_FEN,
   }
 })

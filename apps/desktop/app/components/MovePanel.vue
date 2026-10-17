@@ -43,7 +43,7 @@ watch(
 )
 
 const controlButtons = [
-  { icon: 'i-lucide-skip-back', label: 'Go to first move', keys: ['↑'] },
+  { icon: 'i-lucide-skip-back', label: 'Go to start', keys: ['↑'] },
   { icon: 'i-lucide-chevron-left', label: 'Previous move', keys: ['←'] },
   { icon: 'i-lucide-chevron-right', label: 'Next move', keys: ['→'] },
   { icon: 'i-lucide-skip-forward', label: 'Go to last move', keys: ['↓'] },

@@ -33,6 +33,11 @@ function rename(): void {
     library.rename(open.id, name.value).catch((cause: unknown) => {
       console.warn('[study-bar] Could not rename study:', cause)
       name.value = open.name
+      toast.add({
+        title: 'Could not rename the study',
+        description: cause instanceof Error ? cause.message : String(cause),
+        color: 'error',
+      })
     })
 }
 
@@ -116,8 +121,14 @@ async function saveCopy(): Promise<void> {
   const open = study.value
   if (!open) return
   try {
-    await analysis.saveAsStudy(`${open.name.slice(0, 113)} (copy)`)
-    toast.add({ title: 'Saved as a new study', icon: 'i-lucide-copy' })
+    const copy = `${open.name.slice(0, 113)} (copy)`
+    await analysis.saveAsStudy(copy)
+    // The board now edits the copy; say so, since the original stops changing.
+    toast.add({
+      title: 'Saved a copy',
+      description: `Now editing “${copy}”. The original is unchanged.`,
+      icon: 'i-lucide-copy',
+    })
   } catch (cause) {
     console.warn('[study-bar] Could not save study copy:', cause)
     toast.add({ title: String(cause), color: 'error' })

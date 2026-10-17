@@ -61,9 +61,12 @@ export const useFriendsStore = defineStore('friends', () => {
     }
   }
 
+  /** Why the last presence refresh failed; the next poll tries again. */
+  const statusError = ref('')
   async function refreshStatus(): Promise<void> {
     if (!online.value) return
     const names = friends.value.map((friend) => friend.username)
+    let failure = ''
     for (let start = 0; start < names.length; start += PRESENCE_CHUNK) {
       try {
         const report = await window.kchess.presence(names.slice(start, start + PRESENCE_CHUNK))
@@ -71,9 +74,10 @@ export const useFriendsStore = defineStore('friends', () => {
         statusAt.value = Date.now()
       } catch (cause) {
         console.warn('[friends] refreshing presence failed:', cause)
-        // Statuses are a nicety; the next poll tries again.
+        failure = cause instanceof Error ? cause.message : String(cause)
       }
     }
+    statusError.value = failure
   }
 
   const following = ref<FollowingReport | null>(null)
@@ -121,6 +125,7 @@ export const useFriendsStore = defineStore('friends', () => {
     loadFollowing,
     loadProfiles,
     refreshStatus,
+    statusError,
     forget,
   }
 })

@@ -8,7 +8,7 @@ import type {
   Settings,
 } from '@kchess/contracts/types'
 
-/** The Settings switch that governs each kind; a test notification is always allowed. */
+/** The Settings switch that governs each kind; a test notification follows only the master switch. */
 const CATEGORY: Record<Exclude<NotificationKind, 'test'>, keyof Settings> = {
   opponentMove: 'notifyOpponentMove',
   lowTime: 'notifyLowTime',
@@ -55,8 +55,9 @@ export async function notify(
 ): Promise<NotificationResult> {
   const settings = await readSettings()
   const away = isAway(window)
+  // The master switch covers the test too; the test skips only the per-kind and window rules.
+  if (!settings.notificationsEnabled) return { shown: false, skipped: 'disabled' }
   if (request.kind !== 'test') {
-    if (!settings.notificationsEnabled) return { shown: false, skipped: 'disabled' }
     if (!settings[CATEGORY[request.kind]]) return { shown: false, skipped: 'category-off' }
     if (!(away ? settings.notifyBackground : settings.notifyActive))
       return { shown: false, skipped: 'window-state' }

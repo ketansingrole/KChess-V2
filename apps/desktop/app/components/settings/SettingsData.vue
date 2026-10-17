@@ -25,8 +25,16 @@ async function exportDiagnostics(): Promise<void> {
 }
 
 const confirmClearRuns = ref(false)
+const clearRunsNote = ref('')
 async function clearLocalRuns(): Promise<void> {
-  await window.kchess.clearRuns()
+  clearRunsNote.value = ''
+  try {
+    await window.kchess.clearRuns()
+    clearRunsNote.value = 'Local scores and progress cleared.'
+  } catch (cause) {
+    console.warn('[settings] Clearing local scores failed:', cause)
+    clearRunsNote.value = cause instanceof Error ? cause.message : 'Could not clear local scores.'
+  }
 }
 const confirmResetUsage = ref(false)
 
@@ -164,6 +172,7 @@ onMounted(() => void usage.refresh())
         @click="store.jumpToSection('offline')"
         >Offline downloads</UButton
       >
+      <p v-if="clearRunsNote" role="status" class="setting-hint mt-2">{{ clearRunsNote }}</p>
     </section>
     <section class="card settings-list" aria-labelledby="diagnostics-title">
       <div class="setting-row">
@@ -184,7 +193,7 @@ onMounted(() => void usage.refresh())
     <ConfirmDialog
       v-model:open="confirmClearRuns"
       title="Clear your local scores?"
-      description="This deletes the Storm, Streak, Rush and practice scores stored on this computer. Nothing on Lichess is affected."
+      description="This deletes the Storm, Streak, Rush and board-training scores and the endgame and lesson progress stored on this computer. Nothing on Lichess is affected."
       confirm-label="Clear"
       color="error"
       @confirm="clearLocalRuns"

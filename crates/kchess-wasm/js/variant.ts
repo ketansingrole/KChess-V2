@@ -61,6 +61,10 @@ export function defaultFen(variant: Variant): string {
   return rules<string>('defaultFen', variant)
 }
 
+/** A Chess960 position number as typed: a whole number from 0 to 959. */
+export const valid960 = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 959
+
 /**
  * The Chess960 starting position numbered `n` (0–959) in the Scharnagl scheme; 518 is the
  * standard start. Castling rights use X-FEN letters so every engine and Lichess can read it.

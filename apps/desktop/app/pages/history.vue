@@ -8,7 +8,24 @@ import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import { judgmentCounts } from '../utils/review'
 
-const source = ref(useRoute().query.source === 'lichess' ? 'lichess' : 'computer')
+type HistorySource = 'computer' | 'board' | 'lichess'
+const route = useRoute()
+function routeSource(): HistorySource {
+  const value = route.query.source
+  return value === 'lichess' || value === 'board' ? value : 'computer'
+}
+const source = ref<HistorySource>(routeSource())
+/** The saved local game a link asked to open (Home's recent games). */
+const openGameId = computed(() =>
+  typeof route.query.game === 'string' && route.query.game ? route.query.game : null,
+)
+// A link to History while it is already open changes only the query.
+watch(
+  () => route.query.source,
+  () => {
+    source.value = routeSource()
+  },
+)
 const sourceItems = [
   { label: 'Computer', value: 'computer' },
   { label: 'Over the board', value: 'board' },
@@ -101,7 +118,7 @@ function openGameReview(): void {
     black: game.color === 'black' ? game.account : game.opponent,
     player: game.color,
   }
-  void analysis.requestReview()
+  analysis.startReview()
   selectPage('analysis')
 }
 /** The review of the game being looked at, from its player's side. */
@@ -181,7 +198,7 @@ const reviewColor = computed(() =>
         variant="outline"
         color="neutral"
         :loading="busy"
-        @click="sync()"
+        @click="sync(historyAccount === 'all' ? undefined : historyAccount)"
         >Sync games</UButton
       >
     </PageHeader>
@@ -190,6 +207,7 @@ const reviewColor = computed(() =>
       v-if="source !== 'lichess'"
       ref="localHistory"
       :source="source === 'computer' ? 'computer' : 'board'"
+      :open-game="openGameId"
     />
     <section v-else class="lichess-history">
       <p v-if="!online" class="section-hint mb-4" role="status">

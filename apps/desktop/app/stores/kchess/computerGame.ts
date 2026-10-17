@@ -88,6 +88,16 @@ export function useComputerGame(options: {
       localPly.value === localMoves.value.length,
   )
   const localInteractive = computed(() => localCanPlay.value && localTurn.value === userColor.value)
+  /**
+   * A move of the player's is on the board, also while Stockfish answers it. A loss on time stays:
+   * the flagged clock is empty, so the takeback would only flag again.
+   */
+  const localCanTakeback = computed(
+    () =>
+      !state.flagged &&
+      (localMoves.value.length >= 2 ||
+        (localMoves.value.length === 1 && turnColor(localGame.value) !== userColor.value)),
+  )
 
   /* ── Clock ─────────────────────────────────────────────────────────── */
 
@@ -149,6 +159,7 @@ export function useComputerGame(options: {
     userColor,
     thinking,
     localOver,
+    localCanTakeback,
     localGame,
     localDisplay,
     localHistory,

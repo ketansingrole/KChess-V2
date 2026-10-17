@@ -517,7 +517,7 @@ test('offers account-free actions and manages offline downloads without signing 
     page.getByRole('button', { name: 'Download voice model', exact: true }),
   ).toBeDisabled()
   await expect(
-    page.getByRole('button', { name: 'Download a fresh sample', exact: true }),
+    page.getByRole('button', { name: 'Download a fresh sample (~300 MB)', exact: true }),
   ).toBeDisabled()
   await page.screenshot({ path: test.info().outputPath('kchess-offline-downloads.png') })
 })
@@ -755,7 +755,7 @@ test('turns a reviewed game mistake into a scheduled practice position @seed:rev
   const height = await page.evaluate(() => window.innerHeight)
   expect(board!.y + board!.height).toBeLessThanOrEqual(height)
   await page.screenshot({ path: join(process.cwd(), 'test-results', 'mistake-practice.png') })
-  await page.getByRole('button', { name: 'Show engine line', exact: true }).click()
+  await page.getByRole('button', { name: 'Show solution', exact: true }).click()
   await expect(
     page.getByText('Position completed. Your next revisit has been scheduled.', { exact: true }),
   ).toBeVisible()
@@ -2153,7 +2153,7 @@ test('analyses a broadcast inline and explores lines without changing saved anal
     'white clock',
   )
   await expect(lines.locator('.pv-move').first()).toHaveText(/^1… /)
-  await page.getByRole('button', { name: 'Go to first move', exact: true }).click()
+  await page.getByRole('button', { name: 'Go to start', exact: true }).click()
   await expect(lines.locator('.pv-move').first()).toHaveText(/^1\. /)
   await page.getByRole('button', { name: 'Go to last move', exact: true }).click()
   await expect(lines.locator('.pv-move').first()).toHaveText(/^2\. /)

@@ -86,7 +86,7 @@ async function clearPending(): Promise<void> {
 }
 function showGames(friend: LichessAccount): void {
   historyAccount.value = friend.username
-  selectPage('history')
+  selectPage('history', { source: 'lichess' })
 }
 
 onMounted(() => {

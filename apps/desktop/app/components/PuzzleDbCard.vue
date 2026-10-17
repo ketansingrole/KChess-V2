@@ -68,7 +68,7 @@ const phaseText = computed(() => {
           icon="i-lucide-refresh-cw"
           :disabled="!online"
           @click="puzzles.installDb()"
-          >Download a fresh sample</UButton
+          >Download a fresh sample (~300 MB)</UButton
         >
         <UButton
           size="sm"

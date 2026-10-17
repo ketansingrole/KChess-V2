@@ -59,19 +59,28 @@ export async function openMicrophoneSettings(): Promise<boolean> {
   return true
 }
 
-/** Grant audio capture to the app's own pages only; never camera or screen capture. */
+/** Clipboard writes ("Copy FEN", "Copy PGN", …); reading the clipboard stays denied. */
+const CLIPBOARD_WRITE = 'clipboard-sanitized-write'
+
+/**
+ * Grant audio capture and sanitized clipboard writes to the app's own pages only;
+ * never camera, screen capture or clipboard reads.
+ */
 export function setupMediaPermissions(isAppUrl: (url: string) => boolean): void {
   const ses = session.defaultSession
   ses.setPermissionCheckHandler((contents, permission, origin, details) =>
     Boolean(
       contents &&
-      permission === 'media' &&
       isAppUrl(contents.getURL()) &&
       isAppUrl(origin) &&
-      details.mediaType === 'audio',
+      (permission === CLIPBOARD_WRITE || (permission === 'media' && details.mediaType === 'audio')),
     ),
   )
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (permission === CLIPBOARD_WRITE)
+      return callback(
+        isAppUrl(contents.getURL()) && isAppUrl(details.requestingUrl) && details.isMainFrame,
+      )
     if (permission !== 'media') return callback(false)
     const types = 'mediaTypes' in details ? (details.mediaTypes ?? []) : []
     callback(

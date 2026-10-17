@@ -149,6 +149,13 @@ const followLookup = useDebounceFn(() => void lookup(prefs.value.kind, false), 3
 onMounted(() => {
   if (following.value) void lookup(prefs.value.kind, false)
 })
+// Switching "Follow moves" on looks up the position on the board straight away.
+watch(
+  () => prefs.value.follow,
+  (on) => {
+    if (on && !props.grid) void lookup(prefs.value.kind, false)
+  },
+)
 // The grid follows its position: choosing a database looks it up straight away.
 watch(
   () => [prefs.value.speeds, prefs.value.ratings, prefs.value.since, prefs.value.color],
@@ -288,7 +295,7 @@ const heading = computed(() => {
       />
     </div>
     <div v-if="showFilters && prefs.kind !== 'tablebase'" class="mt-2 flex flex-col gap-2 text-xs">
-      <div class="flex flex-wrap gap-1">
+      <div v-if="prefs.kind !== 'masters'" class="flex flex-wrap gap-1">
         <UButton
           v-for="speed in EXPLORER_SPEEDS"
           :key="speed"

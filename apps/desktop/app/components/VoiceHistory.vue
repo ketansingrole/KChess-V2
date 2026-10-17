@@ -127,7 +127,13 @@ async function exportLog(): Promise<void> {
   }
 }
 async function clearLog(): Promise<void> {
-  await window.kchess.clearVoiceHistory()
+  try {
+    await window.kchess.clearVoiceHistory()
+  } catch (cause) {
+    console.warn('[voice-history] Clearing voice history failed:', cause)
+    error.value = cause instanceof Error ? cause.message : 'Could not clear the voice history.'
+    return
+  }
   await load()
 }
 </script>

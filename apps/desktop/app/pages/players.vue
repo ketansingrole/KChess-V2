@@ -45,6 +45,8 @@ const perf = ref<PerfType>('blitz')
 const stats = ref<PerfStats | null>(null)
 const statsError = ref('')
 const record = ref<Crosstable | null>(null)
+/** What could not be read beside the profile (presence, your record), so "none" is not implied. */
+const extrasFailed = ref<string[]>([])
 const games = ref<LichessGame[] | null>(null)
 const history = ref<LichessRatingHistory | null>(null)
 /** The chart was rebuilt from recent rated games because Lichess sent no history. */
@@ -77,6 +79,7 @@ async function lookup(name = query.value.trim()): Promise<void> {
   stats.value = null
   record.value = null
   status.value = null
+  extrasFailed.value = []
   games.value = null
   gamesError.value = ''
   history.value = null
@@ -102,6 +105,7 @@ async function lookup(name = query.value.trim()): Promise<void> {
         })
         .catch((error: unknown) => {
           console.warn('[players] Crosstable unavailable:', error)
+          if (current === request) extrasFailed.value = [...extrasFailed.value, 'your record']
           return undefined
         })
     void loadHistory(found.username, current)
@@ -113,6 +117,7 @@ async function lookup(name = query.value.trim()): Promise<void> {
       })
       .catch((error: unknown) => {
         console.warn('[players] Presence unavailable:', error)
+        if (current === request) extrasFailed.value = [...extrasFailed.value, 'online status']
         return undefined
       })
   } catch (cause) {
@@ -414,6 +419,9 @@ async function watchGame(): Promise<void> {
             >
           </div>
         </div>
+        <p v-if="extrasFailed.length" class="muted text-sm mb-3" role="status">
+          Could not load {{ extrasFailed.join(' or ') }}.
+        </p>
         <p v-if="profile.profile?.bio" class="text-sm whitespace-pre-line mb-3">
           {{ profile.profile.bio }}
         </p>

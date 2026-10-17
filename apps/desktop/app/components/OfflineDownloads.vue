@@ -27,6 +27,10 @@ async function refreshVoice(): Promise<void> {
     refreshing = false
   }
 }
+function retryVoice(): void {
+  voiceError.value = ''
+  void refreshVoice()
+}
 onMounted(() => {
   offProgress = window.kchess.onVoiceModelProgress((progress) => {
     voice.value = { installed: false, bytes: 0, busy: true, progress }
@@ -146,6 +150,16 @@ function openSection(section: 'engine' | 'voice'): void {
         >Voice input settings</UButton
       >
       <p v-if="voiceError" class="text-error text-sm mt-3" role="alert">{{ voiceError }}</p>
+      <UButton
+        v-if="voiceError && !voice"
+        class="mt-2"
+        size="sm"
+        variant="outline"
+        color="neutral"
+        icon="i-lucide-refresh-cw"
+        @click="retryVoice"
+        >Retry</UButton
+      >
     </section>
     <section class="card">
       <h2 class="section-title">Saved games and studies</h2>

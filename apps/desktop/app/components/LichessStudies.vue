@@ -104,7 +104,11 @@ function openRemote(id: string): Promise<void> {
   }
   const openingAccount = account.value
   const item = remote.value?.find((s) => s.id === id)
-  if (!item) return Promise.resolve()
+  if (!item) {
+    // The list changed under the card (another account, a refresh): say so instead of nothing.
+    message.value = 'This study is no longer in the list. Refresh and try again.'
+    return Promise.resolve()
+  }
   const request = requests.next()
   return work(async () => {
     const result = await window.kchess.lichessStudyChapters(openingAccount, id)

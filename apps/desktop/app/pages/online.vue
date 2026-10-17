@@ -251,13 +251,13 @@ function analyse(): void {
     black,
     player: onlineColor.value,
   }
-  void analysis.requestReview()
+  analysis.startReview()
   selectPage('analysis')
 }
 const rematchOffer = computed(() => challenges.rematchOffer)
 const tournaments = useTournamentStore()
 function backToTournament(): void {
-  void tournaments.open('arena', onlineTournament.value)
+  void tournaments.open(tournaments.systemOf(onlineTournament.value), onlineTournament.value)
   selectPage('tournaments')
 }
 </script>
@@ -505,7 +505,7 @@ function backToTournament(): void {
         </p>
         <div class="mt-3 flex gap-2">
           <UButton :loading="busy" @click="store.reconnectOnline">Reconnect</UButton>
-          <UButton variant="outline" color="neutral" @click="store.selectPage('settings')"
+          <UButton variant="outline" color="neutral" @click="store.openSettings('accounts')"
             >Account settings</UButton
           >
           <UButton v-if="!onlineId" variant="ghost" color="neutral" @click="stopOnline"
@@ -769,7 +769,7 @@ function backToTournament(): void {
                 :color="lastGame ? 'neutral' : 'primary'"
                 icon="i-lucide-plus"
                 @click="stopOnline"
-                >{{ onlineCorrespondence && playing ? 'Close game' : 'New game' }}</UButton
+                >New game</UButton
               >
             </template>
             <UButton

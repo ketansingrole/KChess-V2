@@ -23,7 +23,9 @@ function timeLeft(game: OngoingGame): string {
   return `${Math.max(0, Math.floor(seconds / 60))}m left`
 }
 async function open(game: OngoingGame): Promise<void> {
-  await store.openOngoing(game.account, game.gameId)
+  // The game already on the board needs no new stream.
+  if (store.onlineId !== game.gameId || store.onlinePhase !== 'playing')
+    await store.openOngoing(game.account, game.gameId)
   store.selectPage('online')
 }
 </script>
@@ -85,7 +87,6 @@ async function open(game: OngoingGame): Promise<void> {
             size="xs"
             :variant="game.isMyTurn ? 'solid' : 'outline'"
             :color="game.isMyTurn ? 'primary' : 'neutral'"
-            :disabled="store.onlineId === game.gameId && store.onlinePhase === 'playing'"
             @click="open(game)"
             >{{
               store.onlineId === game.gameId && store.onlinePhase === 'playing' ? 'Open' : 'Play'

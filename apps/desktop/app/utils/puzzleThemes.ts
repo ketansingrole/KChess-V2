@@ -182,6 +182,18 @@ export const PUZZLE_THEME_GROUPS: PuzzleThemeGroup[] = [
       { key: 'veryLong', name: 'Very long', hint: 'Four moves or more.' },
     ],
   },
+  {
+    label: 'Origin',
+    themes: [
+      { key: 'master', name: 'Master games', hint: 'From games played by titled players.' },
+      {
+        key: 'masterVsMaster',
+        name: 'Master vs Master games',
+        hint: 'From games between two titled players.',
+      },
+      { key: 'superGM', name: 'Super GM games', hint: 'From games of the world’s best players.' },
+    ],
+  },
 ]
 
 const ALL_THEMES = PUZZLE_THEME_GROUPS.flatMap((group) => group.themes)

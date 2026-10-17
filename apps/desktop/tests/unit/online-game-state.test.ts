@@ -155,3 +155,13 @@ it('runs the computer game clock and loses on time', async () => {
     vi.useRealTimers()
   }
 })
+
+// The form's Account select was ignored: a new game started as the account of the last game.
+it('starts the form’s game as the account the form shows', async () => {
+  const { store, api } = await setup()
+  const start = vi.fn(async () => ({ seeking: true }))
+  api.startOnline = start
+  store.setOnlineAccount('Bob')
+  await store.startOnline()
+  expect(start).toHaveBeenCalledWith(expect.objectContaining({ account: 'Bob' }))
+})
