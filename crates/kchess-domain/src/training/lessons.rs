@@ -683,7 +683,8 @@ fn step_problems(step: &Step) -> Vec<String> {
             if moves.is_empty() || moves.len() % 2 == 0 {
                 out.push("a line must end with your move".into());
             }
-            let mut pos = start.clone();
+            // `start` is only borrowed by the `Task::Mate` arm below, so this arm can take it.
+            let mut pos = start;
             for uci in moves {
                 match legal(&pos, uci) {
                     Some(m) if uci_of(&m) == *uci => pos.play_unchecked(m),

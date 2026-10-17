@@ -19,6 +19,7 @@ fn arity_const(name: &str, scope: Scope) -> Item {
     let body: String = arities(scope)
         .iter()
         .map(|(method, min, max)| {
+            #[expect(clippy::expect_used, reason = "serializing a &str cannot fail")]
             let key = serde_json::to_string(method).expect("method name serializes");
             format!("  {key}: [{min}, {max}],\n")
         })
@@ -35,6 +36,7 @@ fn assistance_const() -> Item {
     let body: String = ASSISTANCE_METHODS
         .iter()
         .map(|method| {
+            #[expect(clippy::expect_used, reason = "serializing a &str cannot fail")]
             let name = serde_json::to_string(method).expect("method name serializes");
             format!("  {name},\n")
         })

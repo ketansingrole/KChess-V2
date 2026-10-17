@@ -7,7 +7,13 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let check = std::env::args().any(|arg| arg == "--check");
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ts/generated");
-    let files = kchess_contracts::render_all();
+    let files = match kchess_contracts::render_all() {
+        Ok(files) => files,
+        Err(cause) => {
+            eprintln!("contracts: {cause}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     if check {
         let mut stale: Vec<String> = Vec::new();

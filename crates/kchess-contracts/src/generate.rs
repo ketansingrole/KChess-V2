@@ -48,6 +48,7 @@ impl Item {
                 values,
                 suffix,
             } => {
+                #[expect(clippy::expect_used, reason = "serializing a &str cannot fail")]
                 let body = values
                     .iter()
                     .map(|v| serde_json::to_string(v).expect("const value serializes"))

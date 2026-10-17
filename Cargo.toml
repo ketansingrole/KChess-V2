@@ -21,12 +21,15 @@ missing_docs = "allow"
 [workspace.lints.clippy]
 # Verified zero hits on green code; existing unsafe blocks carry SAFETY comments.
 undocumented_unsafe_blocks = "deny"
-# Each allow below fired on green code, and `-D warnings` (check:rust) promotes
-# warns to errors; sources are out of scope, so these stay allow until fixed:
-# cast_possible_truncation (30+ hits), redundant_clone (2 hits),
-# unwrap_used/expect_used (90+ hits).
+# None of these entries changes a build: `-D warnings` only promotes lints that already fire,
+# and nothing in `check:rust-lint` enables these. They document what switching one on would
+# cost. Shipped Rust is library targets only (the N-API cdylib included): the workspace has no
+# shipped bin, and `kchess-core`'s `kchess-fake-uci` bin is test scaffolding.
+# unwrap_used/expect_used are enforced for shipped targets by the second clippy pass in
+# `check:rust-lint`; test targets keep this exemption, because a panicking test is a failing
+# test rather than a shipped panic path.
+# Measured 2026-10-17: cast_possible_truncation 38 hits over 40 files, none with more than 7.
 cast_possible_truncation = "allow"
-redundant_clone = "allow"
 unwrap_used = "allow"
 expect_used = "allow"
 

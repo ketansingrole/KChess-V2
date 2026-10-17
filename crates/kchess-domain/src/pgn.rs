@@ -183,6 +183,63 @@ struct Frame {
     starting_comments: Option<Vec<String>>,
 }
 
+impl Frame {
+    /// The game's root frame: always present, never popped.
+    fn root() -> Frame {
+        Frame {
+            parent: 0,
+            root: true,
+            node: None,
+            starting_comments: None,
+        }
+    }
+}
+
+/// The root frame plus the open variation stack above it. Kept apart so that "there is always a
+/// current frame" is a fact of the type: `current`/`current_mut` are total and `pop` cannot remove
+/// the root, so no caller needs an `expect`.
+struct Frames {
+    root: Frame,
+    rest: Vec<Frame>,
+}
+
+impl Frames {
+    fn new() -> Frames {
+        Frames {
+            root: Frame::root(),
+            rest: Vec::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.root = Frame::root();
+        self.rest.clear();
+    }
+
+    /// The frame the current token applies to.
+    fn current(&self) -> &Frame {
+        self.rest.last().unwrap_or(&self.root)
+    }
+
+    fn current_mut(&mut self) -> &mut Frame {
+        self.rest.last_mut().unwrap_or(&mut self.root)
+    }
+
+    /// True while no variation is open.
+    fn at_root(&self) -> bool {
+        self.rest.is_empty()
+    }
+
+    fn push(&mut self, frame: Frame) {
+        self.rest.push(frame)
+    }
+
+    /// Closes the innermost variation. The root is not in `rest`, so there is nothing to guard.
+    fn pop(&mut self) {
+        let _ = self.rest.pop();
+    }
+}
+
 #[derive(PartialEq, Clone, Copy)]
 enum State {
     Bom,
@@ -381,7 +438,7 @@ struct Parser {
     found: bool,
     state: State,
     game: Game,
-    stack: Vec<Frame>,
+    stack: Frames,
     comment_buf: Vec<String>,
 }
 
@@ -392,12 +449,7 @@ impl Parser {
             found: false,
             state: State::Bom,
             game: Game::new(),
-            stack: vec![Frame {
-                parent: 0,
-                root: true,
-                node: None,
-                starting_comments: None,
-            }],
+            stack: Frames::new(),
             comment_buf: Vec::new(),
         }
     }
@@ -406,12 +458,7 @@ impl Parser {
         self.found = false;
         self.state = State::Pre;
         self.game = Game::new();
-        self.stack = vec![Frame {
-            parent: 0,
-            root: true,
-            node: None,
-            starting_comments: None,
-        }];
+        self.stack.reset();
         self.comment_buf.clear();
     }
 
@@ -474,12 +521,12 @@ impl Parser {
                         }
                         "1-0" | "1–0" | "1—0" | "0-1" | "0–1" | "0—1" | "1/2-1/2" | "1/2–1/2"
                         | "1/2—1/2" | "*" => {
-                            if self.stack.len() == 1 && token != "*" {
+                            if self.stack.at_root() && token != "*" {
                                 self.game.set_header("Result", token.to_string());
                             }
                         }
                         "(" => {
-                            let parent = self.stack.last().map_or(0, |f| f.parent);
+                            let parent = self.stack.current().parent;
                             self.stack.push(Frame {
                                 parent,
                                 root: false,
@@ -488,9 +535,7 @@ impl Parser {
                             });
                         }
                         ")" => {
-                            if self.stack.len() > 1 {
-                                self.stack.pop();
-                            }
+                            self.stack.pop();
                         }
                         "{" => {
                             let open = end;
@@ -511,7 +556,7 @@ impl Parser {
                             } else {
                                 San::new(token)
                             };
-                            let frame = self.stack.last_mut().expect("frame");
+                            let frame = self.stack.current_mut();
                             if let Some(node) = frame.node {
                                 frame.parent = node;
                             }
@@ -554,7 +599,7 @@ impl Parser {
     }
 
     fn handle_nag(&mut self, nag: u32) {
-        if let Some(node) = self.stack.last().and_then(|f| f.node) {
+        if let Some(node) = self.stack.current().node {
             self.game.nodes[node]
                 .nags
                 .get_or_insert_with(Vec::new)
@@ -565,7 +610,7 @@ impl Parser {
     fn handle_comment(&mut self) {
         let comment = self.comment_buf.join("\n");
         self.comment_buf.clear();
-        let frame = self.stack.last_mut().expect("frame");
+        let frame = self.stack.current_mut();
         if let Some(node) = frame.node {
             self.game.nodes[node]
                 .comments

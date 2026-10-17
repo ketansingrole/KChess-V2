@@ -40,9 +40,9 @@ pub fn numbers(list: &[f64]) -> Vec<Value> {
 }
 
 /// Every generated module, keyed by file stem (`generated/<stem>.ts`).
-pub fn modules() -> Vec<Module> {
+pub fn modules() -> Result<Vec<Module>, String> {
     let cfg = Config::new();
-    vec![
+    Ok(vec![
         Module {
             stem: "types",
             items: types::items(&cfg),
@@ -76,7 +76,7 @@ pub fn modules() -> Vec<Module> {
         },
         Module {
             stem: "defaultSettings",
-            items: defaults::items(&cfg),
+            items: defaults::items(&cfg)?,
             reexports: vec![],
         },
         Module {
@@ -84,10 +84,10 @@ pub fn modules() -> Vec<Module> {
             items: arity::items(),
             reexports: vec![],
         },
-    ]
+    ])
 }
 
 /// The rendered files: `file name → contents`.
-pub fn render_all() -> BTreeMap<String, String> {
-    generate::render(&modules())
+pub fn render_all() -> Result<BTreeMap<String, String>, String> {
+    Ok(generate::render(&modules()?))
 }

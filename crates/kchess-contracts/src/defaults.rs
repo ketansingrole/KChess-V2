@@ -14,14 +14,21 @@ const DEFAULT_CORRESPONDENCE_POLL_MINUTES: f64 = 5.0;
 /// Default sound volume (0.0–1.0).
 const DEFAULT_SOUND_VOLUME: f64 = 0.7;
 
+/// The engine levels in `Settings`, from the domain's training data.
+fn default_engine_levels() -> Result<Vec<EngineLevel>, String> {
+    let Some(levels) = training::call("defaultEngineLevels", &[]) else {
+        return Err("defaultEngineLevels is not a training method".into());
+    };
+    let levels =
+        levels.map_err(|cause| format!("the bundled engine levels are unreadable: {cause}"))?;
+    serde_json::from_value(levels)
+        .map_err(|cause| format!("the bundled engine levels are not known levels: {cause}"))
+}
+
 /// The default preferences. The engine levels are the domain's data (`training` data).
-pub fn default_settings() -> Settings {
-    let levels = training::call("defaultEngineLevels", &[])
-        .expect("defaultEngineLevels is a training method")
-        .expect("the bundled engine levels are readable");
-    let engine_levels: Vec<EngineLevel> =
-        serde_json::from_value(levels).expect("default engine levels are known levels");
-    Settings {
+pub fn default_settings() -> Result<Settings, String> {
+    let engine_levels = default_engine_levels()?;
+    Ok(Settings {
         core: CoreSettings {
             engine_path: String::new(),
             voice_history: true,
@@ -67,13 +74,15 @@ pub fn default_settings() -> Settings {
             swipe_indicator: true,
             puzzle_auto_next: true,
         },
-    }
+    })
 }
 
-pub fn items(_cfg: &Config) -> Vec<Item> {
-    let json = serde_json::to_string_pretty(&default_settings()).expect("settings serialize");
-    vec![Item::Raw {
+pub fn items(_cfg: &Config) -> Result<Vec<Item>, String> {
+    let settings = default_settings()?;
+    let json = serde_json::to_string_pretty(&settings)
+        .map_err(|cause| format!("the default settings do not serialize: {cause}"))?;
+    Ok(vec![Item::Raw {
         name: "DEFAULT_SETTINGS".into(),
         text: format!("export const DEFAULT_SETTINGS: Settings = {json};"),
-    }]
+    }])
 }
