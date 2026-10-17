@@ -52,3 +52,6 @@ strip = "none"
 [profile.wasm]
 inherits = "release"
 panic = "abort"
+# The renderer never reads DWARF or the `name` section (a trap reaches the log as its message
+# only); development builds use `dev` and keep both.
+strip = "symbols"
