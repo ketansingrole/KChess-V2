@@ -23,7 +23,14 @@ const { reviewMarks } = storeToRefs(useAnalysisStore())
 const GLYPHS = { inaccuracy: '?!', mistake: '?', blunder: '??' } as const
 
 type Item =
-  | { kind: 'move'; node: TreeNode; path: string; number: string; judgment?: Judgment }
+  | {
+      kind: 'move'
+      node: TreeNode
+      path: string
+      number: string
+      glyph?: ReturnType<typeof moveGlyph>
+      judgment?: Judgment
+    }
   | { kind: 'variations'; parent: TreeNode; parentPath: string; alternatives: TreeNode[] }
 
 const items = computed<Item[]>(() => {
@@ -39,6 +46,7 @@ const items = computed<Item[]>(() => {
       node,
       path,
       number: moveNumber(parent.ply, numbered),
+      glyph: moveGlyph(node),
       judgment: reviewMarks.value.get(path)?.judgment,
     })
     numbered = false
@@ -74,11 +82,9 @@ const items = computed<Item[]>(() => {
       >
         <span v-if="item.number" class="tree-number">{{ item.number }}</span>
         {{ item.node.san
-        }}<span
-          v-if="moveGlyph(item.node)"
-          class="tree-glyph"
-          :title="moveGlyph(item.node)!.label"
-          >{{ moveGlyph(item.node)!.glyph }}</span
+        }}<span v-if="item.glyph" class="tree-glyph" :title="item.glyph.label">{{
+          item.glyph.glyph
+        }}</span
         ><span
           v-else-if="item.judgment"
           :class="['tree-glyph', item.judgment]"

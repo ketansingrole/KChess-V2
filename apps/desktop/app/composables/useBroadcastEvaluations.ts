@@ -16,7 +16,17 @@ export function useBroadcastEvaluations(
   identity: () => string,
 ) {
   const previews = shallowReactive(new Map<string, Preview>())
-  const context = (game: BroadcastGame) => analysisContext(game.startFen, game.moves)
+  // Each update replaces a game's object, so its context is computed once per object rather
+  // than for every grid cell binding on every render.
+  const contexts = new WeakMap<BroadcastGame, string>()
+  const context = (game: BroadcastGame): string => {
+    let key = contexts.get(game)
+    if (key === undefined) {
+      key = analysisContext(game.startFen, game.moves)
+      contexts.set(game, key)
+    }
+    return key
+  }
   const selected = computed(() =>
     games().find((game) => game.ongoing && previews.get(game.id)?.context !== context(game)),
   )

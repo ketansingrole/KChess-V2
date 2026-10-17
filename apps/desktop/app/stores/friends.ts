@@ -26,19 +26,24 @@ export const useFriendsStore = defineStore('friends', () => {
     // Profiles saved within the last hour (e.g. by an import) are not worth another request.
     const fresh = new Set<string>()
     try {
-      for (const friend of friends.value) {
-        const key = friend.username.toLowerCase()
-        if (profiles.value[key]) continue
-        const saved = await window.kchess.cachedProfile(friend.username).catch((error: unknown) => {
-          console.warn('[friends] reading cached profile failed:', error)
-          return null
-        })
-        if (saved?.profile) {
-          profiles.value[key] = saved.profile
-          if (saved.profileFetchedAt && Date.now() - saved.profileFetchedAt < 3_600_000)
-            fresh.add(key)
-        }
-      }
+      // Cached profiles are local reads, so they are fetched together.
+      await Promise.all(
+        friends.value.map(async (friend) => {
+          const key = friend.username.toLowerCase()
+          if (profiles.value[key]) return
+          const saved = await window.kchess
+            .cachedProfile(friend.username)
+            .catch((error: unknown) => {
+              console.warn('[friends] reading cached profile failed:', error)
+              return null
+            })
+          if (saved?.profile) {
+            profiles.value[key] = saved.profile
+            if (saved.profileFetchedAt && Date.now() - saved.profileFetchedAt < 3_600_000)
+              fresh.add(key)
+          }
+        }),
+      )
       for (const friend of friends.value) {
         if (!online.value || fresh.has(friend.username.toLowerCase())) continue
         try {
