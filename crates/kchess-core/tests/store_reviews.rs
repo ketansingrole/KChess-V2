@@ -8,6 +8,7 @@ mod support;
 use std::path::Path;
 use std::sync::Arc;
 
+use kchess_core::engine::review::GameToReview;
 use kchess_core::{Config, Core};
 use kchess_domain::api;
 use rusqlite::Connection;
@@ -169,6 +170,19 @@ fn all_associations_are_retained_through_updates_and_each_account_copy_leaves_th
     );
     assert_eq!(profile.games_to_review(&["Alice", "Bob"]), json!([]));
     assert_eq!(profile.insights("Alice")["accuracy"]["games"], json!(2));
+}
+
+/// The queue parses these rows as `GameToReview` (`engine::bridge`): a floating-point
+/// `createdAt` fails the whole pass ("expected i64") and automatic reviews stop.
+#[test]
+fn games_to_review_rows_parse_as_the_queue_expects() {
+    let profile = fresh();
+    profile.game("Game0001", "Alice");
+    let games: Vec<GameToReview> = serde_json::from_value(profile.games_to_review(&["Alice"]))
+        .expect("the queue reads the games to review");
+    assert_eq!(games.len(), 1);
+    assert_eq!(games[0].id, "Game0001");
+    assert_eq!(games[0].created_at, 1);
 }
 
 #[test]

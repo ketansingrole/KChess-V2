@@ -362,7 +362,9 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
                 "moves": row.get::<_, String>(2)?,
                 "pgn": row.get::<_, Option<String>>(3)?,
                 "perf": row.get::<_, String>(4)?,
-                "createdAt": row.get::<_, f64>(5)?,
+                // The queue parses this row as `GameToReview` (`created_at: i64`); a floating
+                // point reading fails the whole pass with "expected i64".
+                "createdAt": row.get::<_, i64>(5)?,
                 "checked": row.get::<_, i64>(6)? == 1,
             }))
         })
