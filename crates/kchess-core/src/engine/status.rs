@@ -207,16 +207,11 @@ enum AccessMode {
 /// check is existence, which is also what Node does for `X_OK` there.
 #[cfg(unix)]
 fn access(path: &Path, mode: AccessMode) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let flag = match mode {
-        AccessMode::Read => libc::R_OK,
-        AccessMode::Execute => libc::X_OK,
+    let access = match mode {
+        AccessMode::Read => rustix::fs::Access::READ_OK,
+        AccessMode::Execute => rustix::fs::Access::EXEC_OK,
     };
-    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    // SAFETY: `c_path` is a valid NUL-terminated string that lives across the call.
-    unsafe { libc::access(c_path.as_ptr(), flag) == 0 }
+    rustix::fs::access(path, access).is_ok()
 }
 
 #[cfg(not(unix))]

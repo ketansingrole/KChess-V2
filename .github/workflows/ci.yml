@@ -89,6 +89,26 @@ jobs:
       # A normal run must never rewrite the golden file without --update-golden.
       - run: git diff --exit-code tests/core/native-golden.json
 
+  # Undefined-behaviour check of the renderer module's C ABI (kc_alloc/kc_free/kc_invoke), the
+  # workspace's only hand-written unsafe, on the nightly pinned for fuzzing.
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned nightly with Miri
+        run: |
+          nightly=$(sed -n 's/^channel = "\(.*\)"$/\1/p' fuzz/rust-toolchain.toml)
+          rustup toolchain install "$nightly" --profile minimal --component miri,rust-src
+          echo "NIGHTLY=$nightly" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: miri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The host rebuilds result pointers from integers, as the WebAssembly host does.
+      - run: cargo +"$NIGHTLY" miri test -p kchess-wasm --lib --locked
+        env:
+          MIRIFLAGS: -Zmiri-permissive-provenance
+
   audit:
     runs-on: ubuntu-latest
     steps:

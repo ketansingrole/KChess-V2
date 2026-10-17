@@ -1,6 +1,8 @@
 //! Closing the core (`Core::close`, the facade's close sequence): an engine search, a Lichess
 //! request and a puzzle download that are running when the core closes end, `close` returns, and
 //! later calls fail with the TypeScript message `The KChess core is closed.`.
+// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
+#![allow(unsafe_code)]
 
 mod support;
 

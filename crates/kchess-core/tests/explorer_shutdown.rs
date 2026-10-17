@@ -1,4 +1,6 @@
 //! Core close cancels explorer HTTP instead of waiting out its response deadline.
+// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
+#![allow(unsafe_code)]
 #[path = "support/lichess_http.rs"]
 mod fixtures;
 

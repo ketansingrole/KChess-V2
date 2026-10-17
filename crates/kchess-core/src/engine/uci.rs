@@ -800,12 +800,12 @@ async fn reap(inner: Arc<Inner>, mut child: Child, mut kill: mpsc::UnboundedRece
 
 #[cfg(unix)]
 fn request_termination(child: &mut Child) {
-    if let Some(pid) = child.id() {
-        // The child has not been reaped (`wait` has not returned), so this pid still names it.
-        // SAFETY: `kill` only sends a signal to a process id; no memory is shared.
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
-        }
+    // The child has not been reaped (`wait` has not returned), so this pid still names it.
+    if let Some(pid) = child
+        .id()
+        .and_then(|id| rustix::process::Pid::from_raw(id as i32))
+    {
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
     }
 }
 

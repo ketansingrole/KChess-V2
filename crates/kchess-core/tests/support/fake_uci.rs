@@ -21,6 +21,8 @@
 //!
 //! When a log path is given, every received line is appended to it before any reply, so a test
 //! that has read a reply knows the command was received.
+// Test scaffolding: the only unsafe left in this crate (`libc::signal` for `ignore-term`).
+#![allow(unsafe_code)]
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, Write};

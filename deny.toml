@@ -1,8 +1,12 @@
-# Minimal cargo-deny config: fail on yanked advisories, unapproved licenses,
-# wildcard version requirements, and unknown registries/git sources.
+# cargo-deny config: fail on RustSec vulnerabilities, unsound and unmaintained crates, yanked
+# versions, unapproved licenses, wildcard version requirements, and unknown registries/git sources.
 # Run with: cargo deny check
 
 [advisories]
+# Stated rather than left to cargo-deny's defaults: any advisory fails the check. Accept one only
+# with an `ignore = [{ id = "RUSTSEC-…", reason = "…" }]` entry that says why.
+unmaintained = "all"
+unsound = "all"
 yanked = "deny"
 
 [licenses]
@@ -13,6 +17,8 @@ allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CDL
 
 [bans]
 wildcards = "deny"
+# Duplicates come from transitive crates (syn, windows-sys, getrandom…); report, don't fail.
+multiple-versions = "warn"
 # Workspace siblings are path dependencies without versions by design.
 allow-wildcard-paths = true
 

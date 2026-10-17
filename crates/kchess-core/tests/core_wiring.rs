@@ -2,6 +2,8 @@
 //! `Core::call` and `Core::call_sync` with a recording host and scripted engines. Covers the
 //! battery reading (never waiting on the host), the managed engine handoff, the exact event
 //! payloads, the busy state of automatic reviews, and closing the core.
+// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
+#![allow(unsafe_code)]
 
 mod support;
 

@@ -18,8 +18,7 @@ zstd = "0.14"
 # `crypto.randomUUID()` for study and chapter ids (already in Cargo.lock through rustls and tempfile).
 getrandom = "0.4"
 # Engine download: SHA-256 digest check (`sha2`), archive extraction (`flate2` inflates tar.gz,
-# `tar`, `zip` with deflate only, no symlinks), a private staging directory (`tempfile`), and
-# `access(2)` for the executable check of `engine/status.rs` (`libc`, already in Cargo.lock).
+# `tar`, `zip` with deflate only, no symlinks), and a private staging directory (`tempfile`).
 sha2 = { version = "0.11", default-features = false }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 tar = { version = "0.4", default-features = false }
@@ -38,9 +37,11 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # Cargo.lock through hyper; no new code is pulled in.
 tracing = "0.1"
 
-# libc: `access(2)` for engine/status.rs, and SIGTERM before SIGKILL as Node's
-# `ChildProcess.kill()` does (tokio can only send SIGKILL).
+# rustix (already in Cargo.lock through tempfile): `access(2)` for engine/status.rs, and SIGTERM
+# before SIGKILL as Node's `ChildProcess.kill()` does (tokio can only send SIGKILL), without unsafe.
+# libc: only the fake engine's `ignore-term` mode (tests/support/fake_uci.rs) ignores SIGTERM.
 [target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
 libc = "0.2"
 
 [dev-dependencies]
@@ -53,16 +54,4 @@ name = "kchess-fake-uci"
 path = "tests/support/fake_uci.rs"
 
 [lints]
-# Manual table: cargo 1.94 rejects combining `workspace = true` with overrides,
-# and this crate needs unsafe for libc::access/libc::kill. Mirrors
-# [workspace.lints] except unsafe_code.
-[lints.rust]
-unsafe_code = "allow"
-missing_docs = "allow"
-
-[lints.clippy]
-undocumented_unsafe_blocks = "deny"
-cast_possible_truncation = "allow"
-redundant_clone = "allow"
-unwrap_used = "allow"
-expect_used = "allow"
+workspace = true

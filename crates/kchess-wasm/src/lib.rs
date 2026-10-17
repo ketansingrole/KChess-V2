@@ -129,3 +129,89 @@ pub unsafe extern "C" fn kc_invoke(
     };
     packed(status, &body)
 }
+
+/// The C ABI as the host drives it, under Miri (`cargo miri test -p kchess-wasm`), which checks
+/// every allocation, copy and free for undefined behaviour. Native test hosts are left out:
+/// their heap pointers do not fit the 32-bit packing (see `packed`).
+#[cfg(all(test, miri))]
+mod tests {
+    use super::*;
+
+    /// Copy `bytes` into a fresh `kc_alloc` buffer, as the host does.
+    fn host_buffer(bytes: &[u8]) -> *mut u8 {
+        let ptr = kc_alloc(bytes.len());
+        assert!(!ptr.is_null());
+        // SAFETY: `ptr` holds `bytes.len()` writable bytes from `kc_alloc`.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+        ptr
+    }
+
+    /// Read and free a `kc_invoke` result, as the host does.
+    fn take_result(packed: u64) -> (u8, String) {
+        let ptr = std::ptr::with_exposed_provenance_mut::<u8>((packed >> 32) as usize);
+        let len = (packed & 0xffff_ffff) as usize;
+        // SAFETY: `kc_invoke` returned a live buffer of `len` bytes at `ptr`.
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+        // SAFETY: the result buffer with its own length, freed once.
+        unsafe { kc_free(ptr, len) };
+        let (status, body) = bytes.split_first().unwrap();
+        (*status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    fn invoke(method: &[u8], args: &[u8]) -> (u8, String) {
+        let (m, a) = (host_buffer(method), host_buffer(args));
+        // SAFETY: both ranges were just filled from `kc_alloc` buffers of these lengths.
+        let result = take_result(unsafe { kc_invoke(m, method.len(), a, args.len()) });
+        // SAFETY: the host frees its argument buffers with their lengths.
+        unsafe {
+            kc_free(m, method.len());
+            kc_free(a, args.len());
+        }
+        result
+    }
+
+    #[test]
+    fn allocates_and_frees() {
+        let empty = kc_alloc(0);
+        assert!(!empty.is_null());
+        // SAFETY: a zero-length buffer from `kc_alloc(0)`; null is a no-op.
+        unsafe {
+            kc_free(empty, 0);
+            kc_free(std::ptr::null_mut(), 0);
+        }
+        assert!(kc_alloc(MAX_ALLOC + 1).is_null());
+    }
+
+    #[test]
+    fn answers_results_and_errors() {
+        assert_eq!(
+            invoke(b"pathOf", br#"[["e2e4","e7e5"]]"#),
+            (STATUS_OK, r#""e2e4 e7e5""#.into())
+        );
+        let (status, _) = invoke(b"nope", b"[]");
+        assert_eq!(status, STATUS_ERR);
+        assert_eq!(
+            invoke(b"pathOf", b"\xff"),
+            (STATUS_ERR, "arguments must be UTF-8".into())
+        );
+    }
+
+    #[test]
+    fn rejects_null_and_oversized_ranges_without_reading_them() {
+        let one = host_buffer(b"x");
+        // SAFETY: null and oversized ranges are rejected before any read.
+        let (null, oversized) = unsafe {
+            (
+                kc_invoke(std::ptr::null(), 0, one, 1),
+                kc_invoke(one, MAX_ARGS + 1, one, 1),
+            )
+        };
+        assert_eq!(take_result(null), (STATUS_ERR, "null argument".into()));
+        assert_eq!(
+            take_result(oversized),
+            (STATUS_ERR, "arguments too large".into())
+        );
+        // SAFETY: the host's own buffer, freed once.
+        unsafe { kc_free(one, 1) };
+    }
+}
