@@ -607,6 +607,18 @@ function both(method: string, ...args: unknown[]): unknown {
 }
 const orNull = <T>(value: T | undefined): T | null => (value === undefined ? null : value)
 
+describe('rules arguments', () => {
+  // 50,000 nested arrays overflowed the native stack and killed the process (exit 139).
+  it('rejects nesting that would overflow the stack, in both runtimes', () => {
+    const nested = (depth: number) => `[${'['.repeat(depth - 1)}${']'.repeat(depth - 1)}]`
+    for (const depth of [4097, 50_000]) {
+      expect(() => native.invoke('pathOf', nested(depth))).toThrow('arguments nest too deeply')
+      expect(() => wasm.invoke('pathOf', nested(depth))).toThrow('arguments nest too deeply')
+    }
+    expect(both('pathOf', [])).toBe('')
+  })
+})
+
 describe('the renderer rules match recorded outputs in both runtimes', { timeout: TIMEOUT }, () => {
   it('builds, edits and writes analysis trees identically (seed 7201)', () => {
     const random = rng(7201)

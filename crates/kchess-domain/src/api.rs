@@ -16,6 +16,48 @@ use crate::tree::tree_from_pgn;
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
+/// The deepest argument nesting `call` parses. The largest analysis tree (1024 plies, see
+/// `tree.rs`) nests 2051 levels. Parsing, walking and dropping it recurse, and an overflowed
+/// stack aborts the host process, which no panic guard can catch.
+const MAX_JSON_DEPTH: usize = 4096;
+/// Deeper arguments, and methods that build a tree, are handled on a thread with `DEEP_STACK`
+/// bytes of stack: through `Value`, the largest tree overflows a 2 MiB thread (tokio's and Rust's
+/// default) in a debug build.
+const DEEP_JSON: usize = 256;
+const TREE_METHODS: &[&str] = &["treeFromPgn"];
+#[cfg(not(target_arch = "wasm32"))]
+const DEEP_STACK: usize = 32 * 1024 * 1024;
+
+/// How deeply `json` nests arrays and objects, counting no further than one past
+/// `MAX_JSON_DEPTH`. Brackets inside strings do not count; malformed input is left to the parser.
+fn nesting(json: &str) -> usize {
+    let (mut depth, mut deepest, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for byte in json.bytes() {
+        if in_string {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+                if deepest > MAX_JSON_DEPTH {
+                    break;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
+}
+
 fn arg(args: &[Value], i: usize) -> Option<&Value> {
     args.get(i).filter(|v| !v.is_null())
 }
@@ -54,11 +96,41 @@ fn setup_position(args: &[Value]) -> Result<shakmaty::variant::VariantPosition> 
 
 /// Dispatch one call. Unknown methods and malformed arguments are errors.
 pub fn call(method: &str, args: &str) -> std::result::Result<String, String> {
+    let depth = nesting(args);
+    if depth > MAX_JSON_DEPTH {
+        return Err("arguments nest too deeply".to_string());
+    }
+    if depth > DEEP_JSON || TREE_METHODS.contains(&method) {
+        return call_deep(method, args);
+    }
+    call_inner(method, args).map_err(|e| e.to_string())
+}
+
+/// `call_inner` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked.
+#[cfg(not(target_arch = "wasm32"))]
+fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("kchess-deep-call".into())
+            .stack_size(DEEP_STACK)
+            .spawn_scoped(scope, || {
+                call_inner(method, args).map_err(|e| e.to_string())
+            })
+            .map_err(|error| format!("could not start a thread: {error}"))?
+            .join()
+            .map_err(|_| "internal error".to_string())?
+    })
+}
+
+/// The renderer's module has no threads; its own stack (`.cargo/config.toml`) is large enough.
+#[cfg(target_arch = "wasm32")]
+fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
     call_inner(method, args).map_err(|e| e.to_string())
 }
 
 fn call_inner(method: &str, args: &str) -> Result<String> {
-    // Analysis trees nest deeper than serde_json's default limit of 128 levels.
+    // Analysis trees nest deeper than serde_json's default limit of 128 levels; `call` bounds
+    // the depth and gives deep arguments a large stack instead.
     let mut reader = serde_json::Deserializer::from_str(args);
     reader.disable_recursion_limit();
     let args: Vec<Value> = serde::Deserialize::deserialize(&mut reader)?;
@@ -533,5 +605,57 @@ mod tests {
         );
         assert!(call("nope", "[]").is_err());
         assert!(call("replay", "[1]").is_err());
+    }
+
+    fn nested(depth: usize) -> String {
+        format!("[{}{}]", "[".repeat(depth - 1), "]".repeat(depth - 1))
+    }
+
+    /// 50,000 nested arrays used to overflow the stack and kill the host process.
+    #[test]
+    fn rejects_nesting_that_would_overflow_the_stack() {
+        assert_eq!(
+            call("pathOf", &nested(50_000)).unwrap_err(),
+            "arguments nest too deeply"
+        );
+        assert_eq!(
+            call("pathOf", &nested(MAX_JSON_DEPTH + 1)).unwrap_err(),
+            "arguments nest too deeply"
+        );
+        // Brackets inside strings are text, not nesting.
+        let text = format!("[[\"{}\\\"\"]]", "[".repeat(MAX_JSON_DEPTH * 2));
+        assert!(call("pathOf", &text).is_ok());
+    }
+
+    /// Runs `f` on a 256 KiB thread, far smaller than any host's, so a deep call that stayed on
+    /// the caller's stack would overflow.
+    fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(256 * 1024)
+                .spawn_scoped(scope, f)
+                .unwrap()
+                .join()
+                .unwrap()
+        })
+    }
+
+    /// The deepest accepted input is parsed and dropped whatever stack the caller has.
+    #[test]
+    fn accepts_the_depth_limit_on_a_small_stack() {
+        let result = on_small_stack(|| call("pathOf", &nested(MAX_JSON_DEPTH)));
+        assert_ne!(result, Err("arguments nest too deeply".to_string()));
+    }
+
+    /// A 1024-ply tree, the deepest the rules build, round-trips through `call` on a small stack
+    /// (it overflowed tokio's 2 MiB default in a debug build).
+    #[test]
+    fn accepts_the_deepest_analysis_tree() {
+        let moves = ["Nf3", "Nf6", "Ng1", "Ng8"].repeat(256).join(" ");
+        let pgn = serde_json::to_string(&[format!("{moves} *")]).unwrap();
+        let tree = on_small_stack(|| call("treeFromPgn", &pgn)).unwrap();
+        assert_ne!(tree, "null");
+        assert!(nesting(&format!("[{tree}]")) > DEEP_JSON);
+        on_small_stack(|| call("treeToPgn", &format!("[{tree}]"))).unwrap();
     }
 }
