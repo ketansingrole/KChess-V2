@@ -1,0 +1,1 @@
+info depth 30 score mate -3 lowerbound pv h7h8q

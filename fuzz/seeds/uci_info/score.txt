@@ -1,0 +1,1 @@
+info depth 18 seldepth 24 multipv 1 score cp 31 wdl 512 400 88 nodes 1048576 nps 900000 pv e2e4 e7e5 g1f3

@@ -1,0 +1,53 @@
+[package]
+name = "kchess-fuzz"
+description = "Coverage-guided fuzzing of the KChess rules' parsers of outside input (cargo fuzz)."
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Not part of the main workspace: cargo-fuzz needs a nightly toolchain (rust-toolchain.toml here).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+kchess-domain = { path = "../crates/kchess-domain" }
+
+[[bin]]
+name = "pgn"
+path = "fuzz_targets/pgn.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fen"
+path = "fuzz_targets/fen.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uci_info"
+path = "fuzz_targets/uci_info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "online_event"
+path = "fuzz_targets/online_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_call"
+path = "fuzz_targets/api_call.rs"
+test = false
+doc = false
+bench = false

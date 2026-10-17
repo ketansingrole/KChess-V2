@@ -1,0 +1,46 @@
+name: Fuzz
+# Coverage-guided fuzzing of the rules' parsers of outside input (fuzz/). Weekly, and on demand;
+# a crash uploads the input that caused it (reproduce with `cargo fuzz run <target> <file>` in fuzz/).
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: '300'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [pgn, fen, uci_info, online_event, api_call]
+    defaults:
+      run:
+        working-directory: fuzz
+    steps:
+      - uses: actions/checkout@v7
+      # rustup installs fuzz/rust-toolchain.toml's nightly on first use.
+      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          shared-key: fuzz-${{ matrix.target }}
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          mkdir -p corpus/${{ matrix.target }}
+          cp seeds/${{ matrix.target }}/* corpus/${{ matrix.target }}/
+          max_len=8192
+          if [ "${{ matrix.target }}" = api_call ]; then max_len=65536; fi
+          cargo fuzz run -O ${{ matrix.target }} corpus/${{ matrix.target }} -- \
+            -max_total_time=${{ inputs.seconds || '300' }} -max_len=$max_len -rss_limit_mb=4096
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}-artifacts
+          path: fuzz/artifacts/

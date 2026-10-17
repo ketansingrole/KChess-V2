@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts"]
+# cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

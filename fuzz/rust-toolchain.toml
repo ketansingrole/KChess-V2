@@ -1,0 +1,5 @@
+[toolchain]
+# cargo-fuzz instruments with sanitizer flags only nightly accepts. Pinned, like the main
+# toolchain, so a fuzz run is reproducible; move it forward deliberately.
+channel = "nightly-2026-10-01"
+profile = "minimal"
