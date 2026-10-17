@@ -1,5 +1,8 @@
 //! A port of chessops' `PgnParser` (non-streaming, unbounded budget, as `parsePgn` runs it):
 //! the same headers, comments, NAGs, variations and game boundaries.
+// PGN is outside input: read it without indexing that can panic. Node ids are the one
+// exception, and only through `Game::node`.
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use crate::js;
 use crate::rules;
@@ -24,14 +27,17 @@ impl San {
             return San::Heap(text.into());
         }
         let mut bytes = [0; 15];
-        bytes[..text.len()].copy_from_slice(text.as_bytes());
+        for (slot, byte) in bytes.iter_mut().zip(text.bytes()) {
+            *slot = byte;
+        }
         San::Inline(bytes, text.len() as u8)
     }
 
     pub fn as_str(&self) -> &str {
         match self {
             San::Inline(bytes, len) => {
-                std::str::from_utf8(&bytes[..usize::from(*len)]).unwrap_or_default()
+                let text = bytes.get(..usize::from(*len)).unwrap_or_default();
+                std::str::from_utf8(text).unwrap_or_default()
             }
             San::Heap(text) => text,
         }
@@ -117,19 +123,31 @@ impl Game {
         index
     }
 
+    /// A node by id. Ids come only from this game (0 is the start, `add_move` returns the rest),
+    /// and nodes are never removed, so an id always indexes `nodes`.
+    #[allow(clippy::indexing_slicing)]
+    pub fn node(&self, id: usize) -> &PgnNode {
+        &self.nodes[id]
+    }
+
+    #[allow(clippy::indexing_slicing)]
+    fn node_mut(&mut self, id: usize) -> &mut PgnNode {
+        &mut self.nodes[id]
+    }
+
     /// The moves played from `node`, main line first.
     pub fn children(&self, node: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::successors(self.nodes[node].first_child, |&child| {
-            self.nodes[child].next_sibling
+        std::iter::successors(self.node(node).first_child, |&child| {
+            self.node(child).next_sibling
         })
     }
 
     fn append_child(&mut self, parent: usize, child: usize) {
-        match self.nodes[parent].last_child {
-            Some(last) => self.nodes[last].next_sibling = Some(child),
-            None => self.nodes[parent].first_child = Some(child),
+        match self.node(parent).last_child {
+            Some(last) => self.node_mut(last).next_sibling = Some(child),
+            None => self.node_mut(parent).first_child = Some(child),
         }
-        self.nodes[parent].last_child = Some(child);
+        self.node_mut(parent).last_child = Some(child);
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
@@ -362,8 +380,7 @@ fn match_san(b: &[u8], p: usize) -> Option<usize> {
 fn next_token(line: &str, pos: usize) -> Option<(usize, usize)> {
     let b = line.as_bytes();
     let castle_letter = |i: usize| byte_in(b, i, b"O0o");
-    for p in pos..b.len() {
-        let c = b[p];
+    for (p, &c) in b.iter().enumerate().skip(pos) {
         if !(c.is_ascii_alphanumeric() || b"-@{;$?!()*".contains(&c)) {
             continue;
         }
@@ -394,14 +411,16 @@ fn next_token(line: &str, pos: usize) -> Option<(usize, usize)> {
             }
             return Some((p, check_suffix(b, end)));
         }
-        let rest = &b[p..];
+        let rest = b.get(p..).unwrap_or_default();
         for literal in [&b"--"[..], b"Z0", b"0000", b"@@@@", b"{", b";"] {
             if rest.starts_with(literal) {
                 return Some((p, p + literal.len()));
             }
         }
         if c == b'$' {
-            let digits = rest[1..]
+            let digits = rest
+                .get(1..)
+                .unwrap_or_default()
                 .iter()
                 .take(4)
                 .take_while(|d| d.is_ascii_digit())
@@ -582,7 +601,8 @@ impl Parser {
                         return;
                     }
                     Some(close) => {
-                        let end = if close > 0 && line.as_bytes()[close - 1] == b' ' {
+                        let before = close.checked_sub(1).and_then(|i| line.as_bytes().get(i));
+                        let end = if before == Some(&b' ') {
                             close - 1
                         } else {
                             close
@@ -600,7 +620,8 @@ impl Parser {
 
     fn handle_nag(&mut self, nag: u32) {
         if let Some(node) = self.stack.current().node {
-            self.game.nodes[node]
+            self.game
+                .node_mut(node)
                 .nags
                 .get_or_insert_with(Vec::new)
                 .push(nag);
@@ -612,7 +633,8 @@ impl Parser {
         self.comment_buf.clear();
         let frame = self.stack.current_mut();
         if let Some(node) = frame.node {
-            self.game.nodes[node]
+            self.game
+                .node_mut(node)
                 .comments
                 .get_or_insert_with(Vec::new)
                 .push(comment);
@@ -715,12 +737,12 @@ pub fn make_pgn(game: &Game) -> String {
             (setup.fullmoves.get() - 1) * 2 + u32::from(!setup.turn.is_white())
         });
     let mut stack: Vec<WriteFrame> = Vec::new();
-    if let Some(first) = game.nodes[0].first_child {
+    if let Some(first) = game.node(0).first_child {
         stack.push(WriteFrame {
             step: Step::Pre,
             ply: initial_ply,
             node: first,
-            sidelines: game.nodes[first].next_sibling,
+            sidelines: game.node(first).next_sibling,
             in_variation: false,
         });
     }
@@ -732,7 +754,7 @@ pub fn make_pgn(game: &Game) -> String {
             force_number = true;
         }
         if let Step::Pre = frame.step {
-            let data = &game.nodes[frame.node];
+            let data = &game.node(frame.node);
             for comment in data.starting_comments.iter().flatten() {
                 tokens.comment(comment);
                 force_number = true;
@@ -762,18 +784,18 @@ pub fn make_pgn(game: &Game) -> String {
                 None => {
                     frame.step = Step::End;
                     let (node, ply) = (frame.node, frame.ply);
-                    if let Some(first) = game.nodes[node].first_child {
+                    if let Some(first) = game.node(node).first_child {
                         stack.push(WriteFrame {
                             step: Step::Pre,
                             ply: ply + 1,
                             node: first,
-                            sidelines: game.nodes[first].next_sibling,
+                            sidelines: game.node(first).next_sibling,
                             in_variation: false,
                         });
                     }
                 }
                 Some(child) => {
-                    frame.sidelines = game.nodes[child].next_sibling;
+                    frame.sidelines = game.node(child).next_sibling;
                     tokens.push("(");
                     force_number = true;
                     frame.in_variation = true;
@@ -805,13 +827,15 @@ fn itoa(mut n: u32) -> String {
     let mut at = digits.len();
     loop {
         at -= 1;
-        digits[at] = b'0' + (n % 10) as u8;
+        if let Some(digit) = digits.get_mut(at) {
+            *digit = b'0' + (n % 10) as u8;
+        }
         n /= 10;
         if n == 0 {
             break;
         }
     }
-    String::from_utf8_lossy(&digits[at..]).into_owned()
+    String::from_utf8_lossy(digits.get(at..).unwrap_or_default()).into_owned()
 }
 
 /// `studyDocumentPgn`: every chapter as one PGN named by a `ChapterName` header, or None when

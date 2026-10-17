@@ -30,6 +30,10 @@ undocumented_unsafe_blocks = "deny"
 # test rather than a shipped panic path.
 # Measured 2026-10-17: cast_possible_truncation 38 hits over 40 files, none with more than 7.
 cast_possible_truncation = "allow"
+# Denied per module (`#![cfg_attr(not(test), deny(...))]`) where outside input is parsed: PGN
+# (`pgn.rs`), engine output (`uci_info.rs`), Lichess streams and feeds (`stream.rs`, `feed.rs`).
+# Measured 2026-10-17: 284 hits elsewhere over 51 library files.
+indexing_slicing = "allow"
 unwrap_used = "allow"
 expect_used = "allow"
 

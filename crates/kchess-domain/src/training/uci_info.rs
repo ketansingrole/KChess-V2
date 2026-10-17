@@ -1,5 +1,7 @@
 //! UCI `info` lines (`crates/kchess-wasm/js/uciInfo.ts`): the scored principal variation a search
 //! reports, turned to White's point of view.
+// Engine output is outside input: read it without indexing that can panic.
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use serde_json::{Map, Value, json};
 
@@ -8,13 +10,15 @@ use crate::js;
 
 /// `/^[a-h][1-8][a-h][1-8][qrbn]?$/`
 fn is_uci_move(token: &str) -> bool {
-    let b = token.as_bytes();
     let square =
         |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
-    (b.len() == 4 || b.len() == 5)
-        && square(b[0], b[1])
-        && square(b[2], b[3])
-        && (b.len() == 4 || b"qrbn".contains(&b[4]))
+    match *token.as_bytes() {
+        [f1, r1, f2, r2] => square(f1, r1) && square(f2, r2),
+        [f1, r1, f2, r2, promotion] => {
+            square(f1, r1) && square(f2, r2) && b"qrbn".contains(&promotion)
+        }
+        _ => false,
+    }
 }
 
 /// `Number(v)` of an optional token: a missing one is NaN.
@@ -45,8 +49,7 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Value> {
     let mut nps: Option<f64> = None;
     let mut pv: Option<Vec<&str>> = None;
     let mut i = 1;
-    while i < tokens.len() {
-        let token = tokens[i];
+    while let Some(&token) = tokens.get(i) {
         let value = tokens.get(i + 1).copied();
         match token {
             "depth" => depth = Some(number_of(value)),
@@ -72,7 +75,9 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Value> {
             }
             "pv" => {
                 pv = Some(
-                    tokens[i + 1..]
+                    tokens
+                        .get(i + 1..)
+                        .unwrap_or_default()
                         .iter()
                         .copied()
                         .filter(|move_| is_uci_move(move_))

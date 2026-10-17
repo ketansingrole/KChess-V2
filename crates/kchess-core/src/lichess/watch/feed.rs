@@ -1,5 +1,7 @@
 //! Decoding the TV and game feeds and broadcast PGN, all pure (moved from `watch.rs` without
 //! changes).
+// Feed data is outside input: read it without indexing that can panic.
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use serde_json::{Value, json};
 
@@ -77,27 +79,27 @@ fn is_castling(text: &str) -> bool {
 
 /// `/^[a-h][36]$|^-$/`
 fn is_en_passant(text: &str) -> bool {
-    text == "-"
-        || (text.len() == 2
-            && matches!(text.as_bytes()[0], b'a'..=b'h')
-            && matches!(text.as_bytes()[1], b'3' | b'6'))
+    text == "-" || matches!(text.as_bytes(), [b'a'..=b'h', b'3' | b'6'])
 }
 
 /// A move the feed named: UCI, or a drop (`P@e4`); anything else is not kept.
 pub(super) fn uci_or_none(value: Option<&Value>) -> Option<String> {
     let text = value?.as_str()?;
-    let bytes = text.as_bytes();
-    let square = |b: &[u8]| matches!(b[0], b'a'..=b'h') && matches!(b[1], b'1'..=b'8');
-    let plain = bytes.len() >= 4
-        && bytes.len() <= 5
-        && square(&bytes[0..2])
-        && square(&bytes[2..4])
-        && (bytes.len() == 4 || matches!(bytes[4], b'q' | b'r' | b'b' | b'n' | b'k'));
-    let drop = bytes.len() == 4
-        && matches!(bytes[0], b'P' | b'N' | b'B' | b'R' | b'Q')
-        && bytes[1] == b'@'
-        && square(&bytes[2..4]);
-    (plain || drop).then(|| text.to_string())
+    let square = |file: u8, rank: u8| matches!(file, b'a'..=b'h') && matches!(rank, b'1'..=b'8');
+    let kept = match *text.as_bytes() {
+        [f1, r1, f2, r2] => {
+            (square(f1, r1) && square(f2, r2))
+                // A drop: `P@e4`.
+                || (matches!(f1, b'P' | b'N' | b'B' | b'R' | b'Q') && r1 == b'@' && square(f2, r2))
+        }
+        [f1, r1, f2, r2, promotion] => {
+            square(f1, r1)
+                && square(f2, r2)
+                && matches!(promotion, b'q' | b'r' | b'b' | b'n' | b'k')
+        }
+        _ => false,
+    };
+    kept.then(|| text.to_string())
 }
 
 /// The board and side to move of a FEN: what the feed's positions and a replay compare on.
@@ -344,14 +346,14 @@ pub fn align_tv_moves(
             .map(position_key),
     );
     let target = position_key(feed.last()?);
-    for ply in (0..keys.len()).rev() {
-        let Some(seen) = feed.iter().rposition(|key| *key == keys[ply]) else {
+    for (ply, key) in keys.iter().enumerate().rev() {
+        let Some(seen) = feed.iter().rposition(|seen| seen == key) else {
             continue;
         };
         let since = live.get(seen..).unwrap_or(&[]);
         let since_moves: Option<Vec<String>> = since.iter().cloned().collect();
         let since_moves = since_moves?;
-        let mut moves: Vec<String> = exported[..ply.min(exported.len())].to_vec();
+        let mut moves: Vec<String> = exported.iter().take(ply).cloned().collect();
         moves.extend(since_moves);
         let replayed = replay_uci(setup, &moves)?;
         if replayed.0 != moves.len() {
@@ -464,10 +466,8 @@ fn header_map(raw: Option<&Value>) -> Vec<(String, String)> {
 
 /// `/\/([a-zA-Z0-9]{8})$/` on a broadcast URL: the chapter id.
 fn last_path_id(url: Option<&str>) -> Option<String> {
-    let bytes = url?.as_bytes();
-    let n = bytes.len();
-    (n >= 9 && bytes[n - 9] == b'/' && bytes[n - 8..].iter().all(u8::is_ascii_alphanumeric))
-        .then(|| String::from_utf8_lossy(&bytes[n - 8..]).into_owned())
+    let (_, id) = url?.rsplit_once('/')?;
+    (id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| id.to_string())
 }
 
 /// `Number(text)`: JavaScript's conversion (blank is zero, unreadable is NaN).

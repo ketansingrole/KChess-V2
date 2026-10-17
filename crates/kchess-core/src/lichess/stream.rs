@@ -2,6 +2,8 @@
 //! chunks are reassembled, heartbeats (blank lines) are skipped, a line longer than the limit is
 //! an error, a stream that stalls past its idle deadline is an error, and cancellation stops the
 //! reader and drops the body.
+// Stream bodies are outside input: read them without indexing that can panic.
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use std::fmt::Display;
 use std::time::Duration;
@@ -80,13 +82,14 @@ where
         };
         tail.extend_from_slice(chunk.as_ref());
         let mut start = 0;
-        while let Some(offset) = tail[start..].iter().position(|byte| *byte == b'\n') {
-            let end = start + offset;
-            if end - start > max {
+        while let Some(rest) = tail.get(start..)
+            && let Some(offset) = rest.iter().position(|byte| *byte == b'\n')
+        {
+            if offset > max {
                 return Err(CoreError::new(OVERSIZED).into());
             }
-            emit(&tail[start..end], &mut on_line)?;
-            start = end + 1;
+            emit(rest.get(..offset).unwrap_or_default(), &mut on_line)?;
+            start += offset + 1;
         }
         if start > 0 {
             tail.drain(..start);
@@ -135,7 +138,8 @@ where
             Err(_) => pending.len(),
         };
         if complete > 0 {
-            let text = String::from_utf8_lossy(&pending[..complete]).into_owned();
+            let text =
+                String::from_utf8_lossy(pending.get(..complete).unwrap_or_default()).into_owned();
             pending.drain(..complete);
             on_chunk(&text)?;
         }
