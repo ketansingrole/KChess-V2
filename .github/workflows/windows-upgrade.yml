@@ -2,8 +2,9 @@ name: Windows upgrade
 
 # Installs the latest published Windows release three ways (per user, in a custom folder, for all
 # users), upgrades it with this commit's installer the way electron-updater does (`--updated /S`)
-# and checks Apps & features, shortcuts, the old copy and user data. Run it from the Actions tab
-# after changing the NSIS installer; it also runs on pull requests that change the test itself.
+# and checks Apps & features, shortcuts, the old copy and user data. A fresh install checks the
+# default folder. Run it from the Actions tab after changing the NSIS installer; pull requests that
+# change the test or apps/desktop/build/installer.nsh run it too.
 on:
   workflow_dispatch:
   pull_request:
@@ -71,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [default, custom, allusers]
+        mode: [fresh, default, custom, allusers]
     steps:
       - uses: actions/checkout@v7
         with:

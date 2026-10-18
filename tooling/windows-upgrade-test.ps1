@@ -1,16 +1,18 @@
 # Upgrades a published KChess Windows installation with a newly built installer, the way
-# electron-updater runs it (`--updated /S`), and checks what the upgrade leaves behind.
+# electron-updater runs it (`--updated /S`), and checks what the upgrade leaves behind. The fresh
+# mode installs the new installer on a clean machine instead.
 # Run by .github/workflows/windows-upgrade.yml on a disposable windows-latest runner: it installs
 # software, writes to the registry and does not clean up.
 param(
-  [Parameter(Mandatory)][ValidateSet('default', 'custom', 'allusers')][string]$Mode,
-  [Parameter(Mandatory)][string]$OldInstaller,
+  [Parameter(Mandatory)][ValidateSet('fresh', 'default', 'custom', 'allusers')][string]$Mode,
+  [string]$OldInstaller,
   [Parameter(Mandatory)][string]$NewInstaller,
   [Parameter(Mandatory)][string]$NewVersion
 )
 
 $ErrorActionPreference = 'Stop'
 $customFolder = 'C:\Custom Apps\KChess'
+$defaultFolder = Join-Path $env:LOCALAPPDATA 'Programs\KChess'
 $uninstallRoots = @(
   'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
   'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -92,27 +94,30 @@ function Show-State([string]$title) {
 }
 
 # 1. Install the published release.
-$oldArguments = switch ($Mode) {
-  'default' { '/S' }
-  'allusers' { '/S /allusers' }
-  # /D= must come last and unquoted, even with spaces.
-  'custom' { "/S /D=$customFolder" }
-}
-$exit = Invoke-Installer $OldInstaller $oldArguments
-if ($exit -ne 0) { throw "The published installer failed with exit code $exit." }
-Show-State 'Published release installed'
+$old = $null
+if ($Mode -ne 'fresh') {
+  $oldArguments = switch ($Mode) {
+    'default' { '/S' }
+    'allusers' { '/S /allusers' }
+    # /D= must come last and unquoted, even with spaces.
+    'custom' { "/S /D=$customFolder" }
+  }
+  $exit = Invoke-Installer $OldInstaller $oldArguments
+  if ($exit -ne 0) { throw "The published installer failed with exit code $exit." }
+  Show-State 'Published release installed'
 
-$before = @(Get-KChessEntries)
-if ($before.Count -ne 1) { throw "Expected one KChess installation before the upgrade, found $($before.Count)." }
-$old = $before[0]
-$oldExe = Join-Path $old.Folder 'KChess.exe'
-$expectedHive = if ($Mode -eq 'allusers') { 'HKLM' } else { 'HKCU' }
-if ($old.Hive -ne $expectedHive) { throw "The published release registered in $($old.Hive), not $expectedHive." }
-if ($Mode -eq 'custom' -and $old.Folder -ne $customFolder) {
-  throw "The published release installed in $($old.Folder), not $customFolder."
+  $before = @(Get-KChessEntries)
+  if ($before.Count -ne 1) { throw "Expected one KChess installation before the upgrade, found $($before.Count)." }
+  $old = $before[0]
+  $oldExe = Join-Path $old.Folder 'KChess.exe'
+  $expectedHive = if ($Mode -eq 'allusers') { 'HKLM' } else { 'HKCU' }
+  if ($old.Hive -ne $expectedHive) { throw "The published release registered in $($old.Hive), not $expectedHive." }
+  if ($Mode -eq 'custom' -and $old.Folder -ne $customFolder) {
+    throw "The published release installed in $($old.Folder), not $customFolder."
+  }
+  if (-not (Test-Path $oldExe)) { throw "The published release has no $oldExe." }
+  if ($old.DisplayVersion -eq $NewVersion) { throw "The published release already has version $NewVersion." }
 }
-if (-not (Test-Path $oldExe)) { throw "The published release has no $oldExe." }
-if ($old.DisplayVersion -eq $NewVersion) { throw "The published release already has version $NewVersion." }
 
 # 2. Keep something in the user data folder.
 $userData = Join-Path $env:APPDATA 'KChess'
@@ -121,8 +126,9 @@ $markerText = [guid]::NewGuid().ToString()
 New-Item -ItemType Directory -Force $userData | Out-Null
 Set-Content -Path $marker -Value $markerText -NoNewline
 
-# 3. Upgrade as electron-updater does for a silent install.
-$exit = Invoke-Installer $NewInstaller '--updated /S'
+# 3. Upgrade as electron-updater does for a silent install, or install from scratch.
+$newArguments = if ($old) { '--updated /S' } else { '/S' }
+$exit = Invoke-Installer $NewInstaller $newArguments
 if ($exit -ne 0) { Fail "The new installer exited with code $exit." }
 Show-State 'After the upgrade'
 
@@ -139,13 +145,17 @@ if (-not $current) {
   $newExe = Join-Path $current.Folder 'KChess.exe'
   $actual = Get-ExeVersion $newExe
   if ($actual -ne $NewVersion) { Fail "$newExe has version '$actual', expected $NewVersion." }
-  if ($Mode -ne 'allusers' -and $current.Folder -ne $old.Folder) {
-    Fail "The upgrade moved KChess from $($old.Folder) to $($current.Folder)."
+  if ($current.Hive -ne 'HKCU') { Fail "The new version registered in $($current.Hive), not HKCU." }
+  $expectedFolder = if ($old -and $Mode -ne 'allusers') { $old.Folder } else { $defaultFolder }
+  if ($current.Folder -ne $expectedFolder) {
+    Fail "KChess was installed in $($current.Folder), expected $expectedFolder."
   }
   $notes.Add("New version $NewVersion registered in $($current.Hive), installed in ``$($current.Folder)``.")
 }
 
-if (Test-Path $oldExe) {
+if (-not $old) {
+  # Nothing to replace.
+} elseif (Test-Path $oldExe) {
   $leftover = Get-ExeVersion $oldExe
   if ($leftover -ne $NewVersion) {
     Fail "The previous installation is still present: $oldExe (version $leftover)."
@@ -174,16 +184,16 @@ if (-not (Test-Path $marker) -or (Get-Content -Raw $marker) -ne $markerText) {
 # 5. Report.
 $summary = [System.Text.StringBuilder]::new()
 $status = if ($failures.Count) { 'failed' } else { 'passed' }
-[void]$summary.AppendLine("### Upgrade from $($old.DisplayVersion) ($Mode install): $status")
-[void]$summary.AppendLine()
-[void]$summary.AppendLine("Published release: $($old.Hive), ``$($old.Folder)``, installed with ``$oldArguments``.")
+if ($old) {
+  [void]$summary.AppendLine("### Upgrade from $($old.DisplayVersion) ($Mode install): $status")
+  [void]$summary.AppendLine()
+  [void]$summary.AppendLine("Published release: $($old.Hive), ``$($old.Folder)``, installed with ``$oldArguments``.")
+} else {
+  [void]$summary.AppendLine("### Fresh install of $($NewVersion): $status")
+}
 [void]$summary.AppendLine()
 foreach ($failure in $failures) { [void]$summary.AppendLine("- :x: $failure") }
 foreach ($note in $notes) { [void]$summary.AppendLine("- $note") }
-if ($Mode -eq 'allusers' -and $failures.Count) {
-  [void]$summary.AppendLine()
-  [void]$summary.AppendLine('The one-click installer is per-user: it looks for an earlier installation only in HKCU, so an all-users installation in Program Files and its all-users shortcuts are left in place next to the new per-user copy.')
-}
 $summary.ToString() | Write-Host
 if ($env:GITHUB_STEP_SUMMARY) { $summary.ToString() | Add-Content -Path $env:GITHUB_STEP_SUMMARY }
 if ($failures.Count) { exit 1 }
