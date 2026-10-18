@@ -291,14 +291,18 @@ const accuracy = computed(() => {
       <div class="flex items-start justify-between gap-2">
         <h2 class="section-title">Repertoire</h2>
         <div class="flex gap-1">
-          <UTooltip :text="howItWorks">
+          <UPopover :content="{ align: 'end' }">
             <UButton
+              size="xs"
               variant="ghost"
               color="neutral"
               icon="i-lucide-circle-help"
               aria-label="How replies are chosen"
             />
-          </UTooltip>
+            <template #content>
+              <p class="max-w-72 p-3 text-sm">{{ howItWorks }}</p>
+            </template>
+          </UPopover>
           <BoardViewToggles />
         </div>
       </div>

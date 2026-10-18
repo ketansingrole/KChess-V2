@@ -820,6 +820,9 @@ test('browses openings offline and drills one without a saved study', async ({
     ),
   ).toBeVisible()
   await expect(page.getByText("Play the white moves of “King's Gambit”.")).toBeVisible()
+  await page.getByRole('button', { name: 'How replies are chosen', exact: true }).click()
+  await expect(page.getByText(/^After the named line you play the most played move/)).toBeVisible()
+  await page.keyboard.press('Escape')
   await move(page, 'e2', 'e4')
   // Black answers from the line; the board takes White's next move once it has.
   await expect(async () => {
