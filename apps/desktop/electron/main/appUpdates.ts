@@ -190,7 +190,8 @@ export class AppUpdates {
     // A normal quit must stay quit; only this explicit action requests a relaunch.
     this.updater.autoRunAppAfterInstall = restart
     try {
-      this.updater.quitAndInstall(!restart, restart)
+      // Always silent: the Windows installer reuses the existing install instead of showing its UI.
+      this.updater.quitAndInstall(true, restart)
     } catch (cause) {
       this.failed(cause)
       throw cause

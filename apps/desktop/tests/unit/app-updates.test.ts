@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { AppUpdates, type UpdatePreferences } from '../../electron/main/appUpdates'
 import { useAppUpdatesStore } from '../../app/stores/appUpdates'
@@ -88,6 +90,22 @@ describe('desktop updater', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
   })
 
+  it('installs Windows updates without installer pages on restart and on quit', async () => {
+    // Regression: "Restart to update" ran the assisted NSIS installer visibly, so every update
+    // walked the user through the installation wizard again.
+    const { build } = JSON.parse(
+      readFileSync(resolve(__dirname, '../../package.json'), 'utf8'),
+    ) as { build: { nsis: Record<string, unknown> } }
+    expect(build.nsis).toMatchObject({ oneClick: true, perMachine: false })
+    for (const restart of [true, false]) {
+      const { updates, updater } = fixture()
+      await updates.check()
+      await updates.download()
+      updates.install(restart)
+      expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(true, restart)
+    }
+  })
+
   it('honours opting out and opting back in to quit installation after the download finishes', async () => {
     const { updates, updater, preferences } = fixture({ settings: { updateInstallOnQuit: false } })
     await updates.check()
@@ -99,7 +117,7 @@ describe('desktop updater', () => {
     expect(updates.shouldInstallOnQuit()).toBe(false)
     updates.install()
     expect(updater.autoRunAppAfterInstall).toBe(true)
-    expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
+    expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(true, true)
   })
 
   it('shares concurrent checks/downloads and preserves a ready installer on later checks', async () => {
@@ -185,7 +203,7 @@ describe('desktop updater', () => {
     expect(updates.status()).toEqual(ready)
     expect(onInstallFailure).not.toHaveBeenCalled()
     updates.install()
-    expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
+    expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(true, true)
     updates.stop()
   })
 
