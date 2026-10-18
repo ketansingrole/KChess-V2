@@ -1,5 +1,5 @@
 {
-  "name": "kchess-electron",
+  "name": "kchess",
   "version": "2026.10.11",
   "description": "A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.",
   "license": "GPL-3.0-or-later",
@@ -46,7 +46,7 @@
     "vue-tsc": "^3.3.13"
   },
   "build": {
-    "appId": "com.kchess.electron",
+    "appId": "com.kchess.app",
     "productName": "KChess",
     "copyright": "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.",
     "directories": {
@@ -126,9 +126,16 @@
           ]
         }
       ],
+      "executableName": "kchess",
       "category": "Game",
       "synopsis": "Desktop chess: Stockfish, Lichess, puzzles and training",
       "maintainer": "Ketan Singrole"
+    },
+    "deb": {
+      "fpm": [
+        "--replaces=kchess-electron",
+        "--conflicts=kchess-electron"
+      ]
     },
     "asarUnpack": [
       "node_modules/stockfish/bin/**",
@@ -137,6 +144,7 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "nsis": {
       "oneClick": true,
+      "guid": "6bb66f38-a1a5-5ec8-b24f-c899466885ca",
       "perMachine": false,
       "createDesktopShortcut": true
     },

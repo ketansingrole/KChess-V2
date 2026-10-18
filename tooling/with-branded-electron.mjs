@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const APP_NAME = 'KChess'
-const BUNDLE_ID = 'com.kchess.electron.dev'
+const BUNDLE_ID = 'com.kchess.app.dev'
 const HELPERS = ['Helper', 'Helper (GPU)', 'Helper (Renderer)', 'Helper (Plugin)']
 const BUDDY = '/usr/libexec/PlistBuddy'
 

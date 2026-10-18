@@ -1,5 +1,5 @@
 ; The per-user one-click installer would name a new installation folder after the package
-; (kchess-electron). Use KChess, as releases with the assisted installer did; an existing
+; (kchess). Use KChess, as releases with the assisted installer did; an existing
 ; installation and /D= keep their folder.
 !macro customInit
   ReadRegStr $R0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation

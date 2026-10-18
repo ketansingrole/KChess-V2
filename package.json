@@ -18,7 +18,7 @@
     "dev": "node tooling/dev.mjs",
     "app": "pnpm run build && node tooling/with-branded-electron.mjs electron apps/desktop",
     "build": "node tooling/build.mjs",
-    "typecheck": "pnpm --filter kchess-electron typecheck && pnpm --filter @kchess/rules typecheck && pnpm --filter @kchess/contracts typecheck && pnpm --filter @kchess/native typecheck && pnpm --filter @kchess/node typecheck && pnpm --filter @kchess/cli typecheck && tsc --noEmit -p apps/desktop/tsconfig.electron.json && vue-tsc --noEmit -p tsconfig.tests.json",
+    "typecheck": "pnpm --filter kchess typecheck && pnpm --filter @kchess/rules typecheck && pnpm --filter @kchess/contracts typecheck && pnpm --filter @kchess/native typecheck && pnpm --filter @kchess/node typecheck && pnpm --filter @kchess/cli typecheck && tsc --noEmit -p apps/desktop/tsconfig.electron.json && vue-tsc --noEmit -p tsconfig.tests.json",
     "prepare:voice": "node tooling/prepare-voice-model.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
