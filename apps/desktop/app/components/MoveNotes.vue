@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useAnalysisStore } from '../stores/analysis'
-import { MOVE_GLYPHS, moveGlyph, moveNumber, setMoveGlyph } from '@kchess/rules/analysisTree'
+import {
+  MOVE_GLYPHS,
+  commentClock,
+  commentText,
+  moveGlyph,
+  moveNumber,
+  setMoveGlyph,
+  withCommentText,
+} from '@kchess/rules/analysisTree'
+import { formatClock } from '@kchess/rules/clock'
 
 /**
  * Notes on the move shown: a comment and an annotation glyph, written right under the move list
@@ -12,11 +21,25 @@ const { node, path } = storeToRefs(analysis)
 
 const field = ref<HTMLTextAreaElement | null>(null)
 const editing = ref(false)
-const comment = computed({
-  get: () => (node.value.comments ?? []).join('\n\n'),
-  set: (text: string) => {
-    node.value.comments = text.trim() ? [text] : undefined
-  },
+/** The move's comments as written; a game's clock times (`[%clk …]`) ride along unseen. */
+const raw = computed(() => (node.value.comments ?? []).join('\n\n'))
+const shown = computed(() =>
+  (node.value.comments ?? []).map(commentText).filter(Boolean).join('\n\n'),
+)
+/** What the field holds: the text as typed, which the stored comment may have tidied. */
+const comment = ref(shown.value)
+watch(path, () => (comment.value = shown.value))
+watch(shown, (text) => {
+  if (!editing.value) comment.value = text
+})
+function write(text: string): void {
+  comment.value = text
+  const next = withCommentText(raw.value, text)
+  node.value.comments = next ? [next] : undefined
+}
+const clock = computed(() => {
+  const seconds = commentClock(raw.value)
+  return seconds === undefined ? '' : formatClock(seconds * 1000)
 })
 const glyph = computed(() => moveGlyph(node.value))
 const subject = computed(() =>
@@ -43,7 +66,12 @@ defineExpose({ focus })
 <template>
   <section class="move-notes" aria-label="Notes on this move">
     <div class="notes-head">
-      <span class="notes-subject">{{ subject }}</span>
+      <span class="notes-subject"
+        >{{ subject
+        }}<span v-if="clock" class="notes-clock" title="Clock after this move">
+          · {{ clock }}</span
+        ></span
+      >
       <div v-if="path" class="glyphs" role="group" aria-label="Annotate this move">
         <UTooltip v-for="entry in MOVE_GLYPHS" :key="entry.nag" :text="entry.label">
           <button
@@ -62,7 +90,7 @@ defineExpose({ focus })
     <textarea
       v-if="open"
       ref="field"
-      v-model="comment"
+      :value="comment"
       class="notes-field"
       rows="2"
       maxlength="10000"
@@ -71,6 +99,7 @@ defineExpose({ focus })
       @focus="editing = true"
       @blur="editing = false"
       @keydown="keydown"
+      @input="write(($event.target as HTMLTextAreaElement).value)"
     />
     <button v-else type="button" class="notes-add" @click="focus">
       <UIcon name="i-lucide-message-square-plus" />
@@ -101,6 +130,10 @@ defineExpose({ focus })
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.notes-clock {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 .glyphs {
   display: flex;

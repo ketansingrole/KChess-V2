@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { StorageSerializers, useLocalStorage } from '@vueuse/core'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import { treeFromPgn, treeToPgn, type TreeNode } from '@kchess/rules/analysisTree'
+import { commentText, treeFromPgn, treeToPgn, type TreeNode } from '@kchess/rules/analysisTree'
 import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { chapterItems, useStudyStore } from '../stores/studies'
 import { playMoveSound } from '../utils/sound'
@@ -75,6 +75,10 @@ function merge(into: TreeNode, from: TreeNode): void {
   }
 }
 const node = ref<TreeNode | null>(null)
+/** The node's comments as a reader sees them, without a game's clock times. */
+const nodeComment = computed(() =>
+  (node.value?.comments ?? []).map(commentText).filter(Boolean).join(' '),
+)
 const feedback = ref<{ kind: 'ok' | 'wrong' | 'done' | 'info'; text: string } | null>(null)
 const hint = ref<DrawShape[]>([])
 const resetKey = ref(0)
@@ -324,7 +328,7 @@ const accuracy = computed(() => {
         />
         <div>
           <strong>{{ feedback.text }}</strong>
-          <span v-if="node?.comments?.length" class="detail">{{ node.comments.join(' ') }}</span>
+          <span v-if="nodeComment" class="detail">{{ nodeComment }}</span>
         </div>
       </div>
       <p class="text-sm tabular">

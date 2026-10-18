@@ -5,6 +5,9 @@ import {
   formatEval,
   lineEnd,
   moveGlyph,
+  commentText,
+  commentClock,
+  withCommentText,
   moveNumber,
   MOVE_GLYPHS,
   movesOf,
@@ -393,6 +396,23 @@ describe('the trainer rules match recorded traces', { timeout: TIMEOUT }, () => 
       }),
     )
     check('moveGlyphTable', MOVE_GLYPHS)
+    const comments = [
+      '',
+      ' [%clk 0:15:06] ',
+      'Good idea [%eval 0.3] here [%clk 0:01:00]',
+      'see [%clk',
+      '[%cal Ge2e4,Rd7d5] Plan',
+      'plain words',
+    ]
+    check(
+      'commentText',
+      comments.map((comment) => [
+        commentText(comment),
+        commentClock(comment) ?? null,
+        withCommentText(comment, ''),
+        withCommentText(comment, 'Typed '),
+      ]),
+    )
     check(
       'setMoveGlyph',
       Array.from({ length: 300 }, () => {

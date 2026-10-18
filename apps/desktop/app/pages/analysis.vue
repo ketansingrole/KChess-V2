@@ -7,6 +7,7 @@ import type { ContextMenuItem, DropdownMenuItem } from '@nuxt/ui'
 import type { EngineLine } from '@kchess/contracts/types'
 import { checkColor, destsFor } from '@kchess/rules/chess'
 import {
+  commentText,
   formatEval,
   MOVE_GLYPHS,
   moveGlyph,
@@ -234,7 +235,7 @@ const moveMenu = computed<ContextMenuItem[][]>(() => {
   return [
     [
       {
-        label: target.comments?.length ? 'Edit comment' : 'Add comment',
+        label: target.comments?.some((text) => commentText(text)) ? 'Edit comment' : 'Add comment',
         icon: 'i-lucide-message-square-text',
         kbds: ['C'],
         onSelect: () => void comment(),

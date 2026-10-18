@@ -46,9 +46,62 @@ pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
         "deleteAtPlan" => Ok(delete_at_plan(arg(0).and_then(Value::as_str).unwrap_or(""))),
         "onMainline" => Ok(json!(on_mainline(&indices(arg(0))))),
         "promotePlan" => Ok(promote_plan(&indices(arg(0)))),
+        "commentText" => Ok(json!(comment_text(
+            arg(0).and_then(Value::as_str).unwrap_or("")
+        ))),
+        "withCommentText" => Ok(json!(with_comment_text(
+            arg(0).and_then(Value::as_str).unwrap_or(""),
+            arg(1).and_then(Value::as_str).unwrap_or("")
+        ))),
+        "commentClock" => Ok(json!(crate::position::comment_clock(
+            arg(0).and_then(Value::as_str).unwrap_or("")
+        ))),
         _ => return None,
     };
     Some(result)
+}
+
+/// A comment split into what a reader wrote and the commands PGN tools embed in it
+/// (`[%clk 0:15:06]`, `[%eval 0.3]`, `[%cal Ge2e4]`), each command whole.
+fn comment_parts(comment: &str) -> (String, Vec<&str>) {
+    let mut text = String::new();
+    let mut commands = Vec::new();
+    let mut rest = comment;
+    while let Some(at) = rest.find("[%") {
+        let Some(end) = rest[at..].find(']') else {
+            break;
+        };
+        text.push_str(&rest[..at]);
+        text.push(' ');
+        commands.push(&rest[at..at + end + 1]);
+        rest = &rest[at + end + 1..];
+    }
+    text.push_str(rest);
+    (text, commands)
+}
+
+/// `commentText(comment)`: the comment as a reader sees it, without its commands.
+fn comment_text(comment: &str) -> String {
+    comment_parts(comment)
+        .0
+        .split(js::is_space)
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `withCommentText(comment, text)`: `text` exactly as written, then the comment's commands, so a
+/// game's clock times outlive an edit to its notes. Empty when neither is left.
+fn with_comment_text(comment: &str, text: &str) -> String {
+    let commands = comment_parts(comment).1.join(" ");
+    match (
+        text.trim_matches(js::is_space).is_empty(),
+        commands.is_empty(),
+    ) {
+        (true, _) => commands,
+        (false, true) => text.to_string(),
+        (false, false) => format!("{text} {commands}"),
+    }
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {
@@ -283,4 +336,38 @@ fn promote_plan(indices: &[u64]) -> Value {
         .map(|(depth, index)| json!([depth, index]))
         .collect();
     Value::Array(steps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_comment_reads_without_its_commands() {
+        assert_eq!(comment_text(" [%clk 0:15:06] "), "");
+        assert_eq!(
+            comment_text("Good idea [%eval 0.3] here [%clk 0:01:00]"),
+            "Good idea here"
+        );
+        assert_eq!(comment_text("no commands"), "no commands");
+        // An unclosed bracket is text, as a reader wrote it.
+        assert_eq!(comment_text("see [%clk"), "see [%clk");
+    }
+
+    #[test]
+    fn an_edit_keeps_the_commands_and_the_text_as_typed() {
+        let clock = " [%clk 0:15:06] ";
+        assert_eq!(
+            with_comment_text(clock, "Strong "),
+            "Strong  [%clk 0:15:06]"
+        );
+        assert_eq!(with_comment_text(clock, ""), "[%clk 0:15:06]");
+        assert_eq!(
+            with_comment_text("old [%eval 1] [%clk 0:00:05]", "new"),
+            "new [%eval 1] [%clk 0:00:05]"
+        );
+        assert_eq!(with_comment_text("old", "  "), "");
+        assert_eq!(with_comment_text("old", "new"), "new");
+        assert_eq!(comment_text(&with_comment_text(clock, "Strong ")), "Strong");
+    }
 }

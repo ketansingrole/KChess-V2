@@ -49,6 +49,15 @@ export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
   node.nags = rules<number[] | null>('setMoveGlyph', node.nags ?? null, nag ?? null) ?? undefined
 }
 
+/** A comment as a reader sees it, without the commands PGN tools embed (`[%clk 0:15:06]`). */
+export const commentText = (comment: string): string => rules<string>('commentText', comment)
+/** `comment` with its text replaced by `text` (as typed), keeping its commands; '' when empty. */
+export const withCommentText = (comment: string, text: string): string =>
+  rules<string>('withCommentText', comment, text)
+/** Seconds left on the mover's clock (`[%clk]`) in a comment, if it has one. */
+export const commentClock = (comment: string): number | undefined =>
+  rules<number | null>('commentClock', comment) ?? undefined
+
 export const pathOf = (moves: readonly string[]): string => rules<string>('pathOf', moves)
 export const movesOf = (path: string): string[] => rules<string[]>('movesOf', path)
 

@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { moveGlyph, moveNumber, pathOf, movesOf, type TreeNode } from '@kchess/rules/analysisTree'
+import {
+  commentText,
+  moveGlyph,
+  moveNumber,
+  pathOf,
+  movesOf,
+  type TreeNode,
+} from '@kchess/rules/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
 import type { Judgment } from '@kchess/contracts/types'
 
@@ -30,6 +37,8 @@ type Item =
       number: string
       glyph?: ReturnType<typeof moveGlyph>
       judgment?: Judgment
+      /** The move's comments as a reader sees them (a game's clock times are not notes). */
+      comment: string
     }
   | { kind: 'variations'; parent: TreeNode; parentPath: string; alternatives: TreeNode[] }
 
@@ -48,6 +57,7 @@ const items = computed<Item[]>(() => {
       number: moveNumber(parent.ply, numbered),
       glyph: moveGlyph(node),
       judgment: reviewMarks.value.get(path)?.judgment,
+      comment: (node.comments ?? []).map(commentText).filter(Boolean).join(' '),
     })
     numbered = false
     // The alternatives to a main move come right after it (a variation's own siblings were
@@ -93,12 +103,12 @@ const items = computed<Item[]>(() => {
         >
       </button>
       <span
-        v-if="item.node.comments?.length"
+        v-if="item.comment"
         class="tree-comment"
         :data-path="item.path"
         :class="{ block: depth === 0 }"
         @click="emit('select', item.path)"
-        >{{ item.node.comments.join(' ') }}</span
+        >{{ item.comment }}</span
       >
     </template>
     <component
