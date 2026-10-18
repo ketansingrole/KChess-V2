@@ -45,7 +45,7 @@ const PRACTICE_TABS = [
   ['colors', 'Square colours', 'i-lucide-contrast', 'light dark'],
   ['knight', 'Knight paths', 'i-lucide-crown', 'knight tour'],
   ['endgames', 'Endgame drills', 'i-lucide-swords', 'mate technique'],
-  ['openings', 'Opening trainer', 'i-lucide-book-marked', 'repertoire'],
+  ['openings', 'Repertoire trainer', 'i-lucide-book-marked', 'opening drill study'],
   ['mistakes', 'Your mistakes', 'i-lucide-book-open', 'blunders review'],
 ] as const
 const PUZZLE_TABS: readonly [PuzzleTab, string, string, string][] = [

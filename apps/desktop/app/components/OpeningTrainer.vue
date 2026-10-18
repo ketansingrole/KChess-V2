@@ -225,6 +225,20 @@ async function saveOpening(): Promise<void> {
     saving.value = false
   }
 }
+const howItWorks = computed(() =>
+  drillsOpening.value
+    ? 'After the named line you play the most played move on Lichess, and KChess answers with popular replies. Lines you got wrong come up more often.'
+    : 'KChess answers with moves from your study. Lines you got wrong come up more often.',
+)
+const emptyActions = [
+  { label: 'Browse openings', onClick: () => store.selectPage('openings') },
+  {
+    label: 'Open studies',
+    color: 'neutral' as const,
+    variant: 'outline' as const,
+    onClick: () => store.selectPage('studies'),
+  },
+]
 const accuracy = computed(() => {
   const total = stats.value.correct + stats.value.wrong
   return total ? Math.round((100 * stats.value.correct) / total) : null
@@ -236,17 +250,9 @@ const accuracy = computed(() => {
     <UEmpty
       variant="naked"
       icon="i-lucide-book-marked"
-      title="Choose an opening"
-      description="Pick an opening to drill, or save your own lines as a study."
-      :actions="[
-        { label: 'Browse openings', onClick: () => store.selectPage('openings') },
-        {
-          label: 'Open the analysis board',
-          color: 'neutral',
-          variant: 'outline',
-          onClick: () => store.selectPage('analysis'),
-        },
-      ]"
+      title="Nothing to drill yet"
+      description="Drill an opening, or lines you saved as a study."
+      :actions="emptyActions"
     />
   </div>
   <div v-else v-board-fit class="play-layout">
@@ -272,13 +278,31 @@ const accuracy = computed(() => {
         :blindfold="settings.blindfold"
         @move="play"
       />
+      <div v-else-if="!(drillsOpening && preparing)" class="card">
+        <UEmpty
+          variant="naked"
+          icon="i-lucide-book-marked"
+          title="Choose a repertoire"
+          :actions="emptyActions"
+        />
+      </div>
     </div>
     <div class="card side-panel">
       <div class="flex items-start justify-between gap-2">
-        <h2 class="section-title">Opening trainer</h2>
-        <div class="flex gap-1"><BoardViewToggles /></div>
+        <h2 class="section-title">Repertoire</h2>
+        <div class="flex gap-1">
+          <UTooltip :text="howItWorks">
+            <UButton
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-circle-help"
+              aria-label="How replies are chosen"
+            />
+          </UTooltip>
+          <BoardViewToggles />
+        </div>
       </div>
-      <UFormField label="Repertoire">
+      <UFormField label="Lines from">
         <USelect
           v-model="studyId"
           :items="studyItems"
@@ -334,14 +358,6 @@ const accuracy = computed(() => {
       <p class="text-sm tabular">
         Lines finished: {{ stats.lines }} · correct {{ stats.correct }} · wrong {{ stats.wrong }}
         <span v-if="accuracy !== null"> · {{ accuracy }}%</span>
-      </p>
-      <p v-if="drillsOpening" class="text-xs muted">
-        After the named line you play the most played move on Lichess, and KChess answers with
-        popular replies, more often in lines you got wrong.
-      </p>
-      <p v-else class="text-xs muted">
-        KChess picks the other side's replies from your study, more often in lines you got wrong.
-        Comments in the study show as you reach them.
       </p>
       <div class="panel-actions panel-divider pt-3.5">
         <UButton

@@ -10,7 +10,7 @@ const tabs = [
   { label: 'Square colours', value: 'colors', icon: 'i-lucide-contrast' },
   { label: 'Knight paths', value: 'knight', icon: 'i-lucide-crown' },
   { label: 'Endgames', value: 'endgames', icon: 'i-lucide-swords' },
-  { label: 'Openings', value: 'openings', icon: 'i-lucide-book-marked' },
+  { label: 'Repertoire', value: 'openings', icon: 'i-lucide-book-marked' },
   { label: 'Your mistakes', value: 'mistakes', icon: 'i-lucide-book-open' },
 ]
 // A tab saved by an earlier release (the removed puzzle themes) falls back to the first trainer.
