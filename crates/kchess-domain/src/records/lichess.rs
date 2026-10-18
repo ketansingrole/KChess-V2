@@ -23,17 +23,20 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     })
 }
 
-/// `{ status, endpoint, detail }`: an HTML page (Lichess's 404 for unknown users) never becomes
-/// the detail; a JSON body does, cut to 250 characters.
+/// `{ status, endpoint, detail }`: an HTML page (Lichess's 404 for unknown users, or its 429 text
+/// with a refresh tag) never becomes the detail; a JSON body does, cut to 250 characters.
 fn error_fields(status: &Value, error: Option<&Value>, endpoint: &str) -> Value {
-    let page = error
-        .and_then(Value::as_str)
-        .is_some_and(|text| text.trim_start_matches(js::is_space).starts_with('<'));
+    let page = error.and_then(Value::as_str).is_some_and(|text| {
+        text.trim_start_matches(js::is_space).starts_with('<')
+            || ["<meta", "<html", "<!doctype"]
+                .iter()
+                .any(|tag| text.to_ascii_lowercase().contains(tag))
+    });
     let detail = if page {
-        if status.as_f64() == Some(404.0) {
-            "not found".to_string()
-        } else {
-            "unexpected page response".to_string()
+        match status.as_f64() {
+            Some(404.0) => "not found".to_string(),
+            Some(429.0) => "too many requests".to_string(),
+            _ => "unexpected page response".to_string(),
         }
     } else {
         match error {
@@ -170,6 +173,12 @@ mod tests {
         assert_eq!(fields["detail"], json!("not found"));
         let fields = error_fields(&json!(500), Some(&page), "GET /x");
         assert_eq!(fields["detail"], json!("unexpected page response"));
+        // Lichess's 429: a line of text, then a refresh tag to its rate-limit page.
+        let limited = json!(
+            "Too many requests. Read https://http.lichess.org/429\n\n<meta http-equiv=\"refresh\" content=\"0;URL=https://http.lichess.org/429\">\n"
+        );
+        let fields = error_fields(&json!(429), Some(&limited), "GET /x");
+        assert_eq!(fields["detail"], json!("too many requests"));
     }
 
     #[test]

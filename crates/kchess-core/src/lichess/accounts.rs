@@ -885,20 +885,22 @@ impl Lichess {
             .policy()
             .with_usage("", "games", async {
                 self.client
-                    .get_text(
-                        &format!("/game/export/{}", path_segment(id)),
+                    .export_one(
+                        id,
                         &[
                             ("clocks", "true".to_string()),
                             ("evals", "false".to_string()),
                             ("opening", "true".to_string()),
                         ],
                         "application/x-chess-pgn",
-                        None,
                         &self.lifetime,
                     )
                     .await
             })
             .await?;
+        if pgn.trim().is_empty() {
+            return Err(CoreError::new("That game is not on Lichess."));
+        }
         if pgn.encode_utf16().count() > MAX_PGN_UNITS {
             return Err(CoreError::new("That game is too long to open."));
         }

@@ -526,7 +526,7 @@ impl Inner {
     }
 
     async fn fetch_tv_game(&self, id: &str, token: &CancellationToken) -> CoreResult<TvGame> {
-        let path = format!("/game/export/{}", path_segment(id));
+        let path = "/api/games/export/_ids";
         let query = [
             ("moves", "true".to_string()),
             ("tags", "false".to_string()),
@@ -534,14 +534,18 @@ impl Inner {
             ("evals", "false".to_string()),
             ("opening", "false".to_string()),
         ];
-        // Lichess exports a game as PGN unless the request asks for JSON.
+        // Lichess exports games as PGN unless the request asks for NDJSON: one line per game.
         let text = self
             .lichess
             .client()
-            .get_text(&path, &query, "application/json", None, token)
+            .export_one(id, &query, "application/x-ndjson", token)
             .await
             .map_err(CoreError::from)?;
-        let raw: Value = parse_json(&text, &path).map_err(CoreError::from)?;
+        let line = text
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("");
+        let raw: Value = parse_json(line, path).map_err(CoreError::from)?;
         Ok(parse_tv_game(&raw))
     }
 

@@ -425,3 +425,92 @@ async fn text_limit_counts_utf16_units_while_collecting_chunks() {
         .unwrap_err();
     assert_eq!(error.message(), "too large");
 }
+
+#[tokio::test]
+async fn a_request_redirected_to_a_web_page_fails_instead_of_returning_the_page() {
+    // Lichess sends `/game/export/{id}` without an account to its sign-up page.
+    let fixture = serve(|seen| match seen.path() {
+        "/game/export/abcd1234" => {
+            Reply::WithHeaders(303, vec![("location", "/signup".into())], String::new())
+        }
+        _ => Reply::Text(
+            200,
+            "text/html",
+            "<!doctype html><html>Sign up</html>".into(),
+        ),
+    })
+    .await;
+    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let failure = client
+        .get_text(
+            "/game/export/abcd1234",
+            &[],
+            "application/x-chess-pgn",
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        failure.message(),
+        "Lichess 200 from GET /game/export/abcd1234: unexpected page response"
+    );
+}
+
+#[tokio::test]
+async fn one_exported_game_does_not_wait_for_a_running_bulk_export() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/games/user/Alice" => Reply::Hang,
+        _ => Reply::Text(
+            200,
+            "application/x-chess-pgn",
+            format!("[Site \"{}\"]\n\n1. e4 *\n", seen.body),
+        ),
+    })
+    .await;
+    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let client = Arc::new(client);
+    let sync = CancellationToken::new();
+    let syncing = {
+        let client = Arc::clone(&client);
+        let sync = sync.clone();
+        tokio::spawn(async move {
+            client
+                .ndjson(
+                    reqwest::Method::GET,
+                    "/api/games/user/Alice",
+                    &[],
+                    None,
+                    None,
+                    &sync,
+                    |_| Ok(()),
+                )
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let pgn = tokio::time::timeout(
+        Duration::from_secs(2),
+        client.export_one(
+            "abcd1234",
+            &[],
+            "application/x-chess-pgn",
+            &CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("the game waited for the bulk export")
+    .unwrap();
+    assert!(pgn.contains("abcd1234"));
+    let asked = fixture.requests();
+    let export = asked
+        .iter()
+        .find(|seen| seen.path() == "/api/games/export/_ids")
+        .unwrap();
+    assert_eq!(
+        (export.method.as_str(), export.body.as_str()),
+        ("POST", "abcd1234")
+    );
+    sync.cancel();
+    let _ = syncing.await;
+}

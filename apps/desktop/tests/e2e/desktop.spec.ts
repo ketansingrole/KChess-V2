@@ -836,10 +836,10 @@ test('shows an opening’s continuations and games, and drills its popular repli
   desktop: { page, lichess },
 }) => {
   const asked: string[] = []
-  lichess.route = (request) => {
+  lichess.route = async (request) => {
     const url = new URL(request.url)
     asked.push(url.pathname + url.search)
-    if (url.pathname === '/game/export/kgGame01')
+    if (url.pathname === '/api/games/export/_ids' && (await request.text()) === 'kgGame01')
       return new Response('[White "Alpha"]\n[Black "Beta"]\n\n1. e4 e5 2. f4 exf4 1-0\n', {
         headers: { 'content-type': 'application/x-chess-pgn' },
       })

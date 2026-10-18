@@ -270,6 +270,29 @@ impl LichessClient {
         self.read_text(admitted, "GET", path, cancel, None).await
     }
 
+    /// One game from `POST /api/games/export/_ids`, which Lichess answers without an account;
+    /// `/game/export/{id}` sends a request without one to its sign-up page. An empty answer means
+    /// Lichess has no such game. The single game does not wait for the bulk export lane.
+    pub async fn export_one(
+        &self,
+        id: &str,
+        query: &[(&str, String)],
+        accept: &str,
+        cancel: &CancellationToken,
+    ) -> Result<String> {
+        let path = "/api/games/export/_ids";
+        let request = self
+            .http
+            .post(self.url(path, query)?)
+            .header("Accept", accept)
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
+            .body(id.to_string())
+            .build()
+            .map_err(|cause| CoreError::new(format!("Invalid Lichess request: {cause}")))?;
+        let admitted = self.policy.send_single(request, cancel).await?;
+        self.read_text(admitted, "POST", path, cancel, None).await
+    }
+
     /// A text download whose decoded size is bounded before the response finishes.
     #[allow(clippy::too_many_arguments)]
     pub async fn get_text_bounded(
@@ -379,6 +402,22 @@ impl LichessClient {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
+        // Lichess redirects some requests (an export without an account) to a web page, which
+        // would otherwise reach the caller as if it were the data asked for.
+        let asked = self.url(path, &[])?;
+        let page = (200..300).contains(&status)
+            && response.url().path() != asked.path()
+            && content_type
+                .as_deref()
+                .is_some_and(|value| value.starts_with("text/html"));
+        if page {
+            drop(hold);
+            return Err(Failure::Lichess(LichessError {
+                status,
+                endpoint: format!("{method} {path}"),
+                detail: "unexpected page response".to_string(),
+            }));
+        }
         let stream = (200..300).contains(&status) && is_stream(path, content_type.as_deref());
         let text = read_with_deadline(response, cancel, stream, self.policy.timeout(), limit).await;
         drop(hold);

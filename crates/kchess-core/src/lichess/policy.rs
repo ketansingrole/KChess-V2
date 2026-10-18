@@ -369,12 +369,32 @@ impl Policy {
         request: reqwest::Request,
         cancel: &CancellationToken,
     ) -> Result<Admitted> {
+        let bulk = is_bulk_export(request.url().as_str());
+        self.send_in(request, bulk, cancel).await
+    }
+
+    /// `send` for one game from the export endpoint: a small answer that does not wait for the
+    /// bulk lane, which a running sync holds until its whole download ends.
+    pub async fn send_single(
+        self: &Arc<Self>,
+        request: reqwest::Request,
+        cancel: &CancellationToken,
+    ) -> Result<Admitted> {
+        self.send_in(request, false, cancel).await
+    }
+
+    async fn send_in(
+        self: &Arc<Self>,
+        request: reqwest::Request,
+        bulk: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Admitted> {
         if cancel.is_cancelled() {
             return Err(aborted());
         }
         let url = request.url().to_string();
         let context = current_usage().unwrap_or_else(unattributed);
-        let hold = if is_bulk_export(&url) {
+        let hold = if bulk {
             Some(self.acquire_bulk(cancel).await?)
         } else {
             None

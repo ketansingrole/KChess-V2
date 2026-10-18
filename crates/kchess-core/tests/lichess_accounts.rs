@@ -719,3 +719,36 @@ async fn logout_during_a_cache_write_does_not_restore_the_memory_cache() {
         "the stale result was not remembered"
     );
 }
+
+#[tokio::test]
+async fn a_game_is_exported_without_an_account_and_a_missing_one_is_named() {
+    let fixture = serve(|seen| match (seen.path(), seen.body.as_str()) {
+        ("/api/games/export/_ids", "game0001") => Reply::Text(
+            200,
+            "application/x-chess-pgn",
+            "[White \"Alice\"]\n[Black \"Bob\"]\n\n1. e4 e5 1-0\n".into(),
+        ),
+        ("/api/games/export/_ids", _) => Reply::Text(200, "application/x-chess-pgn", String::new()),
+        _ => Reply::WithHeaders(303, vec![("location", "/signup".into())], String::new()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+    let pgn = lichess.export_game("game0001").await.unwrap();
+    assert!(pgn.contains("1. e4 e5"));
+    let error = lichess.export_game("gone0001").await.unwrap_err();
+    assert_eq!(error.message, "That game is not on Lichess.");
+    let asked = fixture.requests();
+    assert!(
+        asked
+            .iter()
+            .all(|seen| seen.path() == "/api/games/export/_ids")
+    );
+    assert_eq!(asked[0].query("clocks").as_deref(), Some("true"));
+    assert_eq!(asked[0].header("authorization"), None);
+}
