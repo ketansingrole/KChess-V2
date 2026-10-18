@@ -12,6 +12,7 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron'
 import { handleAppProtocol, registerAppScheme } from './appProtocol'
+import { APP_NAME, appUserModelId } from './appIdentity'
 import { microphoneAccess, openMicrophoneSettings, setupMediaPermissions } from './microphone'
 import { handle, setIpcOwner, assertIpcComplete } from './ipc'
 import { isAppUrl } from './appOrigin'
@@ -94,7 +95,12 @@ const quitPreparation = new QuitPreparation({
 })
 setIpcOwner(() => window)
 registerAppScheme()
-app.setName('KChess')
+app.setName(APP_NAME)
+if (process.platform === 'win32') {
+  // The branded dev binary reports isPackaged, so also check how it was started.
+  const installed = app.isPackaged && process.defaultApp !== true && !process.env.KCHESS_NUXT_URL
+  app.setAppUserModelId(appUserModelId(installed, process.execPath))
+}
 // An explicit profile is useful for isolated tests and development with fresh data.
 if (process.env.KCHESS_USER_DATA_DIR) {
   mkdirSync(process.env.KCHESS_USER_DATA_DIR, { recursive: true })

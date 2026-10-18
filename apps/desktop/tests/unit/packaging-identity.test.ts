@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { APP_ID, APP_NAME, appUserModelId } from '../../electron/main/appIdentity'
 
 const manifest = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8')) as {
   name: string
@@ -29,5 +30,14 @@ describe('packaging identity', () => {
     expect(manifest.build.deb.fpm).toEqual(
       expect.arrayContaining(['--replaces=kchess-electron', '--conflicts=kchess-electron']),
     )
+  })
+
+  it('runs under the AppUserModelID that the installer stamps on its shortcuts', () => {
+    // A mismatch makes Windows group the running app and its notifications apart from the
+    // Start-menu shortcut, under Electron's fallback ID.
+    expect(APP_ID).toBe(manifest.build.appId)
+    expect(APP_NAME).toBe(manifest.build.productName)
+    expect(appUserModelId(true, 'C:\\KChess\\KChess.exe')).toBe(manifest.build.appId)
+    expect(appUserModelId(false, 'C:\\dev\\KChess.exe')).toBe('C:\\dev\\KChess.exe')
   })
 })
