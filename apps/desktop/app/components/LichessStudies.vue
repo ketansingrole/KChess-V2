@@ -201,7 +201,7 @@ function send(): Promise<void> {
     </div>
     <p v-if="status" role="status" class="text-sm">{{ status }}</p>
 
-    <ul v-if="remote?.length" class="remote-grid" aria-label="Lichess studies">
+    <ul v-if="remote?.length" class="card-grid" aria-label="Lichess studies">
       <li v-for="item in remote" :key="item.id">
         <StudyCard
           :name="item.name"
@@ -243,14 +243,6 @@ function send(): Promise<void> {
 </template>
 
 <style scoped>
-.remote-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
 .remote-row {
   display: flex;
   align-items: center;

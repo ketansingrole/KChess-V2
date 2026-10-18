@@ -371,6 +371,15 @@ button:disabled {
   gap: 12px;
   margin-bottom: 14px;
 }
+/* Cards with a board picture (studies, openings) in rows that fill the width. */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .section-title {
   font-size: 15px;
   font-weight: 650;

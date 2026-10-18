@@ -8,18 +8,28 @@ const props = defineProps<{
   /** When the study was last edited; the card omits the date when it is unknown. */
   updatedAt?: number
   pgn?: string
+  /** A position to picture instead of the study's (an opening's). */
+  fen?: string
+  /** The second detail line, instead of the study's players and event. */
+  description?: string
   chapterCount?: number
   location: string
 }>()
 const summary = computed(() => (props.pgn ? summarizeStudy(props.pgn) : null))
+const previewFen = computed(() => props.fen ?? summary.value?.fen)
+const details = computed(() => {
+  if (props.description !== undefined) return props.description
+  const event = summary.value?.event !== props.name ? summary.value?.event : ''
+  return [summary.value?.players, event].filter(Boolean).join(' · ')
+})
 const emit = defineEmits<{ open: [] }>()
 </script>
 <template>
   <article class="study-card">
     <button type="button" class="study-preview" :aria-label="`Open ${name}`" @click="emit('open')">
       <ChessBoard
-        v-if="summary"
-        :fen="summary.fen"
+        v-if="previewFen"
+        :fen="previewFen"
         :theme="app.settings?.boardTheme"
         :piece-set="app.settings?.pieceSet"
         coordinates="none"
@@ -42,15 +52,8 @@ const emit = defineEmits<{ open: [] }>()
             · {{ chapterCount }} {{ chapterCount === 1 ? 'chapter' : 'chapters' }}</template
           >
         </p>
-        <p
-          v-if="summary?.players || (summary?.event && summary.event !== name)"
-          class="study-description text-xs muted truncate"
-        >
-          {{
-            [summary?.players, summary?.event !== name ? summary?.event : '']
-              .filter(Boolean)
-              .join(' · ')
-          }}
+        <p v-if="details" class="study-description text-xs muted truncate" :title="details">
+          {{ details }}
         </p>
         <p v-if="updatedAt" class="study-edited text-xs muted">Edited {{ timeAgo(updatedAt) }}</p>
       </div>
@@ -95,7 +98,8 @@ const emit = defineEmits<{ open: [] }>()
 }
 .study-details {
   display: grid;
-  grid-template-rows: repeat(3, 1.25em);
+  /* Fixed rows keep cards in a grid aligned; a grid of cards without dates sets two. */
+  grid-template-rows: repeat(var(--study-detail-rows, 3), 1.25em);
   gap: 8px;
   font-size: 0.75rem;
 }

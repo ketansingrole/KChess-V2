@@ -327,7 +327,7 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
         No study matches “{{ query }}”.
       </p>
 
-      <ul v-else class="study-grid" aria-label="Saved studies">
+      <ul v-else class="card-grid" aria-label="Saved studies">
         <li v-for="{ study } in cards" :key="study.id">
           <StudyCard
             :name="study.name"
@@ -434,14 +434,6 @@ async function upload(study: SavedStudy, copy = false): Promise<void> {
 .empty-icon {
   color: var(--ui-text-dimmed);
   font-size: 40px;
-}
-.study-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
 .import-text {
   width: 100%;

@@ -6,3 +6,6 @@ export const REPERTOIRE_STUDY_KEY = 'kchess:repertoire-study'
 export const REPERTOIRE_OPENING_KEY = 'kchess:repertoire-opening'
 /** Practice → Endgames: the course list, the drills, or a course id. */
 export const ENDGAME_VIEW_KEY = 'kchess:endgame-view'
+/** Openings: the first-move group the full list shows, and the openings opened most recently. */
+export const OPENINGS_GROUP_KEY = 'kchess:openings-group'
+export const RECENT_OPENINGS_KEY = 'kchess:recent-openings'

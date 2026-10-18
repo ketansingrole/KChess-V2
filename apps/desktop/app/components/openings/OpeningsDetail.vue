@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { StorageSerializers, useLocalStorage } from '@vueuse/core'
 import { checkColor, destsFor, pgnFromUci } from '@kchess/rules/chess'
 import type { OpeningDescription, PopularityMonth } from '@kchess/contracts/types'
 import { openingAt, openingKey } from '@kchess/rules/openings'
@@ -10,12 +9,7 @@ import { STANDARD_SETUP } from '@kchess/rules/variant'
 import type { Key } from '@lichess-org/chessground/types'
 import { useAnalysisStore } from '../../stores/analysis'
 import { usePuzzleStore } from '../../stores/puzzles'
-import type { OpeningChoice } from '../../composables/useOpeningDrill'
-import {
-  PRACTICE_TAB_KEY,
-  REPERTOIRE_OPENING_KEY,
-  REPERTOIRE_STUDY_KEY,
-} from '../../utils/storageKeys'
+import { useRecentOpenings, useTrainOpening } from '../../composables/useOpenings'
 import { openingLink } from './openingLink'
 import { useReplaceAnalysis } from '../../composables/useReplaceAnalysis'
 
@@ -43,18 +37,19 @@ function go(moves: readonly string[]): void {
   void router.push(openingLink(moves))
 }
 
-// The Practice page's own keys: its opening trainer drills this line.
-const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
-const repertoire = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
-const drilled = useLocalStorage<OpeningChoice | null>(REPERTOIRE_OPENING_KEY, null, {
-  serializer: StorageSerializers.object,
-})
+const startTraining = useTrainOpening()
 function train(): void {
-  drilled.value = { name: title.value, moves: [...line.value] }
-  repertoire.value = 'opening'
-  practiceTab.value = 'openings'
-  store.selectPage('practice')
+  startTraining({ name: title.value, moves: line.value })
 }
+// The landing page lists the named openings shown here most recently.
+const { remember } = useRecentOpenings()
+watch(
+  [opening, line],
+  ([named, moves]) => {
+    if (named) remember({ name: named.name, moves })
+  },
+  { immediate: true },
+)
 function trainPuzzles(): void {
   const name = opening.value?.name
   if (name) usePuzzleStore().startOpening(openingKey(name), name)

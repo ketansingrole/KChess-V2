@@ -782,6 +782,10 @@ test('browses openings offline and drills one without a saved study', async ({
 }) => {
   await navigate(page, 'Openings')
   const families = page.getByRole('list', { name: 'Opening families', exact: true })
+  await page.getByRole('tab', { name: '1.d4', exact: true }).click()
+  await expect(families.getByRole('link', { name: 'Slav Defense', exact: true })).toBeVisible()
+  await expect(families.getByText("King's Gambit", { exact: true })).toHaveCount(0)
+  await page.getByRole('tab', { name: '1.e4', exact: true }).click()
   await families.getByRole('button', { name: "Show King's Gambit variations", exact: true }).click()
   await expect(families.getByRole('link', { name: 'Accepted', exact: true })).toBeVisible()
   await page.getByRole('textbox', { name: 'Search openings', exact: true }).fill('kieseritzky')
@@ -803,9 +807,20 @@ test('browses openings offline and drills one without a saved study', async ({
     .click()
   await expect(page.getByRole('heading', { name: "King's Gambit", exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'All openings', exact: true }).click()
-  await expect(page.getByRole('textbox', { name: 'Search openings', exact: true })).toHaveValue(
-    'kieseritzky',
+  const search = page.getByRole('textbox', { name: 'Search openings', exact: true })
+  await expect(search).toHaveValue('kieseritzky')
+  // Without a search: the openings just shown, newest first, then the popular ones.
+  await search.fill('')
+  const recent = page.getByRole('list', { name: 'Recent openings', exact: true }).getByRole('link')
+  await expect(recent).toHaveCount(2)
+  await expect(recent.nth(0)).toHaveAccessibleName(/^King's Gambit\s*C30$/)
+  await expect(recent.nth(1)).toHaveAccessibleName(
+    /^King's Gambit Accepted: Kieseritzky Gambit\s*C39$/,
   )
+  await expect(
+    page.getByRole('list', { name: 'Popular openings', exact: true }).getByRole('listitem'),
+  ).toHaveCount(12)
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'openings-landing.png') })
   await page.goBack()
   await expect(page.getByRole('heading', { name: "King's Gambit", exact: true })).toBeVisible()
 
@@ -833,6 +848,11 @@ test('browses openings offline and drills one without a saved study', async ({
   await expect(page.getByText('Saved to Studies', { exact: true })).toBeVisible()
   await navigate(page, 'Studies')
   await expect(page.getByText("King's Gambit", { exact: true }).first()).toBeVisible()
+
+  // A popular opening drills straight from its card.
+  await navigate(page, 'Openings')
+  await page.getByRole('button', { name: 'Train Sicilian Defense', exact: true }).click()
+  await expect(page.getByText('Play the white moves of “Sicilian Defense”.')).toBeVisible()
 })
 
 test('shows an opening’s continuations and games, and drills its popular replies @seed:opening-lookups', async ({
