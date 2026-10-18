@@ -1,0 +1,94 @@
+name: Windows upgrade
+
+# Installs the latest published Windows release three ways (per user, in a custom folder, for all
+# users), upgrades it with this commit's installer the way electron-updater does (`--updated /S`)
+# and checks Apps & features, shortcuts, the old copy and user data. Run it from the Actions tab
+# after changing the NSIS installer; it also runs on pull requests that change the test itself.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-upgrade.yml
+      - tooling/windows-upgrade-test.ps1
+      - apps/desktop/build/installer.nsh
+
+permissions:
+  contents: read
+
+env:
+  # Above every release, so the new installer is always an upgrade.
+  KCHESS_TEST_VERSION: 9999.0.${{ github.run_number }}
+
+concurrency:
+  group: windows-upgrade-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      - run: pnpm run build
+      - name: Set the test version
+        working-directory: apps/desktop
+        shell: bash
+        run: npm pkg set version="$KCHESS_TEST_VERSION"
+      - name: Build the installer
+        run: pnpm exec electron-builder --projectDir apps/desktop --win --config ../../tooling/release-config.cjs --publish never
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: dist/KChess-*-win-x64.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  upgrade:
+    name: Upgrade (${{ matrix.mode }})
+    needs: build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [default, custom, allusers]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: tooling/windows-upgrade-test.ps1
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: new
+      - name: Download the latest published installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo $env:GITHUB_REPOSITORY --pattern '*-win-x64.exe' --pattern SHA256SUMS.txt --dir old
+          $installer = Get-Item old/*-win-x64.exe
+          $expected = (Select-String -Path old/SHA256SUMS.txt -SimpleMatch $installer.Name).Line.Split(' ')[0]
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) { throw "Checksum mismatch for $($installer.Name)." }
+          Write-Host "Published installer: $($installer.Name)"
+      - name: Upgrade and check
+        shell: pwsh
+        run: >
+          ./tooling/windows-upgrade-test.ps1 -Mode ${{ matrix.mode }}
+          -OldInstaller (Get-Item old/*-win-x64.exe).FullName
+          -NewInstaller (Get-Item new/*.exe).FullName
+          -NewVersion $env:KCHESS_TEST_VERSION
