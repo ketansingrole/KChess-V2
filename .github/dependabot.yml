@@ -3,7 +3,11 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
+    # Electron patches carry Chromium security fixes; skip the default 3-day cooldown for them.
+    cooldown:
+      default-days: 3
+      exclude: [electron]
     open-pull-requests-limit: 5
     groups:
       development-tools:
