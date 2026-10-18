@@ -92,6 +92,7 @@ const status = computed(() => {
 async function remove(): Promise<void> {
   const open = study.value
   if (!open) return
+  const relink = analysis.captureStudyLink()
   let removed
   try {
     removed = await library.remove(open.id)
@@ -105,13 +106,16 @@ async function remove(): Promise<void> {
     title: `Deleted “${removed.name}”`,
     description: 'The board keeps its moves.',
     icon: 'i-lucide-trash-2',
-    actions: [{ label: 'Undo', onClick: () => restore(removed) }],
+    actions: [{ label: 'Undo', onClick: () => restore(removed, relink) }],
   })
 }
-async function restore(removed: NonNullable<typeof study.value>): Promise<void> {
+async function restore(
+  removed: NonNullable<typeof study.value>,
+  relink: () => void,
+): Promise<void> {
   try {
     await library.restore(removed)
-    analysis.studyId = removed.id
+    relink()
   } catch (cause) {
     console.warn('[study-bar] Could not restore study:', cause)
     toast.add({ title: cause instanceof Error ? cause.message : String(cause), color: 'error' })

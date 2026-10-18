@@ -243,6 +243,21 @@ export const useAnalysisStore = defineStore('analysis', () => {
     studySaveError.value = ''
     return id
   }
+  /**
+   * Remember the board's study link before the study is deleted. The returned function relinks a
+   * restored study only while the board still holds that study's document; once another document
+   * is loaded or linked, autosave would overwrite the restored study with it.
+   */
+  function captureStudyLink(): () => void {
+    const board = studyNavigation.capture()
+    const id = studyId.value
+    const chapterId = studyChapterId.value
+    return () => {
+      if (!id || !board.current() || studyId.value) return
+      studyId.value = id
+      studyChapterId.value = chapterId
+    }
+  }
   /** Save the open study before returning to an empty analysis board. */
   async function closeStudy(): Promise<boolean> {
     const request = studyNavigation.next()
@@ -729,6 +744,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     openStudy,
     flushStudy,
     saveAsStudy,
+    captureStudyLink,
     closeStudy,
     mainline,
     mainlineKey,
