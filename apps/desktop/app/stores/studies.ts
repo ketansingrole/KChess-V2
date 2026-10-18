@@ -66,11 +66,15 @@ export const useStudyStore = defineStore('studies', () => {
     }
   }
   function run(intent: Intent): Promise<StudyCommandResult> {
-    const queued = intent()
-    // A newer command for the same target (or a manual redo) supersedes a failed one, so a
-    // later quit retry neither applies the same intent twice nor rolls back newer work.
-    if (queued) forget((older) => supersedes(queued, older))
-    const result = changes.then(() => persist(intent))
+    const result = changes.then(() => {
+      // A newer command for the same target (or a manual redo) supersedes a failed one, so a
+      // later quit retry neither applies the same intent twice nor rolls back newer work. This
+      // runs once earlier commands have settled: one still pending when this was queued may
+      // only now have failed.
+      const queued = intent()
+      if (queued) forget((older) => supersedes(queued, older))
+      return persist(intent)
+    })
     // A failed command must not prevent later commands from reaching the core.
     changes = result.then(
       () => {},

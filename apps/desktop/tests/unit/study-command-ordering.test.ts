@@ -87,3 +87,63 @@ it('does not replay failed edits to a study or chapter removed since', async () 
   expect(library.studies.map((study) => study.name)).toEqual(['Study'])
   expect(library.studies[0]!.chapters).toHaveLength(1)
 })
+
+it('does not replay a failed save that was still pending when newer content was queued', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const backend = api.studyCommand
+  const older = deferred<StudyCommandResult>()
+  api.studyCommand = vi.fn(backend).mockImplementationOnce(() => older.promise)
+  const olderSave = studies.save('Study', '1. d4 *', id)
+  const olderFailed = expect(olderSave).rejects.toThrow('Disk unavailable')
+  await flushPromises()
+  const newerSave = studies.save('Study', '1. c4 *', id)
+  older.reject(new Error('Disk unavailable'))
+  await olderFailed
+  await newerSave
+  expect((await api.library()).studies[0]!.pgn).toContain('c4')
+  await studies.flush(true)
+  expect((await api.library()).studies[0]!.pgn).toContain('c4')
+})
+
+it('does not replay an overlapping failed chapter autosave over the newer one at quit', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const chapter = studies.items[0]!.chapters[0]!.id
+  const backend = api.studyCommand
+  const older = deferred<StudyCommandResult>()
+  api.studyCommand = vi.fn(backend).mockImplementationOnce(() => older.promise)
+  const olderSave = studies.saveChapter(id, chapter, '1. e4 e5 { Older notes } *')
+  const olderFailed = expect(olderSave).rejects.toThrow('Disk unavailable')
+  await flushPromises()
+  const newerSave = studies.saveChapter(id, chapter, '1. e4 e5 { Latest notes } *')
+  older.reject(new Error('Disk unavailable'))
+  await olderFailed
+  await newerSave
+  await studies.flush(true)
+  expect((await api.library()).studies[0]!.chapters[0]!.pgn).toContain('Latest notes')
+})
+
+it('recovers from consecutive failed saves without replaying either at quit', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const backend = api.studyCommand
+  const studyCommand = vi.fn(backend)
+  studyCommand.mockRejectedValueOnce(new Error('Disk unavailable'))
+  studyCommand.mockRejectedValueOnce(new Error('Disk unavailable'))
+  api.studyCommand = studyCommand
+  const first = expect(studies.save('Study', '1. d4 *', id)).rejects.toThrow('Disk unavailable')
+  const second = expect(studies.save('Study', '1. Nf3 *', id)).rejects.toThrow('Disk unavailable')
+  const recovered = studies.save('Study', '1. c4 *', id)
+  await first
+  await second
+  await recovered
+  const calls = studyCommand.mock.calls.length
+  await studies.flush(true)
+  expect(studyCommand).toHaveBeenCalledTimes(calls)
+  expect((await api.library()).studies[0]!.pgn).toContain('c4')
+  expect(studies.error).toBe('')
+})
