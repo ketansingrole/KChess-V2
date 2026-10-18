@@ -486,6 +486,10 @@ button:disabled {
 .game-list.compact .game-row {
   grid-template-columns: 64px minmax(0, 1fr) 76px 92px;
 }
+.game-list.no-accuracy .game-head,
+.game-list.no-accuracy .game-row {
+  grid-template-columns: 64px minmax(0, 1fr) 96px 72px 104px;
+}
 .game-head {
   padding: 0 12px 8px;
   color: var(--ui-text-dimmed);

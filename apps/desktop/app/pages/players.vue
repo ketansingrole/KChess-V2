@@ -357,7 +357,7 @@ async function watchGame(): Promise<void> {
     </form>
     <p v-if="error" class="text-error text-sm" role="alert">{{ error }}</p>
 
-    <div v-if="profile" class="online-columns">
+    <div v-if="profile" class="online-columns player-columns">
       <section class="card">
         <div class="card-header">
           <div>
@@ -461,7 +461,7 @@ async function watchGame(): Promise<void> {
         </RatingHistoryChart>
         <p v-else class="muted text-sm">Loading…</p>
       </section>
-      <section class="card">
+      <section class="card player-record">
         <div class="card-header record-header">
           <div>
             <h2 class="section-title">Record</h2>
@@ -582,16 +582,17 @@ async function watchGame(): Promise<void> {
         </p>
         <p v-else-if="!games" class="muted text-sm">Loading…</p>
         <p v-else-if="!games.length" class="muted text-sm">No games yet.</p>
-        <div v-else class="game-list">
+        <div v-else class="game-list no-accuracy">
           <div class="game-head" aria-hidden="true">
             <span>Result</span><span>Opponent</span><span>Mode</span><span>Rating</span
-            ><span>Accuracy</span><span>Date</span>
+            ><span>Date</span>
           </div>
           <GameRow
             v-for="game in games"
             :key="game.id"
             :game="game"
             detailed
+            hide-accuracy
             @select="openGame(game)"
           />
         </div>
@@ -654,8 +655,25 @@ async function watchGame(): Promise<void> {
   justify-content: center;
   margin-top: 4px;
 }
-.player-games {
-  grid-column: 1 / -1;
+/* Record is a sidebar beside the profile and the games, so the games follow the profile
+   directly; extra sidebar height goes to the second row, never between the two. */
+.player-columns {
+  grid-template-rows: auto 1fr;
+}
+.player-record {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+/* Too narrow for the games table beside the sidebar: stack profile, record, games. */
+@container page (max-width: 1060px) {
+  .player-columns {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+  .player-record {
+    grid-column: auto;
+    grid-row: auto;
+  }
 }
 .record-header {
   align-items: flex-start;

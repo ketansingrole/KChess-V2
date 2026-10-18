@@ -5,7 +5,13 @@ import { gameResult } from '@kchess/rules/gameStatus'
 import { judgmentCounts } from '../utils/review'
 import type { LichessGame, ReviewSummary } from '@kchess/contracts/types'
 
-const props = defineProps<{ game: LichessGame; detailed?: boolean; review?: ReviewSummary }>()
+const props = defineProps<{
+  game: LichessGame
+  detailed?: boolean
+  review?: ReviewSummary
+  /** Leave out the accuracy column, for lists that have no reviews to show. */
+  hideAccuracy?: boolean
+}>()
 const emit = defineEmits<{ select: [] }>()
 const result = computed(() => gameResult(props.game))
 const badge = computed(
@@ -49,7 +55,7 @@ const worst = computed(() => (side.value ? judgmentCounts(side.value)[0] : undef
     <span v-if="detailed" class="rating-diff" :class="diff ? (diff > 0 ? 'up' : 'down') : 'muted'">
       {{ diff ? (diff > 0 ? `+${diff}` : diff) : '—' }}
     </span>
-    <span v-if="detailed" class="opponent tabular">
+    <span v-if="detailed && !hideAccuracy" class="opponent tabular">
       <span :class="{ muted: !side }">{{
         side?.accuracy !== undefined ? `${side.accuracy}%` : side ? 'Reviewed' : '—'
       }}</span>
