@@ -60,12 +60,6 @@ const versus = computed(() =>
 const more = computed(() => [
   [
     {
-      label: 'Stats',
-      icon: 'i-lucide-chart-column',
-      disabled: !online.value,
-      onSelect: () => navigateTo({ path: '/players', query: { name: props.account.username } }),
-    },
-    {
       label: 'Sync',
       icon: 'i-lucide-refresh-cw',
       disabled: props.busy || !online.value,
@@ -96,7 +90,9 @@ const more = computed(() => [
         <UAvatar :text="account.username.slice(0, 2).toUpperCase()" size="sm" />
         <div class="min-w-0">
           <div class="friend-name">
-            <span class="truncate">@{{ account.username }}</span>
+            <PlayerLink :username="account.username" class="truncate"
+              >@{{ account.username }}</PlayerLink
+            >
             <UBadge v-if="profile?.title" color="primary" variant="soft" size="sm">{{
               profile.title
             }}</UBadge>

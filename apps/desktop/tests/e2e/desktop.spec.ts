@@ -1071,6 +1071,10 @@ test('lists followed players in one table, playing and online first', async ({
   await page.getByRole('button', { name: 'More for @Offline1', exact: true }).click()
   await expect(page.getByRole('menuitem', { name: 'Remove', exact: true })).toBeVisible()
   await expect(page.getByRole('menuitem', { name: 'Clear data', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  // A player's name opens their profile.
+  await rows.nth(2).getByRole('link', { name: '@Offline1', exact: true }).click()
+  await expect(page.getByRole('heading', { name: /^Offline1\b/, level: 2 })).toBeVisible()
 })
 
 test('persists appearance settings after reloading', async ({ desktop: { page } }) => {
