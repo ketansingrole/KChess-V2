@@ -44,7 +44,8 @@ function Get-KChessEntries {
 
 function Get-ExeVersion([string]$exe) {
   if (-not (Test-Path $exe)) { return $null }
-  (Get-Item $exe).VersionInfo.ProductVersion
+  # Windows reports the package version 1.2.3 as 1.2.3.0.
+  (Get-Item $exe).VersionInfo.ProductVersion -replace '^(\d+\.\d+\.\d+)\.0$', '$1'
 }
 
 function Get-Shortcuts {
