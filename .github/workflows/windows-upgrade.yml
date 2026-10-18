@@ -44,12 +44,19 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       - run: pnpm run build
-      - name: Set the test version
-        working-directory: apps/desktop
-        shell: bash
-        run: npm pkg set version="$KCHESS_TEST_VERSION"
       - name: Build the installer
-        run: pnpm exec electron-builder --projectDir apps/desktop --win --config ../../tooling/release-config.cjs --publish never
+        shell: bash
+        run: |
+          # Overrides the version without editing package.json, which pnpm would reject.
+          config="$(cygpath -m "$RUNNER_TEMP")/upgrade-config.cjs"
+          cat > "$config" <<EOF
+          const release = require('$(cygpath -m "$PWD")/tooling/release-config.cjs')
+          module.exports = {
+            ...release,
+            extraMetadata: { ...release.extraMetadata, version: process.env.KCHESS_TEST_VERSION },
+          }
+          EOF
+          pnpm exec electron-builder --projectDir apps/desktop --win --config "$config" --publish never
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
