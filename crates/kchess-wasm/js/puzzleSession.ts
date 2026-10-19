@@ -1,4 +1,10 @@
-import type { CoreApi, NeedsReconnect, Puzzle, PuzzleDifficulty } from '@kchess/contracts/types'
+import type {
+  CoreApi,
+  NeedsReconnect,
+  Puzzle,
+  PuzzleAttemptInput,
+  PuzzleDifficulty,
+} from '@kchess/contracts/types'
 import { rules } from './engine.ts'
 
 /**
@@ -7,7 +13,16 @@ import { rules } from './engine.ts'
  * their replies back with the token it was given. It makes no decisions of its own.
  */
 export type TrainMode = 'rated' | 'practice' | 'offline'
-export type TrainPhase = 'idle' | 'loading' | 'ready' | 'reconnect' | 'noaccount' | 'nodb' | 'error'
+export type TrainPhase =
+  | 'idle'
+  | 'loading'
+  | 'ready'
+  | 'reconnect'
+  | 'noaccount'
+  | 'nodb'
+  /** No puzzle left for the theme and difficulty: a choice to make, not an error. */
+  | 'exhausted'
+  | 'error'
 
 export const isReconnect = (value: unknown): value is NeedsReconnect =>
   rules<boolean>('isReconnect', value)
@@ -27,7 +42,17 @@ export interface PuzzleSessionState {
   isRetry: boolean
   trainError: string
   rating: number | undefined
-  session: { solved: number; failed: number; ratingChange: number }
+  /** Attempts by outcome (retries are not counted), player moves found and tried. */
+  session: {
+    solved: number
+    hinted: number
+    partial: number
+    missed: number
+    revealed: number
+    movesFound: number
+    movesTried: number
+    ratingChange: number
+  }
   lastReport: { win: boolean; ratingDiff?: number; failed?: string } | null
   attemptOutcome: boolean | null
 }
@@ -37,6 +62,25 @@ export function puzzleSessionState(): PuzzleSessionState {
   // JSON has no undefined, so `rating` is absent until a rating arrives. The key must still exist:
   // hosts destructure the state's keys (the store's toRefs), which only sees own properties.
   return { ...state, rating: undefined }
+}
+
+/**
+ * What the board knew at the first verdict. With the first try at each move (`move`), it is what
+ * the attempt counts as once it ends (Rust `puzzle_progress`).
+ */
+export interface PuzzleVerdictDetail {
+  /** The solution was shown. */
+  revealed: boolean
+  /** A hint was asked for before the verdict. */
+  hinted: boolean
+  /** Player moves in the solution. */
+  total: number
+}
+
+/** The local calendar day, `YYYY-MM-DD`: what the day streak counts. */
+export function localDay(date: Date = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 /** What the session keeps privately; replies are matched against it (see the Rust module). */
@@ -59,6 +103,8 @@ interface Step {
     args: Record<string, unknown>
     resume: Record<string, unknown>
   } | null
+  /** An attempt for the local log. */
+  record: PuzzleAttemptInput | null
   warn: boolean
 }
 
@@ -66,6 +112,8 @@ export interface PuzzleSessionHost {
   api: Pick<CoreApi, 'localPuzzles' | 'puzzleNext' | 'puzzleSolve'>
   selection(): PuzzleSelection
   online(): boolean
+  /** Keep an attempt in the local log; hosts without one (tests) leave it out. */
+  record?(attempt: PuzzleAttemptInput): void
 }
 
 const message = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
@@ -107,12 +155,23 @@ export class PuzzleSession {
     this.apply('puzzleSessionRetry', { puzzle, selection: { ...this.host.selection() } })
   }
 
-  async report(win: boolean): Promise<void> {
+  async report(win: boolean, detail?: PuzzleVerdictDetail): Promise<void> {
     const step = this.apply('puzzleSessionReportBegin', {
       win,
+      detail,
       selection: { ...this.host.selection() },
     })
     await this.follow(step, 'puzzleSessionReportSettled')
+  }
+
+  /** A player move: `index` is its number among the player's moves of the solution. */
+  move(index: number, correct: boolean): void {
+    this.apply('puzzleSessionMove', { index, correct })
+  }
+
+  /** The puzzle is over (solved or its solution shown): count and log the attempt. */
+  end(): void {
+    this.apply('puzzleSessionEnd', {})
   }
 
   resetSession(): void {
@@ -160,8 +219,11 @@ export class PuzzleSession {
     const step = rules<Step>(method, {
       state: this.state,
       internal: this.internal,
+      // An attempt replaced by this transition ends on this day.
+      day: localDay(),
       ...input,
     })
+    if (step.record) this.host.record?.(step.record)
     const state = this.state
     const next = step.state
     state.phase = next.phase

@@ -29,10 +29,12 @@ pub struct PuzzleRequest {
     pub color: Option<String>,
 }
 
-/// A puzzle drawn for the user (`PuzzleDraw`): the puzzle and, for an account, its rating.
+/// A puzzle drawn for the user (`PuzzleDraw`): the puzzle and, for an account, its rating. The
+/// puzzle is null when Lichess has none left for the theme and difficulty.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDraw {
+    #[serde(skip_serializing_if = "Value::is_null")]
     pub puzzle: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glicko: Option<Value>,
@@ -104,6 +106,11 @@ fn pick_unseen(recent: &mut VecDeque<String>, ids: &[&str]) -> usize {
 
 /// `puzzleNext(request)`: with an account, a puzzle chosen for its rating and one it has not seen;
 /// without, a random puzzle.
+///
+/// Lichess picks an account's puzzles near its rating plus the difficulty's offset (Harder is +300)
+/// and skips puzzles it has played, so a narrow theme such as one opening can run out at one
+/// difficulty while others still have puzzles. That is an empty draw, not a failure: an empty
+/// batch, or a 404 for the anonymous `/api/puzzle/next`.
 pub async fn puzzle_next(
     lichess: &Lichess,
     request: &PuzzleRequest,
@@ -116,7 +123,7 @@ pub async fn puzzle_next(
         query.push(("color", color.clone()));
     }
     if request.account.is_empty() {
-        let raw: Value = lichess
+        let raw: Result<Value, Failure> = lichess
             .client()
             .policy()
             .with_usage("", "puzzles", async {
@@ -125,9 +132,13 @@ pub async fn puzzle_next(
                     .get_json("/api/puzzle/next", &query, None, &cancel)
                     .await
             })
-            .await?;
+            .await;
+        let puzzle = match raw {
+            Err(Failure::Lichess(error)) if error.status == 404 => Value::Null,
+            raw => readable_puzzle(&raw?)?,
+        };
         return Ok(Reply::Done(PuzzleDraw {
-            puzzle: readable_puzzle(&raw)?,
+            puzzle,
             glicko: None,
         }));
     }
@@ -143,15 +154,16 @@ pub async fn puzzle_next(
                 .client()
                 .get_json(&path, &batch_query, Some(&authorize(&token)), &cancel)
                 .await?;
-            let items = batch
+            let Some(items) = batch
                 .get("puzzles")
                 .and_then(Value::as_array)
                 .filter(|items| !items.is_empty())
-                .ok_or_else(|| {
-                    Failure::Core(CoreError::new(
-                        "Lichess has no more puzzles for this theme and difficulty.",
-                    ))
-                })?;
+            else {
+                return Ok(PuzzleDraw {
+                    puzzle: Value::Null,
+                    glicko: batch.get("glicko").cloned(),
+                });
+            };
             let ids: Vec<&str> = items
                 .iter()
                 .map(|item| {

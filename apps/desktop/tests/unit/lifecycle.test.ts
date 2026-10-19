@@ -34,6 +34,8 @@ describe('puzzle lifecycle', () => {
         puzzle,
         initialOutcome: store.attemptOutcome,
         onOutcome: (win: boolean) => void store.report(win),
+        onMove: (correct: boolean, index: number) => store.move(index, correct),
+        onDone: () => store.end(),
       },
       global: { stubs: componentStubs },
     })
@@ -45,6 +47,8 @@ describe('puzzle lifecycle', () => {
         puzzle,
         initialOutcome: store.attemptOutcome,
         onOutcome: (win: boolean) => void store.report(win),
+        onMove: (correct: boolean, index: number) => store.move(index, correct),
+        onDone: () => store.end(),
       },
       global: { stubs: componentStubs },
     })
@@ -53,7 +57,8 @@ describe('puzzle lifecycle', () => {
     await store.report(true)
     expect(solve).toHaveBeenCalledTimes(1)
     expect(solve.mock.calls[0]?.[0]).toMatchObject({ win: false })
-    expect(store.session).toMatchObject({ solved: 0, failed: 1 })
+    // The first try at the move was wrong; finding it after the remount does not change that.
+    expect(store.session).toMatchObject({ solved: 0, missed: 1, movesFound: 0, movesTried: 1 })
     remounted.unmount()
   })
 

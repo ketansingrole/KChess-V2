@@ -153,20 +153,48 @@ async fn a_refused_login_asks_the_user_to_connect_again() {
 }
 
 #[tokio::test]
-async fn a_signed_in_batch_without_puzzles_says_so() {
-    let fixture = serve(|_| Reply::Json(200, "{\"puzzles\":[]}".into())).await;
+async fn a_theme_with_no_puzzles_left_is_an_empty_draw_not_a_failure() {
+    // A narrow opening theme at Harder: Lichess answers an empty batch once the account has
+    // played the puzzles near its rating. KChess showed that as "Couldn't get a puzzle".
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            "{\"puzzles\":[],\"glicko\":{\"rating\":1620.5}}".into(),
+        )
+    })
+    .await;
     let lichess = service(&fixture.base);
     let request = PuzzleRequest {
         account: "Alice".into(),
-        angle: "fork".into(),
-        difficulty: "hard".into(),
+        angle: "Anderssens_Opening_Polish_Gambit".into(),
+        difficulty: "harder".into(),
         color: Some("white".into()),
     };
-    let error = puzzle_next(&lichess, &request).await.unwrap_err();
-    assert!(error.message.contains("no more puzzles"));
+    let Outcome::Done(draw) = puzzle_next(&lichess, &request).await.unwrap() else {
+        panic!("the login is connected");
+    };
+    assert_eq!(draw.puzzle, Value::Null);
+    assert_eq!(draw.glicko, Some(json!({ "rating": 1620.5 })));
+    assert_eq!(
+        serde_json::to_value(&draw).unwrap(),
+        json!({ "glicko": { "rating": 1620.5 } })
+    );
     let sent = &fixture.requests()[0];
     assert_eq!(sent.query("nb").as_deref(), Some("10"));
+    assert_eq!(sent.query("difficulty").as_deref(), Some("harder"));
     assert_eq!(sent.query("color").as_deref(), Some("white"));
+
+    // Without an account, Lichess answers 404 when it has no puzzle to give.
+    let fixture = serve(|_| Reply::Json(404, "{\"error\":\"Not found\"}".into())).await;
+    let lichess = service(&fixture.base);
+    let request = PuzzleRequest {
+        account: String::new(),
+        ..request
+    };
+    let Outcome::Done(draw) = puzzle_next(&lichess, &request).await.unwrap() else {
+        panic!("anonymous draws need no login");
+    };
+    assert_eq!(draw.puzzle, Value::Null);
 }
 
 #[tokio::test]

@@ -11,12 +11,15 @@ import type {
   PuzzleDbProgress,
   PuzzleDbStatus,
   PuzzleDifficulty,
+  PuzzleProgress,
   StormDashboard,
 } from '@kchess/contracts/types'
 import {
   PuzzleSession,
   puzzleSessionState,
   isReconnect,
+  localDay,
+  type PuzzleVerdictDetail,
   type TrainMode,
 } from '@kchess/rules/puzzleSession'
 import { useKChessStore } from './kchess'
@@ -70,10 +73,23 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       mode: mode.value,
     }),
     online: () => online.value,
+    record: (attempt) => {
+      // A failed write never interrupts training: the attempt still counts in the session.
+      Promise.resolve()
+        .then(() => window.kchess.recordPuzzleAttempt(attempt))
+        .then((next) => {
+          progress.value = next
+          historyStale = true
+        })
+        .catch((cause: unknown) => console.warn('[puzzles] recording the attempt failed:', cause))
+    },
   })
   const syncsToLichess = computed(() => trainer.syncsToLichess)
   const loadNext = (): Promise<void> => trainer.loadNext()
-  const report = (win: boolean): Promise<void> => trainer.report(win)
+  const report = (win: boolean, detail?: PuzzleVerdictDetail): Promise<void> =>
+    trainer.report(win, detail)
+  const move = (index: number, correct: boolean): void => trainer.move(index, correct)
+  const end = (): void => trainer.end()
   const resetSession = (): void => trainer.resetSession()
   const retry = (puzzle: Puzzle): void => {
     trainer.retry(puzzle)
@@ -98,6 +114,29 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     void navigateTo('/puzzles')
   }
   onScopeDispose(() => trainer.invalidate())
+
+  // ── Local attempt log (the core's `puzzles.db`) ─────────────────────────────────────────────
+  /** The latest attempts (the training strip), day streak and totals. */
+  const progress = ref<PuzzleProgress | null>(null)
+  /** The History tab's longer list. */
+  const history = ref<PuzzleProgress | null>(null)
+  let historyStale = true
+  async function loadProgress(): Promise<void> {
+    try {
+      progress.value = await window.kchess.puzzleProgress({ today: localDay(), limit: 10 })
+    } catch (cause) {
+      console.warn('[puzzles] reading the attempt log failed:', cause)
+    }
+  }
+  async function loadHistory(): Promise<void> {
+    if (!historyStale && history.value) return
+    try {
+      history.value = await window.kchess.puzzleProgress({ today: localDay(), limit: 200 })
+      historyStale = false
+    } catch (cause) {
+      console.warn('[puzzles] reading the attempt log failed:', cause)
+    }
+  }
 
   // ── Daily puzzle ──────────────────────────────────────────────────────────────────────────────
   const daily = ref<Puzzle | null>(null)
@@ -297,7 +336,13 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     startOpening,
     openingAngle,
     report,
+    move,
+    end,
     resetSession,
+    progress,
+    loadProgress,
+    history,
+    loadHistory,
     daily,
     dailyError,
     dailyLoading,

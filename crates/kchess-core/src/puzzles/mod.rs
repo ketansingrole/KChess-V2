@@ -3,6 +3,7 @@
 //! CC0 file; the service streams it once, keeps a sample (`kchess_domain::puzzle::Sampler`) and
 //! stores it, so Storm, Streak, Rush and offline practice work without the original.
 
+pub mod attempts;
 pub mod queries;
 
 use futures_util::StreamExt;
@@ -71,6 +72,7 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     db.execute_batch("PRAGMA busy_timeout = 5000;")
         .map_err(|e| CoreError::new(e.to_string()))?;
     queries::create_schema(&db)?;
+    attempts::create_schema(&db)?;
     restrict(&path, host);
     let migrated = db
         .query_row("SELECT id FROM worker_meta WHERE id = 1", [], |_| Ok(()))
@@ -274,6 +276,33 @@ impl PuzzleService {
             .with_db(move |db| Ok(queries::query_ladder(db, &query, &mut random())?))
             .await;
         self.logged("ladder", result).await
+    }
+
+    /// Keep a training attempt; the progress it leaves, as of the attempt's own day.
+    pub async fn record_attempt(
+        &self,
+        attempt: attempts::AttemptInput,
+    ) -> Result<serde_json::Value> {
+        let result = self
+            .inner
+            .with_db(move |db| {
+                attempts::record(db, &attempt, queries::now_ms())?;
+                let query = attempts::ProgressQuery {
+                    today: attempt.day.clone(),
+                    limit: attempts::RECENT,
+                };
+                Ok(attempts::progress(db, &query)?)
+            })
+            .await;
+        self.logged("recordAttempt", result).await
+    }
+
+    pub async fn progress(&self, query: attempts::ProgressQuery) -> Result<serde_json::Value> {
+        let result = self
+            .inner
+            .with_db(move |db| Ok(attempts::progress(db, &query)?))
+            .await;
+        self.logged("progress", result).await
     }
 
     pub async fn delete(&self) -> Result<PuzzleDbStatus> {

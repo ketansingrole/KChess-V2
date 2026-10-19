@@ -321,6 +321,12 @@ impl Core {
             "puzzles.delete" => json(self.puzzles.delete().await?),
             "puzzles.query" => json(self.puzzles.query(arg(args, 0, "query")?).await?),
             "puzzles.ladder" => json(self.puzzles.ladder(arg(args, 0, "query")?).await?),
+            "puzzles.recordAttempt" => json(
+                self.puzzles
+                    .record_attempt(arg(args, 0, "attempt")?)
+                    .await?,
+            ),
+            "puzzles.progress" => json(self.puzzles.progress(arg(args, 0, "query")?).await?),
             _ => self.call_sync(method, args.to_vec()),
         }
     }

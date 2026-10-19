@@ -64,6 +64,7 @@ pub const RUN_KINDS: &[&str] = &[
     "endgame",
     "lesson",
 ];
+pub const PUZZLE_TRAIN_MODES: &[&str] = &["practice", "offline", "rated"];
 pub const VOICE_SOURCES: &[&str] = &[
     "computer",
     "coordinates",

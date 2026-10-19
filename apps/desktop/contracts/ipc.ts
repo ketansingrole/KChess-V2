@@ -182,6 +182,8 @@ export const IPC_CHANNELS = {
   puzzleDbDelete: 'puzzledb:delete',
   localPuzzles: 'puzzledb:query',
   localLadder: 'puzzledb:ladder',
+  recordPuzzleAttempt: 'puzzle:attempt-record',
+  puzzleProgress: 'puzzle:progress',
   saveRun: 'runs:save',
   runSummary: 'runs:summary',
   clearRuns: 'runs:clear',
@@ -214,3 +216,12 @@ export type IpcArguments<K extends InvokeMethod> = Parameters<DesktopApi[K]>
 export type IpcResult<K extends InvokeMethod> = ReturnType<DesktopApi[K]>
 type UnknownTuple<T extends unknown[]> = { [P in keyof T]: unknown }
 export type IpcInput<K extends InvokeMethod> = UnknownTuple<IpcArguments<K>>
+
+/**
+ * An error's message without the wrapper Electron adds to errors from `ipcRenderer.invoke`
+ * (`Error invoking remote method 'puzzle:next': Error: …`), so it can be shown as it is.
+ */
+export function invokeErrorText(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause)
+  return text.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '')
+}

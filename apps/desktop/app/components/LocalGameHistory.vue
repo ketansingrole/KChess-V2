@@ -4,7 +4,14 @@ import { useGameArchiveStore, type ArchivedGame } from '../stores/gameArchive'
 import { useAnalysisStore } from '../stores/analysis'
 import { setupPgn } from '@kchess/rules/chess'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
-import { archivedResultBadge } from '../utils/games'
+import {
+  archivedOutcome,
+  archivedPlayerSide,
+  archivedResultBadge,
+  formatGameDate,
+  moveCount,
+  type ArchivedOutcome,
+} from '../utils/games'
 
 const props = defineProps<{ source: 'computer' | 'board'; openGame?: string | null }>()
 const archive = useGameArchiveStore()
@@ -22,7 +29,7 @@ const deleteOpen = computed({
 function deleteGame(): void {
   if (pendingDelete.value) void archive.remove(pendingDelete.value.id)
   pendingDelete.value = null
-  page.value = Math.max(1, Math.min(page.value, Math.ceil(games.value.length / 20)))
+  page.value = Math.max(1, Math.min(page.value, Math.ceil(shown.value.length / 20)))
 }
 const games = computed(() =>
   archive.games
@@ -31,7 +38,57 @@ const games = computed(() =>
     )
     .sort((a, b) => b.startedAt - a.startedAt),
 )
-const visible = computed(() => games.value.slice((page.value - 1) * 20, page.value * 20))
+type ResultFilter = 'all' | 'win' | 'loss' | 'draw' | 'white' | 'black' | 'unfinished'
+const resultFilter = ref<ResultFilter>('all')
+/** The filter a game falls under; clock-only sessions show only under All. */
+function filterOf(outcome: ArchivedOutcome): ResultFilter | null {
+  if (outcome === 'ongoing') return 'unfinished'
+  return outcome === 'clock' ? null : outcome
+}
+const outcomeCounts = computed(() => {
+  const counts = new Map<ResultFilter, number>()
+  for (const game of games.value) {
+    const key = filterOf(archivedOutcome(game))
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return counts
+})
+const resultItems = computed(() =>
+  (
+    [
+      ['all', 'All'],
+      ...(props.source === 'computer'
+        ? [
+            ['win', 'Wins'],
+            ['loss', 'Losses'],
+          ]
+        : [
+            ['white', 'White won'],
+            ['black', 'Black won'],
+          ]),
+      ['draw', 'Draws'],
+      ['unfinished', 'Unfinished'],
+    ] as [ResultFilter, string][]
+  ).map(([value, label]) => {
+    const count = value === 'all' ? games.value.length : (outcomeCounts.value.get(value) ?? 0)
+    return {
+      value,
+      label,
+      // An empty filter cannot lead anywhere; the selected one stays reachable.
+      disabled: !count && resultFilter.value !== value,
+      badge: { label: String(count), color: 'neutral' as const, variant: 'soft' as const },
+    }
+  }),
+)
+const shown = computed(() =>
+  resultFilter.value === 'all'
+    ? games.value
+    : games.value.filter((game) => filterOf(archivedOutcome(game)) === resultFilter.value),
+)
+watch(resultFilter, () => {
+  page.value = 1
+})
+const visible = computed(() => shown.value.slice((page.value - 1) * 20, page.value * 20))
 /** What the last swipe-back undid, while nothing else changed since. */
 const swipeRedo = ref<ArchivedGame | null>(null)
 /** A swipe steps out of the open game before leaving the page. */
@@ -64,6 +121,7 @@ watch(
   () => {
     selected.value = null
     swipeRedo.value = null
+    resultFilter.value = 'all'
     page.value = 1
   },
 )
@@ -115,8 +173,43 @@ function review(): void {
     store.selectPage('analysis')
   })
 }
+/** Who the game was against: the engine for computer games, both names at the board. */
+function opponent(game: ArchivedGame): string {
+  const you = archivedPlayerSide(game)
+  if (you) return you === 'white' ? game.black : game.white
+  return `${game.white} vs ${game.black}`
+}
+function details(game: ArchivedGame): string {
+  if (game.source === 'clock') return game.clockSummary ?? game.reason
+  return game.result === '*' && !game.finished ? '' : game.reason
+}
+function gameActions(game: ArchivedGame) {
+  return [
+    [
+      {
+        label: game.source === 'clock' ? 'Copy summary' : 'Export PGN',
+        icon: game.source === 'clock' ? 'i-lucide-copy' : 'i-lucide-download',
+        onSelect: () => void exportGame(game),
+      },
+    ],
+    ...(game.finished
+      ? [
+          [
+            {
+              label: 'Delete',
+              icon: 'i-lucide-trash-2',
+              color: 'error' as const,
+              onSelect: () => {
+                pendingDelete.value = game
+              },
+            },
+          ],
+        ]
+      : []),
+  ]
+}
 function timeLabel(control: string): string {
-  if (control === '-') return 'No clock'
+  if (control === '-') return 'Untimed'
   return control
     .split(' / ')
     .map((side) => side.replace(/^(\d+)\+/, (_, seconds: string) => `${Number(seconds) / 60}+`))
@@ -181,52 +274,98 @@ async function exportGame(game: ArchivedGame): Promise<void> {
         },
       ]"
     />
-    <div v-else class="card local-history-list">
-      <article v-for="game in visible" :key="game.id" class="local-history-row">
-        <ResultBadge :badge="archivedResultBadge(game)" class="local-history-result" />
-        <div class="local-history-main">
-          <strong>{{ game.white }} vs {{ game.black }}</strong>
-          <p class="section-hint">
-            {{ new Date(game.startedAt).toLocaleString() }} ·
-            {{
-              game.source === 'clock' ? 'Clock only' : `${Math.ceil(game.moves.length / 2)} moves`
-            }}
-            · {{ game.setup.variant }} ·
-            {{ timeLabel(game.timeControl) }}
-          </p>
-          <p class="section-hint">
-            {{ game.reason
-            }}<template v-if="game.clockSummary"> · {{ game.clockSummary }}</template>
-          </p>
-        </div>
-        <div class="toolbar-row">
-          <UButton
-            v-if="game.finished"
-            variant="ghost"
-            color="neutral"
-            icon="i-lucide-trash-2"
-            :aria-label="`Delete game from ${new Date(game.startedAt).toLocaleString()}`"
-            @click="pendingDelete = game"
-          />
-          <UButton
-            v-if="game.source !== 'clock'"
-            variant="soft"
-            color="neutral"
-            @click="selectGame(game)"
-            >Replay</UButton
-          >
-          <UButton variant="ghost" color="neutral" @click="exportGame(game)">{{
-            game.source === 'clock' ? 'Copy summary' : 'Export PGN'
-          }}</UButton>
-        </div>
-      </article>
-      <UPagination
-        v-if="games.length > 20"
-        v-model:page="page"
-        :total="games.length"
-        :items-per-page="20"
+    <template v-else>
+      <UTabs
+        v-model="resultFilter"
+        :items="resultItems"
+        :content="false"
+        variant="pill"
+        size="sm"
+        aria-label="Filter by result"
+        class="justify-self-start"
       />
-    </div>
+      <div class="card local-history-list game-list">
+        <div class="game-head local-history-head" aria-hidden="true">
+          <span>Result</span><span>{{ source === 'computer' ? 'Opponent' : 'Players' }}</span
+          ><span>Game</span><span>Date</span><span />
+        </div>
+        <div v-for="game in visible" :key="game.id" class="local-history-row">
+          <component
+            :is="game.source === 'clock' ? 'div' : 'button'"
+            :type="game.source === 'clock' ? undefined : 'button'"
+            class="game-row local-history-main"
+            :aria-label="
+              game.source === 'clock'
+                ? undefined
+                : `${archivedResultBadge(game).label}, ${opponent(game)}, ${formatGameDate(game.startedAt)}. Replay game`
+            "
+            @click="game.source !== 'clock' && selectGame(game)"
+          >
+            <span
+              ><ResultBadge :badge="archivedResultBadge(game)" class="local-history-result"
+            /></span>
+            <span class="opponent">
+              <strong class="local-history-opponent"
+                ><span
+                  v-if="archivedPlayerSide(game)"
+                  class="side-dot"
+                  :class="archivedPlayerSide(game)"
+                  :title="`You played ${archivedPlayerSide(game)}`"
+                />{{ opponent(game) }}</strong
+              >
+              <span v-if="details(game)" class="sub" :title="details(game)">{{
+                details(game)
+              }}</span>
+            </span>
+            <span class="opponent">
+              <span>{{
+                game.source === 'clock' ? 'Clock only' : moveCount(game.moves.length)
+              }}</span>
+              <span class="sub"
+                >{{ timeLabel(game.timeControl)
+                }}<template v-if="game.setup.variant !== 'standard'">
+                  · <span class="capitalize-first">{{ game.setup.variant }}</span></template
+                ></span
+              >
+            </span>
+            <span class="muted" :title="new Date(game.startedAt).toLocaleString()">{{
+              formatGameDate(game.startedAt)
+            }}</span>
+          </component>
+          <UDropdownMenu :items="gameActions(game)" :content="{ align: 'end' }">
+            <UButton
+              size="sm"
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-ellipsis"
+              :aria-label="`Actions for the game from ${new Date(game.startedAt).toLocaleString()}`"
+            />
+          </UDropdownMenu>
+        </div>
+        <UEmpty
+          v-if="!shown.length"
+          variant="naked"
+          size="sm"
+          icon="i-lucide-search-x"
+          title="No games match this filter"
+          :actions="[
+            {
+              label: 'Show all games',
+              variant: 'outline',
+              color: 'neutral',
+              onClick: () => (resultFilter = 'all'),
+            },
+          ]"
+        />
+        <UPagination
+          v-if="shown.length > 20"
+          v-model:page="page"
+          :total="shown.length"
+          :items-per-page="20"
+          class="pt-4"
+        />
+      </div>
+    </template>
     <UModal
       v-model:open="deleteOpen"
       title="Delete saved game?"
@@ -253,35 +392,61 @@ async function exportGame(game: ArchivedGame): Promise<void> {
   gap: 16px;
 }
 .local-history-list {
+  display: flex;
+  flex-direction: column;
+}
+.local-history-head,
+.local-history-row {
   display: grid;
-  gap: 0;
+  grid-template-columns: 96px minmax(0, 1fr) 112px 104px 32px;
+  gap: 12px;
+  align-items: center;
+}
+.local-history-head {
+  padding: 0 8px 8px 12px;
 }
 .local-history-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 0;
+  padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--ui-border);
 }
-.local-history-result {
-  flex: none;
-  width: 6rem;
-}
-.local-history-main {
-  flex: 1;
-  min-width: 0;
-}
-.local-history-row:first-child {
-  padding-top: 0;
-}
+.local-history-row:has(+ :not(.local-history-row)),
 .local-history-row:last-child {
   border-bottom: 0;
-  padding-bottom: 0;
 }
-@media (max-width: 700px) {
+.local-history-row:hover {
+  background: var(--ui-bg-accented);
+}
+.local-history-main {
+  grid-column: 1 / 5;
+  grid-template-columns: subgrid;
+  padding: 11px 0;
+  border-bottom: 0;
+}
+.local-history-main:hover {
+  background: transparent;
+}
+div.local-history-main {
+  cursor: default;
+}
+.local-history-result {
+  width: 96px;
+}
+.local-history-opponent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+@container page (max-width: 620px) {
+  .local-history-head,
   .local-history-row {
-    align-items: flex-start;
-    flex-direction: column;
+    grid-template-columns: 96px minmax(0, 1fr) 32px;
+  }
+  .local-history-main {
+    grid-column: 1 / 3;
+  }
+  .local-history-head > :nth-child(n + 3):not(:last-child),
+  .local-history-main > :nth-child(n + 3) {
+    display: none;
   }
 }
 </style>

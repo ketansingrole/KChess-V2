@@ -543,6 +543,21 @@ button:disabled {
 .game-row .capitalize-first::first-letter {
   text-transform: uppercase;
 }
+/* A piece colour: the same light or dark disc in either theme. */
+.side-dot {
+  display: inline-block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid #6b6b6b;
+}
+.side-dot.white {
+  background: #f4f4f2;
+}
+.side-dot.black {
+  background: #1f1f1f;
+}
 .rating-diff {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -2204,7 +2219,10 @@ button.presence:focus-visible {
 
 /* Puzzle history rows share the game list's look with their own columns. */
 .puzzle-cols {
-  grid-template-columns: 72px minmax(0, 1fr) 56px 112px 108px;
+  grid-template-columns: 84px 112px minmax(0, 1fr) 132px 56px 112px 108px;
+}
+.puzzle-moves {
+  text-align: right;
 }
 .puzzle-themes {
   min-width: 0;
@@ -2223,7 +2241,13 @@ button.presence:focus-visible {
 }
 @container page (max-width: 640px) {
   .puzzle-cols {
-    grid-template-columns: 72px minmax(0, 1fr) 48px 96px;
+    grid-template-columns: 84px 24px minmax(0, 1fr) 124px 48px 108px;
+  }
+  .puzzle-mode > span {
+    display: none;
+  }
+  .game-head .puzzle-mode {
+    visibility: hidden;
   }
   .puzzle-when {
     display: none;

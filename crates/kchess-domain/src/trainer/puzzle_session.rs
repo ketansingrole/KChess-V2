@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::Out;
+use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
-const NO_PUZZLE_TEXT: &str = "No puzzle of that theme and difficulty in the local database.";
 const REJECTED_TEXT: &str = "Lichess did not accept the result: reconnect your account.";
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -28,12 +28,34 @@ struct Selection {
     mode: String,
 }
 
+/// The session's attempts by outcome (`puzzle_progress::Outcome`), and its player moves.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Tally {
     solved: f64,
-    failed: f64,
+    hinted: f64,
+    partial: f64,
+    missed: f64,
+    revealed: f64,
+    /// Player moves found, and tried (found plus the wrong move that ended an attempt).
+    moves_found: f64,
+    moves_tried: f64,
     rating_change: f64,
+}
+
+impl Tally {
+    fn count(&mut self, outcome: Outcome, found: u32, tried: u32) {
+        let slot = match outcome {
+            Outcome::Solved => &mut self.solved,
+            Outcome::Hinted => &mut self.hinted,
+            Outcome::Partial => &mut self.partial,
+            Outcome::Missed => &mut self.missed,
+            Outcome::Revealed => &mut self.revealed,
+        };
+        *slot += 1.0;
+        self.moves_found += f64::from(found);
+        self.moves_tried += f64::from(tried);
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -75,7 +97,29 @@ struct Attempt {
     /// Drawn without the account (practice when it lacks the puzzle permission): never reported.
     #[serde(default)]
     anonymous: bool,
+    /// Tried again from the history: logged, not counted.
+    #[serde(default)]
+    retry: bool,
+    /// Each player move's first try, by its number in the solution: 1 right, 2 wrong, 0 untried.
+    #[serde(default)]
+    tries: Vec<u8>,
+    /// The verdict's facts, once given; taken when the attempt ends and is logged.
+    #[serde(default)]
+    verdict: Option<VerdictFacts>,
 }
+
+/// What the board knew at the first verdict.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerdictFacts {
+    win: bool,
+    revealed: bool,
+    hinted: bool,
+    total: u32,
+}
+
+/// The most player moves an attempt scores; longer solutions are not real puzzles.
+const MAX_TRIES: usize = 32;
 
 /// What the class kept private: replies are matched against these counters.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -118,6 +162,8 @@ struct Step {
     state: State,
     internal: Internal,
     call: Option<Call>,
+    /// An attempt for the host to keep in the local log (`recordPuzzleAttempt`).
+    record: Option<Value>,
     warn: bool,
 }
 
@@ -125,7 +171,22 @@ struct Session {
     state: State,
     internal: Internal,
     call: Option<Call>,
+    record: Option<Value>,
     warn: bool,
+    /// The host's calendar day (`YYYY-MM-DD`), for an attempt that ends in this transition.
+    day: String,
+}
+
+/// What the board knew at the verdict.
+#[derive(Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Detail {
+    #[serde(default)]
+    revealed: bool,
+    #[serde(default)]
+    hinted: bool,
+    #[serde(default)]
+    total: u32,
 }
 
 /// `OFFLINE_OFFSET` by difficulty; an unknown difficulty has no offset (NaN, as in TypeScript).
@@ -204,12 +265,14 @@ type Reply = Result<Value, String>;
 
 impl Session {
     fn invalidate(&mut self) {
+        self.end_attempt();
         self.internal.load_gen += 1;
         self.internal.attempt = None;
         self.state.phase = "idle".into();
     }
 
     fn show(&mut self, puzzle: Value, selection: &Selection) {
+        self.end_attempt();
         self.state.current = Some(puzzle);
         self.state.puzzle_key += 1;
         self.state.attempt_outcome = None;
@@ -219,15 +282,25 @@ impl Session {
             angle: selection.angle.clone(),
             mode: selection.mode.clone(),
             anonymous: false,
+            retry: self.state.is_retry,
+            tries: Vec::new(),
+            verdict: None,
         });
         self.state.phase = "ready".into();
     }
 
     fn retry(&mut self, puzzle: Value, selection: &Selection) {
+        self.end_attempt();
         self.internal.load_gen += 1;
         self.state.is_retry = true;
         self.state.last_report = None;
         self.show(puzzle, selection);
+    }
+
+    /// No puzzle left for the theme and difficulty, on Lichess or in the local database: an
+    /// expected state with its own phase (the page offers other choices), not a failure.
+    fn exhausted(&mut self) {
+        self.state.phase = "exhausted".into();
     }
 
     /// A failed load: offline without the database is a distinct phase; everything else shows
@@ -243,6 +316,7 @@ impl Session {
     }
 
     fn load_begin(&mut self, selection: &Selection, online: bool) {
+        self.end_attempt();
         self.internal.load_gen += 1;
         let generation = self.internal.load_gen;
         self.state.phase = "loading".into();
@@ -291,7 +365,7 @@ impl Session {
         match token.stage.as_str() {
             "offline" => match value.as_array().and_then(|puzzles| puzzles.first()) {
                 Some(puzzle) if !puzzle.is_null() => self.show(puzzle.clone(), &selection),
-                _ => self.fail(&selection, NO_PUZZLE_TEXT),
+                _ => self.exhausted(),
             },
             "draw" => {
                 if is_reconnect(&value) {
@@ -314,29 +388,92 @@ impl Session {
                 {
                     self.state.rating = Some(js_round(rating));
                 }
-                let puzzle = value.get("puzzle").cloned().unwrap_or(Value::Null);
-                self.show(puzzle, &selection);
+                match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
+                    Some(puzzle) => self.show(puzzle.clone(), &selection),
+                    None => self.exhausted(),
+                }
             }
             _ => {
-                if !is_reconnect(&value) {
-                    let puzzle = value.get("puzzle").cloned().unwrap_or(Value::Null);
-                    self.show(puzzle, &selection);
-                    if let Some(attempt) = self.internal.attempt.as_mut() {
-                        attempt.anonymous = true;
+                if is_reconnect(&value) {
+                    return;
+                }
+                match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
+                    Some(puzzle) => {
+                        self.show(puzzle.clone(), &selection);
+                        if let Some(attempt) = self.internal.attempt.as_mut() {
+                            attempt.anonymous = true;
+                        }
                     }
+                    None => self.exhausted(),
                 }
             }
         }
     }
 
-    fn report_begin(&mut self, win: bool, selection: &Selection) {
+    /// A player move of the shown puzzle: the first try at each move of the solution is its score.
+    fn played(&mut self, index: usize, correct: bool) {
+        if self.state.phase != "ready" || index >= MAX_TRIES {
+            return;
+        }
+        let Some(attempt) = self.internal.attempt.as_mut() else {
+            return;
+        };
+        if attempt.tries.len() <= index {
+            attempt.tries.resize(index + 1, 0);
+        }
+        if attempt.tries[index] == 0 {
+            attempt.tries[index] = if correct { 1 } else { 2 };
+        }
+    }
+
+    /// The attempt is over (solved, solution shown, or the puzzle replaced): count it, unless it is
+    /// a retry, and hand it to the host's log. An attempt without a verdict was not played.
+    fn end_attempt(&mut self) {
+        let puzzle = self.state.current.clone().filter(|value| !value.is_null());
+        let Some(attempt) = self.internal.attempt.as_mut() else {
+            return;
+        };
+        let (Some(facts), Some(puzzle)) = (attempt.verdict.take(), puzzle) else {
+            return;
+        };
+        let count = |score: u8| attempt.tries.iter().filter(|&&t| t == score).count() as u32;
+        let verdict = Verdict {
+            win: facts.win,
+            revealed: facts.revealed,
+            hinted: facts.hinted,
+            found: count(1),
+            wrong: count(2),
+            total: facts.total,
+        };
+        let (mode, retry) = (attempt.mode.clone(), attempt.retry);
+        let outcome = classify(&verdict);
+        let (found, tried) = moves(outcome, &verdict);
+        self.record = Some(json!({
+            "puzzle": puzzle,
+            "mode": mode,
+            "retry": retry,
+            "win": verdict.win,
+            "revealed": verdict.revealed,
+            "hinted": verdict.hinted,
+            "found": verdict.found,
+            "wrong": verdict.wrong,
+            "total": verdict.total,
+            "day": self.day,
+        }));
+        if !retry {
+            self.state.session.count(outcome, found, tried);
+        }
+    }
+
+    /// The first verdict on the shown puzzle: a rated or practice result goes to Lichess now, while
+    /// the local score waits for the attempt to end. A retry is never sent to Lichess.
+    fn report_begin(&mut self, win: bool, detail: Option<Detail>, selection: &Selection) {
         let attempt = self.internal.attempt.clone();
         let puzzle = self.state.current.clone().filter(|value| !value.is_null());
         let (Some(puzzle), Some(started)) = (puzzle, attempt) else {
             return;
         };
-        if self.state.is_retry
-            || self.state.phase != "ready"
+        if self.state.phase != "ready"
             || self.state.attempt_outcome.is_some()
             || started.account != selection.account
             || started.mode != selection.mode
@@ -345,10 +482,17 @@ impl Session {
             return;
         }
         self.state.attempt_outcome = Some(win);
-        if win {
-            self.state.session.solved += 1.0;
-        } else {
-            self.state.session.failed += 1.0;
+        let detail = detail.unwrap_or_default();
+        if let Some(attempt) = self.internal.attempt.as_mut() {
+            attempt.verdict = Some(VerdictFacts {
+                win,
+                revealed: detail.revealed,
+                hinted: detail.hinted,
+                total: detail.total,
+            });
+        }
+        if self.state.is_retry {
+            return;
         }
         if !syncs_to_lichess(&self.state, selection) || started.anonymous {
             return;
@@ -444,6 +588,7 @@ impl Session {
             state: self.state,
             internal: self.internal,
             call: self.call,
+            record: self.record,
             warn: self.warn,
         })
         .map_err(|error| error.to_string())
@@ -466,7 +611,13 @@ fn session_from(args: &[Value]) -> Result<(Map<String, Value>, Session), String>
         state: take(&arg, "state")?,
         internal: take(&arg, "internal")?,
         call: None,
+        record: None,
         warn: false,
+        day: arg
+            .get("day")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     };
     Ok((arg, session))
 }
@@ -532,8 +683,19 @@ pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
         }
         "puzzleSessionReportBegin" => session_from(args).and_then(|(arg, mut session)| {
             let win = arg.get("win").and_then(Value::as_bool).unwrap_or(false);
+            let detail: Option<Detail> = take(&arg, "detail")?;
             let selection: Selection = take(&arg, "selection")?;
-            session.report_begin(win, &selection);
+            session.report_begin(win, detail, &selection);
+            session.finish()
+        }),
+        "puzzleSessionMove" => session_from(args).and_then(|(arg, mut session)| {
+            let index = arg.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX);
+            let correct = arg.get("correct").and_then(Value::as_bool).unwrap_or(false);
+            session.played(usize::try_from(index).unwrap_or(usize::MAX), correct);
+            session.finish()
+        }),
+        "puzzleSessionEnd" => session_from(args).and_then(|(_, mut session)| {
+            session.end_attempt();
             session.finish()
         }),
         "puzzleSessionReportSettled" => session_from(args).and_then(|(arg, mut session)| {

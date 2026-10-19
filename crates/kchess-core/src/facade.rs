@@ -123,6 +123,8 @@ pub const FACADE_METHODS: &[&str] = &[
     "puzzleDbDelete",
     "localPuzzles",
     "localLadder",
+    "recordPuzzleAttempt",
+    "puzzleProgress",
     "saveRun",
     "runSummary",
     "clearRuns",
@@ -588,10 +590,26 @@ impl Core {
             | "broadcastTour" => self.run_spectate(method, args).await,
             "tournaments" | "tournament" | "joinTournament" | "leaveTournament"
             | "createTournament" => self.run_tournaments(method, args).await,
-            "puzzleNext" | "puzzleSolve" | "puzzleDaily" | "puzzleDashboard" | "puzzleActivity"
-            | "stormDashboard" | "puzzleDbStatus" | "puzzleDbInstall" | "puzzleDbCancel"
-            | "puzzleDbDelete" | "localPuzzles" | "localLadder" | "saveRun" | "runSummary"
-            | "clearRuns" | "saveVoiceAttempt" | "updateVoiceAttempt" | "voiceHistory"
+            "puzzleNext"
+            | "puzzleSolve"
+            | "puzzleDaily"
+            | "puzzleDashboard"
+            | "puzzleActivity"
+            | "stormDashboard"
+            | "puzzleDbStatus"
+            | "puzzleDbInstall"
+            | "puzzleDbCancel"
+            | "puzzleDbDelete"
+            | "localPuzzles"
+            | "localLadder"
+            | "recordPuzzleAttempt"
+            | "puzzleProgress"
+            | "saveRun"
+            | "runSummary"
+            | "clearRuns"
+            | "saveVoiceAttempt"
+            | "updateVoiceAttempt"
+            | "voiceHistory"
             | "clearVoiceHistory" => self.run_puzzles(method, args).await,
             "library"
             | "importLibrary"

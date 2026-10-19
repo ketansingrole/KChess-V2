@@ -131,6 +131,18 @@ wire_enum!(#[doc = "Everything the runs table (local scores) records."] RunKind,
     Endgame = "endgame",
     Lesson = "lesson",
 });
+wire_enum!(#[doc = "Where a training puzzle came from: Lichess unrated, the downloaded database, or Lichess rated."] PuzzleTrainMode, PUZZLE_TRAIN_MODES {
+    Practice = "practice",
+    Offline = "offline",
+    Rated = "rated",
+});
+wire_enum!(#[doc = "What a training attempt counts as, each move scored by its first try: every move found (`solved`, or `hinted`"] #[doc = "after a hint), `partial` (some found, some wrong), `missed` (none found) or `revealed` (the solution shown"] #[doc = "before any wrong move). Local only: Lichess results stay a win or a loss."] PuzzleAttemptOutcome, PUZZLE_ATTEMPT_OUTCOMES {
+    Solved = "solved",
+    Hinted = "hinted",
+    Partial = "partial",
+    Missed = "missed",
+    Revealed = "revealed",
+});
 wire_enum!(#[doc = "Where a spoken phrase was said."] VoiceSource, VOICE_SOURCES {
     Computer = "computer",
     Coordinates = "coordinates",
@@ -1425,7 +1437,8 @@ pub struct PuzzleRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
 pub struct PuzzleDraw {
-    pub puzzle: Puzzle,
+    /// Absent when Lichess has no puzzle left for this theme and difficulty.
+    pub puzzle: Option<Puzzle>,
     /// The account's current puzzle rating, when Lichess reports it.
     pub glicko: Option<PuzzleGlicko>,
 }
@@ -1489,6 +1502,81 @@ pub struct PuzzleActivityEntry {
     pub date: f64,
     pub win: bool,
     pub puzzle: Puzzle,
+}
+
+/// A training attempt as the board saw it at its first verdict, for the local log (`puzzles.db`).
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleAttemptInput {
+    pub puzzle: Puzzle,
+    pub mode: PuzzleTrainMode,
+    /// Tried again from the history: kept in the log, left out of totals and the day streak.
+    pub retry: bool,
+    pub win: bool,
+    /// The solution was shown.
+    pub revealed: bool,
+    /// A hint was asked for before the verdict.
+    pub hinted: bool,
+    /// Player moves right at the first try, and wrong at the first try, of `total` in the solution.
+    pub found: f64,
+    pub wrong: f64,
+    pub total: f64,
+    /// The local calendar day (`YYYY-MM-DD`) it was played on.
+    pub day: String,
+}
+
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleAttempt {
+    pub id: f64,
+    /// When it was played, in ms since the epoch.
+    pub at: f64,
+    pub day: String,
+    pub puzzle: Puzzle,
+    pub mode: PuzzleTrainMode,
+    pub retry: bool,
+    pub outcome: PuzzleAttemptOutcome,
+    pub hinted: bool,
+    /// Player moves right at the first try (all of them for a solve), of `total`.
+    pub found: f64,
+    /// Player moves wrong at the first try.
+    pub wrong: f64,
+    pub total: f64,
+}
+
+/// Attempts by outcome, and player moves found of those tried (found plus each ending wrong move).
+#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleTotals {
+    pub attempts: f64,
+    pub solved: f64,
+    pub hinted: f64,
+    pub partial: f64,
+    pub missed: f64,
+    pub revealed: f64,
+    pub moves_found: f64,
+    pub moves_tried: f64,
+}
+
+/// The local attempt log, summarized. Retries are listed but not counted.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleProgress {
+    /// Newest first.
+    pub recent: Vec<PuzzleAttempt>,
+    /// Consecutive local days with a solved puzzle, ending today (or yesterday until today has one).
+    pub day_streak: f64,
+    pub best_day_streak: f64,
+    pub today: PuzzleTotals,
+    pub all: PuzzleTotals,
+}
+
+/// Which local day is today, and how many recent attempts to list.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleProgressQuery {
+    pub today: String,
+    pub limit: f64,
 }
 
 #[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
@@ -2036,6 +2124,8 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         CHALLENGE_COLORS,
         PUZZLE_DIFFICULTIES,
         RUN_KINDS,
+        PUZZLE_TRAIN_MODES,
+        PUZZLE_ATTEMPT_OUTCOMES,
         VOICE_SOURCES,
         VOICE_OUTCOMES,
         JUDGMENTS,
@@ -2058,6 +2148,8 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         ChallengeColor,
         PuzzleDifficulty,
         RunKind,
+        PuzzleTrainMode,
+        PuzzleAttemptOutcome,
         VoiceSource,
         VoiceOutcome,
         Judgment,
@@ -2182,6 +2274,11 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         PuzzleThemeResult,
         PuzzleDashboard,
         PuzzleActivityEntry,
+        PuzzleAttemptInput,
+        PuzzleAttempt,
+        PuzzleTotals,
+        PuzzleProgress,
+        PuzzleProgressQuery,
         StormHigh,
         StormDay,
         StormDashboard,

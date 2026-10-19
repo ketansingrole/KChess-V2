@@ -280,6 +280,8 @@ const CORE: &[Row] = &[
     ("puzzleDbDelete", 0, &[]),
     ("localPuzzles", 1, &[Valid("assertLocalQuery")]),
     ("localLadder", 1, &[Valid("assertLadderQuery")]),
+    ("recordPuzzleAttempt", 1, &[Valid("assertPuzzleAttempt")]),
+    ("puzzleProgress", 1, &[Valid("assertPuzzleProgressQuery")]),
     ("saveRun", 1, &[Valid("assertRunInput")]),
     ("runSummary", 1, &[Valid("assertRunKind")]),
     ("clearRuns", 0, &[Optional("assertRunKind")]),

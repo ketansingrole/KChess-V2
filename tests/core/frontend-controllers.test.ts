@@ -139,11 +139,124 @@ it('reports a rated attempt once and keeps retries local', async () => {
   const { state, api, trainer } = puzzles()
   await trainer.loadNext()
   await Promise.all([trainer.report(true), trainer.report(false)])
+  trainer.end()
   expect(api.puzzleSolve).toHaveBeenCalledOnce()
-  expect(state.session).toEqual({ solved: 1, failed: 0, ratingChange: 5 })
+  expect(state.session).toMatchObject({ solved: 1, missed: 0, ratingChange: 5 })
   trainer.retry(puzzle)
   await trainer.report(true)
   expect(api.puzzleSolve).toHaveBeenCalledOnce()
+})
+// Train showed only "N solved · N missed": partial progress, hints and reveals were lost.
+it('scores every move by its first try, logs each attempt at its end, retries uncounted', async () => {
+  const record = vi.fn()
+  const state = puzzleSessionState()
+  const selection: PuzzleSelection = {
+    account: '',
+    mode: 'offline',
+    angle: 'mix',
+    difficulty: 'normal',
+    color: 'random',
+  }
+  const trainer = new PuzzleSession(state, {
+    api: {
+      localPuzzles: vi.fn(async () => [puzzle]),
+      puzzleNext: vi.fn(),
+      puzzleSolve: vi.fn(),
+    } as never,
+    selection: () => selection,
+    online: () => true,
+    record,
+  })
+  /** One attempt as the board reports it: first tries per move, the verdict, then its end. */
+  async function play(
+    moves: [number, boolean][],
+    win: boolean,
+    detail: { revealed?: boolean; hinted?: boolean; total: number },
+  ) {
+    let reported = false
+    for (const [index, correct] of moves) {
+      trainer.move(index, correct)
+      if (!correct && !reported) {
+        reported = true
+        await trainer.report(false, { revealed: false, hinted: false, ...detail })
+      }
+    }
+    if (!reported) await trainer.report(win, { revealed: false, hinted: false, ...detail })
+    trainer.end()
+  }
+  await trainer.loadNext()
+  await play(
+    [
+      [0, true],
+      [1, true],
+      [2, true],
+    ],
+    true,
+    { total: 3 },
+  )
+  await trainer.loadNext()
+  await play(
+    [
+      [0, true],
+      [1, true],
+    ],
+    true,
+    { hinted: true, total: 2 },
+  )
+  await trainer.loadNext()
+  // The reported case: wrong on the first move (then found), right on the second, wrong on the
+  // third. Every move is scored by its first try: 1 found, 2 wrong, of 3.
+  await play(
+    [
+      [0, false],
+      [0, true],
+      [1, true],
+      [2, false],
+      [2, true],
+    ],
+    false,
+    { total: 3 },
+  )
+  expect(record.mock.lastCall![0]).toMatchObject({
+    puzzle: { id: 'p1' },
+    mode: 'offline',
+    retry: false,
+    win: false,
+    found: 1,
+    wrong: 2,
+    total: 3,
+    day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  expect(state.session).toMatchObject({ partial: 1, movesFound: 6, movesTried: 8 })
+  await trainer.loadNext()
+  // Wrong, then Next before finishing: the attempt ends when the next puzzle is drawn.
+  await trainer.report(false, { revealed: false, hinted: false, total: 2 })
+  trainer.move(0, false)
+  await trainer.loadNext()
+  expect(state.session.missed).toBe(1)
+  // The solution shown before any wrong move: the moves it played were never tried.
+  trainer.move(0, true)
+  await trainer.report(false, { revealed: true, hinted: false, total: 3 })
+  trainer.end()
+  // Ending twice, or moving after the end, changes nothing.
+  trainer.end()
+  trainer.move(1, false)
+  expect(state.session).toEqual({
+    solved: 1,
+    hinted: 1,
+    partial: 1,
+    missed: 1,
+    revealed: 1,
+    movesFound: 7,
+    movesTried: 10,
+    ratingChange: 0,
+  })
+  expect(record).toHaveBeenCalledTimes(5)
+  trainer.retry(puzzle)
+  await play([[0, true]], true, { total: 1 })
+  expect(record).toHaveBeenCalledTimes(6)
+  expect(record.mock.lastCall![0]).toMatchObject({ retry: true, win: true })
+  expect(state.session.solved).toBe(1)
 })
 // Lichess draws the account's next unplayed puzzle: an unreported one came back on every Next.
 it('sends practice results unrated so the next draw is a new puzzle', async () => {
@@ -153,11 +266,12 @@ it('sends practice results unrated so the next draw is a new puzzle', async () =
   selection.mode = 'practice'
   await trainer.loadNext()
   await trainer.report(false)
+  trainer.end()
   expect(api.puzzleSolve).toHaveBeenCalledOnce()
   expect(api.puzzleSolve).toHaveBeenCalledWith(
     expect.objectContaining({ account: 'Alice', id: 'p1', win: false, rated: false }),
   )
-  expect(state.session).toEqual({ solved: 0, failed: 1, ratingChange: 0 })
+  expect(state.session).toMatchObject({ solved: 0, missed: 1, ratingChange: 0 })
   expect(state.lastReport).toBeNull()
 })
 it('keeps practice going when Lichess rejects an unrated result', async () => {
@@ -192,7 +306,16 @@ it('ignores a late rated result after an account/session changes', async () => {
   trainer.resetSession()
   pending.resolve({ ratingDiff: 100 })
   await report
-  expect(state.session).toEqual({ solved: 0, failed: 0, ratingChange: 0 })
+  expect(state.session).toEqual({
+    solved: 0,
+    hinted: 0,
+    partial: 0,
+    missed: 0,
+    revealed: 0,
+    movesFound: 0,
+    movesTried: 0,
+    ratingChange: 0,
+  })
   expect(state.lastReport).toBeNull()
 })
 it('selects offline difficulty through the same workflow without submitting a result', async () => {

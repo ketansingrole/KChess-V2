@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { STANDARD_SETUP } from '@kchess/rules/variant'
 import type { ArchivedGame } from '../../app/stores/gameArchive'
-import { archivedResultBadge } from '../../app/utils/games'
+import { archivedResultBadge, moveCount } from '../../app/utils/games'
 
 const game = (overrides: Partial<ArchivedGame>): ArchivedGame => ({
   id: 'g',
@@ -36,6 +36,8 @@ describe('archived game result badge', () => {
     expect(label({ ...board, result: '1-0' })).toBe('White won')
     expect(label({ ...board, result: '0-1' })).toBe('Black won')
     expect(label({ ...board, result: '1/2-1/2' })).toBe('Draw')
+    // The winner is drawn as a piece-coloured dot, not a theme colour that inverts in dark mode.
+    expect(archivedResultBadge(game({ ...board, result: '0-1' })).side).toBe('black')
   })
 
   it('separates unfinished, running and clock-only sessions from results', () => {
@@ -43,4 +45,10 @@ describe('archived game result badge', () => {
     expect(label({ result: '*', finished: false })).toBe('In progress')
     expect(label({ source: 'clock', moves: [] })).toBe('Clock')
   })
+})
+
+it('counts full moves with the right plural', () => {
+  expect(moveCount(1)).toBe('1 move')
+  expect(moveCount(2)).toBe('1 move')
+  expect(moveCount(13)).toBe('7 moves')
 })

@@ -550,6 +550,18 @@ pub fn methods() -> Vec<Method> {
             array(t::<Puzzle>()),
         ),
         method(
+            "recordPuzzleAttempt",
+            "Local training log (Practice, Downloaded and Rated attempts), kept in the puzzle database. It never leaves this computer.",
+            vec![req("attempt", t::<PuzzleAttemptInput>())],
+            t::<PuzzleProgress>(),
+        ),
+        method(
+            "puzzleProgress",
+            "",
+            vec![req("query", t::<PuzzleProgressQuery>())],
+            t::<PuzzleProgress>(),
+        ),
+        method(
             "saveRun",
             "Local scores (Storm, Streak, Rush and the practice drills). They never leave this computer.",
             vec![req("run", t::<RunInput>())],

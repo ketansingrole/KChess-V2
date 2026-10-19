@@ -64,6 +64,15 @@ impl Core {
                 let query = normal("assertLadderQuery", &arg(args, 0))?;
                 self.puzzle_operation("puzzles.ladder", vec![query]).await
             }
+            "recordPuzzleAttempt" => {
+                let attempt = normal("assertPuzzleAttempt", &arg(args, 0))?;
+                self.puzzle_operation("puzzles.recordAttempt", vec![attempt])
+                    .await
+            }
+            "puzzleProgress" => {
+                let query = normal("assertPuzzleProgressQuery", &arg(args, 0))?;
+                self.puzzle_operation("puzzles.progress", vec![query]).await
+            }
             "saveRun" => {
                 let run = normal("assertRunInput", &arg(args, 0))?;
                 self.database.call_async("store.runs.saveRun", &[run]).await

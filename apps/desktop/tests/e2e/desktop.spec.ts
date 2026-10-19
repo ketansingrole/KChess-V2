@@ -668,17 +668,13 @@ test('gives neutral buttons on a card visible hover feedback in both themes', as
   for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme })
     const surface = await background(card)
-    // Ghost (Export PGN) and soft (Replay): each must differ from the card once pointed at.
-    for (const name of ['Export PGN', 'Replay']) {
-      const button = row.getByRole('button', { name, exact: true })
-      await button.hover()
-      expect(await background(button)).not.toBe(surface)
-      await page.mouse.move(0, 0)
-    }
-    await row.getByRole('button', { name: 'Export PGN', exact: true }).hover()
-    await expect
-      .poll(() => background(row.getByRole('button', { name: 'Export PGN', exact: true })))
-      .not.toBe(surface)
+    // The row (opens the replay) and its ghost actions button must differ from the card once pointed at.
+    const actions = row.getByRole('button', { name: /^Actions for the game/ })
+    await row.locator('.local-history-main').hover()
+    expect(await background(row)).not.toBe(surface)
+    await page.mouse.move(0, 0)
+    await actions.hover()
+    await expect.poll(() => background(actions)).not.toBe(surface)
     await row.screenshot({
       path: join(process.cwd(), 'test-results', `card-button-hover-${colorScheme}.png`),
     })
@@ -960,7 +956,8 @@ test('plays a move through the board and keeps the game when navigating', async 
   await expect(page.getByRole('group', { name: 'Moves', exact: true })).toContainText('e4')
   await navigate(page, 'Game history')
   await expect(page.locator('.local-history-row')).toHaveCount(1)
-  await page.getByRole('button', { name: 'Replay', exact: true }).click()
+  await expect(page.locator('.local-history-row')).toContainText('In progress')
+  await page.locator('.local-history-main').click()
   await expect(page.locator('cg-board')).toBeVisible()
 })
 
@@ -988,6 +985,39 @@ test('keeps a failed offline puzzle verdict on remount and opens the promotion p
   await expect(
     page.getByText('Solved after a mistake — not counted', { exact: true }),
   ).toBeVisible()
+})
+
+// Train showed only "N solved · N missed": earlier puzzles could not be revisited.
+test('records each training puzzle attempt in the strip and the history', async ({
+  desktop: { page },
+}) => {
+  await navigate(page, 'Puzzles')
+  await page.getByRole('tab', { name: 'Downloaded', exact: true }).click()
+  await expect(page.locator('cg-board')).toBeVisible()
+  await move(page, 'f2', 'f3')
+  await expect(page.getByText('That’s not the move — try again', { exact: true })).toBeVisible()
+  const session = page.locator('.session-line')
+  // The attempt counts once it ends: here, once the solution has been shown.
+  await expect(session).toContainText('0 missed')
+  await page.getByRole('button', { name: 'Solution', exact: true }).click()
+  await expect(session).toContainText('1 missed')
+  await expect(session).toContainText('0 solved')
+  await expect(session).toContainText('0/1 moves right')
+  const chip = page
+    .getByRole('list', { name: 'Recent puzzles' })
+    .getByRole('button', { name: /^Missed, 0\/\d+ moves · 1 wrong, rated \d+$/ })
+  await expect(chip).toHaveCount(1)
+  await chip.click()
+  await page.getByRole('menuitem', { name: 'Try again' }).click()
+  await expect(page.getByText('Retry · unrated', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'History', exact: true }).click()
+  const row = page.locator('.game-row.puzzle-cols')
+  await expect(row).toHaveCount(1)
+  await expect(row).toContainText('Missed')
+  await expect(row).toContainText(/0\/\d+ moves · 1 wrong/)
+  await expect(page.locator('.stat-card').filter({ hasText: 'Today' })).toContainText('1')
+  await row.getByRole('button', { name: 'Open on the analysis board' }).click()
+  await expect(page).toHaveURL(/analysis/)
 })
 
 test('shows puzzle material, voice beside the move box, and hint circles', async ({
@@ -1469,11 +1499,17 @@ test('plays two players on one board, exports the game as a GIF and runs the che
     path: test.info().outputPath('kchess-local-game-history.png'),
     animations: 'disabled',
   })
+  const finished = page.locator('.local-history-row').filter({ hasText: 'Checkmate' })
+  await expect(finished).toContainText(/White won|Black won/)
+  // A filter with no games is disabled; the winner's filter leaves out the clock-only session.
+  await expect(page.getByRole('tab', { name: /^Unfinished/ })).toBeDisabled()
   await page
-    .locator('.local-history-row')
-    .filter({ hasText: 'Checkmate' })
-    .getByRole('button', { name: 'Replay', exact: true })
+    .getByRole('tab', { name: /^(White|Black) won/ })
+    .first()
     .click()
+  await expect(page.locator('.local-history-row')).toHaveCount(1)
+  await expect(finished).toBeVisible()
+  await finished.locator('.local-history-main').click()
   await expect(page.locator('cg-board')).toBeVisible()
   await page.getByRole('button', { name: 'Open analysis', exact: true }).click()
   await expect(page.locator('.analysis-panel')).toBeVisible()
@@ -2363,8 +2399,11 @@ test('browses puzzle tabs and shows offline account states', async ({
   await expect(page.getByRole('radio', { name: /Storm/ })).toBeVisible()
   await page.getByRole('tab', { name: 'Lichess stats', exact: true }).click()
   await expect(page.getByText('Connect a Lichess account', { exact: true }).first()).toBeVisible()
-  await page.getByRole('tab', { name: 'Lichess history', exact: true }).click()
-  await expect(page.getByText('Connect a Lichess account', { exact: true }).first()).toBeVisible()
+  await page.getByRole('tab', { name: 'History', exact: true }).click()
+  await expect(page.getByText('No puzzles yet', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('main').getByRole('button', { name: 'Train', exact: true }),
+  ).toBeVisible()
 })
 
 test('validates account-free online, following and player lookup', async ({

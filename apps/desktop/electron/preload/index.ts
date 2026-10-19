@@ -23,10 +23,14 @@ import {
   type InvokeMethod,
   type IpcArguments,
   type IpcResult,
+  invokeErrorText,
 } from '../../contracts/ipc'
 
+/** Rejections carry the main process's message alone, ready for the UI. */
 function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): IpcResult<K> {
-  return ipcRenderer.invoke(IPC_CHANNELS[method], ...args) as IpcResult<K>
+  return ipcRenderer.invoke(IPC_CHANNELS[method], ...args).catch((cause: unknown) => {
+    throw new Error(invokeErrorText(cause))
+  }) as IpcResult<K>
 }
 
 const api: DesktopApi = {
@@ -232,6 +236,8 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC_EVENTS.puzzleProgress, listener)
     return () => ipcRenderer.removeListener(IPC_EVENTS.puzzleProgress, listener)
   },
+  recordPuzzleAttempt: (attempt) => invoke('recordPuzzleAttempt', attempt),
+  puzzleProgress: (query) => invoke('puzzleProgress', query),
   saveRun: (run) => invoke('saveRun', run),
   runSummary: (kind) => invoke('runSummary', kind),
   clearRuns: (kind) => invoke('clearRuns', kind),

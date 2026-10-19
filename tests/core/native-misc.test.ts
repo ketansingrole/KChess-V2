@@ -354,6 +354,25 @@ const RUN_INPUT = {
   score: 12,
   detail: { a: 1, b: 'x', c: true },
 }
+const PUZZLE_ATTEMPT = {
+  puzzle: {
+    id: 'Ab12c',
+    fen: START,
+    lastMove: 'e2e4',
+    solution: ['e7e5', 'g1f3', 'b8c6'],
+    rating: 1520,
+    themes: ['opening', 'short'],
+  },
+  mode: 'practice',
+  retry: false,
+  win: false,
+  revealed: false,
+  hinted: true,
+  found: 1,
+  wrong: 1,
+  total: 2,
+  day: '2026-10-19',
+}
 const BEST_MOVE = { fen: START, movetime: 500, chess960: false }
 const ANALYSIS = {
   fen: START,
@@ -525,6 +544,8 @@ function suites(): Array<{ method: string; cases: unknown[][] }> {
     ['assertLadderQuery', [LADDER_QUERY]],
     ['assertRunKind', ['storm']],
     ['assertRunInput', [RUN_INPUT]],
+    ['assertPuzzleAttempt', [PUZZLE_ATTEMPT]],
+    ['assertPuzzleProgressQuery', [{ today: '2024-02-29', limit: 10 }]],
     ['assertBestMoveOptions', [BEST_MOVE, undefined]],
     ['assertAnalysisRequest', [ANALYSIS]],
     ['assertReviewRequest', [REVIEW]],

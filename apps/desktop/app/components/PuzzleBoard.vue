@@ -13,6 +13,7 @@ import {
   type PuzzleState,
 } from '@kchess/rules/puzzle'
 import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
+import type { PuzzleVerdictDetail } from '@kchess/rules/puzzleSession'
 import { play, playMoveSound } from '../utils/sound'
 
 /**
@@ -39,10 +40,10 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  /** Every attempted move, right or wrong. */
-  move: [correct: boolean]
-  /** The first verdict on the puzzle: solved cleanly, or not. Sent once. */
-  outcome: [win: boolean]
+  /** Every attempted move, right or wrong, and its number among the player's moves of the solution. */
+  move: [correct: boolean, index: number]
+  /** The first verdict on the puzzle: solved cleanly, or not, and how far it got. Sent once. */
+  outcome: [win: boolean, detail: PuzzleVerdictDetail]
   /** The puzzle is over: solved, or (without `retry`) failed. */
   done: []
 }>()
@@ -57,6 +58,8 @@ const mistakes = ref(props.initialOutcome === false ? 1 : 0)
 const outcome = ref<boolean | null>(props.initialOutcome ?? null)
 const revealed = ref(false)
 const hinted = ref(false)
+/** A hint was shown at some point: `hinted` itself clears after each move. */
+const hintUsed = ref(false)
 const feedback = ref<'' | 'good' | 'wrong'>('')
 /** The board's red outline: a brief flash on a wrong move, while the panel keeps the message. */
 const flash = ref(false)
@@ -74,6 +77,7 @@ function begin(): void {
   outcome.value = props.initialOutcome ?? null
   revealed.value = false
   hinted.value = false
+  hintUsed.value = false
   feedback.value = ''
   flash.value = false
   clearTimeout(flashTimer)
@@ -123,11 +127,16 @@ const shapes = computed<DrawShape[]>(() => {
 function decide(win: boolean): void {
   if (outcome.value !== null) return
   outcome.value = win
-  emit('outcome', win)
+  emit('outcome', win, {
+    revealed: revealed.value,
+    hinted: hintUsed.value,
+    total: Math.ceil(props.puzzle.solution.length / 2),
+  })
 }
 
 function onMove(uci: string): void {
   if (!playing.value) return
+  const index = Math.floor(state.value.index / 2)
   const result = playerMove(props.puzzle, state.value, uci)
   if (!result.correct) {
     mistakes.value++
@@ -137,7 +146,7 @@ function onMove(uci: string): void {
     flashTimer = setTimeout(() => (flash.value = false), 900)
     hinted.value = false
     resetKey.value++
-    emit('move', false)
+    emit('move', false, index)
     decide(false)
     if (!props.retry) {
       state.value = { ...state.value, status: 'failed' }
@@ -149,7 +158,7 @@ function onMove(uci: string): void {
   hinted.value = false
   state.value = result.state
   playMoveSound(result.state.sans.at(-1))
-  emit('move', true)
+  emit('move', true, index)
   if (result.state.status === 'solved') {
     decide(mistakes.value === 0 && !revealed.value)
     void play('genericNotify')
@@ -179,7 +188,9 @@ function reply(uci: string): void {
 
 /** Light up the piece to move, or hide it again. */
 function hint(): void {
-  if (state.value.status === 'playing') hinted.value = !hinted.value
+  if (state.value.status !== 'playing') return
+  hinted.value = !hinted.value
+  if (hinted.value) hintUsed.value = true
 }
 
 /** Play out the rest of the solution; the puzzle then counts as failed. */

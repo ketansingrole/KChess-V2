@@ -379,7 +379,46 @@ describe('the trainer rules match recorded traces', { timeout: TIMEOUT }, () => 
     await session.report(false)
     expect(state.current).toBe(shown)
     expect(state.attemptOutcome).toBe(false)
-    expect(state.session.failed).toBe(1)
+    session.end()
+    expect(state.current).toBe(shown)
+    expect(state.session.missed).toBe(1)
+  })
+
+  it('treats a theme with no puzzles left as a choice, not an error', async () => {
+    // Lichess answered an empty batch for an opening theme at Harder; the page showed
+    // "Couldn't get a puzzle" with the raw message. Every source of puzzles ends the same way.
+    const selection: PuzzleSelection = {
+      account: 'Alice',
+      angle: 'Anderssens_Opening_Polish_Gambit',
+      difficulty: 'harder',
+      color: 'random',
+      mode: 'practice',
+    }
+    const cases = [
+      { mode: 'practice', next: [{ glicko: { rating: 1620 } }] },
+      { mode: 'rated', next: [{}] },
+      // Practice without the puzzle permission draws anonymously.
+      { mode: 'practice', next: [{ needsReconnect: true }, {}] },
+      { mode: 'offline', next: [] },
+    ] as const
+    for (const { mode, next } of cases) {
+      const replies: unknown[] = [...next]
+      const state = puzzleSessionState()
+      const session = new PuzzleSession(state, {
+        api: {
+          localPuzzles: async () => [],
+          puzzleNext: async () => replies.shift(),
+          puzzleSolve: async () => ({}),
+        } as never,
+        selection: () => ({ ...selection, mode }),
+        online: () => true,
+      })
+      await session.loadNext()
+      expect(state.phase, mode).toBe('exhausted')
+      expect(state.trainError).toBe('')
+      expect(state.current).toBeNull()
+      expect(replies).toEqual([])
+    }
   })
 
   it('edits analysis trees in place (seed 8103)', () => {

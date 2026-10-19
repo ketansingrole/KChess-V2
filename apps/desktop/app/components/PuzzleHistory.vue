@@ -1,111 +1,219 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
+import { useLocalStorage } from '@vueuse/core'
 import { themeName } from '../utils/puzzleThemes'
-import { formatGameDate } from '../utils/games'
+import { formatCount } from '../utils/format'
+import {
+  HISTORY_FILTERS,
+  HISTORY_MODES,
+  moveAccuracy,
+  playedText,
+  puzzleHistoryRows,
+  rowMatches,
+  type PuzzleHistoryFilter,
+} from '../utils/puzzleAttempts'
+import { usePuzzleAttemptActions } from '../composables/usePuzzleAttemptActions'
 
-/** The account's puzzle attempts as Lichess recorded them (read-only), each of which can be tried again here. */
-const kchess = useKChessStore()
+/**
+ * Every puzzle attempt: the ones kept on this computer (with partial credit) and the ones Lichess
+ * recorded (read-only), in one list. Each can be tried again or studied on the analysis board.
+ */
 const puzzles = usePuzzleStore()
-const { activity, activityState, account } = storeToRefs(puzzles)
+const { activity, activityState, account, history } = storeToRefs(puzzles)
+const attemptActions = usePuzzleAttemptActions()
 
-onMounted(() => void puzzles.loadActivity())
+onMounted(() => {
+  void puzzles.loadHistory()
+  void puzzles.loadActivity()
+})
 watch(account, () => void puzzles.loadActivity())
 
+const filter = useLocalStorage<PuzzleHistoryFilter>('kchess:puzzle-history-filter', 'all')
+const allRows = computed(() => puzzleHistoryRows(history.value?.recent ?? [], activity.value))
 const rows = computed(() =>
-  activity.value.map((entry) => ({
-    ...entry,
-    themeText: entry.puzzle.themes
-      .filter((theme) => !['short', 'long', 'veryLong', 'oneMove'].includes(theme))
-      .slice(0, 3)
-      .map(themeName)
-      .join(', '),
-  })),
+  allRows.value
+    .filter((row) => rowMatches(row, filter.value))
+    .map((row) => ({
+      ...row,
+      modeInfo: HISTORY_MODES[row.mode],
+      themeText: row.puzzle.themes
+        .filter((theme) => !['short', 'long', 'veryLong', 'oneMove'].includes(theme))
+        .slice(0, 3)
+        .map(themeName)
+        .join(', '),
+    })),
 )
+
+/** Totals of first attempts kept here; retries are listed but not counted. */
+const summary = computed(() => {
+  const progress = history.value
+  if (!progress?.all.attempts) return null
+  const { today, all } = progress
+  return {
+    today,
+    all,
+    accuracy: moveAccuracy(all.movesFound, all.movesTried),
+    solvedShare: Math.round(((all.solved + all.hinted) / all.attempts) * 100),
+    dayStreak: progress.dayStreak,
+    bestDayStreak: progress.bestDayStreak,
+  }
+})
 </script>
 
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2 class="sr-only">Puzzle history</h2>
+  <div class="form-stack">
+    <div v-if="summary" class="stats-grid">
+      <div class="card stat-card">
+        <div class="stat-label">Today</div>
+        <div class="stat-value tabular">{{ formatCount(summary.today.attempts) }}</div>
+        <div class="stat-sub tabular">
+          {{ summary.today.solved + summary.today.hinted }} solved ·
+          {{ summary.today.movesFound }}/{{ summary.today.movesTried }} moves
+        </div>
       </div>
-      <div class="toolbar-row">
-        <UButton
-          v-if="account"
-          size="sm"
-          variant="outline"
-          color="neutral"
-          icon="i-lucide-refresh-cw"
-          :loading="activityState.loading"
-          @click="puzzles.loadActivity(true)"
-          >Refresh</UButton
-        >
+      <div
+        class="card stat-card"
+        title="Puzzles trained in KChess; attempts known only to Lichess are not counted"
+      >
+        <div class="stat-label">All time</div>
+        <div class="stat-value tabular">{{ formatCount(summary.all.attempts) }}</div>
+        <div class="stat-sub tabular">
+          {{ summary.solvedShare }}% solved<template v-if="summary.all.partial">
+            · {{ formatCount(summary.all.partial) }} partial</template
+          >
+        </div>
+      </div>
+      <div class="card stat-card" title="Moves right at the first try, of moves tried">
+        <div class="stat-label">Move accuracy</div>
+        <div class="stat-value tabular">
+          {{ summary.accuracy !== undefined ? `${summary.accuracy}%` : '—' }}
+        </div>
+        <div class="stat-sub tabular">
+          {{ formatCount(summary.all.movesFound) }} of {{ formatCount(summary.all.movesTried) }}
+          moves right
+        </div>
+      </div>
+      <div class="card stat-card" title="Days in a row with a solved puzzle">
+        <div class="stat-label">Days in a row</div>
+        <div class="stat-value tabular">{{ summary.dayStreak }}</div>
+        <div class="stat-sub tabular">Best {{ summary.bestDayStreak }}</div>
       </div>
     </div>
-    <UEmpty
-      v-if="!account"
-      variant="naked"
-      icon="i-lucide-user-round-plus"
-      title="Connect a Lichess account"
-      :actions="[
-        { label: 'Connect Lichess', icon: 'i-lucide-log-in', onClick: () => kchess.connect() },
-      ]"
-    />
-    <UEmpty
-      v-else-if="activityState.needsReconnect"
-      variant="naked"
-      icon="i-lucide-key-round"
-      title="Lichess needs your permission"
-      description="Reconnect this account to load puzzle history."
-      :actions="[
-        { label: 'Reconnect', icon: 'i-lucide-log-in', onClick: () => puzzles.reconnect() },
-      ]"
-    />
-    <p v-else-if="activityState.error" class="text-error text-sm" role="alert">
-      {{ activityState.error }}
-    </p>
-    <div v-else-if="activityState.loading && !rows.length" class="muted text-sm" role="status">
-      <UIcon name="i-lucide-loader-circle" class="animate-spin" /> Loading from Lichess…
-    </div>
-    <UEmpty
-      v-else-if="!rows.length"
-      variant="naked"
-      icon="i-lucide-puzzle"
-      title="No puzzles yet"
-    />
-    <div v-else class="game-list">
-      <div class="game-head puzzle-cols" aria-hidden="true">
-        <span>Result</span><span>Themes</span><span class="puzzle-rating">Rating</span
-        ><span class="puzzle-when">Played</span><span />
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="sr-only">Puzzle history</h2>
+          <USelect
+            v-if="allRows.length"
+            v-model="filter"
+            :items="[...HISTORY_FILTERS]"
+            icon="i-lucide-list-filter"
+            size="sm"
+            aria-label="Show puzzles played in"
+            class="w-40"
+          />
+        </div>
+        <div class="toolbar-row">
+          <UButton
+            v-if="account"
+            size="sm"
+            variant="outline"
+            color="neutral"
+            icon="i-lucide-refresh-cw"
+            title="Load the latest puzzle history from Lichess"
+            :loading="activityState.loading"
+            @click="puzzles.loadActivity(true)"
+            >Refresh</UButton
+          >
+        </div>
       </div>
-      <div v-for="row in rows" :key="`${row.puzzle.id}-${row.date}`" class="game-row puzzle-cols">
-        <span
-          ><UBadge
-            :color="row.win ? 'success' : 'error'"
-            variant="soft"
-            class="w-16 justify-center"
-            >{{ row.win ? 'Solved' : 'Missed' }}</UBadge
-          ></span
+      <div v-if="account && activityState.needsReconnect" class="history-note">
+        <span class="muted text-sm">Lichess needs your permission to show its puzzle history.</span>
+        <UButton size="xs" variant="soft" icon="i-lucide-log-in" @click="puzzles.reconnect()"
+          >Reconnect</UButton
         >
-        <span class="puzzle-themes">{{ row.themeText }}</span>
-        <span class="puzzle-rating tabular">{{ row.puzzle.rating }}</span>
-        <span class="puzzle-when muted">{{ formatGameDate(row.date) }}</span>
-        <span class="puzzle-actions">
-          <UButton size="xs" variant="soft" color="neutral" @click="puzzles.retry(row.puzzle)"
-            >Try again</UButton
+      </div>
+      <p v-else-if="account && activityState.error" class="text-error text-sm" role="alert">
+        {{ activityState.error }}
+      </p>
+      <div v-if="activityState.loading && !rows.length" class="muted text-sm" role="status">
+        <UIcon name="i-lucide-loader-circle" class="animate-spin" /> Loading from Lichess…
+      </div>
+      <p v-else-if="allRows.length && !rows.length" class="muted text-sm" role="status">
+        No {{ HISTORY_MODES[filter === 'all' ? 'practice' : filter].label }} puzzles yet.
+      </p>
+      <UEmpty
+        v-else-if="!rows.length"
+        variant="naked"
+        icon="i-lucide-puzzle"
+        title="No puzzles yet"
+        :actions="[
+          { label: 'Train', icon: 'i-lucide-puzzle', onClick: () => (puzzles.tab = 'train') },
+        ]"
+      />
+      <div v-else class="game-list">
+        <div class="game-head puzzle-cols" aria-hidden="true">
+          <span>Result</span><span class="puzzle-mode">Mode</span><span>Themes</span
+          ><span class="puzzle-moves">Moves</span><span class="puzzle-rating">Rating</span
+          ><span class="puzzle-when">Played</span><span />
+        </div>
+        <div v-for="row in rows" :key="row.key" class="game-row puzzle-cols">
+          <span><ResultBadge :badge="row.badge" class="w-20" /></span>
+          <span class="puzzle-mode muted" :title="row.modeInfo.tip"
+            ><UIcon :name="row.modeInfo.icon" aria-hidden="true" /><span>{{
+              row.modeInfo.label
+            }}</span></span
           >
-          <a
-            :href="'https://lichess.org/training/' + row.puzzle.id"
-            target="_blank"
-            rel="noopener"
-            aria-label="Open this puzzle on Lichess"
-            title="Open on Lichess"
-            class="inline-flex rounded p-1 text-muted hover:text-default focus-visible:outline-2"
+          <span class="puzzle-themes">{{ row.themeText }}</span>
+          <span
+            v-if="row.moves"
+            class="puzzle-moves tabular muted"
+            title="Moves right at the first try, of the solution's"
+            >{{ row.moves }}</span
           >
-            <UIcon name="i-lucide-external-link" />
-          </a>
-        </span>
+          <span v-else class="puzzle-moves text-dimmed" title="Lichess records only the result"
+            >—</span
+          >
+          <span class="puzzle-rating tabular">{{ row.puzzle.rating }}</span>
+          <span class="puzzle-when muted">{{ playedText(row.at) }}</span>
+          <span class="puzzle-actions">
+            <UButton
+              size="xs"
+              variant="soft"
+              color="neutral"
+              @click="attemptActions.retry(row.puzzle)"
+              >Try again</UButton
+            >
+            <UButton
+              size="xs"
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-microscope"
+              aria-label="Open on the analysis board"
+              title="Analysis board"
+              @click="attemptActions.analyse(row.puzzle)"
+            />
+          </span>
+        </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.puzzle-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.history-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+</style>

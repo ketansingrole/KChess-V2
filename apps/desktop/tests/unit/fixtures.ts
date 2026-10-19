@@ -39,6 +39,25 @@ export function keydownListeners(): { count: () => number; restore: () => void }
   }
 }
 
+const noTotals = {
+  attempts: 0,
+  solved: 0,
+  hinted: 0,
+  partial: 0,
+  missed: 0,
+  revealed: 0,
+  movesFound: 0,
+  movesTried: 0,
+}
+/** An empty local attempt log (`PuzzleProgress`). */
+export const emptyProgress = () => ({
+  recent: [],
+  dayStreak: 0,
+  bestDayStreak: 0,
+  today: { ...noTotals },
+  all: { ...noTotals },
+})
+
 export function desktop(overrides: Partial<DesktopApi> = {}) {
   let onEvent: (event: OnlineEvent) => void = () => {}
   const api = {
@@ -80,6 +99,8 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
     startOnline: async () => ({ seeking: true }),
     cancelOnline: async () => {},
     puzzleNext: async () => ({ puzzle, glicko: { rating: 1500 } }),
+    recordPuzzleAttempt: async () => emptyProgress(),
+    puzzleProgress: async () => emptyProgress(),
     puzzleSolve: async () => ({}),
     puzzleDashboard: async () => ({ global: { nb: 42 }, themes: {} }),
     stormDashboard: async () => ({}),

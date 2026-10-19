@@ -29,6 +29,11 @@ pub fn puzzle_id(s: &str) -> bool {
     run(s, 3, 12, alnum)
 }
 
+/// `^\d{4}-\d{2}-\d{2}$`, and a real calendar day (LOCAL_DAY)
+pub fn local_day(s: &str) -> bool {
+    crate::trainer::puzzle_progress::day_number(s).is_some()
+}
+
 /// `^[a-zA-Z0-9_-]{1,60}$` (PUZZLE_ANGLE)
 pub fn puzzle_angle(s: &str) -> bool {
     run(s, 1, 60, |b| alnum(b) || b == b'_' || b == b'-')

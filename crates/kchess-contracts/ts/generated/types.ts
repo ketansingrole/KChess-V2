@@ -30,6 +30,10 @@ export const PUZZLE_DIFFICULTIES = ["easiest", "easier", "normal", "harder", "ha
 
 export const RUN_KINDS = ["storm", "streak", "rush", "coordinates", "squareColor", "knightPath", "endgame", "lesson"] as const;
 
+export const PUZZLE_TRAIN_MODES = ["practice", "offline", "rated"] as const;
+
+export const PUZZLE_ATTEMPT_OUTCOMES = ["solved", "hinted", "partial", "missed", "revealed"] as const;
+
 export const VOICE_SOURCES = ["computer", "coordinates", "squareColor", "knightPath", "analysis", "editor", "local", "puzzles"] as const;
 
 export const VOICE_OUTCOMES = ["played", "pending", "confirmed", "picked", "cancelled", "replaced", "abandoned", "invalid", "unclear", "command", "correct", "wrong"] as const;
@@ -69,6 +73,10 @@ export type ChallengeColor = "random" | "white" | "black";
 export type PuzzleDifficulty = "easiest" | "easier" | "normal" | "harder" | "hardest";
 
 export type RunKind = "storm" | "streak" | "rush" | "coordinates" | "squareColor" | "knightPath" | "endgame" | "lesson";
+
+export type PuzzleTrainMode = "practice" | "offline" | "rated";
+
+export type PuzzleAttemptOutcome = "solved" | "hinted" | "partial" | "missed" | "revealed";
 
 export type VoiceSource = "computer" | "coordinates" | "squareColor" | "knightPath" | "analysis" | "editor" | "local" | "puzzles";
 
@@ -974,7 +982,11 @@ account: string,
  */
 angle: string, difficulty: PuzzleDifficulty, color?: PlayerColor, };
 
-export type PuzzleDraw = { puzzle: Puzzle, 
+export type PuzzleDraw = { 
+/**
+ * Absent when Lichess has no puzzle left for this theme and difficulty.
+ */
+puzzle?: Puzzle, 
 /**
  * The account's current puzzle rating, when Lichess reports it.
  */
@@ -1005,6 +1017,56 @@ export type PuzzleActivityEntry = {
  * When it was played, in ms since the epoch.
  */
 date: number, win: boolean, puzzle: Puzzle, };
+
+export type PuzzleAttemptInput = { puzzle: Puzzle, mode: PuzzleTrainMode, 
+/**
+ * Tried again from the history: kept in the log, left out of totals and the day streak.
+ */
+retry: boolean, win: boolean, 
+/**
+ * The solution was shown.
+ */
+revealed: boolean, 
+/**
+ * A hint was asked for before the verdict.
+ */
+hinted: boolean, 
+/**
+ * Player moves right at the first try, and wrong at the first try, of `total` in the solution.
+ */
+found: number, wrong: number, total: number, 
+/**
+ * The local calendar day (`YYYY-MM-DD`) it was played on.
+ */
+day: string, };
+
+export type PuzzleAttempt = { id: number, 
+/**
+ * When it was played, in ms since the epoch.
+ */
+at: number, day: string, puzzle: Puzzle, mode: PuzzleTrainMode, retry: boolean, outcome: PuzzleAttemptOutcome, hinted: boolean, 
+/**
+ * Player moves right at the first try (all of them for a solve), of `total`.
+ */
+found: number, 
+/**
+ * Player moves wrong at the first try.
+ */
+wrong: number, total: number, };
+
+export type PuzzleTotals = { attempts: number, solved: number, hinted: number, partial: number, missed: number, revealed: number, movesFound: number, movesTried: number, };
+
+export type PuzzleProgress = { 
+/**
+ * Newest first.
+ */
+recent: Array<PuzzleAttempt>, 
+/**
+ * Consecutive local days with a solved puzzle, ending today (or yesterday until today has one).
+ */
+dayStreak: number, bestDayStreak: number, today: PuzzleTotals, all: PuzzleTotals, };
+
+export type PuzzleProgressQuery = { today: string, limit: number, };
 
 export type StormHigh = { allTime: number, day: number, month: number, week: number, };
 

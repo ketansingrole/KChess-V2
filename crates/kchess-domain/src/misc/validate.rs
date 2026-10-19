@@ -613,6 +613,77 @@ fn puzzle_solve_schema() -> Schema {
     )
 }
 
+fn local_day_schema(msg: &'static str) -> Schema {
+    text(
+        Some(msg),
+        r"/^\d{4}-\d{2}-\d{2}$/",
+        patterns::local_day,
+        Some(msg),
+    )
+}
+
+/// A puzzle as the trainer shows it (`Puzzle`), as stored in the attempt log.
+fn attempt_puzzle_schema() -> Schema {
+    const MSG: Option<&str> = Some("Invalid puzzle attempt.");
+    object(
+        vec![
+            (
+                "id",
+                text(MSG, "/^[a-zA-Z0-9]{3,12}$/", patterns::puzzle_id, MSG),
+            ),
+            (
+                "fen",
+                pipe(
+                    Schema::Str(MSG),
+                    vec![
+                        max_len(100, MSG),
+                        Action::Regex {
+                            source: FEN_SOURCE,
+                            test: patterns::fen,
+                            msg: MSG,
+                        },
+                    ],
+                ),
+            ),
+            ("lastMove", optional(uci_schema())),
+            (
+                "solution",
+                pipe(
+                    array(uci_schema(), MSG),
+                    vec![Action::MinLength(1, MSG), max_len(64, MSG)],
+                ),
+            ),
+            ("rating", int_in_range(0.0, 4000.0, MSG)),
+            (
+                "themes",
+                pipe(array(angle_schema(), MSG), vec![max_len(40, MSG)]),
+            ),
+            ("plays", optional(int_in_range(0.0, MAX_SAFE_INTEGER, MSG))),
+            ("gameId", optional(game_id_schema())),
+        ],
+        MSG,
+    )
+}
+
+fn puzzle_attempt_schema() -> Schema {
+    const MSG: Option<&str> = Some("Invalid puzzle attempt.");
+    object(
+        vec![
+            ("puzzle", attempt_puzzle_schema()),
+            ("mode", picklist_str(PUZZLE_TRAIN_MODES, MSG)),
+            ("retry", Schema::Bool(MSG)),
+            ("win", Schema::Bool(MSG)),
+            ("revealed", Schema::Bool(MSG)),
+            ("hinted", Schema::Bool(MSG)),
+            ("found", int_in_range(0.0, 32.0, MSG)),
+            ("wrong", int_in_range(0.0, 32.0, MSG)),
+            ("total", int_in_range(1.0, 32.0, MSG)),
+            ("day", local_day_schema("Invalid puzzle attempt.")),
+        ],
+        MSG,
+    )
+}
+
 fn run_input_schema() -> Schema {
     object(
         vec![
@@ -902,6 +973,20 @@ schema_validator!(
     picklist_str(RUN_KINDS, Some("Invalid kind of run."))
 );
 schema_validator!(assert_run_input_v, run_input_schema());
+schema_validator!(assert_puzzle_attempt_v, puzzle_attempt_schema());
+schema_validator!(
+    assert_puzzle_progress_query_v,
+    object(
+        vec![
+            ("today", local_day_schema("Invalid puzzle history query.")),
+            (
+                "limit",
+                int_in_range(1.0, 500.0, Some("Invalid puzzle history query.")),
+            ),
+        ],
+        Some("Invalid puzzle history query."),
+    )
+);
 schema_validator!(
     assert_best_move_options_v,
     Schema::Optional {
@@ -1364,6 +1449,8 @@ pub fn validator(method: &str) -> Option<Validator> {
         "assertLadderQuery" => assert_ladder_query_v,
         "assertRunKind" => assert_run_kind_v,
         "assertRunInput" => assert_run_input_v,
+        "assertPuzzleAttempt" => assert_puzzle_attempt_v,
+        "assertPuzzleProgressQuery" => assert_puzzle_progress_query_v,
         "assertBestMoveOptions" => assert_best_move_options_v,
         "assertAnalysisRequest" => assert_analysis_request_v,
         "assertReviewRequest" => assert_review_request_v,
