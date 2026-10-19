@@ -8,6 +8,7 @@ import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
 import { judgmentCounts } from '../utils/review'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
+import { OUTCOME_BADGES } from '../utils/games'
 
 type HistorySource = 'computer' | 'board' | 'lichess'
 const route = useRoute()
@@ -181,13 +182,8 @@ const rangeText = computed(() => {
   const from = historyPage.value * historyPageSize.value + 1
   return `${from}–${Math.min(total, from + historyPageSize.value - 1)} of ${total} games`
 })
-const reviewResult = computed(() =>
-  reviewGame.value ? { win: 'Win', loss: 'Loss', draw: 'Draw' }[gameResult(reviewGame.value)] : '',
-)
-const reviewColor = computed(() =>
-  reviewGame.value
-    ? ({ win: 'success', loss: 'error', draw: 'neutral' } as const)[gameResult(reviewGame.value)]
-    : 'neutral',
+const reviewBadge = computed(() =>
+  reviewGame.value ? OUTCOME_BADGES[gameResult(reviewGame.value)] : null,
 )
 </script>
 
@@ -236,7 +232,7 @@ const reviewColor = computed(() =>
             >All games</UButton
           >
           <USeparator orientation="vertical" class="h-5" />
-          <UBadge :color="reviewColor" variant="soft" size="sm">{{ reviewResult }}</UBadge>
+          <ResultBadge v-if="reviewBadge" :badge="reviewBadge" size="sm" />
           <span class="game-title text-sm" :title="reviewGame.opening"
             ><strong><PlayerLink :username="reviewGame.account" /></strong> vs
             <strong><PlayerLink :username="reviewGame.opponent" /></strong

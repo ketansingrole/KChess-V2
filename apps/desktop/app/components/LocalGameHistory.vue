@@ -4,6 +4,7 @@ import { useGameArchiveStore, type ArchivedGame } from '../stores/gameArchive'
 import { useAnalysisStore } from '../stores/analysis'
 import { setupPgn } from '@kchess/rules/chess'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
+import { archivedResultBadge } from '../utils/games'
 
 const props = defineProps<{ source: 'computer' | 'board'; openGame?: string | null }>()
 const archive = useGameArchiveStore()
@@ -150,7 +151,8 @@ async function exportGame(game: ArchivedGame): Promise<void> {
         <UButton variant="ghost" color="neutral" icon="i-lucide-arrow-left" @click="closeGame"
           >All games</UButton
         >
-        <span>{{ selected.white }} vs {{ selected.black }} · {{ selected.result }}</span>
+        <ResultBadge :badge="archivedResultBadge(selected)" size="sm" />
+        <span>{{ selected.white }} vs {{ selected.black }}</span>
         <UButton variant="outline" color="neutral" @click="exportGame(selected)"
           >Export PGN</UButton
         >
@@ -181,7 +183,8 @@ async function exportGame(game: ArchivedGame): Promise<void> {
     />
     <div v-else class="card local-history-list">
       <article v-for="game in visible" :key="game.id" class="local-history-row">
-        <div>
+        <ResultBadge :badge="archivedResultBadge(game)" class="local-history-result" />
+        <div class="local-history-main">
           <strong>{{ game.white }} vs {{ game.black }}</strong>
           <p class="section-hint">
             {{ new Date(game.startedAt).toLocaleString() }} ·
@@ -192,18 +195,7 @@ async function exportGame(game: ArchivedGame): Promise<void> {
             {{ timeLabel(game.timeControl) }}
           </p>
           <p class="section-hint">
-            {{
-              game.source === 'clock'
-                ? game.finished
-                  ? 'Session ended'
-                  : 'Clock session'
-                : game.result === '*'
-                  ? game.finished
-                    ? 'Unfinished'
-                    : 'In progress'
-                  : game.result
-            }}
-            · {{ game.reason
+            {{ game.reason
             }}<template v-if="game.clockSummary"> · {{ game.clockSummary }}</template>
           </p>
         </div>
@@ -266,11 +258,18 @@ async function exportGame(game: ArchivedGame): Promise<void> {
 }
 .local-history-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 16px;
   padding: 16px 0;
   border-bottom: 1px solid var(--ui-border);
+}
+.local-history-result {
+  flex: none;
+  width: 6rem;
+}
+.local-history-main {
+  flex: 1;
+  min-width: 0;
 }
 .local-history-row:first-child {
   padding-top: 0;

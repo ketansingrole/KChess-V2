@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatGameDate } from '../utils/games'
+import { formatGameDate, OUTCOME_BADGES } from '../utils/games'
 import { gameResult } from '@kchess/rules/gameStatus'
 import { judgmentCounts } from '../utils/review'
 import type { LichessGame, ReviewSummary } from '@kchess/contracts/types'
@@ -13,15 +13,7 @@ const props = defineProps<{
   hideAccuracy?: boolean
 }>()
 const emit = defineEmits<{ select: [] }>()
-const result = computed(() => gameResult(props.game))
-const badge = computed(
-  () =>
-    ({
-      win: { label: 'Win', color: 'success' },
-      loss: { label: 'Loss', color: 'error' },
-      draw: { label: 'Draw', color: 'neutral' },
-    })[result.value] as { label: string; color: 'success' | 'error' | 'neutral' },
-)
+const badge = computed(() => OUTCOME_BADGES[gameResult(props.game)])
 const diff = computed(() => props.game.ratingDiff)
 /** The player's side of the game's review. */
 const side = computed(() => props.review?.[props.game.color])
@@ -36,11 +28,7 @@ const worst = computed(() => (side.value ? judgmentCounts(side.value)[0] : undef
     :aria-label="`${badge.label} against ${game.opponent}, ${formatGameDate(game.createdAt)}. Open game`"
     @click="emit('select')"
   >
-    <span
-      ><UBadge :color="badge.color" variant="soft" class="w-11 justify-center">{{
-        badge.label
-      }}</UBadge></span
-    >
+    <span><ResultBadge :badge="badge" class="w-11" /></span>
     <span class="opponent">
       <strong>{{ game.opponent }}</strong>
       <span v-if="detailed" class="sub">
