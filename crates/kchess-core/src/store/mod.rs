@@ -194,16 +194,33 @@ pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
     Ok(db)
 }
 
-#[cfg(unix)]
 fn restrict(path: &Path, host: &dyn Host) {
+    restrict_database(path, host, "db");
+}
+
+/// 0600 for a database and its `-wal` and `-shm` files. Opening in WAL mode creates both before
+/// the database is restricted, and SQLite gives them the database's mode as it was then.
+#[cfg(unix)]
+pub(crate) fn restrict_database(path: &Path, host: &dyn Host, tag: &str) {
     use std::os::unix::fs::PermissionsExt;
-    if let Err(cause) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-        host.log(Level::Debug, "db", &format!("chmod failed: {cause}"));
+    let mut files = vec![path.to_path_buf()];
+    for suffix in ["-wal", "-shm"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        files.push(name.into());
+    }
+    for (index, file) in files.iter().enumerate() {
+        match std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)) {
+            Err(cause) if index == 0 || cause.kind() != std::io::ErrorKind::NotFound => {
+                host.log(Level::Debug, tag, &format!("chmod failed: {cause}"));
+            }
+            _ => {}
+        }
     }
 }
 
 #[cfg(not(unix))]
-fn restrict(_path: &Path, _host: &dyn Host) {}
+pub(crate) fn restrict_database(_path: &Path, _host: &dyn Host, _tag: &str) {}
 
 type Dispatch = fn(&StoreContext, &str, &[Value]) -> Option<Result<Value>>;
 

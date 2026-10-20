@@ -5,12 +5,15 @@ vi.mock('node:child_process', () => ({ default: { execFileSync: exec }, execFile
 vi.mock('node:fs', () => ({ default: { existsSync: () => true }, existsSync: () => true }))
 
 let key: string | undefined
+/** What `execFileSync` throws for a non-zero exit. */
+const exit = (status: number, stderr = ''): Error =>
+  Object.assign(new Error('failed'), { status, stderr })
 beforeEach(() => {
   key = undefined
   vi.stubGlobal('process', { ...process, platform: 'darwin' })
   exec.mockImplementation((_file: string, args: string[], options: { input?: string }) => {
     if (args[0] === 'find-generic-password') {
-      if (!key) throw new Error('No key')
+      if (!key) throw exit(44)
       return key
     }
     if (args[0] === '-i') {
@@ -48,7 +51,7 @@ it('invokes the detected absolute secret-tool path on Linux', () => {
   vi.stubGlobal('process', { ...process, platform: 'linux' })
   exec.mockImplementation((file: string, args: string[], options: { input?: string }) => {
     if (args[0] === 'lookup') {
-      if (!key) throw new Error('No key')
+      if (!key) throw exit(1)
       return key
     }
     if (args[0] === 'store') {
@@ -73,4 +76,24 @@ it('does not expose command arguments or keys when the OS store fails', () => {
     'OS credential storage is unavailable',
   )
   expect(() => systemSecrets('/tmp/profile').encrypt('test-token')).not.toThrow('secret-key-123')
+})
+it('keeps the existing key when the keychain is locked or times out', () => {
+  // The key exists but cannot be read now; a replacement would orphan every saved credential.
+  for (const failure of [exit(51, 'User interaction is not allowed.'), exit(-1)]) {
+    exec.mockClear()
+    exec.mockImplementation(() => {
+      throw failure
+    })
+    expect(() => systemSecrets('/tmp/profile').encrypt('test-token')).toThrow(
+      'OS credential storage is unavailable',
+    )
+    expect(exec.mock.calls.some((call) => call[1][0] === '-i')).toBe(false)
+  }
+  vi.stubGlobal('process', { ...process, platform: 'linux' })
+  exec.mockClear()
+  exec.mockImplementation(() => {
+    throw exit(1, 'Cannot get secret of a locked object')
+  })
+  expect(() => systemSecrets('/tmp/profile').encrypt('test-token')).toThrow('unavailable')
+  expect(exec.mock.calls.some((call) => call[1][0] === 'store')).toBe(false)
 })

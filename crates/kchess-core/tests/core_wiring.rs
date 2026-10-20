@@ -387,3 +387,20 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
     );
     drop(silent);
 }
+
+#[tokio::test]
+async fn account_calls_use_the_username_as_validated() {
+    // `" Alice "` passed validation trimmed but reached the store untrimmed, matching nothing.
+    let dir = profile();
+    let host = Arc::new(Wire::default());
+    let core = core(&host, dir.path());
+    core.call("addAccount", vec![json!("Alice")])
+        .await
+        .expect("added");
+    let data = core
+        .call("removeAccount", vec![json!(" Alice ")])
+        .await
+        .expect("removed");
+    assert_eq!(data["accounts"], json!([]));
+    core.close().await;
+}

@@ -113,18 +113,18 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
         Some(Value::Array(items)) => items,
         Some(_) => return Err(CoreError::new("games is not iterable")),
     };
-    // `sort((a, b) => b.createdAt - a.createdAt)`: a NaN difference counts as equal.
-    games.sort_by(|a, b| {
-        let created = |game: &Value| js::to_number(game.get("createdAt"));
-        let difference = created(b) - created(a);
-        if difference.is_nan() {
-            std::cmp::Ordering::Equal
+    // `sort((a, b) => b.createdAt - a.createdAt)`, newest first. A missing or invalid time sorts
+    // last: treating NaN as equal to everything is not a total order, and Rust's sort may panic
+    // on one (poisoning the database lock).
+    let created = |game: &Value| {
+        let time = js::to_number(game.get("createdAt"));
+        if time.is_nan() {
+            f64::NEG_INFINITY
         } else {
-            difference
-                .partial_cmp(&0.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            time
         }
-    });
+    };
+    games.sort_by(|a, b| created(b).total_cmp(&created(a)));
     games.truncate(MAX_GAMES as usize);
 
     let tokens: Option<Value> = match fs::read_to_string(&token_path)
@@ -150,6 +150,14 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
                 return Err(CoreError::new("accounts is not iterable"));
             };
             for account in accounts {
+                // `accounts.username` is a nullable primary key; a NULL row breaks every load.
+                if account
+                    .get("username")
+                    .and_then(Value::as_str)
+                    .is_none_or(|name| name.trim().is_empty())
+                {
+                    continue;
+                }
                 ctx.db
                     .execute(
                         "INSERT OR REPLACE INTO accounts (username, connected, lastSyncedAt) VALUES (?, ?, ?)",
@@ -244,6 +252,7 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
             return Vec::new();
         }
     };
+    let unreadable = std::cell::Cell::new(false);
     let rows = |sql: &str, name: &str, width: usize| -> Vec<Vec<SqlValue>> {
         let read = || -> rusqlite::Result<Vec<Vec<SqlValue>>> {
             let mut statement = legacy.prepare(sql)?;
@@ -261,6 +270,13 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         match read() {
             Ok(found) => found,
             Err(cause) => {
+                // An older schema without the table has nothing to import. Any other failure
+                // (busy, damaged, unreadable) must not commit a partial import that is never
+                // retried.
+                let text = cause.to_string();
+                if !text.contains("no such table") && !text.contains("no such column") {
+                    unreadable.set(true);
+                }
                 log(
                     ctx,
                     Level::Debug,
@@ -282,6 +298,14 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         15,
     );
     let token_rows = rows("SELECT username, token FROM lichess_tokens", "tokens", 2);
+    if unreadable.get() {
+        log(
+            ctx,
+            Level::Warn,
+            "The earlier database could not be read; its import is retried on the next start.",
+        );
+        return Vec::new();
+    }
 
     let get = |key: &str| -> SqlValue {
         setting_rows
@@ -379,6 +403,9 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         let outcome = (|| -> Result<()> {
             write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
             for row in &account_rows {
+                if !matches!(&row[0], SqlValue::Text(name) if !name.trim().is_empty()) {
+                    continue;
+                }
                 let auth_oauth = matches!(&row[1], SqlValue::Text(kind) if kind == "oauth");
                 ctx.db
                     .execute(
@@ -470,6 +497,9 @@ fn insert_game(db: &Connection, game: &Value) -> Result<()> {
         .map_err(storage)?;
         return Ok(());
     }
+    if !importable(game) {
+        return Ok(());
+    }
     let columns = GAME_KEYS.join(", ");
     let placeholders = vec!["?"; GAME_KEYS.len()].join(", ");
     let params = GAME_KEYS
@@ -482,6 +512,35 @@ fn insert_game(db: &Connection, game: &Value) -> Result<()> {
     )
     .map_err(storage)?;
     Ok(())
+}
+
+/// A backup game the library can read back: its `LichessGame` fields with their types, and
+/// whole-number times and ratings. SQLite keeps a mistyped value as written, and one such row
+/// failed every game page.
+fn importable(game: &Value) -> bool {
+    let text = |key: &str| game.get(key).is_some_and(Value::is_string);
+    let optional_text = |key: &str| game.get(key).is_none_or(|v| v.is_null() || v.is_string());
+    let whole = |v: &Value| {
+        v.as_f64()
+            .is_some_and(|n| n.is_finite() && n.fract() == 0.0)
+    };
+    let optional_whole = |key: &str| game.get(key).is_none_or(|v| v.is_null() || whole(v));
+    let side = |v: &Value| matches!(v.as_str(), Some("white" | "black"));
+    [
+        "id", "account", "speed", "perf", "status", "opponent", "moves",
+    ]
+    .into_iter()
+    .all(text)
+        && ["opening", "pgn"].into_iter().all(optional_text)
+        && ["createdAt", "lastMoveAt"]
+            .into_iter()
+            .all(|key| game.get(key).is_some_and(whole))
+        && ["opponentRating", "playerRating", "ratingDiff"]
+            .into_iter()
+            .all(optional_whole)
+        && game.get("rated").is_some_and(Value::is_boolean)
+        && game.get("color").is_some_and(side)
+        && game.get("winner").is_none_or(|v| v.is_null() || side(v))
 }
 
 /// `normalizeSettings`: the stored settings over the defaults, with the older forms converted.

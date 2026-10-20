@@ -617,3 +617,45 @@ fn with_os_encryption_a_login_and_its_account_are_stored_together_or_neither_aft
         1
     );
 }
+
+#[test]
+fn a_legacy_token_that_cannot_be_stored_disconnects_its_account_but_keeps_its_games() {
+    // The migration's fallback when re-encrypting a token fails; a logout here deleted the
+    // imported games, and with a NULL account name every account's.
+    let store = fresh();
+    save_page(&store, "Alice", &[library_game("Private1", &[])]);
+    store.exec("INSERT INTO tokens (username, encrypted) VALUES ('Alice', 'x')");
+    assert_eq!(
+        store.ok("store.games.disconnectAccount", vec![Value::Null]),
+        Value::Null
+    );
+    assert_eq!(
+        page(&store, json!({ "offset": 0, "limit": 20 }))["total"],
+        json!(1)
+    );
+    store.ok("store.games.disconnectAccount", vec![json!("aLiCe")]);
+    assert_eq!(
+        page(&store, json!({ "offset": 0, "limit": 20 }))["total"],
+        json!(1)
+    );
+    assert_eq!(
+        store.rows("SELECT username, connected FROM accounts WHERE username = 'Alice'"),
+        [json!({ "username": "Alice", "connected": 0 })]
+    );
+    assert_eq!(store.rows("SELECT * FROM tokens"), Vec::<Value>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn the_database_and_its_write_ahead_files_are_private() {
+    // The WAL holds recent writes; it was created 0644 before the database was restricted.
+    use std::os::unix::fs::PermissionsExt;
+    let store = fresh();
+    for name in ["kchess.db", "kchess.db-wal", "kchess.db-shm"] {
+        let mode = std::fs::metadata(store.path().join(name))
+            .unwrap_or_else(|cause| panic!("{name}: {cause}"))
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{name}");
+    }
+}

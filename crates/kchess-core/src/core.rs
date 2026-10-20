@@ -238,10 +238,14 @@ impl Core {
     /// Run one method: a facade method (`CoreApi`) or an internal service method. Unknown
     /// methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        self.start();
         if crate::facade::is_facade_method(method) {
+            self.start_unless_closed();
             return Box::pin(self.facade(method, args)).await;
         }
+        // The services were stopped and the profile released: a late internal call must not
+        // restart them or reopen the database.
+        self.refuse_closed()?;
+        self.start();
         Box::pin(self.dispatch(method, args)).await
     }
 
@@ -528,6 +532,20 @@ impl Core {
 
     /// Starts the background work once, on the first call (which is always in a runtime): the
     /// battery refresh, and the review queue, which looks for work as soon as it starts.
+    /// `The KChess core is closed.` once `close` has begun.
+    fn refuse_closed(&self) -> Result<()> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(CoreError::new(crate::facade::CLOSED));
+        }
+        Ok(())
+    }
+
+    fn start_unless_closed(&self) {
+        if !self.closed.load(Ordering::SeqCst) {
+            self.start();
+        }
+    }
+
     fn start(&self) {
         if !self.battery_started.swap(true, Ordering::SeqCst) {
             self.battery.refresh(&self.capabilities);

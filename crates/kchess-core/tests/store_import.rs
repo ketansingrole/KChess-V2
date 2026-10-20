@@ -226,7 +226,7 @@ fn a_null_token_rolls_the_whole_earlier_import_back_when_encryption_is_available
 }
 
 #[test]
-fn null_stays_null_and_null_tokens_are_skipped_without_encryption() {
+fn null_accounts_and_null_tokens_are_skipped_without_encryption() {
     let (_earlier, legacy) = earlier_database(
         "CREATE TABLE app_settings (key TEXT, value TEXT);
          INSERT INTO app_settings VALUES ('app.appearance_mode', 'dark');
@@ -240,12 +240,83 @@ fn null_stays_null_and_null_tokens_are_skipped_without_encryption() {
         store.ok("store.games.getSettings", vec![])["appearance"],
         json!("dark")
     );
+    // A NULL account name is skipped: `accounts.username` is nullable, and a NULL row made
+    // every later `loadData` fail.
     assert_eq!(
         store.rows("SELECT username FROM accounts"),
-        [json!({ "username": null })]
+        Vec::<Value>::new()
+    );
+    assert_eq!(
+        usernames(&store.ok("store.games.loadData", vec![])),
+        Vec::<String>::new()
     );
     assert_eq!(
         store.rows("SELECT COUNT(*) AS n FROM tokens WHERE username = 'null'"),
         [json!({ "n": 0 })]
+    );
+}
+
+#[test]
+fn a_backup_with_invalid_times_and_nameless_accounts_still_imports_and_loads() {
+    // NaN creation times once fed a non-total comparator to Rust's sort, which may panic and
+    // poison the database lock; a nameless account became a NULL primary key.
+    let store = Store::new(None, Secrets::OFF);
+    let dir = store.path().to_path_buf();
+    let game = |id: &str, created: Value| {
+        json!({
+            "id": id, "account": "Alice", "createdAt": created, "lastMoveAt": 1, "rated": true,
+            "speed": "blitz", "perf": "blitz", "status": "mate", "color": "white",
+            "opponent": "Bob", "moves": "e4 e5",
+        })
+    };
+    let mut games = Vec::new();
+    for n in 0..40 {
+        let created = if n % 3 == 0 { json!("soon") } else { json!(n) };
+        games.push(game(&format!("Game{n:04}"), created));
+    }
+    fs::write(
+        dir.join("kchess-data.json"),
+        json!({
+            "accounts": [{ "connected": true }, { "username": "Alice", "connected": true }],
+            "games": games,
+        })
+        .to_string(),
+    )
+    .expect("backup written");
+    let data = store.ok("store.games.loadData", vec![]);
+    assert_eq!(usernames(&data), ["Alice"]);
+    // Games without a readable time are left out rather than breaking every page.
+    assert_eq!(data["gameCount"], json!(26));
+    let page = store.ok(
+        "store.games.gamePage",
+        vec![json!({ "offset": 0, "limit": 1 })],
+    );
+    assert_eq!(ids(&page), ["Game0038"]);
+}
+
+#[test]
+fn an_earlier_database_that_fails_to_read_is_not_half_imported() {
+    // A read failure counted as an empty table: settings and accounts were committed without the
+    // rest, and the filled profile was never imported again.
+    let (_earlier, legacy) = earlier_database(
+        "CREATE TABLE app_settings (key TEXT, value TEXT);
+         INSERT INTO app_settings VALUES ('app.appearance_mode', 'dark');
+         CREATE TABLE lichess_accounts (username TEXT, auth_kind TEXT, last_synced_at INTEGER);
+         INSERT INTO lichess_accounts VALUES ('Grace', 'oauth', NULL);
+         CREATE VIEW lichess_tokens AS SELECT json('not json') AS username, 'lip_grace' AS token;",
+    );
+    let store = Store::new(Some(legacy), Secrets::OFF);
+    assert_eq!(
+        store.ok("store.games.getSettings", vec![])["appearance"],
+        json!("system")
+    );
+    assert_eq!(
+        store.rows("SELECT username FROM accounts"),
+        Vec::<Value>::new()
+    );
+    assert_eq!(store.rows("SELECT id FROM settings"), Vec::<Value>::new());
+    assert_eq!(
+        store.ok("store.games.legacyImportPending", vec![]),
+        json!(true)
     );
 }

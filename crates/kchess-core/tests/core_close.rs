@@ -242,3 +242,27 @@ async fn closing_twice_is_harmless_and_frees_the_profile() {
     let reopened = Core::open(Config::new(dir.path().to_path_buf()), host.clone());
     assert!(reopened.is_ok(), "a closed profile reopens");
 }
+
+#[tokio::test]
+async fn a_closed_core_refuses_internal_calls() {
+    // Only facade methods checked the closed state: a late internal call could start the
+    // battery and review services again, or reach an engine or Lichess after shutdown.
+    let dir = tempfile::tempdir().expect("profile");
+    let host = Arc::new(Wire::default());
+    let core = open(dir.path(), &host);
+    core.call("store.open", vec![]).await.expect("opened");
+    core.close().await;
+    let db = dir.path().join("kchess.db");
+    std::fs::remove_file(&db).expect("database removed");
+    let later = core
+        .call("store.games.loadData", vec![])
+        .await
+        .expect_err("a closed core refuses");
+    assert_eq!(later.message, CLOSED);
+    // Synchronous calls only read state; a closed core still answers them.
+    assert_eq!(
+        core.call_sync("analysis.running", vec![]).expect("running"),
+        json!(false)
+    );
+    assert!(!db.exists(), "the database was not opened again");
+}

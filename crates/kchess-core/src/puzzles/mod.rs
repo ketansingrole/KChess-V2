@@ -120,20 +120,9 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     Ok(db)
 }
 
-#[cfg(unix)]
 fn restrict(path: &Path, host: &dyn Host) {
-    use std::os::unix::fs::PermissionsExt;
-    if let Err(cause) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-        host.log(
-            Level::Debug,
-            "puzzles",
-            &format!("Could not restrict database file permissions {cause}"),
-        );
-    }
+    crate::store::restrict_database(path, host, "puzzles");
 }
-
-#[cfg(not(unix))]
-fn restrict(_path: &Path, _host: &dyn Host) {}
 
 /// A random sampler seed, as `randomInt(2 ** 32)` gave one.
 fn seed() -> u32 {

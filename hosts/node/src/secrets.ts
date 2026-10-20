@@ -8,7 +8,14 @@ import { logDebug } from '@kchess/native/logger'
 export function systemSecrets(dataDir: string, disabled = false): SecretStore {
   const service = `KChess.Node.${createHash('sha256').update(dataDir).digest('hex')}`
   let key: Buffer | undefined
-  const run = (file: string, args: string[], input?: string): string => {
+  /** Thrown when the store answered that the item does not exist, as opposed to failing. */
+  const missing = new Error('The KChess credential key does not exist yet.')
+  const run = (
+    file: string,
+    args: string[],
+    input?: string,
+    notFound?: (status: unknown, stderr: string) => boolean,
+  ): string => {
     try {
       return execFileSync(file, args, {
         input,
@@ -18,6 +25,8 @@ export function systemSecrets(dataDir: string, disabled = false): SecretStore {
         windowsHide: true,
       }).trim()
     } catch (cause) {
+      const failure = cause as { status?: unknown; stderr?: unknown }
+      if (notFound?.(failure.status, String(failure.stderr ?? '').trim())) throw missing
       // Child-process errors contain command arguments; never expose credential material.
       logDebug(
         'credentials',
@@ -40,26 +49,43 @@ export function systemSecrets(dataDir: string, disabled = false): SecretStore {
     process.platform === 'linux'
       ? ['/usr/bin/secret-tool', '/bin/secret-tool'].find(existsSync)
       : undefined
-  const credentialTool = (args: string[], input?: string): string => {
+  const credentialTool = (
+    args: string[],
+    input?: string,
+    notFound?: (status: unknown, stderr: string) => boolean,
+  ): string => {
     if (!secretTool)
       throw new Error('OS credential storage is unavailable. Unlock the system keychain and retry.')
-    return run(secretTool, args, input)
+    return run(secretTool, args, input, notFound)
+  }
+  /**
+   * The stored key, or '' only when the store says there is none. A locked, denied or timed-out
+   * keychain throws: replacing the key then would make every saved credential undecryptable.
+   */
+  const lookupKey = (): string => {
+    try {
+      return process.platform === 'darwin'
+        ? // 44 is errSecItemNotFound.
+          run(
+            '/usr/bin/security',
+            ['find-generic-password', '-s', service, '-a', 'key', '-w'],
+            undefined,
+            (status) => status === 44,
+          )
+        : // secret-tool exits 1 without a message when nothing matches.
+          credentialTool(
+            ['lookup', 'service', service, 'account', 'key'],
+            undefined,
+            (status, stderr) => status === 1 && stderr === '',
+          )
+    } catch (cause) {
+      if (cause === missing) return ''
+      throw cause
+    }
   }
   function aesKey(create = true): Buffer {
     if (key) return key
-    let stored = ''
-    try {
-      stored =
-        process.platform === 'darwin'
-          ? run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', 'key', '-w'])
-          : credentialTool(['lookup', 'service', service, 'account', 'key'])
-    } catch (cause) {
-      logDebug(
-        'credentials',
-        'Node profile key is not available:',
-        cause instanceof Error ? cause.name : 'error',
-      )
-    }
+    let stored = lookupKey()
     if (!stored) {
       if (!create)
         throw new Error('The KChess credential key is unavailable. Reconnect your account.')
@@ -71,10 +97,7 @@ export function systemSecrets(dataDir: string, disabled = false): SecretStore {
           ['store', '--label=KChess Node credentials', 'service', service, 'account', 'key'],
           stored,
         )
-      const verified =
-        process.platform === 'darwin'
-          ? run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', 'key', '-w'])
-          : credentialTool(['lookup', 'service', service, 'account', 'key'])
+      const verified = lookupKey()
       if (verified !== stored)
         throw new Error('The OS credential key could not be saved. Retry login.')
     }

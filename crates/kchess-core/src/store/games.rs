@@ -335,6 +335,26 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "logoutAccounts" => optional_arg::<String>(args, 0, "username")
             .and_then(|username| logout_accounts(ctx.host, db, username.as_deref()))
             .and_then(as_json),
+        // A legacy token that could not be re-encrypted: forget the token, keep the games.
+        "disconnectAccount" => optional_arg::<String>(args, 0, "username").and_then(|username| {
+            let Some(username) = username else {
+                return Ok(Value::Null);
+            };
+            transaction(ctx.host, db, || {
+                db.execute(
+                    "UPDATE accounts SET connected = 0 WHERE username = ? COLLATE NOCASE",
+                    [&username],
+                )
+                .sql()?;
+                db.execute(
+                    "DELETE FROM tokens WHERE username = ? COLLATE NOCASE",
+                    [&username],
+                )
+                .sql()?;
+                Ok(())
+            })
+            .map(|()| Value::Null)
+        }),
         "removeAccount" => arg(args, 0, "username")
             .and_then(|username: String| remove_account(ctx.host, db, &username))
             .and_then(as_json),

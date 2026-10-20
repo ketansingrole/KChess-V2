@@ -1,6 +1,6 @@
 //! The facade's Lichess accounts (`run_facade` arms, moved without changes).
 
-use super::args::{arg, normal, text_arg};
+use super::args::{arg, normal};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use serde_json::{Value, json};
@@ -17,7 +17,7 @@ impl Core {
                     .await
             }
             "logout" => {
-                let username = text_arg(args, 0);
+                let username = username_arg(args)?;
                 self.end_sessions(Some(&username)).await?;
                 let data = self.logout_accounts(Some(&username)).await?;
                 self.reviews.reviews_changed();
@@ -30,7 +30,7 @@ impl Core {
                 Ok(data)
             }
             "removeAccount" => {
-                let name = text_arg(args, 0);
+                let name = username_arg(args)?;
                 if self.end_sessions(Some(&name)).await?.is_empty() {
                     self.inner("lichess.cancelAccountSyncs", vec![json!([name])])
                         .await?;
@@ -53,4 +53,13 @@ impl Core {
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
     }
+}
+
+/// The account named by the first argument as the validator normalizes it (trimmed): the raw
+/// text matched no stored account, so `logout(" Alice ")` kept Alice signed in.
+fn username_arg(args: &[Value]) -> Result<String> {
+    normal("assertUsername", &arg(args, 0))?
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| CoreError::new("Invalid username."))
 }

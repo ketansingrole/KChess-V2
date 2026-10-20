@@ -257,8 +257,14 @@ fn write_sample(
 }
 
 pub fn clear_stored(db: &Connection) -> Result<(), String> {
-    db.execute_batch("DELETE FROM puzzles; DELETE FROM puzzle_meta;")
-        .map_err(sql_error)?;
+    // One transaction: puzzles gone with their metadata left would still count as installed.
+    db.execute_batch("BEGIN IMMEDIATE; DELETE FROM puzzles; DELETE FROM puzzle_meta; COMMIT;")
+        .map_err(|cause| {
+            if !db.is_autocommit() && db.execute_batch("ROLLBACK").is_err() {
+                tracing::warn!("puzzle clear rollback failed");
+            }
+            sql_error(cause)
+        })?;
     // Give the space back to the file rather than leave it for reuse.
     db.execute_batch("VACUUM").map_err(sql_error)
 }

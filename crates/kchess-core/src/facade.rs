@@ -419,7 +419,9 @@ impl Core {
             if let Err(cause) = stored {
                 // The accounts row was already committed as connected: disconnect it
                 // so a per-account encrypt failure does not leave a silent logged-out
-                // state that `legacyImportPending` (now false) would never retry.
+                // state that `legacyImportPending` (now false) would never retry. Its
+                // imported games stay: a logout would delete them (and with no account
+                // name, every account's).
                 let name = account.as_str().unwrap_or("?");
                 self.host.log(
                     Level::Warn,
@@ -428,7 +430,7 @@ impl Core {
                 );
                 let _ = self
                     .database
-                    .call_async("store.games.logoutAccounts", &[account])
+                    .call_async("store.games.disconnectAccount", &[account])
                     .await;
             }
         }
