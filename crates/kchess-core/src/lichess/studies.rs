@@ -320,11 +320,22 @@ pub async fn sync_lichess_study(
     };
     let joined: Vec<String> = current.iter().map(|chapter| chapter.pgn.clone()).collect();
     let remote = valid_chapters(&joined.join("\n\n"))?;
-    let changed_remotely = remote.len() != before.len()
-        || remote
-            .iter()
-            .zip(before.iter())
-            .any(|(game, expected)| game.pgn != expected.pgn);
+    // An earlier upload may have stopped partway: chapters it already wrote (and chapters it
+    // already appended) match the local edit rather than the baseline. Anything else changed
+    // on Lichess, and is never overwritten.
+    let mut written = vec![false; before.len()];
+    let mut changed_remotely = remote.len() < before.len() || remote.len() > after.len();
+    if !changed_remotely {
+        for (index, game) in remote.iter().enumerate() {
+            match before.get(index) {
+                Some(expected) if game.pgn == expected.pgn => {}
+                Some(_) if uploaded(game, &after[index]) => written[index] = true,
+                None if uploaded(game, &after[index]) => {}
+                _ => changed_remotely = true,
+            }
+        }
+    }
+    let appended = remote.len().saturating_sub(before.len());
     if changed_remotely {
         return Err(CoreError::new(
             "The cloud study changed. Download its latest copy before uploading; your offline edits are kept.",
@@ -348,7 +359,7 @@ pub async fn sync_lichess_study(
             let auth = authorize(&token);
             for (index, expected) in before.iter().enumerate() {
                 let game = &after[index];
-                if game.pgn == expected.pgn {
+                if game.pgn == expected.pgn || written[index] {
                     continue;
                 }
                 let base = format!(
@@ -393,7 +404,7 @@ pub async fn sync_lichess_study(
                     )
                     .await?;
             }
-            for game in after.iter().skip(before.len()) {
+            for game in after.iter().skip(before.len() + appended) {
                 let name = map_get(&game.headers, "ChapterName")
                     .or_else(|| map_get(&game.headers, "Event"))
                     .unwrap_or("New chapter")
@@ -418,6 +429,29 @@ pub async fn sync_lichess_study(
             lichess_study_chapters(lichess, &request.account, &request.study_id).await
         }
     }
+}
+
+/// The movetext of a chapter's PGN: everything after its tag pairs.
+fn movetext(pgn: &str) -> &str {
+    let mut rest = pgn.trim_start();
+    while rest.starts_with('[') {
+        rest = rest
+            .split_once('\n')
+            .map_or("", |(_, tail)| tail)
+            .trim_start();
+    }
+    rest.trim_end()
+}
+
+/// Lichess already holds the local `chapter`: the same moves, and every tag the upload sets
+/// (the chapter identity in `[Site]` stays Lichess's).
+fn uploaded(remote: &Chapter, chapter: &Chapter) -> bool {
+    movetext(&remote.pgn) == movetext(&chapter.pgn)
+        && chapter
+            .headers
+            .iter()
+            .filter(|(key, _)| key != "Site")
+            .all(|(key, value)| map_get(&remote.headers, key) == Some(value.as_str()))
 }
 
 /// `[Site]` of a cloud chapter: `…/study/{study}/{chapter}`, optionally followed by `?` or `#`.

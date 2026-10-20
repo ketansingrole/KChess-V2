@@ -464,6 +464,7 @@ impl OnlineSession {
         }
         if kind == "gameStart" {
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
+            self.challenge_became_game(&game_id);
             let correspondence = event["game"]["speed"].as_str() == Some("correspondence");
             let (live, live_correspondence) = {
                 let st = self.st();
@@ -501,6 +502,14 @@ impl OnlineSession {
                 "challenge:received",
                 serde_json::to_value(info).unwrap_or(Value::Null),
             );
+        }
+    }
+
+    /// An accepted challenge becomes the game of the same id; Lichess sends no other event for
+    /// it, so it leaves the inbox here.
+    pub(super) fn challenge_became_game(&self, game_id: &str) {
+        if !game_id.is_empty() {
+            self.inner.challenges.remove(game_id);
         }
     }
 

@@ -1136,8 +1136,10 @@ impl Lichess {
                     until = Some(oldest);
                 }
                 // A 401-downgraded sync yields a successful partial (public games only):
-                // do not advance the cursor, so the gap is backfilled after reconnect.
-                if !downgraded {
+                // do not advance the cursor, so the gap is backfilled after reconnect. A tracked
+                // player has no login, so public games are the whole sync: holding its cursor
+                // back re-downloaded its full history every time.
+                if !downgraded || !row.connected {
                     self.store
                         .save_games_cursor(name, started_at, &current)
                         .await?;

@@ -738,7 +738,9 @@ impl PositionLookups {
             query.append_pair("fen", fen);
             if kind != Kind::Tablebase {
                 query.append_pair("moves", "12");
-                query.append_pair("recentGames", "0");
+                // Once per URL: Lichess reads the first of repeated parameters.
+                let recent = if kind == Kind::Player { "8" } else { "0" };
+                query.append_pair("recentGames", recent);
             }
             match kind {
                 Kind::Opening => {
@@ -773,7 +775,6 @@ impl PositionLookups {
                     if let Some(since) = &options.since {
                         query.append_pair("since", since);
                     }
-                    query.append_pair("recentGames", "8");
                 }
                 Kind::Tablebase => {}
             }

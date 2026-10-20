@@ -36,7 +36,8 @@ impl Default for LineOptions {
 }
 
 const OVERSIZED: &str = "Lichess sent an oversized stream record.";
-const STALLED: &str = "Lichess stream stalled. Reconnecting…";
+/// The error of a stream silent past its idle deadline.
+pub(crate) const STALLED: &str = "Lichess stream stalled. Reconnecting…";
 
 /// Read `body` to its end, calling `on_line` for every non-empty trimmed line as it arrives.
 ///

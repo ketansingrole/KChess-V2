@@ -8,7 +8,10 @@ mod fixtures;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, Seen, lichess_service, serve};
+use fixtures::{
+    MemoryStore, MemoryTokens, Recording, Reply, Seen, lichess_service, lichess_service_with_idle,
+    serve,
+};
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
     BroadcastUpdate, GameSetup, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState,
@@ -227,6 +230,43 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(sink.frames.lock().unwrap().len(), count);
+}
+
+#[tokio::test]
+async fn a_silent_tv_feed_reconnects_instead_of_ending_the_watch() {
+    // The TV feed sends no keep-alives, so a long think once ended TV with a stall error.
+    let feeds = Arc::new(Mutex::new(Vec::new()));
+    let senders = Arc::clone(&feeds);
+    let fixture = serve(move |seen: &Seen| {
+        if seen.path() != "/api/tv/rapid/feed" {
+            return Reply::Hang;
+        }
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        tx.send(tv_frame("abcdefghijkl", INITIAL)).unwrap();
+        senders.lock().unwrap().push(tx);
+        Reply::Stream(rx)
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let lichess = lichess_service_with_idle(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+        Duration::from_millis(100),
+    );
+    let spectator = Spectator::new(lichess, Arc::clone(&sink) as Arc<dyn WatchSink>);
+    spectator.watch(WatchTarget::Channel("rapid".into()));
+    wait_until("a reconnect", || feeds.lock().unwrap().len() >= 2).await;
+    assert!(
+        sink.states
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|state| state.phase != "error")
+    );
+    spectator.stop();
 }
 
 #[tokio::test]
@@ -527,4 +567,14 @@ async fn a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived() {
     assert_eq!(updates[1].games[0].white.name, "Gamma");
     assert_eq!(updates[1].games[0].black.name, "Delta");
     spectator.stop();
+}
+
+#[test]
+fn every_listed_tv_channel_is_a_valid_watch_target() {
+    // Atomic, Horde and Racing Kings were listed but refused by the watch validator.
+    let listed: Vec<&str> = kchess_core::lichess::watch::TV_CHANNELS
+        .iter()
+        .map(|(key, _)| *key)
+        .collect();
+    assert_eq!(listed, kchess_domain::misc::TV_CHANNEL_KEYS);
 }

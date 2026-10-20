@@ -173,6 +173,34 @@ async fn an_account_without_a_login_syncs_anonymously() {
     assert_eq!(alice[0].header("authorization"), Some("Bearer lip_alice"));
 }
 
+#[tokio::test]
+async fn a_tracked_player_moves_its_cursor_while_a_connected_account_without_its_login_does_not() {
+    // Every sync of a player without a login counted as downgraded, so its cursor never moved
+    // and each sync downloaded its whole history again.
+    let fixture = serve(|_| {
+        Reply::Text(
+            200,
+            "application/x-ndjson",
+            ndjson(&page_of("Game", 1, 5_000_000)),
+        )
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Bob", true), ("Carol", false)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[]),
+    );
+
+    lichess.sync_games(None).await.unwrap();
+
+    let cursors = store.cursors.lock().unwrap();
+    assert!(cursors.contains_key("carol"));
+    assert!(!cursors.contains_key("bob"));
+}
+
 /// A sync whose download is interrupted by `interrupt`, run from inside the fixture (so the
 /// interruption lands while the page is in flight).
 async fn interrupted_sync(interrupt: fn(&Lichess)) -> (Arc<MemoryStore>, Result<(), String>) {

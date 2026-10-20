@@ -74,9 +74,10 @@ const PLAYER: &[Field] = &[
     opt("aiLevel", Check::Num),
 ];
 
+/// Lichess sends `"id": null` for an AI opponent.
 const GAME_OPPONENT: &[Field] = &[
     opt("username", Check::Str(usize::MAX)),
-    opt("id", Check::Str(usize::MAX)),
+    opt("id", Check::Nullable(&Check::Str(usize::MAX))),
 ];
 
 const GAME: &[Field] = &[
@@ -314,6 +315,20 @@ mod tests {
         assert_eq!(validate(&json!({ "type": "futureEvent" })).unwrap(), None);
         assert_eq!(validate(&json!(["gameState"])).unwrap(), None);
         assert_eq!(validate(&json!({ "moves": "e2e4" })).unwrap(), None);
+    }
+
+    #[test]
+    fn a_game_against_the_lichess_ai_starts_with_a_null_opponent_id() {
+        // Rejecting it as unreadable kept games against the AI from opening.
+        let start = json!({
+            "type": "gameStart",
+            "game": {
+                "gameId": "Abcdefgh",
+                "color": "white",
+                "opponent": { "id": null, "username": "A.I. level 3", "ai": 3 },
+            },
+        });
+        assert!(validate(&start).unwrap().is_some());
     }
 
     #[test]

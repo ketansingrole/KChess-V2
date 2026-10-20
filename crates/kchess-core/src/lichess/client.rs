@@ -157,6 +157,8 @@ pub struct LichessClient {
     base: String,
     http: reqwest::Client,
     policy: Arc<Policy>,
+    /// How long an NDJSON stream may stay silent before it counts as stalled.
+    stream_idle: std::time::Duration,
 }
 
 impl LichessClient {
@@ -170,7 +172,15 @@ impl LichessClient {
             base: base.trim_end_matches('/').to_string(),
             http,
             policy,
+            stream_idle: super::stream::IDLE,
         }
+    }
+
+    /// The same client with another stream idle deadline (the tests' stalled feeds).
+    #[must_use]
+    pub fn with_stream_idle(mut self, idle: std::time::Duration) -> LichessClient {
+        self.stream_idle = idle;
+        self
     }
 
     pub fn policy(&self) -> &Arc<Policy> {
@@ -344,13 +354,11 @@ impl LichessClient {
             )));
         }
         let body = self.policy.metered(response.bytes_stream());
-        let outcome = read_lines(
-            Box::pin(body),
-            Some(cancel),
-            &LineOptions::default(),
-            on_line,
-        )
-        .await;
+        let options = LineOptions {
+            idle: self.stream_idle,
+            ..LineOptions::default()
+        };
+        let outcome = read_lines(Box::pin(body), Some(cancel), &options, on_line).await;
         // The export lane (if any) is freed once the body is over, whatever its outcome.
         drop(hold);
         outcome

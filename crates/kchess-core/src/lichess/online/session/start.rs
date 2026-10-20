@@ -29,7 +29,6 @@ impl OnlineSession {
                 ));
             }
         }
-        self.cancel_inner();
         let target = options.target.as_deref().unwrap_or("").trim().to_string();
         let correspondence = options.days.is_some();
         let perf = perf_for(options.minutes, options.increment);
@@ -62,9 +61,10 @@ impl OnlineSession {
             None
         };
         if let Some(message) = rejection {
-            self.schedule_lobby();
+            // A refused request leaves the seek or challenge already running alone.
             return Err(core(message));
         }
+        self.cancel_inner();
         let handle = {
             let mut st = self.st();
             let handle = self.next_handle(&mut st);

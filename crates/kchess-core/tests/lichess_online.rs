@@ -332,6 +332,41 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
 }
 
 #[tokio::test]
+async fn a_refused_start_leaves_the_pending_challenge_running() {
+    // Validation ran after the running challenge was cancelled, so a bad request ended it.
+    let (gate_tx, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(
+                200,
+                json!({ "id": "AbCd1234", "url": "https://lichess.org/AbCd1234" }).to_string(),
+            )),
+        ),
+        ("POST", _) => Reply::Json(200, json!({ "ok": true }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (_host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &_host, &store, &tokens);
+    let starting = online.clone();
+    let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
+    wait_requests(&fixture, "/api/challenge/Bob", 1).await;
+    let mut bullet = seek_options(Some("Carol"));
+    bullet.minutes = 1.0;
+    let refused = online.start(&bullet).await;
+    assert!(refused.is_err_and(|cause| !cause.is_aborted()));
+    let _ = gate_tx.send(true);
+    assert!(
+        result.await.unwrap().is_ok(),
+        "the first challenge was not aborted"
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(fixture.to("/api/challenge/AbCd1234/cancel").is_empty());
+    online.close();
+}
+
+#[tokio::test]
 async fn prevents_streams_and_challenges_when_cancelled_before_credentials_arrive() {
     let fixture = serve(|_| Reply::Json(200, json!({ "ok": true }).to_string())).await;
     let (host, store, tokens) = rig(&[("Alice", true)]);
@@ -913,6 +948,34 @@ async fn keeps_the_idle_event_stream_open_for_challenges_and_closes_it_on_reques
 }
 
 #[tokio::test]
+async fn reopens_the_idle_event_stream_after_it_ended_on_its_own() {
+    // An ended stream stayed registered as running, so challenges stopped for the session.
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => Reply::Hang,
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    tokens.queue(
+        "Alice",
+        vec![Script::Now(None), Script::Now(Some("Alice-token".into()))],
+    );
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    until("auth-required", || {
+        emitted(&host, "online:lobby")
+            .iter()
+            .any(|state| state["phase"] == "auth-required")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    online.stay_connected("Alice");
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+    assert_eq!(tokens.calls_for("Alice"), 2);
+    online.close();
+}
+
+#[tokio::test]
 async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accepted_games() {
     let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
         Arc::new(Mutex::new(None));
@@ -951,6 +1014,7 @@ async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accept
     })
     .await;
     assert_eq!(emitted(&host, "challenge:received")[0]["id"], "Chal1234");
+    assert_eq!(online.challenges().list().len(), 1);
     sender
         .send(format!(
             "{}\n",
@@ -959,6 +1023,8 @@ async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accept
         .unwrap();
     wait_requests(&fixture, "/api/board/game/stream/Chal1234", 1).await;
     assert!(online.playing());
+    // Accepted elsewhere, the challenge became this game: Lichess sends nothing else for it.
+    assert!(online.challenges().list().is_empty());
     online.close();
 }
 

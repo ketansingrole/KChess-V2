@@ -647,6 +647,24 @@ pub fn lichess_service(
     store: Arc<dyn LichessStore>,
     tokens: Arc<dyn TokenSource>,
 ) -> Arc<kchess_core::lichess::accounts::Lichess> {
+    lichess_service_with_idle(
+        base,
+        host,
+        store,
+        tokens,
+        kchess_core::lichess::stream::IDLE,
+    )
+}
+
+/// `lichess_service` whose streams count as stalled after `idle` of silence.
+#[allow(dead_code)]
+pub fn lichess_service_with_idle(
+    base: &str,
+    host: &Arc<Recording>,
+    store: Arc<dyn LichessStore>,
+    tokens: Arc<dyn TokenSource>,
+    idle: Duration,
+) -> Arc<kchess_core::lichess::accounts::Lichess> {
     use kchess_core::lichess::client::LichessClient;
     use kchess_core::lichess::policy::Policy;
     let policy = Policy::with_timeout(
@@ -655,7 +673,7 @@ pub fn lichess_service(
         tokio_util::sync::CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, policy, http_client());
+    let client = LichessClient::with_base(base, policy, http_client()).with_stream_idle(idle);
     Arc::new(kchess_core::lichess::accounts::Lichess::new(
         client,
         capabilities_for(host),

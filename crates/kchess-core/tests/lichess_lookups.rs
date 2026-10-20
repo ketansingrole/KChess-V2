@@ -563,6 +563,9 @@ async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_fi
     let url = &fixture.requests()[0];
     assert_eq!(url.query("player").as_deref(), Some("Alice"));
     assert_eq!(url.query("color").as_deref(), Some("black"));
+    // `recentGames=0&recentGames=8` made Lichess read 0: no recent games for the player.
+    assert_eq!(url.target.matches("recentGames=").count(), 1);
+    assert_eq!(url.query("recentGames").as_deref(), Some("8"));
     lookups
         .service
         .lookup(

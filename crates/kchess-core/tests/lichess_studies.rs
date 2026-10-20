@@ -139,6 +139,40 @@ async fn does_not_retry_an_ambiguous_mutation() {
 }
 
 #[tokio::test]
+async fn resumes_an_upload_that_stopped_partway_without_rewriting_what_it_wrote() {
+    // A failure after the first chapter's write left the cloud matching neither the baseline
+    // nor the edit, and every later upload was refused.
+    let second = "[Site \"https://lichess.org/study/Study001/Chapter2\"]\n[Event \"Two\"]\n[Result \"*\"]\n\n1. d4 *";
+    let baseline = format!("{BASELINE}\n\n{second}");
+    let edited = format!(
+        "{}\n\n{}",
+        BASELINE.replace("{Keep}", "{Edited notes}"),
+        second.replace("1. d4", "1. c4")
+    );
+    // Lichess holds the first edit (with a tag of its own) and still the second baseline.
+    let written = BASELINE
+        .replace("{Keep}", "{Edited notes}")
+        .replace("[Result", "[Annotator \"Alice\"]\n[Result");
+    let cloud = Arc::new(Mutex::new(format!("{written}\n\n{second}")));
+    let fixture = study_fixture(cloud, 200).await;
+    let lichess = service(&fixture.base);
+    let mut retry = request(&edited);
+    retry.baseline = baseline;
+    sync_lichess_study(&lichess, &retry).await.unwrap();
+    let targets: Vec<String> = posts(&fixture)
+        .iter()
+        .map(|seen| seen.path().to_string())
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "/api/study/Study001/Chapter2/moves",
+            "/api/study/Study001/Chapter2/tags"
+        ]
+    );
+}
+
+#[tokio::test]
 async fn appends_new_chapters_to_the_linked_cloud_study_without_duplicating_the_existing_chapters()
 {
     let cloud = Arc::new(Mutex::new(BASELINE.to_string()));

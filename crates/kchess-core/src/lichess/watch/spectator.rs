@@ -16,7 +16,8 @@ use super::{
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
-use crate::lichess::client::parse_json;
+use crate::lichess::client::{Failure, parse_json};
+use crate::lichess::stream::STALLED;
 
 /// What a viewer is told when a feed's task panicked (the panic hook logged it).
 const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
@@ -251,36 +252,47 @@ impl Inner {
     ) -> CoreResult<()> {
         let path = format!("/api/tv/{}/feed", path_segment(channel));
         let live = Arc::new(Mutex::new(TvLive::default()));
-        let live_for_lines = Arc::clone(&live);
-        let token_for_lines = token.clone();
-        let inner = Arc::clone(self);
-        let channel_owned = channel.to_string();
-        self.lichess
-            .client()
-            .ndjson(
-                reqwest::Method::GET,
-                &path,
-                &[],
-                None,
-                None,
-                token,
-                move |line| {
-                    if token_for_lines.is_cancelled() || !inner.is_current(session) {
-                        return Ok(());
-                    }
-                    // A malformed record ends the feed as it arrives.
-                    inner.handle_tv_line(
-                        &channel_owned,
-                        session,
-                        &token_for_lines,
-                        &live_for_lines,
-                        line,
-                    )?;
-                    Ok(())
-                },
-            )
-            .await?;
-        Ok(())
+        loop {
+            let live_for_lines = Arc::clone(&live);
+            let token_for_lines = token.clone();
+            let inner = Arc::clone(self);
+            let channel_owned = channel.to_string();
+            let followed = self
+                .lichess
+                .client()
+                .ndjson(
+                    reqwest::Method::GET,
+                    &path,
+                    &[],
+                    None,
+                    None,
+                    token,
+                    move |line| {
+                        if token_for_lines.is_cancelled() || !inner.is_current(session) {
+                            return Ok(());
+                        }
+                        // A malformed record ends the feed as it arrives.
+                        inner.handle_tv_line(
+                            &channel_owned,
+                            session,
+                            &token_for_lines,
+                            &live_for_lines,
+                            line,
+                        )?;
+                        Ok(())
+                    },
+                )
+                .await;
+            match followed {
+                // The TV feed has no keep-alive: it is silent while a player thinks. A new
+                // request answers with the featured game at once.
+                Err(Failure::Core(cause))
+                    if cause.message == STALLED
+                        && !token.is_cancelled()
+                        && self.is_current(session) => {}
+                other => return other.map_err(Into::into),
+            }
+        }
     }
 
     /// One line of a TV feed: a featured game (`featured`) or a move (`fen`).

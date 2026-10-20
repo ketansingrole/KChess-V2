@@ -1,4 +1,4 @@
-//! The online session's idle event stream (moved from `session.rs` without changes).
+//! The online session's idle event stream.
 
 use std::sync::Arc;
 
@@ -53,29 +53,36 @@ impl OnlineSession {
         };
         let this = self.clone();
         tokio::spawn(async move {
-            let token = match this.token(&account).await {
-                Ok(token) => token,
-                Err(cause) => {
-                    this.log(
-                        Level::Debug,
-                        format!("Stored login is unavailable: {account} {}", cause.message()),
-                    );
-                    None
-                }
-            };
-            if cancel.is_cancelled() {
-                return;
-            }
-            let Some(token) = token else {
-                this.lobby_state(
-                    &account,
-                    "auth-required",
-                    Some("Its Lichess login is unavailable. Reconnect it in Settings."),
-                );
-                return;
-            };
-            this.run_lobby(account, token, cancel).await;
+            this.lobby_task(account, cancel.clone()).await;
+            // A stream that ended on its own (no login, refused, gave up) no longer counts as
+            // running, so the next `stay_connected` opens a new one.
+            cancel.cancel();
         });
+    }
+
+    async fn lobby_task(&self, account: String, cancel: CancellationToken) {
+        let token = match self.token(&account).await {
+            Ok(token) => token,
+            Err(cause) => {
+                self.log(
+                    Level::Debug,
+                    format!("Stored login is unavailable: {account} {}", cause.message()),
+                );
+                None
+            }
+        };
+        if cancel.is_cancelled() {
+            return;
+        }
+        let Some(token) = token else {
+            self.lobby_state(
+                &account,
+                "auth-required",
+                Some("Its Lichess login is unavailable. Reconnect it in Settings."),
+            );
+            return;
+        };
+        self.run_lobby(account, token, cancel).await;
     }
 
     fn lobby_state(&self, account: &str, phase: &str, message: Option<&str>) {
@@ -108,6 +115,9 @@ impl OnlineSession {
                 return;
             }
             let kind = event["type"].as_str().unwrap_or("").to_string();
+            if kind == "gameStart" {
+                this.challenge_became_game(event["game"]["gameId"].as_str().unwrap_or(""));
+            }
             if is_challenge_event(&kind) {
                 this.on_challenge(&for_account, &event);
             } else if kind == "gameStart"
