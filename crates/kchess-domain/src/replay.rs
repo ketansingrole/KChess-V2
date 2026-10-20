@@ -120,11 +120,21 @@ pub fn replay_positions<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<ReplayedPo
 
 /// Side to move and game end of each position `review.replay` returns, without their FENs.
 pub fn replay_turns<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<(bool, Option<&'static str>)> {
+    replay_turns_with_end(fen, moves, true)
+}
+
+/// The same walk, skipping the end-of-game check when the caller has scores for every position
+/// and only needs whose turn it is. The check generates every legal move at every ply.
+pub fn replay_turns_with_end<S: AsRef<str>>(
+    fen: &str,
+    moves: &[S],
+    with_end: bool,
+) -> Vec<(bool, Option<&'static str>)> {
     let Some(mut pos) = rules::standard_from_fen(fen) else {
         return Vec::new();
     };
     let state = |pos: &VariantPosition| {
-        let described = end_of(pos);
+        let described = if with_end { end_of(pos) } else { None };
         (pos.turn().is_white(), described)
     };
     let mut turns = Vec::with_capacity(moves.len() + 1);
@@ -138,6 +148,16 @@ pub fn replay_turns<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<(bool, Option<
         turns.push(state(&pos));
     }
     turns
+}
+
+/// The FEN after `count` legal moves from `fen` (standard rules), or None when one is illegal.
+pub fn fen_after<S: AsRef<str>>(fen: &str, moves: &[S], count: usize) -> Option<String> {
+    let mut pos = rules::standard_from_fen(fen)?;
+    for uci in moves.iter().take(count) {
+        let m = rules::parse_uci(uci.as_ref()).and_then(|u| rules::legal_move(&pos, u))?;
+        pos.play_unchecked(m);
+    }
+    Some(rules::make_fen(&pos))
 }
 
 /// How many positions `review.replay` returns.

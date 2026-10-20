@@ -288,11 +288,12 @@ fn mean(values: &[f64]) -> f64 {
 
 fn standard_deviation(values: &[f64]) -> f64 {
     let average = mean(values);
-    let squares: Vec<f64> = values
+    // Same order and arithmetic as collecting the squares into a Vec and taking their mean,
+    // without the allocation: this runs once per accuracy window of a review.
+    let squares = values
         .iter()
-        .map(|v| (v - average) * (v - average))
-        .collect();
-    mean(&squares).sqrt()
+        .fold(0.0, |sum, v| sum + (v - average) * (v - average));
+    (squares / values.len() as f64).sqrt()
 }
 
 fn harmonic_mean(values: &[f64]) -> f64 {
@@ -398,8 +399,12 @@ struct Analysis {
 
 /// `analyseReview`, or None when the input needs the TypeScript rules (see `Review::read`).
 fn analyse(review: &Review) -> Option<Analysis> {
-    // Only each position's side to move and end matter here, not its FEN.
-    let positions = replay::replay_turns(review.fen, &review.moves);
+    // Only each position's side to move and end matter here, not its FEN. The end check is
+    // skipped when every position already has a score: `eval_at` then never reads it, and the
+    // check would generate every legal move at every ply.
+    let needs_end =
+        review.evals.len() < review.moves.len() + 1 || review.evals.iter().any(Option::is_none);
+    let positions = replay::replay_turns_with_end(review.fen, &review.moves, needs_end);
     let eval_at = |i: usize| -> Option<Score> {
         if let Some(Some(score)) = review.evals.get(i) {
             return Some(*score);
@@ -475,6 +480,19 @@ fn analyse(review: &Review) -> Option<Analysis> {
         moves.push(Value::Object(entry));
     }
     let computed = game_accuracy(&colors, &accuracies, count, &percent);
+    // One pass counts each label for both sides; the previous shape scanned every move once per
+    // label and side (six passes over the game).
+    let mut label_counts = [[0usize; 3]; 2];
+    for i in 0..count {
+        let Some(label) = judgments[i] else { continue };
+        let lane = usize::from(!colors[i]);
+        match label {
+            "inaccuracy" => label_counts[lane][0] += 1,
+            "mistake" => label_counts[lane][1] += 1,
+            "blunder" => label_counts[lane][2] += 1,
+            _ => {}
+        }
+    }
     let side = |white: bool| -> Value {
         let index = usize::from(!white);
         let lichess = if review.lichess {
@@ -489,11 +507,8 @@ fn analyse(review: &Review) -> Option<Analysis> {
         if !losses[index].is_empty() {
             side.insert("acpl".into(), json!(js_round(mean(&losses[index]))));
         }
-        for label in ["inaccuracy", "mistake", "blunder"] {
-            let n = (0..count)
-                .filter(|&i| colors[i] == white && judgments[i] == Some(label))
-                .count();
-            side.insert(label.into(), n.into());
+        for (slot, label) in ["inaccuracy", "mistake", "blunder"].into_iter().enumerate() {
+            side.insert(label.into(), label_counts[index][slot].into());
         }
         Value::Object(side)
     };

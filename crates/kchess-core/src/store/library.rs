@@ -608,10 +608,12 @@ mod tests {
         let db = rusqlite::Connection::open_in_memory().unwrap();
         crate::store::migrations::migrate(&db).unwrap();
         let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
         let ctx = crate::store::StoreContext {
             db: &db,
             host: &Quiet,
             config: &config,
+            cache: &cache,
         };
         let now = 1_700_000_000_000.0;
         let entry = |system: &str, id: &str, account: &str, name: &str, until: f64| json!({ "system": system, "id": id, "account": account, "name": name, "until": until });

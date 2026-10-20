@@ -73,16 +73,35 @@ impl Record {
     }
 }
 
-/// The entry for `key`, created in first-seen order (a JavaScript `Map`).
-fn slot<'a, T>(list: &'a mut Vec<(String, T)>, key: &str, make: impl FnOnce() -> T) -> &'a mut T {
-    let index = match list.iter().position(|(k, _)| k == key) {
-        Some(index) => index,
-        None => {
-            list.push((key.to_string(), make()));
-            list.len() - 1
+/// First-seen ordered entries with a hash index: the JavaScript `Map` the TypeScript code used.
+/// A linear scan here made grouping quadratic in the number of distinct speeds, openings or
+/// endings (20k distinct opening names took hundreds of milliseconds).
+struct Slots<T> {
+    items: Vec<(String, T)>,
+    index: std::collections::HashMap<String, usize>,
+}
+
+impl<T> Slots<T> {
+    fn new() -> Self {
+        Slots {
+            items: Vec::new(),
+            index: std::collections::HashMap::new(),
         }
-    };
-    &mut list[index].1
+    }
+
+    fn slot(&mut self, key: &str, make: impl FnOnce() -> T) -> &mut T {
+        if let Some(&index) = self.index.get(key) {
+            return &mut self.items[index].1;
+        }
+        let index = self.items.len();
+        self.items.push((key.to_string(), make()));
+        self.index.insert(key.to_string(), index);
+        &mut self.items[index].1
+    }
+
+    fn into_items(self) -> Vec<(String, T)> {
+        self.items
+    }
 }
 
 /// `SQL` value of a query argument: text, a number, or null.
@@ -127,14 +146,23 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
     let sql = format!(
         "SELECT id, color, speed, status, opening, opponentRating, playerRating, createdAt,
           (CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END) AS result,
-          CAST(strftime('%w', createdAt / 1000, 'unixepoch', 'localtime') AS INTEGER) AS weekday,
-          CAST(strftime('%H', createdAt / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+          strftime('%w %H', createdAt / 1000, 'unixepoch', 'localtime') AS dayhour,
           CASE WHEN moves = '' THEN 0 ELSE LENGTH(moves) - LENGTH(REPLACE(moves, ' ', '')) + 1 END AS plies
          FROM games WHERE {where_sql} ORDER BY createdAt DESC LIMIT {ROW_LIMIT}"
     );
     let mut statement = db.prepare(&sql).map_err(db_err)?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
+            let dayhour: Option<String> = row.get(9)?;
+            let (weekday, hour) = dayhour
+                .as_deref()
+                .and_then(|text| text.split_once(' '))
+                .map_or((-1, -1), |(day, hour)| {
+                    (
+                        day.parse::<i64>().unwrap_or(-1),
+                        hour.parse::<i64>().unwrap_or(-1),
+                    )
+                });
             Ok(Row {
                 color: row.get(1)?,
                 speed: row.get(2)?,
@@ -142,9 +170,9 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
                 opponent_rating: row.get(5)?,
                 player_rating: row.get(6)?,
                 result: row.get(8)?,
-                weekday: row.get(9)?,
-                hour: row.get(10)?,
-                plies: row.get(11)?,
+                weekday,
+                hour,
+                plies: row.get(10)?,
                 status: row.get(3)?,
             })
         })
@@ -156,13 +184,13 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
 
     let mut record = Record::default();
     let mut by_color = [Record::default(), Record::default()];
-    let mut speeds: Vec<(String, Record)> = Vec::new();
-    let mut openings: Vec<(String, (Record, i64))> = Vec::new();
+    let mut speeds: Slots<Record> = Slots::new();
+    let mut openings: Slots<(Record, i64)> = Slots::new();
     let mut weekdays: Vec<Record> = (0..7).map(|_| Record::default()).collect();
     let mut hours: Vec<Record> = (0..24).map(|_| Record::default()).collect();
     let mut opponents: Vec<Record> = RATING_BANDS.iter().map(|_| Record::default()).collect();
     let mut lengths: Vec<Record> = LENGTH_BANDS.iter().map(|_| Record::default()).collect();
-    let mut endings: Vec<(String, Record)> = Vec::new();
+    let mut endings: Slots<Record> = Slots::new();
     let mut longest_win = 0;
     let mut longest_loss = 0;
     let mut run = 0;
@@ -180,11 +208,11 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
             }
         };
         by_color[side].add(&row.result);
-        slot(&mut speeds, &row.speed, Record::default).add(&row.result);
+        speeds.slot(&row.speed, Record::default).add(&row.result);
         if let Some(opening) = row.opening.as_deref().filter(|o| !o.is_empty()) {
             // Group variations under their opening family: "Sicilian Defense: Najdorf" → "Sicilian Defense".
-            let family = js::trim(opening.split(':').next().unwrap_or_default()).to_string();
-            let entry = slot(&mut openings, &family, || (Record::default(), 0));
+            let family = js::trim(opening.split(':').next().unwrap_or_default());
+            let entry = openings.slot(family, || (Record::default(), 0));
             entry.0.add(&row.result);
             if row.color == "white" {
                 entry.1 += 1;
@@ -214,7 +242,7 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
         {
             lengths[band].add(&row.result);
         }
-        slot(&mut endings, &row.status, Record::default).add(&row.result);
+        endings.slot(&row.status, Record::default).add(&row.result);
         if row.result == run_kind {
             run += 1;
         } else {
@@ -234,15 +262,16 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
         _ => 0,
     };
 
-    let mut by_speed: Vec<(String, Record)> = speeds;
+    let mut by_speed = speeds.into_items();
     by_speed.sort_by(|a, b| b.1.total.cmp(&a.1.total));
     let mut by_opening: Vec<(String, (Record, i64))> = openings
+        .into_items()
         .into_iter()
         .filter(|(_, (record, _))| record.total >= 2)
         .collect();
     by_opening.sort_by(|a, b| (b.1).0.total.cmp(&(a.1).0.total));
     by_opening.truncate(25);
-    let mut by_ending = endings;
+    let mut by_ending = endings.into_items();
     by_ending.sort_by(|a, b| b.1.total.cmp(&a.1.total));
 
     let mut report = Map::new();

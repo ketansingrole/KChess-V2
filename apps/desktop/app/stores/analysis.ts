@@ -617,10 +617,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const stored = review.value
     if (!analysed || !stored) return marks
     let parent = root.value
+    let path = ''
     for (let i = 0; i < reviewedPlies.value; i++) {
       const child = parent.children[0]
       const move = analysed.moves[i]
       if (!child || !move) break
+      path = path ? `${path} ${child.uci}` : child.uci
       const mark: ReviewMark = { index: i, color: move.color, judgment: move.judgment }
       const before = stored.evals[i]
       if (move.judgment && before?.best && before.best !== child.uci) {
@@ -628,7 +630,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
         const san = pos && playUci(pos, before.best)
         if (san) mark.best = { uci: before.best, san, pv: before.pv ?? [before.best] }
       }
-      marks.set(pathOf(mainline.value.slice(0, i + 1)), mark)
+      marks.set(path, mark)
       parent = child
     }
     return marks

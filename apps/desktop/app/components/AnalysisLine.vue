@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import {
-  commentText,
-  moveGlyph,
-  moveNumber,
-  pathOf,
-  movesOf,
-  type TreeNode,
-} from '@kchess/rules/analysisTree'
+import { commentText, moveGlyph, moveNumber, type TreeNode } from '@kchess/rules/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
 import type { Judgment } from '@kchess/contracts/types'
 
@@ -49,7 +42,9 @@ const items = computed<Item[]>(() => {
   let node: TreeNode | undefined = props.first ?? props.parent.children[0]
   let numbered = true
   while (node) {
-    const path = pathOf([...movesOf(parentPath), node.uci])
+    // A path is its parent's path plus this move's UCI; joining and re-splitting it through the
+    // rules for every row made this O(n²) across a line on each tree change.
+    const path = parentPath ? `${parentPath} ${node.uci}` : node.uci
     list.push({
       kind: 'move',
       node,

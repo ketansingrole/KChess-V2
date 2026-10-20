@@ -691,7 +691,21 @@ export const useKChessStore = defineStore('kchess', () => {
   function applyCurrentSettings(): void {
     if (settings.value) applySettings(settings.value)
   }
-  watch([settings, customThemes], applyCurrentSettings, { deep: true, immediate: true })
+  // Only appearance and sound settings need the DOM/audio work below; watching the whole
+  // settings object also re-applied every theme CSS variable for unrelated changes (engine
+  // path, notifications, review options) on every keystroke and slider step.
+  watch(
+    () => [
+      settings.value?.appearance,
+      settings.value?.lightTheme,
+      settings.value?.darkTheme,
+      settings.value?.soundEnabled,
+      settings.value?.soundVolume,
+      customThemes.value,
+    ],
+    applyCurrentSettings,
+    { deep: true, immediate: true },
+  )
 
   /** Flip a yes/no setting from a quick toggle; it saves itself like the Settings page. */
   function toggleSetting(key: 'zenMode' | 'blindfold' | 'cloudEval' | 'showOpeningName'): void {

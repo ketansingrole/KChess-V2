@@ -33,6 +33,11 @@ describe('variants', () => {
         ?.san,
     ).toBe('O-O')
     expect(replaySetup(STANDARD_SETUP, ['e2e4', 'e2e4'])?.played).toHaveLength(1)
+    // A list edited in place, keeping its length and its last two moves, is replayed again.
+    const edited = ['e2e4', 'e7e5', 'g1f3', 'b8c6']
+    expect(setupSanHistory(STANDARD_SETUP, edited)[0]).toBe('e4')
+    edited[0] = 'd2d4'
+    expect(setupSanHistory(STANDARD_SETUP, edited)[0]).toBe('d4')
   })
 
   it('knows each variant’s start and rules', () => {

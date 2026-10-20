@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::watch;
+use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::client::{Failure, LichessClient, TokenSource, authorize};
@@ -312,6 +312,9 @@ pub struct Lichess {
     login_epoch: AtomicU64,
     account_epochs: Mutex<HashMap<String, u64>>,
     profiles: Mutex<HashMap<String, (Instant, Value)>>,
+    /// Network reads in flight, keyed by `epoch:cache key`: concurrent callers for the same
+    /// profile share one request instead of sending one each.
+    pending: Mutex<HashMap<String, Arc<OnceCell<CoreResult<Value>>>>>,
     last_following: Mutex<HashMap<String, Value>>,
     last_following_epoch: AtomicU64,
     syncs: Mutex<HashMap<String, (u64, SyncOutcome)>>,
@@ -345,6 +348,7 @@ impl Lichess {
             login_epoch: AtomicU64::new(0),
             account_epochs: Mutex::new(HashMap::new()),
             profiles: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
             last_following: Mutex::new(HashMap::new()),
             last_following_epoch: AtomicU64::new(0),
             syncs: Mutex::new(HashMap::new()),
@@ -570,6 +574,7 @@ impl Lichess {
 
     /// `cachedFetch`: memory first (five minutes), then the network. The result is persisted;
     /// when Lichess is unreachable the last persisted copy is served instead of an error.
+    /// Concurrent callers for the same key and account epoch share one network request.
     async fn cached_fetch<F, Fut>(&self, key: &str, account: &str, load: F) -> CoreResult<Value>
     where
         F: FnOnce() -> Fut,
@@ -579,6 +584,48 @@ impl Lichess {
             return Ok(value);
         }
         let epoch = self.account_epoch(account);
+        let pending_key = format!("{epoch}:{key}");
+        let cell = {
+            let mut pending = lock(&self.pending);
+            if pending.len() > 256 {
+                // A cell only the map still holds has no caller waiting on it: every caller was
+                // cancelled (or it is about to be removed), so the next caller can start over.
+                pending.retain(|_, cell| Arc::strong_count(cell) > 1);
+            }
+            Arc::clone(
+                pending
+                    .entry(pending_key.clone())
+                    .or_insert_with(|| Arc::new(OnceCell::new())),
+            )
+        };
+        let result = cell
+            .get_or_init(|| async { self.fetch_and_cache(key, account, epoch, load).await })
+            .await
+            .clone();
+        if cell.get().is_some() {
+            let mut pending = lock(&self.pending);
+            if pending
+                .get(&pending_key)
+                .is_some_and(|entry| Arc::ptr_eq(entry, &cell))
+            {
+                pending.remove(&pending_key);
+            }
+        }
+        result
+    }
+
+    /// The request (or stale-cache fallback) one shared `cached_fetch` cell runs.
+    async fn fetch_and_cache<F, Fut>(
+        &self,
+        key: &str,
+        account: &str,
+        epoch: u64,
+        load: F,
+    ) -> CoreResult<Value>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Value, Failure>>,
+    {
         match load().await {
             Ok(value) => {
                 let current = || self.account_epoch(account) == epoch;

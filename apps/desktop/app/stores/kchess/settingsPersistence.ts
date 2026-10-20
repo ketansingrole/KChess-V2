@@ -10,10 +10,15 @@ export function useSettingsPersistence(options: {
   refreshEngine: () => Promise<void>
 }) {
   const { settings, data, fail, refreshEngine } = options
+  // Both serializations are cached by their computed: a save reads the dirty flag several times,
+  // and each read used to stringify the whole settings object twice.
+  const settingsSignature = computed(() => (settings.value ? JSON.stringify(settings.value) : ''))
+  const storedSignature = computed(() =>
+    data.value?.settings ? JSON.stringify(data.value.settings) : '',
+  )
   const settingsDirty = computed(
     () =>
-      Boolean(settings.value && data.value) &&
-      JSON.stringify(settings.value) !== JSON.stringify(data.value?.settings),
+      Boolean(settings.value && data.value) && settingsSignature.value !== storedSignature.value,
   )
   // Settings save themselves. Saves run one at a time, and each is a no-op
   // when nothing changed, so explicit calls (engine actions) and the debounced
@@ -31,20 +36,20 @@ export function useSettingsPersistence(options: {
     if (!settings.value || !data.value || !settingsDirty.value) return
     // A reactive array cannot cross IPC (structured clone): send a plain copy of the list.
     const sent = { ...settings.value, engineLevels: [...settings.value.engineLevels] }
+    const sentSignature = JSON.stringify(sent)
     const previousEngine = data.value.settings.enginePath
     try {
       const saved = await window.kchess.saveSettings(sent)
       data.value = { ...data.value, settings: saved }
       // Keep edits made while the request was in flight; only adopt the stored
       // (normalised) copy when the form still matches what was sent.
-      if (settings.value && JSON.stringify(settings.value) === JSON.stringify(sent))
-        settings.value = { ...saved }
+      if (settings.value && settingsSignature.value === sentSignature) settings.value = { ...saved }
       if (saved.enginePath !== previousEngine) void refreshEngine()
     } catch (cause) {
       console.warn('[settings] saving settings failed:', cause)
       fail(cause)
       // Show what is actually stored rather than a change that did not stick.
-      if (data.value && JSON.stringify(settings.value) === JSON.stringify(sent))
+      if (data.value && settingsSignature.value === sentSignature)
         settings.value = { ...data.value.settings }
       if (strict) throw cause
     }

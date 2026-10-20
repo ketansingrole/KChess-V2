@@ -1083,24 +1083,40 @@ fn knight_fen(square: &str) -> String {
 
 /// Material balance of a FEN's placement in pawns: positive when White is ahead.
 fn material_balance(fen: &str) -> i64 {
+    let (white, black) = material_counts(fen);
+    balance_of(&white, &black)
+}
+
+fn balance_of(white: &[u32; 6], black: &[u32; 6]) -> i64 {
+    let value = [1, 3, 3, 5, 9, 0];
+    (0..6)
+        .map(|i| (i64::from(white[i]) - i64::from(black[i])) * value[i])
+        .sum()
+}
+
+/// One pass over the placement: pieces per side, indexed pawn, knight, bishop, rook, queen, king.
+fn material_counts(fen: &str) -> ([u32; 6], [u32; 6]) {
     let placement = fen.split(' ').next().unwrap_or("");
-    let mut balance = 0;
-    for c in placement.chars() {
-        let lower: String = c.to_lowercase().collect();
-        let value = match lower.as_str() {
-            "p" => 1,
-            "n" | "b" => 3,
-            "r" => 5,
-            "q" => 9,
+    let mut white = [0u32; 6];
+    let mut black = [0u32; 6];
+    for byte in placement.bytes() {
+        let (counts, piece) = if byte.is_ascii_uppercase() {
+            (&mut white, byte.to_ascii_lowercase())
+        } else {
+            (&mut black, byte)
+        };
+        let index = match piece {
+            b'p' => 0,
+            b'n' => 1,
+            b'b' => 2,
+            b'r' => 3,
+            b'q' => 4,
+            b'k' => 5,
             _ => continue,
         };
-        if c.to_uppercase().collect::<String>() == c.to_string() {
-            balance += value;
-        } else {
-            balance -= value;
-        }
+        counts[index] += 1;
     }
-    balance
+    (white, black)
 }
 
 /// Roles from most to least valuable, as Lichess lists a material difference.
@@ -1116,19 +1132,26 @@ const MATERIAL_ROLES: [(char, &str); 6] = [
 /// Lichess's material difference: the pieces each side has beyond the other's, most valuable
 /// first, and `score`, the balance in pawns (positive when White is ahead).
 fn material_diff(fen: &str) -> Value {
-    let placement = fen.split(' ').next().unwrap_or("");
-    let count = |piece: char| placement.chars().filter(|&c| c == piece).count();
+    let (white_counts, black_counts) = material_counts(fen);
     let mut white = Vec::new();
     let mut black = Vec::new();
     for (letter, role) in MATERIAL_ROLES {
-        let ours = count(letter.to_ascii_uppercase());
-        let theirs = count(letter);
+        let index = match letter {
+            'k' => 5,
+            'q' => 4,
+            'r' => 3,
+            'b' => 2,
+            'n' => 1,
+            _ => 0,
+        };
+        let ours = white_counts[index];
+        let theirs = black_counts[index];
         let (side, extra) = if ours > theirs {
             (&mut white, ours - theirs)
         } else {
             (&mut black, theirs - ours)
         };
-        side.extend(std::iter::repeat_n(role, extra));
+        side.extend(std::iter::repeat_n(role, extra as usize));
     }
-    json!({ "white": white, "black": black, "score": material_balance(fen) })
+    json!({ "white": white, "black": black, "score": balance_of(&white_counts, &black_counts) })
 }

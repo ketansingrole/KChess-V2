@@ -81,3 +81,6 @@ target/
 *.node
 crates/kchess-node/THIRD_PARTY_LICENSES.txt
 apps/desktop/app/assets/rules/
+
+# Benchmark output (perf/README.md)
+perf/results/

@@ -215,7 +215,38 @@ onMounted(() => {
 })
 
 watch(
-  () => ({ ...props, reducedMotion: reducedMotion.value }),
+  () => props.shapes,
+  (shapes) => {
+    // Engine arrows change several times a second; only the drawn shapes need replacing, not
+    // the whole Chessground configuration (which re-reads the FEN, dests and premove state).
+    // They are auto shapes: `setShapes` would replace the player's own right-click drawings.
+    ground?.setAutoShapes(shapes ?? [])
+  },
+)
+
+watch(
+  () => [
+    props.fen,
+    props.orientation,
+    props.movable,
+    props.interactive,
+    props.movableColor,
+    props.premove,
+    props.showDests,
+    props.promotion,
+    props.dests,
+    props.lastMove,
+    props.check,
+    props.turnColor,
+    props.coordinates,
+    props.coordinatesOnSquares,
+    props.pieceSet,
+    props.animation,
+    props.resetKey,
+    props.blindfold,
+    props.variant,
+    reducedMotion.value,
+  ],
   () => {
     if (!ground) return
     if (props.resetKey !== shownReset) {

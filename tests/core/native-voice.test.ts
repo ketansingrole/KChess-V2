@@ -498,6 +498,8 @@ describe('the Rust voice rules match the recorded TypeScript outputs', () => {
       black: [],
       score: 0,
     })
+    // An unvalidated placement may name a piece more often than a small counter holds.
+    expect(rules('materialDiff', `${'P'.repeat(300)} w - - 0 1`)).toMatchObject({ score: 300 })
   })
 
   it('exports the same grammars and constants as the Rust rules', () => {

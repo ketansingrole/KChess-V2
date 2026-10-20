@@ -1,7 +1,7 @@
 import { GameArchive, archiveState } from '@kchess/rules/gameArchive'
 import { defineStore } from 'pinia'
 import { onScopeDispose, reactive, ref, shallowRef, watch, toRef, type Ref } from 'vue'
-import { initialLibrary, persistSession, plain, registerPersistenceFlush } from '../utils/library'
+import { initialLibrary, persistSession, registerPersistenceFlush } from '../utils/library'
 import type { ArchivedGame, GameSnapshot } from '@kchess/rules/library'
 
 export type { ArchivedGame, GameSnapshot }
@@ -94,7 +94,9 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
     void flush().catch((cause) => console.warn('[history] flushing games failed:', cause))
   }
   function save(game: ArchivedGame): void {
-    const candidate = plain(game)
+    // The rules already answer with a plain snapshot; cloning it here duplicated a JSON
+    // stringify/parse of every move on every save.
+    const candidate = game
     revisions.set(candidate.id, (revisions.get(candidate.id) ?? 0) + 1)
     failed.delete(candidate.id)
     games.value = [candidate, ...games.value.filter((g) => g.id !== candidate.id)]
@@ -161,10 +163,11 @@ export function useGameArchive(
   const session = new GameArchive(state, host, resume)
   const identityPersistence = persistSession(`archive:${kind}`, () => state.identity, undefined, {
     flush: 'sync',
+    deep: true,
   })
   void identityPersistence.flush()
   const save = (finished = false): void => session.save(finished)
   const reset = (): void => session.reset()
-  watch(source, () => save(), { deep: true, immediate: true })
+  watch(source, () => save(), { immediate: true })
   return { save, reset, error: toRef(archive, 'error') }
 }

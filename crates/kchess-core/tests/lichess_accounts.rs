@@ -439,6 +439,27 @@ async fn a_missing_user_is_named_in_the_error() {
 }
 
 #[tokio::test]
+async fn concurrent_profile_reads_share_one_request() {
+    let fixture = serve(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        Reply::Json(200, r#"{"username":"Alice","title":"IM"}"#.into())
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+
+    let (first, second) = tokio::join!(lichess.profile("Alice"), lichess.profile("Alice"));
+    assert_eq!(first.unwrap()["title"], "IM");
+    assert_eq!(second.unwrap()["title"], "IM");
+    assert_eq!(fixture.to("/api/user/Alice").len(), 1);
+}
+
+#[tokio::test]
 async fn a_profile_is_served_from_the_saved_copy_when_lichess_is_unreachable() {
     let fixture = serve(|_| Reply::Json(503, String::new())).await;
     let host = Arc::new(Recording::default());

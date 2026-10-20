@@ -1,4 +1,4 @@
-import { nextTick, onScopeDispose, ref, watch, type Ref } from 'vue'
+import { isReactive, nextTick, onScopeDispose, ref, watch, type Ref } from 'vue'
 import {
   LEGACY_DOCUMENT_KEYS,
   type LegacyDocuments,
@@ -89,6 +89,9 @@ export async function loadLibrary(): Promise<void> {
 /** Plain data for IPC: reactive proxies cannot be cloned. */
 export const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
+/** A session's source is usually a plain rules snapshot already; only unwrap a reactive one. */
+const sessionPayload = <T>(value: T): T => (isReactive(value) ? plain(value) : value)
+
 /**
  * Keep an unfinished session in the core's library: saved shortly after each change, and when the
  * window closes. The returned ref holds the last save error.
@@ -97,7 +100,7 @@ export function persistSession<K extends SessionKind>(
   kind: K,
   source: () => SessionDocuments[K],
   changes: () => unknown = source,
-  options: { flush?: 'pre' | 'sync' } = {},
+  options: { flush?: 'pre' | 'sync'; deep?: boolean } = {},
 ): Ref<string> & { flush: () => Promise<void> } {
   const error = ref('')
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -106,7 +109,7 @@ export function persistSession<K extends SessionKind>(
     // Unloaded documents must never be replaced by a store's default session.
     if (!libraryReady.value) return
     try {
-      await window.kchess.saveSession(kind, plain(source()))
+      await window.kchess.saveSession(kind, sessionPayload(source()))
       error.value = ''
     } catch (cause) {
       console.warn('[library] saving session failed:', kind, cause)
@@ -123,7 +126,9 @@ export function persistSession<K extends SessionKind>(
       clearTimeout(timer)
       timer = setTimeout(saveNow, 150)
     },
-    { deep: true, flush: options.flush ?? 'pre' },
+    // Snapshots are built from reactive state while the getter runs, so watching the getter
+    // already tracks changes; only a proxy returned as-is (archive identity) needs a deep walk.
+    { deep: options.deep ?? false, flush: options.flush ?? 'pre' },
   )
   window.addEventListener('beforeunload', saveNow)
   onScopeDispose(() => {

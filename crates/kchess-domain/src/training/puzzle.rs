@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use shakmaty::variant::VariantPosition;
 use shakmaty::{Position as _, Role};
 
 use super::{Out, text_arg, to_value, value_arg};
@@ -177,8 +178,7 @@ fn coords(square: &str) -> (i32, i32) {
 }
 
 /// `castlingSide`: `'h'` or `'a'` when a king's move from `from` to `to` castles, else None.
-fn castling_side(fen: &str, from: &str, to: &str) -> Option<char> {
-    let pos = rules::standard_from_fen(fen)?;
+fn castling_side(pos: &VariantPosition, from: &str, to: &str) -> Option<char> {
     let board = pos.board();
     let piece = |square: &str| rules::parse_square(square).and_then(|sq| board.piece_at(sq));
     let (to_file, to_rank) = coords(to);
@@ -195,15 +195,26 @@ fn castling_side(fen: &str, from: &str, to: &str) -> Option<char> {
 
 /// `moveSquares`: the squares to highlight for a UCI move. Castling shows the king's two-square
 /// step, not "king takes rook".
-fn move_squares(fen: &str, uci: &str) -> Option<Vec<String>> {
+fn squares_for(pos: Option<&VariantPosition>, uci: &str) -> Option<Vec<String>> {
     let (from, to) = uci_squares(uci)?;
-    match castling_side(fen, from, to) {
+    match pos.and_then(|pos| castling_side(pos, from, to)) {
         None => Some(vec![from.to_string(), to.to_string()]),
         Some(side) => {
             let file = if side == 'h' { 'g' } else { 'c' };
             Some(vec![from.to_string(), format!("{file}{}", &from[1..2])])
         }
     }
+}
+
+fn move_squares_at(pos: &VariantPosition, uci: &str) -> Option<Vec<String>> {
+    squares_for(Some(pos), uci)
+}
+
+/// An unreadable FEN still highlights the move's squares: only castling detection needs the
+/// position, and the old rules treated a missing one as "not castling".
+fn move_squares(fen: &str, uci: &str) -> Option<Vec<String>> {
+    let pos = rules::standard_from_fen(fen);
+    squares_for(pos.as_ref(), uci)
 }
 
 /// `startPuzzle`
@@ -224,12 +235,17 @@ fn start_puzzle(puzzle: &Value) -> PuzzleState {
 /// `applyMove`: `uci` played from the state's position, or None when it is illegal.
 fn apply_move(state: &PuzzleState, uci: &str) -> Option<PuzzleState> {
     let pos = rules::standard_from_fen(&state.fen)?;
-    let played = position::play_uci(&pos, uci)?;
+    apply_move_at(&pos, state, uci)
+}
+
+/// The same, reusing the position the caller already parsed.
+fn apply_move_at(pos: &VariantPosition, state: &PuzzleState, uci: &str) -> Option<PuzzleState> {
+    let played = position::play_uci(pos, uci)?;
     let mut sans = state.sans.clone();
     sans.push(played.san);
     Some(PuzzleState {
         fen: played.position.fen,
-        last_move: move_squares(&state.fen, uci),
+        last_move: move_squares_at(pos, uci),
         sans,
         index: state.index,
         status: state.status.clone(),
@@ -261,7 +277,7 @@ fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> PlayerMove
     if !same_move && !mates {
         return wrong(state);
     }
-    let Some(next) = apply_move(&state, uci) else {
+    let Some(next) = apply_move_at(&pos, &state, uci) else {
         return wrong(state);
     };
     let index = state.index + 1.0;

@@ -4,6 +4,8 @@
 // exception, and only through `Game::node`.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
+use std::fmt::Write as _;
+
 use crate::js;
 use crate::rules;
 
@@ -762,7 +764,7 @@ pub fn make_pgn(game: &Game) -> String {
             if force_number || frame.ply % 2 == 0 {
                 tokens.push("");
                 let number = frame.ply / 2 + 1;
-                tokens.text.push_str(itoa(number).as_str());
+                let _ = write!(tokens.text, "{number}");
                 tokens
                     .text
                     .push_str(if frame.ply % 2 == 1 { "..." } else { "." });
@@ -771,7 +773,7 @@ pub fn make_pgn(game: &Game) -> String {
             tokens.push(data.san.as_str());
             for nag in data.nags.iter().flatten() {
                 tokens.push("$");
-                tokens.text.push_str(itoa(*nag).as_str());
+                let _ = write!(tokens.text, "{}", *nag);
                 force_number = true;
             }
             for comment in data.comments.iter().flatten() {
@@ -819,23 +821,6 @@ pub fn make_pgn(game: &Game) -> String {
     let mut out = tokens.text;
     out.push('\n');
     out
-}
-
-/// Decimal text of a small number without a formatting call.
-fn itoa(mut n: u32) -> String {
-    let mut digits = [0u8; 10];
-    let mut at = digits.len();
-    loop {
-        at -= 1;
-        if let Some(digit) = digits.get_mut(at) {
-            *digit = b'0' + (n % 10) as u8;
-        }
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-    String::from_utf8_lossy(digits.get(at..).unwrap_or_default()).into_owned()
 }
 
 /// `studyDocumentPgn`: every chapter as one PGN named by a `ChapterName` header, or None when

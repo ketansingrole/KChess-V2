@@ -130,22 +130,36 @@ export interface ReplayedMove {
   san: string
 }
 
+type Replayed = { position: Position; played: ReplayedMove[]; start: Position } | undefined
+/** The last replay of each move list (kept weak, so a replaced list is collected). */
+const replayCache = new WeakMap<readonly string[], { key: string; result: Replayed }>()
+
 /**
  * Replay UCI moves under a setup's rules. Castling is accepted as king-to-rook or king-two-squares
  * (Lichess sends either); the result keeps the moves as given. Stops at the first illegal move.
  */
-export function replaySetup(
-  setup: GameSetup,
-  moves: readonly string[],
-): { position: Position; played: ReplayedMove[]; start: Position } | undefined {
+export function replaySetup(setup: GameSetup, moves: readonly string[]): Replayed {
+  // A board asks for the same replay for its position and its move list. The answer is shared
+  // only for the same list with the same text: a new list (a restart, even at the same position)
+  // still gets a new position, which watchers read as a change, and a list edited in place is
+  // replayed again. Reading every move keeps a reactive caller's dependencies complete.
+  const key = `${setup.variant}|${setup.fen}|${moves.join(' ')}`
+  const cached = replayCache.get(moves)
+  if (cached?.key === key) return cached.result
+
   const start = setupStart(setup)
   const replayed =
     start && rules<{ played: ReplayedMove[]; fen: string } | null>('setupReplay', setup, moves)
-  if (!start || !replayed) return undefined
-  if (!replayed.played.length) return { position: start, played: replayed.played, start }
-  const position = Position.from({ variant: setup.variant, fen: replayed.fen })
-  if (!position) return undefined
-  return { position, played: replayed.played, start }
+  let result: Replayed
+  if (start && replayed) {
+    if (!replayed.played.length) result = { position: start, played: replayed.played, start }
+    else {
+      const position = Position.from({ variant: setup.variant, fen: replayed.fen })
+      if (position) result = { position, played: replayed.played, start }
+    }
+  }
+  replayCache.set(moves, { key, result })
+  return result
 }
 
 /** True when the setup is the ordinary standard game (so Stockfish, the explorer and reviews apply). */

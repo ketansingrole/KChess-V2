@@ -130,11 +130,7 @@ export function setupPositionAfter(setup: GameSetup, moves: readonly string[]): 
 
 /** SAN of each move from `setup`. */
 export function setupSanHistory(setup: GameSetup, moves: readonly string[]): string[] {
-  return (
-    rules<{ played: { san: string }[] } | null>('setupReplay', setup, moves)?.played.map(
-      (move) => move.san,
-    ) ?? []
-  )
+  return replaySetup(setup, moves)?.played.map((move) => move.san) ?? []
 }
 
 /** Chessground destinations under the setup's rules (Chess960 castles king onto rook). */

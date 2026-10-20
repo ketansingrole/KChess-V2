@@ -10,6 +10,7 @@ use shakmaty::{
     Bitboard, Board, ByColor, ByRole, CastlingMode, CastlingSide, Color, EnPassantMode, File, Move,
     MoveList, Piece, Position, PositionError, Rank, RemainingChecks, Role, Setup, Square, attacks,
 };
+use std::fmt::Write as _;
 use std::num::NonZeroU32;
 
 use crate::js;
@@ -489,19 +490,24 @@ fn write_fen(parts: &FenParts) -> String {
     }
     fen.push(' ');
     match parts.ep_square {
-        Some(sq) => fen.push_str(&sq.to_string()),
+        Some(sq) => {
+            fen.push(sq.file().char());
+            fen.push(sq.rank().char());
+        }
         None => fen.push('-'),
     }
     if let Some(checks) = parts.remaining_checks {
-        fen.push_str(&format!(
+        // Formatting straight into the FEN avoids a temporary String on a path every move takes.
+        let _ = write!(
+            fen,
             " {}+{}",
             u32::from(checks.white),
             u32::from(checks.black)
-        ));
+        );
     }
     let halfmoves = parts.halfmoves.min(9999);
     let fullmoves = parts.fullmoves.clamp(1, 9999);
-    fen.push_str(&format!(" {halfmoves} {fullmoves}"));
+    let _ = write!(fen, " {halfmoves} {fullmoves}");
     fen
 }
 

@@ -1,11 +1,13 @@
 import type { ArchivedGame } from '@kchess/rules/library'
 
+const GAME_DATE = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
+
 export function formatGameDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
+  return GAME_DATE.format(new Date(timestamp))
 }
 
 export type ResultBadge = {

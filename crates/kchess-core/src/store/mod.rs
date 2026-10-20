@@ -21,11 +21,79 @@ pub mod voice_log;
 
 use rusqlite::Connection;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
+
+/// Filtered page counts, valid until a call that can change the stored games runs. The count is
+/// a full scan of the filter's index, while the page rows themselves are a short index range.
+#[derive(Default)]
+pub struct StoreCache {
+    counts: Mutex<HashMap<String, i64>>,
+    overview: Mutex<Option<Value>>,
+}
+
+impl StoreCache {
+    pub fn count(&self, key: &str) -> Option<i64> {
+        self.counts.lock().ok()?.get(key).copied()
+    }
+
+    pub fn remember_count(&self, key: String, total: i64) {
+        if let Ok(mut counts) = self.counts.lock() {
+            if counts.len() >= 128 {
+                counts.clear();
+            }
+            counts.insert(key, total);
+        }
+    }
+
+    pub fn overview(&self) -> Option<Value> {
+        self.overview.lock().ok()?.clone()
+    }
+
+    pub fn remember_overview(&self, value: &Value) {
+        if let Ok(mut overview) = self.overview.lock() {
+            *overview = Some(value.clone());
+        }
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut counts) = self.counts.lock() {
+            counts.clear();
+        }
+        if let Ok(mut overview) = self.overview.lock() {
+            *overview = None;
+        }
+    }
+}
+
+/// Whether `method` can change the games or accounts a count or the overview is computed from.
+/// Every games method except the known reads clears the cache, so a new mutation (or one that
+/// only touches `accounts`, such as a login) can never leave a stale total behind.
+fn invalidates_counts(method: &str) -> bool {
+    if let Some(name) = method.strip_prefix("store.games.") {
+        return !matches!(
+            name,
+            "getSettings"
+                | "loadData"
+                | "gamePage"
+                | "gameLibraryOverview"
+                | "gameRatingHistory"
+                | "pendingGameIds"
+                | "gamePgn"
+                | "readApiCache"
+                | "writeApiCache"
+                | "saveSettings"
+                | "dismissedFriends"
+                | "legacyImportPending"
+                | "tokenCiphertext"
+        );
+    }
+    method.starts_with("store.import.") || method.starts_with("store.debug.")
+}
 
 /// `kchess.db` as the core shares it: one connection, opened and migrated on first use, behind a
 /// lock. The synchronous storage calls and the asynchronous services (the review queue) both
@@ -37,6 +105,7 @@ pub struct Database {
     work: tokio_util::task::TaskTracker,
     host: Arc<dyn Host>,
     config: Config,
+    cache: StoreCache,
 }
 
 impl Database {
@@ -47,6 +116,7 @@ impl Database {
             work: tokio_util::task::TaskTracker::new(),
             host,
             config,
+            cache: StoreCache::default(),
         }
     }
 
@@ -146,12 +216,16 @@ impl Database {
             let path = self.config.data_dir.join("kchess.db");
             *db = Some(open(&path, self.host.as_ref())?);
         }
+        if invalidates_counts(method) {
+            self.cache.clear();
+        }
         match db.as_ref() {
             Some(connection) => {
                 let ctx = StoreContext {
                     db: connection,
                     host: self.host.as_ref(),
                     config: &self.config,
+                    cache: &self.cache,
                 };
                 call(&ctx, method, args)
             }
@@ -161,6 +235,7 @@ impl Database {
 
     /// Releases the file; the next `call` opens it again.
     pub fn close(&self) {
+        self.cache.clear();
         if let Ok(mut db) = self.connection.lock() {
             db.take();
         }
@@ -173,6 +248,7 @@ pub struct StoreContext<'a> {
     pub db: &'a Connection,
     pub host: &'a dyn Host,
     pub config: &'a Config,
+    pub cache: &'a StoreCache,
 }
 
 /// Open `kchess.db` as `db.ts` did: WAL, foreign keys, NORMAL sync, memory temp store, a 20 MB

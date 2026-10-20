@@ -298,8 +298,8 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     Some(match name {
         "getSettings" => get_settings(db),
         "loadData" => load_app_data(db).and_then(as_json),
-        "gamePage" => arg(args, 0, "query").and_then(|query| game_page(db, query)),
-        "gameLibraryOverview" => game_library_overview(db).and_then(as_json),
+        "gamePage" => arg(args, 0, "query").and_then(|query| game_page(ctx, query)),
+        "gameLibraryOverview" => game_library_overview(ctx),
         "gameRatingHistory" => arg(args, 0, "account")
             .and_then(|account: String| rating_history(db, &account))
             .and_then(as_json),
@@ -783,7 +783,8 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
 }
 
 /// `gamePage`: a bounded page of list rows, with the total for the same filters.
-fn game_page(db: &Connection, input: Value) -> Result<Value> {
+fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
+    let db = ctx.db;
     let query: GamePageQuery =
         serde_json::from_value(domain("assertGamePageQuery", vec![json!([]), input])?)
             .map_err(|cause| CoreError::new(cause.to_string()))?;
@@ -810,13 +811,39 @@ fn game_page(db: &Connection, input: Value) -> Result<Value> {
     } else {
         format!("WHERE {}", clauses.join(" AND "))
     };
-    let total: i64 = db
-        .query_row(
-            &format!("SELECT COUNT(*) AS total FROM games {filter}"),
-            params_from_iter(params.iter().cloned()),
-            |row| row.get(0),
-        )
-        .sql()?;
+    // Counting the filter walks the whole indexed range; the page itself is a short slice of it.
+    // The same filters are re-counted on every page and result toggle, so keep the total until a
+    // call that can change the games runs.
+    let count_key = format!(
+        "{}|{}|{}",
+        query
+            .account
+            .as_deref()
+            .filter(|account| !account.is_empty())
+            .unwrap_or(""),
+        query
+            .result
+            .as_deref()
+            .filter(|result| !result.is_empty())
+            .unwrap_or(""),
+        query
+            .rated
+            .map_or("any".to_string(), |rated| rated.to_string())
+    );
+    let total: i64 = match ctx.cache.count(&count_key) {
+        Some(total) => total,
+        None => {
+            let total = db
+                .query_row(
+                    &format!("SELECT COUNT(*) AS total FROM games {filter}"),
+                    params_from_iter(params.iter().cloned()),
+                    |row| row.get(0),
+                )
+                .sql()?;
+            ctx.cache.remember_count(count_key, total);
+            total
+        }
+    };
     let mut page_params = params;
     page_params.push(SqlValue::Integer(query.limit as i64));
     page_params.push(SqlValue::Integer(query.offset as i64));
@@ -855,16 +882,23 @@ fn game_records(db: &Connection, sql: &str) -> Result<BTreeMap<String, GameRecor
     Ok(records.into_iter().collect())
 }
 
-fn game_library_overview(db: &Connection) -> Result<GameLibraryOverview> {
+fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
+    if let Some(cached) = ctx.cache.overview() {
+        return Ok(cached);
+    }
+    let db = ctx.db;
     const AGGREGATES: &str = "COUNT(*) AS total,
     SUM(winner = color) AS win,
     SUM(winner IS NOT NULL AND winner != color) AS loss,
     SUM(winner IS NULL) AS draw";
-    Ok(GameLibraryOverview {
+    let overview = GameLibraryOverview {
         by_account: game_records(
             db,
             &format!(
-                "SELECT lower(account) AS name, {AGGREGATES} FROM games GROUP BY lower(account)"
+                // Group on the indexed `account` with the same NOCASE collation as the lower()
+                // grouping, so SQLite walks idx_games_account_created instead of building a
+                // temporary B-tree over every game.
+                "SELECT lower(account) AS name, {AGGREGATES} FROM games GROUP BY account COLLATE NOCASE"
             ),
         )?,
         // Only tracked opponents need a card; never transfer the entire opponent list.
@@ -877,7 +911,10 @@ fn game_library_overview(db: &Connection) -> Result<GameLibraryOverview> {
       GROUP BY lower(opponent)"
             ),
         )?,
-    })
+    };
+    let value = as_json(overview)?;
+    ctx.cache.remember_overview(&value);
+    Ok(value)
 }
 
 /// Days since 1970-01-01 to a proleptic Gregorian (year, month 1-12, day), as `Date` reads them in UTC.

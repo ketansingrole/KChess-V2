@@ -113,10 +113,12 @@ fn explain(review: &Review, index: f64) -> String {
         return String::new();
     }
     let index = index as usize;
-    let positions = replay::replay_positions(&review.fen, &review.moves);
+    // Only the position before this move is read; replaying the rest of the game built a FEN,
+    // a legal-move set and a material scan for every later ply.
+    let fen = replay::fen_after(&review.fen, &review.moves, index);
     let before = review.evals.get(index).and_then(Option::as_ref);
     let after = review.evals.get(index + 1).and_then(Option::as_ref);
-    let fen = positions.get(index).map(|position| position.fen.as_str());
+    let fen = fen.as_deref();
     let (Some(before), Some(after), Some(fen)) = (before, after, fen) else {
         return String::new();
     };

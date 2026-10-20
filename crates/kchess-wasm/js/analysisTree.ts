@@ -39,10 +39,32 @@ export const MOVE_GLYPHS = [
   { nag: 6, glyph: '?!', label: 'Dubious move' },
 ] as const
 
+/** A small memo for pure rules answers that repeat across renders and lines. */
+function memo<V>(limit: number): (key: string, make: () => V) => V {
+  const cache = new Map<string, V>()
+  return (key, make) => {
+    const hit = cache.get(key)
+    if (hit !== undefined) return hit
+    const value = make()
+    cache.set(key, value)
+    if (cache.size > limit) {
+      const oldest = cache.keys().next().value
+      if (oldest !== undefined) cache.delete(oldest)
+    }
+    return value
+  }
+}
+
 /** The move's annotation glyph, if it has one. */
 export function moveGlyph(node: Pick<TreeNode, 'nags'>): (typeof MOVE_GLYPHS)[number] | undefined {
-  return rules<(typeof MOVE_GLYPHS)[number] | null>('moveGlyph', node.nags ?? null) ?? undefined
+  const nags = node.nags ?? null
+  return (
+    glyphMemo(nags ? nags.join(',') : '', () =>
+      rules<(typeof MOVE_GLYPHS)[number] | null>('moveGlyph', nags),
+    ) ?? undefined
+  )
 }
+const glyphMemo = memo<(typeof MOVE_GLYPHS)[number] | null>(64)
 
 /** Mark a move with one annotation glyph (or none), keeping its other NAGs (evaluation symbols…). */
 export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
@@ -50,7 +72,10 @@ export function setMoveGlyph(node: TreeNode, nag: number | undefined): void {
 }
 
 /** A comment as a reader sees it, without the commands PGN tools embed (`[%clk 0:15:06]`). */
-export const commentText = (comment: string): string => rules<string>('commentText', comment)
+export function commentText(comment: string): string {
+  return commentMemo(comment, () => rules<string>('commentText', comment))
+}
+const commentMemo = memo<string>(256)
 /** `comment` with its text replaced by `text` (as typed), keeping its commands; '' when empty. */
 export const withCommentText = (comment: string, text: string): string =>
   rules<string>('withCommentText', comment, text)
@@ -156,8 +181,9 @@ export function promoteToMainline(root: TreeNode, path: string): void {
 
 /** “1.”, “1…”: the number to print before a move at this ply (the ply *before* it is played). */
 export function moveNumber(ply: number, always: boolean): string {
-  return rules<string>('moveNumber', ply, always)
+  return numberMemo(`${ply}|${always}`, () => rules<string>('moveNumber', ply, always))
 }
+const numberMemo = memo<string>(256)
 
 /* ── PGN ─────────────────────────────────────────────────────────────── */
 
@@ -195,16 +221,20 @@ export function treeFromPgn(text: string): TreeNode | undefined {
 
 /** “+0.34”, “−1.20”, “#3”, “#−2”, as Lichess prints them. */
 export function formatEval(line: Pick<EngineLine, 'cp' | 'mate'> | undefined): string {
-  return rules<string>('formatEval', line ?? null)
+  const key = line ? `${line.cp ?? ''}|${line.mate ?? ''}` : ''
+  return evalMemo(key, () => rules<string>('formatEval', line ?? null))
 }
+const evalMemo = memo<string>(64)
 
 /**
  * White's winning chances in −1…1 (Lichess's curve), for the evaluation bar: an even game is the
  * middle and a won one fills the bar, without ±10 pawns and ±1 pawn looking alike or apart.
  */
 export function winningChances(line: Pick<EngineLine, 'cp' | 'mate'> | undefined): number {
-  return rules<number>('winningChances', line ?? null)
+  const key = line ? `${line.cp ?? ''}|${line.mate ?? ''}` : ''
+  return chanceMemo(key, () => rules<number>('winningChances', line ?? null))
 }
+const chanceMemo = memo<number>(64)
 
 /** A principal variation in SAN with move numbers, stopping at the first illegal move. */
 const PV_SAN_CACHE_LIMIT = 200

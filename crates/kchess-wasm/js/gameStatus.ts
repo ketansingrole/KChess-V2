@@ -11,5 +11,10 @@ export function isGameInProgress(status?: string): boolean {
 
 /** The result from the account's side. */
 export function gameResult(game: LichessGame): 'win' | 'loss' | 'draw' {
-  return rules<'win' | 'loss' | 'draw'>('gameResult', game)
+  // The rule reads only these two fields; sending the whole game also serialized its moves and
+  // PGN once per row on the history list.
+  return rules<'win' | 'loss' | 'draw'>('gameResult', {
+    winner: game.winner,
+    color: game.color,
+  })
 }

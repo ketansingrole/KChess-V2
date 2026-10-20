@@ -69,7 +69,7 @@ fn table() -> &'static HashMap<String, usize> {
             if !played {
                 continue;
             }
-            let key = repetition_key(&rules::make_fen(&pos));
+            let key = repetition_key(&rules::make_fen(&pos)).to_string();
             let shorter = table
                 .get(&key)
                 .is_none_or(|&known| line.moves.len() < all[known].moves.len());
@@ -81,9 +81,18 @@ fn table() -> &'static HashMap<String, usize> {
     })
 }
 
-/// `repetitionKey`: the first four FEN fields.
-fn repetition_key(fen: &str) -> String {
-    fen.split(' ').take(4).collect::<Vec<_>>().join(" ")
+/// `repetitionKey`: the first four FEN fields, borrowed from the FEN.
+fn repetition_key(fen: &str) -> &str {
+    let mut seen = 0;
+    for (index, byte) in fen.bytes().enumerate() {
+        if byte == b' ' {
+            seen += 1;
+            if seen == 4 {
+                return &fen[..index];
+            }
+        }
+    }
+    fen
 }
 
 /// `openingAt`: the name of the opening reached after `ply` moves. As Lichess suggests, step back
@@ -97,19 +106,29 @@ pub fn opening_at<S: AsRef<str>>(
     if variant != "standard" {
         return None;
     }
-    let pos = rules::setup_start("standard", fen)?;
-    let mut seen = vec![repetition_key(&rules::make_fen(&pos))];
-    let end = js_slice_end(moves.len(), ply);
-    let (_, line) = position::line(pos, &moves[..end], false, false);
-    seen.extend(line.iter().map(|step| repetition_key(&step.fen)));
+    let mut pos = rules::setup_start("standard", fen)?;
     let books = table();
     let named = lines();
-    seen.iter().rev().find_map(|key| {
-        let line = &named[*books.get(key)?];
-        Some(OpeningName {
-            eco: line.eco.clone(),
-            name: line.name.clone(),
-        })
+    let end = js_slice_end(moves.len(), ply);
+    // Walk forward once, keeping the last named position: the old code built every FEN and
+    // repetition key, then scanned backwards for the same answer. SAN and UCI strings were
+    // never read here.
+    let mut found = books
+        .get(repetition_key(&rules::make_fen(&pos)))
+        .map(|&index| &named[index]);
+    for text in &moves[..end] {
+        let Some(m) = rules::parse_uci(text.as_ref()).and_then(|u| rules::legal_move(&pos, u))
+        else {
+            break;
+        };
+        pos.play_unchecked(m);
+        if let Some(&index) = books.get(repetition_key(&rules::make_fen(&pos))) {
+            found = Some(&named[index]);
+        }
+    }
+    found.map(|line| OpeningName {
+        eco: line.eco.clone(),
+        name: line.name.clone(),
     })
 }
 
@@ -159,7 +178,12 @@ impl OpeningNode {
 }
 
 /// `openingTree`: every named opening by family, alphabetically at each level.
-pub fn opening_tree() -> Vec<OpeningNode> {
+pub fn opening_tree() -> &'static Vec<OpeningNode> {
+    static TREE: OnceLock<Vec<OpeningNode>> = OnceLock::new();
+    TREE.get_or_init(build_opening_tree)
+}
+
+fn build_opening_tree() -> Vec<OpeningNode> {
     let mut families: Vec<OpeningNode> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     for line in lines() {
@@ -407,7 +431,7 @@ mod tests {
     #[test]
     fn groups_openings_by_family() {
         let tree = opening_tree();
-        let gambit = find(&tree, "King's Gambit");
+        let gambit = find(tree, "King's Gambit");
         assert_eq!(gambit.eco.as_deref(), Some("C30"));
         assert_eq!(
             gambit.moves.as_deref(),
@@ -438,7 +462,7 @@ mod tests {
         }
         let names: std::collections::HashSet<&str> =
             lines().iter().map(|line| line.name.as_str()).collect();
-        assert_eq!(count(&tree), names.len());
+        assert_eq!(count(tree), names.len());
         let labels: Vec<&str> = tree.iter().map(|root| root.label.as_str()).collect();
         let mut sorted = labels.clone();
         sorted.sort_by_key(|label| label.to_lowercase());

@@ -645,6 +645,107 @@ fn a_legacy_token_that_cannot_be_stored_disconnects_its_account_but_keeps_its_ga
     assert_eq!(store.rows("SELECT * FROM tokens"), Vec::<Value>::new());
 }
 
+/// A storage call straight to the database. `Store::call` runs the one-time import first, which
+/// clears the cache on every call; the app imports once, so cache tests must skip it.
+fn direct(store: &Store, method: &str, args: Vec<Value>) -> Value {
+    store
+        .db
+        .call(method, &args)
+        .unwrap_or_else(|cause| panic!("{method} failed: {cause}"))
+}
+
+fn overview(store: &Store) -> Value {
+    direct(store, "store.games.gameLibraryOverview", vec![])
+}
+
+#[test]
+fn filtered_page_totals_are_cached_until_the_games_change() {
+    let store = fresh();
+    let win = |id: &str| library_game(id, &[("winner", json!("white")), ("color", json!("white"))]);
+    let loss = library_game(
+        "Loss1",
+        &[("winner", json!("black")), ("color", json!("white"))],
+    );
+    save_games(&store, "Alice", &[win("Win1"), loss], SYNCED_AT);
+
+    let query = json!({ "account": "Alice", "result": "win", "offset": 0, "limit": 10 });
+    let total =
+        |store: &Store| direct(store, "store.games.gamePage", vec![query.clone()])["total"].clone();
+    assert_eq!(total(&store), json!(1));
+    // A second connection's write is not one the core makes, so the total is served from the cache.
+    store.exec("UPDATE games SET winner = 'white' WHERE id = 'Loss1'");
+    assert_eq!(total(&store), json!(1));
+    // A write through the core clears it.
+    direct(
+        &store,
+        "store.games.saveGames",
+        vec![
+            json!("Alice"),
+            json!([win("Win2")]),
+            json!(SYNCED_AT + 1),
+            json!(true),
+        ],
+    );
+    assert_eq!(total(&store), json!(3));
+}
+
+#[test]
+fn library_overview_is_cached_until_the_games_change() {
+    let store = fresh();
+    save_games(
+        &store,
+        "Alice",
+        &[library_game("Overview1", &[])],
+        SYNCED_AT,
+    );
+    assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
+    store.exec("DELETE FROM games WHERE id = 'Overview1'");
+    assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
+    direct(
+        &store,
+        "store.games.saveGames",
+        vec![
+            json!("Alice"),
+            json!([library_game("Overview2", &[])]),
+            json!(SYNCED_AT + 1),
+            json!(true),
+        ],
+    );
+    assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
+    assert_eq!(
+        direct(
+            &store,
+            "store.games.gamePage",
+            vec![json!({ "offset": 0, "limit": 10 })]
+        )["total"],
+        json!(1)
+    );
+}
+
+#[test]
+fn library_overview_is_recomputed_after_a_login_connects_an_account() {
+    // Bob is followed but not connected, so his game against Alice is not a versus card yet.
+    let store = fresh();
+    let game = library_game(
+        "Login001",
+        &[
+            ("account", json!("Bob")),
+            ("opponent", json!("Alice")),
+            ("color", json!("black")),
+        ],
+    );
+    save_games(&store, "Bob", &[game], SYNCED_AT);
+    assert!(overview(&store)["versus"].get("alice").is_none());
+
+    // A login only touches `accounts` and `tokens`; the cached overview must not survive it.
+    direct(
+        &store,
+        "store.games.saveTokenCiphertext",
+        vec![json!("Bob"), json!("ciphertext")],
+    );
+    assert_eq!(overview(&store)["versus"]["alice"]["total"], json!(1));
+}
+
 #[cfg(unix)]
 #[test]
 fn the_database_and_its_write_ahead_files_are_private() {

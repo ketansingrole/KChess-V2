@@ -104,7 +104,16 @@ pub(super) fn uci_or_none(value: Option<&Value>) -> Option<String> {
 
 /// The board and side to move of a FEN: what the feed's positions and a replay compare on.
 pub(super) fn position_key(fen: &str) -> String {
-    fen.split(' ').take(2).collect::<Vec<_>>().join(" ")
+    let mut spaces = 0;
+    for (index, byte) in fen.bytes().enumerate() {
+        if byte == b' ' {
+            spaces += 1;
+            if spaces == 2 {
+                return fen[..index].to_string();
+            }
+        }
+    }
+    fen.to_string()
 }
 
 /// A player record of the feed (`playerOf`): a name, title and rating, or `?` when unreadable.
