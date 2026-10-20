@@ -7,7 +7,6 @@
 pub mod constants;
 mod contracts;
 mod documents;
-mod engine;
 mod patterns;
 mod validate;
 mod value;

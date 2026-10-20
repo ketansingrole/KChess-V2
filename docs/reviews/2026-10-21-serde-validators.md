@@ -1,12 +1,11 @@
 # Typed serde validators in place of the valibot port (2026-10-21)
 
 `crates/kchess-domain/src/misc/engine.rs` re-implemented valibot 1.5 over a JS-like value (`J`)
-so the Rust validators reported exactly what the deleted TypeScript did. This change moves the IPC
+so the Rust validators reported exactly what the deleted TypeScript did. Phase 1 moved the IPC
 validators (`misc/validate.rs`) to typed `#[derive(Deserialize)]` structs with explicit checks.
-The document checks in `misc/documents.rs` still use the engine; Phase 2 below proposes how to
-remove it and needs a decision.
+Phase 2 moved the six document checks the same way and deleted `engine.rs`.
 
-## Phase 1: the IPC validators (this change)
+## Phase 1: the IPC validators
 
 - `misc/value.rs` holds `J` and a serde `Deserializer` over it. Its errors carry the path of the
   rejected value. Each validator maps a path to its custom message; without one, the decoder's
@@ -71,55 +70,64 @@ normalized value. Only messages changed:
   file changed.
   `tests/core/native-golden.json` is untouched.
 
-## Phase 2 proposal: the document checks (needs a decision)
+## Phase 2: the document checks (approved 2026-10-21)
 
-### What still uses the engine
+### What used the engine after Phase 1
 
-After Phase 1, `engine.rs` serves only six checks in `misc/documents.rs`, all with valibot
-default messages:
+Only six checks in `misc/documents.rs`, all with valibot default messages. They now live in
+`validate.rs` with the other `assert*` validators:
 
-| check                     | schema                                    | pinned cases (ok / error) |
-| ------------------------- | ----------------------------------------- | ------------------------- |
-| `assertStudyCommandShape` | `variant('op', …)` over 12 study commands | 34 / 68                   |
-| `assertLegacyDocuments`   | strict object of the legacy storage keys  | 53 / 38                   |
-| `assertLibraryId`         | string, 1–80                              | 61 / 30                   |
-| `assertRepertoireKey`     | string, 1–200                             | 66 / 25                   |
-| `assertSessionKind`       | picklist of session kinds                 | 3 / 88                    |
-| `assertSide`              | `white` \| `black`                        | 3 / 88                    |
+| check                     | now                                                       | pinned cases (ok / error) |
+| ------------------------- | --------------------------------------------------------- | ------------------------- |
+| `assertStudyCommandShape` | the `op` decodes as an enum, then one struct per command  | 34 / 68                   |
+| `assertLegacyDocuments`   | a `deny_unknown_fields` struct of the legacy storage keys | 53 / 38                   |
+| `assertLibraryId`         | a string of 1–80 characters                               | 61 / 30                   |
+| `assertRepertoireKey`     | a string of 1–200 characters                              | 66 / 25                   |
+| `assertSessionKind`       | one of the session kinds                                  | 3 / 88                    |
+| `assertSide`              | `white` or `black`                                        | 3 / 88                    |
 
-It also uses two helpers: `js_string` (`String(color)` in `decodeComputerSession`) and
-`own_entries` (now in `value.rs`).
+A study to restore is passed on as it is, as valibot's `unknown()` did. `js_string`
+(`String(color)` in `decodeComputerSession`) moved into `documents.rs`. `own_entries` moved
+into `value.rs`.
 
-### What does not use it
+### What was left alone
 
-The brief assumed the engine also decodes saved documents. It does not:
-
-- `native-golden.json` (`studies`, `mistakes`, `archive`, `archivedGame`, `study`, …) pins
-  `library.rs`, which decodes over `serde_json::Value` with `js.rs`. Removing the engine changes
-  **none** of those cases.
 - The session decoders (`decodeAnalysisSession`, `decodeLocalSession`,
   `decodeComputerSession`, `decodeArchiveIdentity`, `decodeJoinedTournaments`,
   `decodeRepertoireMisses`, `encodeSession`, `assertSession`) are hand-written walks over `J`
-  that salvage damaged documents field by field. They have no schema and no messages.
-- `training/data.rs` and `contracts.rs` do not use the engine (`contracts.rs` only uses `J`).
+  that salvage damaged documents field by field. They never used the engine. Rewriting them as
+  all-or-nothing typed structs would reject partly damaged documents they now recover.
+- `native-golden.json` pins `library.rs`, which decodes over `serde_json::Value` with `js.rs` and
+  never used the engine either.
+- `js.rs` and `patterns.rs` stay: the validators and decoders still use them.
 
-### Proposed change
+### Behaviour changes
 
-Port the six checks to typed serde, the same way as Phase 1: a `#[serde(tag = "op")]` enum for
-study commands, a `deny_unknown_fields` struct for legacy documents, and plain checks for the
-four scalars. Then delete `engine.rs`. Keep the session decoders as they are: rewriting them as
-all-or-nothing typed structs would reject partly damaged documents they now recover, which is a
-real behaviour change for users' saved libraries and not needed to remove the engine.
+The old/new replays show no accept/reject flip and no different normalized value: neither the
+seeded `native-misc` cases nor the mutation corpus, which was extended with cases for the six
+checks. Only default messages changed, for example:
 
-### Golden impact if approved
+| valibot (before)                                                 | now                                                           |
+| ---------------------------------------------------------------- | ------------------------------------------------------------- |
+| `Invalid type: Expected ("save" \| …) but received "x"`          | ``op: unknown variant `x`, expected one of `save`, …``        |
+| `Invalid type: Expected ("save" \| …) but received undefined`    | `op: invalid type: undefined, expected a study command`       |
+| `Invalid key: Expected "name" but received undefined`            | `` missing field `name` ``                                    |
+| `Invalid key: Expected never but received "x"`                   | ``unknown field `x`, expected one of `kchess:studies:v1`, …`` |
+| `Invalid length: Expected <=80 but received 81`                  | `invalid value, expected at most 80 characters`               |
+| `Invalid type: Expected ("white" \| "black") but received "red"` | `invalid value, expected one of white, black`                 |
 
-- `tests/core/golden/misc.json`: up to **337 cases** in the six suites above (every pinned
-  error), all valibot default messages, would get the new default texts. The 220 accepted cases
-  would stay identical if acceptance parity holds (verify with the same old/new replay).
-- `tests/core/native-golden.json`: **0 cases**.
-- Ordering can also differ for `assertStudyCommandShape`. valibot's `variant` picked the first
-  option whose `op` matched and reported that option's first issue in schema order. Serde would
-  report a type error first.
+Type errors are reported before length and pattern checks, as in Phase 1. None of these
+checks had custom messages.
 
-Rewriting these goldens needs explicit approval (AGENTS.md: golden rewrites only for intended
-behaviour changes).
+Phase 2 also fixed the grammar of two default texts shared with Phase 1: "at least 1
+character" and "at least 1 item" (they said "characters" and "items"). The only validators
+whose default texts this changes are `assertChapterName` and `assertPgnText` (an empty string)
+and an empty chapter list in `assertStudyCommandShape`. No golden pins them.
+
+### Goldens
+
+- `tests/core/golden/misc.json`: 337 cases re-recorded, exactly the six suites' pinned errors.
+  By suite: `assertSessionKind` 88, `assertSide` 88, `assertStudyCommandShape` 68,
+  `assertLegacyDocuments` 38, `assertLibraryId` 30, `assertRepertoireKey` 25. Every accepted
+  case and every other suite is unchanged.
+- `tests/core/native-golden.json`: unchanged.
