@@ -231,50 +231,12 @@ fn write_pretty(value: &Value, depth: usize, out: &mut String) {
     }
 }
 
-/// `new Date(ms).toISOString()`; a time outside JavaScript's range is an error.
+/// `new Date(ms).toISOString()`; a time outside the calendar's range is an error.
 fn iso_time(ms: f64) -> Result<String> {
-    if !ms.is_finite() || ms.abs() > 8.64e15 {
-        return Err(CoreError::new("Invalid time value"));
-    }
-    let ms = ms.trunc() as i64;
-    let days = ms.div_euclid(86_400_000);
-    let within = ms.rem_euclid(86_400_000);
-    let (year, month, day) = civil_from_days(days);
-    let (hour, minute, second, millis) = (
-        within / 3_600_000,
-        within / 60_000 % 60,
-        within / 1_000 % 60,
-        within % 1_000,
-    );
-    let year = if (0..=9999).contains(&year) {
-        format!("{year:04}")
-    } else if year < 0 {
-        format!("-{:06}", -year)
-    } else {
-        format!("+{year:06}")
-    };
-    Ok(format!(
-        "{year}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z"
-    ))
-}
-
-/// The proleptic Gregorian date of a day count since 1970-01-01.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted + 2) / 5 + 1;
-    let month = if shifted < 10 {
-        shifted + 3
-    } else {
-        shifted - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month, day)
+    Some(ms)
+        .filter(|ms| ms.is_finite())
+        .and_then(|ms| kchess_domain::calendar::iso_millis(ms.trunc() as i64))
+        .ok_or_else(|| CoreError::new("Invalid time value"))
 }
 
 #[cfg(test)]
@@ -283,9 +245,6 @@ mod tests {
 
     #[test]
     fn dates_read_as_javascript_reads_them() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(-1), (1969, 12, 31));
-        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
         assert_eq!(iso_time(0.0).expect("epoch"), "1970-01-01T00:00:00.000Z");
         assert_eq!(
             iso_time(1_700_000_000_123.0).expect("date"),

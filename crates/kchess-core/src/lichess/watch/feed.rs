@@ -3,9 +3,11 @@
 // Feed data is outside input: read it without indexing that can panic.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{BroadcastGame, MAX_BROADCAST_PGN, VARIANTS, WatchClock, WatchPlayer};
+use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
 use kchess_domain::{api, js, position, review};
 
@@ -116,62 +118,59 @@ pub(super) fn position_key(fen: &str) -> String {
     fen.to_string()
 }
 
+#[derive(Deserialize)]
+struct RawUser {
+    #[serde(default)]
+    name: Option<Text<40>>,
+    #[serde(default)]
+    #[allow(dead_code)] // Checked, not kept.
+    id: Option<Text<40>>,
+    #[serde(default)]
+    title: Option<Text<8>>,
+}
+
+/// A feed player: absent or null fields are fine, fields of another shape are not.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPlayer {
+    #[serde(default)]
+    rating: Option<f64>,
+    #[serde(default)]
+    ai_level: Option<f64>,
+    #[serde(default)]
+    user: Option<RawUser>,
+    #[serde(default)]
+    name: Option<Text<40>>,
+}
+
 /// A player record of the feed (`playerOf`): a name, title and rating, or `?` when unreadable.
 pub(super) fn player_of(raw: Option<&Value>) -> WatchPlayer {
-    let unreadable = || WatchPlayer {
-        name: "?".into(),
-        ..WatchPlayer::default()
+    let Some(player) = raw
+        .filter(|value| value.is_object())
+        .and_then(read::<RawPlayer>)
+    else {
+        return WatchPlayer {
+            name: "?".into(),
+            ..WatchPlayer::default()
+        };
     };
-    let Some(raw) = raw.filter(|value| value.is_object()) else {
-        return unreadable();
-    };
-    // A text field of at most `max` UTF-16 units; absent or null is fine, anything else is not.
-    let text = |value: Option<&Value>, max: usize| -> Option<Option<String>> {
-        match value {
-            None | Some(Value::Null) => Some(None),
-            Some(Value::String(text)) if js::utf16_len(text) <= max => Some(Some(text.clone())),
-            Some(_) => None,
-        }
-    };
-    let rating = match raw.get("rating") {
-        None | Some(Value::Null) => None,
-        Some(value) => match value.as_f64() {
-            Some(rating) if rating.is_finite() => Some(rating),
-            _ => return unreadable(),
-        },
-    };
-    let ai_level = match raw.get("aiLevel") {
-        None | Some(Value::Null) => None,
-        Some(value) => match value.as_f64() {
-            Some(level) if level.is_finite() => Some(level),
-            _ => return unreadable(),
-        },
-    };
-    let (user_name, user_title) = match raw.get("user") {
-        None | Some(Value::Null) => (None, None),
-        Some(user) => {
-            let (Some(name), Some(_), Some(title)) = (
-                text(user.get("name"), 40),
-                text(user.get("id"), 40),
-                text(user.get("title"), 8),
-            ) else {
-                return unreadable();
-            };
-            (name, title)
-        }
-    };
-    let Some(name) = text(raw.get("name"), 40) else {
-        return unreadable();
-    };
-    let name = user_name.or(name).unwrap_or_else(|| match ai_level {
-        // `aiLevel ? ... : 'Anonymous'`: zero is no level.
-        Some(level) if level != 0.0 => format!("Stockfish level {}", js::number_to_string(level)),
-        _ => "Anonymous".into(),
-    });
+    let (user_name, user_title) = player
+        .user
+        .map_or((None, None), |user| (user.name, user.title));
+    let name = user_name
+        .or(player.name)
+        .map(String::from)
+        .unwrap_or_else(|| match player.ai_level {
+            // `aiLevel ? ... : 'Anonymous'`: zero is no level.
+            Some(level) if level != 0.0 => {
+                format!("Stockfish level {}", js::number_to_string(level))
+            }
+            _ => "Anonymous".into(),
+        });
     WatchPlayer {
         name,
-        title: user_title,
-        rating,
+        title: user_title.map(String::from),
+        rating: player.rating,
     }
 }
 
@@ -183,39 +182,36 @@ pub struct GameDetails {
     pub clock: Option<WatchClock>,
 }
 
+#[derive(Deserialize)]
+struct RawClock {
+    initial: f64,
+    increment: f64,
+}
+
+#[derive(Deserialize)]
+struct RawDetails {
+    #[serde(default, deserialize_with = "present")]
+    rated: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    speed: Option<Text<20>>,
+    #[serde(default, deserialize_with = "present")]
+    clock: Option<RawClock>,
+}
+
 /// `parseGameDetails(raw)`: each field kept when it has the right type; an unreadable clock or
 /// speed drops all details.
 pub fn parse_game_details(raw: &Value) -> GameDetails {
-    let rated = match raw.get("rated") {
-        None => None,
-        Some(Value::Bool(flag)) => Some(*flag),
-        Some(_) => return GameDetails::default(),
-    };
-    let speed = match raw.get("speed") {
-        None => None,
-        Some(Value::String(text)) if js::utf16_len(text) <= 20 => Some(text.clone()),
-        Some(_) => return GameDetails::default(),
-    };
-    let clock = match raw.get("clock") {
-        None => None,
-        Some(clock) => {
-            let number = |key: &str| {
-                clock
-                    .get(key)
-                    .and_then(Value::as_f64)
-                    .filter(|n| n.is_finite())
-            };
-            match (number("initial"), number("increment")) {
-                (Some(initial), Some(increment)) => Some(WatchClock { initial, increment }),
-                _ => return GameDetails::default(),
-            }
-        }
-    };
-    GameDetails {
-        rated,
-        speed,
-        clock,
+    if !raw.is_object() {
+        return GameDetails::default();
     }
+    read::<RawDetails>(raw).map_or_else(GameDetails::default, |details| GameDetails {
+        rated: details.rated,
+        speed: details.speed.map(String::from),
+        clock: details.clock.map(|clock| WatchClock {
+            initial: clock.initial,
+            increment: clock.increment,
+        }),
+    })
 }
 
 /// A game's details, start and SAN moves from its JSON export (`TvGame`).
@@ -257,40 +253,37 @@ fn domain_call(method: &str, args: Value) -> Option<Value> {
     serde_json::from_str(&text).ok()
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Winner {
+    White,
+    Black,
+}
+
+/// A game export; `null` is not an absent field here.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawTvGame {
+    #[serde(default, deserialize_with = "present")]
+    moves: Option<Text<20_000>>,
+    #[serde(default, deserialize_with = "present")]
+    initial_fen: Option<Text<120>>,
+    #[serde(default, deserialize_with = "present")]
+    variant: Option<Text<20>>,
+    #[serde(default, deserialize_with = "present")]
+    status: Option<Text<30>>,
+    #[serde(default, deserialize_with = "present")]
+    winner: Option<Winner>,
+}
+
 /// `parseTvGame(raw)`: the start, moves and result of a game export. A malformed export keeps
 /// its details and gets no moves.
 pub fn parse_tv_game(raw: &Value) -> TvGame {
     let details = parse_game_details(raw);
-    // (moves, initialFen, variant, status, winner) when the export reads as a whole.
-    type Fields<'a> = (
-        Option<&'a str>,
-        Option<&'a str>,
-        Option<&'a str>,
-        Option<&'a str>,
-        Option<&'a str>,
-    );
-    let parsed = (|| -> Option<Fields> {
-        let text = |key: &str, max: usize| -> Option<Option<&str>> {
-            match raw.get(key) {
-                None => Some(None),
-                Some(Value::String(text)) if js::utf16_len(text) <= max => {
-                    Some(Some(text.as_str()))
-                }
-                Some(_) => None,
-            }
-        };
-        let moves = text("moves", 20_000)?;
-        let initial = text("initialFen", 120)?;
-        let variant = text("variant", 20)?;
-        let status = text("status", 30)?;
-        let winner = match raw.get("winner") {
-            None => None,
-            Some(Value::String(text)) if text == "white" || text == "black" => Some(text.as_str()),
-            Some(_) => return None,
-        };
-        Some((moves, initial, variant, status, winner))
-    })();
-    let Some((moves, initial, variant, status, winner)) = parsed else {
+    let Some(game) = Some(raw)
+        .filter(|raw| raw.is_object())
+        .and_then(read::<RawTvGame>)
+    else {
         return TvGame {
             details,
             setup: None,
@@ -299,6 +292,16 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
             winner: None,
         };
     };
+    let (moves, initial, variant, status) = (
+        game.moves.as_deref(),
+        game.initial_fen.as_deref(),
+        game.variant.as_deref(),
+        game.status.as_deref(),
+    );
+    let winner = game.winner.map(|winner| match winner {
+        Winner::White => "white",
+        Winner::Black => "black",
+    });
     let variant = variant_from_lichess(Some(variant.unwrap_or("standard")));
     let setup = variant.and_then(|variant| {
         let fen = match initial {
@@ -320,7 +323,7 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
             })
             .unwrap_or_default(),
         status: status.map(str::to_string),
-        winner: winner.map(|color| if color == "white" { "white" } else { "black" }),
+        winner,
     }
 }
 

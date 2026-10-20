@@ -1,18 +1,19 @@
 //! Arena and Swiss tournaments (`crates/kchess-node/js/tournaments.ts`): the list the timeline shows,
 //! one tournament with its leaderboard, joining and leaving, and creating an arena.
 //!
-//! Lichess's answers are read with the rules of the TypeScript schemas (valibot): a required key
-//! must be present and well typed, an optional key may be absent but not null (where the schema
-//! says nullable, null is a value), and unknown keys pass. A listing skips entries it cannot read;
+//! Lichess's answers are read into typed shapes (`decode`): a required key must be present and
+//! well typed, an optional key may be absent but not null (where null is allowed, it reads as
+//! absent), and unknown keys pass. A listing skips entries it cannot read;
 //! an arena's extras are kept only when all of them read. Eligibility (`playable`, `problem`)
 //! follows the Board API rules in `kchess_domain`.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Number, Value, json};
+use serde_json::{Number, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::{Failure, TokenSource, authorize};
+use super::decode::{Millis, Text, present, read};
 use super::online::js_number;
 use crate::error::CoreError;
 use crate::host::Level;
@@ -264,76 +265,265 @@ pub struct NewArena {
     pub description: Option<String>,
 }
 
-type Object = Map<String, Value>;
+/* ── Lichess's shapes (see `decode` for the key rules) ─────────────────── */
 
-/* ── Schema helpers (valibot's rules over serde_json values) ──────────── */
-
-/// Characters a JavaScript string counts for `maxLength` (UTF-16 code units).
-fn units(text: &str) -> usize {
-    text.encode_utf16().count()
+/// `variantField`: a key string, or `{ key, name? }`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawVariant {
+    Key(Text<40>),
+    Object {
+        key: Text<40>,
+        #[serde(default, deserialize_with = "present")]
+        name: Option<Text<40>>,
+    },
 }
 
-/// `v.string()` within `max` UTF-16 units.
-fn text(value: &Value, max: usize) -> Option<&str> {
-    value.as_str().filter(|text| units(text) <= max)
-}
-
-/// `v.number()`.
-fn num(value: &Value) -> Option<Number> {
-    value.as_number().cloned()
-}
-
-/// A whole number read from a finite JSON number (timestamps, in milliseconds).
-fn whole(value: &Value) -> Option<i64> {
-    value.as_f64().map(|number| number as i64)
-}
-
-/// `v.optional(check)` for one key: `Some(None)` when absent, `Some(Some(_))` when it passes,
-/// `None` when it is present and fails (null fails too).
-fn optional<'a, T>(
-    object: &'a Object,
-    key: &str,
-    check: impl Fn(&'a Value) -> Option<T>,
-) -> Option<Option<T>> {
-    match object.get(key) {
-        None => Some(None),
-        Some(value) => check(value).map(Some),
+impl RawVariant {
+    /// The key and its name.
+    fn into_parts(self) -> (String, String) {
+        match self {
+            RawVariant::Key(key) => (key.0.clone(), key.0),
+            RawVariant::Object { key, name } => {
+                let name = name.map_or_else(|| key.0.clone(), String::from);
+                (key.0, name)
+            }
+        }
     }
 }
 
-/// `v.nullable(check)`: null is a value of its own.
-fn nullable<'a, T>(value: &'a Value, check: impl Fn(&'a Value) -> Option<T>) -> Option<Option<T>> {
-    if value.is_null() {
-        Some(None)
-    } else {
-        check(value).map(Some)
+#[derive(Deserialize)]
+struct RawPerf {
+    key: Text<30>,
+}
+
+#[derive(Deserialize)]
+struct RawSchedule {
+    #[serde(default, deserialize_with = "present")]
+    freq: Option<Text<20>>,
+}
+
+#[derive(Deserialize)]
+struct RawRating {
+    rating: Number,
+}
+
+/// An entry of the arena list.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawArena {
+    id: Text<12>,
+    full_name: Text<120>,
+    status: Number,
+    variant: RawVariant,
+    rated: bool,
+    clock: Clock,
+    #[serde(default, deserialize_with = "present")]
+    minutes: Option<Number>,
+    nb_players: Number,
+    starts_at: Millis,
+    #[serde(default, deserialize_with = "present")]
+    finishes_at: Option<Millis>,
+    #[serde(default, deserialize_with = "present")]
+    perf: Option<RawPerf>,
+    #[serde(default)]
+    schedule: Option<RawSchedule>,
+    #[serde(default)]
+    max_rating: Option<RawRating>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SwissStatus {
+    Created,
+    Started,
+    Finished,
+}
+
+/// A Swiss start: ISO 8601 text, or milliseconds.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawDate {
+    Iso(String),
+    Millis(Millis),
+}
+
+#[derive(Deserialize)]
+struct RawNextRound {
+    #[serde(default, deserialize_with = "present", rename = "in")]
+    in_seconds: Option<Number>,
+}
+
+#[derive(Deserialize)]
+struct RawVerdict {
+    condition: Text<200>,
+    verdict: Text<200>,
+}
+
+#[derive(Deserialize)]
+struct RawVerdicts {
+    accepted: bool,
+    list: Vec<RawVerdict>,
+}
+
+impl From<RawVerdicts> for Verdicts {
+    fn from(raw: RawVerdicts) -> Verdicts {
+        Verdicts {
+            accepted: raw.accepted,
+            list: raw
+                .list
+                .into_iter()
+                .map(|entry| Verdict {
+                    condition: entry.condition.into(),
+                    verdict: entry.verdict.into(),
+                })
+                .collect(),
+        }
     }
 }
 
-/// `variantField`: a key string, or `{ key, name? }`. Returns the key and its name.
-fn variant_of(value: &Value) -> Option<(String, String)> {
-    if let Some(key) = text(value, 40) {
-        return Some((key.to_string(), key.to_string()));
+/// A Swiss event, in a team's list or on its own.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawSwiss {
+    id: Text<12>,
+    name: Text<120>,
+    status: SwissStatus,
+    variant: RawVariant,
+    rated: bool,
+    clock: Clock,
+    #[serde(default, deserialize_with = "present")]
+    round: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    nb_rounds: Option<Number>,
+    nb_players: Number,
+    starts_at: RawDate,
+    #[serde(default, deserialize_with = "present")]
+    next_round: Option<RawNextRound>,
+    #[serde(default, deserialize_with = "present")]
+    verdicts: Option<RawVerdicts>,
+}
+
+#[derive(Deserialize)]
+struct RawSheet {
+    #[serde(default, deserialize_with = "present")]
+    scores: Option<Text<400>>,
+    #[serde(default, deserialize_with = "present")]
+    fire: Option<bool>,
+}
+
+/// A leaderboard row.
+#[derive(Deserialize)]
+struct RawStanding {
+    rank: Number,
+    #[serde(default, deserialize_with = "present")]
+    name: Option<Text<40>>,
+    #[serde(default, deserialize_with = "present")]
+    username: Option<Text<40>>,
+    #[serde(default)]
+    title: Option<Text<8>>,
+    #[serde(default, deserialize_with = "present")]
+    rating: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    score: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    points: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    sheet: Option<RawSheet>,
+}
+
+/// `rankedPlayer`: `{ name, rating?, rank? }`.
+#[derive(Deserialize)]
+struct RawRankedPlayer {
+    name: Text<40>,
+    #[serde(default, deserialize_with = "present")]
+    rating: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    rank: Option<Number>,
+}
+
+impl From<RawRankedPlayer> for RankedPlayer {
+    fn from(raw: RawRankedPlayer) -> RankedPlayer {
+        RankedPlayer {
+            name: raw.name.into(),
+            rating: raw.rating,
+            rank: raw.rank,
+        }
     }
-    let object = value.as_object()?;
-    let key = text(object.get("key")?, 40)?.to_string();
-    let name = optional(object, "name", |v| text(v, 40))?
-        .map(str::to_string)
-        .unwrap_or_else(|| key.clone());
-    Some((key, name))
 }
 
-/// `clockSchema`: an object with numeric `limit` and `increment`.
-fn clock_of(value: &Value) -> Option<Clock> {
-    let object = value.as_object()?;
-    Some(Clock {
-        limit: num(object.get("limit")?)?,
-        increment: num(object.get("increment")?)?,
-    })
+/// A side of a duel: `{ n, r?, k? }`.
+#[derive(Deserialize)]
+struct RawDuelSide {
+    n: Text<40>,
+    #[serde(default, deserialize_with = "present")]
+    r: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    k: Option<Number>,
 }
 
-/// `standingSchema`'s sheet: `{ scores?, fire? }`.
-type Sheet = (Option<String>, Option<bool>);
+impl From<RawDuelSide> for RankedPlayer {
+    fn from(raw: RawDuelSide) -> RankedPlayer {
+        RankedPlayer {
+            name: raw.n.into(),
+            rating: raw.r,
+            rank: raw.k,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct RawDuel {
+    id: Text<12>,
+    p: (RawDuelSide, RawDuelSide),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Side {
+    White,
+    Black,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawFeatured {
+    id: Text<12>,
+    fen: Text<100>,
+    #[serde(default, deserialize_with = "present")]
+    orientation: Option<Side>,
+    #[serde(default, deserialize_with = "present")]
+    last_move: Option<Text<8>>,
+    white: RawRankedPlayer,
+    black: RawRankedPlayer,
+    #[serde(default, deserialize_with = "present")]
+    c: Option<Clocks>,
+}
+
+#[derive(Deserialize)]
+struct RawPodiumEntry {
+    name: Text<40>,
+    rank: Number,
+    #[serde(default, deserialize_with = "present")]
+    rating: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    score: Option<Number>,
+    #[serde(default, deserialize_with = "present")]
+    performance: Option<Number>,
+}
+
+/// The extras of an arena detail, read as one.
+#[derive(Deserialize)]
+struct RawExtras {
+    #[serde(default)]
+    featured: Option<RawFeatured>,
+    #[serde(default, deserialize_with = "present")]
+    duels: Option<Vec<RawDuel>>,
+    #[serde(default)]
+    podium: Option<Vec<RawPodiumEntry>>,
+    #[serde(default)]
+    stats: Option<Stats>,
+}
 
 /* ── Eligibility and dates ─────────────────────────────────────────────── */
 
@@ -371,124 +561,40 @@ fn compatibility(clock: &Clock, variant: &str) -> (bool, Option<String>) {
 /// time, fraction and offset). Anything else is 0, as an unreadable date is. A bare date or a
 /// time without an offset is read as UTC.
 pub fn parse_date(text: &str) -> i64 {
-    parse_iso(text).unwrap_or(0)
-}
-
-fn parse_iso(text: &str) -> Option<i64> {
-    let year: i64 = text.get(0..4)?.parse().ok()?;
-    if text.get(4..5)? != "-" || text.get(7..8)? != "-" {
-        return None;
-    }
-    let month: i64 = text.get(5..7)?.parse().ok()?;
-    let day: i64 = text.get(8..10)?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let mut rest = text.get(10..)?;
-    let (mut hour, mut minute, mut second, mut millis) = (0i64, 0i64, 0i64, 0i64);
-    if let Some(time) = rest.strip_prefix('T').or_else(|| rest.strip_prefix(' ')) {
-        hour = time.get(0..2)?.parse().ok()?;
-        minute = time.get(3..5)?.parse().ok()?;
-        rest = time.get(5..)?;
-        if let Some(seconds) = rest.strip_prefix(':') {
-            second = seconds.get(0..2)?.parse().ok()?;
-            rest = seconds.get(2..)?;
-        }
-        if let Some(fraction) = rest.strip_prefix('.') {
-            let digits: String = fraction
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            if digits.is_empty() {
-                return None;
-            }
-            let padded = format!("{digits:0<3}");
-            millis = padded.get(0..3)?.parse().ok()?;
-            rest = fraction.get(digits.len()..)?;
-        }
-    }
-    let offset_minutes = if rest.is_empty() || rest == "Z" {
-        0
-    } else {
-        let sign = rest.chars().next()?;
-        let zone = rest.get(1..)?;
-        let total =
-            zone.get(0..2)?.parse::<i64>().ok()? * 60 + zone.get(3..5)?.parse::<i64>().ok()?;
-        match sign {
-            '+' => total,
-            '-' => -total,
-            _ => return None,
-        }
-    };
-    let days = days_from_civil(year, month, day);
-    let seconds = days * 86_400 + hour * 3600 + minute * 60 + second - offset_minutes * 60;
-    Some(seconds * 1000 + millis)
-}
-
-/// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let month_index = if month > 2 { month - 3 } else { month + 9 };
-    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
+    kchess_domain::calendar::parse_iso_millis(text).unwrap_or(0)
 }
 
 /* ── Readers of the Lichess answers ───────────────────────────────────── */
 
 /// `arenaSummary(raw)` of an entry of the arena list, or None when it is not readable.
 fn arena_summary(raw: &Value) -> Option<TournamentSummary> {
-    let object = raw.as_object()?;
-    let id = text(object.get("id")?, 12)?.to_string();
-    let name = text(object.get("fullName")?, 120)?.to_string();
-    let status = num(object.get("status")?)?;
-    let (variant_key, variant_name) = variant_of(object.get("variant")?)?;
-    let rated = object.get("rated")?.as_bool()?;
-    let clock = clock_of(object.get("clock")?)?;
-    let minutes = optional(object, "minutes", num)?;
-    let nb_players = num(object.get("nbPlayers")?)?;
-    let starts_at = whole(object.get("startsAt")?)?;
-    let finishes_at = optional(object, "finishesAt", whole)?;
-    // `perf: optional({ key })`: present must be an object with a key.
-    let perf = optional(object, "perf", |v| {
-        text(v.as_object()?.get("key")?, 30).map(str::to_string)
-    })?;
-    // `schedule: optional(nullable({ freq? }))`: null is no schedule.
-    let freq = match object.get("schedule") {
-        None | Some(Value::Null) => None,
-        Some(schedule) => {
-            optional(schedule.as_object()?, "freq", |f| text(f, 20))?.map(str::to_string)
-        }
-    };
-    // `maxRating: optional(nullable({ rating }))`.
-    let max_rating = optional(object, "maxRating", |v| {
-        nullable(v, |m| num(m.as_object()?.get("rating")?))
-    })?
-    .flatten();
-    let (playable, problem) = compatibility(&clock, &variant_key);
+    let arena: RawArena = read(raw)?;
+    let (variant_key, variant_name) = arena.variant.into_parts();
+    let (playable, problem) = compatibility(&arena.clock, &variant_key);
     Some(TournamentSummary {
-        id,
+        id: arena.id.into(),
         system: ARENA.into(),
-        name,
-        status: arena_status(&status).into(),
+        name: arena.full_name.into(),
+        status: arena_status(&arena.status).into(),
         variant: variant_key,
         variant_name,
-        rated,
-        clock,
-        minutes,
+        rated: arena.rated,
+        clock: arena.clock,
+        minutes: arena.minutes,
         round: None,
         nb_rounds: None,
-        nb_players,
-        starts_at,
-        finishes_at,
+        nb_players: arena.nb_players,
+        starts_at: arena.starts_at.0,
+        finishes_at: arena.finishes_at.map(|at| at.0),
         team: None,
         playable,
         problem,
-        perf,
-        freq,
-        max_rating,
+        perf: arena.perf.map(|perf| perf.key.into()),
+        freq: arena
+            .schedule
+            .and_then(|schedule| schedule.freq)
+            .map(String::from),
+        max_rating: arena.max_rating.map(|max| max.rating),
     })
 }
 
@@ -501,32 +607,40 @@ fn arena_status(status: &Number) -> &'static str {
     }
 }
 
-/// `swissSummary(raw, team)`, or None when the entry is not readable.
-fn swiss_summary(raw: &Value, team: Option<Team>) -> Option<TournamentSummary> {
-    let object = raw.as_object()?;
-    let id = text(object.get("id")?, 12)?.to_string();
-    let name = text(object.get("name")?, 120)?.to_string();
-    let status = object
-        .get("status")?
-        .as_str()
-        .filter(|status| ["created", "started", "finished"].contains(status))?;
-    let (variant_key, variant_name) = variant_of(object.get("variant")?)?;
-    let rated = object.get("rated")?.as_bool()?;
-    let clock = clock_of(object.get("clock")?)?;
-    let round = optional(object, "round", num)?;
-    let nb_rounds = optional(object, "nbRounds", num)?;
-    let nb_players = num(object.get("nbPlayers")?)?;
-    let starts_at = match object.get("startsAt")? {
-        Value::String(date) => parse_date(date),
-        other => whole(other)?,
-    };
-    swiss_checked(object)?;
-    let (playable, problem) = compatibility(&clock, &variant_key);
-    Some(TournamentSummary {
+/// The Swiss parts a summary does not keep, for a detail.
+struct SwissExtras {
+    verdicts: Option<RawVerdicts>,
+    next_round: Option<RawNextRound>,
+}
+
+/// `swissSummary(raw, team)` and the Swiss extras, or None when the entry is not readable.
+fn swiss_read(raw: &Value, team: Option<Team>) -> Option<(TournamentSummary, SwissExtras)> {
+    let RawSwiss {
         id,
-        system: SWISS.into(),
         name,
-        status: status.to_string(),
+        status,
+        variant,
+        rated,
+        clock,
+        round,
+        nb_rounds,
+        nb_players,
+        starts_at,
+        next_round,
+        verdicts,
+    } = read(raw)?;
+    let (variant_key, variant_name) = variant.into_parts();
+    let (playable, problem) = compatibility(&clock, &variant_key);
+    let summary = TournamentSummary {
+        id: id.into(),
+        system: SWISS.into(),
+        name: name.into(),
+        status: match status {
+            SwissStatus::Created => "created",
+            SwissStatus::Started => "started",
+            SwissStatus::Finished => "finished",
+        }
+        .into(),
         variant: variant_key,
         variant_name,
         rated,
@@ -535,7 +649,10 @@ fn swiss_summary(raw: &Value, team: Option<Team>) -> Option<TournamentSummary> {
         round,
         nb_rounds,
         nb_players,
-        starts_at,
+        starts_at: match starts_at {
+            RawDate::Iso(date) => parse_date(&date),
+            RawDate::Millis(at) => at.0,
+        },
         finishes_at: None,
         team,
         playable,
@@ -543,191 +660,92 @@ fn swiss_summary(raw: &Value, team: Option<Team>) -> Option<TournamentSummary> {
         perf: None,
         freq: None,
         max_rating: None,
-    })
+    };
+    Some((
+        summary,
+        SwissExtras {
+            verdicts,
+            next_round,
+        },
+    ))
 }
 
-/// The optional parts of a Swiss entry that the summary does not keep. A malformed one makes the
-/// entry unreadable, as the schema does.
-fn swiss_checked(object: &Object) -> Option<()> {
-    optional(object, "nextRound", |v| {
-        optional(v.as_object()?, "in", num).map(|_| ())
-    })?;
-    optional(object, "verdicts", verdicts_of)?;
-    Some(())
-}
-
-/// `verdicts`: `{ accepted, list: [{ condition, verdict }] }` with the schema's lengths.
-fn verdicts_of(value: &Value) -> Option<Verdicts> {
-    let object = value.as_object()?;
-    let accepted = object.get("accepted")?.as_bool()?;
-    let list = object
-        .get("list")?
-        .as_array()?
-        .iter()
-        .map(|entry| {
-            let entry = entry.as_object()?;
-            Some(Verdict {
-                condition: text(entry.get("condition")?, 200)?.to_string(),
-                verdict: text(entry.get("verdict")?, 200)?.to_string(),
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(Verdicts { accepted, list })
+/// `swissSummary(raw, team)`, or None when the entry is not readable.
+fn swiss_summary(raw: &Value, team: Option<Team>) -> Option<TournamentSummary> {
+    swiss_read(raw, team).map(|(summary, _)| summary)
 }
 
 /// `standingOf(raw)`: a leaderboard row, or None when it is not readable.
 fn standing_of(raw: &Value) -> Option<Standing> {
-    let object = raw.as_object()?;
-    let rank = num(object.get("rank")?)?;
-    let name = optional(object, "name", |v| text(v, 40))?;
-    let username = optional(object, "username", |v| text(v, 40))?;
-    // `title: optional(nullable(text(8)))`.
-    let title = optional(object, "title", |v| nullable(v, |t| text(t, 8)))?.flatten();
-    let rating = optional(object, "rating", num)?;
-    let score = optional(object, "score", num)?;
-    let points = optional(object, "points", num)?;
-    let sheet: Option<Sheet> = optional(object, "sheet", |v| {
-        let sheet = v.as_object()?;
-        let scores = optional(sheet, "scores", |s| text(s, 400))?;
-        let fire = optional(sheet, "fire", Value::as_bool)?;
-        Some((scores.map(str::to_string), fire))
-    })?;
-    let (scores, fire) = sheet.unwrap_or((None, None));
+    let row: RawStanding = read(raw)?;
+    let (scores, fire) = row.sheet.map_or((None, None), |sheet| {
+        (sheet.scores.map(String::from), sheet.fire)
+    });
     Some(Standing {
-        rank,
-        name: name.or(username).unwrap_or("?").to_string(),
-        title: title.map(str::to_string),
-        rating,
-        score: score.or(points),
+        rank: row.rank,
+        name: row
+            .name
+            .or(row.username)
+            .map_or_else(|| "?".into(), String::from),
+        title: row.title.map(String::from),
+        rating: row.rating,
+        score: row.score.or(row.points),
         sheet: scores,
         fire,
-    })
-}
-
-/// `rankedPlayer`: `{ name, rating?, rank? }`.
-fn ranked_player(value: &Value) -> Option<RankedPlayer> {
-    let object = value.as_object()?;
-    Some(RankedPlayer {
-        name: text(object.get("name")?, 40)?.to_string(),
-        rating: optional(object, "rating", num)?,
-        rank: optional(object, "rank", num)?,
-    })
-}
-
-/// A side of a duel: `{ n, r?, k? }`.
-fn duel_side(value: &Value) -> Option<RankedPlayer> {
-    let side = value.as_object()?;
-    Some(RankedPlayer {
-        name: text(side.get("n")?, 40)?.to_string(),
-        rating: optional(side, "r", num)?,
-        rank: optional(side, "k", num)?,
     })
 }
 
 /// `arenaExtras(raw)`: the featured game, the games in progress, the podium and the totals of an
 /// arena. The schema is checked as one: when any part is unreadable, none of them is kept.
 pub fn arena_extras(raw: &Value) -> ArenaExtras {
-    arena_extras_checked(raw).unwrap_or_default()
-}
-
-fn arena_extras_checked(raw: &Value) -> Option<ArenaExtras> {
-    let object = raw.as_object()?;
-    // `featured: optional(nullable(...))`.
-    let featured = optional(object, "featured", |v| {
-        nullable(v, |f| {
-            let f = f.as_object()?;
-            let id = text(f.get("id")?, 12)?.to_string();
-            let fen = text(f.get("fen")?, 100)?.to_string();
-            let orientation = optional(f, "orientation", |o| {
-                o.as_str()
-                    .filter(|side| *side == "white" || *side == "black")
-                    .map(str::to_string)
-            })?;
-            let last_move = optional(f, "lastMove", |m| text(m, 8).map(str::to_string))?;
-            let white = ranked_player(f.get("white")?)?;
-            let black = ranked_player(f.get("black")?)?;
-            let clocks = optional(f, "c", |c| {
-                let c = c.as_object()?;
-                Some(Clocks {
-                    white: num(c.get("white")?)?,
-                    black: num(c.get("black")?)?,
-                })
-            })?;
-            Some(Featured {
-                id,
-                // Lichess sends the board and side to move only.
-                fen: format!(
-                    "{} - - 0 1",
-                    fen.split(' ').take(2).collect::<Vec<_>>().join(" ")
-                ),
-                orientation: orientation.unwrap_or_else(|| "white".to_string()),
-                last_move,
-                white,
-                black,
-                clocks,
-            })
-        })
-    })?
-    .flatten();
-    // `duels: optional(array)`.
-    let duels = optional(object, "duels", |v| {
-        v.as_array()?
-            .iter()
-            .map(|duel| {
-                let duel = duel.as_object()?;
-                let id = text(duel.get("id")?, 12)?.to_string();
-                let pair = duel.get("p")?.as_array()?;
-                let [first, second] = pair.as_slice() else {
-                    return None;
-                };
-                Some(TournamentGame {
-                    id,
-                    white: duel_side(first)?,
-                    black: duel_side(second)?,
-                })
-            })
-            .collect::<Option<Vec<_>>>()
-    })?;
-    // `podium: optional(nullable(array))`.
-    let podium = optional(object, "podium", |v| {
-        nullable(v, |list| {
-            list.as_array()?
-                .iter()
-                .map(|entry| {
-                    let entry = entry.as_object()?;
-                    Some(PodiumEntry {
-                        name: text(entry.get("name")?, 40)?.to_string(),
-                        rank: num(entry.get("rank")?)?,
-                        rating: optional(entry, "rating", num)?,
-                        score: optional(entry, "score", num)?,
-                        performance: optional(entry, "performance", num)?,
-                    })
-                })
-                .collect::<Option<Vec<_>>>()
-        })
-    })?
-    .flatten();
-    // `stats: optional(nullable(object))`.
-    let stats = optional(object, "stats", |v| {
-        nullable(v, |s| {
-            let s = s.as_object()?;
-            Some(Stats {
-                games: num(s.get("games")?)?,
-                white_wins: num(s.get("whiteWins")?)?,
-                black_wins: num(s.get("blackWins")?)?,
-                draws: num(s.get("draws")?)?,
-                berserks: num(s.get("berserks")?)?,
-                average_rating: num(s.get("averageRating")?)?,
-            })
-        })
-    })?
-    .flatten();
-    Some(ArenaExtras {
+    let Some(extras) = read::<RawExtras>(raw) else {
+        return ArenaExtras::default();
+    };
+    let featured = extras.featured.map(|f| Featured {
+        id: f.id.into(),
+        // Lichess sends the board and side to move only.
+        fen: format!(
+            "{} - - 0 1",
+            f.fen.split(' ').take(2).collect::<Vec<_>>().join(" ")
+        ),
+        orientation: match f.orientation {
+            Some(Side::Black) => "black",
+            Some(Side::White) | None => "white",
+        }
+        .into(),
+        last_move: f.last_move.map(String::from),
+        white: f.white.into(),
+        black: f.black.into(),
+        clocks: f.c,
+    });
+    ArenaExtras {
         featured,
-        duels: duels.map(|games| games.into_iter().take(30).collect()),
-        podium: podium.map(|entries| entries.into_iter().take(3).collect()),
-        stats,
-    })
+        duels: extras.duels.map(|duels| {
+            duels
+                .into_iter()
+                .take(30)
+                .map(|duel| TournamentGame {
+                    id: duel.id.into(),
+                    white: duel.p.0.into(),
+                    black: duel.p.1.into(),
+                })
+                .collect()
+        }),
+        podium: extras.podium.map(|entries| {
+            entries
+                .into_iter()
+                .take(3)
+                .map(|entry| PodiumEntry {
+                    name: entry.name.into(),
+                    rank: entry.rank,
+                    rating: entry.rating,
+                    score: entry.score,
+                    performance: entry.performance,
+                })
+                .collect()
+        }),
+        stats: extras.stats,
+    }
 }
 
 /// `teamProblem(cause)`: a short reason for the Swiss list, never Lichess's raw response.
@@ -1032,7 +1050,7 @@ async fn arena_detail(
 /// None when its clock is unreadable.
 fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
     let object = raw.as_object()?;
-    let clock = clock_of(object.get("clock").unwrap_or(&Value::Null))?;
+    let clock: Clock = read(object.get("clock")?)?;
     let variant_key = match object.get("variant") {
         Some(Value::String(key)) => key.clone(),
         _ => "standard".to_string(),
@@ -1082,7 +1100,7 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
 
 /// A number under `key` of a JSON object, when it is one.
 fn num_at(value: &Value, key: &str) -> Option<Number> {
-    value.get(key).and_then(num)
+    value.get(key).and_then(Value::as_number).cloned()
 }
 
 async fn swiss_detail(
@@ -1093,7 +1111,7 @@ async fn swiss_detail(
 ) -> Res<TournamentDetail> {
     let path = format!("/api/swiss/{}", path_segment(id));
     let raw: Value = lichess.client().get_json(&path, &[], auth, cancel).await?;
-    let summary = swiss_summary(&raw, None).ok_or_else(|| {
+    let (summary, swiss) = swiss_read(&raw, None).ok_or_else(|| {
         Failure::Core(CoreError::new(
             "Lichess sent details KChess could not read.",
         ))
@@ -1128,8 +1146,8 @@ async fn swiss_detail(
         standing,
         standing_page: None,
         me: None,
-        verdicts: raw.get("verdicts").and_then(verdicts_of),
-        next_round_in: raw.get("nextRound").and_then(|next| num_at(next, "in")),
+        verdicts: swiss.verdicts.map(Verdicts::from),
+        next_round_in: swiss.next_round.and_then(|next| next.in_seconds),
         featured: None,
         duels: None,
         podium: None,
@@ -1271,12 +1289,13 @@ pub async fn create_tournament(
             // with an entry of the arena list.
             let id = raw
                 .get("id")
-                .and_then(|id| text(id, 12))
+                .and_then(read::<Text<12>>)
+                .map(String::from)
                 .unwrap_or_default();
             arena_summary(&raw)
                 .or_else(|| {
                     (!id.is_empty())
-                        .then(|| arena_detail_summary(id, &raw))
+                        .then(|| arena_detail_summary(&id, &raw))
                         .flatten()
                 })
                 .ok_or_else(|| {

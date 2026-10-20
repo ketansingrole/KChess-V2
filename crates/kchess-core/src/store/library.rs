@@ -160,17 +160,10 @@ pub fn num(n: f64) -> Value {
 pub fn random_uuid() -> Result<String> {
     let mut bytes = [0u8; 16];
     fill(&mut bytes).map_err(|e| CoreError::new(e.to_string()))?;
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    ))
+    Ok(uuid::Builder::from_random_bytes(bytes)
+        .into_uuid()
+        .hyphenated()
+        .to_string())
 }
 
 /// `BEGIN IMMEDIATE` … `COMMIT`, rolled back on any error (`db.exec` in the TypeScript).

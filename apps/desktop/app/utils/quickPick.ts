@@ -1,5 +1,7 @@
 /** Quick-pick search: prefix modes and a VS Code-style fuzzy matcher with highlight ranges. */
 
+import escapeHtml from 'escape-html'
+
 export type QuickPickMode = 'all' | 'commands' | 'players' | 'settings' | 'help'
 
 export const QUICK_PICK_PREFIXES: Record<string, QuickPickMode> = {
@@ -109,17 +111,6 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
     else merged.push([...range])
   }
   return merged
-}
-
-const ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-}
-export function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => ESCAPES[char] ?? char)
 }
 
 /** Escaped label HTML with matched ranges wrapped in `<mark>`. */

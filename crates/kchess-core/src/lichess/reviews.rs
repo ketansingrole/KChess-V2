@@ -5,11 +5,13 @@
 //! goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
 //! the storage trait the wiring provides.
 
-use serde_json::{Map, Value, json};
+use serde::Deserialize;
+use serde_json::{Map, Number, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, now_ms};
 use super::client::{Failure, LichessClient};
+use super::decode::{Loose, read};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, records, replay, review as domain_review};
 
@@ -18,11 +20,73 @@ const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 
 /// `fetchLichessReviews` asks about at most this many games at once.
 pub const MAX_REVIEW_IDS: usize = 300;
 
+/// One entry of Lichess's analysis: each field read when it has the right type.
+#[derive(Default, Deserialize)]
+struct RawAnalysis {
+    #[serde(default)]
+    mate: Loose<Number>,
+    #[serde(default)]
+    eval: Loose<Number>,
+    #[serde(default)]
+    best: Loose<String>,
+    #[serde(default)]
+    variation: Loose<String>,
+    #[serde(default)]
+    judgment: Loose<RawJudgment>,
+}
+
+#[derive(Deserialize)]
+struct RawJudgment {
+    #[serde(default)]
+    name: Loose<String>,
+}
+
+#[derive(Deserialize)]
+struct RawAccuracy {
+    #[serde(default)]
+    accuracy: Loose<Number>,
+}
+
+#[derive(Deserialize)]
+struct RawPlayer {
+    #[serde(default)]
+    analysis: Loose<RawAccuracy>,
+}
+
+#[derive(Default, Deserialize)]
+struct RawPlayers {
+    #[serde(default)]
+    white: Loose<RawPlayer>,
+    #[serde(default)]
+    black: Loose<RawPlayer>,
+}
+
+/// A game export with its analysis.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawGame {
+    #[serde(default)]
+    status: Option<Value>,
+    #[serde(default)]
+    analysis: Loose<Vec<Loose<RawAnalysis>>>,
+    #[serde(default)]
+    variant: Loose<String>,
+    #[serde(default)]
+    moves: Loose<String>,
+    #[serde(default)]
+    initial_fen: Loose<String>,
+    #[serde(default)]
+    players: Loose<RawPlayers>,
+    #[serde(default)]
+    id: Loose<String>,
+}
+
 /// `reviewFromLichess(raw)`: Lichess's computer analysis of a game, as a review (scores from
 /// White's side, its labels and accuracy). None when the game is unfinished, has no analysis,
 /// or is a variant reviews cannot replay.
 pub fn review_from_lichess(raw: &Value) -> Option<Value> {
-    let status = raw.get("status").cloned().unwrap_or(Value::Null);
+    let game: RawGame = read(raw)?;
+    let status = game.status.unwrap_or(Value::Null);
     let in_progress = records::call("isGameInProgress", &[status])
         .and_then(Result::ok)
         .and_then(|value| value.as_bool())
@@ -30,16 +94,16 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
     if in_progress {
         return None;
     }
-    let analysis = raw.get("analysis")?.as_array()?;
+    let analysis = game.analysis.0?;
     if analysis.is_empty() {
         return None;
     }
-    let variant = raw.get("variant").and_then(Value::as_str);
+    let variant = game.variant.0.as_deref();
     if variant != Some("standard") && variant != Some("fromPosition") {
         return None;
     }
-    let moves_text = raw.get("moves").and_then(Value::as_str).unwrap_or("");
-    let initial = raw.get("initialFen").and_then(Value::as_str);
+    let moves_text = game.moves.0.as_deref().unwrap_or("");
+    let initial = game.initial_fen.0.as_deref();
     let (fen, moves) = domain_review::lichess_line(moves_text, None, initial);
     if moves.is_empty() {
         return None;
@@ -50,14 +114,13 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
         evals[0] = Some(Map::from_iter([("cp".to_string(), json!(15))]));
     }
     let mut judgments: Vec<Value> = vec![Value::Null; moves.len()];
-    for (i, entry) in analysis.iter().take(moves.len()).enumerate() {
+    for (i, entry) in analysis.into_iter().take(moves.len()).enumerate() {
         // Entry i scores the position after move i+1; its `best` is what should have been played.
         // Only numbers are scores: a review is stored as Lichess sent it.
-        let mate = entry.get("mate").filter(|value| value.is_number());
-        let eval = entry.get("eval").filter(|value| value.is_number());
-        let score = match (mate, eval) {
-            (Some(mate), _) => Some(("mate", mate.clone())),
-            (None, Some(eval)) => Some(("cp", eval.clone())),
+        let entry = entry.0.unwrap_or_default();
+        let score = match (entry.mate.0, entry.eval.0) {
+            (Some(mate), _) => Some(("mate", Value::Number(mate))),
+            (None, Some(eval)) => Some(("cp", Value::Number(eval))),
             (None, None) => None,
         };
         if let Some((key, value)) = score {
@@ -65,15 +128,8 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
                 .get_or_insert_with(Map::new)
                 .insert(key.to_string(), value);
         }
-        if let Some(best) = entry
-            .get("best")
-            .and_then(Value::as_str)
-            .filter(|best| !best.is_empty())
-        {
-            let variation = entry
-                .get("variation")
-                .and_then(Value::as_str)
-                .filter(|text| !text.is_empty());
+        if let Some(best) = entry.best.0.as_deref().filter(|best| !best.is_empty()) {
+            let variation = entry.variation.0.as_deref().filter(|text| !text.is_empty());
             let pv: Vec<String> = match variation {
                 Some(text) => {
                     let start = positions.get(i).map_or(fen.as_str(), |p| p.fen.as_str());
@@ -91,21 +147,24 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
             slot.insert("pv".to_string(), json!(pv));
         }
         if let Some(name) = entry
-            .pointer("/judgment/name")
-            .and_then(Value::as_str)
-            .map(str::to_lowercase)
+            .judgment
+            .0
+            .and_then(|judgment| judgment.name.0)
+            .map(|name| name.to_lowercase())
             && matches!(name.as_str(), "inaccuracy" | "mistake" | "blunder")
         {
             judgments[i] = json!(name);
         }
     }
     let mut accuracy = Map::new();
-    for color in ["white", "black"] {
-        let figure = raw
-            .pointer(&format!("/players/{color}/analysis/accuracy"))
-            .filter(|value| value.is_number());
+    let players = game.players.0.unwrap_or_default();
+    for (color, player) in [("white", players.white), ("black", players.black)] {
+        let figure = player
+            .0
+            .and_then(|player| player.analysis.0)
+            .and_then(|analysis| analysis.accuracy.0);
         if let Some(figure) = figure {
-            accuracy.insert(color.to_string(), figure.clone());
+            accuracy.insert(color.to_string(), Value::Number(figure));
         }
     }
     let key = records::call("reviewKey", &[json!(fen), json!(moves)])
@@ -126,7 +185,7 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
         "depth": 0,
         "complete": true,
         "updatedAt": now_ms(),
-        "gameId": raw.get("id")?.as_str()?,
+        "gameId": game.id.0?,
     }))
 }
 

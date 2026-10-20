@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use super::feed::{player_of, position_key, take_utf16, uci_or_none};
@@ -17,7 +18,84 @@ use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::client::{Failure, parse_json};
+use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
+
+/// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
+/// `d` is not an object, are ignored; each field is read when it has the right type.
+#[derive(Deserialize)]
+#[serde(tag = "t", content = "d")]
+enum TvRecord {
+    #[serde(rename = "featured")]
+    Featured(TvFeatured),
+    #[serde(rename = "fen")]
+    Fen(FeedMove),
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize)]
+struct TvFeatured {
+    #[serde(default)]
+    players: Loose<Vec<Value>>,
+    #[serde(default)]
+    fen: Loose<String>,
+    #[serde(default)]
+    id: Loose<String>,
+    #[serde(default)]
+    orientation: Loose<String>,
+}
+
+/// A move of a feed: the position, the move and the clocks.
+#[derive(Deserialize)]
+struct FeedMove {
+    #[serde(default)]
+    fen: Loose<String>,
+    #[serde(default)]
+    lm: Option<Value>,
+    #[serde(default)]
+    wc: Loose<f64>,
+    #[serde(default)]
+    bc: Loose<f64>,
+}
+
+#[derive(Default, Deserialize)]
+struct Named {
+    #[serde(default)]
+    name: Loose<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct Keyed {
+    #[serde(default)]
+    key: Loose<String>,
+}
+
+/// A record of a game's stream: its description (with an `id`) or a move.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GameRecord {
+    #[serde(default)]
+    fen: Loose<String>,
+    #[serde(default)]
+    id: Loose<String>,
+    #[serde(default)]
+    status: Loose<Named>,
+    #[serde(default)]
+    players: Loose<Map<String, Value>>,
+    #[serde(default)]
+    winner: Loose<String>,
+    #[serde(default)]
+    variant: Loose<Keyed>,
+    #[serde(default)]
+    last_move: Option<Value>,
+    #[serde(default)]
+    lm: Option<Value>,
+    #[serde(default)]
+    wc: Loose<f64>,
+    #[serde(default)]
+    bc: Loose<f64>,
+}
 
 /// What a viewer is told when a feed's task panicked (the panic hook logged it).
 const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
@@ -307,26 +385,20 @@ impl Inner {
         let message: Value = serde_json::from_str(line).map_err(|cause| {
             CoreError::new(format!("Lichess sent an unreadable TV record: {cause}"))
         })?;
-        let data = message.get("d").cloned().unwrap_or_else(|| json!({}));
-        let fen_of =
-            |data: &Value| display_fen(data.get("fen").and_then(Value::as_str).unwrap_or(""));
-        match message.get("t").and_then(Value::as_str) {
-            Some("featured") => {
-                let players = data
-                    .get("players")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+        let fen_of = |fen: &Loose<String>| display_fen(fen.0.as_deref().unwrap_or(""));
+        match read::<TvRecord>(&message).unwrap_or(TvRecord::Other) {
+            TvRecord::Featured(data) => {
+                let players = data.players.0.unwrap_or_default();
                 let side = |color: &str| {
                     players
                         .iter()
                         .find(|player| player.get("color").and_then(Value::as_str) == Some(color))
                         .cloned()
                 };
-                let Some(fen) = fen_of(&data) else {
+                let Some(fen) = fen_of(&data.fen) else {
                     return Ok(());
                 };
-                let Some(id) = data.get("id").and_then(Value::as_str) else {
+                let Some(id) = data.id.0.as_deref() else {
                     return Ok(());
                 };
                 let game_id = take_utf16(id, 12);
@@ -346,8 +418,7 @@ impl Inner {
                     game_id: game_id.clone(),
                     white: player_of(white.as_ref()),
                     black: player_of(black.as_ref()),
-                    orientation: if data.get("orientation").and_then(Value::as_str) == Some("black")
-                    {
+                    orientation: if data.orientation.0.as_deref() == Some("black") {
                         "black"
                     } else {
                         "white"
@@ -404,11 +475,11 @@ impl Inner {
                 });
                 Ok(())
             }
-            Some("fen") => {
-                let Some(fen) = fen_of(&data) else {
+            TvRecord::Fen(data) => {
+                let Some(fen) = fen_of(&data.fen) else {
                     return Ok(());
                 };
-                let last_move = uci_or_none(data.get("lm"));
+                let last_move = uci_or_none(data.lm.as_ref());
                 let mut state = lock(live);
                 let (Some(current), Some(track)) = (state.current.clone(), state.track.clone())
                 else {
@@ -422,14 +493,8 @@ impl Inner {
                 let frame = WatchFrame {
                     fen,
                     last_move: last_move.clone(),
-                    white_clock: data
-                        .get("wc")
-                        .and_then(Value::as_f64)
-                        .or(current.white_clock),
-                    black_clock: data
-                        .get("bc")
-                        .and_then(Value::as_f64)
-                        .or(current.black_clock),
+                    white_clock: data.wc.0.or(current.white_clock),
+                    black_clock: data.bc.0.or(current.black_clock),
                     // A move the feed did not name breaks the list; better none than a wrong one.
                     moves: match (current.moves.as_ref(), last_move.as_ref()) {
                         (Some(moves), Some(last)) => {
@@ -451,7 +516,7 @@ impl Inner {
                 self.emit_tv(channel, frame);
                 Ok(())
             }
-            _ => Ok(()),
+            TvRecord::Other => Ok(()),
         }
     }
 
@@ -648,19 +713,15 @@ impl Inner {
                     let data: Value = serde_json::from_str(line).map_err(|cause| {
                         CoreError::new(format!("Lichess sent an unreadable game record: {cause}"))
                     })?;
-                    let Some(fen) =
-                        display_fen(data.get("fen").and_then(Value::as_str).unwrap_or(""))
-                    else {
+                    let record: GameRecord = read(&data).unwrap_or_default();
+                    let Some(fen) = display_fen(record.fen.0.as_deref().unwrap_or("")) else {
                         return Ok(());
                     };
-                    if let Some(id) = data.get("id").and_then(Value::as_str) {
+                    if let Some(id) = record.id.0.as_deref() {
                         // The description of the game: first, and again when it ends.
-                        let status = data
-                            .pointer("/status/name")
-                            .and_then(Value::as_str)
-                            .map(str::to_string);
-                        let players = data.get("players").cloned().unwrap_or_else(|| json!({}));
-                        let winner = match data.get("winner").and_then(Value::as_str) {
+                        let status = record.status.0.and_then(|status| status.name.0);
+                        let players = record.players.0.unwrap_or_default();
+                        let winner = match record.winner.0.as_deref() {
                             Some("white") => Some("white"),
                             Some("black") => Some("black"),
                             _ => None,
@@ -678,14 +739,14 @@ impl Inner {
                             black: player_of(players.get("black")),
                             orientation: current.as_ref().map_or("white", |c| c.orientation),
                             fen,
-                            last_move: uci_or_none(data.get("lastMove")),
+                            last_move: uci_or_none(record.last_move.as_ref()),
                             white_clock: current.as_ref().and_then(|c| c.white_clock),
                             black_clock: current.as_ref().and_then(|c| c.black_clock),
-                            variant: data
-                                .pointer("/variant/key")
-                                .and_then(Value::as_str)
-                                .unwrap_or("standard")
-                                .to_string(),
+                            variant: record
+                                .variant
+                                .0
+                                .and_then(|variant| variant.key.0)
+                                .unwrap_or_else(|| "standard".into()),
                             speed: details.speed,
                             rated: details.rated,
                             clock: details.clock,
@@ -699,15 +760,9 @@ impl Inner {
                     } else if let Some(previous) = current.as_ref() {
                         current = Some(WatchFrame {
                             fen,
-                            last_move: uci_or_none(data.get("lm")),
-                            white_clock: data
-                                .get("wc")
-                                .and_then(Value::as_f64)
-                                .or(previous.white_clock),
-                            black_clock: data
-                                .get("bc")
-                                .and_then(Value::as_f64)
-                                .or(previous.black_clock),
+                            last_move: uci_or_none(record.lm.as_ref()),
+                            white_clock: record.wc.0.or(previous.white_clock),
+                            black_clock: record.bc.0.or(previous.black_clock),
                             ..previous.clone()
                         });
                     }

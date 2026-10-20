@@ -9,15 +9,58 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::{Failure, LichessError, authorize, lichess_error, read_with_deadline};
+use super::decode::{Loose, present, read};
 use super::policy::Admitted;
 use super::reviews::collect_lines;
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::training;
+
+#[derive(Deserialize)]
+struct PuzzleId {
+    #[serde(default)]
+    id: Loose<String>,
+}
+
+/// An entry of a puzzle batch; only the puzzle's id is read here.
+#[derive(Deserialize)]
+struct BatchItem {
+    #[serde(default)]
+    puzzle: Loose<PuzzleId>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SolveRound {
+    #[serde(default)]
+    id: Loose<String>,
+    /// Passed on as Lichess sent it, null included.
+    #[serde(default, deserialize_with = "present")]
+    rating_diff: Option<Value>,
+}
+
+/// Lichess's answer to solved puzzles.
+#[derive(Deserialize)]
+struct SolveAnswer {
+    #[serde(default)]
+    rounds: Loose<Vec<Loose<SolveRound>>>,
+}
+
+/// A line of the puzzle activity; the puzzle is read by `puzzle_from_api`.
+#[derive(Default, Deserialize)]
+struct ActivityEntry {
+    #[serde(default, deserialize_with = "present")]
+    puzzle: Option<Value>,
+    #[serde(default)]
+    date: Option<Value>,
+    #[serde(default)]
+    win: Loose<bool>,
+}
 
 /// The request for a puzzle (`PuzzleRequest`). An empty account trains anonymously.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
@@ -164,15 +207,16 @@ pub async fn puzzle_next(
                     glicko: batch.get("glicko").cloned(),
                 });
             };
-            let ids: Vec<&str> = items
+            let ids: Vec<String> = items
                 .iter()
                 .map(|item| {
-                    item.get("puzzle")
-                        .and_then(|puzzle| puzzle.get("id"))
-                        .and_then(Value::as_str)
+                    read::<BatchItem>(item)
+                        .and_then(|item| item.puzzle.0)
+                        .and_then(|puzzle| puzzle.id.0)
                         .unwrap_or_default()
                 })
                 .collect();
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
             let chosen = {
                 let mut drawn = lichess.drawn_puzzles();
                 let recent = drawn.entry(request.account.to_lowercase()).or_default();
@@ -200,17 +244,16 @@ pub async fn puzzle_solve(
                 "solutions": [{ "id": request.id, "win": request.win, "rated": request.rated }]
             });
             let result = post_json(lichess, &path, &body, &authorize(&token), &cancel).await?;
-            let round = result
-                .get("rounds")
-                .and_then(Value::as_array)
-                .and_then(|rounds| {
-                    rounds
-                        .iter()
-                        .find(|round| round.get("id").and_then(Value::as_str) == Some(&request.id))
-                });
+            let rounds = read::<SolveAnswer>(&result)
+                .and_then(|answer| answer.rounds.0)
+                .unwrap_or_default();
+            let round = rounds
+                .into_iter()
+                .filter_map(|round| round.0)
+                .find(|round| round.id.0.as_deref() == Some(request.id.as_str()));
             Ok(PuzzleSolveResult {
                 rating_diff: if request.rated {
-                    round.and_then(|round| round.get("ratingDiff")).cloned()
+                    round.and_then(|round| round.rating_diff)
                 } else {
                     None
                 },
@@ -282,15 +325,16 @@ pub async fn puzzle_activity(
                         "Lichess sent an unreadable puzzle record: {cause}"
                     )))
                 })?;
-                let mut puzzle = raw.get("puzzle").cloned().unwrap_or_else(|| json!({}));
+                let activity: ActivityEntry = read(&raw).unwrap_or_default();
+                let mut puzzle = activity.puzzle.unwrap_or_else(|| json!({}));
                 if let Some(object) = puzzle.as_object_mut() {
                     object.insert("initialPly".into(), json!(0));
                 }
                 let read = puzzle_from_api(&json!({ "game": {}, "puzzle": puzzle }));
                 if let Some(read) = read {
                     entries.push(PuzzleActivityEntry {
-                        date: raw.get("date").cloned().unwrap_or(Value::Null),
-                        win: raw.get("win").and_then(Value::as_bool).unwrap_or(false),
+                        date: activity.date.unwrap_or(Value::Null),
+                        win: activity.win.0.unwrap_or(false),
                         puzzle: read,
                     });
                 }

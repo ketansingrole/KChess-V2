@@ -108,39 +108,7 @@ pub fn moves(outcome: Outcome, verdict: &Verdict) -> (u32, u32) {
     (verdict.found, verdict.found + verdict.wrong)
 }
 
-/// Days since 1970-01-01 of a `YYYY-MM-DD` calendar day; None when it is not one.
-pub fn day_number(day: &str) -> Option<i64> {
-    let bytes = day.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return None;
-    }
-    let number = |range: std::ops::Range<usize>| -> Option<i64> {
-        let part = day.get(range)?;
-        part.bytes()
-            .all(|b| b.is_ascii_digit())
-            .then(|| part.parse().ok())?
-    };
-    let (year, month, date) = (number(0..4)?, number(5..7)?, number(8..10)?);
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let length = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return None,
-    };
-    if date < 1 || date > length {
-        return None;
-    }
-    // Howard Hinnant's days_from_civil.
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + date - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146_097 + doe - 719_468)
-}
+pub use crate::calendar::day_number;
 
 /// The day streak: consecutive calendar days with a solved puzzle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

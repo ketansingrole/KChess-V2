@@ -200,27 +200,15 @@ fn history_from_games(games: &[Value]) -> Value {
     )
 }
 
-/// `[year, month0, day]` of a day start in UTC; nulls where JavaScript's Date is invalid.
+/// `[year, month0, day]` of a day start in UTC; nulls for a date outside the calendar's range.
 fn utc_date(day: f64) -> (Value, Value, Value) {
     if !day.is_finite() || day.abs() > MAX_DATE_MS {
         return (Value::Null, Value::Null, Value::Null);
     }
-    let (year, month0, date) = civil_from_days((day / DAY_MS).round() as i64);
-    (json!(year), json!(month0), json!(date))
-}
-
-/// Days since 1970-01-01 as (year, month 0-11, day 1-31), proleptic Gregorian.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let date = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month - 1, date)
+    match crate::calendar::civil_from_days((day / DAY_MS).round() as i64) {
+        Some((year, month, date)) => (json!(year), json!(month - 1), json!(date)),
+        None => (Value::Null, Value::Null, Value::Null),
+    }
 }
 
 /// Whether a history entry has points (`entry.points?.length`).
@@ -253,16 +241,6 @@ fn merge(official: &[Value], from_games: &[Value]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn calendar_days_match_the_gregorian_calendar() {
-        assert_eq!(civil_from_days(0), (1970, 0, 1));
-        assert_eq!(civil_from_days(-1), (1969, 11, 31));
-        assert_eq!(civil_from_days(19_723), (2024, 0, 1));
-        // A leap day, and the day after it.
-        assert_eq!(civil_from_days(19_782), (2024, 1, 29));
-        assert_eq!(civil_from_days(19_783), (2024, 2, 1));
-    }
 
     #[test]
     fn keys_normalize_like_lichess_names() {

@@ -88,7 +88,6 @@ onUnmounted(() => {
       <LazyUCommandPalette
         v-model:search-term="query"
         :groups="open ? groups : []"
-        :fuse="{ resultLimit: 100 }"
         :placeholder="open ? placeholders[props.mode] : 'Search…'"
         :input="{
           'aria-label': 'Search pages and commands',

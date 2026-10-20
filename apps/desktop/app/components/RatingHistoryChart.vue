@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
 import type { LichessRatingHistory } from '@kchess/contracts/types'
 import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '@kchess/rules/ratings'
-import { escapeHtml } from '../utils/quickPick'
+import escapeHtml from 'escape-html'
 import { toRatingPoints } from '../utils/ratingPoints'
 import {
   RATING_DAY_MS,

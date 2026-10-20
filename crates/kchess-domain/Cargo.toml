@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 thiserror = "2"
 shakmaty.workspace = true
+jiff.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 memchr.workspace = true

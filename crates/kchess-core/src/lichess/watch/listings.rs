@@ -1,5 +1,6 @@
 //! Broadcast listings and the TV and broadcast requests (moved from `watch.rs` without changes).
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
@@ -7,6 +8,7 @@ use super::{
 };
 use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::{Lichess, path_segment};
+use crate::lichess::decode::{Loose, Millis, Text, read};
 use kchess_domain::js;
 
 /* ── Broadcast listings (pure) ── */
@@ -18,12 +20,7 @@ pub fn broadcast_summaries(entries: &[Value], section: &'static str) -> Vec<Broa
         .iter()
         .take(30)
         .filter_map(|entry| {
-            let tour = entry.get("tour")?;
-            let tour = read_tour(tour)?;
-            let round = match entry.get("round") {
-                None | Some(Value::Null) => None,
-                Some(round) => Some(read_round(round)?),
-            };
+            let ListingRaw { tour, round } = read(entry)?;
             let ongoing = round.as_ref().is_some_and(|round| round.ongoing);
             let upcoming = round.as_ref().is_some_and(|round| {
                 !ongoing && !round.finished && round.finished_at.is_none_or(|at| at == 0.0)
@@ -36,91 +33,93 @@ pub fn broadcast_summaries(entries: &[Value], section: &'static str) -> Vec<Broa
                 section
             };
             Some(BroadcastSummary {
-                players: tour.players,
-                tour_id: tour.id,
-                tour_name: tour.name,
-                description: tour.description,
+                players: tour.info.and_then(|info| info.players).map(String::from),
+                tour_id: tour.id.into(),
+                tour_name: tour.name.into(),
+                description: tour.description.map(String::from),
                 image: tour
                     .image
+                    .map(String::from)
                     .filter(|image| image.starts_with("https://image.lichess1.org/")),
-                round_id: round.as_ref().map(|round| round.id.clone()),
-                round_name: round.as_ref().map(|round| round.name.clone()),
+                round_id: round.as_ref().map(|round| round.id.0.clone()),
+                round_name: round.as_ref().map(|round| round.name.0.clone()),
                 ongoing: round.as_ref().is_some_and(|round| round.ongoing),
-                starts_at: round.as_ref().and_then(|round| round.starts_at),
+                starts_at: round
+                    .as_ref()
+                    .and_then(|round| round.starts_at)
+                    .map(|at| at.0),
                 section,
             })
         })
         .collect()
 }
 
+/// An entry of a listing: a tournament and, unless null, its current round.
+#[derive(Deserialize)]
+struct ListingRaw {
+    tour: TourRaw,
+    #[serde(default)]
+    round: Option<RoundRaw>,
+}
+
+#[derive(Deserialize)]
+struct InfoRaw {
+    #[serde(default)]
+    players: Option<Text<500>>,
+}
+
+/// A broadcast tournament: absent or null optional fields are fine, other shapes are not.
+#[derive(Deserialize)]
 struct TourRaw {
-    id: String,
-    name: String,
-    description: Option<String>,
-    image: Option<String>,
-    players: Option<String>,
+    id: Text<12>,
+    name: Text<200>,
+    #[serde(default)]
+    description: Option<Text<4000>>,
+    #[serde(default)]
+    image: Option<Text<400>>,
+    #[serde(default)]
+    info: Option<InfoRaw>,
 }
 
+/// A broadcast round; absent or null flags are false.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RoundRaw {
-    id: String,
-    name: String,
+    id: Text<12>,
+    name: Text<120>,
+    #[serde(default, deserialize_with = "flag")]
     ongoing: bool,
+    #[serde(default, deserialize_with = "flag")]
     finished: bool,
+    #[serde(default)]
     finished_at: Option<f64>,
-    starts_at: Option<i64>,
+    #[serde(default)]
+    starts_at: Option<Millis>,
 }
 
-/// A text field of a tournament or round: absent, or a string of at most `max` UTF-16 units.
-fn text_field(raw: &Value, key: &str, max: usize) -> Option<Option<String>> {
-    match raw.get(key) {
-        None | Some(Value::Null) if key != "id" && key != "name" => Some(None),
-        Some(Value::String(text)) if js::utf16_len(text) <= max => Some(Some(text.clone())),
-        _ => None,
-    }
+/// A flag that may be null (false).
+fn flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    Option::<bool>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
-fn read_tour(raw: &Value) -> Option<TourRaw> {
-    let id = text_field(raw, "id", 12)??;
-    let name = text_field(raw, "name", 200)??;
-    let description = text_field(raw, "description", 4000)?;
-    let image = text_field(raw, "image", 400)?;
-    let players = match raw.get("info") {
-        None | Some(Value::Null) => None,
-        Some(info) => text_field(info, "players", 500)?,
-    };
-    Some(TourRaw {
-        id,
-        name,
-        description,
-        image,
-        players,
-    })
+#[derive(Deserialize)]
+struct ChannelUserRaw {
+    #[serde(default)]
+    name: Loose<String>,
+    #[serde(default)]
+    title: Loose<String>,
 }
 
-fn read_round(raw: &Value) -> Option<RoundRaw> {
-    let id = text_field(raw, "id", 12)??;
-    let name = text_field(raw, "name", 120)??;
-    let flag = |key: &str| -> Option<bool> {
-        match raw.get(key) {
-            None | Some(Value::Null) => Some(false),
-            Some(Value::Bool(flag)) => Some(*flag),
-            Some(_) => None,
-        }
-    };
-    let number = |key: &str| -> Option<Option<f64>> {
-        match raw.get(key) {
-            None | Some(Value::Null) => Some(None),
-            Some(value) => value.as_f64().map(Some),
-        }
-    };
-    Some(RoundRaw {
-        id,
-        name,
-        ongoing: flag("ongoing")?,
-        finished: flag("finished")?,
-        finished_at: number("finishedAt")?,
-        starts_at: number("startsAt")?.map(|n| n as i64),
-    })
+/// A TV channel: every field is optional and read when it has the right type.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelRaw {
+    #[serde(default)]
+    user: Loose<ChannelUserRaw>,
+    #[serde(default)]
+    rating: Loose<f64>,
+    #[serde(default)]
+    game_id: Loose<String>,
 }
 
 /* ── Requests ── */
@@ -141,29 +140,22 @@ pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
     Ok(TV_CHANNELS
         .iter()
         .map(|(key, label)| {
-            let entry = raw.get(*key);
-            let user = entry.and_then(|entry| entry.get("user"));
-            let player = user
-                .and_then(|user| user.get("name"))
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())
-                .map(|name| WatchPlayer {
-                    name: name.to_string(),
-                    title: user
-                        .and_then(|user| user.get("title"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    rating: entry
-                        .and_then(|entry| entry.get("rating"))
-                        .and_then(Value::as_f64),
-                });
+            let entry: Option<ChannelRaw> = raw.get(*key).and_then(read);
+            let (user, rating, game_id) = entry.map_or((None, None, None), |entry| {
+                (entry.user.0, entry.rating.0, entry.game_id.0)
+            });
+            let player = user.and_then(|user| {
+                let name = user.name.0.filter(|name| !name.is_empty())?;
+                Some(WatchPlayer {
+                    name,
+                    title: user.title.0,
+                    rating,
+                })
+            });
             TvChannel {
                 key,
                 label,
-                game_id: entry
-                    .and_then(|entry| entry.get("gameId"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
+                game_id,
                 player,
             }
         })
@@ -245,7 +237,7 @@ pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<Broadcast
         })
         .await?;
     let unreadable = || CoreError::new("Lichess sent an unreadable broadcast.");
-    let tour = raw.get("tour").and_then(read_tour).ok_or_else(unreadable)?;
+    let tour: TourRaw = raw.get("tour").and_then(read).ok_or_else(unreadable)?;
     let rounds = raw
         .get("rounds")
         .and_then(Value::as_array)
@@ -253,21 +245,21 @@ pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<Broadcast
             rounds
                 .iter()
                 .take(100)
-                .filter_map(read_round)
+                .filter_map(read::<RoundRaw>)
                 .map(|round| BroadcastRoundRef {
-                    id: round.id,
-                    name: round.name,
+                    id: round.id.into(),
+                    name: round.name.into(),
                     ongoing: round.ongoing,
                     finished: round.finished,
-                    starts_at: round.starts_at,
+                    starts_at: round.starts_at.map(|at| at.0),
                 })
                 .collect()
         })
         .unwrap_or_default();
     Ok(BroadcastTourDetail {
-        id: tour.id,
-        name: tour.name,
-        description: tour.description,
+        id: tour.id.into(),
+        name: tour.name.into(),
+        description: tour.description.map(String::from),
         rounds,
         default_round_id: raw
             .get("defaultRoundId")

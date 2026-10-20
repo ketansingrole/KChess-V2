@@ -2,6 +2,7 @@
 //! semantics, PGN, the analysis tree, game replay and library document decoding.
 
 pub mod api;
+pub mod calendar;
 pub mod error;
 pub use error::DomainError;
 pub mod games;

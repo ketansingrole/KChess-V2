@@ -5,6 +5,7 @@ pub mod accounts;
 pub mod adapters;
 pub mod challenges;
 pub mod client;
+pub mod decode;
 pub mod lookups;
 pub mod oauth;
 pub mod online;

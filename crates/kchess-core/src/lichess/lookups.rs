@@ -17,6 +17,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::client::Failure;
+use super::decode::{Loose, Text, read};
 use super::reviews::split_whitespace;
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, misc, position, replay};
@@ -178,74 +179,59 @@ pub async fn cloud_eval(
         }
         result_lines.push(CloudLine {
             rank: index + 1,
-            depth: data.depth.clone(),
-            cp: pv.cp.clone(),
-            mate: pv.mate.clone(),
+            depth: Value::Number(data.depth.clone()),
+            // `cp` wins when both are sent.
+            cp: pv.cp.0.clone().map(Value::Number),
+            mate: pv
+                .cp
+                .0
+                .is_none()
+                .then(|| pv.mate.0.clone().map(Value::Number))
+                .flatten(),
             pv: moves[..legal].iter().map(|m| m.to_string()).collect(),
         });
     }
     let result = CloudEval {
         fen: fen.to_string(),
-        depth: data.depth,
-        knodes: data.knodes,
+        depth: Value::Number(data.depth),
+        knodes: Value::Number(data.knodes),
         lines: result_lines,
     };
     cache.set(key, Some(result.clone()));
     Ok(Some(result))
 }
 
+#[derive(Deserialize)]
 struct CloudPv {
-    cp: Option<Value>,
-    mate: Option<Value>,
+    #[serde(default)]
+    cp: Loose<serde_json::Number>,
+    #[serde(default)]
+    mate: Loose<serde_json::Number>,
     moves: String,
 }
 
+#[derive(Deserialize)]
 struct CloudData {
-    depth: Value,
-    knodes: Value,
+    depth: serde_json::Number,
+    knodes: serde_json::Number,
     pvs: Vec<CloudPv>,
 }
 
-/// The cloud evaluation's shape: finite non-negative depth and nodes, at most five lines, each
-/// with a score (`cp` or `mate`) and at most 2000 characters of moves.
+/// The cloud evaluation's shape: non-negative depth and nodes, at most five lines, each with a
+/// score (`cp` or `mate`) and at most 2000 characters of moves.
 fn decode_cloud(raw: &Value) -> CoreResult<CloudData> {
-    let unreadable = || CoreError::new("Lichess sent an unreadable cloud evaluation.");
-    let finite_count = |value: Option<&Value>| -> Option<Value> {
-        value
-            .filter(|v| v.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
-            .cloned()
-    };
-    let depth = finite_count(raw.get("depth")).ok_or_else(unreadable)?;
-    let knodes = finite_count(raw.get("knodes")).ok_or_else(unreadable)?;
-    let items = raw
-        .get("pvs")
-        .and_then(Value::as_array)
-        .filter(|items| items.len() <= 5)
-        .ok_or_else(unreadable)?;
-    let mut pvs = Vec::with_capacity(items.len());
-    for item in items {
-        let moves = item
-            .get("moves")
-            .and_then(Value::as_str)
-            .filter(|moves| moves.len() <= 2000)
-            .ok_or_else(unreadable)?;
-        let finite = |key: &str| {
-            item.get(key)
-                .filter(|v| v.as_f64().is_some_and(f64::is_finite))
-                .cloned()
-        };
-        let (cp, mate) = match (finite("cp"), finite("mate")) {
-            (Some(cp), _) => (Some(cp), None),
-            (None, Some(mate)) => (None, Some(mate)),
-            (None, None) => return Err(unreadable()),
-        };
-        pvs.push(CloudPv {
-            cp,
-            mate,
-            moves: moves.to_string(),
-        });
-    }
-    Ok(CloudData { depth, knodes, pvs })
+    let non_negative = |n: &serde_json::Number| n.as_f64().is_some_and(|n| n >= 0.0);
+    read::<CloudData>(raw)
+        .filter(|data| {
+            non_negative(&data.depth)
+                && non_negative(&data.knodes)
+                && data.pvs.len() <= 5
+                && data
+                    .pvs
+                    .iter()
+                    .all(|pv| pv.moves.len() <= 2000 && (pv.cp.0.is_some() || pv.mate.0.is_some()))
+        })
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable cloud evaluation."))
 }
 
 /* ── Position lookups ── */
@@ -1068,27 +1054,123 @@ fn legal_san(fen: &str, uci: &str) -> Option<String> {
     replay.played.first().map(|played| played.san.clone())
 }
 
+/// A tablebase category (`win`, `syzygy-loss`, …).
+struct Category(String);
+
+impl<'de> Deserialize<'de> for Category {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        const CATEGORIES: [&str; 10] = [
+            "win",
+            "unknown",
+            "syzygy-win",
+            "maybe-win",
+            "cursed-win",
+            "draw",
+            "blessed-loss",
+            "maybe-loss",
+            "syzygy-loss",
+            "loss",
+        ];
+        let text = String::deserialize(deserializer)?;
+        if CATEGORIES.contains(&text.as_str()) {
+            Ok(Category(text))
+        } else {
+            Err(serde::de::Error::custom("unknown tablebase category"))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct RawTablebaseMove {
+    uci: Text<5>,
+    category: Category,
+    #[serde(default)]
+    dtz: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct RawTablebase {
+    category: Category,
+    #[serde(default)]
+    dtz: Option<i64>,
+    moves: Vec<RawTablebaseMove>,
+}
+
+/// The position's and each move's totals: absent or null is no count.
+#[derive(Deserialize)]
+struct RawExplorerMove {
+    uci: Text<5>,
+    white: u64,
+    draws: u64,
+    black: u64,
+}
+
+#[derive(Deserialize)]
+struct RawOpening {
+    name: String,
+    eco: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawExplorer {
+    #[serde(default)]
+    white: Option<u64>,
+    #[serde(default)]
+    draws: Option<u64>,
+    #[serde(default)]
+    black: Option<u64>,
+    #[serde(default)]
+    opening: Option<RawOpening>,
+    moves: Vec<RawExplorerMove>,
+    // Only the games kept are read (`explorer_game`); one past them may be malformed.
+    #[serde(default)]
+    top_games: Loose<Vec<Value>>,
+    #[serde(default)]
+    recent_games: Loose<Vec<Value>>,
+}
+
+#[derive(Deserialize)]
+struct RawGamePlayer {
+    name: String,
+    #[serde(default)]
+    rating: Loose<f64>,
+}
+
+#[derive(Deserialize)]
+struct RawExplorerGame {
+    id: String,
+    white: RawGamePlayer,
+    black: RawGamePlayer,
+    #[serde(default)]
+    winner: Loose<String>,
+    #[serde(default)]
+    uci: Loose<String>,
+    #[serde(default)]
+    year: Loose<i64>,
+    #[serde(default)]
+    month: Loose<String>,
+}
+
+/// Counts as the cache keeps them.
+fn count(n: u64) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
 fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
     let unreadable = || CoreError::new("Position lookup returned unreadable data.");
-    let category = category_of(raw.get("category")).ok_or_else(unreadable)?;
-    let dtz = dtz_of(raw.get("dtz")).ok_or_else(unreadable)?;
-    let items = raw
-        .get("moves")
-        .and_then(Value::as_array)
-        .filter(|items| items.len() <= MAX_MOVES)
+    let tablebase = read::<RawTablebase>(raw)
+        .filter(|tablebase| tablebase.moves.len() <= MAX_MOVES)
         .ok_or_else(unreadable)?;
-    let mut moves = Vec::with_capacity(items.len());
-    for item in items {
-        let uci = uci_of(item.get("uci")).ok_or_else(unreadable)?;
-        let entry_category = category_of(item.get("category")).ok_or_else(unreadable)?;
-        let entry_dtz = dtz_of(item.get("dtz")).ok_or_else(unreadable)?;
-        let san = legal_san(fen, &uci)
+    let mut moves = Vec::with_capacity(tablebase.moves.len());
+    for item in tablebase.moves {
+        let san = legal_san(fen, &item.uci)
             .ok_or_else(|| CoreError::new("Position lookup returned an illegal move."))?;
         moves.push(LookupMove {
-            uci,
+            uci: item.uci.into(),
             san,
-            category: Some(entry_category),
-            dtz: Some(entry_dtz),
+            category: Some(item.category.0),
+            dtz: Some(item.dtz),
             ..LookupMove::default()
         });
     }
@@ -1098,8 +1180,8 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
         fetched_at: now,
         total: None,
         opening: None,
-        category: Some(category),
-        dtz: Some(dtz),
+        category: Some(tablebase.category.0),
+        dtz: Some(tablebase.dtz),
         games: None,
         moves,
     })
@@ -1107,76 +1189,50 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
 
 fn explorer_result(kind: Kind, fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
     let unreadable = || CoreError::new("Position lookup returned unreadable data.");
-    let count = |value: Option<&Value>| -> Result<Option<i64>, CoreError> {
-        match value {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_i64()
-                .filter(|n| *n >= 0)
-                .map(Some)
-                .ok_or_else(unreadable),
-        }
-    };
-    let items = raw
-        .get("moves")
-        .and_then(Value::as_array)
-        .filter(|items| items.len() <= MAX_MOVES)
+    let explorer = read::<RawExplorer>(raw)
+        .filter(|explorer| {
+            explorer.moves.len() <= MAX_MOVES
+                && explorer
+                    .opening
+                    .as_ref()
+                    .is_none_or(|opening| opening.name.chars().count() <= 200)
+        })
         .ok_or_else(unreadable)?;
-    let (white, draws, black) = (
-        count(raw.get("white"))?.unwrap_or(0),
-        count(raw.get("draws"))?.unwrap_or(0),
-        count(raw.get("black"))?.unwrap_or(0),
-    );
-    let opening = match raw.get("opening") {
-        None | Some(Value::Null) => None,
-        Some(opening) => {
-            let name = opening
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(unreadable)?;
-            let eco = opening
-                .get("eco")
-                .and_then(Value::as_str)
-                .ok_or_else(unreadable)?;
-            if name.chars().count() > 200 {
-                return Err(unreadable());
-            }
-            Some(format!("{eco} · {name}"))
-        }
-    };
-    let mut moves = Vec::with_capacity(items.len());
-    for item in items {
-        let uci = uci_of(item.get("uci")).ok_or_else(unreadable)?;
-        // Each move's counts are required, unlike the position's own totals.
-        let required = |key: &str| count(item.get(key))?.ok_or_else(unreadable);
-        let (entry_white, entry_draws, entry_black) =
-            (required("white")?, required("draws")?, required("black")?);
-        let san = legal_san(fen, &uci)
+    let opening = explorer
+        .opening
+        .map(|opening| format!("{} · {}", opening.eco, opening.name));
+    let mut moves = Vec::with_capacity(explorer.moves.len());
+    for item in explorer.moves {
+        let san = legal_san(fen, &item.uci)
             .ok_or_else(|| CoreError::new("Position lookup returned an illegal move."))?;
         moves.push(LookupMove {
-            uci,
+            uci: item.uci.into(),
             san,
-            white: Some(entry_white),
-            draws: Some(entry_draws),
-            black: Some(entry_black),
+            white: Some(count(item.white)),
+            draws: Some(count(item.draws)),
+            black: Some(count(item.black)),
             ..LookupMove::default()
         });
     }
-    let mut listed: Vec<&Value> = Vec::new();
-    for key in ["topGames", "recentGames"] {
-        if let Some(games) = raw.get(key).and_then(Value::as_array) {
-            if games.len() > MAX_CACHED_GAMES {
-                return Err(unreadable());
-            }
-            listed.extend(games.iter());
+    let mut listed: Vec<Value> = Vec::new();
+    for games in [explorer.top_games.0, explorer.recent_games.0]
+        .into_iter()
+        .flatten()
+    {
+        if games.len() > MAX_CACHED_GAMES {
+            return Err(unreadable());
         }
+        listed.extend(games);
     }
     listed.truncate(12);
-    let mut games = Vec::with_capacity(listed.len());
-    for game in listed {
-        games.push(explorer_game(game, fen, &unreadable)?);
-    }
-    let total = white + draws + black;
+    let games = listed
+        .iter()
+        .map(|game| explorer_game(game, fen).ok_or_else(unreadable))
+        .collect::<CoreResult<Vec<_>>>()?;
+    let total = [explorer.white, explorer.draws, explorer.black]
+        .into_iter()
+        .map(|n| count(n.unwrap_or(0)))
+        .fold(0i64, i64::saturating_add);
     Ok(Cached {
         kind: kind.name().into(),
         fen: fen.to_string(),
@@ -1190,150 +1246,53 @@ fn explorer_result(kind: Kind, fen: &str, now: i64, raw: &Value) -> CoreResult<C
     })
 }
 
-fn explorer_game(
-    game: &Value,
-    fen: &str,
-    unreadable: &dyn Fn() -> CoreError,
-) -> CoreResult<ExplorerGame> {
-    let id = game
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(unreadable)?;
-    if id.len() != 8 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        return Err(unreadable());
+/// A game the explorer lists, or None when it is not readable.
+fn explorer_game(game: &Value, fen: &str) -> Option<ExplorerGame> {
+    let game: RawExplorerGame = read(game)?;
+    let id_ok = game.id.len() == 8 && game.id.bytes().all(|b| b.is_ascii_alphanumeric());
+    let names_ok = [&game.white.name, &game.black.name]
+        .iter()
+        .all(|name| name.chars().count() <= 80);
+    if !id_ok || !names_ok {
+        return None;
     }
-    let player = |key: &str| -> Result<(String, Option<f64>), CoreError> {
-        let side = game.get(key).ok_or_else(unreadable)?;
-        let name = side
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(unreadable)?;
-        if name.chars().count() > 80 {
-            return Err(unreadable());
-        }
-        let rating = side.get("rating").and_then(|value| match value {
-            Value::Null => None,
-            other => other.as_f64(),
-        });
-        Ok((name.to_string(), rating))
-    };
-    let (white, white_rating) = player("white")?;
-    let (black, black_rating) = player("black")?;
-    let winner = match game.get("winner").and_then(Value::as_str) {
-        Some(color @ ("white" | "black")) => Some(color.to_string()),
-        _ => None,
-    };
-    // The move a listed game played from this position, as SAN, when it is legal there.
-    let san = game
-        .get("uci")
-        .and_then(Value::as_str)
-        .filter(|uci| uci.len() <= 5)
-        .and_then(|uci| legal_san(fen, uci));
-    Ok(ExplorerGame {
-        id: id.to_string(),
-        white,
-        black,
-        white_rating,
-        black_rating,
-        winner,
-        year: game.get("year").and_then(Value::as_i64),
-        month: game
-            .get("month")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        san,
+    Some(ExplorerGame {
+        id: game.id,
+        white: game.white.name,
+        black: game.black.name,
+        white_rating: game.white.rating.0,
+        black_rating: game.black.rating.0,
+        winner: game
+            .winner
+            .0
+            .filter(|color| color == "white" || color == "black"),
+        // The move a listed game played from this position, as SAN, when it is legal there.
+        san: game
+            .uci
+            .0
+            .filter(|uci| uci.len() <= 5)
+            .and_then(|uci| legal_san(fen, &uci)),
+        year: game.year.0,
+        month: game.month.0,
     })
 }
 
 /// `decodeLookupCache`: a saved lookup with the shape this module writes, or None.
 fn decode_cached(raw: Option<&Value>) -> Option<Cached> {
-    let raw = raw?;
-    let object = raw.as_object()?;
-    let kind = object.get("kind")?.as_str()?;
-    Kind::parse(kind)?;
-    let fen = object.get("fen")?.as_str()?;
-    if fen.len() > 100 {
-        return None;
-    }
-    let fetched_at = object.get("fetchedAt")?.as_i64().filter(|n| *n >= 0)?;
-    let entries = object.get("moves")?.as_array()?;
-    if entries.len() > MAX_MOVES {
-        return None;
-    }
-    let mut moves = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let uci = entry.get("uci")?.as_str()?;
-        let san = entry.get("san")?.as_str()?;
-        if uci.len() > 5 || san.len() > 32 {
-            return None;
-        }
-        moves.push(serde_json::from_value::<LookupMove>(entry.clone()).ok()?);
-    }
-    let games = match object.get("games") {
-        None => None,
-        Some(games) => {
-            let list = games.as_array()?;
-            if list.len() > MAX_CACHED_GAMES {
-                return None;
-            }
-            Some(
-                list.iter()
-                    .map(|game| serde_json::from_value::<ExplorerGame>(game.clone()).ok())
-                    .collect::<Option<Vec<_>>>()?,
-            )
-        }
-    };
-    Some(Cached {
-        kind: kind.to_string(),
-        fen: fen.to_string(),
-        fetched_at,
-        total: object.get("total").and_then(Value::as_i64),
-        opening: object
-            .get("opening")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        category: object
-            .get("category")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        dtz: match object.get("dtz") {
-            None => None,
-            Some(Value::Null) => Some(None),
-            Some(value) => Some(Some(value.as_i64()?)),
-        },
-        games,
-        moves,
-    })
-}
-
-fn category_of(value: Option<&Value>) -> Option<String> {
-    const CATEGORIES: [&str; 10] = [
-        "win",
-        "unknown",
-        "syzygy-win",
-        "maybe-win",
-        "cursed-win",
-        "draw",
-        "blessed-loss",
-        "maybe-loss",
-        "syzygy-loss",
-        "loss",
-    ];
-    let text = value?.as_str()?;
-    CATEGORIES.contains(&text).then(|| text.to_string())
-}
-
-fn dtz_of(value: Option<&Value>) -> Option<Option<i64>> {
-    match value {
-        None => Some(None),
-        Some(Value::Null) => Some(None),
-        Some(value) => value.as_i64().map(Some),
-    }
-}
-
-fn uci_of(value: Option<&Value>) -> Option<String> {
-    let text = value?.as_str()?;
-    (text.len() <= 5).then(|| text.to_string())
+    let cached: Cached = read(raw?)?;
+    let fits = Kind::parse(&cached.kind).is_some()
+        && cached.fen.len() <= 100
+        && cached.fetched_at >= 0
+        && cached.moves.len() <= MAX_MOVES
+        && cached
+            .moves
+            .iter()
+            .all(|entry| entry.uci.len() <= 5 && entry.san.len() <= 32)
+        && cached
+            .games
+            .as_ref()
+            .is_none_or(|games| games.len() <= MAX_CACHED_GAMES);
+    fits.then_some(cached)
 }
 
 /// Waits for a lookup another caller started. A lookup abandoned before it answers reports so.

@@ -21,6 +21,7 @@ use super::StoreContext;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::api;
+use kchess_domain::calendar::civil_from_days;
 
 /// Games kept per account (`MAX_GAMES` in `store.ts`).
 pub const MAX_GAMES: i64 = 5000;
@@ -917,25 +918,6 @@ fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
     Ok(value)
 }
 
-/// Days since 1970-01-01 to a proleptic Gregorian (year, month 1-12, day), as `Date` reads them in UTC.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted + 2) / 5 + 1;
-    let month = if shifted < 10 {
-        shifted + 3
-    } else {
-        shifted - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month, day)
-}
-
 /// `gameRatingHistory`: the last rated rating each day, per variant.
 fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
     let mut statement = db
@@ -963,7 +945,9 @@ fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
         .sql()?;
     let mut series: Vec<RatingSeries> = Vec::new();
     for (perf, day, rating) in rows {
-        let (year, month, date) = civil_from_days(day.div_euclid(86_400_000));
+        let Some((year, month, date)) = civil_from_days(day.div_euclid(86_400_000)) else {
+            continue;
+        };
         let point = [year, month - 1, date, rating];
         match series.iter().position(|entry| entry.name == perf) {
             Some(index) => series[index].points.push(point),
@@ -1433,19 +1417,6 @@ mod tests {
             )
             .contains("idx_games_account_result_page")
         );
-    }
-
-    #[test]
-    fn civil_dates_match_utc_dates() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        // 2023-10-01T00:00:00Z
-        assert_eq!(
-            civil_from_days(1_696_118_400_000 / 86_400_000),
-            (2023, 10, 1)
-        );
-        // 2000-02-29 (a leap day) and 1969-12-31.
-        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
-        assert_eq!(civil_from_days(-1), (1969, 12, 31));
     }
 
     #[test]

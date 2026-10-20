@@ -10,8 +10,8 @@ import { useLocalGameStore } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import { useAppUpdatesStore } from '../stores/appUpdates'
 import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
+import escapeHtml from 'escape-html'
 import {
-  escapeHtml,
   highlightRanges,
   parseQuickPick,
   pushRecent,
