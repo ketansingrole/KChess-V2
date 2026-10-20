@@ -1,1225 +1,1407 @@
-//! The `assert*` validators of `crates/kchess-wasm/js/validate.ts`: each parses an untrusted IPC value
-//! with the same schema the TypeScript used (see `engine.rs`) and returns the normalized value,
-//! or the message the TypeScript threw.
+//! The `assert*` validators of `crates/kchess-wasm/js/validate.ts`: each decodes an untrusted IPC
+//! value into a typed struct, checks it, and returns the normalized value or a message.
+//!
+//! A value of the wrong type takes the message its validator names for that place (the field, or
+//! the object for a missing property); without one, the decoder's own text, prefixed by the path
+//! (`speeds[0]: unknown variant …`). Type errors come first, in the order the input lists its
+//! properties; the checks after them run in field order.
 
-use std::sync::LazyLock;
+use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::constants::*;
-use super::engine::{
-    Action, J, Msg, Schema, array, literal, object, optional, parse, picklist_num, picklist_str,
-    pipe, strict_object, union,
-};
 use super::patterns;
-use crate::replay;
+use super::value::{self, J};
+use crate::{js, replay};
 
-type Validator = fn(Vec<J>) -> Result<J, String>;
+pub type Validator = fn(Vec<J>) -> Result<Value, String>;
 
-/// The argument `i`, moved out of the list (`undefined` when it is absent).
-fn take(args: &mut [J], i: usize) -> J {
-    args.get_mut(i)
-        .map_or(J::Undef, |slot| std::mem::replace(slot, J::Undef))
+/// A custom message, as the TypeScript source wrote it.
+type Msg = Option<&'static str>;
+
+type Checked<T> = Result<T, String>;
+
+/* ── Decoding and checks ── */
+
+/// The first argument, moved out of the list (`undefined` when it is absent).
+fn first(args: Vec<J>) -> J {
+    args.into_iter().next().unwrap_or(J::Undef)
 }
 
-/// Defines a validator that parses its only argument with a schema built once.
-macro_rules! schema_validator {
-    ($name:ident, $build:expr) => {
-        fn $name(mut args: Vec<J>) -> Result<J, String> {
-            static SCHEMA: LazyLock<Schema> = LazyLock::new(|| $build);
-            parse(&SCHEMA, take(&mut args, 0))
-        }
+/// Decodes `value` as `T`. A rejection takes the message `messages` names for the keys of the
+/// rejected value's path (`[]` for a list position), else the decoder's own text.
+fn decode<T: DeserializeOwned>(value: J, messages: fn(&[&str]) -> Msg) -> Checked<T> {
+    value::decode(value).map_err(|error| match messages(&error.keys()) {
+        Some(message) => message.to_owned(),
+        None => error.to_string(),
+    })
+}
+
+/// Messages for a validator that names one message for every rejection.
+macro_rules! always {
+    ($msg:expr) => {
+        (|_: &[&str]| Some($msg)) as fn(&[&str]) -> Msg
     };
 }
 
-const USERNAME_MESSAGE: &str = "Enter a valid Lichess username.";
-const USERNAME_SOURCE: &str = "/^[a-zA-Z0-9_-]{2,30}$/";
-const FEN_SOURCE: &str = r"/^[1-8pnbrqkPNBRQK]+(?:\/[1-8pnbrqkPNBRQK]+){7} [wb] (?:[KQkqA-Ha-h]{1,4}|-) (?:[a-h][36]|-)(?: \d{1,3} \d{1,4})?$/";
-const SINCE_SOURCE: &str = r"/^\d{4}(-\d{2})?$/";
-
-/// A string checked by one pattern; `msg` is the custom message, if any.
-fn text(msg: Msg, source: &'static str, test: fn(&str) -> bool, pattern_msg: Msg) -> Schema {
-    pipe(
-        Schema::Str(msg),
-        vec![Action::Regex {
-            source,
-            test,
-            msg: pattern_msg,
-        }],
-    )
+/// No custom messages.
+fn plain(_: &[&str]) -> Msg {
+    None
 }
 
-fn int_in_range(min: f64, max: f64, msg: Msg) -> Schema {
-    pipe(
-        Schema::Num(msg),
-        vec![
-            Action::Integer(msg),
-            Action::MinValue(min, msg),
-            Action::MaxValue(max, msg),
-        ],
-    )
+/// The normalized value, as JSON (integral numbers as integers).
+fn out<T: Serialize>(value: &T) -> Checked<Value> {
+    serde_json::to_value(value)
+        .map(value::integral)
+        .map_err(|error| error.to_string())
 }
 
-fn max_len(max: usize, msg: Msg) -> Action {
-    Action::MaxLength(max, msg)
+/// `msg`, or a description of what the value at `path` should have been.
+fn reject(msg: Msg, path: &str, expected: &str) -> String {
+    match msg {
+        Some(message) => message.to_owned(),
+        None if path.is_empty() => format!("invalid value, expected {expected}"),
+        None => format!("{path}: invalid value, expected {expected}"),
+    }
 }
 
-fn username_schema() -> Schema {
-    pipe(
-        Schema::Str(Some(USERNAME_MESSAGE)),
-        vec![
-            Action::Trim,
-            Action::Regex {
-                source: USERNAME_SOURCE,
-                test: patterns::username,
-                msg: Some(USERNAME_MESSAGE),
-            },
-        ],
-    )
+fn ensure(ok: bool, msg: Msg, path: &str, expected: impl FnOnce() -> String) -> Checked<()> {
+    if ok {
+        Ok(())
+    } else {
+        Err(reject(msg, path, &expected()))
+    }
 }
 
-fn game_id_schema() -> Schema {
-    text(
-        Some("Invalid game id."),
-        "/^[a-zA-Z0-9]{8,12}$/",
-        patterns::game_id,
-        Some("Invalid game id."),
-    )
+/// At most `max` UTF-16 units.
+fn max_chars(text: &str, max: usize, msg: Msg, path: &str) -> Checked<()> {
+    ensure(js::utf16_len(text) <= max, msg, path, || {
+        format!("at most {max} characters")
+    })
 }
 
-fn uci_schema() -> Schema {
-    text(
-        Some("Invalid move."),
-        "/^[a-h][1-8][a-h][1-8][qrbn]?$/",
-        patterns::uci_move,
-        Some("Invalid move."),
-    )
+/// At least `min` UTF-16 units.
+fn min_chars(text: &str, min: usize, msg: Msg, path: &str) -> Checked<()> {
+    ensure(js::utf16_len(text) >= min, msg, path, || {
+        format!("at least {min} characters")
+    })
 }
 
-fn moves_schema() -> Schema {
-    pipe(
-        array(uci_schema(), Some("Invalid move list.")),
-        vec![max_len(MAX_MOVES, Some("Invalid move list."))],
-    )
+fn max_items<T>(items: &[T], max: usize, msg: Msg, path: &str) -> Checked<()> {
+    ensure(items.len() <= max, msg, path, || {
+        format!("at most {max} items")
+    })
 }
 
-fn level_schema() -> Schema {
-    picklist_str(ENGINE_LEVELS, Some("Invalid engine level."))
+fn min_items<T>(items: &[T], min: usize, msg: Msg, path: &str) -> Checked<()> {
+    ensure(items.len() >= min, msg, path, || {
+        format!("at least {min} items")
+    })
 }
 
-fn angle_schema() -> Schema {
-    text(
-        Some("Invalid puzzle theme."),
-        "/^[a-zA-Z0-9_-]{1,60}$/",
+fn within<N: PartialOrd + std::fmt::Display>(
+    n: N,
+    min: N,
+    max: N,
+    msg: Msg,
+    path: &str,
+) -> Checked<()> {
+    let ok = n >= min && n <= max;
+    ensure(ok, msg, path, || format!("a number from {min} to {max}"))
+}
+
+fn finite(n: f64, msg: Msg, path: &str) -> Checked<()> {
+    ensure(n.is_finite(), msg, path, || "a finite number".into())
+}
+
+fn one_of(text: &str, options: &[&str], msg: Msg, path: &str) -> Checked<()> {
+    ensure(options.contains(&text), msg, path, || {
+        format!("one of {}", options.join(", "))
+    })
+}
+
+fn one_of_numbers(n: f64, options: &[f64], msg: Msg, path: &str) -> Checked<()> {
+    ensure(options.contains(&n), msg, path, || {
+        let listed: Vec<String> = options.iter().map(f64::to_string).collect();
+        format!("one of {}", listed.join(", "))
+    })
+}
+
+fn matches(text: &str, test: fn(&str) -> bool, msg: Msg, path: &str, what: &str) -> Checked<()> {
+    ensure(test(text), msg, path, || what.to_owned())
+}
+
+/// Each item checked by `check`, in order.
+fn each<T>(items: &[T], check: impl Fn(&T) -> Checked<()>) -> Checked<()> {
+    items.iter().try_for_each(check)
+}
+
+/* ── Shared fields ── */
+
+const USERNAME: &str = "Enter a valid Lichess username.";
+const NOTIFY: &str = "Invalid notification setting.";
+const VOICE: &str = "Invalid voice entry.";
+const ATTEMPT: &str = "Invalid puzzle attempt.";
+
+/// A Lichess username, trimmed.
+fn username(text: &str, path: &str) -> Checked<String> {
+    let trimmed = js::trim(text);
+    matches(trimmed, patterns::username, Some(USERNAME), path, "")?;
+    Ok(trimmed.to_owned())
+}
+
+fn game_id(text: &str) -> Checked<()> {
+    matches(text, patterns::game_id, Some("Invalid game id."), "", "")
+}
+
+fn uci(text: &str) -> Checked<()> {
+    matches(text, patterns::uci_move, Some("Invalid move."), "", "")
+}
+
+/// A move list: each a UCI move, and no more than a game holds.
+fn move_list(moves: &[String]) -> Checked<()> {
+    each(moves, |m| uci(m))?;
+    max_items(moves, MAX_MOVES, Some("Invalid move list."), "")
+}
+
+fn angle(text: &str) -> Checked<()> {
+    matches(
+        text,
         patterns::puzzle_angle,
         Some("Invalid puzzle theme."),
+        "",
+        "",
     )
+}
+
+fn lichess_id(text: &str, msg: &'static str) -> Checked<()> {
+    matches(text, patterns::lichess_id, Some(msg), "", "")
+}
+
+/// A position: at most 100 characters (`length` when longer), then the FEN shape (`msg`).
+fn fen(text: &str, length: Msg, msg: Msg, path: &str) -> Checked<()> {
+    max_chars(text, 100, length, path)?;
+    matches(text, patterns::fen, msg, path, "a FEN position")
+}
+
+fn local_day(text: &str, msg: &'static str) -> Checked<()> {
+    matches(text, patterns::local_day, Some(msg), "", "")
+}
+
+/// Messages of a move list, where the list itself has `list` and each move has its own.
+fn move_list_messages(keys: &[&str], list: Msg) -> Msg {
+    match keys {
+        [] => list,
+        _ => Some("Invalid move."),
+    }
+}
+
+/* ── Single values ── */
+
+fn assert_username(value: J) -> Checked<String> {
+    let text: String = decode(value, always!(USERNAME))?;
+    username(&text, "")
+}
+
+fn assert_game_id(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid game id."))?;
+    game_id(&text)?;
+    Ok(text)
+}
+
+fn assert_game_ids(value: J) -> Checked<Vec<String>> {
+    let ids: Vec<String> = decode(value, |keys| match keys {
+        [] => Some("Invalid game list."),
+        _ => Some("Invalid game id."),
+    })?;
+    each(&ids, |id| game_id(id))?;
+    max_items(&ids, 100, Some("Too many games."), "")?;
+    Ok(ids)
+}
+
+fn assert_uci(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid move."))?;
+    uci(&text)?;
+    Ok(text)
+}
+
+fn assert_moves(value: J) -> Checked<Vec<String>> {
+    let moves: Vec<String> = decode(value, |keys| {
+        move_list_messages(keys, Some("Invalid move list."))
+    })?;
+    move_list(&moves)?;
+    Ok(moves)
+}
+
+/// Decodes `value` as `T`; any rejection is `msg`, or the decoder's own text without one.
+fn decode_or<T: DeserializeOwned>(value: J, msg: Msg) -> Checked<T> {
+    decode(value, plain).map_err(|error| msg.map_or(error, str::to_owned))
+}
+
+/// A string from `options`; any rejection is `msg`.
+fn picked(value: J, options: &[&str], msg: Msg) -> Checked<String> {
+    let text: String = decode_or(value, msg)?;
+    one_of(&text, options, msg, "")?;
+    Ok(text)
+}
+
+fn assert_level(value: J) -> Checked<String> {
+    picked(value, ENGINE_LEVELS, Some("Invalid engine level."))
+}
+
+/// A list of usernames (trimmed), at most `max`; `min_msg` when there must be at least one.
+fn usernames(value: J, min_msg: Msg, max: usize) -> Checked<Vec<String>> {
+    let names: Vec<String> = decode(value, |keys| match keys {
+        [] => Some("Invalid users."),
+        _ => Some(USERNAME),
+    })?;
+    let names: Vec<String> = names
+        .iter()
+        .map(|name| username(name, ""))
+        .collect::<Checked<_>>()?;
+    if min_msg.is_some() {
+        min_items(&names, 1, min_msg, "")?;
+    }
+    max_items(&names, max, Some("Invalid users."), "")?;
+    Ok(names)
+}
+
+fn assert_usernames(value: J) -> Checked<Vec<String>> {
+    usernames(value, None, 50)
+}
+
+fn assert_friend_list(value: J) -> Checked<Vec<String>> {
+    usernames(value, Some("Choose at least one player."), 1000)
+}
+
+fn assert_action(value: J) -> Checked<String> {
+    picked(value, ONLINE_ACTIONS, Some("Invalid game action."))
+}
+
+fn assert_chat_room(value: J) -> Checked<String> {
+    picked(value, CHAT_ROOMS, Some("Invalid chat room."))
+}
+
+/// A message to send, trimmed, of 1 to `max` characters.
+fn message_text(value: J, max: usize, too_long: &'static str) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid message."))?;
+    let text = js::trim(&text);
+    min_chars(text, 1, Some("Type a message first."), "")?;
+    max_chars(text, max, Some(too_long), "")?;
+    Ok(text.to_owned())
+}
+
+fn assert_chat_text(value: J) -> Checked<String> {
+    message_text(value, 140, "Chat messages are limited to 140 characters.")
+}
+
+fn assert_message_text(value: J) -> Checked<String> {
+    message_text(value, 8000, "Messages are limited to 8,000 characters.")
+}
+
+fn assert_decline_reason(value: J) -> Checked<String> {
+    picked(value, DECLINE_REASONS, Some("Invalid reason."))
+}
+
+fn assert_tournament_system(value: J) -> Checked<String> {
+    picked(value, TOURNAMENT_SYSTEMS, Some("Invalid tournament."))
+}
+
+fn assert_tournament_id(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid tournament."))?;
+    lichess_id(&text, "Invalid tournament.")?;
+    Ok(text)
+}
+
+/// `assertTournamentPassword`: nothing or an empty password means none.
+fn assert_tournament_password(value: J) -> Checked<Option<String>> {
+    if matches!(&value, J::Undef) {
+        return Ok(None);
+    }
+    let text: String = decode(value, always!("Invalid password."))?;
+    if text.is_empty() {
+        return Ok(None);
+    }
+    max_chars(&text, 100, Some("Invalid password."), "")?;
+    Ok(Some(text))
+}
+
+fn assert_perf_type(value: J) -> Checked<String> {
+    picked(value, PERF_TYPES, Some("Invalid rating category."))
+}
+
+fn assert_lichess_id(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid id."))?;
+    lichess_id(&text, "Invalid id.")?;
+    Ok(text)
 }
 
 /// `optionalAccountSchema`: a connected account, or empty for none.
-fn optional_account_schema() -> Schema {
-    union(
-        vec![literal(""), username_schema()],
-        Some("Invalid account."),
-    )
-}
-
-fn hex_schema() -> Schema {
-    text(
-        Some("Colors must be hex, like #1a2b3c."),
-        "/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/",
-        patterns::hex_color,
-        Some("Colors must be hex, like #1a2b3c."),
-    )
-}
-
-/// A theme identifier setting: 1–32 characters of a–z, 0–9 and dashes.
-fn theme_setting(msg: &'static str) -> Schema {
-    text(
-        Some(msg),
-        "/^[a-z0-9-]{1,32}$/",
-        patterns::theme_id,
-        Some(msg),
-    )
-}
-
-fn voice_text(max: usize) -> Schema {
-    pipe(
-        Schema::Str(Some("Invalid voice entry.")),
-        vec![max_len(max, None)],
-    )
-}
-
-fn voice_pattern_score() -> Schema {
-    pipe(
-        Schema::Num(Some("Invalid voice entry.")),
-        vec![Action::MinValue(0.0, None), Action::MaxValue(1.0, None)],
-    )
-}
-
-fn palette_schema() -> Schema {
-    let mut entries = vec![
-        ("bg", hex_schema()),
-        ("text", hex_schema()),
-        ("primary", hex_schema()),
-    ];
-    for key in [
-        "muted",
-        "elevated",
-        "accented",
-        "border",
-        "textMuted",
-        "success",
-        "warning",
-        "error",
-        "info",
-    ] {
-        entries.push((key, optional(hex_schema())));
+fn assert_optional_account(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid account."))?;
+    if text.is_empty() {
+        return Ok(text);
     }
-    object(entries, None)
+    username(&text, "")
 }
 
-fn theme_schema() -> Schema {
-    let body = object(
-        vec![
-            (
-                "id",
-                text(
-                    Some("A theme needs an \"id\"."),
-                    "/^[a-z0-9-]{1,32}$/",
-                    patterns::theme_id,
-                    Some("The \"id\" must be 1–32 characters: a–z, 0–9 and dashes."),
-                ),
-            ),
-            (
-                "name",
-                pipe(
-                    Schema::Str(Some("A theme needs a \"name\".")),
-                    vec![
-                        Action::Trim,
-                        Action::MinLength(1, Some("A theme needs a \"name\".")),
-                        max_len(40, Some("The \"name\" is too long.")),
-                    ],
-                ),
-            ),
-            ("light", optional(palette_schema())),
-            ("dark", optional(palette_schema())),
-        ],
-        Some("A theme file must be a JSON object."),
-    );
-    pipe(
-        body,
-        vec![Action::Check {
-            check: |theme| {
-                theme.get("light").is_some_and(J::truthy)
-                    || theme.get("dark").is_some_and(J::truthy)
-            },
-            msg: Some("Add a \"dark\" or \"light\" palette."),
-        }],
-    )
+/// An integer from `min` to `max`; any rejection is `msg`.
+fn integer(value: J, min: u64, max: u64, msg: &'static str) -> Checked<u64> {
+    let n: u64 = decode_or(value, Some(msg))?;
+    within(n, min, max, Some(msg), "")?;
+    Ok(n)
 }
 
-fn notification_schema() -> Schema {
-    object(
-        vec![
-            (
-                "kind",
-                picklist_str(NOTIFICATION_KINDS, Some("Invalid notification.")),
-            ),
-            (
-                "title",
-                pipe(
-                    Schema::Str(Some("Invalid notification.")),
-                    vec![max_len(120, Some("Invalid notification."))],
-                ),
-            ),
-            (
-                "body",
-                pipe(
-                    Schema::Str(Some("Invalid notification.")),
-                    vec![max_len(400, Some("Invalid notification."))],
-                ),
-            ),
-        ],
-        Some("Invalid notification."),
-    )
+const MAX_SAFE: u64 = MAX_SAFE_INTEGER as u64;
+
+fn assert_days(value: J) -> Checked<u64> {
+    integer(value, 1, 365, "Invalid number of days.")
 }
 
-/// The notification switches share one message.
-const NOTIFY: &str = "Invalid notification setting.";
-
-fn settings_entries() -> Vec<(&'static str, Schema)> {
-    let boolean = |msg: &'static str| Schema::Bool(Some(msg));
-    vec![
-        (
-            "appearance",
-            picklist_str(APPEARANCES, Some("Invalid appearance.")),
-        ),
-        ("boardTheme", theme_setting("Invalid board theme.")),
-        ("lightTheme", theme_setting("Invalid color theme.")),
-        ("darkTheme", theme_setting("Invalid color theme.")),
-        ("pieceSet", theme_setting("Invalid piece set.")),
-        (
-            "pieceAnimation",
-            picklist_str(PIECE_ANIMATIONS, Some("Invalid piece animation.")),
-        ),
-        (
-            "coordinates",
-            picklist_str(COORDINATE_MODES, Some("Invalid coordinates mode.")),
-        ),
-        ("soundEnabled", boolean("Invalid sound setting.")),
-        (
-            "soundVolume",
-            pipe(
-                Schema::Num(Some("Invalid sound volume.")),
-                vec![
-                    Action::Finite(Some("Invalid sound volume.")),
-                    Action::Transform(clamp_unit),
-                ],
-            ),
-        ),
-        (
-            "enginePath",
-            pipe(
-                Schema::Str(Some("Invalid engine path.")),
-                vec![max_len(4096, Some("Invalid engine path."))],
-            ),
-        ),
-        ("premove", boolean("Invalid premove setting.")),
-        (
-            "promotion",
-            picklist_str(PROMOTION_MODES, Some("Invalid promotion setting.")),
-        ),
-        ("showLegalMoves", boolean("Invalid legal moves setting.")),
-        ("notificationsEnabled", boolean(NOTIFY)),
-        ("notifyActive", boolean(NOTIFY)),
-        ("notifyBackground", boolean(NOTIFY)),
-        ("notifyOpponentMove", boolean(NOTIFY)),
-        ("notifyLowTime", boolean(NOTIFY)),
-        ("notifyGameEvents", boolean(NOTIFY)),
-        ("notifyComputerMove", boolean(NOTIFY)),
-        ("notifySound", boolean(NOTIFY)),
-        ("voicePushToTalk", boolean("Invalid voice setting.")),
-        ("voiceConfirmMoves", boolean("Invalid voice setting.")),
-        ("voiceHistory", boolean("Invalid voice setting.")),
-        ("updateAutoCheck", boolean("Invalid update setting.")),
-        ("updateAutoDownload", boolean("Invalid update setting.")),
-        ("updateInstallOnQuit", boolean("Invalid update setting.")),
-        (
-            "engineLevels",
-            pipe(
-                array(level_schema(), Some("Invalid computer levels.")),
-                vec![
-                    Action::MinLength(1, Some("Keep at least one computer level.")),
-                    Action::Transform(engine_levels_filter),
-                ],
-            ),
-        ),
-        (
-            "reviewAuto",
-            picklist_str(REVIEW_AUTO, Some("Invalid review setting.")),
-        ),
-        ("reviewOnBattery", boolean("Invalid review setting.")),
-        ("receiveChallenges", boolean("Invalid challenge setting.")),
-        ("notifyChallenges", boolean(NOTIFY)),
-        ("onlineChat", boolean("Invalid chat setting.")),
-        (
-            "correspondencePoll",
-            int_in_range(0.0, 120.0, Some("Invalid correspondence check interval.")),
-        ),
-        ("zenMode", boolean("Invalid zen mode setting.")),
-        ("blindfold", boolean("Invalid blindfold setting.")),
-        ("cloudEval", boolean("Invalid cloud evaluation setting.")),
-        ("showOpeningName", boolean("Invalid opening name setting.")),
-        ("swipeNavigation", boolean("Invalid swipe setting.")),
-        ("swipeIndicator", boolean("Invalid swipe setting.")),
-        ("puzzleAutoNext", boolean("Invalid puzzle setting.")),
-    ]
+fn assert_activity_max(value: J) -> Checked<u64> {
+    integer(value, 1, 200, "Invalid number of puzzles.")
 }
 
-/// `Math.max(0, Math.min(1, n))`
-fn clamp_unit(v: J) -> J {
-    match v {
-        // Typed numbers are never NaN, so `clamp` is `Math.max(0, Math.min(1, n))`.
-        J::Num(n) => J::Num(n.clamp(0.0, 1.0)),
-        other => other,
+fn assert_run_kind(value: J) -> Checked<String> {
+    picked(value, RUN_KINDS, Some("Invalid kind of run."))
+}
+
+fn assert_review_key(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid review."))?;
+    matches(&text, patterns::review_key, Some("Invalid review."), "", "")?;
+    Ok(text)
+}
+
+fn assert_voice_id(value: J) -> Checked<u64> {
+    integer(value, 1, MAX_SAFE, VOICE)
+}
+
+fn assert_voice_limit(value: J) -> Checked<u64> {
+    integer(value, 1, 5000, "Invalid number of entries.")
+}
+
+/// Bounded text for Lichess broadcast search, trimmed; nothing is no search.
+fn assert_broadcast_query(value: J) -> Checked<Option<String>> {
+    let text: Option<String> = decode(value, plain)?;
+    text.map(|text| {
+        let text = js::trim(&text);
+        max_chars(text, 100, None, "")?;
+        Ok(text.to_owned())
+    })
+    .transpose()
+}
+
+/// `CORE_CONTRACTS` `lines` (`cloudEval`): an integer from 1 to 5.
+fn assert_lines(value: J) -> Checked<u64> {
+    let n: u64 = decode(value, plain)?;
+    within(n, 1, 5, None, "")?;
+    Ok(n)
+}
+
+/// `CORE_CONTRACTS` `lookupKind`: one of the position lookups.
+fn assert_lookup_kind(value: J) -> Checked<String> {
+    picked(value, &["opening", "masters", "player", "tablebase"], None)
+}
+
+/// `CORE_CONTRACTS` `optionalPage` (`tournament`): nothing, or a page from 1 to 200.
+fn assert_optional_page(value: J) -> Checked<Option<u64>> {
+    let page: Option<u64> = decode(value, plain)?;
+    if let Some(n) = page {
+        within(n, 1, 200, None, "")?;
+    }
+    Ok(page)
+}
+
+/// `CORE_CONTRACTS` `boolean` (`answerMistake`): a boolean.
+fn assert_boolean(value: J) -> Checked<bool> {
+    decode(value, plain)
+}
+
+/// `setInterfaceZoom`: `auto` or one of the zoom steps (`ZOOM_PERCENTS` in `interfaceZoom.ts`).
+fn assert_interface_zoom(value: J) -> Checked<Value> {
+    const PERCENTS: [u64; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Zoom {
+        Percent(u64),
+        Auto(String),
+    }
+    let invalid = || "Invalid interface zoom.".to_string();
+    match decode::<Zoom>(value, plain).map_err(|_| invalid())? {
+        Zoom::Auto(text) if text == "auto" => Ok(Value::String(text)),
+        Zoom::Percent(percent) if PERCENTS.contains(&percent) => Ok(Value::from(percent)),
+        _ => Err(invalid()),
     }
 }
 
-/// `ENGINE_LEVELS.filter((level) => levels.includes(level))`
-fn engine_levels_filter(v: J) -> J {
-    let J::Arr(items) = &v else {
-        return v;
-    };
-    J::Arr(
-        ENGINE_LEVELS
-            .iter()
-            .filter(|level| items.iter().any(|item| item.str() == Some(level)))
-            .map(|level| J::Str((*level).to_string()))
-            .collect(),
-    )
+/// `CORE_CONTRACTS` `chapterName`: a trimmed name of 1 to 100 characters.
+fn assert_chapter_name(value: J) -> Checked<String> {
+    let text: String = decode(value, plain)?;
+    let text = js::trim(&text);
+    min_chars(text, 1, None, "")?;
+    max_chars(text, 100, None, "")?;
+    Ok(text.to_owned())
 }
 
-/// `s || undefined`
-fn empty_to_undefined(v: J) -> J {
-    match v {
-        J::Str(s) if s.is_empty() => J::Undef,
-        other => other,
+/// `CORE_CONTRACTS` `pgn` (`exportToLichessStudy`): 1 to 500,000 characters with some content.
+fn assert_pgn_text(value: J) -> Checked<String> {
+    let text: String = decode(value, plain)?;
+    min_chars(&text, 1, None, "")?;
+    max_chars(&text, 500_000, None, "")?;
+    ensure(!text.trim().is_empty(), None, "", || "some text".into())?;
+    Ok(text)
+}
+
+/// `CORE_CONTRACTS` `sessionObject` (`saveSession`): any object; the session is checked after it.
+fn assert_session_object(value: J) -> Checked<Value> {
+    ensure(value.is_object(), None, "", || "an object".into())?;
+    Ok(Value::Object(serde_json::Map::new()))
+}
+
+/// `CORE_CONTRACTS` `studyId` (`exportToLichessStudy`): nothing (a new study) or a Lichess id.
+fn assert_study_id(value: J) -> Checked<String> {
+    if matches!(&value, J::Str(text) if text.is_empty()) {
+        return Ok(String::new());
     }
+    assert_lichess_id(value)
 }
 
-fn online_options_schema() -> Schema {
-    object(
-        vec![
-            ("minutes", clock_field(1.0, "Invalid time control.")),
-            ("increment", clock_field(0.0, "Invalid increment.")),
-            (
-                "color",
-                picklist_str(CHALLENGE_COLORS, Some("Invalid color.")),
-            ),
-            ("rated", Schema::Bool(Some("Invalid rated option."))),
-            (
-                "days",
-                optional(picklist_num(
-                    CORRESPONDENCE_DAYS,
-                    Some("Invalid days per move."),
-                )),
-            ),
-            (
-                "variant",
-                optional(picklist_str(VARIANTS, Some("Invalid variant."))),
-            ),
-            (
-                "fen",
-                optional(pipe(
-                    Schema::Str(Some("Invalid position.")),
-                    vec![
-                        max_len(100, None),
-                        Action::Regex {
-                            source: FEN_SOURCE,
-                            test: patterns::fen,
-                            msg: Some("Invalid position."),
-                        },
-                    ],
-                )),
-            ),
-            ("account", optional(username_schema())),
-            (
-                "target",
-                optional(pipe(
-                    Schema::Str(Some("Invalid opponent.")),
-                    vec![
-                        Action::Trim,
-                        Action::Check {
-                            check: |s| match s {
-                                J::Str(s) => s.is_empty() || patterns::username(s),
-                                _ => true,
-                            },
-                            msg: Some(USERNAME_MESSAGE),
-                        },
-                        Action::Transform(empty_to_undefined),
-                    ],
-                )),
-            ),
-        ],
-        Some("Invalid game options."),
-    )
+/// `apps/desktop/contracts/apiContracts.ts` `completeQuit`: a request id (8-4-4-4-12 hexadecimal
+/// digits, in either case).
+fn assert_uuid(value: J) -> Checked<String> {
+    let text: String = decode(value, plain)?;
+    let groups: Vec<&str> = text.split('-').collect();
+    const LENGTHS: [usize; 5] = [8, 4, 4, 4, 12];
+    let uuid = groups.len() == LENGTHS.len()
+        && groups.iter().zip(LENGTHS).all(|(group, length)| {
+            group.len() == length && group.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+    ensure(uuid, None, "", || "a UUID".into())?;
+    Ok(text)
 }
 
-fn clock_field(min: f64, msg: &'static str) -> Schema {
-    pipe(
-        Schema::Num(Some(msg)),
-        vec![
-            Action::Integer(Some(msg)),
-            Action::MinValue(min, Some(msg)),
-            Action::MaxValue(180.0, Some(msg)),
-        ],
-    )
+/// `recordPerformance` name: one of the renderer's timings (`PERFORMANCE_NAMES`).
+fn assert_performance_name(value: J) -> Checked<String> {
+    let text: String = decode(value, plain)?;
+    let known = performance_names().contains(&text);
+    ensure(known, None, "", || "a performance timing name".into())?;
+    Ok(text)
 }
 
-fn voice_attempt_schema() -> Schema {
-    object(
-        vec![
-            (
-                "source",
-                picklist_str(VOICE_SOURCES, Some("Invalid voice entry.")),
-            ),
-            ("heard", voice_text(200)),
-            ("confidence", voice_pattern_score()),
-            (
-                "words",
-                pipe(
-                    array(
-                        object(
-                            vec![("word", voice_text(40)), ("conf", voice_pattern_score())],
-                            None,
-                        ),
-                        None,
-                    ),
-                    vec![max_len(40, Some("Invalid voice entry."))],
-                ),
-            ),
-            (
-                "outcome",
-                picklist_str(VOICE_OUTCOMES, Some("Invalid voice entry.")),
-            ),
-            ("parsed", optional(voice_text(120))),
-            ("expected", optional(voice_text(20))),
-            (
-                "fen",
-                optional(pipe(
-                    voice_text(100),
-                    vec![Action::Regex {
-                        source: FEN_SOURCE,
-                        test: patterns::fen,
-                        msg: Some("Invalid position."),
-                    }],
-                )),
-            ),
-            (
-                "retryOf",
-                optional(int_in_range(
-                    1.0,
-                    MAX_SAFE_INTEGER,
-                    Some("Invalid voice entry."),
-                )),
-            ),
-        ],
-        Some("Invalid voice entry."),
-    )
+/// `recordPerformance` value: a finite duration from 0 to 300,000 ms.
+fn assert_timing_value(value: J) -> Checked<f64> {
+    let ms: f64 = decode(value, plain)?;
+    finite(ms, None, "")?;
+    within(ms, 0.0, 300_000.0, None, "")?;
+    Ok(ms)
 }
 
-fn analysis_request_schema() -> Schema {
-    object(
-        vec![
-            (
-                "fen",
-                pipe(
-                    Schema::Str(Some("Invalid position.")),
-                    vec![
-                        max_len(100, None),
-                        Action::Regex {
-                            source: FEN_SOURCE,
-                            test: patterns::fen,
-                            msg: Some("Invalid position."),
-                        },
-                    ],
-                ),
-            ),
-            (
-                "lines",
-                int_in_range(1.0, 5.0, Some("Invalid number of engine lines.")),
-            ),
-            (
-                "infinite",
-                optional(Schema::Bool(Some("Invalid engine options."))),
-            ),
-            (
-                "rootFen",
-                optional(pipe(
-                    Schema::Str(None),
-                    vec![
-                        max_len(100, None),
-                        Action::Regex {
-                            source: FEN_SOURCE,
-                            test: patterns::fen,
-                            msg: None,
-                        },
-                    ],
-                )),
-            ),
-            ("moves", optional(moves_schema())),
-            (
-                "clientId",
-                optional(int_in_range(
-                    1.0,
-                    MAX_SAFE_INTEGER,
-                    Some("Invalid analysis request."),
-                )),
-            ),
-        ],
-        Some("Invalid engine options."),
-    )
+/* ── Requests ── */
+
+/// `reportRendererError`: a fixed page route, a message and a short info string, and no other keys.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(deny_unknown_fields)]
+struct RendererError {
+    route: String,
+    message: String,
+    info: String,
 }
 
-fn review_request_schema() -> Schema {
-    object(
-        vec![
-            (
-                "fen",
-                pipe(
-                    Schema::Str(Some("Invalid position.")),
-                    vec![
-                        max_len(100, None),
-                        Action::Regex {
-                            source: FEN_SOURCE,
-                            test: patterns::fen,
-                            msg: Some("Invalid position."),
-                        },
-                    ],
-                ),
-            ),
-            ("moves", moves_schema()),
-            ("gameId", optional(game_id_schema())),
-            ("account", optional(username_schema())),
-        ],
-        Some("Invalid review request."),
-    )
+fn assert_renderer_error(value: J) -> Checked<RendererError> {
+    let error: RendererError = decode(value, plain)?;
+    one_of(&error.route, RENDERER_ROUTES, None, "route")?;
+    max_chars(&error.message, 1000, None, "message")?;
+    max_chars(&error.info, 160, None, "info")?;
+    Ok(error)
 }
 
-fn lichess_id_schema(msg: &'static str) -> Schema {
-    text(
-        Some(msg),
-        "/^[a-zA-Z0-9]{8}$/",
-        patterns::lichess_id,
-        Some(msg),
-    )
+/// `assertNewArena`: the arena's clock, schedule and options, and no other keys.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NewArena {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    clock_time: f64,
+    clock_increment: f64,
+    minutes: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wait_minutes: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_date: Option<f64>,
+    variant: String,
+    rated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
-fn puzzle_request_schema() -> Schema {
-    object(
-        vec![
-            ("account", optional_account_schema()),
-            ("angle", angle_schema()),
-            (
-                "difficulty",
-                picklist_str(PUZZLE_DIFFICULTIES, Some("Invalid difficulty.")),
-            ),
-            (
-                "color",
-                optional(picklist_str(&["white", "black"], Some("Invalid color."))),
-            ),
-        ],
-        Some("Invalid puzzle request."),
-    )
-}
-
-fn puzzle_solve_schema() -> Schema {
-    object(
-        vec![
-            ("account", username_schema()),
-            ("angle", angle_schema()),
-            (
-                "id",
-                text(
-                    Some("Invalid puzzle."),
-                    "/^[a-zA-Z0-9]{3,12}$/",
-                    patterns::puzzle_id,
-                    Some("Invalid puzzle."),
-                ),
-            ),
-            ("win", Schema::Bool(Some("Invalid puzzle result."))),
-            ("rated", Schema::Bool(Some("Invalid puzzle result."))),
-        ],
-        Some("Invalid puzzle result."),
-    )
-}
-
-fn local_day_schema(msg: &'static str) -> Schema {
-    text(
-        Some(msg),
-        r"/^\d{4}-\d{2}-\d{2}$/",
-        patterns::local_day,
-        Some(msg),
-    )
-}
-
-/// A puzzle as the trainer shows it (`Puzzle`), as stored in the attempt log.
-fn attempt_puzzle_schema() -> Schema {
-    const MSG: Option<&str> = Some("Invalid puzzle attempt.");
-    object(
-        vec![
-            (
-                "id",
-                text(MSG, "/^[a-zA-Z0-9]{3,12}$/", patterns::puzzle_id, MSG),
-            ),
-            (
-                "fen",
-                pipe(
-                    Schema::Str(MSG),
-                    vec![
-                        max_len(100, MSG),
-                        Action::Regex {
-                            source: FEN_SOURCE,
-                            test: patterns::fen,
-                            msg: MSG,
-                        },
-                    ],
-                ),
-            ),
-            ("lastMove", optional(uci_schema())),
-            (
-                "solution",
-                pipe(
-                    array(uci_schema(), MSG),
-                    vec![Action::MinLength(1, MSG), max_len(64, MSG)],
-                ),
-            ),
-            ("rating", int_in_range(0.0, 4000.0, MSG)),
-            (
-                "themes",
-                pipe(array(angle_schema(), MSG), vec![max_len(40, MSG)]),
-            ),
-            ("plays", optional(int_in_range(0.0, MAX_SAFE_INTEGER, MSG))),
-            ("gameId", optional(game_id_schema())),
-        ],
-        MSG,
-    )
-}
-
-fn puzzle_attempt_schema() -> Schema {
-    const MSG: Option<&str> = Some("Invalid puzzle attempt.");
-    object(
-        vec![
-            ("puzzle", attempt_puzzle_schema()),
-            ("mode", picklist_str(PUZZLE_TRAIN_MODES, MSG)),
-            ("retry", Schema::Bool(MSG)),
-            ("win", Schema::Bool(MSG)),
-            ("revealed", Schema::Bool(MSG)),
-            ("hinted", Schema::Bool(MSG)),
-            ("found", int_in_range(0.0, 32.0, MSG)),
-            ("wrong", int_in_range(0.0, 32.0, MSG)),
-            ("total", int_in_range(1.0, 32.0, MSG)),
-            ("day", local_day_schema("Invalid puzzle attempt.")),
-        ],
-        MSG,
-    )
-}
-
-fn run_input_schema() -> Schema {
-    object(
-        vec![
-            (
-                "kind",
-                picklist_str(RUN_KINDS, Some("Invalid kind of run.")),
-            ),
-            (
-                "variant",
-                text(
-                    Some("Invalid run."),
-                    "/^[a-zA-Z0-9_-]{0,40}$/",
-                    patterns::run_variant,
-                    Some("Invalid run."),
-                ),
-            ),
-            (
-                "score",
-                pipe(
-                    Schema::Num(Some("Invalid score.")),
-                    vec![
-                        Action::Finite(Some("Invalid score.")),
-                        Action::MinValue(0.0, None),
-                        Action::MaxValue(1_000_000.0, None),
-                    ],
-                ),
-            ),
-            (
-                "detail",
-                pipe(
-                    Schema::Record {
-                        key: Box::new(text(
-                            None,
-                            "/^[a-zA-Z0-9_]{1,30}$/",
-                            patterns::run_detail_key,
-                            Some("Invalid run."),
-                        )),
-                        value: Box::new(union(
-                            vec![
-                                pipe(Schema::Str(None), vec![max_len(80, None)]),
-                                pipe(Schema::Num(None), vec![Action::Finite(None)]),
-                                Schema::Bool(None),
-                            ],
-                            None,
-                        )),
-                        msg: Some("Invalid run."),
-                    },
-                    vec![Action::Check {
-                        check: |detail| match detail {
-                            J::Obj(fields) => fields.len() <= 20,
-                            _ => true,
-                        },
-                        msg: Some("Invalid run."),
-                    }],
-                ),
-            ),
-        ],
-        Some("Invalid run."),
-    )
-}
-
-fn voice_outcome_schema() -> Schema {
-    picklist_str(VOICE_OUTCOMES, Some("Invalid voice entry."))
-}
-
-fn lookup_options_schema() -> Schema {
-    Schema::Optional {
-        wrapped: Box::new(object(
-            vec![
-                (
-                    "speeds",
-                    optional(pipe(
-                        array(picklist_str(EXPLORER_SPEEDS, None), None),
-                        vec![max_len(6, None)],
-                    )),
-                ),
-                (
-                    "ratings",
-                    optional(pipe(
-                        array(picklist_num(EXPLORER_RATINGS, None), None),
-                        vec![max_len(9, None)],
-                    )),
-                ),
-                (
-                    "player",
-                    optional(pipe(
-                        Schema::Str(None),
-                        vec![Action::Regex {
-                            source: USERNAME_SOURCE,
-                            test: patterns::username,
-                            msg: None,
-                        }],
-                    )),
-                ),
-                ("color", optional(picklist_str(&["white", "black"], None))),
-                (
-                    "modes",
-                    optional(pipe(
-                        array(picklist_str(&["rated", "casual"], None), None),
-                        vec![max_len(2, None)],
-                    )),
-                ),
-                (
-                    "since",
-                    optional(pipe(
-                        Schema::Str(None),
-                        vec![Action::Regex {
-                            source: SINCE_SOURCE,
-                            test: patterns::since,
-                            msg: None,
-                        }],
-                    )),
-                ),
-            ],
-            Some("Invalid explorer filters."),
-        )),
-        default: Some(J::Obj(Vec::new())),
+fn assert_new_arena(value: J) -> Checked<NewArena> {
+    let mut arena: NewArena = decode(value, |keys| match keys {
+        ["clockTime"] => Some("Invalid clock."),
+        ["clockIncrement"] => Some("Invalid increment."),
+        ["minutes"] => Some("Invalid duration."),
+        ["waitMinutes"] => Some("Invalid start."),
+        ["variant"] => Some("Invalid variant."),
+        _ => None,
+    })?;
+    if let Some(name) = &mut arena.name {
+        *name = js::trim(name).to_owned();
+        let too_long = Some("Arena names are limited to 30 characters.");
+        max_chars(name, 30, too_long, "name")?;
+        let punctuation = Some("Use letters, numbers and simple punctuation.");
+        matches(name, patterns::arena_name, punctuation, "name", "")?;
     }
+    let clock = Some("Invalid clock.");
+    one_of_numbers(arena.clock_time, ARENA_CLOCK_MINUTES, clock, "clockTime")?;
+    let increment = Some("Invalid increment.");
+    one_of_numbers(
+        arena.clock_increment,
+        ARENA_INCREMENTS,
+        increment,
+        "clockIncrement",
+    )?;
+    let duration = Some("Invalid duration.");
+    one_of_numbers(arena.minutes, ARENA_DURATIONS, duration, "minutes")?;
+    if let Some(wait) = arena.wait_minutes {
+        let start = Some("Invalid start.");
+        one_of_numbers(wait, ARENA_WAIT_MINUTES, start, "waitMinutes")?;
+    }
+    if let Some(start) = arena.start_date {
+        let ok = start.is_finite() && start.fract() == 0.0 && start >= 0.0;
+        ensure(ok, None, "startDate", || "a time in milliseconds".into())?;
+    }
+    one_of(
+        &arena.variant,
+        ARENA_VARIANTS,
+        Some("Invalid variant."),
+        "variant",
+    )?;
+    if let Some(password) = &arena.password {
+        max_chars(password, 60, None, "password")?;
+    }
+    if let Some(description) = &arena.description {
+        max_chars(description, 2000, None, "description")?;
+    }
+    Ok(arena)
 }
 
-/* ── Validators ── */
-
-schema_validator!(assert_username_v, username_schema());
-schema_validator!(assert_game_id_v, game_id_schema());
-schema_validator!(
-    assert_game_ids_v,
-    pipe(
-        array(game_id_schema(), Some("Invalid game list.")),
-        vec![max_len(100, Some("Too many games."))],
-    )
-);
-schema_validator!(assert_uci_v, uci_schema());
-schema_validator!(assert_moves_v, moves_schema());
-schema_validator!(assert_level_v, level_schema());
-schema_validator!(
-    assert_usernames_v,
-    pipe(
-        array(username_schema(), Some("Invalid users.")),
-        vec![max_len(50, Some("Invalid users."))],
-    )
-);
-schema_validator!(
-    assert_friend_list_v,
-    pipe(
-        array(username_schema(), Some("Invalid users.")),
-        vec![
-            Action::MinLength(1, Some("Choose at least one player.")),
-            max_len(1000, Some("Invalid users.")),
-        ],
-    )
-);
-schema_validator!(
-    assert_action_v,
-    picklist_str(ONLINE_ACTIONS, Some("Invalid game action."))
-);
-schema_validator!(
-    assert_chat_room_v,
-    picklist_str(CHAT_ROOMS, Some("Invalid chat room."))
-);
-schema_validator!(
-    assert_chat_text_v,
-    pipe(
-        Schema::Str(Some("Invalid message.")),
-        vec![
-            Action::Trim,
-            Action::MinLength(1, Some("Type a message first.")),
-            max_len(140, Some("Chat messages are limited to 140 characters.")),
-        ],
-    )
-);
-schema_validator!(
-    assert_message_text_v,
-    pipe(
-        Schema::Str(Some("Invalid message.")),
-        vec![
-            Action::Trim,
-            Action::MinLength(1, Some("Type a message first.")),
-            max_len(8000, Some("Messages are limited to 8,000 characters.")),
-        ],
-    )
-);
-schema_validator!(
-    assert_decline_reason_v,
-    picklist_str(DECLINE_REASONS, Some("Invalid reason."))
-);
-schema_validator!(
-    assert_tournament_system_v,
-    picklist_str(&["arena", "swiss"], Some("Invalid tournament."))
-);
-schema_validator!(
-    assert_tournament_id_v,
-    text(
-        Some("Invalid tournament."),
-        "/^[a-zA-Z0-9]{8}$/",
-        patterns::lichess_id,
-        Some("Invalid tournament."),
-    )
-);
-schema_validator!(
-    assert_insights_query_v,
-    object(
-        vec![
-            ("account", username_schema()),
-            (
-                "speed",
-                optional(picklist_str(
-                    &[
-                        "ultraBullet",
-                        "bullet",
-                        "blitz",
-                        "rapid",
-                        "classical",
-                        "correspondence",
-                    ],
-                    None,
-                )),
-            ),
-            ("rated", optional(Schema::Bool(None))),
-            (
-                "days",
-                optional(int_in_range(1.0, 3650.0, Some("Invalid period."))),
-            ),
-        ],
-        Some("Invalid insights filter."),
-    )
-);
-schema_validator!(
-    assert_perf_type_v,
-    picklist_str(PERF_TYPES, Some("Invalid rating category."))
-);
-schema_validator!(assert_lichess_id_v, lichess_id_schema("Invalid id."));
-schema_validator!(assert_optional_account_v, optional_account_schema());
-schema_validator!(assert_online_options_v, online_options_schema());
-schema_validator!(assert_theme_v, theme_schema());
-schema_validator!(assert_notification_v, notification_schema());
-schema_validator!(
-    assert_settings_v,
-    object(settings_entries(), Some("Invalid settings."))
-);
-schema_validator!(assert_puzzle_request_v, puzzle_request_schema());
-schema_validator!(assert_puzzle_solve_v, puzzle_solve_schema());
-schema_validator!(
-    assert_days_v,
-    int_in_range(1.0, 365.0, Some("Invalid number of days."))
-);
-schema_validator!(
-    assert_activity_max_v,
-    int_in_range(1.0, 200.0, Some("Invalid number of puzzles."))
-);
-schema_validator!(
-    assert_local_query_v,
-    object(
-        vec![
-            ("theme", optional(angle_schema())),
-            (
-                "minRating",
-                optional(int_in_range(0.0, 4000.0, Some("Invalid rating."))),
-            ),
-            (
-                "maxRating",
-                optional(int_in_range(0.0, 4000.0, Some("Invalid rating."))),
-            ),
-            (
-                "count",
-                int_in_range(1.0, 300.0, Some("Invalid puzzle count.")),
-            ),
-        ],
-        Some("Invalid puzzle query."),
-    )
-);
-schema_validator!(
-    assert_ladder_query_v,
-    object(
-        vec![
-            ("from", int_in_range(0.0, 4000.0, Some("Invalid rating."))),
-            ("to", int_in_range(0.0, 4000.0, Some("Invalid rating."))),
-            (
-                "count",
-                int_in_range(1.0, 300.0, Some("Invalid puzzle count.")),
-            ),
-        ],
-        Some("Invalid puzzle query."),
-    )
-);
-schema_validator!(
-    assert_run_kind_v,
-    picklist_str(RUN_KINDS, Some("Invalid kind of run."))
-);
-schema_validator!(assert_run_input_v, run_input_schema());
-schema_validator!(assert_puzzle_attempt_v, puzzle_attempt_schema());
-schema_validator!(
-    assert_puzzle_progress_query_v,
-    object(
-        vec![
-            ("today", local_day_schema("Invalid puzzle history query.")),
-            (
-                "limit",
-                int_in_range(1.0, 500.0, Some("Invalid puzzle history query.")),
-            ),
-        ],
-        Some("Invalid puzzle history query."),
-    )
-);
-schema_validator!(
-    assert_best_move_options_v,
-    Schema::Optional {
-        wrapped: Box::new(object(
-            vec![
-                (
-                    "fen",
-                    optional(pipe(
-                        Schema::Str(Some("Invalid position.")),
-                        vec![
-                            max_len(100, None),
-                            Action::Regex {
-                                source: FEN_SOURCE,
-                                test: patterns::fen,
-                                msg: Some("Invalid position."),
-                            },
-                        ],
-                    )),
-                ),
-                (
-                    "movetime",
-                    optional(int_in_range(50.0, 5000.0, Some("Invalid think time."))),
-                ),
-                (
-                    "chess960",
-                    optional(Schema::Bool(Some("Invalid engine options."))),
-                ),
-            ],
-            Some("Invalid engine options."),
-        )),
-        default: Some(J::Obj(Vec::new())),
-    }
-);
-schema_validator!(
-    assert_review_key_v,
-    text(
-        Some("Invalid review."),
-        "/^[0-9a-f]{16}$/",
-        patterns::review_key,
-        Some("Invalid review."),
-    )
-);
-schema_validator!(assert_voice_attempt_v, voice_attempt_schema());
-schema_validator!(
-    assert_voice_update_v,
-    object(
-        vec![
-            ("outcome", optional(voice_outcome_schema())),
-            ("expected", optional(voice_text(20))),
-        ],
-        Some("Invalid voice entry."),
-    )
-);
-schema_validator!(
-    assert_voice_id_v,
-    int_in_range(1.0, MAX_SAFE_INTEGER, Some("Invalid voice entry."))
-);
-schema_validator!(
-    assert_voice_limit_v,
-    int_in_range(1.0, 5000.0, Some("Invalid number of entries."))
-);
-schema_validator!(
-    assert_game_page_query_v,
-    object(
-        vec![
-            ("account", optional(username_schema())),
-            (
-                "result",
-                optional(picklist_str(&["win", "loss", "draw"], None)),
-            ),
-            ("rated", optional(Schema::Bool(None))),
-            (
-                "offset",
-                int_in_range(0.0, MAX_SAFE_INTEGER, Some("Invalid game offset.")),
-            ),
-            (
-                "limit",
-                int_in_range(1.0, 100.0, Some("Invalid game page size.")),
-            ),
-        ],
-        None,
-    )
-);
-schema_validator!(
-    assert_broadcast_query_v,
-    Schema::Optional {
-        wrapped: Box::new(pipe(
-            Schema::Str(None),
-            vec![Action::Trim, max_len(100, None)],
-        )),
-        default: None,
-    }
-);
-schema_validator!(assert_lookup_options_v, lookup_options_schema());
-
-/// `assertTournamentPassword`: nothing or an empty password means none.
-fn assert_tournament_password_v(mut args: Vec<J>) -> Result<J, String> {
-    static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
-        pipe(
-            Schema::Str(Some("Invalid password.")),
-            vec![max_len(100, Some("Invalid password."))],
-        )
-    });
-    match take(&mut args, 0) {
-        J::Undef => Ok(J::Null),
-        J::Str(s) if s.is_empty() => Ok(J::Null),
-        value => parse(&SCHEMA, value),
-    }
+/// `assertExport`: a file name and kind, then that the data is the file it claims to be. A
+/// binary export arrives as its length and first bytes; it goes back as `null`, and the caller
+/// keeps its own bytes.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct ExportRequest {
+    name: String,
+    kind: ExportKind,
 }
 
-/// `assertWatchTarget(value, channels)`: a channel from `channels`, or a game id.
-fn assert_watch_target_v(mut args: Vec<J>) -> Result<J, String> {
-    let value = take(&mut args, 0);
-    let channels = match take(&mut args, 1) {
-        J::Arr(items) => items,
-        _ => Vec::new(),
-    };
-    let schema = union(
-        vec![
-            object(
-                vec![(
-                    "channel",
-                    Schema::Picklist {
-                        options: channels,
-                        msg: None,
-                    },
-                )],
-                None,
-            ),
-            object(vec![("gameId", game_id_schema())], None),
-        ],
-        Some("Invalid game to watch."),
-    );
-    parse(&schema, value)
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ExportKind {
+    Gif,
+    Png,
+    Pgn,
 }
 
-/// `assertExport`: the request's shape, then that its bytes are the file they claim to be.
-fn assert_export_v(mut args: Vec<J>) -> Result<J, String> {
-    static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
-        object(
-            vec![
-                (
-                    "name",
-                    pipe(
-                        Schema::Str(None),
-                        vec![Action::Regex {
-                            source: r"/^[\w .()+-]{1,80}$/",
-                            test: patterns::file_name,
-                            msg: Some("Invalid file name."),
-                        }],
-                    ),
-                ),
-                (
-                    "kind",
-                    picklist_str(&["gif", "png", "pgn"], Some("Invalid export.")),
-                ),
-                (
-                    "data",
-                    union(
-                        vec![
-                            Schema::Bytes(None),
-                            pipe(Schema::Str(None), vec![max_len(2_000_000, None)]),
-                        ],
-                        None,
-                    ),
-                ),
-            ],
-            None,
-        )
-    });
-    let request = parse(&SCHEMA, take(&mut args, 0))?;
-    let invalid = || Err("Invalid export.".to_string());
-    let kind = request.get("kind").and_then(J::str).unwrap_or_default();
-    let data = request.get("data");
-    if kind == "pgn" {
-        if !matches!(data, Some(J::Str(_))) {
-            return invalid();
+fn assert_export(value: J) -> Checked<Value> {
+    let data = value.get("data").cloned().unwrap_or(J::Undef);
+    let request: ExportRequest = decode(value, |keys| match keys {
+        ["kind"] => Some("Invalid export."),
+        _ => None,
+    })?;
+    let file_name = Some("Invalid file name.");
+    matches(&request.name, patterns::file_name, file_name, "name", "")?;
+    let invalid = || "Invalid export.".to_string();
+    let data = match (request.kind, data) {
+        (ExportKind::Pgn, J::Str(text)) => {
+            max_chars(&text, 2_000_000, None, "data")?;
+            Value::String(text)
         }
-        return Ok(request);
-    }
-    let Some(J::Bytes { len, head }) = data else {
-        return invalid();
+        (ExportKind::Gif | ExportKind::Png, J::Bytes { len, head }) => {
+            let magic: &[u8] = match request.kind {
+                ExportKind::Gif => b"GIF8",
+                _ => &[137, 80, 78, 71],
+            };
+            if len > EXPORT_MAX || head.as_slice() != magic {
+                return Err(invalid());
+            }
+            Value::Null
+        }
+        (_, J::Str(_) | J::Bytes { .. }) => return Err(invalid()),
+        _ => return Err("data: invalid type, expected a string or a Uint8Array".into()),
     };
-    if *len > EXPORT_MAX {
-        return invalid();
+    let mut normalized = out(&request)?;
+    if let Value::Object(fields) = &mut normalized {
+        fields.insert("data".into(), data);
     }
-    let magic: &[u8] = if kind == "gif" {
-        b"GIF8"
-    } else {
-        &[137, 80, 78, 71]
-    };
-    if head.as_slice() != magic {
-        return invalid();
+    Ok(normalized)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct InsightsQuery {
+    account: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    days: Option<u64>,
+}
+
+fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
+    let mut query: InsightsQuery = decode(value, |keys| match keys {
+        [] => Some("Invalid insights filter."),
+        ["account"] => Some(USERNAME),
+        ["days"] => Some("Invalid period."),
+        _ => None,
+    })?;
+    query.account = username(&query.account, "account")?;
+    if let Some(speed) = &query.speed {
+        one_of(speed, EXPLORER_SPEEDS, None, "speed")?;
+    }
+    if let Some(days) = query.days {
+        within(days, 1, 3650, Some("Invalid period."), "days")?;
+    }
+    Ok(query)
+}
+
+/// `assertWatchTarget(value, channels)`: a channel from `channels`, or a game id. A valid
+/// channel wins; otherwise a game id is checked; anything else is no game to watch.
+fn assert_watch_target(value: J, channels: J) -> Checked<Value> {
+    let invalid = || "Invalid game to watch.".to_string();
+    if !value.is_object() {
+        return Err(invalid());
+    }
+    let channels: Vec<String> = decode(channels, plain).unwrap_or_default();
+    if let Some(channel) = value.get("channel").and_then(J::str)
+        && channels.iter().any(|c| c == channel)
+    {
+        return Ok(serde_json::json!({ "channel": channel }));
+    }
+    match value.get("gameId").and_then(J::str) {
+        Some(id) => {
+            game_id(id)?;
+            Ok(serde_json::json!({ "gameId": id }))
+        }
+        None => Err(invalid()),
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct OnlineOptions {
+    minutes: u64,
+    increment: u64,
+    color: String,
+    rated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    days: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+}
+
+fn assert_online_options(value: J) -> Checked<OnlineOptions> {
+    let mut options: OnlineOptions = decode(value, |keys| match keys {
+        [] => Some("Invalid game options."),
+        ["minutes"] => Some("Invalid time control."),
+        ["increment"] => Some("Invalid increment."),
+        ["color"] => Some("Invalid color."),
+        ["rated"] => Some("Invalid rated option."),
+        ["days"] => Some("Invalid days per move."),
+        ["variant"] => Some("Invalid variant."),
+        ["fen"] => Some("Invalid position."),
+        ["account"] => Some(USERNAME),
+        ["target"] => Some("Invalid opponent."),
+        _ => None,
+    })?;
+    within(options.minutes, 1, 180, Some("Invalid time control."), "")?;
+    within(options.increment, 0, 180, Some("Invalid increment."), "")?;
+    one_of(&options.color, CHALLENGE_COLORS, Some("Invalid color."), "")?;
+    if let Some(days) = options.days {
+        let msg = Some("Invalid days per move.");
+        one_of_numbers(days as f64, CORRESPONDENCE_DAYS, msg, "")?;
+    }
+    if let Some(variant) = &options.variant {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "")?;
+    }
+    if let Some(position) = &options.fen {
+        fen(position, None, Some("Invalid position."), "fen")?;
+    }
+    if let Some(account) = &options.account {
+        options.account = Some(username(account, "account")?);
+    }
+    if let Some(target) = &options.target {
+        let target = js::trim(target);
+        let valid = target.is_empty() || patterns::username(target);
+        ensure(valid, Some(USERNAME), "", String::new)?;
+        options.target = (!target.is_empty()).then(|| target.to_owned());
+    }
+    Ok(options)
+}
+
+/// A theme file: an id, a name and at least one palette.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct Theme {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    light: Option<Palette>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dark: Option<Palette>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct Palette {
+    bg: String,
+    text: String,
+    primary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    muted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elevated: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accented: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    border: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text_muted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    success: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    info: Option<String>,
+}
+
+const HEX: &str = "Colors must be hex, like #1a2b3c.";
+
+impl Palette {
+    fn check(&self) -> Checked<()> {
+        let optional = [
+            &self.muted,
+            &self.elevated,
+            &self.accented,
+            &self.border,
+            &self.text_muted,
+            &self.success,
+            &self.warning,
+            &self.error,
+            &self.info,
+        ];
+        [&self.bg, &self.text, &self.primary]
+            .into_iter()
+            .chain(optional.into_iter().flatten())
+            .try_for_each(|color| matches(color, patterns::hex_color, Some(HEX), "", ""))
+    }
+}
+
+fn assert_theme(value: J) -> Checked<Theme> {
+    let mut theme: Theme = decode(value, |keys| match keys {
+        [] => Some("A theme file must be a JSON object."),
+        ["id"] => Some("A theme needs an \"id\"."),
+        ["name"] => Some("A theme needs a \"name\"."),
+        ["light" | "dark", _] => Some(HEX),
+        _ => None,
+    })?;
+    let id = Some("The \"id\" must be 1–32 characters: a–z, 0–9 and dashes.");
+    matches(&theme.id, patterns::theme_id, id, "", "")?;
+    theme.name = js::trim(&theme.name).to_owned();
+    min_chars(&theme.name, 1, Some("A theme needs a \"name\"."), "")?;
+    max_chars(&theme.name, 40, Some("The \"name\" is too long."), "")?;
+    for palette in theme.light.iter().chain(&theme.dark) {
+        palette.check()?;
+    }
+    let palette = Some("Add a \"dark\" or \"light\" palette.");
+    ensure(
+        theme.light.is_some() || theme.dark.is_some(),
+        palette,
+        "",
+        String::new,
+    )?;
+    Ok(theme)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct Notification {
+    kind: String,
+    title: String,
+    body: String,
+}
+
+fn assert_notification(value: J) -> Checked<Notification> {
+    const MSG: Msg = Some("Invalid notification.");
+    let notification: Notification = decode(value, always!("Invalid notification."))?;
+    one_of(&notification.kind, NOTIFICATION_KINDS, MSG, "")?;
+    max_chars(&notification.title, 120, MSG, "")?;
+    max_chars(&notification.body, 400, MSG, "")?;
+    Ok(notification)
+}
+
+/// The settings the core keeps (`CORE_SETTINGS_KEYS`), in its order.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct CoreSettings {
+    engine_path: String,
+    engine_levels: Vec<String>,
+    review_auto: String,
+    review_on_battery: bool,
+    receive_challenges: bool,
+    online_chat: bool,
+    correspondence_poll: u64,
+    cloud_eval: bool,
+    voice_history: bool,
+}
+
+/// Every setting, in the renderer's order.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct Settings {
+    appearance: String,
+    board_theme: String,
+    light_theme: String,
+    dark_theme: String,
+    piece_set: String,
+    piece_animation: String,
+    coordinates: String,
+    sound_enabled: bool,
+    sound_volume: f64,
+    engine_path: String,
+    premove: bool,
+    promotion: String,
+    show_legal_moves: bool,
+    notifications_enabled: bool,
+    notify_active: bool,
+    notify_background: bool,
+    notify_opponent_move: bool,
+    notify_low_time: bool,
+    notify_game_events: bool,
+    notify_computer_move: bool,
+    notify_sound: bool,
+    voice_push_to_talk: bool,
+    voice_confirm_moves: bool,
+    voice_history: bool,
+    update_auto_check: bool,
+    update_auto_download: bool,
+    update_install_on_quit: bool,
+    engine_levels: Vec<String>,
+    review_auto: String,
+    review_on_battery: bool,
+    receive_challenges: bool,
+    notify_challenges: bool,
+    online_chat: bool,
+    correspondence_poll: u64,
+    zen_mode: bool,
+    blindfold: bool,
+    cloud_eval: bool,
+    show_opening_name: bool,
+    swipe_navigation: bool,
+    swipe_indicator: bool,
+    puzzle_auto_next: bool,
+}
+
+/// The message of each setting.
+fn settings_messages(keys: &[&str]) -> Msg {
+    Some(match keys {
+        ["appearance"] => "Invalid appearance.",
+        ["boardTheme"] => "Invalid board theme.",
+        ["lightTheme" | "darkTheme"] => "Invalid color theme.",
+        ["pieceSet"] => "Invalid piece set.",
+        ["pieceAnimation"] => "Invalid piece animation.",
+        ["coordinates"] => "Invalid coordinates mode.",
+        ["soundEnabled"] => "Invalid sound setting.",
+        ["soundVolume"] => "Invalid sound volume.",
+        ["enginePath"] => "Invalid engine path.",
+        ["premove"] => "Invalid premove setting.",
+        ["promotion"] => "Invalid promotion setting.",
+        ["showLegalMoves"] => "Invalid legal moves setting.",
+        ["voicePushToTalk" | "voiceConfirmMoves" | "voiceHistory"] => "Invalid voice setting.",
+        ["updateAutoCheck" | "updateAutoDownload" | "updateInstallOnQuit"] => {
+            "Invalid update setting."
+        }
+        ["engineLevels"] => "Invalid computer levels.",
+        ["engineLevels", "[]"] => "Invalid engine level.",
+        ["reviewAuto" | "reviewOnBattery"] => "Invalid review setting.",
+        ["receiveChallenges"] => "Invalid challenge setting.",
+        ["onlineChat"] => "Invalid chat setting.",
+        ["correspondencePoll"] => "Invalid correspondence check interval.",
+        ["zenMode"] => "Invalid zen mode setting.",
+        ["blindfold"] => "Invalid blindfold setting.",
+        ["cloudEval"] => "Invalid cloud evaluation setting.",
+        ["showOpeningName"] => "Invalid opening name setting.",
+        ["swipeNavigation" | "swipeIndicator"] => "Invalid swipe setting.",
+        ["puzzleAutoNext"] => "Invalid puzzle setting.",
+        ["notificationsEnabled"] => NOTIFY,
+        [key] if key.starts_with("notify") => NOTIFY,
+        _ => "Invalid settings.",
+    })
+}
+
+fn theme_setting(id: &str, msg: &'static str) -> Checked<()> {
+    matches(id, patterns::theme_id, Some(msg), "", "")
+}
+
+/// The core's settings after the engine path, checked in their order. The computer levels are
+/// kept in their own order, without repeats; at least one must be chosen.
+fn check_core_settings(
+    engine_levels: &mut Vec<String>,
+    review_auto: &str,
+    correspondence_poll: u64,
+) -> Checked<()> {
+    each(engine_levels, |level| {
+        one_of(level, ENGINE_LEVELS, Some("Invalid engine level."), "")
+    })?;
+    let keep = Some("Keep at least one computer level.");
+    min_items(engine_levels, 1, keep, "")?;
+    *engine_levels = ENGINE_LEVELS
+        .iter()
+        .filter(|level| engine_levels.iter().any(|chosen| chosen == *level))
+        .map(|level| (*level).to_owned())
+        .collect();
+    one_of(
+        review_auto,
+        REVIEW_AUTO,
+        Some("Invalid review setting."),
+        "",
+    )?;
+    let poll = Some("Invalid correspondence check interval.");
+    within(correspondence_poll, 0, 120, poll, "")
+}
+
+fn assert_core_settings(value: J) -> Checked<CoreSettings> {
+    let mut s: CoreSettings = decode(value, settings_messages)?;
+    max_chars(&s.engine_path, 4096, Some("Invalid engine path."), "")?;
+    check_core_settings(&mut s.engine_levels, &s.review_auto, s.correspondence_poll)?;
+    Ok(s)
+}
+
+fn assert_settings(value: J) -> Checked<Settings> {
+    let mut s: Settings = decode(value, settings_messages)?;
+    one_of(&s.appearance, APPEARANCES, Some("Invalid appearance."), "")?;
+    theme_setting(&s.board_theme, "Invalid board theme.")?;
+    theme_setting(&s.light_theme, "Invalid color theme.")?;
+    theme_setting(&s.dark_theme, "Invalid color theme.")?;
+    theme_setting(&s.piece_set, "Invalid piece set.")?;
+    let animation = Some("Invalid piece animation.");
+    one_of(&s.piece_animation, PIECE_ANIMATIONS, animation, "")?;
+    let coordinates = Some("Invalid coordinates mode.");
+    one_of(&s.coordinates, COORDINATE_MODES, coordinates, "")?;
+    finite(s.sound_volume, Some("Invalid sound volume."), "")?;
+    s.sound_volume = s.sound_volume.clamp(0.0, 1.0);
+    max_chars(&s.engine_path, 4096, Some("Invalid engine path."), "")?;
+    let promotion = Some("Invalid promotion setting.");
+    one_of(&s.promotion, PROMOTION_MODES, promotion, "")?;
+    check_core_settings(&mut s.engine_levels, &s.review_auto, s.correspondence_poll)?;
+    Ok(s)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct PuzzleRequest {
+    account: String,
+    angle: String,
+    difficulty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+}
+
+fn assert_puzzle_request(value: J) -> Checked<PuzzleRequest> {
+    let mut request: PuzzleRequest = decode(value, |keys| match keys {
+        ["account"] => Some("Invalid account."),
+        ["angle"] => Some("Invalid puzzle theme."),
+        ["difficulty"] => Some("Invalid difficulty."),
+        ["color"] => Some("Invalid color."),
+        _ => Some("Invalid puzzle request."),
+    })?;
+    if !request.account.is_empty() {
+        request.account = username(&request.account, "")?;
+    }
+    angle(&request.angle)?;
+    let difficulty = Some("Invalid difficulty.");
+    one_of(&request.difficulty, PUZZLE_DIFFICULTIES, difficulty, "")?;
+    if let Some(color) = &request.color {
+        one_of(color, &["white", "black"], Some("Invalid color."), "")?;
     }
     Ok(request)
 }
 
-/// `assertStudySyncRequest`: a study's account, id and both PGN copies, bounded.
-fn assert_study_sync_request_v(mut args: Vec<J>) -> Result<J, String> {
-    static LICHESS: LazyLock<Schema> = LazyLock::new(|| lichess_id_schema("Invalid id."));
-    static USER: LazyLock<Schema> = LazyLock::new(username_schema);
-    let value = take(&mut args, 0);
-    if !value.is_object() {
-        return Err("Invalid study synchronization.".into());
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct PuzzleSolve {
+    account: String,
+    angle: String,
+    id: String,
+    win: bool,
+    rated: bool,
+}
+
+fn assert_puzzle_solve(value: J) -> Checked<PuzzleSolve> {
+    let mut solve: PuzzleSolve = decode(value, |keys| match keys {
+        ["account"] => Some(USERNAME),
+        ["angle"] => Some("Invalid puzzle theme."),
+        ["id"] => Some("Invalid puzzle."),
+        _ => Some("Invalid puzzle result."),
+    })?;
+    solve.account = username(&solve.account, "")?;
+    angle(&solve.angle)?;
+    matches(
+        &solve.id,
+        patterns::puzzle_id,
+        Some("Invalid puzzle."),
+        "",
+        "",
+    )?;
+    Ok(solve)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct LocalQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_rating: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_rating: Option<u64>,
+    count: u64,
+}
+
+fn assert_local_query(value: J) -> Checked<LocalQuery> {
+    let query: LocalQuery = decode(value, |keys| match keys {
+        ["theme"] => Some("Invalid puzzle theme."),
+        ["minRating" | "maxRating"] => Some("Invalid rating."),
+        ["count"] => Some("Invalid puzzle count."),
+        _ => Some("Invalid puzzle query."),
+    })?;
+    if let Some(theme) = &query.theme {
+        angle(theme)?;
     }
-    let field = |key: &str| value.get(key).cloned().unwrap_or(J::Undef);
-    let account = parse(&USER, field("account"))?;
-    let study_id = parse(&LICHESS, field("studyId"))?;
-    let (baseline, pgn) = (field("baseline"), field("pgn"));
-    let usable = |v: &J| match v {
-        J::Str(s) => !crate::js::trim(s).is_empty() && crate::js::utf16_len(s) <= 500_000,
-        _ => false,
-    };
-    if !usable(&baseline) || !usable(&pgn) {
-        return Err("The study is empty or too large to upload.".into());
+    for rating in query.min_rating.iter().chain(&query.max_rating) {
+        within(*rating, 0, 4000, Some("Invalid rating."), "")?;
     }
-    Ok(J::Obj(vec![
-        ("account".into(), account),
-        ("studyId".into(), study_id),
-        ("baseline".into(), baseline),
-        ("pgn".into(), pgn),
-    ]))
+    within(query.count, 1, 300, Some("Invalid puzzle count."), "")?;
+    Ok(query)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct LadderQuery {
+    from: u64,
+    to: u64,
+    count: u64,
+}
+
+fn assert_ladder_query(value: J) -> Checked<LadderQuery> {
+    let query: LadderQuery = decode(value, |keys| match keys {
+        ["from" | "to"] => Some("Invalid rating."),
+        ["count"] => Some("Invalid puzzle count."),
+        _ => Some("Invalid puzzle query."),
+    })?;
+    within(query.from, 0, 4000, Some("Invalid rating."), "")?;
+    within(query.to, 0, 4000, Some("Invalid rating."), "")?;
+    within(query.count, 1, 300, Some("Invalid puzzle count."), "")?;
+    Ok(query)
+}
+
+/// A saved training run.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct RunInput {
+    kind: String,
+    variant: String,
+    score: f64,
+    detail: Detail,
+}
+
+/// A run's detail: up to 20 named strings, numbers and flags, in their order.
+#[derive(Serialize)]
+#[serde(transparent)]
+struct Detail(#[serde(with = "entries")] Vec<(String, DetailValue)>);
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum DetailValue {
+    Flag(bool),
+    Number(f64),
+    Text(String),
+}
+
+impl<'de> Deserialize<'de> for DetailValue {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Scalar;
+        impl Visitor<'_> for Scalar {
+            type Value = DetailValue;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a string, number or boolean")
+            }
+            fn visit_bool<E: de::Error>(self, b: bool) -> Result<DetailValue, E> {
+                Ok(DetailValue::Flag(b))
+            }
+            fn visit_i64<E: de::Error>(self, n: i64) -> Result<DetailValue, E> {
+                Ok(DetailValue::Number(n as f64))
+            }
+            fn visit_u64<E: de::Error>(self, n: u64) -> Result<DetailValue, E> {
+                Ok(DetailValue::Number(n as f64))
+            }
+            fn visit_f64<E: de::Error>(self, n: f64) -> Result<DetailValue, E> {
+                Ok(DetailValue::Number(n))
+            }
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<DetailValue, E> {
+                Ok(DetailValue::Text(text.to_owned()))
+            }
+        }
+        deserializer.deserialize_any(Scalar)
+    }
+}
+
+impl<'de> Deserialize<'de> for Detail {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        entries::deserialize(deserializer).map(Detail)
+    }
+}
+
+/// A plain object as an ordered list of entries.
+mod entries {
+    use super::*;
+    use serde::ser::SerializeMap;
+
+    pub fn serialize<S: serde::Serializer, T: Serialize>(
+        entries: &[(String, T)],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(entries.len()))?;
+        for (key, value) in entries {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D: de::Deserializer<'de>, T: Deserialize<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<(String, T)>, D::Error> {
+        struct Entries<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for Entries<T> {
+            type Value = Vec<(String, T)>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(entries)
+            }
+        }
+        // A record is a plain object only; a list is not read by its indices here.
+        deserializer.deserialize_any(Entries(std::marker::PhantomData))
+    }
+}
+
+fn assert_run_input(value: J) -> Checked<RunInput> {
+    let run: RunInput = decode(value, |keys| match keys {
+        ["kind"] => Some("Invalid kind of run."),
+        ["score"] => Some("Invalid score."),
+        ["detail", _] => None,
+        _ => Some("Invalid run."),
+    })?;
+    one_of(&run.kind, RUN_KINDS, Some("Invalid kind of run."), "")?;
+    matches(
+        &run.variant,
+        patterns::run_variant,
+        Some("Invalid run."),
+        "",
+        "",
+    )?;
+    finite(run.score, Some("Invalid score."), "")?;
+    within(run.score, 0.0, 1_000_000.0, None, "score")?;
+    for (key, value) in &run.detail.0 {
+        matches(key, patterns::run_detail_key, Some("Invalid run."), "", "")?;
+        let path = format!("detail.{key}");
+        match value {
+            DetailValue::Text(text) => max_chars(text, 80, None, &path)?,
+            DetailValue::Number(n) => finite(*n, None, &path)?,
+            DetailValue::Flag(_) => {}
+        }
+    }
+    max_items(&run.detail.0, 20, Some("Invalid run."), "")?;
+    Ok(run)
+}
+
+/// A puzzle as the trainer shows it (`Puzzle`), as stored in the attempt log.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct AttemptPuzzle {
+    id: String,
+    fen: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_move: Option<String>,
+    solution: Vec<String>,
+    rating: u64,
+    themes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plays: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_id: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct PuzzleAttempt {
+    puzzle: AttemptPuzzle,
+    mode: String,
+    retry: bool,
+    win: bool,
+    revealed: bool,
+    hinted: bool,
+    found: u64,
+    wrong: u64,
+    total: u64,
+    day: String,
+}
+
+fn assert_puzzle_attempt(value: J) -> Checked<PuzzleAttempt> {
+    const MSG: Msg = Some(ATTEMPT);
+    let attempt: PuzzleAttempt = decode(value, |keys| match keys {
+        ["puzzle", "lastMove"] | ["puzzle", "solution", "[]"] => Some("Invalid move."),
+        ["puzzle", "themes", "[]"] => Some("Invalid puzzle theme."),
+        ["puzzle", "gameId"] => Some("Invalid game id."),
+        _ => Some(ATTEMPT),
+    })?;
+    let puzzle = &attempt.puzzle;
+    matches(&puzzle.id, patterns::puzzle_id, MSG, "", "")?;
+    fen(&puzzle.fen, MSG, MSG, "")?;
+    if let Some(last) = &puzzle.last_move {
+        uci(last)?;
+    }
+    each(&puzzle.solution, |m| uci(m))?;
+    min_items(&puzzle.solution, 1, MSG, "")?;
+    max_items(&puzzle.solution, 64, MSG, "")?;
+    within(puzzle.rating, 0, 4000, MSG, "")?;
+    each(&puzzle.themes, |theme| angle(theme))?;
+    max_items(&puzzle.themes, 40, MSG, "")?;
+    if let Some(plays) = puzzle.plays {
+        within(plays, 0, MAX_SAFE, MSG, "")?;
+    }
+    if let Some(id) = &puzzle.game_id {
+        game_id(id)?;
+    }
+    one_of(&attempt.mode, PUZZLE_TRAIN_MODES, MSG, "")?;
+    within(attempt.found, 0, 32, MSG, "")?;
+    within(attempt.wrong, 0, 32, MSG, "")?;
+    within(attempt.total, 1, 32, MSG, "")?;
+    local_day(&attempt.day, ATTEMPT)?;
+    Ok(attempt)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct PuzzleProgressQuery {
+    today: String,
+    limit: u64,
+}
+
+fn assert_puzzle_progress_query(value: J) -> Checked<PuzzleProgressQuery> {
+    const MSG: &str = "Invalid puzzle history query.";
+    let query: PuzzleProgressQuery = decode(value, always!(MSG))?;
+    local_day(&query.today, MSG)?;
+    within(query.limit, 1, 500, Some(MSG), "")?;
+    Ok(query)
+}
+
+#[derive(Deserialize, Serialize, Default)]
+#[serde(expecting = "an object")]
+struct BestMoveOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    movetime: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chess960: Option<bool>,
+}
+
+fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
+    if matches!(value, J::Undef) {
+        return Ok(BestMoveOptions::default());
+    }
+    let options: BestMoveOptions = decode(value, |keys| match keys {
+        ["fen"] => Some("Invalid position."),
+        ["movetime"] => Some("Invalid think time."),
+        _ => Some("Invalid engine options."),
+    })?;
+    if let Some(position) = &options.fen {
+        fen(position, None, Some("Invalid position."), "fen")?;
+    }
+    if let Some(movetime) = options.movetime {
+        within(movetime, 50, 5000, Some("Invalid think time."), "")?;
+    }
+    Ok(options)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct AnalysisRequest {
+    fen: String,
+    lines: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    infinite: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_fen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moves: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_id: Option<u64>,
 }
 
 /// `assertAnalysisRequest`: the request's shape, and a position its moves reach.
-fn assert_analysis_request_v(mut args: Vec<J>) -> Result<J, String> {
-    static SCHEMA: LazyLock<Schema> = LazyLock::new(analysis_request_schema);
-    let request = parse(&SCHEMA, take(&mut args, 0))?;
-    let fen = request.get("fen").and_then(J::str).unwrap_or_default();
-    let root = request.get("rootFen").and_then(J::str).unwrap_or(fen);
-    let moves = str_list(request.get("moves"));
-    let positions = replay::replay_positions(root, &moves);
-    let normalized = replay::replay_positions(fen, &Vec::<&str>::new())
+fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
+    let request: AnalysisRequest = decode(value, |keys| match keys {
+        [] | ["infinite"] => Some("Invalid engine options."),
+        ["fen"] => Some("Invalid position."),
+        ["lines"] => Some("Invalid number of engine lines."),
+        ["rootFen"] => None,
+        ["moves", rest @ ..] => move_list_messages(rest, Some("Invalid move list.")),
+        ["clientId"] => Some("Invalid analysis request."),
+        _ => None,
+    })?;
+    fen(&request.fen, None, Some("Invalid position."), "fen")?;
+    let lines = Some("Invalid number of engine lines.");
+    within(request.lines, 1, 5, lines, "")?;
+    if let Some(root) = &request.root_fen {
+        fen(root, None, None, "rootFen")?;
+    }
+    if let Some(moves) = &request.moves {
+        move_list(moves)?;
+    }
+    if let Some(client) = request.client_id {
+        within(client, 1, MAX_SAFE, Some("Invalid analysis request."), "")?;
+    }
+    let root = request.root_fen.as_deref().unwrap_or(&request.fen);
+    let moves = request.moves.as_deref().unwrap_or_default();
+    let positions = replay::replay_positions(root, moves);
+    let normalized = replay::replay_positions(&request.fen, &Vec::<&str>::new())
         .first()
         .map(|p| p.fen.clone());
     let last = positions.last().map(|p| p.fen.as_str());
@@ -1229,328 +1411,559 @@ fn assert_analysis_request_v(mut args: Vec<J>) -> Result<J, String> {
     Ok(request)
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct ReviewRequest {
+    fen: String,
+    moves: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+}
+
 /// `assertReviewRequest`: the request's shape, and moves that replay from its position.
-fn assert_review_request_v(mut args: Vec<J>) -> Result<J, String> {
-    static SCHEMA: LazyLock<Schema> = LazyLock::new(review_request_schema);
-    let request = parse(&SCHEMA, take(&mut args, 0))?;
-    let fen = request.get("fen").and_then(J::str).unwrap_or_default();
-    let moves = str_list(request.get("moves"));
-    if replay::replay_positions_count(fen, &moves) != moves.len() + 1 {
+fn assert_review_request(value: J) -> Checked<ReviewRequest> {
+    let mut request: ReviewRequest = decode(value, |keys| match keys {
+        ["fen"] => Some("Invalid position."),
+        ["moves", rest @ ..] => move_list_messages(rest, Some("Invalid move list.")),
+        ["gameId"] => Some("Invalid game id."),
+        ["account"] => Some(USERNAME),
+        _ => Some("Invalid review request."),
+    })?;
+    fen(&request.fen, None, Some("Invalid position."), "fen")?;
+    move_list(&request.moves)?;
+    if let Some(id) = &request.game_id {
+        game_id(id)?;
+    }
+    if let Some(account) = &request.account {
+        request.account = Some(username(account, "account")?);
+    }
+    if replay::replay_positions_count(&request.fen, &request.moves) != request.moves.len() + 1 {
         return Err("Invalid game position or move history.".into());
     }
     Ok(request)
 }
 
-/// The strings of a list (absent or not a list gives none).
-fn str_list(v: Option<&J>) -> Vec<&str> {
-    match v {
-        Some(J::Arr(items)) => items.iter().filter_map(J::str).collect(),
-        _ => Vec::new(),
-    }
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct VoiceAttempt {
+    source: String,
+    heard: String,
+    confidence: f64,
+    words: Vec<VoiceWord>,
+    outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parsed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_of: Option<u64>,
 }
 
-// `CORE_CONTRACTS` `lines` (`cloudEval`): an integer from 1 to 5.
-schema_validator!(
-    assert_lines_v,
-    pipe(
-        Schema::Num(None),
-        vec![
-            Action::Integer(None),
-            Action::MinValue(1.0, None),
-            Action::MaxValue(5.0, None),
-        ],
-    )
-);
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct VoiceWord {
+    word: String,
+    conf: f64,
+}
 
-// `CORE_CONTRACTS` `lookupKind`: one of the position lookups.
-schema_validator!(
-    assert_lookup_kind_v,
-    picklist_str(&["opening", "masters", "player", "tablebase"], None)
-);
+/// A recognizer's confidence, from 0 to 1.
+fn score(n: f64, path: &str) -> Checked<()> {
+    within(n, 0.0, 1.0, None, path)
+}
 
-// `CORE_CONTRACTS` `optionalPage` (`tournament`): nothing, or a page from 1 to 200.
-schema_validator!(
-    assert_optional_page_v,
-    optional(pipe(
-        Schema::Num(None),
-        vec![
-            Action::Integer(None),
-            Action::MinValue(1.0, None),
-            Action::MaxValue(200.0, None),
-        ],
-    ))
-);
+fn assert_voice_attempt(value: J) -> Checked<VoiceAttempt> {
+    let attempt: VoiceAttempt = decode(value, |keys| match keys {
+        ["words"] | ["words", "[]"] => None,
+        _ => Some(VOICE),
+    })?;
+    one_of(&attempt.source, VOICE_SOURCES, Some(VOICE), "")?;
+    max_chars(&attempt.heard, 200, None, "heard")?;
+    score(attempt.confidence, "confidence")?;
+    for word in &attempt.words {
+        max_chars(&word.word, 40, None, "words.word")?;
+        score(word.conf, "words.conf")?;
+    }
+    max_items(&attempt.words, 40, Some(VOICE), "")?;
+    one_of(&attempt.outcome, VOICE_OUTCOMES, Some(VOICE), "")?;
+    if let Some(parsed) = &attempt.parsed {
+        max_chars(parsed, 120, None, "parsed")?;
+    }
+    if let Some(expected) = &attempt.expected {
+        max_chars(expected, 20, None, "expected")?;
+    }
+    if let Some(position) = &attempt.fen {
+        fen(position, None, Some("Invalid position."), "fen")?;
+    }
+    if let Some(retry) = attempt.retry_of {
+        within(retry, 1, MAX_SAFE, Some(VOICE), "")?;
+    }
+    Ok(attempt)
+}
 
-// `CORE_CONTRACTS` `boolean` (`answerMistake`): a boolean.
-schema_validator!(assert_boolean_v, Schema::Bool(None));
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct VoiceUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected: Option<String>,
+}
 
-/// `setInterfaceZoom`: `auto` or one of the zoom steps (`ZOOM_PERCENTS` in `interfaceZoom.ts`).
-fn assert_interface_zoom_v(mut args: Vec<J>) -> Result<J, String> {
-    const PERCENTS: [f64; 13] = [
-        50.0, 67.0, 75.0, 80.0, 90.0, 100.0, 110.0, 125.0, 150.0, 175.0, 200.0, 250.0, 300.0,
-    ];
-    let value = take(&mut args, 0);
-    let valid = match &value {
-        J::Str(text) => text == "auto",
-        J::Num(percent) => PERCENTS.contains(percent),
-        _ => false,
+fn assert_voice_update(value: J) -> Checked<VoiceUpdate> {
+    let update: VoiceUpdate = decode(value, always!(VOICE))?;
+    if let Some(outcome) = &update.outcome {
+        one_of(outcome, VOICE_OUTCOMES, Some(VOICE), "")?;
+    }
+    if let Some(expected) = &update.expected {
+        max_chars(expected, 20, None, "expected")?;
+    }
+    Ok(update)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct GamePageQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<GameResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rated: Option<bool>,
+    offset: u64,
+    limit: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GameResult {
+    Win,
+    Loss,
+    Draw,
+}
+
+fn assert_game_page_query(value: J) -> Checked<GamePageQuery> {
+    let mut query: GamePageQuery = decode(value, |keys| match keys {
+        ["account"] => Some(USERNAME),
+        ["offset"] => Some("Invalid game offset."),
+        ["limit"] => Some("Invalid game page size."),
+        _ => None,
+    })?;
+    if let Some(account) = &query.account {
+        query.account = Some(username(account, "account")?);
+    }
+    within(query.offset, 0, MAX_SAFE, Some("Invalid game offset."), "")?;
+    within(query.limit, 1, 100, Some("Invalid game page size."), "")?;
+    Ok(query)
+}
+
+/// `assertStudySyncRequest`: a study's account, id and both PGN copies, bounded.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+#[serde(rename_all = "camelCase")]
+struct StudySyncRequest {
+    account: Option<String>,
+    study_id: Option<String>,
+    baseline: Option<String>,
+    pgn: Option<String>,
+}
+
+const STUDY_TEXT: &str = "The study is empty or too large to upload.";
+
+fn assert_study_sync_request(value: J) -> Checked<StudySyncRequest> {
+    if !value.is_object() {
+        return Err("Invalid study synchronization.".into());
+    }
+    let mut request: StudySyncRequest = decode(value, |keys| match keys {
+        ["account"] => Some(USERNAME),
+        ["studyId"] => Some("Invalid id."),
+        ["baseline" | "pgn"] => Some(STUDY_TEXT),
+        _ => Some("Invalid study synchronization."),
+    })?;
+    let account = request.account.as_deref().ok_or(USERNAME)?;
+    request.account = Some(username(account, "")?);
+    lichess_id(
+        request.study_id.as_deref().ok_or("Invalid id.")?,
+        "Invalid id.",
+    )?;
+    let usable = |text: &Option<String>| {
+        text.as_deref()
+            .is_some_and(|t| !js::trim(t).is_empty() && js::utf16_len(t) <= 500_000)
     };
-    if valid {
-        Ok(value)
-    } else {
-        Err("Invalid interface zoom.".into())
-    }
+    ensure(
+        usable(&request.baseline) && usable(&request.pgn),
+        Some(STUDY_TEXT),
+        "",
+        String::new,
+    )?;
+    Ok(request)
 }
 
-// `CORE_CONTRACTS` `chapterName`: a trimmed name of 1 to 100 characters.
-schema_validator!(
-    assert_chapter_name_v,
-    pipe(
-        Schema::Str(None),
-        vec![
-            Action::Trim,
-            Action::MinLength(1, None),
-            Action::MaxLength(100, None),
-        ],
-    )
-);
-
-// `CORE_CONTRACTS` `pgn` (`exportToLichessStudy`): 1 to 500,000 characters with some content.
-schema_validator!(
-    assert_pgn_text_v,
-    pipe(
-        Schema::Str(None),
-        vec![
-            Action::MinLength(1, None),
-            Action::MaxLength(500_000, None),
-            Action::Check {
-                check: |value| matches!(value, J::Str(text) if !text.trim().is_empty()),
-                msg: None,
-            },
-        ],
-    )
-);
-
-// `CORE_CONTRACTS` `sessionObject` (`saveSession`): any object; the session is checked after it.
-schema_validator!(
-    assert_session_object_v,
-    Schema::Object {
-        entries: Vec::new(),
-        msg: None,
-        strict: false,
-    }
-);
-
-// `CORE_CONTRACTS` `studyId` (`exportToLichessStudy`): nothing (a new study) or a Lichess id.
-fn assert_study_id_v(mut args: Vec<J>) -> Result<J, String> {
-    let value = take(&mut args, 0);
-    if matches!(&value, J::Str(text) if text.is_empty()) {
-        return Ok(value);
-    }
-    assert_lichess_id_v(vec![value])
+#[derive(Deserialize, Serialize, Default)]
+#[serde(expecting = "an object")]
+struct LookupOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speeds: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ratings: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    player: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<Side>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modes: Option<Vec<GameMode>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    since: Option<String>,
 }
 
-// `apps/desktop/contracts/apiContracts.ts` `completeQuit`: a request id (`v.pipe(v.string(), v.uuid())`).
-schema_validator!(
-    assert_uuid_v,
-    pipe(Schema::Str(None), vec![Action::Uuid(None)])
-);
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Side {
+    White,
+    Black,
+}
 
-// `recordPerformance` name: one of the renderer's timings (`PERFORMANCE_NAMES`).
-schema_validator!(
-    assert_performance_name_v,
-    Schema::Picklist {
-        options: performance_names().into_iter().map(J::Str).collect(),
-        msg: None,
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GameMode {
+    Rated,
+    Casual,
+}
+
+fn assert_lookup_options(value: J) -> Checked<LookupOptions> {
+    if matches!(value, J::Undef) {
+        return Ok(LookupOptions::default());
     }
-);
-
-// `recordPerformance` value: a finite duration from 0 to 300,000 ms.
-schema_validator!(
-    assert_timing_value_v,
-    pipe(
-        Schema::Num(None),
-        vec![
-            Action::Finite(None),
-            Action::MinValue(0.0, None),
-            Action::MaxValue(300_000.0, None),
-        ],
-    )
-);
-
-// `reportRendererError`: a fixed page route, a message and a short info string, and no other keys.
-schema_validator!(
-    assert_renderer_error_v,
-    strict_object(
-        vec![
-            (
-                "route",
-                Schema::Picklist {
-                    options: RENDERER_ROUTES
-                        .iter()
-                        .map(|route| J::Str((*route).into()))
-                        .collect(),
-                    msg: None,
-                },
-            ),
-            (
-                "message",
-                pipe(Schema::Str(None), vec![Action::MaxLength(1000, None)]),
-            ),
-            (
-                "info",
-                pipe(Schema::Str(None), vec![Action::MaxLength(160, None)]),
-            ),
-        ],
-        None,
-    )
-);
-
-/// The validators by their TypeScript names.
-pub fn validator(method: &str) -> Option<Validator> {
-    Some(match method {
-        "assertUuid" => assert_uuid_v,
-        "assertPerformanceName" => assert_performance_name_v,
-        "assertTimingValue" => assert_timing_value_v,
-        "assertRendererError" => assert_renderer_error_v,
-        "assertUsername" => assert_username_v,
-        "assertGameId" => assert_game_id_v,
-        "assertGameIds" => assert_game_ids_v,
-        "assertUci" => assert_uci_v,
-        "assertMoves" => assert_moves_v,
-        "assertLevel" => assert_level_v,
-        "assertUsernames" => assert_usernames_v,
-        "assertFriendList" => assert_friend_list_v,
-        "assertAction" => assert_action_v,
-        "assertChatRoom" => assert_chat_room_v,
-        "assertChatText" => assert_chat_text_v,
-        "assertNewArena" => assert_new_arena_v,
-        "assertMessageText" => assert_message_text_v,
-        "assertDeclineReason" => assert_decline_reason_v,
-        "assertTournamentSystem" => assert_tournament_system_v,
-        "assertTournamentId" => assert_tournament_id_v,
-        "assertTournamentPassword" => assert_tournament_password_v,
-        "assertExport" => assert_export_v,
-        "assertInsightsQuery" => assert_insights_query_v,
-        "assertPerfType" => assert_perf_type_v,
-        "assertLichessId" => assert_lichess_id_v,
-        "assertWatchTarget" => assert_watch_target_v,
-        "assertOptionalAccount" => assert_optional_account_v,
-        "assertOnlineOptions" => assert_online_options_v,
-        "assertTheme" => assert_theme_v,
-        "assertNotification" => assert_notification_v,
-        "assertCoreSettings" => assert_core_settings_v,
-        "assertSettings" => assert_settings_v,
-        "assertPuzzleRequest" => assert_puzzle_request_v,
-        "assertPuzzleSolve" => assert_puzzle_solve_v,
-        "assertDays" => assert_days_v,
-        "assertActivityMax" => assert_activity_max_v,
-        "assertLocalQuery" => assert_local_query_v,
-        "assertLadderQuery" => assert_ladder_query_v,
-        "assertRunKind" => assert_run_kind_v,
-        "assertRunInput" => assert_run_input_v,
-        "assertPuzzleAttempt" => assert_puzzle_attempt_v,
-        "assertPuzzleProgressQuery" => assert_puzzle_progress_query_v,
-        "assertBestMoveOptions" => assert_best_move_options_v,
-        "assertAnalysisRequest" => assert_analysis_request_v,
-        "assertReviewRequest" => assert_review_request_v,
-        "assertReviewKey" => assert_review_key_v,
-        "assertVoiceAttempt" => assert_voice_attempt_v,
-        "assertVoiceUpdate" => assert_voice_update_v,
-        "assertVoiceId" => assert_voice_id_v,
-        "assertVoiceLimit" => assert_voice_limit_v,
-        "assertGamePageQuery" => assert_game_page_query_v,
-        "assertStudySyncRequest" => assert_study_sync_request_v,
-        "assertBroadcastQuery" => assert_broadcast_query_v,
-        "assertLookupOptions" => assert_lookup_options_v,
-        "assertLines" => assert_lines_v,
-        "assertLookupKind" => assert_lookup_kind_v,
-        "assertOptionalPage" => assert_optional_page_v,
-        "assertBoolean" => assert_boolean_v,
-        "assertInterfaceZoom" => assert_interface_zoom_v,
-        "assertChapterName" => assert_chapter_name_v,
-        "assertPgnText" => assert_pgn_text_v,
-        "assertSessionObject" => assert_session_object_v,
-        "assertStudyId" => assert_study_id_v,
-        _ => return None,
-    })
-}
-
-/// `assertCoreSettings`: `pick(settingsSchema, CORE_SETTINGS_KEYS)`, keeping the settings message.
-fn assert_core_settings_v(mut args: Vec<J>) -> Result<J, String> {
-    static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
-        let mut all = settings_entries();
-        let picked = CORE_SETTINGS_KEYS
-            .iter()
-            .filter_map(|key| {
-                let at = all.iter().position(|(name, _)| name == key)?;
-                Some(all.remove(at))
-            })
-            .collect();
-        object(picked, Some("Invalid settings."))
-    });
-    parse(&SCHEMA, take(&mut args, 0))
-}
-
-/// `assertNewArena`: a strict object of the arena's clock, schedule and options.
-fn assert_new_arena_v(mut args: Vec<J>) -> Result<J, String> {
-    static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
-        strict_object(
-            vec![
-                (
-                    "name",
-                    optional(pipe(
-                        Schema::Str(None),
-                        vec![
-                            Action::Trim,
-                            max_len(30, Some("Arena names are limited to 30 characters.")),
-                            Action::Regex {
-                                source: r"/^[\p{L}\p{N} ,.'&()-]*$/u",
-                                test: patterns::arena_name,
-                                msg: Some("Use letters, numbers and simple punctuation."),
-                            },
-                        ],
-                    )),
-                ),
-                (
-                    "clockTime",
-                    picklist_num(ARENA_CLOCK_MINUTES, Some("Invalid clock.")),
-                ),
-                (
-                    "clockIncrement",
-                    picklist_num(ARENA_INCREMENTS, Some("Invalid increment.")),
-                ),
-                (
-                    "minutes",
-                    picklist_num(ARENA_DURATIONS, Some("Invalid duration.")),
-                ),
-                (
-                    "waitMinutes",
-                    optional(picklist_num(ARENA_WAIT_MINUTES, Some("Invalid start."))),
-                ),
-                (
-                    "startDate",
-                    optional(pipe(
-                        Schema::Num(None),
-                        vec![Action::Integer(None), Action::MinValue(0.0, None)],
-                    )),
-                ),
-                (
-                    "variant",
-                    picklist_str(ARENA_VARIANTS, Some("Invalid variant.")),
-                ),
-                ("rated", Schema::Bool(None)),
-                (
-                    "password",
-                    optional(pipe(Schema::Str(None), vec![max_len(60, None)])),
-                ),
-                (
-                    "description",
-                    optional(pipe(Schema::Str(None), vec![max_len(2000, None)])),
-                ),
-            ],
+    let options: LookupOptions = decode(value, |keys| match keys {
+        [] => Some("Invalid explorer filters."),
+        _ => None,
+    })?;
+    if let Some(speeds) = &options.speeds {
+        each(speeds, |speed| {
+            one_of(speed, EXPLORER_SPEEDS, None, "speeds")
+        })?;
+        max_items(speeds, 6, None, "speeds")?;
+    }
+    if let Some(ratings) = &options.ratings {
+        each(ratings, |rating| {
+            one_of_numbers(*rating as f64, EXPLORER_RATINGS, None, "ratings")
+        })?;
+        max_items(ratings, 9, None, "ratings")?;
+    }
+    if let Some(player) = &options.player {
+        matches(
+            player,
+            patterns::username,
             None,
-        )
-    });
-    parse(&SCHEMA, take(&mut args, 0))
+            "player",
+            "a Lichess username",
+        )?;
+    }
+    if let Some(modes) = &options.modes {
+        max_items(modes, 2, None, "modes")?;
+    }
+    if let Some(since) = &options.since {
+        matches(
+            since,
+            patterns::since,
+            None,
+            "since",
+            "a year or a year and month",
+        )?;
+    }
+    Ok(options)
+}
+
+/* ── The table ── */
+
+macro_rules! validators {
+    ($($name:literal => $check:path,)*) => {
+        /// The validators by their TypeScript names.
+        pub fn validator(method: &str) -> Option<Validator> {
+            Some(match method {
+                $($name => {
+                    let run: Validator = |args| out(&$check(first(args))?);
+                    run
+                })*
+                "assertWatchTarget" => {
+                    let run: Validator = |args| {
+                        let mut args = args.into_iter();
+                        let value = args.next().unwrap_or(J::Undef);
+                        assert_watch_target(value, args.next().unwrap_or(J::Undef))
+                    };
+                    run
+                }
+                _ => return None,
+            })
+        }
+    };
+}
+
+validators! {
+    "assertUuid" => assert_uuid,
+    "assertPerformanceName" => assert_performance_name,
+    "assertTimingValue" => assert_timing_value,
+    "assertRendererError" => assert_renderer_error,
+    "assertUsername" => assert_username,
+    "assertGameId" => assert_game_id,
+    "assertGameIds" => assert_game_ids,
+    "assertUci" => assert_uci,
+    "assertMoves" => assert_moves,
+    "assertLevel" => assert_level,
+    "assertUsernames" => assert_usernames,
+    "assertFriendList" => assert_friend_list,
+    "assertAction" => assert_action,
+    "assertChatRoom" => assert_chat_room,
+    "assertChatText" => assert_chat_text,
+    "assertNewArena" => assert_new_arena,
+    "assertMessageText" => assert_message_text,
+    "assertDeclineReason" => assert_decline_reason,
+    "assertTournamentSystem" => assert_tournament_system,
+    "assertTournamentId" => assert_tournament_id,
+    "assertTournamentPassword" => assert_tournament_password,
+    "assertExport" => assert_export,
+    "assertInsightsQuery" => assert_insights_query,
+    "assertPerfType" => assert_perf_type,
+    "assertLichessId" => assert_lichess_id,
+    "assertOptionalAccount" => assert_optional_account,
+    "assertOnlineOptions" => assert_online_options,
+    "assertTheme" => assert_theme,
+    "assertNotification" => assert_notification,
+    "assertCoreSettings" => assert_core_settings,
+    "assertSettings" => assert_settings,
+    "assertPuzzleRequest" => assert_puzzle_request,
+    "assertPuzzleSolve" => assert_puzzle_solve,
+    "assertDays" => assert_days,
+    "assertActivityMax" => assert_activity_max,
+    "assertLocalQuery" => assert_local_query,
+    "assertLadderQuery" => assert_ladder_query,
+    "assertRunKind" => assert_run_kind,
+    "assertRunInput" => assert_run_input,
+    "assertPuzzleAttempt" => assert_puzzle_attempt,
+    "assertPuzzleProgressQuery" => assert_puzzle_progress_query,
+    "assertBestMoveOptions" => assert_best_move_options,
+    "assertAnalysisRequest" => assert_analysis_request,
+    "assertReviewRequest" => assert_review_request,
+    "assertReviewKey" => assert_review_key,
+    "assertVoiceAttempt" => assert_voice_attempt,
+    "assertVoiceUpdate" => assert_voice_update,
+    "assertVoiceId" => assert_voice_id,
+    "assertVoiceLimit" => assert_voice_limit,
+    "assertGamePageQuery" => assert_game_page_query,
+    "assertStudySyncRequest" => assert_study_sync_request,
+    "assertBroadcastQuery" => assert_broadcast_query,
+    "assertLookupOptions" => assert_lookup_options,
+    "assertLines" => assert_lines,
+    "assertLookupKind" => assert_lookup_kind,
+    "assertOptionalPage" => assert_optional_page,
+    "assertBoolean" => assert_boolean,
+    "assertInterfaceZoom" => assert_interface_zoom,
+    "assertChapterName" => assert_chapter_name,
+    "assertPgnText" => assert_pgn_text,
+    "assertSessionObject" => assert_session_object,
+    "assertStudyId" => assert_study_id,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn obj(fields: Vec<(&str, J)>) -> J {
+        J::Obj(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    }
+
+    fn run(method: &str, value: J) -> Checked<Value> {
+        validator(method).expect(method)(vec![value])
+    }
+
+    fn settings() -> Vec<(&'static str, J)> {
+        let mut fields = vec![
+            ("appearance", J::Str("system".into())),
+            ("boardTheme", J::Str("classic".into())),
+            ("lightTheme", J::Str("light".into())),
+            ("darkTheme", J::Str("dark".into())),
+            ("pieceSet", J::Str("cburnett".into())),
+            ("pieceAnimation", J::Str("normal".into())),
+            ("coordinates", J::Str("inside".into())),
+            ("soundVolume", J::Num(7.0)),
+            ("enginePath", J::Str(String::new())),
+            ("promotion", J::Str("ask".into())),
+            (
+                "engineLevels",
+                J::Arr(vec![J::Str("gm".into()), J::Str("club".into())]),
+            ),
+            ("reviewAuto", J::Str("off".into())),
+            ("correspondencePoll", J::Num(30.0)),
+        ];
+        for flag in [
+            "soundEnabled",
+            "premove",
+            "showLegalMoves",
+            "notificationsEnabled",
+            "notifyActive",
+            "notifyBackground",
+            "notifyOpponentMove",
+            "notifyLowTime",
+            "notifyGameEvents",
+            "notifyComputerMove",
+            "notifySound",
+            "voicePushToTalk",
+            "voiceConfirmMoves",
+            "voiceHistory",
+            "updateAutoCheck",
+            "updateAutoDownload",
+            "updateInstallOnQuit",
+            "reviewOnBattery",
+            "receiveChallenges",
+            "notifyChallenges",
+            "onlineChat",
+            "zenMode",
+            "blindfold",
+            "cloudEval",
+            "showOpeningName",
+            "swipeNavigation",
+            "swipeIndicator",
+            "puzzleAutoNext",
+        ] {
+            fields.push((flag, J::Bool(true)));
+        }
+        fields
+    }
+
+    #[test]
+    fn settings_normalize_in_the_renderers_order() {
+        let normalized = run("assertSettings", obj(settings())).unwrap();
+        assert_eq!(normalized["soundVolume"], json!(1));
+        assert_eq!(normalized["engineLevels"], json!(["club", "gm"]));
+        let keys: Vec<&String> = normalized.as_object().unwrap().keys().collect();
+        assert_eq!(keys[..3], ["appearance", "boardTheme", "lightTheme"]);
+    }
+
+    #[test]
+    fn each_setting_keeps_its_message() {
+        for (key, value, message) in [
+            ("notificationsEnabled", J::Num(1.0), NOTIFY),
+            ("notifyLowTime", J::Null, NOTIFY),
+            (
+                "engineLevels",
+                J::Arr(vec![J::Num(1.0)]),
+                "Invalid engine level.",
+            ),
+            (
+                "engineLevels",
+                J::Arr(vec![]),
+                "Keep at least one computer level.",
+            ),
+            ("soundVolume", J::Num(f64::NAN), "Invalid sound volume."),
+            (
+                "soundVolume",
+                J::Num(f64::INFINITY),
+                "Invalid sound volume.",
+            ),
+            (
+                "correspondencePoll",
+                J::Num(1.5),
+                "Invalid correspondence check interval.",
+            ),
+            ("lightTheme", J::Str("Bad".into()), "Invalid color theme."),
+        ] {
+            let mut fields = settings();
+            fields.iter_mut().find(|(k, _)| *k == key).unwrap().1 = value;
+            assert_eq!(
+                run("assertSettings", obj(fields)),
+                Err(message.into()),
+                "{key}"
+            );
+        }
+        let mut missing = settings();
+        missing.retain(|(k, _)| *k != "zenMode");
+        assert_eq!(
+            run("assertSettings", obj(missing)),
+            Err("Invalid settings.".into())
+        );
+    }
+
+    #[test]
+    fn nested_values_take_their_own_message() {
+        let palette = obj(vec![
+            ("bg", J::Num(1.0)),
+            ("text", J::Str("#fff".into())),
+            ("primary", J::Str("#000".into())),
+        ]);
+        let theme = obj(vec![
+            ("id", J::Str("night".into())),
+            ("name", J::Str("Night".into())),
+            ("dark", palette),
+        ]);
+        assert_eq!(run("assertTheme", theme), Err(HEX.into()));
+        let moves = obj(vec![
+            ("fen", J::Str("x".into())),
+            ("moves", J::Arr(vec![J::Num(1.0)])),
+        ]);
+        assert_eq!(
+            run("assertReviewRequest", moves),
+            Err("Invalid move.".into())
+        );
+    }
+
+    #[test]
+    fn lists_are_objects_of_their_indices_and_binary_data_is_not_text() {
+        assert_eq!(run("assertBestMoveOptions", J::Arr(vec![])), Ok(json!({})));
+        assert_eq!(run("assertBestMoveOptions", J::Undef), Ok(json!({})));
+        let bytes = J::Bytes {
+            len: 2,
+            head: b"hi".to_vec(),
+        };
+        assert_eq!(run("assertChatText", bytes), Err("Invalid message.".into()));
+    }
+
+    #[test]
+    fn default_messages_name_the_rejected_value() {
+        assert_eq!(
+            run("assertNewArena", obj(vec![])),
+            Err("missing field `clockTime`".into())
+        );
+        let speeds = obj(vec![("speeds", J::Arr(vec![J::Str("bogus".into())]))]);
+        assert!(
+            run("assertLookupOptions", speeds)
+                .unwrap_err()
+                .starts_with("speeds: invalid value, expected one of ultraBullet")
+        );
+        let extra = obj(vec![
+            ("route", J::Str("/".into())),
+            ("message", J::Str("m".into())),
+            ("info", J::Str("i".into())),
+            ("extra", J::Num(1.0)),
+        ]);
+        assert!(
+            run("assertRendererError", extra)
+                .unwrap_err()
+                .starts_with("unknown field `extra`")
+        );
+    }
+
+    #[test]
+    fn run_details_keep_their_order_and_integers() {
+        let run_input = obj(vec![
+            ("kind", J::Str("storm".into())),
+            ("variant", J::Str(String::new())),
+            ("score", J::Num(12.0)),
+            (
+                "detail",
+                obj(vec![("z", J::Num(1.0)), ("a", J::Str("x".into()))]),
+            ),
+        ]);
+        let normalized = run("assertRunInput", run_input).unwrap();
+        assert_eq!(normalized["score"], json!(12));
+        assert_eq!(
+            serde_json::to_string(&normalized["detail"]).unwrap(),
+            r#"{"z":1,"a":"x"}"#
+        );
+    }
 }

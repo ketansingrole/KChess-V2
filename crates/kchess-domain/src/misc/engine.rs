@@ -4,80 +4,7 @@
 
 use crate::js;
 
-/// A JSON-like value that also keeps what JSON cannot carry: `undefined` (a missing or
-/// `undefined` property), NaN and the infinities (as `Num`), and binary data (a `Uint8Array`,
-/// kept as its length and first bytes). Object properties keep their order.
-#[derive(Clone, Debug, PartialEq)]
-pub enum J {
-    Undef,
-    Null,
-    Bool(bool),
-    Num(f64),
-    Str(String),
-    Bytes { len: usize, head: Vec<u8> },
-    Arr(Vec<J>),
-    Obj(Vec<(String, J)>),
-}
-
-impl J {
-    /// The property `key` of an object, present even when its value is `undefined`.
-    pub fn get(&self, key: &str) -> Option<&J> {
-        match self {
-            J::Obj(fields) => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
-            _ => None,
-        }
-    }
-
-    pub fn str(&self) -> Option<&str> {
-        match self {
-            J::Str(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// JavaScript truthiness (`!!value`).
-    pub fn truthy(&self) -> bool {
-        match self {
-            J::Undef | J::Null => false,
-            J::Bool(b) => *b,
-            J::Num(n) => *n != 0.0 && !n.is_nan(),
-            J::Str(s) => !s.is_empty(),
-            J::Bytes { .. } | J::Arr(_) | J::Obj(_) => true,
-        }
-    }
-
-    /// Whether `typeof value === 'object'` holds (`null` aside, which callers check first).
-    pub fn is_object(&self) -> bool {
-        matches!(self, J::Arr(_) | J::Obj(_) | J::Bytes { .. })
-    }
-
-    /// The JSON value a result is returned as. `undefined` properties are left out, as
-    /// `JSON.stringify` does; anything JSON cannot carry becomes `null`.
-    pub fn into_value(self) -> serde_json::Value {
-        use serde_json::Value;
-        match self {
-            J::Undef | J::Null | J::Bytes { .. } => Value::Null,
-            J::Bool(b) => Value::Bool(b),
-            // Integral numbers go out as integers, as `JSON.stringify` writes them, so a consumer
-            // reading an integer (an id, a page) accepts the normalized value.
-            J::Num(n)
-                if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0 =>
-            {
-                Value::from(n as i64)
-            }
-            J::Num(n) => serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number),
-            J::Str(s) => Value::String(s),
-            J::Arr(items) => Value::Array(items.into_iter().map(J::into_value).collect()),
-            J::Obj(fields) => Value::Object(
-                fields
-                    .into_iter()
-                    .filter(|(_, v)| *v != J::Undef)
-                    .map(|(k, v)| (k, v.into_value()))
-                    .collect(),
-            ),
-        }
-    }
-}
+pub use super::value::{J, own_entries};
 
 /// `String(value)`: the text a value takes in string coercion.
 pub fn js_string(v: &J) -> String {
@@ -142,16 +69,6 @@ pub fn message(msg: Msg, label: &str, expected: Option<&str>, received: &str) ->
     }
 }
 
-/// valibot's `uuid` requirement: `/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu`.
-fn is_uuid(text: &str) -> bool {
-    let groups: Vec<&str> = text.split('-').collect();
-    const LENGTHS: [usize; 5] = [8, 4, 4, 4, 12];
-    groups.len() == LENGTHS.len()
-        && groups.iter().zip(LENGTHS).all(|(group, length)| {
-            group.len() == length && group.bytes().all(|b| b.is_ascii_hexdigit())
-        })
-}
-
 /// valibot's `_joinExpects`: distinct expectations, parenthesised when there are several.
 fn join_expects(list: Vec<String>, separator: &str) -> String {
     let mut distinct: Vec<String> = Vec::with_capacity(list.len());
@@ -201,35 +118,19 @@ fn type_fail(msg: Msg, expects: &str, input: J) -> Ds {
 
 /// Actions of a pipe: validations (which only report issues) and transformations.
 pub enum Action {
-    Trim,
     MinLength(usize, Msg),
     MaxLength(usize, Msg),
-    MinValue(f64, Msg),
-    MaxValue(f64, Msg),
-    Integer(Msg),
-    Finite(Msg),
-    /// valibot's `uuid()`: the 8-4-4-4-12 hexadecimal form, in either case.
-    Uuid(Msg),
     Regex {
         source: &'static str,
         test: fn(&str) -> bool,
         msg: Msg,
     },
-    Check {
-        check: fn(&J) -> bool,
-        msg: Msg,
-    },
-    Transform(fn(J) -> J),
 }
 
 /// A schema of the subset of valibot the validators use.
 pub enum Schema {
     Str(Msg),
-    Num(Msg),
-    Bool(Msg),
     Unknown,
-    /// `v.instance(Uint8Array)`.
-    Bytes(Msg),
     Literal {
         value: J,
         msg: Msg,
@@ -245,15 +146,6 @@ pub enum Schema {
     },
     Array {
         item: Box<Schema>,
-        msg: Msg,
-    },
-    Record {
-        key: Box<Schema>,
-        value: Box<Schema>,
-        msg: Msg,
-    },
-    Union {
-        options: Vec<Schema>,
         msg: Msg,
     },
     Optional {
@@ -309,20 +201,9 @@ pub fn array(item: Schema, msg: Msg) -> Schema {
     }
 }
 
-pub fn union(options: Vec<Schema>, msg: Msg) -> Schema {
-    Schema::Union { options, msg }
-}
-
 pub fn picklist_str(options: &[&str], msg: Msg) -> Schema {
     Schema::Picklist {
         options: options.iter().map(|s| J::Str((*s).into())).collect(),
-        msg,
-    }
-}
-
-pub fn picklist_num(options: &[f64], msg: Msg) -> Schema {
-    Schema::Picklist {
-        options: options.iter().map(|n| J::Num(*n)).collect(),
         msg,
     }
 }
@@ -339,21 +220,13 @@ impl Schema {
     pub fn expects(&self) -> String {
         match self {
             Schema::Str(_) => "string".into(),
-            Schema::Num(_) => "number".into(),
-            Schema::Bool(_) => "boolean".into(),
             Schema::Unknown => "unknown".into(),
-            Schema::Bytes(_) => "Uint8Array".into(),
             Schema::Literal { value, .. } => stringify(value),
             Schema::Picklist { options, .. } => {
                 join_expects(options.iter().map(stringify).collect(), "|")
             }
-            Schema::Object { .. } | Schema::Record { .. } | Schema::Variant { .. } => {
-                "Object".into()
-            }
+            Schema::Object { .. } | Schema::Variant { .. } => "Object".into(),
             Schema::Array { .. } => "Array".into(),
-            Schema::Union { options, .. } => {
-                join_expects(options.iter().map(Schema::expects).collect(), "|")
-            }
             Schema::Optional { wrapped, .. } => format!("({} | undefined)", wrapped.expects()),
             Schema::Pipe { base, .. } => base.expects(),
         }
@@ -380,19 +253,7 @@ impl Schema {
                 J::Str(_) => Ds::ok(input),
                 other => type_fail(*msg, "string", other),
             },
-            Schema::Num(msg) => match input {
-                J::Num(n) if !n.is_nan() => Ds::ok(input),
-                other => type_fail(*msg, "number", other),
-            },
-            Schema::Bool(msg) => match input {
-                J::Bool(_) => Ds::ok(input),
-                other => type_fail(*msg, "boolean", other),
-            },
             Schema::Unknown => Ds::ok(input),
-            Schema::Bytes(msg) => match input {
-                J::Bytes { .. } => Ds::ok(input),
-                other => type_fail(*msg, "Uint8Array", other),
-            },
             Schema::Literal { value, msg } => {
                 if input == *value {
                     Ds::ok(input)
@@ -431,28 +292,6 @@ impl Schema {
                 }
                 other => type_fail(*msg, "Array", other),
             },
-            Schema::Record { key, value, msg } => match input {
-                J::Obj(fields) => {
-                    let mut ds = Ds::ok(J::Undef);
-                    let mut out = Vec::with_capacity(fields.len());
-                    for (entry_key, entry_value) in fields {
-                        let key_ds = key.run(J::Str(entry_key));
-                        ds.issues.extend(key_ds.issues);
-                        let value_ds = value.run(entry_value);
-                        ds.issues.extend(value_ds.issues);
-                        if !key_ds.typed || !value_ds.typed {
-                            ds.typed = false;
-                        }
-                        if let (true, J::Str(name)) = (key_ds.typed, key_ds.value) {
-                            out.push((name, value_ds.value));
-                        }
-                    }
-                    ds.value = J::Obj(out);
-                    ds
-                }
-                other => type_fail(*msg, "Object", other),
-            },
-            Schema::Union { options, msg } => run_union(options, *msg, input),
             Schema::Optional { wrapped, default } => {
                 if input == J::Undef {
                     match default {
@@ -466,11 +305,6 @@ impl Schema {
             Schema::Pipe { base, actions } => {
                 let mut ds = base.run(input);
                 for action in actions {
-                    let transformation = matches!(action, Action::Trim | Action::Transform(_));
-                    if transformation && !ds.issues.is_empty() {
-                        ds.typed = false;
-                        break;
-                    }
                     action.apply(&mut ds);
                 }
                 ds
@@ -484,16 +318,6 @@ impl Action {
     /// Run one action of a pipe. Validations add an issue only while the value is typed.
     fn apply(&self, ds: &mut Ds) {
         match self {
-            Action::Trim => {
-                if let J::Str(s) = &mut ds.value {
-                    let start_len = s.len();
-                    let trimmed = js::trim(s);
-                    if trimmed.len() != start_len {
-                        let owned = trimmed.to_owned();
-                        *s = owned;
-                    }
-                }
-            }
             Action::MinLength(min, msg) => {
                 if let Some(count) = length_of(&ds.value).filter(|c| ds.typed && c < min) {
                     ds.issues.push(message(
@@ -514,53 +338,6 @@ impl Action {
                     ));
                 }
             }
-            Action::MinValue(min, msg) => {
-                if let J::Num(n) = ds.value
-                    && ds.typed
-                    && n < *min
-                {
-                    let expects = format!(">={}", number_text(*min));
-                    ds.issues
-                        .push(message(*msg, "value", Some(&expects), &number_text(n)));
-                }
-            }
-            Action::MaxValue(max, msg) => {
-                if let J::Num(n) = ds.value
-                    && ds.typed
-                    && n > *max
-                {
-                    let expects = format!("<={}", number_text(*max));
-                    ds.issues
-                        .push(message(*msg, "value", Some(&expects), &number_text(n)));
-                }
-            }
-            Action::Integer(msg) => {
-                if let J::Num(n) = ds.value
-                    && ds.typed
-                    && !(n.is_finite() && n.fract() == 0.0)
-                {
-                    ds.issues
-                        .push(message(*msg, "integer", None, &number_text(n)));
-                }
-            }
-            Action::Finite(msg) => {
-                if let J::Num(n) = ds.value
-                    && ds.typed
-                    && !n.is_finite()
-                {
-                    ds.issues
-                        .push(message(*msg, "finite", None, &number_text(n)));
-                }
-            }
-            Action::Uuid(msg) => {
-                if let J::Str(s) = &ds.value
-                    && ds.typed
-                    && !is_uuid(s)
-                {
-                    ds.issues
-                        .push(message(*msg, "UUID", None, &stringify(&ds.value)));
-                }
-            }
             Action::Regex { source, test, msg } => {
                 if let J::Str(s) = &ds.value
                     && ds.typed
@@ -569,16 +346,6 @@ impl Action {
                     ds.issues
                         .push(message(*msg, "format", Some(source), &stringify(&ds.value)));
                 }
-            }
-            Action::Check { check, msg } => {
-                if ds.typed && !check(&ds.value) {
-                    ds.issues
-                        .push(message(*msg, "input", None, &stringify(&ds.value)));
-                }
-            }
-            Action::Transform(f) => {
-                let value = std::mem::replace(&mut ds.value, J::Undef);
-                ds.value = f(value);
             }
         }
     }
@@ -590,38 +357,6 @@ fn length_of(v: &J) -> Option<usize> {
         J::Str(s) => Some(js::utf16_len(s)),
         J::Arr(items) => Some(items.len()),
         _ => None,
-    }
-}
-
-/// The own enumerable entries of a value, as `Object.keys`/spread see them: an object's fields, an
-/// array's items by index, a `Uint8Array`'s bytes by index (the first four are kept, which is all a
-/// key check can see), a string's code units by index.
-pub fn own_entries(v: J) -> Vec<(String, J)> {
-    match v {
-        J::Obj(fields) => fields,
-        J::Arr(items) => items
-            .into_iter()
-            .enumerate()
-            .map(|(i, item)| (i.to_string(), item))
-            .collect(),
-        J::Bytes { len, head } => (0..len.min(4))
-            .map(|i| {
-                (
-                    i.to_string(),
-                    J::Num(f64::from(head.get(i).copied().unwrap_or(0))),
-                )
-            })
-            .collect(),
-        J::Str(s) => s
-            .encode_utf16()
-            .enumerate()
-            .map(|(i, unit)| {
-                // Unpaired surrogates cannot be held as Rust text; U+FFFD keeps the length.
-                let c = char::from_u32(u32::from(unit)).unwrap_or('\u{FFFD}');
-                (i.to_string(), J::Str(c.to_string()))
-            })
-            .collect(),
-        _ => Vec::new(),
     }
 }
 
@@ -669,40 +404,6 @@ fn run_object(entries: &[(&'static str, Schema)], msg: Msg, strict: bool, input:
     }
     ds.value = J::Obj(out);
     ds
-}
-
-fn run_union(options: &[Schema], msg: Msg, input: J) -> Ds {
-    let mut typed_runs: Vec<Ds> = Vec::new();
-    let mut untyped_runs: Vec<Ds> = Vec::new();
-    for option in options {
-        let ds = option.run(input.clone());
-        if ds.typed {
-            if ds.issues.is_empty() {
-                return ds;
-            }
-            typed_runs.push(ds);
-        } else {
-            untyped_runs.push(ds);
-        }
-    }
-    if typed_runs.len() == 1 {
-        return typed_runs.remove(0);
-    }
-    // Several options got past the type check: the union's own issue, typed, with their issues
-    // attached (valibot's `subIssues`, which `parse` does not report).
-    if !typed_runs.is_empty() {
-        let expects = join_expects(options.iter().map(Schema::expects).collect(), "|");
-        let issue = message(msg, "type", Some(&expects), &stringify(&input));
-        let mut ds = Ds::fail(input, issue);
-        ds.typed = true;
-        return ds;
-    }
-    if untyped_runs.len() == 1 {
-        return untyped_runs.remove(0);
-    }
-    let expects = join_expects(options.iter().map(Schema::expects).collect(), "|");
-    let issue = message(msg, "type", Some(&expects), &stringify(&input));
-    Ds::fail(input, issue)
 }
 
 fn run_variant(key: &str, options: &[Schema], msg: Msg, input: J) -> Ds {
@@ -792,19 +493,6 @@ mod tests {
         assert_eq!(
             parse(&plain, J::Obj(vec![])),
             Err("Invalid key: Expected \"a\" but received undefined".into())
-        );
-    }
-
-    #[test]
-    fn nan_and_undefined_are_not_null() {
-        let schema = Schema::Num(None);
-        assert_eq!(
-            parse(&schema, J::Num(f64::NAN)),
-            Err("Invalid type: Expected number but received NaN".into())
-        );
-        assert_eq!(
-            parse(&schema, J::Null),
-            Err("Invalid type: Expected number but received null".into())
         );
     }
 }

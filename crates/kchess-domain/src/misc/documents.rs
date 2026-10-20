@@ -14,7 +14,7 @@ use crate::js;
 use crate::replay;
 use crate::tree::{self, TreeNode};
 
-type Handler = fn(Vec<J>) -> Result<J, String>;
+pub type Handler = fn(Vec<J>) -> Result<J, String>;
 
 const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
