@@ -89,7 +89,10 @@ jobs:
         run: |
           gh release download --repo $env:GITHUB_REPOSITORY --pattern '*-win-x64.exe' --pattern SHA256SUMS.txt --dir old
           $installer = Get-Item old/*-win-x64.exe
-          $expected = (Select-String -Path old/SHA256SUMS.txt -SimpleMatch $installer.Name).Line.Split(' ')[0]
+          # The installer's own line: its name also starts the `.exe.blockmap` line.
+          $line = Get-Content old/SHA256SUMS.txt | Where-Object { ($_ -split '\s+', 2)[1] -eq $installer.Name }
+          if (@($line).Count -ne 1) { throw "SHA256SUMS.txt has no single entry for $($installer.Name)." }
+          $expected = ($line -split '\s+', 2)[0]
           $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
           if ($actual -ne $expected) { throw "Checksum mismatch for $($installer.Name)." }
           Write-Host "Published installer: $($installer.Name)"

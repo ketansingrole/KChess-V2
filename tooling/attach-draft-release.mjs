@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseReleaseVersion } from './release-rules.mjs'
 
@@ -22,6 +22,12 @@ export function attachDraftRelease(tag, files, run = gh) {
         `Release ${tag} is already published. Advance the version and create a new tag; its assets will not be overwritten.`,
       )
     run('release', 'upload', tag, ...files, '--clobber')
+    // --clobber only replaces: a draft retried with fewer files kept the ones no build made.
+    const uploaded = new Set(files.map((file) => basename(file)))
+    const assets = JSON.parse(run('release', 'view', tag, '--json', 'assets')).assets
+    if (!Array.isArray(assets)) throw new Error('Could not list the draft release assets.')
+    for (const { name } of assets)
+      if (!uploaded.has(name)) run('release', 'delete-asset', tag, name, '--yes')
   } else {
     // --verify-tag prevents gh from inventing a tag at the default branch's HEAD.
     run(

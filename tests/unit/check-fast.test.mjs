@@ -57,3 +57,14 @@ it('fails structural performance regressions independently of wall-clock speed',
     'transfer',
   )
 })
+it.each([
+  'tests/core/native-golden.json',
+  'tests/fixtures/deferred.ts',
+  'apps/desktop/tests/unit/fixtures.ts',
+  'hosts/node/tests/unit/setup.ts',
+])('runs every unit test when the shared test input %s changes', (file) => {
+  // These change what many tests check, yet no import graph leads from them to those tests.
+  expect(selectChecks([file]).map(([name]) => name)).toEqual(
+    expect.arrayContaining(['native', 'unit']),
+  )
+})

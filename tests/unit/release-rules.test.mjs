@@ -125,10 +125,12 @@ describe('draft release uploads', () => {
     attachDraftRelease('v2026.10.1', ['packages/app.dmg'], run)
     expect(run.mock.calls[1]).toEqual(expect.arrayContaining(['create', '--draft', '--verify-tag']))
   })
-  it('permits replacement only on an existing draft', () => {
+  it('permits replacement only on an existing draft, removing assets no build made', () => {
     const run = vi
       .fn()
       .mockReturnValueOnce(JSON.stringify([{ tagName: 'v2026.10.1', isDraft: true }]))
+      .mockReturnValueOnce('')
+      .mockReturnValueOnce(JSON.stringify({ assets: [{ name: 'app.dmg' }, { name: 'old.zip' }] }))
     attachDraftRelease('v2026.10.1', ['packages/app.dmg'], run)
     expect(run.mock.calls[1]).toEqual([
       'release',
@@ -136,6 +138,10 @@ describe('draft release uploads', () => {
       'v2026.10.1',
       'packages/app.dmg',
       '--clobber',
+    ])
+    // --clobber kept a retried draft's stale files.
+    expect(run.mock.calls.slice(3)).toEqual([
+      ['release', 'delete-asset', 'v2026.10.1', 'old.zip', '--yes'],
     ])
   })
   it('does not mutate a published release', () => {

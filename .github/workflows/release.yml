@@ -140,15 +140,20 @@ jobs:
           fi
           spctl --assess --type execute --verbose=2 "$mac_app"
           xcrun stapler validate "$mac_app"
-      - name: Verify update metadata exists
+      - name: Verify update metadata and every supported package exist
         shell: bash
         run: |
+          # upload-artifact fails only when no pattern matches at all; check each package.
           case "${{ runner.os }}" in
-            macOS) manifest=dist/latest-mac.yml ;;
-            Windows) manifest=dist/latest.yml ;;
-            Linux) manifest=dist/latest-linux.yml ;;
+            macOS) manifest=dist/latest-mac.yml; packages="*-mac-arm64.dmg *-mac-arm64.zip" ;;
+            Windows) manifest=dist/latest.yml; packages="*-win-x64.exe" ;;
+            Linux) manifest=dist/latest-linux.yml; packages="*.AppImage *.deb" ;;
           esac
           test -s "$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
+          for pattern in $packages; do
+            found=$(find dist -maxdepth 1 -name "$pattern" -size +0 | head -n 1)
+            test -n "$found" || { echo "::error::Missing package: dist/$pattern"; exit 1; }
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: kchess-${{ runner.os }}

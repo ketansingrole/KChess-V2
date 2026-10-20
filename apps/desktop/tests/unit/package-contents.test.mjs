@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { verifyEntries, verifyRendererEntries } from '../../../../tooling/verify-package.mjs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  LEGAL_FILES,
+  verifyEntries,
+  verifyLegalFiles,
+  verifyRendererEntries,
+} from '../../../../tooling/verify-package.mjs'
 
 describe('release payload checks', () => {
   it('accepts frontend assets, runtime dependencies, and the lite engine', () => {
@@ -45,4 +53,17 @@ it('enforces the renderer budget separately from the larger packaged runtime bud
   const entries = [{ path: '_nuxt/app.js', size: 13 * 1024 * 1024 }]
   expect(() => verifyEntries(entries)).not.toThrow()
   expect(() => verifyRendererEntries(entries)).toThrow('12 MiB')
+})
+
+describe('package legal files', () => {
+  it('requires the GPL license and the third-party notices beside the app', async () => {
+    // Packages once shipped without either file.
+    const resources = mkdtempSync(join(tmpdir(), 'kchess-resources-'))
+    await expect(verifyLegalFiles(resources)).rejects.toThrow('Missing LICENSE')
+    writeFileSync(join(resources, 'LICENSE'), 'GNU GENERAL PUBLIC LICENSE')
+    await expect(verifyLegalFiles(resources)).rejects.toThrow('Missing THIRD_PARTY_NOTICES.md')
+    writeFileSync(join(resources, 'THIRD_PARTY_NOTICES.md'), '# Third-party notices')
+    await expect(verifyLegalFiles(resources)).resolves.toBeUndefined()
+    expect(LEGAL_FILES).toEqual(['LICENSE', 'THIRD_PARTY_NOTICES.md'])
+  })
 })

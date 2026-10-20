@@ -154,6 +154,16 @@
       "repo": "KChess-V2",
       "releaseType": "release"
     },
+    "extraResources": [
+      {
+        "from": "../../LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "../../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
+    ],
     "afterPack": "tooling/after-pack.cjs"
   },
   "scripts": {

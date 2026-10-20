@@ -65,6 +65,22 @@ export async function verifyRenderer(root) {
   console.info(`[kchess] Renderer verified: ${(bytes / MiB).toFixed(1)} MiB.`)
 }
 
+/** The license and notices a GPL distribution must carry, as app resources. */
+export const LEGAL_FILES = ['LICENSE', 'THIRD_PARTY_NOTICES.md']
+
+/** Throws unless every legal file is a non-empty file in `resources`. */
+export async function verifyLegalFiles(resources) {
+  for (const name of LEGAL_FILES) {
+    let info
+    try {
+      info = await stat(join(resources, name))
+    } catch (cause) {
+      throw new Error(`Missing ${name} in the package resources.`, { cause })
+    }
+    if (!info.isFile() || !info.size) throw new Error(`Missing ${name} in the package resources.`)
+  }
+}
+
 export async function verifyPackage(appOutDir, platform = process.platform) {
   const resources =
     platform === 'darwin'
@@ -109,6 +125,7 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
     throw new Error('Missing license texts for the Rust crates in the native rules.')
   if (!(await stat(join(resources, 'app.asar.unpacked', native.path))).size)
     throw new Error(`Native rules are empty: ${native.path}`)
+  await verifyLegalFiles(resources)
   if ((await stat(archive)).size > PERFORMANCE_BUDGETS.packageBytes)
     throw new Error(`app.asar exceeds the ${PERFORMANCE_BUDGETS.packageBytes / MiB} MiB budget.`)
   console.info(

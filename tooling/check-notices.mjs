@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
 /**
@@ -26,17 +27,46 @@ const dependencies = Object.assign(
   }),
 )
 
-// Rust crates the native rules depend on directly (path crates are KChess's own).
-const cargo = [
-  '../Cargo.toml',
-  '../crates/kchess-domain/Cargo.toml',
-  '../crates/kchess-node/Cargo.toml',
+// The renderer is bundled by Nuxt from the desktop's devDependencies; these reach users.
+const RENDERER_BUNDLED = [
+  '@iconify-json/lucide',
+  '@lichess-org/chessground',
+  '@nuxt/ui',
+  '@unovis/ts',
+  '@unovis/vue',
+  '@vueuse/core',
+  'electron',
+  'nuxt',
+  'pinia',
+  'tailwindcss',
+  'vosk-browser',
+  'vue',
+  'vue-router',
 ]
-for (const path of cargo) {
-  const manifest = readFileSync(new URL(path, import.meta.url), 'utf8')
-  for (const section of manifest.matchAll(/^\[(workspace\.)?dependencies\]\n([^[]*)/gm))
-    for (const [, name] of section[2].matchAll(/^([A-Za-z0-9_-]+)\s*(?:\.workspace)?\s*=/gm))
-      if (!name.startsWith('kchess-')) dependencies[name] = 'cargo'
+const desktop = JSON.parse(
+  readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8'),
+)
+for (const name of RENDERER_BUNDLED) {
+  if (!desktop.devDependencies?.[name] && !desktop.dependencies?.[name])
+    throw new Error(`${name} is no longer a desktop dependency; update RENDERER_BUNDLED.`)
+  dependencies[name] = 'renderer'
+}
+
+// Rust crates the shipped native module depends on directly (path crates are KChess's own),
+// read with Cargo itself: a hand-written TOML scan skipped entries after inline arrays.
+const SHIPPED_CRATES = ['kchess-core', 'kchess-domain', 'kchess-node']
+const metadata = JSON.parse(
+  execFileSync('cargo', ['metadata', '--format-version', '1', '--no-deps', '--offline'], {
+    cwd: new URL('..', import.meta.url),
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  }),
+)
+for (const crate of SHIPPED_CRATES) {
+  const pkg = metadata.packages.find((candidate) => candidate.name === crate)
+  if (!pkg) throw new Error(`Cargo metadata has no ${crate} package.`)
+  for (const dependency of pkg.dependencies)
+    if (dependency.kind === null && !dependency.path) dependencies[dependency.name] = 'cargo'
 }
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

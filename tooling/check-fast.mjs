@@ -16,6 +16,13 @@ export function selectChecks(files) {
       file,
     ),
   )
+  // Fixtures, golden outputs and test setup are shared by tests no import graph points to.
+  const support = relevant.some(
+    (file) =>
+      /^(?:tests\/|hosts\/node\/tests\/|apps\/[^/]+\/tests\/)/.test(file) &&
+      !/\.test\.[^/]+$/.test(file) &&
+      !/\/e2e\//.test(file),
+  )
   const packages = /^(?:apps|hosts|crates\/kchess-(?:node\/js|wasm\/js|contracts\/ts))\//
   const sources = code.filter((file) => packages.test(file))
   const rust = relevant.some((file) =>
@@ -38,10 +45,12 @@ export function selectChecks(files) {
   if (rust && !full)
     steps.push(['unit-native', ['exec', 'vitest', 'run', 'tests/core/native-rules.test.ts']])
   // Unit tests load the core, which requires the native rules for this host.
-  const unit = full || code.some((file) => packages.test(file) || /tests\//.test(file))
+  const unit = full || support || code.some((file) => packages.test(file) || /tests\//.test(file))
   if (!rust && unit) steps.push(['native', ['run', 'build:native']])
   if (full) {
     steps.push(['types', ['run', 'typecheck']], ['unit', ['run', 'test:unit']])
+  } else if (support) {
+    steps.push(['unit', ['run', 'test:unit']])
   } else {
     if (tests.length) steps.push(['unit-changed', ['exec', 'vitest', 'run', ...tests]])
     if (sources.length)
