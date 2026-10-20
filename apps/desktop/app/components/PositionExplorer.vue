@@ -15,6 +15,7 @@ import { STANDARD_SETUP } from '@kchess/rules/variant'
 import { uciSquares } from '@kchess/rules/position'
 import type { Key } from '@lichess-org/chessground/types'
 import { useAnalysisStore } from '../stores/analysis'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 import { errorText } from '../utils/format'
 
 const props = defineProps<{
@@ -30,6 +31,7 @@ const emit = defineEmits<{ play: [uci: string] }>()
 
 const analysis = useAnalysisStore()
 const store = useKChessStore()
+const replaceAnalysis = useReplaceAnalysis()
 const fen = computed(() => props.fen ?? analysis.node.fen)
 const result = ref<PositionLookup | null>(null)
 const error = ref('')
@@ -203,7 +205,11 @@ const tiles = computed(() => {
   })
 })
 const toast = useToast()
-async function openGame(game: ExplorerGame): Promise<void> {
+/** Asks first when the game would replace unsaved analysis. */
+function openGame(game: ExplorerGame): void {
+  replaceAnalysis(() => loadGame(game))
+}
+async function loadGame(game: ExplorerGame): Promise<void> {
   try {
     const pgn =
       result.value?.kind === 'masters'

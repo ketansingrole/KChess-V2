@@ -100,7 +100,10 @@ const entry = useId()
 const controls = ref<HTMLElement | null>(null)
 const topColor = computed(() => (orientation.value === 'white' ? 'black' : 'white'))
 const position = computed(() => positionFromFen(state.value.fen))
-const playing = computed(() => state.value.status === 'playing' && !waiting.value && !props.frozen)
+/** The player may move: not while the opponent replies or the solution plays itself out. */
+const playing = computed(
+  () => state.value.status === 'playing' && !waiting.value && !revealed.value && !props.frozen,
+)
 const dests = computed(() =>
   playing.value && position.value ? destsFor(position.value) : undefined,
 )
@@ -256,7 +259,7 @@ defineExpose({
         :movable-color="color"
         :premove="false"
         :show-dests="settings.showLegalMoves"
-        :promotion="settings.promotion === 'premove' ? 'queen' : settings.promotion"
+        :promotion="settings.promotion === 'queen' ? 'queen' : 'ask'"
         :dests="dests"
         :last-move="lastMove"
         :check="check"

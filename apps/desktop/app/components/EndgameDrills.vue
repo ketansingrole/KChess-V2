@@ -166,7 +166,7 @@ async function showHint(): Promise<void> {
           :movable-color="drill.player"
           :premove="false"
           :show-dests="settings.showLegalMoves"
-          :promotion="settings.promotion === 'premove' ? 'queen' : settings.promotion"
+          :promotion="settings.promotion === 'queen' ? 'queen' : 'ask'"
           :dests="yourTurn && position ? destsFor(position) : undefined"
           :last-move="lastMove"
           :check="position ? checkColor(position) : false"

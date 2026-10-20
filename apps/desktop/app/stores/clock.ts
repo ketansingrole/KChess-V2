@@ -16,6 +16,8 @@ export function useOtbClock(now: { value: number }) {
   const otbFlagged = ref<'top' | 'bottom' | null>(null)
   const otbMoves = ref({ top: 0, bottom: 0 })
   let otbStarted = performance.now()
+  /** Whose clock a pause stopped: Resume restarts that side, not the bottom's. */
+  let otbPaused: 'top' | 'bottom' | null = null
   const clockArchive = useGameArchive(
     () => ({
       source: 'clock',
@@ -84,6 +86,7 @@ export function useOtbClock(now: { value: number }) {
       otbMoves.value = { ...otbMoves.value, [side]: otbMoves.value[side] + 1 }
     }
     otbStarted = at
+    otbPaused = null
     otbRunning.value = other
   }
   function otbPause(): void {
@@ -92,6 +95,7 @@ export function useOtbClock(now: { value: number }) {
     const side = otbRunning.value
     if (!side) return
     otb.value = { ...otb.value, [side]: otbLeft(side, at) }
+    otbPaused = side
     otbRunning.value = null
   }
   function saveClockSession(): void {
@@ -105,6 +109,7 @@ export function useOtbClock(now: { value: number }) {
   })
   function otbReset(): void {
     clockArchive.reset()
+    otbPaused = null
     otbRunning.value = null
     otbFlagged.value = null
     otbMoves.value = { top: 0, bottom: 0 }
@@ -117,6 +122,13 @@ export function useOtbClock(now: { value: number }) {
   /** Start (or resume) the clock; after a flag, Start begins a fresh session at the set times. */
   function otbStart(): void {
     if (otbFlagged.value) otbReset()
+    if (otbRunning.value) return
+    if (otbPaused) {
+      otbStarted = performance.now()
+      otbRunning.value = otbPaused
+      otbPaused = null
+      return
+    }
     otbPress('top')
   }
   return {

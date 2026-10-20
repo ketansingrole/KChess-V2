@@ -80,6 +80,9 @@ it('keeps the chosen round and board when the feed stops, and resumes them', asy
   expect(start).toHaveBeenCalledTimes(2)
   store.closeTour()
   expect(store.roundId).toBe('')
+  // A board left selected kept the broadcast engine and shortcuts running on the tour list.
+  expect(store.selectedGame).toBe('')
+  expect(store.currentGame).toBeUndefined()
 })
 it('ignores an older tour response when a newer tour is selected', async () => {
   const b = bridge(),

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type {
   NewArena,
   TournamentDetail,
@@ -23,7 +23,25 @@ export const useTournamentStore = defineStore('tournaments', () => {
   const needsReconnect = ref(false)
   /** Tournaments joined from KChess, as the core keeps them. */
   const stored = ref<JoinedTournament[]>(initialLibrary().joinedTournaments)
-  const joined = computed(() => stored.value.filter((entry) => entry.until > Date.now()))
+  /**
+   * The time `joined` is judged at, moved on when the next tournament ends: `Date.now()` alone is
+   * not reactive, so an ended tournament stayed joined (and kept its stream wanted).
+   */
+  const clock = ref(Date.now())
+  let expiry: ReturnType<typeof setTimeout> | undefined
+  function scheduleExpiry(): void {
+    clearTimeout(expiry)
+    const now = Date.now()
+    clock.value = now
+    const next = Math.min(
+      ...stored.value.map((entry) => entry.until).filter((until) => until > now),
+    )
+    // setTimeout holds at most 2^31 - 1 ms; a later end is checked again then.
+    if (Number.isFinite(next))
+      expiry = setTimeout(scheduleExpiry, Math.min(next - now + 1, 2 ** 31 - 1))
+  }
+  watch(stored, scheduleExpiry, { immediate: true })
+  const joined = computed(() => stored.value.filter((entry) => entry.until > clock.value))
   /** A tournament is under way for an account: pairings must be able to arrive. */
   const active = computed(() => joined.value.length > 0)
 

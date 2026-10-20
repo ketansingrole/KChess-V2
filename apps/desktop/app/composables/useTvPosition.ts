@@ -14,6 +14,7 @@ import {
 import { useWatchStore } from '../stores/watch'
 import { useAnalysisStore } from '../stores/analysis'
 import { useKChessStore } from '../stores/kchess'
+import { useReplaceAnalysis } from './useReplaceAnalysis'
 
 export const CHANNEL_ICONS: Record<string, string> = {
   best: 'i-lucide-crown',
@@ -92,6 +93,7 @@ export function useTvPosition() {
   const watcher = useWatchStore()
   const analysis = useAnalysisStore()
   const store = useKChessStore()
+  const replaceAnalysis = useReplaceAnalysis()
   const toast = useToast()
 
   const now = ref(performance.now())
@@ -275,7 +277,12 @@ export function useTvPosition() {
     ]
   })
 
-  async function openPast(entry: TvPastGame): Promise<void> {
+  /** Opens a past TV game in the analysis board, asking first if that replaces unsaved moves. */
+  function openPast(entry: TvPastGame): void {
+    replaceAnalysis(() => loadPast(entry))
+  }
+
+  async function loadPast(entry: TvPastGame): Promise<void> {
     try {
       const pgn = await window.kchess.exportGame(entry.gameId)
       if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
@@ -293,7 +300,11 @@ export function useTvPosition() {
   }
 
   /** Opens the TV game so far in the analysis board, at the move being looked at. */
-  async function analyseTv(): Promise<void> {
+  function analyseTv(): void {
+    if (frame.value) replaceAnalysis(loadTv)
+  }
+
+  async function loadTv(): Promise<void> {
     const current = frame.value
     if (!current) return
     const origin = { white: current.white.name, black: current.black.name, gameId: current.gameId }
@@ -306,7 +317,7 @@ export function useTvPosition() {
       analysis.orientation = tvOrientation.value
       analysis.origin = origin
       store.selectPage('analysis')
-    } else await openPast({ ...current, orientation: tvOrientation.value })
+    } else await loadPast({ ...current, orientation: tvOrientation.value })
   }
 
   return {

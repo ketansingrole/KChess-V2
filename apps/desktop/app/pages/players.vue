@@ -14,6 +14,7 @@ import type {
 import { USERNAME } from '@kchess/rules/patterns'
 import { useWatchStore } from '../stores/watch'
 import { useAnalysisStore } from '../stores/analysis'
+import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 import { mergeRatingHistories, ratingHistoryFromGames } from '@kchess/rules/ratings'
 import { PERF_LABELS, playedPerfs } from '../utils/perfs'
 
@@ -23,6 +24,7 @@ const { activeOnlineAccount, connectedAccounts, data, trackedAccounts } = storeT
 const route = useRoute()
 const watcher = useWatchStore()
 const analysis = useAnalysisStore()
+const replaceAnalysis = useReplaceAnalysis()
 const toast = useToast()
 
 const query = ref(typeof route.query.name === 'string' ? route.query.name : '')
@@ -244,7 +246,11 @@ async function loadHistory(username: string, current: number): Promise<void> {
 }
 
 /** Opens one of the player's games in the analysis board, from their side. */
-async function openGame(game: LichessGame): Promise<void> {
+/** Asks first when the game would replace unsaved analysis. */
+function openGame(game: LichessGame): void {
+  replaceAnalysis(() => loadGame(game))
+}
+async function loadGame(game: LichessGame): Promise<void> {
   try {
     const pgn = await window.kchess.exportGame(game.id)
     if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')

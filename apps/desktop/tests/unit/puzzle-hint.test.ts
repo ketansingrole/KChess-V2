@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PuzzleBoard from '../../app/components/PuzzleBoard.vue'
 import PuzzleStatusPanel from '../../app/components/PuzzleStatusPanel.vue'
@@ -44,4 +44,43 @@ it('shows the hint button as pressed while the hint is on', () => {
       .find((button) => button.text() === 'Hint')!
   expect(hint(false).attributes('aria-pressed')).toBe('false')
   expect(hint(true).attributes('aria-pressed')).toBe('true')
+})
+
+it('takes no moves while the solution plays itself out', async () => {
+  // A move during the replay advanced the solution and played the opponent's reply as the player's.
+  vi.useFakeTimers()
+  desktop()
+  await useKChessStore().init()
+  const twoMoves = {
+    ...puzzle,
+    fen: '6k1/5ppp/8/8/8/8/5PPP/RR4K1 w - - 0 1',
+    solution: ['b1b8', 'g8h8', 'a1a8'],
+  }
+  const board = mount(PuzzleBoard, {
+    props: { puzzle: twoMoves },
+    global: { stubs: componentStubs },
+  })
+  const replay = board.vm.showSolution()
+  await board.vm.$nextTick()
+  expect(board.vm.playing).toBe(false)
+  expect(board.vm.playMove('b1b8')).toBe(false)
+  await vi.advanceTimersByTimeAsync(3000)
+  await replay
+  expect(board.vm.status).toBe('revealed')
+  board.unmount()
+  vi.useRealTimers()
+})
+
+it('asks for the promotion piece when queening applies only to premoves', async () => {
+  // "Queen when premoving" queened every puzzle promotion, so an underpromotion could not be found.
+  desktop()
+  const kchess = useKChessStore()
+  await kchess.init()
+  kchess.settings.promotion = 'premove'
+  const board = mount(PuzzleBoard, { props: { puzzle }, global: { stubs: componentStubs } })
+  expect(board.findComponent(ChessBoardStub).vm.$attrs.promotion).toBe('ask')
+  kchess.settings.promotion = 'queen'
+  await board.vm.$nextTick()
+  expect(board.findComponent(ChessBoardStub).vm.$attrs.promotion).toBe('queen')
+  board.unmount()
 })

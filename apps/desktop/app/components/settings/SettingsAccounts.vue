@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { LichessAccount } from '@kchess/contracts/types'
 import { useKChessStore } from '../../stores/kchess'
+import { useUsageStore } from '../../stores/usage'
 import AccountRow from '../AccountRow.vue'
 import ConfirmDialog from '../ConfirmDialog.vue'
 
 const store = useKChessStore()
 const { activeOnlineAccount, busy, connectedAccounts } = storeToRefs(store)
 const { connect, setOnlineAccount, removeAccount, sync } = store
+// Each row shows what its account keeps and downloaded; this section may be the first to need it.
+const usage = useUsageStore()
+onMounted(() => void usage.refresh())
 
 // The account stays set after the dialog closes so its text doesn't flicker while it animates out.
 const pendingRemoval = ref<LichessAccount | null>(null)

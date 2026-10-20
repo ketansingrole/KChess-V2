@@ -142,12 +142,17 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const daily = ref<Puzzle | null>(null)
   const dailyError = ref('')
   const dailyLoading = ref(false)
+  /** The UTC day the daily puzzle was loaded on: a later day has a new one. */
+  let dailyDay = ''
+  const utcDay = (): string => new Date().toISOString().slice(0, 10)
   async function loadDaily(force = false): Promise<void> {
-    if (daily.value && !force) return
+    if (daily.value && !force && dailyDay === utcDay()) return
     dailyLoading.value = true
     dailyError.value = ''
     try {
+      const day = utcDay()
       daily.value = await window.kchess.puzzleDaily()
+      dailyDay = day
     } catch (cause) {
       console.warn('[puzzles] loading daily puzzle failed:', cause)
       dailyError.value = message(cause)

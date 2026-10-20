@@ -264,6 +264,11 @@ export const useWatchStore = defineStore('watch', () => {
   function closeTour(): void {
     tour.value = null
     roundId.value = ''
+    // No board stays selected: its engine and keyboard shortcuts belong to the tour just left.
+    selectedGame.value = ''
+    games.value = new Map()
+    broadcastClocks.clear()
+    roundEnded.value = false
     void stop()
   }
   const roundGames = computed(() => [...games.value.values()])

@@ -173,3 +173,26 @@ it('records standalone clock expiry when paused before a timer tick', async () =
   expect(store.otbFlagged).toBe('top')
   expect(store.otbRunning).toBeNull()
 })
+
+it('standalone clock resumes the side that was paused', async () => {
+  // Resume always pressed the top clock, so a pause on the top player's turn restarted the bottom's.
+  vi.useFakeTimers()
+  let time = 0
+  vi.spyOn(performance, 'now').mockImplementation(() => time)
+  desktop()
+  const store = useLocalGameStore()
+  store.otbStart()
+  expect(store.otbRunning).toBe('bottom')
+  store.otbPress('bottom')
+  expect(store.otbRunning).toBe('top')
+  time = 1000
+  store.otbPause()
+  expect(store.otbRunning).toBe(null)
+  time = 5000
+  store.otbStart()
+  expect(store.otbRunning).toBe('top')
+  time = 6000
+  // The top player's clock ran one second before the pause and one after it, none during it.
+  expect(store.otbLeft('top')).toBe(298_000)
+  expect(store.otbLeft('bottom')).toBe(300_000 + store.otbConfig.increment * 1000)
+})
