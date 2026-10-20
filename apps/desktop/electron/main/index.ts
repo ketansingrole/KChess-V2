@@ -223,7 +223,15 @@ function refreshAppIcon(): void {
   }
 }
 
+/** Startup has registered IPC and opened the first window; until then it owns window creation. */
+let windowStarted = false
+
 function createWindow(): void {
+  // One window: a second would take over IPC ownership and orphan the first renderer.
+  if (window && !window.isDestroyed()) {
+    bringToFront()
+    return
+  }
   rendererGone = false
   const icon = windowIcon()
   // macOS keeps its traffic lights (hiddenInset). Windows/Linux use OpenChamber-style
@@ -399,6 +407,8 @@ if (!singleInstance) {
   app.quit()
 } else {
   app.on('second-instance', () => {
+    // During startup the window is still to come; creating one now would precede IPC.
+    if (!windowStarted) return
     if (BrowserWindow.getAllWindows().length === 0) {
       if (!coreShutdown) createWindow()
     } else bringToFront()
@@ -484,8 +494,9 @@ void app
       () => {
         // Closing the last window can initiate quit before an installer fails (e.g. elevation
         // is cancelled). Restore the UI so a prevented quit never leaves a hidden process.
-        if (!window || window.isDestroyed()) createWindow()
-        else {
+        if (!window || window.isDestroyed()) {
+          if (windowStarted) createWindow()
+        } else {
           if (window.isMinimized()) window.restore()
           window.show()
           window.focus()
@@ -568,6 +579,7 @@ void app
       quitPreparation.complete(token, saved)
     })
     assertIpcComplete()
+    windowStarted = true
     createWindow()
     appUpdates.start()
     app.on('activate', () => {
@@ -584,6 +596,22 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 let coreShutdown: Promise<void> | undefined
+/** Long enough for engines and streams to stop; a core that never finishes must not block quit. */
+const CORE_CLOSE_LIMIT_MS = 10_000
+async function closeCoreWithin(limit: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<void>((done) => {
+    timer = setTimeout(() => {
+      logWarn('shutdown', `Core shutdown did not finish within ${limit} ms; quitting.`)
+      done()
+    }, limit)
+  })
+  try {
+    await Promise.race([core?.close(), expired])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 let coreStopped = false
 let installPreparation: Promise<void> | undefined
 app.on('before-quit', (event) => {
@@ -603,10 +631,11 @@ app.on('before-quit', (event) => {
   if (core && !coreStopped) {
     event.preventDefault()
     coreShutdown ??= (async () => {
-      // An update install already flushed the renderer before calling quitAndInstall;
-      // re-preparing here would only add a second 3s-timeout and retry dialog.
-      if (!appUpdates?.isInstalling() && !(await quitPreparation.prepare())) return
-      await core?.close()
+      // Flush again even during an update install: on macOS the installer can still be
+      // downloading after the first flush, and edits made meanwhile would be lost. A renderer
+      // that answers makes this quick.
+      if (!(await quitPreparation.prepare())) return
+      await closeCoreWithin(CORE_CLOSE_LIMIT_MS)
       coreStopped = true
       app.quit()
     })()

@@ -37,11 +37,15 @@ export function redactDiagnostics(value: string): string {
 
 /** Bounded local logs; never include database contents or request bodies. */
 export class DiagnosticLog {
+  /** The current file's size, kept here: every line is written on the main process. */
+  private size: number
+
   constructor(
     private readonly directory: string,
     private readonly maxBytes = 512 * 1024,
   ) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
+    this.size = existsSync(this.path()) ? statSync(this.path()).size : 0
   }
 
   private path(index = 0): string {
@@ -53,12 +57,18 @@ export class DiagnosticLog {
     // A single unexpected object must not defeat the file-size bound.
     const line = Buffer.from(`${new Date().toISOString()} ${level.toUpperCase()} ${message}\n`)
     const entry = line.subarray(0, this.maxBytes)
-    if (existsSync(this.path()) && statSync(this.path()).size + entry.length > this.maxBytes) {
-      if (existsSync(this.path(2))) unlinkSync(this.path(2))
-      if (existsSync(this.path(1))) renameSync(this.path(1), this.path(2))
-      renameSync(this.path(), this.path(1))
+    // One append per line; the file is looked at again only when it is due to rotate.
+    if (this.size + entry.length > this.maxBytes) {
+      const size = existsSync(this.path()) ? statSync(this.path()).size : 0
+      if (size > 0) {
+        if (existsSync(this.path(2))) unlinkSync(this.path(2))
+        if (existsSync(this.path(1))) renameSync(this.path(1), this.path(2))
+        renameSync(this.path(), this.path(1))
+      }
+      this.size = 0
     }
     appendFileSync(this.path(), entry, { mode: 0o600 })
+    this.size += entry.length
   }
 
   read(): string[] {
