@@ -77,6 +77,49 @@ async fn best_move_sends_the_level_options_and_the_position() {
 }
 
 #[tokio::test]
+async fn castling_reaches_the_engine_in_the_notation_of_its_mode() {
+    // The rules record castling king-takes-rook (e1h1); Stockfish rejects that with
+    // `UCI_Chess960` off, never answers, and the computer game times out.
+    let line = json!([
+        "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e1h1", "f8c5"
+    ]);
+    let log = log_path("castling-standard");
+    let (search, _) = search_with("search", false, &log);
+    search
+        .best_move(
+            line.clone(),
+            "max",
+            &fake_path(),
+            json!({ "movetime": 100 }),
+        )
+        .await
+        .expect("a move");
+    assert!(
+        received(&log)
+            .iter()
+            .any(|line| line == "position startpos moves e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 e1g1 f8c5")
+    );
+    let log = log_path("castling-chess960");
+    let (search, _) = search_with("search", false, &log);
+    let mut typed = line;
+    typed[6] = json!("e1g1");
+    search
+        .best_move(
+            typed,
+            "max",
+            &fake_path(),
+            json!({ "movetime": 100, "chess960": true }),
+        )
+        .await
+        .expect("a move");
+    assert!(
+        received(&log)
+            .iter()
+            .any(|line| line == "position startpos moves e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 e1h1 f8c5")
+    );
+}
+
+#[tokio::test]
 async fn the_random_move_path_picks_from_the_legal_moves() {
     // The rook on a1 checks the king on h1; its only escape is h2 (the scripted `go perft 1`).
     let log = log_path("random");

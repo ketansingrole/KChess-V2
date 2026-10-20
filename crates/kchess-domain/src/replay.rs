@@ -1,8 +1,8 @@
 //! Replaying games (`replaySetup` in `variant.ts`, `replay` in `review.ts`).
 
 use serde::Serialize;
-use shakmaty::Position;
 use shakmaty::variant::VariantPosition;
+use shakmaty::{CastlingMode, Position};
 
 use crate::js;
 use crate::rules;
@@ -155,6 +155,27 @@ pub fn replay_positions_count<S: AsRef<str>>(fen: &str, moves: &[S]) -> usize {
     moves.len() + 1
 }
 
+/// The moves from `fen` (standard rules) spelled as a UCI engine reads them: castling is
+/// king-takes-rook with `UCI_Chess960` on and king-two-squares with it off. `None` when a move
+/// is not legal.
+pub fn engine_line<S: AsRef<str>>(fen: &str, moves: &[S], chess960: bool) -> Option<Vec<String>> {
+    let mut pos = rules::standard_from_fen(fen)?;
+    let mode = if chess960 {
+        CastlingMode::Chess960
+    } else {
+        CastlingMode::Standard
+    };
+    moves
+        .iter()
+        .map(|uci| {
+            let m = rules::parse_uci(uci.as_ref()).and_then(|u| rules::legal_move(&pos, u))?;
+            let text = m.to_uci(mode).to_string();
+            pos.play_unchecked(m);
+            Some(text)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +212,21 @@ mod tests {
             replay_setup("standard", START, &rook).unwrap().played[6].san,
             "O-O"
         );
+    }
+
+    #[test]
+    fn engine_line_spells_castling_for_the_engine_mode() {
+        let line = [
+            "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e1h1", "f8c5", "e1g1",
+        ];
+        let standard = engine_line(START, &line[..8], false).unwrap();
+        assert_eq!(standard[6], "e1g1");
+        let chess960 = engine_line(START, &line[..8], true).unwrap();
+        assert_eq!(chess960[6], "e1h1");
+        let mut typed = line;
+        typed[6] = "e1g1";
+        assert_eq!(engine_line(START, &typed[..8], true).unwrap()[6], "e1h1");
+        assert_eq!(engine_line(START, &line, false), None);
     }
 
     #[test]

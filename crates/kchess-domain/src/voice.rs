@@ -547,7 +547,10 @@ fn matching_moves(pos: &VariantPosition, spoken: Spoken) -> Vec<(String, String)
             }
         }
         // The rules write castling king-takes-rook (e1h1); engines expect standard UCI (e1g1).
-        let uci = if san.starts_with("O-O") {
+        // Only the standard geometry has that spelling: in Chess960 a king two squares away
+        // can be an ordinary king move (b1c1), so castling stays king-takes-rook there.
+        let standard_castle = from.starts_with('e') && (to.starts_with('a') || to.starts_with('h'));
+        let uci = if san.starts_with("O-O") && standard_castle {
             format!(
                 "{from}{}{}",
                 if san.starts_with("O-O-O") { 'c' } else { 'g' },

@@ -341,9 +341,9 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
         serde_json::from_value(super::domain_client::assert_best_move_options(&options)?)
             .map_err(|cause| CoreError::new(cause.to_string()))?;
     let start = options.fen.as_deref().unwrap_or(INITIAL_FEN);
-    if kchess_domain::replay::replay_positions_count(start, &moves) != moves.len() + 1 {
-        return Err(CoreError::new("Invalid computer position or move history."));
-    }
+    // The rules write castling king-takes-rook; with `UCI_Chess960` off the engine rejects that.
+    let moves = kchess_domain::replay::engine_line(start, &moves, options.chess960)
+        .ok_or_else(|| CoreError::new("Invalid computer position or move history."))?;
     Ok(Request {
         moves,
         fen: options.fen,

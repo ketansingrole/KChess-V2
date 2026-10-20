@@ -9,6 +9,7 @@ import {
   MOVE_GRAMMAR,
 } from '@kchess/rules/voiceCommands'
 import { positionAfter, positionFromFen } from '@kchess/rules/chess'
+import { Position } from '@kchess/rules/position'
 
 describe('spoken square names', () => {
   it.each([
@@ -105,6 +106,18 @@ describe('spoken legal moves', () => {
     expect(spokenMove('castle queen side', pos)).toEqual({
       kind: 'move',
       choices: [{ uci: 'e1c1', san: 'O-O-O' }],
+    })
+  })
+  it('castles a Chess960 king king-takes-rook when two squares over is an ordinary move', () => {
+    // King b1: “b1c1” is the king stepping to c1, not O-O-O.
+    const pos = Position.from({ variant: 'chess960', fen: 'rk5r/8/8/8/8/8/8/RK5R w HAha - 0 1' })!
+    expect(spokenMove('castle queen side', pos)).toEqual({
+      kind: 'move',
+      choices: [{ uci: 'b1a1', san: 'O-O-O' }],
+    })
+    expect(spokenMove('castle king side', pos)).toEqual({
+      kind: 'move',
+      choices: [{ uci: 'b1h1', san: 'O-O' }],
     })
   })
   it('reads “eight” before a rank as the letter a, which it is often heard for', () => {
