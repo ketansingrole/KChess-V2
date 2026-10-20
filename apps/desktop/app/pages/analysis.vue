@@ -774,6 +774,7 @@ function missed(result: VoiceResult): void {
             :white="root.headers?.White || analysis.origin?.white || 'White'"
             :black="root.headers?.Black || analysis.origin?.black || 'Black'"
             :ply="Math.min(path ? path.split(' ').length : 0, analysis.mainline.length)"
+            :result="root.headers?.Result"
           />
           <UTooltip text="Import a PGN or FEN">
             <UButton

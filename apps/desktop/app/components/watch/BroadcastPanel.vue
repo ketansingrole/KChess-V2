@@ -451,6 +451,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
         <MovePanel
           :moves="gameSan"
           :ply="shownPly"
+          :fen="gameSetup.fen"
           empty-text="No moves yet."
           @select="selectBroadcastPly"
           @flip="gameOrientation = gameOrientation === 'white' ? 'black' : 'white'"

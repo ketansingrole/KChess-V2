@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -13,8 +13,29 @@ const props = withDefaults(
     selectable?: boolean
     /** What the flip button does, for its tooltip and label. */
     flipLabel?: string
+    /** The starting position, when it is not White's first move: it sets the move numbers. */
+    fen?: string
   }>(),
   { title: 'Moves', controls: true, selectable: true, flipLabel: 'Flip board' },
+)
+
+/** Black to move at the start shifts every move one column, under the start's move number. */
+const start = computed(() => {
+  const fields = props.fen?.trim().split(/\s+/) ?? []
+  const fullmove = Number(fields[5])
+  return {
+    shift: fields[1] === 'b' ? 1 : 0,
+    fullmove: Number.isInteger(fullmove) && fullmove > 0 ? fullmove : 1,
+  }
+})
+/** The move number and side of the move at `index`. */
+function moveAt(index: number): { number: number; black: boolean } {
+  const slot = index + start.value.shift
+  return { number: start.value.fullmove + Math.floor(slot / 2), black: slot % 2 === 1 }
+}
+
+const moveCount = computed(() =>
+  props.moves.length ? moveAt(props.moves.length - 1).number - start.value.fullmove + 1 : 0,
 )
 
 const emit = defineEmits<{
@@ -56,19 +77,24 @@ const controlButtons = [
     <div class="flex items-baseline justify-between gap-2">
       <h2 class="section-title">{{ title }}</h2>
       <span v-if="moves.length" class="muted text-xs tabular">
-        {{ Math.ceil(moves.length / 2) }} {{ Math.ceil(moves.length / 2) === 1 ? 'move' : 'moves' }}
+        {{ moveCount }} {{ moveCount === 1 ? 'move' : 'moves' }}
       </span>
     </div>
     <div class="moves-wrap">
       <div ref="list" class="moves-list" role="group" :aria-label="title">
         <template v-for="(san, index) in props.moves" :key="index">
-          <div v-if="index % 2 === 0" class="move-num" aria-hidden="true">{{ index / 2 + 1 }}</div>
+          <div v-if="!moveAt(index).black || index === 0" class="move-num" aria-hidden="true">
+            {{ moveAt(index).number }}
+          </div>
+          <span v-if="index === 0 && moveAt(0).black" class="move-cell muted" aria-hidden="true"
+            >…</span
+          >
           <button
             v-if="selectable"
             type="button"
             class="move-cell"
             :class="{ active: props.ply === index + 1 }"
-            :aria-label="`Move ${Math.floor(index / 2) + 1}, ${index % 2 ? 'black' : 'white'}, ${san}`"
+            :aria-label="`Move ${moveAt(index).number}, ${moveAt(index).black ? 'black' : 'white'}, ${san}`"
             :aria-current="props.ply === index + 1 ? 'step' : undefined"
             @click="emit('select', index + 1)"
           >

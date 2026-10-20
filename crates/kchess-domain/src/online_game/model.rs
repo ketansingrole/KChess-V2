@@ -85,6 +85,9 @@ pub struct Model {
     #[serde(default)]
     pub online_rating: Option<f64>,
     pub online_status: String,
+    /// The finished game's PGN result (`1-0`, `0-1`, `1/2-1/2`); empty while none is known.
+    #[serde(default)]
+    pub online_result: String,
     pub online_initial: f64,
     pub online_game_rated: bool,
     pub online_setup: Setup,
@@ -339,6 +342,7 @@ impl Model {
             online_opponent_rating: None,
             online_rating: None,
             online_status: String::new(),
+            online_result: String::new(),
             online_initial: 0.0,
             online_game_rated: false,
             online_setup: Setup::standard(),

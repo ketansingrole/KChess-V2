@@ -31,6 +31,7 @@ const {
   onlineDays,
   busy,
   onlineStatus,
+  onlineResult,
   onlineConnection,
   onlineOpponent,
   onlineOpponentRating,
@@ -245,7 +246,8 @@ function analyse(): void {
     const white = onlineColor.value === 'white' ? 'You' : onlineOpponent.value
     const black = onlineColor.value === 'black' ? 'You' : onlineOpponent.value
     const pgn = setupPgn(onlineSetup.value, onlineMoves.value)
-    if (!analysis.loadPgn(pgn, onlineMoves.value.length)) return
+    // At the move being looked at, as the local and computer boards open.
+    if (!analysis.loadPgn(pgn, onlinePly.value)) return
     analysis.orientation = onlineColor.value
     analysis.origin = {
       gameId: onlineId.value,
@@ -578,6 +580,7 @@ function backToTournament(): void {
         title="Live game"
         :moves="onlineHistory"
         :ply="onlinePly"
+        :fen="onlineSetup.fen"
         empty-text="No moves yet."
         @select="viewOnlinePly"
         @flip="onlineFlipped = !onlineFlipped"
@@ -759,6 +762,7 @@ function backToTournament(): void {
                 :white="onlineColor === 'white' ? activeOnlineAccount : onlineOpponent"
                 :black="onlineColor === 'black' ? activeOnlineAccount : onlineOpponent"
                 :ply="onlinePly"
+                :result="onlineResult || '*'"
               />
               <UButton
                 v-if="onlinePhase === 'finished' && onlineTournament"

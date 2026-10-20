@@ -99,6 +99,7 @@ impl Run {
         self.effect(Effect::ResetView);
         let m = &mut self.m;
         m.online_moves = Vec::new();
+        m.online_result = String::new();
         m.opponent_gone = false;
         m.claim_at = None;
         m.draw_offer = "none".into();
@@ -123,6 +124,14 @@ impl Run {
         let previous = self.m.online_phase.clone();
         self.m.online_phase = "finished".into();
         self.m.online_status = outcome_line(winner, reason, &self.m.online_color);
+        self.m.online_result = match winner {
+            Some("white") => "1-0",
+            Some("black") => "0-1",
+            // An aborted game has no result; any other undecided finish is a draw.
+            _ if matches!(reason, "aborted" | "noStart") => "*",
+            _ => "1/2-1/2",
+        }
+        .into();
         self.m.draw_offer = "none".into();
         self.m.takeback_offer = "none".into();
         self.m.claim_at = None;

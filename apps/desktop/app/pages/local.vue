@@ -183,20 +183,19 @@ function analyse(): void {
   })
 }
 const toast = useToast()
-async function copyPgn(): Promise<void> {
+/** The game's PGN result, for copying and exporting. */
+const pgnResult = computed(() => {
   const result = game.result
+  if (!result) return '*'
+  return result.winner === 'white' ? '1-0' : result.winner === 'black' ? '0-1' : '1/2-1/2'
+})
+async function copyPgn(): Promise<void> {
   const headers: Record<string, string> = {
     Event: 'Over the board (KChess)',
     Date: new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
     White: 'White',
     Black: 'Black',
-    Result: result
-      ? result.winner === 'white'
-        ? '1-0'
-        : result.winner === 'black'
-          ? '0-1'
-          : '1/2-1/2'
-      : '*',
+    Result: pgnResult.value,
   }
   try {
     await navigator.clipboard.writeText(setupPgn(game.setup, game.moves, headers))
@@ -300,6 +299,7 @@ function otbText(side: 'top' | 'bottom'): string {
         title="Moves"
         :moves="game.history"
         :ply="game.shownPly"
+        :fen="game.setup.fen"
         empty-text="White moves first. The first move starts the clock."
         @select="game.view($event)"
         @flip="game.flip()"
@@ -385,6 +385,7 @@ function otbText(side: 'top' | 'bottom'): string {
               :orientation="game.orientation"
               white="White"
               black="Black"
+              :result="pgnResult"
             />
             <UButton
               v-if="game.setup.variant === 'standard'"

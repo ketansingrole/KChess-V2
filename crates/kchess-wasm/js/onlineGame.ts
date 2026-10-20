@@ -36,6 +36,8 @@ export function onlineGameState() {
     onlineOpponentRating: undefined as number | undefined,
     onlineRating: undefined as number | undefined,
     onlineStatus: '',
+    /** The finished game's PGN result; empty while none is known. */
+    onlineResult: '' as '' | '*' | '1-0' | '0-1' | '1/2-1/2',
     onlineInitial: 0,
     onlineGameRated: false,
     onlineSetup: STANDARD_SETUP as GameSetup,

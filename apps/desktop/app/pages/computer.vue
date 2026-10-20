@@ -59,6 +59,14 @@ const levels = computed(() =>
   })),
 )
 const otherColor = computed(() => (userColor.value === 'white' ? 'black' : 'white'))
+/** The game's PGN result: the result card says it from the player's side. */
+const pgnResult = computed(() => {
+  const kind = localResult.value?.kind
+  if (!kind) return '*'
+  if (kind === 'draw') return '1/2-1/2'
+  const winner = kind === 'win' ? userColor.value : otherColor.value
+  return winner === 'white' ? '1-0' : '0-1'
+})
 
 /** A game with moves that has not finished: leaving it needs a confirmation. */
 const inProgress = computed(() => localMoves.value.length > 0 && !localResult.value)
@@ -515,6 +523,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
       <MovePanel
         :moves="localHistory"
         :ply="localPly"
+        :fen="localSetup.fen"
         :empty-text="
           userColor === 'white'
             ? 'Make your move to start. Flip the board to play Black.'
@@ -631,6 +640,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
               :white="userColor === 'white' ? 'You' : 'Stockfish'"
               :black="userColor === 'black' ? 'You' : 'Stockfish'"
               :ply="localPly"
+              :result="pgnResult"
             />
           </div>
         </template>

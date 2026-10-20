@@ -621,6 +621,8 @@ mod tests {
             result["state"]["onlineStatus"],
             json!("You lost by resignation")
         );
+        // Exports and saved games need the result itself, not only the sentence.
+        assert_eq!(result["state"]["onlineResult"], json!("0-1"));
         assert_eq!(
             effects(&result)[1],
             json!({

@@ -99,6 +99,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
       <MovePanel
         :moves="tvSan"
         :ply="tvShownPly"
+        :fen="tvSetup?.fen"
         :empty-text="tvEmptyText"
         @select="selectTvPly"
         @flip="flipped = !flipped"

@@ -125,6 +125,12 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
         icon: 'i-lucide-user',
       }"
     />
-    <MovePanel :moves="replay.moves" :ply="ply" @select="ply = $event" @flip="flipped = !flipped" />
+    <MovePanel
+      :moves="replay.moves"
+      :ply="ply"
+      :fen="replay.steps[0]?.fen"
+      @select="ply = $event"
+      @flip="flipped = !flipped"
+    />
   </div>
 </template>
