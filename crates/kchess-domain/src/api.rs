@@ -134,6 +134,8 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
     let mut reader = serde_json::Deserializer::from_str(args);
     reader.disable_recursion_limit();
     let args: Vec<Value> = serde::Deserialize::deserialize(&mut reader)?;
+    // One JSON array, nothing after it.
+    reader.end()?;
     let result = match method {
         "treeFromPgn" => to_value(tree_from_pgn(text(&args, 0, "pgn")?))?,
         "treeToPgn" => Value::String(tree_to_pgn(
@@ -474,8 +476,11 @@ fn pgn_from_moves(tokens: &[&str]) -> String {
         .map(|t| crate::js::trim(t))
         .filter(|t| !t.is_empty() && !is_result(t))
         .collect();
-    if !cleaned.is_empty() && cleaned.iter().all(|t| is_uci(&t.to_lowercase())) {
-        pgn_from_san(&san_history(&cleaned))
+    let lower: Vec<String> = cleaned.iter().map(|t| t.to_lowercase()).collect();
+    if !cleaned.is_empty() && lower.iter().all(|t| is_uci(t)) {
+        // Replayed as detected: the rules read UCI in lower case.
+        let lower: Vec<&str> = lower.iter().map(String::as_str).collect();
+        pgn_from_san(&san_history(&lower))
     } else {
         pgn_from_san(&cleaned)
     }
@@ -499,10 +504,17 @@ fn setup_pgn(
         );
     }
     if variant != "standard" {
-        let name = if variant == "chess960" {
-            "Chess960"
-        } else {
-            variant
+        // chessops `makeVariant`: the names other PGN readers know, not the Lichess keys.
+        let name = match variant {
+            "chess960" => "Chess960",
+            "kingOfTheHill" => "King of the Hill",
+            "threeCheck" => "Three-check",
+            "antichess" => "Antichess",
+            "atomic" => "Atomic",
+            "horde" => "Horde",
+            "racingKings" => "Racing Kings",
+            "crazyhouse" => "Crazyhouse",
+            other => other,
         };
         game.put_header("Variant", name.to_string());
     }
@@ -592,6 +604,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn setup_pgns_name_their_variant_as_pgn_readers_know_it() {
+        let koth = crate::rules::make_fen(&crate::rules::default_position(
+            shakmaty::variant::Variant::KingOfTheHill,
+        ));
+        let pgn = setup_pgn("kingOfTheHill", &koth, &["e2e4"], None).unwrap();
+        assert!(pgn.contains("[Variant \"King of the Hill\"]"), "{pgn}");
+        assert_eq!(
+            crate::rules::pgn_variant(Some("King of the Hill")),
+            Some(shakmaty::variant::Variant::KingOfTheHill)
+        );
+    }
+
+    #[test]
+    fn upper_case_uci_moves_make_a_pgn() {
+        // They were detected as UCI after lower-casing, then replayed as written: no moves.
+        assert_eq!(
+            pgn_from_moves(&["E2E4", "E7E5"]),
+            pgn_from_moves(&["e2e4", "e7e5"])
+        );
+        assert!(pgn_from_moves(&["E2E4"]).contains("1. e4"));
+    }
+
+    #[test]
     fn dispatches_by_name() {
         let tree = call("treeFromPgn", r#"["1. e4 *"]"#).unwrap();
         assert!(tree.contains("\"uci\":\"e2e4\""));
@@ -604,6 +639,7 @@ mod tests {
             "\"Threefold repetition\""
         );
         assert!(call("nope", "[]").is_err());
+        assert!(call("replay", r#"["8/8/8/8/8/8/8/8 w - - 0 1", []] []"#).is_err());
         assert!(call("replay", "[1]").is_err());
     }
 

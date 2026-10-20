@@ -48,19 +48,13 @@ const SCALE = Math.max(1, Number(process.env.KCHESS_FUZZ_SCALE) || 1)
 
 /**
  * Golden outputs for rules that exist only in Rust: hashes of what the TypeScript rules
- * returned for each seeded case before they were removed. Rewriting them requires both
- * `KCHESS_WRITE_GOLDEN=1` and an explicit `--update-golden` CLI flag, so an accidental
- * env-set run cannot silently bless a behaviour change; do it only for an intended change.
+ * returned for each seeded case before they were removed. `KCHESS_WRITE_GOLDEN=1` rewrites
+ * them, as it does every other golden file; do it only for an intended behaviour change.
+ * (Vitest refuses unknown CLI flags, so a second `--update-golden` switch could never be set.)
  */
 // A file path: the test environment's global URL resolves against the renderer origin.
 const GOLDEN_PATH = join(dirname(fileURLToPath(import.meta.url)), 'native-golden.json')
-const WRITE_REQUESTED = process.env.KCHESS_WRITE_GOLDEN === '1'
-const UPDATE_FLAG = process.argv.includes('--update-golden')
-if (WRITE_REQUESTED && !UPDATE_FLAG)
-  throw new Error(
-    'KCHESS_WRITE_GOLDEN=1 requires an explicit --update-golden flag (vitest run --update-golden). Refusing to rewrite native-golden.json.',
-  )
-const WRITE_GOLDEN = WRITE_REQUESTED && UPDATE_FLAG
+const WRITE_GOLDEN = process.env.KCHESS_WRITE_GOLDEN === '1'
 const goldenFile: Record<string, string[]> = existsSync(GOLDEN_PATH)
   ? JSON.parse(readFileSync(GOLDEN_PATH, 'utf8'))
   : {}
@@ -92,7 +86,7 @@ function golden(suite: string, index: number, actual: unknown, reference?: unkno
     // the direct runtime-parity expects below, just no golden pin.
     if (SCALE > 1) return
     throw new Error(
-      `golden ${suite} #${index} has no recorded output. If this is an intended behaviour change, re-run with KCHESS_WRITE_GOLDEN=1 vitest run --update-golden; otherwise it is a generation-skew bug.`,
+      `golden ${suite} #${index} has no recorded output. If this is an intended behaviour change, re-run with KCHESS_WRITE_GOLDEN=1; otherwise it is a generation-skew bug.`,
     )
   }
   expect(digest(actual), `golden ${suite} #${index}: ${canonical(actual).slice(0, 300)}`).toBe(
