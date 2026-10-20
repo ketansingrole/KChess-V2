@@ -11,8 +11,8 @@
 
 use serde_json::{Value, json};
 
-use super::engine::J;
-use super::{call, documents, validate};
+use super::value::J;
+use super::{Run, call};
 
 /// One argument's validator.
 #[derive(Clone, Copy)]
@@ -402,18 +402,10 @@ pub fn arities(scope: Scope) -> Vec<(&'static str, usize, usize)> {
     out
 }
 
-/// A validator or decoder: its arguments in, its normalized value or message out.
-type Run = fn(Vec<J>) -> Result<J, String>;
-
-/// The validator named `name`: a value validator, or a document decoder.
-fn resolve(name: &str) -> Option<Run> {
-    validate::validator(name).or_else(|| documents::handler(name))
-}
-
 /// Runs validator `name` on `args`; a rejection is its message.
-fn apply(name: &str, args: Vec<J>) -> Result<J, String> {
-    match resolve(name) {
-        Some(validator) => validator(args),
+fn apply(name: &str, args: Vec<J>) -> Result<Value, String> {
+    match Run::find(name) {
+        Some(validator) => validator.call(args),
         None => Err(format!("Unknown validator {name}.")),
     }
 }
@@ -544,7 +536,7 @@ mod tests {
             for check in checks.iter() {
                 if let Valid(name) | Optional(name) = check {
                     assert!(
-                        resolve(name).is_some(),
+                        Run::find(name).is_some(),
                         "{method} names no validator {name}"
                     );
                 }

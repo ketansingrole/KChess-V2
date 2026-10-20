@@ -7,17 +7,17 @@
 pub mod constants;
 mod contracts;
 mod documents;
-mod engine;
 mod patterns;
 mod validate;
+mod value;
 
 pub use constants::MAX_DOCUMENT;
 pub use contracts::{
     ASSISTANCE_METHODS, Scope, TV_CHANNEL_KEYS, arities, normalize, validate_arguments,
 };
 
-use engine::J;
 use serde_json::Value;
+use value::J;
 
 /// This module's methods for `api::call`; None when the method is not one of them.
 pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
@@ -25,7 +25,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
     let run = if is_check {
         None
     } else {
-        Some(validate::validator(method).or_else(|| documents::handler(method))?)
+        Some(Run::find(method)?)
     };
     let Some((sidecar, user)) = args.split_first() else {
         return Some(Err(format!(
@@ -40,7 +40,31 @@ pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
         );
     }
     let run = run?;
-    Some(inputs(user, sidecar).and_then(run).map(J::into_value))
+    Some(inputs(user, sidecar).and_then(|values| run.call(values)))
+}
+
+/// A value validator or a document decoder.
+#[derive(Clone, Copy)]
+enum Run {
+    Validate(validate::Validator),
+    Decode(documents::Handler),
+}
+
+impl Run {
+    /// The validator or decoder by its TypeScript name.
+    fn find(name: &str) -> Option<Run> {
+        validate::validator(name)
+            .map(Run::Validate)
+            .or_else(|| documents::handler(name).map(Run::Decode))
+    }
+
+    /// Its normalized value for `args`, or the message it rejected them with.
+    fn call(self, args: Vec<J>) -> Result<Value, String> {
+        match self {
+            Run::Validate(validate) => validate(args),
+            Run::Decode(decode) => decode(args).map(J::into_value),
+        }
+    }
 }
 
 /// The arguments as values, with the sidecar's `undefined`, NaN, infinite and binary entries.

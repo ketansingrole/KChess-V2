@@ -150,7 +150,7 @@ describe('chat and messaging', () => {
 describe('tournaments', () => {
   it('checks new arenas, reasons, systems and ids', () => {
     expect(assertNewArena(NEW_ARENA)).toEqual(NEW_ARENA)
-    expect(() => assertNewArena({})).toThrow('Invalid key')
+    expect(() => assertNewArena({})).toThrow('missing field `clockTime`')
     expect(assertDeclineReason('generic')).toBe('generic')
     expect(() => assertDeclineReason('nope')).toThrow('Invalid reason.')
     expect(assertTournamentSystem('arena')).toBe('arena')
@@ -402,7 +402,7 @@ describe('voice, pages, studies and lookup', () => {
   it('checks game pages, study sync, broadcast search and lookup', () => {
     const page = { account: 'abc', result: 'win', rated: true, offset: 0, limit: 10 }
     expect(assertGamePageQuery(page)).toEqual(page)
-    expect(() => assertGamePageQuery({})).toThrow('Invalid key')
+    expect(() => assertGamePageQuery({})).toThrow('missing field `offset`')
     const sync = { account: 'abc', studyId: 'abcdefgh', baseline: '1. e4 *', pgn: '1. d4 *' }
     expect(assertStudySyncRequest(sync)).toEqual(sync)
     expect(() => assertStudySyncRequest({})).toThrow('Enter a valid Lichess username.')
@@ -419,7 +419,7 @@ describe('voice, pages, studies and lookup', () => {
     }
     expect(assertLookupOptions(lookup)).toEqual(lookup)
     expect(assertLookupOptions(undefined)).toEqual({})
-    expect(() => assertLookupOptions({ speeds: ['bogus'] })).toThrow('Invalid type')
+    expect(() => assertLookupOptions({ speeds: ['bogus'] })).toThrow('speeds')
   })
 })
 

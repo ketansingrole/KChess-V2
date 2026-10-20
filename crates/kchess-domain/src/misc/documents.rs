@@ -1,20 +1,17 @@
-//! Library documents (`crates/kchess-wasm/js/library.ts`): the session decoders, the study command shape
-//! and the small checks a frontend's library calls pass through. Each decoder accepts and rejects
-//! what the TypeScript decoder does, and returns the same normalized value.
+//! Library documents (`crates/kchess-wasm/js/library.ts`): the session decoders and the session
+//! checks a frontend's library calls pass through; the other document checks are in
+//! `validate.rs`. Each decoder accepts and rejects what the TypeScript decoder does, and returns
+//! the same normalized value.
 
 use std::cell::RefCell;
-use std::sync::LazyLock;
 
 use super::constants::*;
-use super::engine::{
-    self, Action, J, Schema, array, literal, object, optional, parse, picklist_str, pipe,
-    strict_object,
-};
+use super::value::{J, own_entries};
 use crate::js;
 use crate::replay;
 use crate::tree::{self, TreeNode};
 
-type Handler = fn(Vec<J>) -> Result<J, String>;
+pub type Handler = fn(Vec<J>) -> Result<J, String>;
 
 const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -295,7 +292,7 @@ fn decode_computer(raw: &J) -> Option<J> {
         .and_then(J::str)
         .filter(|l| ENGINE_LEVELS.contains(l))?;
     let color = raw.get("color")?;
-    if !matches!(engine::js_string(color).as_str(), "white" | "black") {
+    if !matches!(js_string(color).as_str(), "white" | "black") {
         return None;
     }
     let clock = clock_side(raw.get("clock"));
@@ -324,6 +321,28 @@ fn decode_computer(raw: &J) -> Option<J> {
         ),
         ("flagged".into(), flagged),
     ]))
+}
+
+/// `String(value)`: the text a value takes in string coercion.
+fn js_string(v: &J) -> String {
+    match v {
+        J::Undef => "undefined".into(),
+        J::Null => "null".into(),
+        J::Bool(b) => b.to_string(),
+        J::Num(n) if n.is_nan() => "NaN".into(),
+        J::Num(n) if n.is_infinite() => if *n > 0.0 { "Infinity" } else { "-Infinity" }.into(),
+        J::Num(n) => js::number_to_string(*n),
+        J::Str(s) => s.clone(),
+        J::Arr(items) => items
+            .iter()
+            .map(|item| match item {
+                J::Undef | J::Null => String::new(),
+                other => js_string(other),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        J::Bytes { .. } | J::Obj(_) => "[object Object]".into(),
+    }
 }
 
 /* ── Archive identities ── */
@@ -368,7 +387,7 @@ fn encode_session(kind: &str, session: &J) -> J {
     let mut fields = vec![("version".to_string(), J::Num(version))];
     // `{ version, ...session }` copies the session's own entries (none for non-objects).
     let spread: Vec<(String, J)> = match session {
-        J::Obj(_) | J::Arr(_) | J::Str(_) | J::Bytes { .. } => engine::own_entries(session.clone()),
+        J::Obj(_) | J::Arr(_) | J::Str(_) | J::Bytes { .. } => own_entries(session.clone()),
         _ => Vec::new(),
     };
     for (key, value) in spread {
@@ -469,188 +488,7 @@ fn decode_repertoire_misses(raw: &J) -> J {
     J::Obj(js_key_order(result))
 }
 
-/* ── Schemas: study commands, legacy documents and the small checks ── */
-
-const MAX_STUDY_NAME: usize = 200;
-
-fn study_name() -> Schema {
-    pipe(
-        Schema::Str(None),
-        vec![Action::MaxLength(MAX_STUDY_NAME, None)],
-    )
-}
-
-fn local_id() -> Schema {
-    pipe(
-        Schema::Str(None),
-        vec![Action::MinLength(1, None), Action::MaxLength(80, None)],
-    )
-}
-
-fn study_pgn() -> Schema {
-    pipe(
-        Schema::Str(None),
-        vec![Action::MaxLength(MAX_DOCUMENT, None)],
-    )
-}
-
-fn lichess_id() -> Schema {
-    pipe(
-        Schema::Str(None),
-        vec![Action::Regex {
-            source: "/^[a-zA-Z0-9]{8}$/",
-            test: super::patterns::lichess_id,
-            msg: None,
-        }],
-    )
-}
-
-fn account() -> Schema {
-    pipe(Schema::Str(None), vec![Action::MaxLength(40, None)])
-}
-
-fn chapter_input() -> Schema {
-    pipe(
-        array(
-            object(vec![("name", study_name()), ("pgn", study_pgn())], None),
-            None,
-        ),
-        vec![
-            Action::MinLength(1, None),
-            Action::MaxLength(MAX_CHAPTERS, None),
-        ],
-    )
-}
-
-/// The `op` discriminator of one study command.
-fn op(name: &str) -> (&'static str, Schema) {
-    ("op", literal(name))
-}
-
-/// `studyCommandSchema`: a variant over `op`, one object per study command.
-fn study_command_schema() -> Schema {
-    let opt = |s: Schema| optional(s);
-    Schema::Variant {
-        key: "op",
-        options: vec![
-            object(
-                vec![
-                    op("save"),
-                    ("name", study_name()),
-                    ("pgn", study_pgn()),
-                    ("id", opt(local_id())),
-                    ("chapterId", opt(local_id())),
-                ],
-                None,
-            ),
-            object(
-                vec![
-                    op("saveChapters"),
-                    ("name", study_name()),
-                    ("chapters", chapter_input()),
-                    ("id", opt(local_id())),
-                ],
-                None,
-            ),
-            object(
-                vec![op("addChapter"), ("id", local_id()), ("name", study_name())],
-                None,
-            ),
-            object(
-                vec![
-                    op("renameChapter"),
-                    ("id", local_id()),
-                    ("chapterId", local_id()),
-                    ("name", study_name()),
-                ],
-                None,
-            ),
-            object(
-                vec![
-                    op("duplicateChapter"),
-                    ("id", local_id()),
-                    ("chapterId", local_id()),
-                ],
-                None,
-            ),
-            object(
-                vec![
-                    op("removeChapter"),
-                    ("id", local_id()),
-                    ("chapterId", local_id()),
-                ],
-                None,
-            ),
-            object(
-                vec![
-                    op("markCloud"),
-                    ("id", local_id()),
-                    ("account", account()),
-                    ("remoteId", lichess_id()),
-                    ("baseline", study_pgn()),
-                ],
-                None,
-            ),
-            object(
-                vec![
-                    op("offline"),
-                    ("account", account()),
-                    (
-                        "remote",
-                        object(vec![("id", lichess_id()), ("name", study_name())], None),
-                    ),
-                    ("chapters", chapter_input()),
-                ],
-                None,
-            ),
-            object(vec![op("remove"), ("id", local_id())], None),
-            object(vec![op("restore"), ("study", Schema::Unknown)], None),
-            object(
-                vec![op("rename"), ("id", local_id()), ("name", study_name())],
-                None,
-            ),
-            object(vec![op("duplicate"), ("id", local_id())], None),
-        ],
-        msg: None,
-    }
-}
-
-fn library_id() -> Schema {
-    pipe(
-        Schema::Str(None),
-        vec![Action::MinLength(1, None), Action::MaxLength(80, None)],
-    )
-}
-
-fn repertoire_key() -> Schema {
-    pipe(
-        Schema::Str(None),
-        vec![Action::MinLength(1, None), Action::MaxLength(200, None)],
-    )
-}
-
-fn legacy_documents_schema() -> Schema {
-    let entries = LEGACY_DOCUMENT_KEYS
-        .iter()
-        .map(|key| {
-            (
-                *key,
-                optional(pipe(
-                    Schema::Str(None),
-                    vec![Action::MaxLength(MAX_DOCUMENT, None)],
-                )),
-            )
-        })
-        .collect();
-    strict_object(entries, None)
-}
-
-static STUDY_COMMAND: LazyLock<Schema> = LazyLock::new(study_command_schema);
-static LIBRARY_ID: LazyLock<Schema> = LazyLock::new(library_id);
-static REPERTOIRE_KEY: LazyLock<Schema> = LazyLock::new(repertoire_key);
-static SESSION_KIND: LazyLock<Schema> = LazyLock::new(|| picklist_str(SESSION_KINDS, None));
-static SIDE: LazyLock<Schema> = LazyLock::new(|| picklist_str(&["white", "black"], None));
-static LEGACY: LazyLock<Schema> = LazyLock::new(legacy_documents_schema);
+/* ── Session checks ── */
 
 /// `assertSession(kind, value)`: the value, decoded as its kind's document.
 fn assert_session(args: Vec<J>) -> Result<J, String> {
@@ -696,20 +534,9 @@ fn handler_of(method: &str) -> Option<Handler> {
         "assertSession" => assert_session,
         "decodeJoinedTournaments" => |a| Ok(decode_joined_tournaments(arg(&a, 0))),
         "decodeRepertoireMisses" => |a| Ok(decode_repertoire_misses(arg(&a, 0))),
-        "assertStudyCommandShape" => |a| parse(&STUDY_COMMAND, arg_owned(a, 0)),
         "assertArchivedGameShape" => assert_archived_game_shape,
-        "assertLibraryId" => |a| parse(&LIBRARY_ID, arg_owned(a, 0)),
-        "assertRepertoireKey" => |a| parse(&REPERTOIRE_KEY, arg_owned(a, 0)),
-        "assertSessionKind" => |a| parse(&SESSION_KIND, arg_owned(a, 0)),
-        "assertSide" => |a| parse(&SIDE, arg_owned(a, 0)),
-        "assertLegacyDocuments" => |a| parse(&LEGACY, arg_owned(a, 0)),
         _ => return None,
     })
-}
-
-fn arg_owned(mut args: Vec<J>, i: usize) -> J {
-    args.get_mut(i)
-        .map_or(J::Undef, |slot| std::mem::replace(slot, J::Undef))
 }
 
 /// The document validators and decoders by their TypeScript names.
