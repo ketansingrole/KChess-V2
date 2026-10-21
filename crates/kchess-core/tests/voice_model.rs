@@ -288,6 +288,91 @@ async fn replaces_an_earlier_release_archive_with_the_model_folder() {
     );
 }
 
+/// An earlier release's cache: the model repacked as `model.tar.gz` (folder `NAME/`) with the
+/// marker naming the zip it came from and the archive's own size and SHA-256.
+fn write_legacy(directory: &Path, zip: &[u8], members: &[(&str, &[u8])]) {
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::default(),
+    ));
+    for (name, data) in members {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, *data)
+            .expect("member");
+    }
+    let archive = builder.into_inner().expect("tar").finish().expect("gzip");
+    fs::write(directory.join("model.tar.gz"), &archive).expect("legacy");
+    let marker = serde_json::json!({
+        "source": sha256(zip),
+        "sha256": sha256(&archive),
+        "size": archive.len(),
+    });
+    fs::write(directory.join("model.tar.gz.json"), marker.to_string()).expect("legacy marker");
+}
+
+#[tokio::test]
+async fn unpacks_an_earlier_release_archive_offline_instead_of_downloading() {
+    let zip = model_zip();
+    let server = serve(|_| Reply::Body(503, Vec::new())).await;
+    let directory = tempfile::tempdir().expect("directory");
+    write_legacy(
+        directory.path(),
+        &zip,
+        &[
+            ("test-model/am/final.mdl", MODEL_FILE),
+            ("test-model/conf/model.conf", b"--sample-frequency=16000"),
+        ],
+    );
+    let (cache, _) = cache_in(directory.path(), &server.base, &zip);
+
+    assert!(cache.status().await.installed);
+    let path = cache.ensure(None).await.expect("migrate");
+    assert_eq!(server.requests(), 0);
+    assert_eq!(
+        fs::read(path.join("am/final.mdl")).expect("model"),
+        MODEL_FILE
+    );
+    assert_eq!(cache.status().await, idle(true, model_bytes()));
+    assert_eq!(
+        entries(directory.path()),
+        vec!["model".to_string(), "model.json".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn downloads_when_an_earlier_release_archive_is_unusable() {
+    let zip = model_zip();
+    let body = zip.clone();
+    let server = serve(move |_| Reply::Body(200, body.clone())).await;
+    let directory = tempfile::tempdir().expect("directory");
+    // A member outside the model folder makes the archive unusable; the download replaces it.
+    write_legacy(
+        directory.path(),
+        &zip,
+        &[("elsewhere/am/final.mdl", MODEL_FILE)],
+    );
+    let (cache, logs) = cache_in(directory.path(), &server.base, &zip);
+
+    cache.ensure(None).await.expect("ensure");
+    assert_eq!(server.requests(), 1);
+    assert_eq!(cache.status().await, idle(true, model_bytes()));
+    assert_eq!(
+        entries(directory.path()),
+        vec!["model".to_string(), "model.json".to_string()]
+    );
+    assert!(
+        logs.0
+            .lock()
+            .expect("logs")
+            .iter()
+            .any(|line| line.contains("could not be reused"))
+    );
+}
+
 #[tokio::test]
 async fn reports_shared_preparation_while_a_download_is_in_flight() {
     let zip = model_zip();

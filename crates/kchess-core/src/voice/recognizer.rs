@@ -29,6 +29,8 @@ const STARTUP_DEADLINE: Duration = Duration::from_secs(60);
 const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 /// The longest answer line read from the helper.
 const MAX_LINE: u64 = 1 << 20;
+/// The largest request payload the helper reads (`MAX_PAYLOAD` in `kchess-voice`).
+const MAX_PAYLOAD: usize = 1 << 20;
 
 const UNAVAILABLE: &str = "Voice input isn’t available in this build.";
 const NOT_INSTALLED: &str = "The offline voice model isn’t installed. Download it and try again.";
@@ -248,6 +250,9 @@ impl VoiceRecognizer {
             }
         }
         let payload = json!({ "sampleRate": sample_rate, "grammar": grammar }).to_string();
+        if payload.len() > MAX_PAYLOAD {
+            return Err(CoreError::new("Invalid voice grammar."));
+        }
         match self.exchange(b'G', payload.as_bytes()).await? {
             Answer { ok: Some(true), .. } => Ok(()),
             _ => Err(CoreError::new(STOPPED)),
@@ -260,7 +265,7 @@ impl VoiceRecognizer {
         let pcm = STANDARD
             .decode(audio)
             .map_err(|_| CoreError::new("Invalid audio."))?;
-        if pcm.len() % 2 != 0 {
+        if pcm.len() % 2 != 0 || pcm.len() > MAX_PAYLOAD {
             return Err(CoreError::new("Invalid audio."));
         }
         heard(self.exchange(b'A', &pcm).await?)

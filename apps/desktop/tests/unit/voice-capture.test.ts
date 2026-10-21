@@ -205,6 +205,40 @@ describe('voice capture lifecycle', () => {
     expect(core.voiceStop).toHaveBeenCalledTimes(1)
   })
 
+  // A result answered after another control claimed the recognizer restarted the old
+  // control's grammar and silently skipped the new control's audio.
+  it('never lets a superseded control’s late result take the recognizer back', async () => {
+    const old = setupCapture()
+    await old.capture.prepare(['e four'])
+    old.capture.update(true, ['e four'], false)
+    const oldNode = FakeNode.nodes.at(-1)!
+    const pending = deferred<VoiceHeard>()
+    core.heard.push(pending.promise)
+    oldNode.port.onmessage!({ data: { epoch: epochOf(oldNode), audio: new Float32Array(8) } })
+
+    // The replacement claims the recognizer behind the old audio, whose answer is a result.
+    const replacement = setupCapture()
+    const ready = replacement.capture.prepare(['d four'])
+    await settle()
+    const oldStarts = core.voiceStart.mock.calls.length
+    pending.resolve(
+      said('e four', [
+        ['e', 1],
+        ['four', 1],
+      ]),
+    )
+    await ready
+    await settle()
+    await settle()
+    expect(old.callbacks.result).toHaveBeenCalledOnce()
+    expect(core.voiceStart.mock.calls.slice(oldStarts).map(([grammar]) => grammar)).toEqual([
+      ['d four'],
+    ])
+    old.capture.dispose()
+    replacement.capture.dispose()
+    await settle()
+  })
+
   it('closes the mic between turns, reuses the recognizer, and releases it on disable', async () => {
     const { capture, track } = setupCapture()
     await capture.prepare(['e four'])

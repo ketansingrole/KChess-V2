@@ -316,9 +316,16 @@ function createWindow(): void {
   window.webContents.on('will-navigate', (event, url) => {
     if (!isAppUrl(url)) event.preventDefault()
   })
+  // A reloaded or crashed renderer never unmounts its voice control: release the recognizer
+  // (the helper and its model) that the old page was holding.
+  const releaseVoice = (): void => {
+    core?.voiceStop().catch((cause: unknown) => logWarn('voice', 'Voice stop failed:', cause))
+  }
+  window.webContents.on('did-start-loading', releaseVoice)
   window.webContents.on('render-process-gone', (_event, details) => {
     // A crashed renderer holds no flushable state; quitting must not wait on it.
     rendererGone = true
+    releaseVoice()
     logError('renderer', 'Renderer exited:', details.reason, details.exitCode)
   })
   window.webContents.on('preload-error', (_event, _path, error) => {
