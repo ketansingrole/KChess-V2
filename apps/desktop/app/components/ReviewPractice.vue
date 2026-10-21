@@ -9,7 +9,7 @@ import { MOVE_CLASSIFICATIONS } from '../utils/moveClassification'
  * and the game's chart, so each position keeps its place in the game.
  */
 const analysis = useAnalysisStore()
-const { origin, reviewChart, reviewPly } = storeToRefs(analysis)
+const { origin, playerNames, reviewChart, reviewPly } = storeToRefs(analysis)
 const practice = useReviewPractice()
 const { status, positions, index, played, tried, answerSan, atPosition, hinted, found } =
   storeToRefs(practice)
@@ -19,7 +19,18 @@ const mover = computed(() => {
   const color = played.value?.color
   if (!color) return ''
   if (origin.value?.player === color) return 'You'
-  return origin.value?.[color] ?? (color === 'white' ? 'White' : 'Black')
+  return playerNames.value[color] ?? (color === 'white' ? 'White' : 'Black')
+})
+/** Who had which side, when the game says. */
+const players = computed(() => {
+  const you = origin.value?.player
+  const named = playerNames.value
+  if (!named.white && !named.black && !you) return []
+  return (['white', 'black'] as const).map((color) => ({
+    color,
+    name: named[color] ?? (color === 'white' ? 'White' : 'Black'),
+    you: you === color,
+  }))
 })
 const foundCount = computed(() => found.value.filter(Boolean).length)
 const last = computed(() => index.value + 1 >= positions.value.length)
@@ -44,6 +55,14 @@ const last = computed(() => index.value + 1 >= positions.value.length)
         />
       </UTooltip>
     </div>
+    <p v-if="players.length" class="practice-players">
+      <span v-for="player in players" :key="player.color" class="practice-player">
+        <span :class="['side-dot', player.color]" aria-hidden="true" />
+        <span class="sr-only">{{ player.color === 'white' ? 'White' : 'Black' }}:</span>
+        <span class="practice-name" :title="player.name">{{ player.name }}</span>
+        <span v-if="player.you" class="practice-you">you</span>
+      </span>
+    </p>
 
     <template v-if="status === 'done'">
       <p class="practice-status" role="status">
@@ -125,6 +144,33 @@ const last = computed(() => index.value + 1 >= positions.value.length)
   color: var(--ui-text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+.practice-players {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+.practice-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.practice-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.practice-you {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--ui-bg-accented);
+  color: var(--ui-text-muted);
+  font-size: 11px;
 }
 .practice-played {
   margin: 0;

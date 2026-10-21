@@ -108,9 +108,16 @@ const lines = computed<EngineLine[]>(() =>
 const best = computed(() => lines.value[0])
 /** Arrows for the engine's choices: the best one bold, the others thinner. */
 const shapes = computed<DrawShape[]>(() => {
+  // Practising: the game's move in red, to find a better one, and the piece to move once hinted.
   if (hidesEngine.value) {
+    const played = practice.playedArrow
     const square = practice.hintSquare as Key | undefined
-    return square ? [{ orig: square, brush: 'green' }] : []
+    return [
+      ...(played
+        ? [{ orig: played.slice(0, 2) as Key, dest: played.slice(2, 4) as Key, brush: 'red' }]
+        : []),
+      ...(square ? [{ orig: square, brush: 'green' }] : []),
+    ]
   }
   if ((!engineOn.value && !usingCloud.value) || !showArrows.value || gameOver.value) return []
   return lines.value.flatMap((line, index) => {

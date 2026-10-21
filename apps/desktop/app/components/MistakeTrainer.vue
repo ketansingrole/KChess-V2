@@ -247,19 +247,6 @@ function next(all = false): void {
 .mistake-games li + li {
   border-top: 1px solid var(--ui-border);
 }
-.side-dot {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border: 1px solid var(--ui-border-accented);
-  border-radius: 50%;
-}
-.side-dot.white {
-  background: #f2f0ea;
-}
-.side-dot.black {
-  background: #403d39;
-}
 .side-dot.unknown {
   visibility: hidden;
 }

@@ -572,6 +572,17 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   const reviews = useReviewStore()
   const origin = ref<GameOrigin | null>(null)
+  /** The players' names: from where the game came from, or else its PGN headers. */
+  const playerNames = computed(() => {
+    const header = (key: string) => {
+      const value = root.value.headers?.[key]?.trim()
+      return value && value !== '?' ? value : undefined
+    }
+    return {
+      white: origin.value?.white ?? header('White'),
+      black: origin.value?.black ?? header('Black'),
+    }
+  })
   const mainline = computed(() => movesOf(lineEnd(root.value, '')))
   const mainlineKey = computed(() => reviewKey(root.value.fen, mainline.value))
   /** The review shown: of the main line, or of the game before moves were added to it. */
@@ -763,6 +774,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     analyseSetup,
     editPosition,
     origin,
+    playerNames,
     studyId,
     studyChapterId,
     study,

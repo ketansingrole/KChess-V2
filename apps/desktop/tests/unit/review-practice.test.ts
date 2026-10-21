@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest'
 import { defineComponent, nextTick } from 'vue'
-import { shallowMount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import AnalysisPage from '../../app/pages/analysis.vue'
+import ReviewPractice from '../../app/components/ReviewPractice.vue'
 import { useReviewPractice } from '../../app/stores/reviewPractice'
 import { BLUNDER_PLY, key, moves, reviewedGame } from './reviewedGame'
 
@@ -11,7 +12,13 @@ it('practises a reviewed position on the board and schedules the answer', async 
   const practice = useReviewPractice()
   practice.start(key)
   expect(practice.status).toBe('find')
-  expect(practice.played).toEqual({ label: '4… g6', judgment: 'blunder', color: 'black' })
+  expect(practice.played).toEqual({
+    uci: 'g7g6',
+    label: '4… g6',
+    judgment: 'blunder',
+    color: 'black',
+  })
+  expect(practice.playedArrow).toBe('g7g6')
   expect(analysis.reviewPly).toBe(BLUNDER_PLY)
   expect(analysis.orientation).toBe('black')
   expect(practice.hidesEngine).toBe(true)
@@ -88,6 +95,9 @@ it('replaces the engine with the practice card and keeps wrong answers off the b
   expect(page.find('.ceval').exists()).toBe(false)
   expect(page.find('eval-bar-stub').exists()).toBe(false)
   const board = page.getComponent(Board)
+  // The game's move is drawn, to find a better one; the engine's arrows are not.
+  const played = { orig: 'g7', dest: 'g6', brush: 'red' }
+  expect(board.props('shapes')).toEqual([played])
   const before = board.props('resetKey')
   board.vm.$emit('move', 'g7g6')
   await nextTick()
@@ -95,7 +105,7 @@ it('replaces the engine with the practice card and keeps wrong answers off the b
   expect(board.props('resetKey')).toBe(before + 1)
   practice.hint()
   await nextTick()
-  expect(board.props('shapes')).toEqual([{ orig: 'e8', brush: 'green' }])
+  expect(board.props('shapes')).toEqual([played, { orig: 'e8', brush: 'green' }])
   board.vm.$emit('move', 'e8e7')
   await nextTick()
   expect(practice.status).toBe('solved')
@@ -105,4 +115,32 @@ it('replaces the engine with the practice card and keeps wrong answers off the b
   expect(page.find('.ceval').exists()).toBe(true)
   expect(page.find('eval-bar-stub').exists()).toBe(true)
   page.unmount()
+})
+
+it('names the players beside the move to improve on', async () => {
+  const { analysis, practice: saved } = await reviewedGame()
+  await saved.add(analysis.review!, 'black')
+  analysis.root.headers = { White: 'Alice', Black: 'Bob' }
+  useReviewPractice().start(key)
+  const card = mount(ReviewPractice, {
+    global: { stubs: { UButton: true, UTooltip: true, UIcon: true, EvalChart: true } },
+  })
+  await nextTick()
+  const players = () =>
+    card.findAll('.practice-player').map((player) => ({
+      side: player.get('.sr-only').text(),
+      name: player.get('.practice-name').text(),
+      you: player.find('.practice-you').exists(),
+    }))
+  expect(players()).toEqual([
+    { side: 'White:', name: 'Alice', you: false },
+    { side: 'Black:', name: 'Bob', you: false },
+  ])
+  expect(card.get('.practice-played').text()).toBe('Bob played 4… g6??, a blunder.')
+  // Your own game: you are marked, and it is your move to improve on.
+  analysis.origin = { player: 'black' }
+  await nextTick()
+  expect(players()[1]).toEqual({ side: 'Black:', name: 'Bob', you: true })
+  expect(card.get('.practice-played').text()).toBe('You played 4… g6??, a blunder.')
+  card.unmount()
 })

@@ -53,6 +53,7 @@ export const useReviewPractice = defineStore('reviewPractice', () => {
     const san = playUci(pos, uci)
     if (!san) return null
     return {
+      uci,
       label: `${number}${color === 'black' ? '…' : '.'} ${san}`,
       judgment: at.judgment as Judgment,
       color,
@@ -70,6 +71,10 @@ export const useReviewPractice = defineStore('reviewPractice', () => {
     const at = current.value
     return active.value && !!at && analysis.path === pathOf(analysis.mainline.slice(0, at.ply))
   })
+  /** The game's move, drawn on the board while a better one is found. */
+  const playedArrow = computed(() =>
+    atPosition.value && hidesEngine.value ? played.value?.uci : undefined,
+  )
   /** The piece to move, once a hint is asked for. */
   const hintSquare = computed(() =>
     hinted.value && atPosition.value && hidesEngine.value ? answer.value?.slice(0, 2) : undefined,
@@ -180,6 +185,7 @@ export const useReviewPractice = defineStore('reviewPractice', () => {
     answerSan,
     atPosition,
     hintSquare,
+    playedArrow,
     hidesEngine,
     start,
     attempt,

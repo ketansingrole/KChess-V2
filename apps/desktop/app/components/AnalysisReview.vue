@@ -132,7 +132,7 @@ const sides = computed(() => {
   if (!result || !reviewWhole.value) return []
   return (['white', 'black'] as const).map((color) => ({
     color,
-    name: origin.value?.[color] ?? (color === 'white' ? 'White' : 'Black'),
+    name: analysis.playerNames[color] ?? (color === 'white' ? 'White' : 'Black'),
     side: result[color],
     brilliant: [...reviewMarks.value.values()].filter(
       (mark) => mark.color === color && mark.classification === 'brilliant',
@@ -384,19 +384,6 @@ function next(color: 'white' | 'black', judgment: MoveClassification): void {
 }
 .accuracy th {
   color: var(--ui-text);
-}
-.side-dot {
-  flex: none;
-  width: 9px;
-  height: 9px;
-  border: 1px solid var(--ui-border-accented);
-  border-radius: 50%;
-}
-.side-dot.white {
-  background: #f2f0ea;
-}
-.side-dot.black {
-  background: #403d39;
 }
 .count {
   min-width: 30px;
