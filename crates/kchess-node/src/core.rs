@@ -48,6 +48,8 @@ pub struct NativeCoreOptions {
     pub node_env: Option<HashMap<String, String>>,
     /// `CorePlatform.managedEngineDir`: where the downloaded Stockfish is kept.
     pub managed_engine_dir: Option<String>,
+    /// `CorePlatform.voiceHelperPath`: the speech recognition helper, with libvosk beside it.
+    pub voice_helper_path: Option<String>,
 }
 
 #[napi]
@@ -76,6 +78,7 @@ impl NativeCore {
                 .into_iter()
                 .collect::<BTreeMap<_, _>>(),
             managed_engine_dir: options.managed_engine_dir.map(PathBuf::from),
+            voice_helper_path: options.voice_helper_path.map(PathBuf::from),
             ..Config::new(PathBuf::from(options.data_dir))
         };
         let core = Core::open(config, Arc::new(JsHost { log, emit }))

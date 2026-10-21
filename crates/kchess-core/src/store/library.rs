@@ -171,13 +171,11 @@ pub fn transaction<T>(db: &Connection, work: impl FnOnce() -> Result<T>) -> Resu
     db.execute_batch("BEGIN IMMEDIATE").map_err(db_err)?;
     match work().and_then(|value| db.execute_batch("COMMIT").map_err(db_err).map(|()| value)) {
         Ok(value) => Ok(value),
-        Err(error) => {
-            // The original error is the one the caller needs; a failed rollback changes nothing.
-            if let Err(rollback) = db.execute_batch("ROLLBACK") {
-                tracing::warn!("library rollback failed: {rollback}");
-            }
-            Err(error)
-        }
+        // The original error is the one the caller needs; a failed rollback is appended to it.
+        Err(error) => Err(match db.execute_batch("ROLLBACK") {
+            Ok(()) => error,
+            Err(rollback) => error.with_rollback_failure(rollback),
+        }),
     }
 }
 
@@ -549,6 +547,24 @@ mod tests {
     use super::*;
     use crate::store::documents::{DAMAGED_STUDIES, read_document_text};
     use crate::store::library_import::read_studies;
+
+    #[test]
+    fn failed_rollback_is_reported_with_the_original_error() {
+        // The work ends the transaction itself, so the transaction's own ROLLBACK fails. That
+        // failure used to go to a `tracing` macro with no subscriber and was lost.
+        let db = Connection::open_in_memory().expect("open");
+        let result: Result<()> = transaction(&db, || {
+            db.execute_batch("ROLLBACK").map_err(db_err)?;
+            Err(CoreError::new("work failed"))
+        });
+        let error = result.expect_err("work failed");
+        assert!(
+            error.message.starts_with("work failed; rollback failed: "),
+            "{}",
+            error.message
+        );
+        assert!(!error.aborted);
+    }
 
     #[test]
     fn stored_text_matches_javascript_stringify() {

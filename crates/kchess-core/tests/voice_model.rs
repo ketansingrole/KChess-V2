@@ -206,8 +206,21 @@ fn entries(directory: &Path) -> Vec<String> {
     names
 }
 
+const MODEL_FILE: &[u8] = b"test model";
+
 fn model_zip() -> Vec<u8> {
-    zip_of(&[("test-model/am/final.mdl", b"test model")], false)
+    zip_of(
+        &[
+            ("test-model/am/final.mdl", MODEL_FILE),
+            ("test-model/conf/model.conf", b"--sample-frequency=16000"),
+        ],
+        false,
+    )
+}
+
+/// The size of everything `model_zip` unpacks.
+fn model_bytes() -> u64 {
+    (MODEL_FILE.len() + b"--sample-frequency=16000".len()) as u64
 }
 
 fn idle(installed: bool, bytes: u64) -> Status {
@@ -230,15 +243,49 @@ async fn checks_installation_without_downloading_and_rejects_a_damaged_cache() {
     assert_eq!(cache.status().await, idle(false, 0));
     assert_eq!(server.requests(), 0);
     cache.ensure(None).await.expect("ensure");
-    let archive = fs::read(cache.path()).expect("archive");
-    assert_eq!(cache.status().await, idle(true, archive.len() as u64));
+    assert_eq!(cache.status().await, idle(true, model_bytes()));
     assert_eq!(server.requests(), 1);
 
-    let mut damaged = archive.clone();
+    let file = cache.path().join("am/final.mdl");
+    let mut damaged = fs::read(&file).expect("model file");
     *damaged.last_mut().expect("byte") ^= 1;
-    fs::write(cache.path(), &damaged).expect("damage");
+    fs::write(&file, &damaged).expect("damage");
     assert_eq!(cache.status().await, idle(false, 0));
     assert_eq!(server.requests(), 1);
+}
+
+#[tokio::test]
+async fn a_missing_model_file_is_not_installed() {
+    let zip = model_zip();
+    let body = zip.clone();
+    let server = serve(move |_| Reply::Body(200, body.clone())).await;
+    let directory = tempfile::tempdir().expect("directory");
+    let (cache, _) = cache_in(directory.path(), &server.base, &zip);
+
+    cache.ensure(None).await.expect("ensure");
+    fs::remove_file(cache.path().join("conf/model.conf")).expect("remove");
+    assert_eq!(cache.status().await, idle(false, 0));
+    cache.ensure(None).await.expect("replacement");
+    assert_eq!(server.requests(), 2);
+    assert_eq!(cache.status().await, idle(true, model_bytes()));
+}
+
+#[tokio::test]
+async fn replaces_an_earlier_release_archive_with_the_model_folder() {
+    let zip = model_zip();
+    let body = zip.clone();
+    let server = serve(move |_| Reply::Body(200, body.clone())).await;
+    let directory = tempfile::tempdir().expect("directory");
+    fs::write(directory.path().join("model.tar.gz"), b"old archive").expect("legacy");
+    fs::write(directory.path().join("model.tar.gz.json"), b"{}").expect("legacy marker");
+    let (cache, _) = cache_in(directory.path(), &server.base, &zip);
+
+    assert_eq!(cache.status().await, idle(false, 0));
+    cache.ensure(None).await.expect("ensure");
+    assert_eq!(
+        entries(directory.path()),
+        vec!["model".to_string(), "model.json".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -274,10 +321,7 @@ async fn reports_shared_preparation_while_a_download_is_in_flight() {
 
     gate.notify_one();
     pending.await.expect("join").expect("ensure");
-    assert_eq!(
-        cache.status().await,
-        idle(true, fs::metadata(cache.path()).expect("file").len())
-    );
+    assert_eq!(cache.status().await, idle(true, model_bytes()));
 }
 
 #[tokio::test]
@@ -298,8 +342,10 @@ async fn shares_concurrent_downloads_and_reuses_a_verified_cache_offline() {
     assert!(seen.contains(&Phase::Downloading));
     assert!(seen.contains(&Phase::Preparing));
 
-    let bytes = fs::read(&first).expect("archive");
-    assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+    assert_eq!(
+        fs::read(first.join("am/final.mdl")).expect("model file"),
+        MODEL_FILE
+    );
 
     // A new instance with no network reuses the verified cache.
     let (offline, _) = cache_at_unreachable(directory.path(), &zip);
@@ -307,7 +353,7 @@ async fn shares_concurrent_downloads_and_reuses_a_verified_cache_offline() {
     assert_eq!(server.requests(), 1);
     assert_eq!(
         entries(directory.path()),
-        vec!["model.tar.gz".to_string(), "model.tar.gz.json".to_string()]
+        vec!["model".to_string(), "model.json".to_string()]
     );
 }
 
@@ -357,7 +403,11 @@ async fn detects_same_size_cache_corruption_and_downloads_a_replacement() {
     let directory = tempfile::tempdir().expect("directory");
     let (cache, _) = cache_in(directory.path(), &server.base, &zip);
 
-    let path = cache.ensure(None).await.expect("ensure");
+    let path = cache
+        .ensure(None)
+        .await
+        .expect("ensure")
+        .join("am/final.mdl");
     let original = fs::read(&path).expect("original");
     let mut damaged = original.clone();
     *damaged.last_mut().expect("byte") ^= 1;

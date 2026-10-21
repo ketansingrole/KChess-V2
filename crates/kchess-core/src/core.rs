@@ -37,6 +37,7 @@ use crate::puzzles::PuzzleService;
 use crate::store::Database;
 use crate::store::debug;
 use crate::usage::{UsageBatch, UsageHost};
+use crate::voice::recognizer::VoiceRecognizer;
 
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]
@@ -61,6 +62,8 @@ pub struct Core {
     pub(crate) reviews: Reviews,
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
     pub(crate) services: Services,
+    /// Offline speech recognition through the `kchess-voice` helper.
+    pub(crate) voice: VoiceRecognizer,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
@@ -211,8 +214,14 @@ impl Core {
                 busy: Arc::clone(&busy),
             },
         );
+        let voice = VoiceRecognizer::new(
+            Arc::clone(&host),
+            config.voice_helper_path.clone(),
+            crate::voice::model_dir(&config.data_dir),
+        );
         Ok(Core {
             puzzles: PuzzleService::new(config, services_host),
+            voice,
             host,
             capabilities,
             database,

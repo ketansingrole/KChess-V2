@@ -108,13 +108,31 @@ onUnmounted(() => {
           item: 'px-2.5 py-1.5 gap-2.5 text-[13px] rounded-md before:inset-x-0 before:inset-y-0 data-highlighted:before:bg-primary/12',
           itemLeadingIcon: 'size-4 text-muted group-data-highlighted:text-primary',
           itemLabel: 'space-x-2',
-          itemLabelBase:
-            'text-default [&>mark]:bg-transparent [&>mark]:text-primary [&>mark]:font-semibold',
-          itemLabelSuffix: 'text-[12px] text-dimmed',
           empty: 'py-6 text-[13px]',
           footer: 'p-0',
         }"
       >
+        <template #item-label="{ item, ui }">
+          <span
+            data-slot="itemLabelBase"
+            :class="
+              ui.itemLabelBase({
+                class:
+                  'text-default [&>mark]:bg-transparent [&>mark]:text-primary [&>mark]:font-semibold',
+              })
+            "
+            ><template v-for="(part, index) in item.labelParts" :key="index"
+              ><mark v-if="part.mark">{{ part.text }}</mark
+              ><template v-else>{{ part.text }}</template></template
+            ></span
+          >
+          <span
+            v-if="item.suffix"
+            data-slot="itemLabelSuffix"
+            :class="ui.itemLabelSuffix({ class: 'text-[12px] text-dimmed' })"
+            >{{ item.suffix }}</span
+          >
+        </template>
         <template #item-trailing="{ item }">
           <span v-if="item.hint" class="quickpick-hint">{{ item.hint }}</span>
           <span v-if="item.kbds?.length" class="quickpick-kbds">

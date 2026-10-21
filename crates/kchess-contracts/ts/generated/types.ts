@@ -1150,6 +1150,10 @@ isBest: boolean, };
 
 export type VoiceWord = { word: string, conf: number, };
 
+export type VoiceRecognized = { text: string, words: Array<VoiceWord>, };
+
+export type VoiceHeard = { partial?: string, result?: VoiceRecognized, };
+
 export type VoiceModelProgress = { phase: VoiceModelPhase, received: number, total?: number, };
 
 export type VoiceModelStatus = { installed: boolean, bytes: number, busy: boolean, progress?: VoiceModelProgress, };

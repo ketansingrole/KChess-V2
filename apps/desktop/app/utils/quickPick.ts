@@ -1,7 +1,5 @@
 /** Quick-pick search: prefix modes and a VS Code-style fuzzy matcher with highlight ranges. */
 
-import escapeHtml from 'escape-html'
-
 export type QuickPickMode = 'all' | 'commands' | 'players' | 'settings' | 'help'
 
 export const QUICK_PICK_PREFIXES: Record<string, QuickPickMode> = {
@@ -113,16 +111,24 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
   return merged
 }
 
-/** Escaped label HTML with matched ranges wrapped in `<mark>`. */
-export function highlightRanges(label: string, ranges: [number, number][]): string {
-  let html = ''
+/** A run of label text; `mark` runs matched the query. */
+export interface LabelSegment {
+  text: string
+  mark: boolean
+}
+
+/** The label split at the matched ranges, rendered as text (never as HTML). */
+export function labelSegments(label: string, ranges: [number, number][]): LabelSegment[] {
+  const segments: LabelSegment[] = []
+  const push = (text: string, mark: boolean) => text && segments.push({ text, mark })
   let from = 0
   for (const [start, end] of ranges) {
-    html += escapeHtml(label.slice(from, start))
-    html += `<mark>${escapeHtml(label.slice(start, end + 1))}</mark>`
+    push(label.slice(from, start), false)
+    push(label.slice(start, end + 1), true)
     from = end + 1
   }
-  return html + escapeHtml(label.slice(from))
+  push(label.slice(from), false)
+  return segments
 }
 
 /** Rank items by match score, keeping catalog order for ties. */

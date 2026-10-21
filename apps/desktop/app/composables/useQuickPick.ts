@@ -10,12 +10,12 @@ import { useLocalGameStore } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import { useAppUpdatesStore } from '../stores/appUpdates'
 import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
-import escapeHtml from 'escape-html'
 import {
-  highlightRanges,
+  labelSegments,
   parseQuickPick,
   pushRecent,
   rankQuickPick,
+  type LabelSegment,
   type QuickPickMode,
 } from '../utils/quickPick'
 
@@ -38,6 +38,8 @@ export interface QuickCommand {
 
 export interface QuickPickItem extends CommandPaletteItem {
   hint?: string
+  /** The label with the query's matches marked. */
+  labelParts: LabelSegment[]
 }
 
 const PRACTICE_TABS = [
@@ -500,9 +502,8 @@ export function useQuickPick(query: Ref<string>) {
       icon: command.icon,
       kbds: command.kbds,
       hint: command.hint,
-      labelHtml: ranges.length ? highlightRanges(command.label, ranges) : escapeHtml(command.label),
+      labelParts: labelSegments(command.label, ranges),
       suffix: command.detail,
-      suffixHtml: command.detail ? escapeHtml(command.detail) : undefined,
       onSelect: (event: Event) => {
         event.preventDefault()
         if (command.prefix !== undefined) {

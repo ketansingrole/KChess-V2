@@ -33,6 +33,7 @@ mod spectate;
 mod studies;
 mod system;
 mod tournaments;
+mod voice;
 
 use self::args::text_arg;
 
@@ -132,6 +133,10 @@ pub const FACADE_METHODS: &[&str] = &[
     "updateVoiceAttempt",
     "voiceHistory",
     "clearVoiceHistory",
+    "voiceStart",
+    "voiceAccept",
+    "voiceFinish",
+    "voiceStop",
     "library",
     "importLibrary",
     "studyCommand",
@@ -613,6 +618,9 @@ impl Core {
             | "updateVoiceAttempt"
             | "voiceHistory"
             | "clearVoiceHistory" => self.run_puzzles(method, args).await,
+            "voiceStart" | "voiceAccept" | "voiceFinish" | "voiceStop" => {
+                self.run_voice(method, args).await
+            }
             "library"
             | "importLibrary"
             | "studyCommand"
@@ -676,6 +684,7 @@ impl Core {
         self.analysis.stop_analysis(true);
         self.search.reset_engine();
         self.reviews.stop_reviews().await;
+        self.voice.stop().await;
         self.usage.flush().await;
         // Cancel what is in flight: installs, pending host requests, lookups, downloads, streams.
         self.capabilities.close();

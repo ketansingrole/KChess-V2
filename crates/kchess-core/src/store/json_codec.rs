@@ -32,13 +32,8 @@ fn write_js_json(value: &Value, out: &mut String) {
                 if i > 0 {
                     out.push(',');
                 }
-                match serde_json::to_string(key) {
-                    Ok(encoded) => out.push_str(&encoded),
-                    Err(cause) => {
-                        tracing::warn!("library JSON key encoding failed: {cause}");
-                        out.push_str("null");
-                    }
-                }
+                // Serializing a string or a scalar cannot fail; `Display` is the infallible path.
+                out.push_str(&Value::from(key.as_str()).to_string());
                 out.push(':');
                 write_js_json(item, out);
             }
@@ -50,13 +45,7 @@ fn write_js_json(value: &Value, out: &mut String) {
             }
             _ => out.push_str(&n.to_string()),
         },
-        other => match serde_json::to_string(other) {
-            Ok(encoded) => out.push_str(&encoded),
-            Err(cause) => {
-                tracing::warn!("library JSON value encoding failed: {cause}");
-                out.push_str("null");
-            }
-        },
+        other => out.push_str(&other.to_string()),
     }
 }
 

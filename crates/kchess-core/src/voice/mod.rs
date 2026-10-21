@@ -1,8 +1,9 @@
 //! The offline voice model that voice input loads (formerly `crates/kchess-node/js/voiceModel.ts`
 //! and `voiceModelWorker.ts`). The model is downloaded once, verified against its published
-//! SHA-256, unpacked and repacked as `model.tar.gz` in the profile's voice folder, and recorded
-//! with a marker (`model.tar.gz.json`). A cache is trusted only while the marker and the file
-//! still match; a damaged cache is replaced by the next `ensure`.
+//! SHA-256, unpacked as the `model` folder in the profile's voice folder, and recorded with a
+//! marker (`model.json`) listing every file's size and SHA-256. A cache is trusted only while the
+//! marker and the files still match; a damaged cache is replaced by the next `ensure`. The
+//! recognizer (`recognizer.rs`) reads the folder.
 //!
 //! Concurrent `ensure` calls share one preparation, which runs on its own task, so dropping a
 //! caller does not abandon the download. Preparation happens in a `.prepare-*` folder inside the
@@ -20,6 +21,8 @@ use futures_util::future::{BoxFuture, Shared};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
+pub mod recognizer;
+
 use crate::archive::{self, Member};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
@@ -30,7 +33,11 @@ const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const MAX_DOWNLOAD_BYTES: u64 = 50 * 1024 * 1024;
 /// Total uncompressed size the archive may expand to.
 pub const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
-const MODEL_FILE: &str = "model.tar.gz";
+const MODEL_FOLDER: &str = "model";
+const MARKER_FILE: &str = "model.json";
+/// What earlier releases published (a repacked archive for the browser recognizer), removed by
+/// the next preparation.
+const LEGACY_FILES: [&str; 2] = ["model.tar.gz", "model.tar.gz.json"];
 const USER_AGENT: &str = "KChess";
 const CHECKSUM_MESSAGE: &str = "Voice model checksum mismatch. Try downloading it again.";
 const INVALID_MESSAGE: &str = "Invalid voice model archive.";
@@ -130,14 +137,32 @@ pub struct Status {
 /// Receives each progress report. It must not block: the preparation calls it on its own task.
 pub type Listener = Arc<dyn Fn(&Progress) + Send + Sync>;
 
-/// The marker written beside a published model (`model.tar.gz.json`).
+/// The model folder of the profile whose data directory is `data_dir`.
+pub fn model_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("voice").join(MODEL_FOLDER)
+}
+
+/// One file of the published folder.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct MarkerFile {
+    /// Its path inside the folder, `/`-separated.
+    path: String,
+    size: u64,
+    sha256: String,
+}
+
+/// The marker written beside a published model (`model.json`).
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Marker {
     /// The SHA-256 of the downloaded zip the model was prepared from.
     source: String,
-    /// The SHA-256 of `model.tar.gz`.
-    sha256: String,
-    size: u64,
+    files: Vec<MarkerFile>,
+}
+
+impl Marker {
+    fn bytes(&self) -> u64 {
+        self.files.iter().map(|file| file.size).sum()
+    }
 }
 
 type Pending = Shared<BoxFuture<'static, std::result::Result<PathBuf, String>>>;
@@ -188,9 +213,13 @@ impl VoiceModelCache {
         }
     }
 
-    /// The published archive (`model.tar.gz` in the voice folder).
+    /// The published model folder (`model` in the voice folder).
     pub fn path(&self) -> PathBuf {
-        self.inner.directory.join(MODEL_FILE)
+        self.inner.directory.join(MODEL_FOLDER)
+    }
+
+    fn marker_path(&self) -> PathBuf {
+        self.inner.directory.join(MARKER_FILE)
     }
 
     /// Whether a verified model is installed, and whether a preparation is running.
@@ -198,26 +227,11 @@ impl VoiceModelCache {
         if let Some(progress) = self.busy() {
             return busy(progress);
         }
-        let installed = self.cached().await;
-        // Preparation may start while the cache checksum is being checked.
+        let bytes = self.cached().await.unwrap_or(0);
+        // Preparation may start while the cache checksums are being checked.
         if let Some(progress) = self.busy() {
             return busy(progress);
         }
-        if !installed {
-            return Status {
-                installed: false,
-                bytes: 0,
-                busy: false,
-                progress: None,
-            };
-        }
-        let bytes = match tokio::fs::metadata(self.path()).await {
-            Ok(metadata) => metadata.len(),
-            Err(cause) => {
-                self.debug(&format!("Voice model file is missing: {cause}"));
-                0
-            }
-        };
         Status {
             installed: bytes > 0,
             bytes,
@@ -312,39 +326,36 @@ impl VoiceModelCache {
         self.inner.host.log(Level::Debug, "voice", message);
     }
 
-    /// Whether the published archive still matches its marker and checksum. A failure to read
-    /// them is logged and counts as not installed; a mismatch is simply not installed.
-    async fn cached(&self) -> bool {
+    /// The installed model's size while the published folder still matches its marker: every
+    /// listed file present with its size and checksum. A failure to read them is logged and counts
+    /// as not installed; a mismatch is simply not installed.
+    async fn cached(&self) -> Option<u64> {
         match self.check().await {
-            Ok(installed) => installed,
+            Ok(bytes) => bytes,
             Err(cause) => {
                 self.debug(&format!(
                     "Voice model cache check failed: {}",
                     cause.message
                 ));
-                false
+                None
             }
         }
     }
 
-    async fn check(&self) -> Result<bool> {
-        let path = self.path();
-        let text = tokio::fs::read_to_string(marker_path(&path))
+    async fn check(&self) -> Result<Option<u64>> {
+        let text = tokio::fs::read_to_string(self.marker_path())
             .await
             .map_err(|cause| CoreError::wrap("voice model marker read", cause))?;
         let marker: Marker = serde_json::from_str(&text)
             .map_err(|cause| CoreError::wrap("voice model marker parse", cause))?;
-        if marker.source != self.inner.model.sha256 || marker.size == 0 {
-            return Ok(false);
+        if marker.source != self.inner.model.sha256 || marker.files.is_empty() {
+            return Ok(None);
         }
-        let length = tokio::fs::metadata(&path)
+        let folder = self.path();
+        let verified = tokio::task::spawn_blocking(move || verify(&folder, &marker))
             .await
-            .map_err(|cause| CoreError::new(cause.to_string()))?
-            .len();
-        if length != marker.size {
-            return Ok(false);
-        }
-        Ok(blocking_sha256(path).await? == marker.sha256)
+            .map_err(|_| CoreError::new(STOPPED_MESSAGE))??;
+        Ok(verified)
     }
 
     async fn prepare(&self) -> Result<PathBuf> {
@@ -353,7 +364,7 @@ impl VoiceModelCache {
             received: 0,
             total: None,
         });
-        if self.cached().await {
+        if self.cached().await.is_some() {
             return Ok(self.path());
         }
         let directory = self.inner.directory.clone();
@@ -378,7 +389,7 @@ impl VoiceModelCache {
     }
 
     /// Obtain, verify, prepare and publish the model through `staging`. Only a fully prepared
-    /// archive reaches the voice folder; a missing marker makes an interrupted install retry.
+    /// folder reaches the voice folder; a missing marker makes an interrupted install retry.
     async fn stage(&self, staging: &Path) -> Result<()> {
         self.report(Progress {
             phase: Phase::Downloading,
@@ -393,11 +404,14 @@ impl VoiceModelCache {
             total: None,
         });
         let marker = self.prepare_archive(&zip, staging).await?;
-        let prepared = staging.join(MODEL_FILE);
+        let prepared = staging.join("unpacked").join(&self.inner.model.name);
         let path = self.path();
-        let marker_file = marker_path(&path);
+        let marker_file = self.marker_path();
         remove_if_present(&marker_file).await?;
-        remove_if_present(&path).await?;
+        for legacy in LEGACY_FILES {
+            remove_if_present(&self.inner.directory.join(legacy)).await?;
+        }
+        remove_dir_if_present(&path).await?;
         tokio::fs::rename(&prepared, &path)
             .await
             .map_err(|cause| io_error("Could not publish the voice model", cause))?;
@@ -487,7 +501,7 @@ impl VoiceModelCache {
         Ok(received)
     }
 
-    /// Verify and repack the zip on a blocking thread. On timeout the work is told to stop at its
+    /// Verify and unpack the zip on a blocking thread. On timeout the work is told to stop at its
     /// next member and awaited, so the staging folder is only removed once nothing writes to it.
     async fn prepare_archive(&self, zip: &Path, staging: &Path) -> Result<Marker> {
         let cancel = Arc::new(AtomicBool::new(false));
@@ -524,12 +538,6 @@ fn busy(progress: Option<Progress>) -> Status {
     }
 }
 
-fn marker_path(path: &Path) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(".json");
-    PathBuf::from(name)
-}
-
 async fn remove_if_present(path: &Path) -> Result<()> {
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
@@ -538,11 +546,67 @@ async fn remove_if_present(path: &Path) -> Result<()> {
     }
 }
 
-async fn blocking_sha256(path: PathBuf) -> Result<String> {
-    tokio::task::spawn_blocking(move || archive::sha256_file(&path))
-        .await
-        .map_err(|_| CoreError::new(STOPPED_MESSAGE))?
-        .map_err(|cause| io_error("Could not check the voice model", cause))
+async fn remove_dir_if_present(path: &Path) -> Result<()> {
+    match tokio::fs::remove_dir_all(path).await {
+        Ok(()) => Ok(()),
+        Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(cause) => Err(io_error("Could not replace the voice model", cause)),
+    }
+}
+
+/// The total size of the files `marker` lists under `folder` when each still has its size and
+/// checksum; `None` on the first that does not.
+fn verify(folder: &Path, marker: &Marker) -> Result<Option<u64>> {
+    for file in &marker.files {
+        let Some(relative) = archive::safe_relative(&file.path) else {
+            return Ok(None);
+        };
+        let path = folder.join(relative);
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() == file.size => {}
+            Ok(_) => return Ok(None),
+            Err(cause) if cause.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(cause) => return Err(io_error("Could not check the voice model", cause)),
+        }
+        let digest = archive::sha256_file(&path)
+            .map_err(|cause| io_error("Could not check the voice model", cause))?;
+        if digest != file.sha256 {
+            return Ok(None);
+        }
+    }
+    Ok(Some(marker.bytes()))
+}
+
+/// Every file under `folder` with its size and SHA-256, sorted by path.
+fn describe(folder: &Path) -> io::Result<Vec<MarkerFile>> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<MarkerFile>) -> io::Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let path = entry.path();
+            if kind.is_dir() {
+                walk(root, &path, out)?;
+            } else if kind.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(io::Error::other)?
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                out.push(MarkerFile {
+                    path: relative,
+                    size: entry.metadata()?.len(),
+                    sha256: archive::sha256_file(&path)?,
+                });
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(folder, folder, &mut files)?;
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
 }
 
 fn io_error(context: &str, cause: io::Error) -> CoreError {
@@ -567,7 +631,7 @@ fn error_text(cause: &reqwest::Error) -> String {
 }
 
 /// The blocking half of preparation: check the zip's digest, unpack it under the model's folder
-/// name, repack it as `model.tar.gz` in `staging`, and describe the result.
+/// name in `staging/unpacked`, and describe every file of the result.
 fn build(zip: &Path, staging: &Path, model: &VoiceModel, cancel: &AtomicBool) -> Result<Marker> {
     let digest = archive::sha256_file(zip)
         .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
@@ -576,17 +640,11 @@ fn build(zip: &Path, staging: &Path, model: &VoiceModel, cancel: &AtomicBool) ->
     }
     let extracted = staging.join("unpacked");
     extract(zip, &extracted, &model.name, cancel)?;
-    let prepared = staging.join(MODEL_FILE);
-    pack(&extracted, &model.name, &prepared)?;
-    let size = fs::metadata(&prepared)
-        .map_err(|cause| io_error("Could not record the voice model", cause))?
-        .len();
-    let sha256 = archive::sha256_file(&prepared)
+    let files = describe(&extracted.join(&model.name))
         .map_err(|cause| io_error("Could not record the voice model", cause))?;
     Ok(Marker {
         source: model.sha256.clone(),
-        sha256,
-        size,
+        files,
     })
 }
 
@@ -636,27 +694,6 @@ fn extract(zip: &Path, root: &Path, name: &str, cancel: &AtomicBool) -> Result<(
         return Err(CoreError::new("Voice model archive is empty."));
     }
     Ok(())
-}
-
-/// Write `extracted/name` as a gzip-compressed tar with deterministic headers, so the same files
-/// always repack to the same bytes.
-fn pack(extracted: &Path, name: &str, prepared: &Path) -> Result<()> {
-    let file = File::create(prepared)
-        .map_err(|cause| io_error("Could not record the voice model", cause))?;
-    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-    let mut builder = tar::Builder::new(encoder);
-    builder.mode(tar::HeaderMode::Deterministic);
-    builder.follow_symlinks(false);
-    builder
-        .append_dir_all(name, extracted.join(name))
-        .map_err(|cause| io_error("Could not record the voice model", cause))?;
-    let encoder = builder
-        .into_inner()
-        .map_err(|cause| io_error("Could not record the voice model", cause))?;
-    encoder
-        .finish()
-        .map(drop)
-        .map_err(|cause| io_error("Could not record the voice model", cause))
 }
 
 #[cfg(test)]

@@ -54,6 +54,10 @@ pub struct Config {
     /// Where the downloaded Stockfish is kept (`CorePlatform.managedEngineDir`); the default is
     /// `engines/stockfish/current` in the data directory.
     pub managed_engine_dir: Option<PathBuf>,
+    /// The `kchess-voice` speech recognition helper, with libvosk beside it
+    /// (`CorePlatform.voiceHelperPath`). `None` when the host ships none; voice input is then
+    /// unavailable.
+    pub voice_helper_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -66,6 +70,7 @@ impl Config {
             runtime_path: None,
             runtime_env: BTreeMap::new(),
             managed_engine_dir: None,
+            voice_helper_path: None,
         }
     }
 }

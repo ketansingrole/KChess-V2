@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue'
 import type { LichessRatingHistory } from '@kchess/contracts/types'
 import { isPuzzleHistory, normalizeRatingKey, ratingDisplayName } from '@kchess/rules/ratings'
-import escapeHtml from 'escape-html'
 import { toRatingPoints } from '../utils/ratingPoints'
 import {
   RATING_DAY_MS,
@@ -133,12 +131,13 @@ const rows = computed<Row[]>(() => {
   return before ? [{ ...before, date: start }, ...inside] : inside
 })
 
-const x = (row: Row): number => row.date
-const accessors = computed(() =>
-  shown.value.map((entry) => (row: Row) => row[entry.key] as number | undefined),
+const dates = computed(() => rows.value.map((row) => row.date))
+const lines = computed(() =>
+  shown.value.map((entry) => ({
+    values: rows.value.map((row) => row[entry.key]),
+    color: `var(--rating-series-${entry.slot})`,
+  })),
 )
-const colors = computed(() => shown.value.map((entry) => `var(--rating-series-${entry.slot})`))
-const color = (_row: Row, index: number): string => colors.value[index] ?? 'var(--ui-primary)'
 
 const domain = computed<[number, number]>(() =>
   ratingYDomain(
@@ -152,14 +151,10 @@ const spansYears = computed(() =>
 )
 const formatDate = (timestamp: number, long = false): string =>
   formatRatingDate(timestamp, long, spansYears.value)
-const tooltip = (row: Row): string => {
-  const lines = shown.value
-    .filter((entry) => row[entry.key] !== undefined)
-    .map(
-      (entry) =>
-        `<span class="rh-tip-line"><i style="background:var(--rating-series-${entry.slot})"></i>${escapeHtml(entry.name)}<strong>${row[entry.key]}</strong></span>`,
-    )
-  return `<div class="rh-tip"><span class="rh-tip-date">${formatDate(row.date, true)}</span>${lines.join('')}</div>`
+/** The speeds with a rating on the hovered day, for the tooltip. */
+const tooltipLines = (index: number) => {
+  const row = rows.value[index]
+  return row ? shown.value.filter((entry) => row[entry.key] !== undefined) : []
 }
 const summary = computed(
   () =>
@@ -218,18 +213,17 @@ const summary = computed(
       Not enough rated games in this range.
     </p>
     <div v-else class="rh-chart" role="img" :aria-label="summary">
-      <VisXYContainer :data="rows" :height="260" :y-domain="domain" :padding="{ top: 8 }">
-        <VisLine :x="x" :y="accessors" :color="color" :line-width="2" />
-        <VisAxis
-          type="x"
-          :tick-format="(tick: number | Date) => formatDate(+tick)"
-          :num-ticks="5"
-          :grid-line="false"
-        />
-        <VisAxis type="y" :num-ticks="4" :domain-line="false" />
-        <VisCrosshair :x="x" :y="accessors" :color="color" :template="tooltip" />
-        <VisTooltip />
-      </VisXYContainer>
+      <LineChart :x="dates" :series="lines" :y-domain="domain" :height="260" :x-format="formatDate">
+        <template #tooltip="{ index }">
+          <div class="rh-tip">
+            <span class="rh-tip-date">{{ formatDate(rows[index]!.date, true) }}</span>
+            <span v-for="entry in tooltipLines(index)" :key="entry.key" class="rh-tip-line">
+              <i :style="{ background: `var(--rating-series-${entry.slot})` }" />{{ entry.name
+              }}<strong>{{ rows[index]![entry.key] }}</strong>
+            </span>
+          </div>
+        </template>
+      </LineChart>
     </div>
   </div>
 </template>
@@ -320,17 +314,8 @@ const summary = computed(
   height: 260px;
 }
 .rh-chart {
-  --vis-axis-tick-label-color: var(--ui-text-dimmed);
-  --vis-axis-tick-label-font-size: 10px;
-  --vis-axis-grid-color: var(--ui-border);
-  --vis-axis-tick-color: transparent;
-  --vis-crosshair-line-stroke-color: var(--ui-border-accented);
-  --vis-crosshair-circle-stroke-color: var(--ui-bg-elevated);
-  --vis-tooltip-background-color: var(--ui-bg-elevated);
-  --vis-tooltip-border-color: var(--ui-border);
-  --vis-tooltip-text-color: var(--ui-text);
-  --vis-tooltip-font-size: 12px;
-  font-variant-numeric: tabular-nums;
+  --line-chart-crosshair: var(--ui-border-accented);
+  --line-chart-ring: var(--ui-bg-elevated);
 }
 .rh-tip {
   display: grid;

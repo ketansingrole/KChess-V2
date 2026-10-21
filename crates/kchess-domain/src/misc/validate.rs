@@ -383,6 +383,43 @@ fn assert_voice_limit(value: J) -> Checked<u64> {
     integer(value, 1, 5000, "Invalid number of entries.")
 }
 
+/// The phrases speech recognition listens for (`voiceStart`): at most 4,096 of at most 200
+/// characters, as the `kchess-voice` helper accepts.
+fn assert_voice_grammar(value: J) -> Checked<Vec<String>> {
+    const INVALID: &str = "Invalid voice grammar.";
+    let phrases: Vec<String> = decode_or(value, Some(INVALID))?;
+    within(phrases.len(), 1, 4096, Some(INVALID), "")?;
+    for phrase in &phrases {
+        max_chars(phrase, 200, Some(INVALID), "")?;
+    }
+    Ok(phrases)
+}
+
+/// The microphone's sample rate in Hz (`voiceStart`).
+fn assert_sample_rate(value: J) -> Checked<f64> {
+    const INVALID: &str = "Invalid sample rate.";
+    let rate: f64 = decode_or(value, Some(INVALID))?;
+    finite(rate, Some(INVALID), "")?;
+    within(rate, 8_000.0, 192_000.0, Some(INVALID), "")?;
+    Ok(rate)
+}
+
+/// One chunk of base64 audio (`voiceAccept`), no larger than the helper's 1 MiB request limit.
+fn assert_voice_audio(value: J) -> Checked<String> {
+    const INVALID: &str = "Invalid audio.";
+    let audio: String = decode_or(value, Some(INVALID))?;
+    let base64 = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=');
+    ensure(
+        audio.len().is_multiple_of(4)
+            && audio.len() <= (1 << 20) / 3 * 4 + 4
+            && audio.bytes().all(base64),
+        Some(INVALID),
+        "",
+        || "base64 audio".into(),
+    )?;
+    Ok(audio)
+}
+
 /// Bounded text for Lichess broadcast search, trimmed; nothing is no search.
 fn assert_broadcast_query(value: J) -> Checked<Option<String>> {
     let text: Option<String> = decode(value, plain)?;
@@ -2025,6 +2062,9 @@ validators! {
     "assertUuid" => assert_uuid,
     "assertPerformanceName" => assert_performance_name,
     "assertTimingValue" => assert_timing_value,
+    "assertVoiceGrammar" => assert_voice_grammar,
+    "assertSampleRate" => assert_sample_rate,
+    "assertVoiceAudio" => assert_voice_audio,
     "assertRendererError" => assert_renderer_error,
     "assertUsername" => assert_username,
     "assertGameId" => assert_game_id,

@@ -90,7 +90,7 @@ export interface DesktopApi extends CoreApi {
   /** The microphone permission; with `request`, asks the OS (shows its prompt) when undecided. */
   microphoneAccess(request: boolean): Promise<MicrophoneAccess>
   /** Downloads the verified English model on first use, then reuses the local cache. */
-  ensureVoiceModel(): Promise<string>
+  ensureVoiceModel(): Promise<void>
   /** Checks the verified local voice model without downloading or requesting microphone access. */
   voiceModelStatus(): Promise<VoiceModelStatus>
   onVoiceModelProgress(callback: (progress: VoiceModelProgress) => void): () => void

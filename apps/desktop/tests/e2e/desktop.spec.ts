@@ -642,15 +642,16 @@ test('launches with SQLite, sandboxed preload and bundled Stockfish @packaged', 
   expect(status.nodeExposed).toBe(false)
   const policies = await page.evaluate(async () => {
     const document = await fetch('kchess://app/index.html')
+    // Speech recognition runs in a native helper; no page or worker evaluates generated code.
     const worker = await fetch('kchess://app/_nuxt/vosk-worker.js')
     return {
       document: document.headers.get('Content-Security-Policy'),
-      worker: worker.headers.get('Content-Security-Policy'),
+      worker: worker.status,
     }
   })
   expect(policies.document).not.toContain("'unsafe-eval'")
   expect(policies.document).not.toContain("script-src 'unsafe-inline'")
-  expect(policies.worker).toContain("'unsafe-eval'")
+  expect(policies.worker).toBe(404)
 })
 
 test('gives neutral buttons on a card visible hover feedback in both themes', async ({
@@ -1666,7 +1667,7 @@ test('blocks assistance after unverified startup until account status is confirm
   await expect(page.locator('.pv-eval').first()).toBeVisible({ timeout: 20_000 })
 })
 
-test('prepares a voice archive with the packaged native module @seed:voice-archive @packaged', async ({
+test('prepares a voice model folder with the packaged native module @seed:voice-archive @packaged', async ({
   desktop: { page, profile },
 }) => {
   const zip = await readFile(join(profile, 'test-model.zip'))
@@ -1677,13 +1678,17 @@ test('prepares a voice archive with the packaged native module @seed:voice-archi
   // The packaged main process prepares the override archive; nothing is downloaded.
   await page.getByRole('button', { name: 'Download voice model', exact: true }).click()
   await expect(page.getByText(/^Installed ·/)).toBeVisible({ timeout: 60_000 })
-  const marker = JSON.parse(
-    await readFile(join(profile, 'voice', 'model.tar.gz.json'), 'utf8'),
-  ) as { source: string; sha256: string; size: number }
+  const marker = JSON.parse(await readFile(join(profile, 'voice', 'model.json'), 'utf8')) as {
+    source: string
+    files: { path: string; size: number; sha256: string }[]
+  }
   expect(marker.source).toBe(sha256)
-  const prepared = await readFile(join(profile, 'voice', 'model.tar.gz'))
-  expect(prepared.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]))
-  expect(prepared.length).toBe(marker.size)
+  expect(marker.files.length).toBeGreaterThan(0)
+  for (const file of marker.files) {
+    const prepared = await readFile(join(profile, 'voice', 'model', file.path))
+    expect(prepared.length).toBe(file.size)
+    expect(createHash('sha256').update(prepared).digest('hex')).toBe(file.sha256)
+  }
 })
 
 /** A zip of stored (uncompressed) entries, so the test archive needs no compression library. */

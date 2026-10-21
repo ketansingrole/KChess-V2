@@ -38,25 +38,16 @@ describe('app protocol', () => {
   })
 
   it('rejects non-GET, foreign hosts and path traversal', async () => {
-    handleAppProtocol('/tmp/model.tar.gz')
+    handleAppProtocol()
     expect(await get('kchess://app/index.html', 'POST')).toMatchObject({ status: 403 })
     expect(await get('kchess://evil/index.html')).toMatchObject({ status: 403 })
     expect(await get('kchess://app/..%2Fsecret')).toMatchObject({ status: 403 })
   })
 
   it('serves local files with a content-security-policy header', async () => {
-    handleAppProtocol('/tmp/model.tar.gz')
+    handleAppProtocol()
     const response = await get('kchess://app/index.html')
     expect(response.status).toBe(200)
     expect(response.headers.get('Content-Security-Policy')).toContain('script-src')
-  })
-
-  it('serves the voice model as gzip and maps fetch failures to 404', async () => {
-    handleAppProtocol('/tmp/model.tar.gz')
-    const model = await get('kchess://app/voice/model.tar.gz')
-    expect(model.status).toBe(200)
-    expect(model.headers.get('Content-Type')).toBe('application/gzip')
-    electronMock.fetch.mockRejectedValueOnce(new Error('gone'))
-    expect(await get('kchess://app/voice/model.tar.gz')).toMatchObject({ status: 404 })
   })
 })

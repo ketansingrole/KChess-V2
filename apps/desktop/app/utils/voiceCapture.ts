@@ -1,5 +1,9 @@
-import type { Model, KaldiRecognizer } from 'vosk-browser/dist/model'
-import type { VoiceWord, VoiceModelProgress } from '@kchess/contracts/types'
+import type {
+  VoiceHeard,
+  VoiceRecognized,
+  VoiceWord,
+  VoiceModelProgress,
+} from '@kchess/contracts/types'
 
 export type VoiceState = 'off' | 'loading' | 'paused' | 'listening' | 'error'
 /** Why voice input stopped, so the UI can offer the right fix (e.g. open privacy settings). */
@@ -71,15 +75,30 @@ export function voiceAssetUrl(file: string): string {
   return new URL(`voice/${file}`, document.baseURI).href
 }
 
-/** One model per mounted voice control, reused between turns/questions; released on disable. */
+/** Microphone samples (-1…1) as base64 16-bit little-endian PCM, as the core's recognizer takes. */
+export function pcmBase64(audio: Float32Array): string {
+  const bytes = new Uint8Array(audio.length * 2)
+  const view = new DataView(bytes.buffer)
+  audio.forEach((sample, index) => {
+    view.setInt16(index * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 0x7fff), true)
+  })
+  let binary = ''
+  for (let start = 0; start < bytes.length; start += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000))
+  return btoa(binary)
+}
+
+/**
+ * Microphone capture for one mounted voice control. Audio goes to the core's offline recognizer
+ * (`voiceStart`/`voiceAccept`), which runs Vosk in its own process; the recognizer is reused
+ * between turns/questions and released on dispose.
+ */
 export class VoiceCapture {
-  private model?: Model
-  private loading?: Promise<Model>
+  private ready = false
   private stream?: MediaStream
   private context?: AudioContext
   private node?: AudioWorkletNode
   private source?: MediaStreamAudioSourceNode
-  private recognizer?: KaldiRecognizer
   private revision = 0
   private epoch = 0
   private active = false
@@ -88,64 +107,56 @@ export class VoiceCapture {
   private starting?: Promise<void>
   private grammar: readonly string[] = []
   private disposed = false
-  private cancelLoad?: () => void
+  /** Core calls run one at a time, so audio reaches the recognizer in order. */
+  private queue: Promise<unknown> = Promise.resolve()
 
   constructor(private callbacks: Callbacks) {}
 
-  private async loadModel(): Promise<Model> {
-    if (this.model?.ready) return this.model
-    if (this.loading) return this.loading
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work)
+    // The queue only orders calls: each caller handles (and logs) its own call's failure on
+    // `next`, so the chain itself just waits for it to settle either way.
+    const settled = () => undefined
+    this.queue = next.then(settled, settled)
+    return next
+  }
+
+  /** Download (first use) and verify the model; the core loads it on the first `voiceStart`. */
+  private async ensureModel(): Promise<void> {
+    if (this.ready) return
     this.callbacks.state('loading')
-    this.loading = (async () => {
-      // The package embeds Vosk's WASM in a worker. Import it only after an explicit enable action.
-      const unsubscribe = window.kchess.onVoiceModelProgress((progress) => {
-        if (!this.disposed) this.callbacks.modelProgress?.(progress)
-      })
-      let modelUrl: string
-      try {
-        modelUrl = await window.kchess.ensureVoiceModel()
-      } catch (cause) {
-        throw new VoiceError(
-          cause instanceof Error
-            ? cause.message
-            : 'The voice model couldn’t download. Connect to the internet and try again.',
-          'model',
-        )
-      } finally {
-        unsubscribe()
-      }
-      if (this.disposed) throw new Error('Voice input was stopped.')
-      const { Model } = await import('vosk-browser')
-      if (this.disposed) throw new Error('Voice input was stopped.')
-      const model = new Model(modelUrl, -1)
-      this.model = model
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(
-          () =>
-            reject(new VoiceError('The voice model took too long to load. Try again.', 'model')),
-          60_000,
-        )
-        this.cancelLoad = () => {
-          clearTimeout(timer)
-          reject(new Error('Voice input was stopped.'))
-        }
-        model.on('load', (message) => {
-          clearTimeout(timer)
-          if ('result' in message && message.result) resolve()
-          else reject(new VoiceError('The offline voice model couldn’t load.', 'model'))
-        })
-        model.on('error', (_message) => {
-          clearTimeout(timer)
-          reject(new VoiceError('The offline voice model couldn’t load. Try again.', 'model'))
-        })
-      })
-      this.cancelLoad = undefined
-      return model
-    })()
+    const unsubscribe = window.kchess.onVoiceModelProgress((progress) => {
+      if (!this.disposed) this.callbacks.modelProgress?.(progress)
+    })
     try {
-      return await this.loading
+      await window.kchess.ensureVoiceModel()
+    } catch (cause) {
+      throw new VoiceError(
+        cause instanceof Error
+          ? cause.message
+          : 'The voice model couldn’t download. Connect to the internet and try again.',
+        'model',
+      )
     } finally {
-      this.loading = undefined
+      unsubscribe()
+    }
+    if (this.disposed) throw new Error('Voice input was stopped.')
+    this.ready = true
+  }
+
+  /** Starts the core's recognizer once, which loads the model (the first start is the slow one). */
+  private async warmUp(sampleRate: number): Promise<void> {
+    if (!this.grammar.length) return
+    const grammar = [...this.grammar]
+    try {
+      await this.enqueue(() => window.kchess.voiceStart(grammar, sampleRate))
+    } catch (cause) {
+      throw new VoiceError(
+        cause instanceof Error && cause.message
+          ? cause.message
+          : 'The offline voice model couldn’t load. Try again.',
+        'model',
+      )
     }
   }
 
@@ -156,7 +167,7 @@ export class VoiceCapture {
       return this.starting.then(() => {
         if (!this.disposed && !this.context) return this.prepare(grammar)
       })
-    if (this.context && this.node && this.model?.ready) return Promise.resolve()
+    if (this.context && this.node && this.ready) return Promise.resolve()
     const revision = this.revision
     this.starting = this.open(revision).finally(() => {
       this.starting = undefined
@@ -188,7 +199,10 @@ export class VoiceCapture {
       context = new AudioContext({ sampleRate: 16_000 })
       await context.resume()
       await context.audioWorklet.addModule(voiceAssetUrl('processor.js'))
-      const model = await this.loadModel()
+      await this.ensureModel()
+      if (revision !== this.revision || this.disposed) return
+      // Load the model now, so a timed run never waits for it.
+      await this.warmUp(context.sampleRate)
       if (revision !== this.revision || this.disposed) return
       this.stream = stream
       this.context = context
@@ -207,19 +221,18 @@ export class VoiceCapture {
       this.node.port.onmessage = ({
         data,
       }: MessageEvent<{ epoch: number; audio?: Float32Array; final?: boolean }>) => {
-        if (data.epoch !== this.epoch || !this.active || !this.recognizer) return
+        if (data.epoch !== this.epoch || !this.active || !this.grammar.length) return
+        const epoch = this.epoch
         if (data.audio) {
-          const ctx = this.context
-          if (!ctx) return
-          this.recognizer.acceptWaveformFloat(data.audio, ctx.sampleRate)
           this.reportLevel(data.audio)
+          const audio = pcmBase64(data.audio)
+          this.recognize(epoch, () => window.kchess.voiceAccept(audio))
         }
-        if (data.final) this.recognizer.retrieveFinalResult()
+        if (data.final) this.recognize(epoch, () => window.kchess.voiceFinish())
       }
       for (const track of this.stream.getTracks()) {
         track.onended = () => this.fail('The microphone disconnected. Try again.', 'missing')
       }
-      if (!model.ready) throw new VoiceError('The voice model is unavailable.', 'model')
       this.resetRecognizer()
       this.callbacks.state(this.active && (!this.pushTalk || this.held) ? 'listening' : 'paused')
     } catch (error) {
@@ -277,60 +290,71 @@ export class VoiceCapture {
     }
   }
 
+  /** Starts a fresh utterance with the current grammar; audio of earlier epochs is dropped. */
   private resetRecognizer(): void {
     this.epoch++
-    this.recognizer?.remove()
-    this.recognizer = undefined
-    if (!this.model?.ready || !this.context || !this.node || !this.active) return
+    if (!this.ready || !this.context || !this.node || !this.active) return
     const epoch = this.epoch
-    const rec = new this.model.KaldiRecognizer(
-      this.context.sampleRate,
-      JSON.stringify(this.grammar),
-    )
-    this.recognizer = rec
-    rec.setWords(true)
-    rec.on('partialresult', (message) => {
-      if (epoch === this.epoch && this.active && 'result' in message && 'partial' in message.result)
-        this.callbacks.partial(message.result.partial)
-    })
-    rec.on('result', (message) => {
-      if (
-        epoch !== this.epoch ||
-        !this.active ||
-        !('result' in message) ||
-        !('text' in message.result)
+    if (this.grammar.length) {
+      const grammar = [...this.grammar]
+      const sampleRate = this.context.sampleRate
+      void this.enqueue(() => window.kchess.voiceStart(grammar, sampleRate)).catch(
+        (error: unknown) => {
+          console.warn('[voice-capture] starting speech recognition failed:', error)
+          this.recognitionFailed(epoch, error)
+        },
       )
-        return
-      const text = message.result.text.trim()
-      if (!text) return
-      // Judge only real words: a noise [unk] would otherwise sink a clearly heard command.
-      const words: VoiceWord[] =
-        message.result.result
-          ?.filter((word) => word.word !== '[unk]')
-          .map((word) => ({ word: word.word, conf: Math.round(word.conf * 1000) / 1000 })) ?? []
-      const confidences = words.map((word) => word.conf)
-      // Average, not minimum: grammar homophones (“to”/“two”) split a word's confidence to 0.5
-      // even when heard perfectly. Moves are still checked for legality before use.
-      const confidence = confidences.length
-        ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
-        : 0
-      this.callbacks.partial('')
-      this.callbacks.result({ text, confidence, words })
-      // One action per finalized utterance. A parent's synchronous context update may already reset it.
-      if (epoch === this.epoch) this.resetRecognizer()
-    })
-    rec.on('error', () => {
-      if (epoch === this.epoch) this.fail('Speech recognition stopped. Try again.', 'model')
-    })
+    }
     this.node.port.postMessage({ action: 'reset', epoch, listening: !this.pushTalk || this.held })
     this.callbacks.state(!this.pushTalk || this.held ? 'listening' : 'paused')
+  }
+
+  /** Queues one recognizer call; its answer counts only while its epoch is current. */
+  private recognize(epoch: number, call: () => Promise<VoiceHeard>): void {
+    this.enqueue(call)
+      .then((heard) => {
+        if (epoch !== this.epoch || !this.active) return
+        if (heard.result) this.heard(epoch, heard.result)
+        else if (heard.partial !== undefined) this.callbacks.partial(heard.partial)
+      })
+      .catch((error: unknown) => {
+        console.warn('[voice-capture] speech recognition failed:', error)
+        this.recognitionFailed(epoch, error)
+      })
+  }
+
+  private heard(epoch: number, result: VoiceRecognized): void {
+    const text = result.text.trim()
+    if (!text) return
+    // Judge only real words: a noise [unk] would otherwise sink a clearly heard command.
+    const words: VoiceWord[] = result.words
+      .filter((word) => word.word !== '[unk]')
+      .map((word) => ({ word: word.word, conf: Math.round(word.conf * 1000) / 1000 }))
+    const confidences = words.map((word) => word.conf)
+    // Average, not minimum: grammar homophones (“to”/“two”) split a word's confidence to 0.5
+    // even when heard perfectly. Moves are still checked for legality before use.
+    const confidence = confidences.length
+      ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+      : 0
+    this.callbacks.partial('')
+    this.callbacks.result({ text, confidence, words })
+    // One action per finalized utterance. A parent's synchronous context update may already reset it.
+    if (epoch === this.epoch) this.resetRecognizer()
+  }
+
+  private recognitionFailed(epoch: number, error: unknown): void {
+    if (epoch !== this.epoch || this.disposed) return
+    this.fail(
+      error instanceof Error && error.message
+        ? error.message
+        : 'Speech recognition stopped. Try again.',
+      'model',
+    )
   }
 
   pause(): void {
     this.revision++
     this.epoch++
-    this.recognizer?.remove()
-    this.recognizer = undefined
     this.node?.disconnect()
     this.node?.port.close()
     this.source?.disconnect()
@@ -368,9 +392,11 @@ export class VoiceCapture {
     this.disposed = true
     this.active = false
     this.pause()
-    this.cancelLoad?.()
-    this.model?.terminate()
-    this.model = undefined
+    if (this.ready)
+      void this.enqueue(() => window.kchess.voiceStop()).catch((error: unknown) => {
+        console.warn('[voice-capture] releasing the recognizer failed:', error)
+      })
+    this.ready = false
     this.callbacks.state('off')
   }
 }

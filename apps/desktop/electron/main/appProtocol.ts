@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import { APP_CSP, VOICE_WORKER_CSP } from './appOrigin'
+import { APP_CSP } from './appOrigin'
 import { logDebug } from '@kchess/native/logger'
 import { app, net, protocol } from 'electron'
 import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-// A secure origin lets packaged Web Workers use IndexedDB and load local audio/model assets.
+// A secure origin lets packaged Web Workers use IndexedDB and load local audio assets.
 export function registerAppScheme(): void {
   protocol.registerSchemesAsPrivileged([
     {
@@ -21,24 +21,11 @@ export function registerAppScheme(): void {
   ])
 }
 
-export function handleAppProtocol(voiceModelPath: string): void {
+export function handleAppProtocol(): void {
   const root = resolve(join(app.getAppPath(), '.output', 'public'))
   protocol.handle('kchess', async (request) => {
     const url = new URL(request.url)
     if (url.host !== 'app' || request.method !== 'GET') return new Response(null, { status: 403 })
-    if (url.pathname === '/voice/model.tar.gz') {
-      try {
-        const response = await net.fetch(pathToFileURL(voiceModelPath).href)
-        // The same local asset is used by the localhost renderer during development.
-        return new Response(response.body, {
-          status: response.status,
-          headers: { 'Content-Type': 'application/gzip', 'Access-Control-Allow-Origin': '*' },
-        })
-      } catch (cause) {
-        logDebug('startup', 'Voice model asset is unavailable:', cause)
-        return new Response(null, { status: 404 })
-      }
-    }
     let path: string
     try {
       path = resolve(
@@ -69,10 +56,7 @@ export function handleAppProtocol(voiceModelPath: string): void {
         )
         return new Response(html, { status: response.status, headers })
       }
-      headers.set(
-        'Content-Security-Policy',
-        url.pathname === '/_nuxt/vosk-worker.js' ? VOICE_WORKER_CSP : APP_CSP,
-      )
+      headers.set('Content-Security-Policy', APP_CSP)
       return new Response(response.body, { status: response.status, headers })
     } catch (cause) {
       logDebug('startup', 'App protocol asset is unavailable:', cause)

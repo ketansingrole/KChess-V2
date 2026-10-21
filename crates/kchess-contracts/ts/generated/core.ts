@@ -2,7 +2,7 @@
 // Do not edit: change the Rust contract types and run `pnpm run build:native`.
 
 import type { ArchivedGame, JoinedTournament, LegacyDocuments, LibrarySnapshot, MistakeExercise, RepertoireMisses, SessionDocuments, SessionKind, StudyCommand, StudyCommandResult } from './library'
-import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, WatchFrame, WatchState } from './types'
+import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
 
 export type CoreEvents = { "online:state": OnlineConnection, "online:event": OnlineEvent, "online:error": string, "puzzledb:progress": PuzzleDbProgress, "engine:analysis": AnalysisUpdate, "review:update": ReviewUpdate, "review:status": ReviewStatus, "challenges:update": Array<ChallengeInfo>, "online:lobby": LobbyState, "online:ongoing-changed": null, "watch:state": WatchState, "watch:frame": WatchFrame, "watch:broadcast": BroadcastUpdate, 
 /**
@@ -266,6 +266,22 @@ export interface CoreApi {
   voiceHistory(limit: number): Promise<VoiceAttempt[]>
   clearVoiceHistory(): Promise<void>
   /**
+   * Offline speech recognition: listens for these phrases, discarding any utterance in progress.
+   */
+  voiceStart(grammar: string[], sampleRate: number): Promise<void>
+  /**
+   * Base64 16-bit little-endian mono PCM at the started sample rate.
+   */
+  voiceAccept(audio: string): Promise<VoiceHeard>
+  /**
+   * Ends the utterance (push-to-talk released).
+   */
+  voiceFinish(): Promise<VoiceHeard>
+  /**
+   * Releases the recognizer and its model.
+   */
+  voiceStop(): Promise<void>
+  /**
    * The local library as saved: studies, played games, drills, sessions and training notes.
    */
   library(): Promise<LibrarySnapshot>
@@ -393,6 +409,10 @@ export const CORE_METHODS: CoreMethod[] = [
   'updateVoiceAttempt',
   'voiceHistory',
   'clearVoiceHistory',
+  'voiceStart',
+  'voiceAccept',
+  'voiceFinish',
+  'voiceStop',
   'library',
   'importLibrary',
   'studyCommand',

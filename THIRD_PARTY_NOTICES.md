@@ -16,7 +16,6 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 | [Nuxt](https://nuxt.com), [Vue](https://vuejs.org), Vue Router (`vue-router`)                                                                     | MIT                                                                    | Application framework                                                             |
 | [Nuxt UI](https://ui.nuxt.com) (`@nuxt/ui`), [Tailwind CSS](https://tailwindcss.com) (`tailwindcss`)                                              | MIT                                                                    | Interface components and styling                                                  |
 | [Pinia](https://pinia.vuejs.org), [VueUse](https://vueuse.org) (`@vueuse/core`)                                                                   | MIT                                                                    | State and utilities                                                               |
-| [`@unovis/ts`](https://unovis.dev), `@unovis/vue`                                                                                                 | Apache-2.0                                                             | The rating chart                                                                  |
 | [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/)                                                                                          | MIT                                                                    | Typed Lichess API client                                                          |
 | [Valibot](https://valibot.dev)                                                                                                                    | MIT                                                                    | Validating values that cross the Electron IPC boundary                            |
 | [`lru-cache`](https://github.com/isaacs/node-lru-cache)                                                                                           | BlueOak-1.0.0                                                          | In-memory cache for profile requests                                              |
@@ -30,15 +29,12 @@ packages in `node_modules/` and, for packaged apps, inside the app bundle.
 | [`tokio`](https://tokio.rs), `tokio-util`                                                                                                         | MIT                                                                    | The core's async runtime, engine processes and cancellation                       |
 | [`reqwest`](https://github.com/seanmonstar/reqwest)                                                                                               | MIT OR Apache-2.0                                                      | HTTPS requests and streams to Lichess and engine downloads                        |
 | [`futures-util`](https://github.com/rust-lang/futures-rs)                                                                                         | MIT OR Apache-2.0                                                      | Reading streamed responses in the core                                            |
-| [`zstd`](https://github.com/gyscos/zstd-rs)                                                                                                       | BSD-3-Clause                                                           | Compressing stored documents and caches                                           |
+| [`ruzstd`](https://github.com/KillingSpark/zstd-rs)                                                                                               | MIT                                                                    | Decompressing the downloaded puzzle database                                      |
 | [`getrandom`](https://github.com/rust-random/getrandom), [`uuid`](https://github.com/uuid-rs/uuid)                                                | MIT OR Apache-2.0                                                      | Random ids for studies and chapters                                               |
-| [`jiff`](https://github.com/BurntSushi/jiff)                                                                                                      | Unlicense OR MIT (used under MIT)                                      | Calendar dates and ISO 8601 timestamps                                            |
 | [`sha2`](https://github.com/RustCrypto/hashes), [`base64`](https://github.com/marshallpierce/rust-base64)                                         | MIT OR Apache-2.0                                                      | Engine download checks and the Lichess sign-in challenge                          |
 | [`flate2`](https://github.com/rust-lang/flate2-rs), [`tar`](https://github.com/composefs/tar-rs) (crate), [`zip`](https://github.com/zip-rs/zip2) | MIT OR Apache-2.0 (`zip`: MIT)                                         | Unpacking a downloaded engine                                                     |
 | [`tempfile`](https://github.com/Stebalien/tempfile)                                                                                               | MIT OR Apache-2.0                                                      | A private staging directory for engine downloads                                  |
-| [`tracing`](https://github.com/tokio-rs/tracing)                                                                                                  | MIT                                                                    | Storage rollback diagnostics                                                      |
 | [`rustix`](https://github.com/bytecodealliance/rustix), [`libc`](https://github.com/rust-lang/libc)                                               | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; MIT OR Apache-2.0 | Engine process signals and file checks on macOS and Linux                         |
-| [`regex-syntax`](https://github.com/rust-lang/regex)                                                                                              | MIT OR Apache-2.0                                                      | Unicode categories for the arena name check                                       |
 
 The native rules (`@kchess/native`) are compiled Rust. The license text of every crate compiled
 into them, including indirect dependencies, ships beside the module as `THIRD_PARTY_LICENSES.txt`
@@ -104,19 +100,24 @@ release page and verifies it against the SHA-256 digest GitHub publishes.
 
 ## Offline voice recognition
 
-[`vosk-browser`](https://github.com/ccoreilly/vosk-browser), by Ciaran O'Reilly and contributors,
-is distributed under Apache-2.0. Its unmodified WebAssembly worker includes
-[Vosk](https://github.com/alphacep/vosk-api) and [Kaldi](https://github.com/kaldi-asr/kaldi)
-(Apache-2.0), plus its bundled JavaScript dependencies under their respective licenses.
-KChess's voice parser, microphone worklet, and UI are original code; no Lichess voice
-application code is copied.
+The speech recognition helper (`crates/kchess-voice`) loads `libvosk`, the official prebuilt
+[Vosk](https://github.com/alphacep/vosk-api) library by Alpha Cephei Inc. and contributors
+(Apache-2.0), which includes [Kaldi](https://github.com/kaldi-asr/kaldi) and
+[OpenFst](https://www.openfst.org) (Apache-2.0). KChess ships it unchanged from the Vosk
+release archives (0.3.42 for macOS, of which only the arm64 slice is kept; 0.3.45 for Linux and
+Windows), each pinned by SHA-256 in `tooling/voice-runtime.mjs`. On Windows, libvosk needs the
+MinGW-w64 runtime beside it: `libstdc++-6.dll` and `libgcc_s_seh-1.dll` (GPL-3.0 with the GCC
+Runtime Library Exception) and `libwinpthread-1.dll` (MIT and BSD-3-Clause), from the same
+archive. Attribution and the Apache license ship beside the helper (`voice/NOTICE.txt`,
+`voice/APACHE-2.0.txt`). KChess's voice parser, microphone worklet, helper and UI are original
+code; no Lichess voice application code is copied.
 
 The optionally downloaded `vosk-model-small-en-us-0.15` model is from
 [Alpha Cephei's model catalog](https://alphacephei.com/vosk/models) and is Apache-2.0.
 Its official ZIP archive has SHA-256
 `30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498`.
-The app verifies this digest on download and repackages the unchanged model files into a
-gzip tar archive for the browser loader. The cached archive is verified before reuse. Attribution and the Apache license ship in `apps/desktop/public/voice/`.
+The app verifies this digest on download and unpacks the unchanged model files into the
+app's data folder, recording each file's SHA-256; the cached files are verified before reuse.
 
 ## Not affiliated
 

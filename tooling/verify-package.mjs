@@ -9,9 +9,18 @@ const MiB = 1024 * 1024
 const forbidden =
   /(?:^|\/)(?:[^/]*\.(?:app|framework|asar|dmg|exe|AppImage|deb|zip|blockmap)|\.temp[^/]*|mac(?:-arm64|-x64)?|linux-unpacked|win-unpacked)(?:\/|$)/i
 
+/** The speech recognition runtime: the helper, libvosk, its MinGW runtime (Windows), notices. */
+const VOICE_RUNTIME =
+  /^node_modules\/@kchess\/native\/voice\/(?:kchess-voice(?:\.exe)?|libvosk\.(?:dylib|so|dll)|lib(?:stdc\+\+-6|gcc_s_seh-1|winpthread-1)\.dll|NOTICE\.txt|APACHE-2\.0\.txt)$/
+
 export function verifyEntries(entries, label = 'package') {
   let total = 0
+  let voice = 0
   for (const { path, size } of entries) {
+    if (VOICE_RUNTIME.test(path)) {
+      voice += size
+      continue
+    }
     if (forbidden.test(path) || /(?:^|\/)voice\/model\.tar\.gz/.test(path))
       throw new Error(`${label} contains a build artifact or bundled voice model: ${path}`)
     if (path.startsWith('node_modules/')) {
@@ -38,6 +47,10 @@ export function verifyEntries(entries, label = 'package') {
   if (total > PERFORMANCE_BUDGETS.packageBytes)
     throw new Error(
       `${label} payload exceeds the ${PERFORMANCE_BUDGETS.packageBytes / MiB} MiB budget.`,
+    )
+  if (voice > PERFORMANCE_BUDGETS.voiceRuntimeBytes)
+    throw new Error(
+      `${label} voice runtime exceeds the ${PERFORMANCE_BUDGETS.voiceRuntimeBytes / MiB} MiB budget.`,
     )
   return total
 }
@@ -97,11 +110,7 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
   }
   walk(getRawHeader(archive).header.files)
   const bytes = verifyEntries(entries)
-  for (const path of [
-    'out/main/index.js',
-    'out/preload/index.cjs',
-    '.output/public/_nuxt/vosk-worker.js',
-  ]) {
+  for (const path of ['out/main/index.js', 'out/preload/index.cjs']) {
     if (!entries.some((entry) => entry.path === path && entry.size > 0))
       throw new Error(`Missing desktop service: ${path}`)
   }
@@ -125,6 +134,15 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
     throw new Error('Missing license texts for the Rust crates in the native rules.')
   if (!(await stat(join(resources, 'app.asar.unpacked', native.path))).size)
     throw new Error(`Native rules are empty: ${native.path}`)
+  // Speech recognition: the helper and libvosk, unpacked so the OS can run and load them.
+  const library = { darwin: 'libvosk.dylib', win32: 'libvosk.dll' }[platform] ?? 'libvosk.so'
+  for (const name of [platform === 'win32' ? 'kchess-voice.exe' : 'kchess-voice', library]) {
+    const path = `node_modules/@kchess/native/voice/${name}`
+    if (!entries.some((entry) => entry.path === path))
+      throw new Error(`Missing voice runtime: ${path}`)
+    if (!(await stat(join(resources, 'app.asar.unpacked', path))).size)
+      throw new Error(`Voice runtime is empty: ${path}`)
+  }
   await verifyLegalFiles(resources)
   if ((await stat(archive)).size > PERFORMANCE_BUDGETS.packageBytes)
     throw new Error(`app.asar exceeds the ${PERFORMANCE_BUDGETS.packageBytes / MiB} MiB budget.`)

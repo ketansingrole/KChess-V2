@@ -269,10 +269,11 @@ pub fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
             .and_then(|()| db.execute_batch(&format!("PRAGMA user_version = {}", index + 1)))
             .and_then(|()| db.execute_batch("COMMIT"));
         if let Err(cause) = applied {
-            if let Err(rollback) = db.execute_batch("ROLLBACK") {
-                tracing::warn!("migration {} rollback failed: {rollback}", index + 1);
-            }
-            return Err(storage_error(cause));
+            let error = storage_error(cause);
+            return Err(match db.execute_batch("ROLLBACK") {
+                Ok(()) => error,
+                Err(rollback) => error.with_rollback_failure(rollback),
+            });
         }
     }
     Ok(())

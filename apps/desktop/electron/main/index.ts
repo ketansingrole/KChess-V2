@@ -421,13 +421,13 @@ void app
     // A second instance already quit above; its ready handler must not start a core.
     if (!singleInstance) return
     const voiceModel = new VoiceModelCache(join(app.getPath('userData'), 'voice'))
-    handleAppProtocol(voiceModel.path)
+    handleAppProtocol()
     handle('voiceModelStatus', () => voiceModel.status())
     handle('ensureVoiceModel', async (event) => {
+      // The core's recognizer reads the published folder (`voice/model` in the data directory).
       await voiceModel.ensure((progress) => {
         if (!event.sender.isDestroyed()) event.sender.send(IPC_EVENTS.voiceModelProgress, progress)
       })
-      return 'kchess://app/voice/model.tar.gz'
     })
     setupMediaPermissions(isAppUrl)
     setupDiagnostics()

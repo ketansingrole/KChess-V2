@@ -83,6 +83,7 @@ function core(): NativeCoreHandle {
       nodePath: process.execPath,
       nodeEnv: host.nodeEnv,
       managedEngineDir: host.managedEngineDir,
+      voiceHelperPath: host.voiceHelperPath,
     },
     bindCoreCallback((json: string) => {
       const line = JSON.parse(json) as { level: keyof typeof LOG; scope: string; message: string }

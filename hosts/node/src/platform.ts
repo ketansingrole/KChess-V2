@@ -3,13 +3,15 @@ import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import type { CorePlatform } from '@kchess/native'
+import { VOICE_HELPER_FILE, type CorePlatform } from '@kchess/native'
 import { systemSecrets } from './secrets'
 
 export interface NodeCoreOptions {
   dataDir?: string
   bundledEnginePath?: string
   managedEngineDir?: string
+  /** The speech recognition helper; defaults to the one staged in `@kchess/native`. */
+  voiceHelperPath?: string
   /** Disable credentials for unattended tools and isolated tests. */
   disableCredentials?: boolean
   /** Print login URLs instead of launching a browser on an SSH/headless host. */
@@ -26,6 +28,9 @@ export async function nodePlatform(options: NodeCoreOptions): Promise<CorePlatfo
     dataDir,
     bundledEnginePath,
     managedEngineDir: options.managedEngineDir ?? join(dataDir, 'engines'),
+    voiceHelperPath:
+      options.voiceHelperPath ??
+      join(dirname(require.resolve('@kchess/native/binding')), VOICE_HELPER_FILE),
     secrets: systemSecrets(dataDir, options.disableCredentials),
     onBattery: () => false,
     async openExternal(url) {

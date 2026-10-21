@@ -6,6 +6,14 @@
  */
 export const BUNDLED_ENGINE_SCRIPT = 'node_modules/stockfish/bin/stockfish-19-lite.js'
 
+/**
+ * The speech recognition helper inside this package, with libvosk beside it (staged by
+ * `pnpm run build:native`); the core runs it for voice input (`crates/kchess-voice`).
+ */
+export const VOICE_HELPER_FILE = `voice/kchess-voice${process.platform === 'win32' ? '.exe' : ''}`
+/** `VOICE_HELPER_FILE` from the desktop app's directory. */
+export const VOICE_HELPER = `node_modules/@kchess/native/${VOICE_HELPER_FILE}`
+
 /** A search ended on purpose (`SearchCancelled`); `isExpectedCancellation` recognises it. */
 export class SearchCancelled extends Error {
   constructor() {
