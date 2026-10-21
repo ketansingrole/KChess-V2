@@ -10,6 +10,8 @@ interface QuitWindow {
 
 /** The user's answer after a flush failed or went unanswered. */
 export type QuitRetryChoice = 'retry' | 'discard' | 'cancel'
+/** What the renderer is being replaced for: closing it or reloading it. */
+export type QuitPurpose = 'quit' | 'reload'
 
 /** A failed or unanswered flush never authorizes closing the renderer or its core. */
 export class QuitPreparation {
@@ -19,7 +21,7 @@ export class QuitPreparation {
   constructor(
     private options: {
       window: () => QuitWindow | undefined
-      retry: () => Promise<QuitRetryChoice>
+      retry: (purpose: QuitPurpose) => Promise<QuitRetryChoice>
       timeoutMs?: number
     },
   ) {}
@@ -29,8 +31,8 @@ export class QuitPreparation {
     this.pending.resolve(saved)
   }
 
-  prepare(): Promise<boolean> {
-    this.preparing ??= this.perform()
+  prepare(purpose: QuitPurpose = 'quit'): Promise<boolean> {
+    this.preparing ??= this.perform(purpose)
       .catch((cause) => {
         logWarn('shutdown', 'Quit preparation failed.', cause)
         return false
@@ -41,7 +43,7 @@ export class QuitPreparation {
     return this.preparing
   }
 
-  private async perform(): Promise<boolean> {
+  private async perform(purpose: QuitPurpose): Promise<boolean> {
     while (true) {
       const owner = this.options.window()
       // No window, or a crashed renderer: nothing remains to flush, so quitting is safe.
@@ -67,9 +69,9 @@ export class QuitPreparation {
         this.pending = undefined
       }
       if (saved) return true
-      const choice = await this.options.retry()
+      const choice = await this.options.retry(purpose)
       if (choice === 'discard') {
-        logDebug('shutdown', 'Quitting without saving after a failed flush.')
+        logDebug('shutdown', `Continuing (${purpose}) without saving after a failed flush.`)
         return true
       }
       if (choice === 'cancel') return false

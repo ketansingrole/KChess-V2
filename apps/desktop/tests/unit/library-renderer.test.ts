@@ -297,6 +297,38 @@ describe('review summaries for the visible page', () => {
     expect(reviews.summaries.Gone0001).toBeUndefined()
     reviews.dispose()
   })
+  // A full-review lookup that resolved after a newer streamed update replaced the completed
+  // review with the older, incomplete snapshot.
+  it('keeps a streamed review over an older lookup that resolves later', async () => {
+    let stream: (update: ReviewUpdate) => void = () => {}
+    const lookup = deferred<ReviewUpdate['review'] | null>()
+    const stored = (complete: boolean, updatedAt: number) =>
+      ({ key: 'review1', gameId: 'Game0001', complete, updatedAt }) as ReviewUpdate['review']
+    desktop({
+      reviewStatus: async () => ({ waiting: 0 }),
+      reviewGet: () => lookup.promise,
+      onReviewUpdate: (callback) => {
+        stream = callback
+        return vi.fn()
+      },
+      onReviewStatus: () => vi.fn(),
+    })
+    const reviews = useReviewStore()
+    const pending = reviews.load(INITIAL_FEN, ['e2e4'])
+    stream({ review: stored(true, 2), summary: summary(80) })
+    lookup.resolve(stored(false, 1))
+    const shown = await pending
+    expect(shown).toMatchObject({ complete: true, updatedAt: 2 })
+    expect(reviews.reviews.get('review1')).toMatchObject({ complete: true, updatedAt: 2 })
+    // A lookup with nothing streamed meanwhile still replaces the cache.
+    const again = deferred<ReviewUpdate['review'] | null>()
+    window.kchess.reviewGet = () => again.promise
+    const next = reviews.load(INITIAL_FEN, ['e2e4'])
+    again.resolve(stored(true, 3))
+    expect(await next).toMatchObject({ updatedAt: 3 })
+    expect(reviews.reviews.get('review1')).toMatchObject({ updatedAt: 3 })
+    reviews.dispose()
+  })
   // Every streamed review stayed in memory for the session, including a background review of
   // every game. Reviews are stored by the core, so only recent ones and the one shown are kept.
   it('keeps a bounded number of full reviews and always the one on the board', () => {

@@ -11,6 +11,7 @@ import {
   turnColor,
 } from '@kchess/rules/chess'
 import { initialLibrary, persistSession } from '../../utils/library'
+import { bestMoveOwned } from '../../utils/engineControl'
 import { useGameArchive } from '../gameArchive'
 import { isVariant, type GameSetup } from '@kchess/rules/variant'
 import { formatClock } from '@kchess/rules/clock'
@@ -41,7 +42,7 @@ export function useComputerGame(options: {
     epoch: gameEpoch,
   } = toRefs(state)
   const game = new ComputerGame(state, {
-    bestMove: (moves, level, options) => window.kchess.bestMove(moves, level, options),
+    bestMove: (moves, level, options) => bestMoveOwned(moves, level, options).result,
     stopEngine: () => window.kchess.stopEngine(),
     ready: () => engineReady.value,
     allowed,

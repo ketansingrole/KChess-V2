@@ -89,6 +89,14 @@ export function pcmBase64(audio: Float32Array): string {
 }
 
 /**
+ * The core has one recognizer, shared by every voice control. Their calls run one at a time on
+ * one queue, so audio reaches it in order, and the control that started it last owns it: an
+ * outgoing control's late audio or stop never reaches its replacement's session.
+ */
+let recognizerQueue: Promise<unknown> = Promise.resolve()
+let recognizerOwner: object | undefined
+
+/**
  * Microphone capture for one mounted voice control. Audio goes to the core's offline recognizer
  * (`voiceStart`/`voiceAccept`), which runs Vosk in its own process; the recognizer is reused
  * between turns/questions and released on dispose.
@@ -107,17 +115,30 @@ export class VoiceCapture {
   private starting?: Promise<void>
   private grammar: readonly string[] = []
   private disposed = false
-  /** Core calls run one at a time, so audio reaches the recognizer in order. */
-  private queue: Promise<unknown> = Promise.resolve()
+  /** This control's claim on the shared recognizer. */
+  private readonly owner = {}
 
   constructor(private callbacks: Callbacks) {}
 
+  /** Queues a `voiceStart`, which makes this control the recognizer's owner. */
+  private claim(work: () => Promise<void>): Promise<void> {
+    return this.enqueue(() => {
+      recognizerOwner = this.owner
+      return work()
+    })
+  }
+
+  /** Queues a call on this control's session; once another control owns it, `skipped` instead. */
+  private owned<T>(work: () => Promise<T>, skipped: T): Promise<T> {
+    return this.enqueue(() => (recognizerOwner === this.owner ? work() : Promise.resolve(skipped)))
+  }
+
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work, work)
+    const next = recognizerQueue.then(work, work)
     // The queue only orders calls: each caller handles (and logs) its own call's failure on
     // `next`, so the chain itself just waits for it to settle either way.
     const settled = () => undefined
-    this.queue = next.then(settled, settled)
+    recognizerQueue = next.then(settled, settled)
     return next
   }
 
@@ -149,7 +170,7 @@ export class VoiceCapture {
     if (!this.grammar.length) return
     const grammar = [...this.grammar]
     try {
-      await this.enqueue(() => window.kchess.voiceStart(grammar, sampleRate))
+      await this.claim(() => window.kchess.voiceStart(grammar, sampleRate))
     } catch (cause) {
       throw new VoiceError(
         cause instanceof Error && cause.message
@@ -298,7 +319,7 @@ export class VoiceCapture {
     if (this.grammar.length) {
       const grammar = [...this.grammar]
       const sampleRate = this.context.sampleRate
-      void this.enqueue(() => window.kchess.voiceStart(grammar, sampleRate)).catch(
+      void this.claim(() => window.kchess.voiceStart(grammar, sampleRate)).catch(
         (error: unknown) => {
           console.warn('[voice-capture] starting speech recognition failed:', error)
           this.recognitionFailed(epoch, error)
@@ -311,7 +332,7 @@ export class VoiceCapture {
 
   /** Queues one recognizer call; its answer counts only while its epoch is current. */
   private recognize(epoch: number, call: () => Promise<VoiceHeard>): void {
-    this.enqueue(call)
+    this.owned<VoiceHeard>(call, {})
       .then((heard) => {
         if (epoch !== this.epoch || !this.active) return
         if (heard.result) this.heard(epoch, heard.result)
@@ -393,7 +414,10 @@ export class VoiceCapture {
     this.active = false
     this.pause()
     if (this.ready)
-      void this.enqueue(() => window.kchess.voiceStop()).catch((error: unknown) => {
+      void this.owned(async () => {
+        recognizerOwner = undefined
+        await window.kchess.voiceStop()
+      }, undefined).catch((error: unknown) => {
         console.warn('[voice-capture] releasing the recognizer failed:', error)
       })
     this.ready = false

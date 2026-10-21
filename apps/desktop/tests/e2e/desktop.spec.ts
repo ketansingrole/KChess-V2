@@ -2764,3 +2764,75 @@ for (const action of ['quit', 'close'] as const) {
     }
   })
 }
+
+// View → Reload used Electron's built-in role, which replaced the renderer without the save
+// acknowledgement that quitting waits for, so a failed write's retained edits were lost.
+test('retains failed study edits on reload and saves them when Retry succeeds @packaged', async ({
+  desktop: { app, page, profile },
+}) => {
+  await navigate(page, 'Analysis board')
+  const input = page.getByRole('textbox', { name: 'Enter a chess move in SAN or UCI' })
+  await input.fill('e4')
+  await input.press('Enter')
+  await page.getByRole('button', { name: 'Save as study', exact: true }).click()
+  await page.getByLabel('Study name', { exact: true }).fill('Reload regression')
+  await page.getByRole('button', { name: 'Save study', exact: true }).click()
+  await expect(page.getByText('Study saved', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Add a comment' }).click()
+  const comment = page.getByLabel('Comment on 1. e4', { exact: true })
+  await expect(comment).toBeVisible()
+  const now = Date.now()
+  await page.clock.install({ time: now })
+  await page.clock.pauseAt(now + 1000)
+  const database = new DatabaseSync(join(profile, 'kchess.db'))
+  database.exec(
+    "CREATE TRIGGER reject_study_save BEFORE INSERT ON studies BEGIN SELECT RAISE(ABORT, 'Disk unavailable'); END;",
+  )
+  type DialogProbe = typeof globalThis & { reloadDialogs?: string[]; retryReload?: () => void }
+  try {
+    await app.evaluate(({ dialog }) => {
+      const probe = globalThis as DialogProbe
+      probe.reloadDialogs = []
+      dialog.showMessageBox = (async (...args: unknown[]) => {
+        const options = args.at(-1) as { buttons: string[] }
+        probe.reloadDialogs!.push(options.buttons[1]!)
+        // Buttons are Retry, Reload without saving, Cancel: cancel first, then retry.
+        if (probe.reloadDialogs!.length === 1) return { response: 2, checkboxChecked: false }
+        await new Promise<void>((resolve) => {
+          probe.retryReload = resolve
+        })
+        return { response: 0, checkboxChecked: false }
+      }) as typeof dialog.showMessageBox
+    })
+    await comment.evaluate((field) => {
+      const textarea = field as HTMLTextAreaElement
+      textarea.value = 'Preserve this edit across reload'
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const reload = () =>
+      app.evaluate(({ Menu }) => {
+        const view = Menu.getApplicationMenu()!.items.find((item) => item.label === 'View')!
+        setImmediate(() => view.submenu!.items.find((item) => item.label === 'Reload')!.click())
+      })
+    await reload()
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as DialogProbe).reloadDialogs))
+      .toEqual(['Reload without saving'])
+    // Cancel kept the renderer and its unsaved tree.
+    await expect(comment).toHaveValue('Preserve this edit across reload')
+    await reload()
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as DialogProbe).reloadDialogs!.length))
+      .toBe(2)
+    database.exec('DROP TRIGGER reject_study_save')
+    const reloaded = page.waitForEvent('load')
+    await app.evaluate(() => (globalThis as DialogProbe).retryReload!())
+    await reloaded
+    const row = database.prepare('SELECT body FROM studies').get() as { body: string }
+    expect(JSON.parse(row.body).chapters[0].pgn).toContain('Preserve this edit across reload')
+  } finally {
+    database.exec('DROP TRIGGER IF EXISTS reject_study_save')
+    database.close()
+    await app.evaluate(() => (globalThis as DialogProbe).retryReload?.())
+  }
+})

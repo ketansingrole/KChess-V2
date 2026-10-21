@@ -42,6 +42,8 @@ export interface DesktopApi extends CoreApi {
   /** Flush pending frontend writes before the shell closes the core. */
   onPrepareQuit(callback: (token: string) => void): () => void
   completeQuit(token: string, saved?: boolean): Promise<void>
+  /** Reload the window once its pending writes are saved; false when the user kept it open. */
+  reloadWindow(): Promise<boolean>
   reportRendererError(report: RendererErrorReport): Promise<void>
   recordPerformance(name: PerformanceName, milliseconds: number): Promise<void>
   /**

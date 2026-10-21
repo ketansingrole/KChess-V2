@@ -203,6 +203,7 @@ export const IPC_ARITY = {
   "recordPerformance": [2, 2],
   "recordPuzzleAttempt": [1, 1],
   "recordRepertoireMiss": [2, 2],
+  "reloadWindow": [0, 0],
   "removeAccount": [1, 1],
   "removeArchivedGame": [1, 1],
   "reportRendererError": [1, 1],

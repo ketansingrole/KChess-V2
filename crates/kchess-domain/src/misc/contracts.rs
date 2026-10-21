@@ -373,6 +373,7 @@ const DESKTOP: &[Row] = &[
     ("ensureVoiceModel", 0, &[]),
     ("voiceModelStatus", 0, &[]),
     ("openMicrophoneSettings", 0, &[]),
+    ("reloadWindow", 0, &[]),
     ("exportVoiceHistory", 0, &[]),
     ("saveSettings", 1, &[Valid("assertSettings")]),
 ];

@@ -35,6 +35,7 @@ function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): Ip
 
 const api: DesktopApi = {
   completeQuit: (token, saved) => invoke('completeQuit', token, saved),
+  reloadWindow: () => invoke('reloadWindow'),
   onPrepareQuit(callback) {
     const listener = (_event: unknown, token: string): void => callback(token)
     ipcRenderer.on(IPC_EVENTS.prepareQuit, listener)

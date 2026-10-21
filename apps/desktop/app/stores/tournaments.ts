@@ -44,6 +44,17 @@ export const useTournamentStore = defineStore('tournaments', () => {
   const joined = computed(() => stored.value.filter((entry) => entry.until > clock.value))
   /** A tournament is under way for an account: pairings must be able to arrive. */
   const active = computed(() => joined.value.length > 0)
+  const sameAccount = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+  /**
+   * The account taking part in a tournament, whose event stream must stay open until it ends:
+   * the selected account if it is in one, otherwise the one that joined last. Selecting another
+   * account must not drop the pairings of the one still playing.
+   */
+  const participant = computed(() => {
+    const account = app.activeOnlineAccount
+    if (account && joined.value.some((entry) => sameAccount(entry.account, account))) return account
+    return joined.value.at(-1)?.account ?? ''
+  })
 
   async function refresh(): Promise<void> {
     loading.value = true
@@ -76,7 +87,8 @@ export const useTournamentStore = defineStore('tournaments', () => {
       if (request !== detailRequest) return
       detail.value = next
       // The core forgets an arena that is over or that you left.
-      if (isJoined(system, id)) await reloadJoined()
+      if (joined.value.some((entry) => entry.system === system && entry.id === id))
+        await reloadJoined()
     } catch (cause) {
       if (request === detailRequest) {
         console.warn('[tournaments] loading tournament failed:', cause)
@@ -107,8 +119,15 @@ export const useTournamentStore = defineStore('tournaments', () => {
       list.value?.swiss.find((entry) => entry.id === id)?.system
     return known ?? 'arena'
   }
-  function isJoined(system: TournamentSystem, id: string): boolean {
-    return joined.value.some((entry) => entry.system === system && entry.id === id)
+  /** Whether `account` (the selected account by default) is in this tournament. */
+  function isJoined(
+    system: TournamentSystem,
+    id: string,
+    account = app.activeOnlineAccount,
+  ): boolean {
+    return joined.value.some(
+      (entry) => entry.system === system && entry.id === id && sameAccount(entry.account, account),
+    )
   }
   async function join(summary: TournamentSummary, password?: string): Promise<boolean> {
     needsReconnect.value = false
@@ -170,6 +189,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
     needsReconnect,
     joined,
     active,
+    participant,
     refresh,
     open,
     close,

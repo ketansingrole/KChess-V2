@@ -110,7 +110,8 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             now_arg(args, 1).and_then(|now| remember_tournament(host, db, &entry, now))
         }
         "store.library.forgetTournament" => str_arg(args, 0, "system").and_then(|system| {
-            str_arg(args, 1, "id").and_then(|id| forget_tournament(host, db, system, id))
+            str_arg(args, 1, "id")
+                .and_then(|id| forget_tournament(host, db, system, id, opt_str(args, 2)))
         }),
         "store.library.forgetTournamentsOf" => forget_tournaments_of(host, db, args.first()),
         "store.library.recordRepertoireMiss" => str_arg(args, 0, "key").and_then(|key| {
@@ -458,12 +459,25 @@ fn joined_tournaments(host: &dyn Host, db: &Connection, now: f64) -> Result<Valu
     ))
 }
 
+/// A membership's account, compared without case.
+fn joined_account(entry: &Value) -> String {
+    entry
+        .get("account")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+/// Memberships belong to an account: the same event joined by another account is another entry.
 fn remember_tournament(host: &dyn Host, db: &Connection, entry: &Value, now: f64) -> Result<Value> {
+    let account = joined_account(entry);
     let mut entries: Vec<Value> = read_joined(host, db)?
         .into_iter()
         .filter(|e| {
             until_after(e, now)
-                && !(e.get("system") == entry.get("system") && e.get("id") == entry.get("id"))
+                && !(e.get("system") == entry.get("system")
+                    && e.get("id") == entry.get("id")
+                    && joined_account(e) == account)
         })
         .collect();
     entries.push(entry.clone());
@@ -471,12 +485,23 @@ fn remember_tournament(host: &dyn Host, db: &Connection, entry: &Value, now: f64
     Ok(Value::Null)
 }
 
-fn forget_tournament(host: &dyn Host, db: &Connection, system: &str, id: &str) -> Result<Value> {
+/// Forgets one account's membership, or every account's when `account` is `None` (the event ended).
+fn forget_tournament(
+    host: &dyn Host,
+    db: &Connection,
+    system: &str,
+    id: &str,
+    account: Option<&str>,
+) -> Result<Value> {
+    let account = account.map(str::to_lowercase);
     let kept: Vec<Value> = read_joined(host, db)?
         .into_iter()
         .filter(|e| {
             !(e.get("system").and_then(Value::as_str) == Some(system)
-                && e.get("id").and_then(Value::as_str) == Some(id))
+                && e.get("id").and_then(Value::as_str) == Some(id)
+                && account
+                    .as_ref()
+                    .is_none_or(|name| joined_account(e) == *name))
         })
         .collect();
     write_joined(db, kept)?;
@@ -656,6 +681,66 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ids(joined(&ctx)), ["other"]);
+    }
+
+    // Viewing an arena as Bob (not in it) forgot Alice's membership, and Bob joining the same
+    // event replaced hers: memberships were keyed without the account.
+    #[test]
+    fn tournament_memberships_belong_to_their_account() {
+        let db = Connection::open_in_memory().expect("database");
+        super::super::migrations::migrate(&db).expect("migrate");
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = crate::store::StoreContext {
+            db: &db,
+            host: &Quiet,
+            config: &config,
+            cache: &cache,
+        };
+        let now = 1_700_000_000_000.0;
+        let call = |method: &str, args: &[Value]| crate::store::call(&ctx, method, args).unwrap();
+        let entry = |account: &str| json!({ "system": "arena", "id": "live", "account": account, "name": "Live", "until": now + 60_000.0 });
+        let accounts = || -> Vec<String> {
+            call("store.library.joinedTournaments", &[json!(now)])
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["account"].as_str().unwrap().to_string())
+                .collect()
+        };
+        call(
+            "store.library.rememberTournament",
+            &[entry("Alice"), json!(now)],
+        );
+        call(
+            "store.library.rememberTournament",
+            &[entry("Bob"), json!(now)],
+        );
+        call(
+            "store.library.rememberTournament",
+            &[entry("bob"), json!(now)],
+        );
+        assert_eq!(accounts(), ["Alice", "bob"]);
+        call(
+            "store.library.forgetTournament",
+            &[json!("arena"), json!("live"), json!("BOB")],
+        );
+        assert_eq!(accounts(), ["Alice"]);
+        call(
+            "store.library.forgetTournament",
+            &[json!("arena"), json!("live"), json!("Carol")],
+        );
+        assert_eq!(accounts(), ["Alice"]);
+        call(
+            "store.library.rememberTournament",
+            &[entry("Bob"), json!(now)],
+        );
+        // The event ending forgets every account's place.
+        call(
+            "store.library.forgetTournament",
+            &[json!("arena"), json!("live")],
+        );
+        assert!(accounts().is_empty());
     }
 
     fn study_db() -> Connection {

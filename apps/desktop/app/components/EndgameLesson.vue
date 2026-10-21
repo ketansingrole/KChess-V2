@@ -249,7 +249,6 @@ watch(
 )
 watch(chapterId, () => (saved = ''))
 onBeforeUnmount(() => {
-  cancel()
   clearReply()
 })
 </script>

@@ -140,3 +140,17 @@ it('retries the flush when the user asks after a failed flush', async () => {
   f.preparation.complete(f.tokens[1]!, true)
   await expect(ready).resolves.toBe(true)
 })
+
+// View → Reload and sign-out replaced the renderer without this save acknowledgement, so a
+// failed write's retained changes were lost. Reload asks the same retry question.
+it('asks before reloading over changes that could not be saved', async () => {
+  const f = fixture()
+  f.retry.mockResolvedValueOnce('retry').mockResolvedValueOnce('cancel')
+  const ready = f.preparation.prepare('reload')
+  f.preparation.complete(f.tokens[0]!, false)
+  await flushPromises()
+  f.preparation.complete(f.tokens[1]!, false)
+  expect(await ready).toBe(false)
+  expect(f.retry).toHaveBeenNthCalledWith(1, 'reload')
+  expect(f.retry).toHaveBeenNthCalledWith(2, 'reload')
+})

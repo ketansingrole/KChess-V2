@@ -66,7 +66,9 @@ beforeEach(() => {
   vi.stubGlobal('AudioContext', FakeContext)
   vi.stubGlobal('AudioWorkletNode', FakeNode)
   core = fakeRecognizer()
+  // Keep the setup's library API, which the app facade saves through on teardown.
   window.kchess = {
+    ...window.kchess,
     ensureVoiceModel: vi.fn(async () => {}),
     onVoiceModelProgress: vi.fn(() => vi.fn()),
     ...core,
@@ -174,6 +176,33 @@ describe('voice capture lifecycle', () => {
       expect.objectContaining({ text: 'e four', confidence: 0.95 }),
     )
     capture.dispose()
+  })
+
+  // Each control had its own queue to the one shared recognizer: a replaced control's stop,
+  // queued behind its pending audio, killed the replacement's session.
+  it('never lets a replaced control stop its replacement’s recognizer', async () => {
+    const old = setupCapture()
+    await old.capture.prepare(['e four'])
+    old.capture.update(true, ['e four'], false)
+    const oldNode = FakeNode.nodes.at(-1)!
+    const pending = deferred<VoiceHeard>()
+    core.heard.push(pending.promise)
+    oldNode.port.onmessage!({ data: { epoch: epochOf(oldNode), audio: new Float32Array(8) } })
+
+    // The replacement prepares (its start waits behind the old audio), then the old one goes.
+    const replacement = setupCapture()
+    const ready = replacement.capture.prepare(['d four'])
+    await settle()
+    old.capture.dispose()
+    pending.resolve({ partial: '' })
+    await ready
+    await settle()
+    expect(core.voiceStart.mock.lastCall![0]).toEqual(['d four'])
+    expect(core.voiceStop).not.toHaveBeenCalled()
+
+    replacement.capture.dispose()
+    await settle()
+    expect(core.voiceStop).toHaveBeenCalledTimes(1)
   })
 
   it('closes the mic between turns, reuses the recognizer, and releases it on disable', async () => {
