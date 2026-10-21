@@ -204,6 +204,7 @@ export const IPC_CHANNELS = {
   saveArchivedGame: 'library:game-save',
   removeArchivedGame: 'library:game-remove',
   addMistakes: 'library:mistakes-add',
+  mistakeGames: 'library:mistake-games',
   answerMistake: 'library:mistake-answer',
   saveSession: 'library:session-save',
   joinedTournaments: 'library:tournaments-joined',

@@ -130,12 +130,13 @@ onUnmounted(() => {
   background: var(--ui-bg);
   overflow: hidden;
 }
+/* A fixed row height and score width, so arriving lines and placeholders never move the layout. */
 .pv-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 5px 8px;
+  height: 34px;
+  padding: 0 8px;
   font-size: 12.5px;
 }
 .pv-row + .pv-row {
@@ -143,7 +144,7 @@ onUnmounted(() => {
 }
 .pv-eval {
   flex: none;
-  min-width: 3.4em;
+  width: 4.4em;
   padding: 1px 6px;
   border: 0;
   border-radius: 6px;

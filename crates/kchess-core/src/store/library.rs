@@ -8,7 +8,7 @@
 //! writers, and re-exports so every `crate::store::library::X` path keeps working.
 
 use getrandom::fill;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -92,6 +92,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             let solved = truthy(args.get(1));
             now_arg(args, 2).and_then(|now| answer_mistake(db, id, solved, now))
         }),
+        "store.library.mistakeGames" => mistake_games(host, db),
         "store.library.saveSession" => str_arg(args, 0, "kind").and_then(|kind| {
             let value = args.get(1).cloned().unwrap_or(Value::Null);
             let encoded = misc("encodeSession", vec![json!(kind), value])?;
@@ -399,6 +400,121 @@ fn add_mistakes(
         write_mistakes(db, items.clone())?;
     }
     Ok(json!({ "added": added, "items": items }))
+}
+
+/// The review key of a line: that of its legal moves from its normalized start, as a review of
+/// it is stored. None when no move replays.
+fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
+    let positions = kchess_domain::replay::replay_positions(fen, moves);
+    let start = positions.first()?;
+    if positions.len() < 2 {
+        return None;
+    }
+    let args = json!([start.fen, moves[..positions.len() - 1]]).to_string();
+    let key: Value =
+        serde_json::from_str(&kchess_domain::api::call("reviewKey", &args).ok()?).ok()?;
+    key.as_str().map(str::to_string)
+}
+
+/// `mistakeGames()`: each review with positions in practice, most recently played first, with
+/// its game when that is known: a synced Lichess game through its review link, or a game played
+/// here whose line it reviews (your side there is the one named "You").
+fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
+    let mut keys: Vec<String> = Vec::new();
+    for item in read_mistakes(db)? {
+        let Some((key, _)) = id_of(&item).and_then(|id| id.rsplit_once(':')) else {
+            continue;
+        };
+        if !keys.iter().any(|known| known == key) {
+            keys.push(key.to_string());
+        }
+    }
+    if keys.is_empty() {
+        return Ok(json!([]));
+    }
+    let mut played = Map::new();
+    for game in super::library_import::read_games(host, db)? {
+        let fen = game
+            .pointer("/setup/fen")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if let Some(key) = line_review_key(fen, &string_list(game.get("moves"))) {
+            played.entry(key).or_insert(game);
+        }
+    }
+    let mut lichess = db
+        .prepare(
+            "SELECT g.id, g.account, g.color, g.opponent, g.createdAt
+             FROM game_reviews gr JOIN games g ON g.id = gr.gameId
+             WHERE gr.reviewKey = ?1 ORDER BY g.createdAt DESC LIMIT 1",
+        )
+        .map_err(db_err)?;
+    let mut games = Vec::new();
+    for key in keys {
+        let Some(review) = super::reviews::read_review(host, db, &key)? else {
+            continue;
+        };
+        let mut entry = Map::new();
+        entry.insert("key".into(), json!(key));
+        entry.insert(
+            "fen".into(),
+            review.get("fen").cloned().unwrap_or(json!("")),
+        );
+        entry.insert("moves".into(), json!(string_list(review.get("moves"))));
+        let mut at = js::to_number(review.get("updatedAt"));
+        let synced = lichess
+            .query_row(params![key], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .optional()
+            .map_err(db_err)?;
+        if let Some((id, account, color, opponent, created)) = synced {
+            let (white, black) = if color == "white" {
+                (&account, &opponent)
+            } else {
+                (&opponent, &account)
+            };
+            entry.insert("white".into(), json!(white));
+            entry.insert("black".into(), json!(black));
+            entry.insert("player".into(), json!(color));
+            entry.insert("gameId".into(), json!(id));
+            entry.insert("account".into(), json!(account));
+            #[allow(clippy::cast_precision_loss)]
+            {
+                at = created as f64;
+            }
+        } else if let Some(game) = played.get(&key) {
+            let white = game
+                .get("white")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let black = game
+                .get("black")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            entry.insert("white".into(), json!(white));
+            entry.insert("black".into(), json!(black));
+            if (white == "You") != (black == "You") {
+                entry.insert(
+                    "player".into(),
+                    json!(if white == "You" { "white" } else { "black" }),
+                );
+            }
+            at = js::to_number(game.get("startedAt"));
+        }
+        entry.insert("playedAt".into(), num(at));
+        games.push((at, Value::Object(entry)));
+    }
+    games.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Ok(Value::Array(
+        games.into_iter().map(|(_, game)| game).collect(),
+    ))
 }
 
 /// `answerMistake(id, solved, now)`: schedule a drill again.

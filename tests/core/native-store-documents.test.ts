@@ -1125,6 +1125,64 @@ describe('mistake drills', () => {
     }
   })
 
+  it('names the games behind drills: a synced Lichess game first, then one played here', async () => {
+    const s = await open()
+    try {
+      const games = async () =>
+        value<Record<string, unknown>[]>(await s.run('store.library.mistakeGames', []))
+      expect(await games()).toEqual([])
+      // Keyed by its own line, as the core keys every review it stores.
+      const base = mistakeReview()
+      const drilled = { ...base, key: reviewKey(base.fen, base.moves) }
+      value(await s.run('store.reviewStore.writeReview', [drilled]))
+      value(await s.run('store.library.addMistakes', [drilled.key, undefined, NOW]))
+      // Neither kind of game: the line alone, dated when it was reviewed.
+      expect(await games()).toEqual([
+        { key: drilled.key, fen: drilled.fen, moves: drilled.moves, playedAt: expect.any(Number) },
+      ])
+      // The same line played here against the computer: you are the side named "You".
+      value(
+        await s.run('store.library.saveArchivedGame', [
+          game('g1', drilled.moves, {
+            source: 'computer',
+            white: 'You',
+            black: 'Stockfish',
+            startedAt: 42,
+          }),
+        ]),
+      )
+      expect(await games()).toEqual([
+        {
+          key: drilled.key,
+          fen: drilled.fen,
+          moves: drilled.moves,
+          playedAt: 42,
+          white: 'You',
+          black: 'Stockfish',
+          player: 'white',
+        },
+      ])
+      // Synced from Lichess and linked to its review: the account's side and the game's date.
+      seedGame(s, 'Game0001', 'Alice', { color: 'black', opponent: 'Bob', createdAt: 5000 })
+      value(await s.run('store.reviewStore.writeReview', [{ ...drilled, gameId: 'Game0001' }]))
+      expect(await games()).toEqual([
+        {
+          key: drilled.key,
+          fen: drilled.fen,
+          moves: drilled.moves,
+          playedAt: 5000,
+          white: 'Bob',
+          black: 'Alice',
+          player: 'black',
+          gameId: 'Game0001',
+          account: 'Alice',
+        },
+      ])
+    } finally {
+      await s.close()
+    }
+  })
+
   it('reads at most 500 drills and keeps the newest 500 when adding', async () => {
     const s = await open()
     try {
@@ -1635,6 +1693,7 @@ it('names every method the Rust modules export once', () => {
     'store.library.removeArchivedGame',
     'store.library.addMistakes',
     'store.library.answerMistake',
+    'store.library.mistakeGames',
     'store.library.saveSession',
     'store.library.joinedTournaments',
     'store.library.rememberTournament',

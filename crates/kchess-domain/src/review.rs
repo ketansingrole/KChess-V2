@@ -4,8 +4,10 @@
 //! Results must be bit-for-bit what V8 computes, so `exp` is fdlibm's (which V8 uses for
 //! `Math.exp`) and rounding and ±0 follow JavaScript's `Math.round`, `Math.max` and `Math.min`.
 
+use std::ops::Range;
+
 use serde_json::{Map, Value, json};
-use shakmaty::Position;
+use shakmaty::{Bitboard, Color, Position, Rank};
 
 use crate::replay;
 use crate::rules;
@@ -395,6 +397,11 @@ struct Analysis {
     moves: Vec<Value>,
     sides: [Value; 2],
     start_chances: Option<f64>,
+    /// Per move: whether White played it, and its accuracy.
+    colors: Vec<bool>,
+    accuracies: Vec<Option<f64>>,
+    /// Per move, its weight in an accuracy figure; None unless every position has a score.
+    weights: Option<Vec<f64>>,
 }
 
 /// `analyseReview`, or None when the input needs the TypeScript rules (see `Review::read`).
@@ -479,7 +486,10 @@ fn analyse(review: &Review) -> Option<Analysis> {
         judgments.push(judgment);
         moves.push(Value::Object(entry));
     }
-    let computed = game_accuracy(&colors, &accuracies, count, &percent);
+    let weights = volatility_weights(count, &percent);
+    let computed = weights.as_deref().map_or([None, None], |weights| {
+        weighted_accuracy(&colors, &accuracies, weights, 0..count)
+    });
     // One pass counts each label for both sides; the previous shape scanned every move once per
     // label and side (six passes over the game).
     let mut label_counts = [[0usize; 3]; 2];
@@ -516,24 +526,21 @@ fn analyse(review: &Review) -> Option<Analysis> {
         moves,
         sides: [side(true), side(false)],
         start_chances: eval_at(0).map(|s| win_chances(s, white_at(0))),
+        colors,
+        accuracies,
+        weights,
     })
 }
 
-fn game_accuracy(
-    colors: &[bool],
-    accuracies: &[Option<f64>],
-    count: usize,
-    percent: &dyn Fn(usize) -> Option<f64>,
-) -> [Option<f64>; 2] {
+/// Each move's weight in an accuracy figure: how much the winning chances swing around it.
+/// None unless every position has a score.
+fn volatility_weights(count: usize, percent: &dyn Fn(usize) -> Option<f64>) -> Option<Vec<f64>> {
     let mut wins = Vec::with_capacity(count + 1);
     for i in 0..=count {
-        match percent(i) {
-            Some(value) => wins.push(value),
-            None => return [None, None],
-        }
+        wins.push(percent(i)?);
     }
     if wins.len() < 2 {
-        return [None, None];
+        return None;
     }
     let size = 2.max(8.min(wins.len() / 10));
     let mut weights = Vec::new();
@@ -544,10 +551,21 @@ fn game_accuracy(
     for i in 0..=(wins.len() - size) {
         weights.push(window_weight(&wins[i..i + size]));
     }
+    Some(weights)
+}
+
+/// Both sides' accuracy over the moves in `range`: the mean of the weighted and the harmonic
+/// mean of their move accuracies.
+fn weighted_accuracy(
+    colors: &[bool],
+    accuracies: &[Option<f64>],
+    weights: &[f64],
+    range: Range<usize>,
+) -> [Option<f64>; 2] {
     let mut result = [None, None];
     for (index, white) in [true, false].into_iter().enumerate() {
         let mut scored: Vec<(f64, f64)> = Vec::new();
-        for i in 0..count {
+        for i in range.clone() {
             if colors[i] != white {
                 continue;
             }
@@ -579,6 +597,187 @@ pub fn analyse_review(raw: &Value) -> Option<Value> {
         out.insert("startChances".into(), json!(chances));
     }
     Some(Value::Object(out))
+}
+
+/// `reviewPhases`: each side's accuracy in the opening, middlegame and endgame, worked out like
+/// the game's. The division is a simpler form of Lichess's: the middlegame begins once at most 10
+/// queens, rooks, bishops and knights remain or either side has fewer than 4 pieces left on its
+/// back rank, and the endgame once at most 6 remain. None when the review cannot be analysed.
+pub fn review_phases(raw: &Value) -> Option<Value> {
+    let review = Review::read(raw)?;
+    let analysis = analyse(&review)?;
+    let count = analysis.colors.len();
+    let mut pos = rules::standard_from_fen(review.fen)?;
+    let (mut middle, mut end) = (count, count);
+    for i in 0..=count {
+        let board = pos.board();
+        let pieces = (board.occupied() & !board.kings() & !board.pawns()).count();
+        let sparse = |color: Color, rank: Rank| {
+            (board.by_color(color) & Bitboard::from_rank(rank)).count() < 4
+        };
+        if middle == count
+            && (pieces <= 10
+                || sparse(Color::White, Rank::First)
+                || sparse(Color::Black, Rank::Eighth))
+        {
+            middle = i;
+        }
+        if pieces <= 6 {
+            end = i;
+            break;
+        }
+        if i == count {
+            break;
+        }
+        let m = rules::parse_uci(review.moves[i]).and_then(|u| rules::legal_move(&pos, u))?;
+        pos.play_unchecked(m);
+    }
+    let mut sides = [Map::new(), Map::new()];
+    if let Some(weights) = analysis.weights.as_deref() {
+        let phases = [
+            ("opening", 0..middle),
+            ("middlegame", middle..end),
+            ("endgame", end..count),
+        ];
+        for (name, range) in phases {
+            let figures = weighted_accuracy(&analysis.colors, &analysis.accuracies, weights, range);
+            for (side, figure) in sides.iter_mut().zip(figures) {
+                if let Some(figure) = figure {
+                    side.insert(name.into(), json!(js_round(figure)));
+                }
+            }
+        }
+    }
+    let [white, black] = sides;
+    Some(json!({ "white": white, "black": black }))
+}
+
+/// Display classifications enrich review labels without changing Lichess judgments or practice.
+pub fn review_classifications(raw: &Value) -> Option<Value> {
+    let review = Review::read(raw)?;
+    let analysis = analyse(&review)?;
+    let mut pos = rules::standard_from_fen(review.fen)?;
+    let evals = raw.get("evals")?.as_array()?;
+    let mut labels = Vec::with_capacity(analysis.moves.len());
+    for (i, entry) in analysis.moves.iter().enumerate() {
+        let text = review.moves[i];
+        let m = rules::parse_uci(text).and_then(|u| rules::legal_move(&pos, u))?;
+        let before = evals.get(i).filter(|v| v.is_object());
+        let after = evals.get(i + 1).filter(|v| v.is_object());
+        let label = if let Some(label) = entry.get("judgment").and_then(Value::as_str) {
+            Some(label)
+        } else if before.is_some() && after.is_some() {
+            let white = pos.turn() == shakmaty::Color::White;
+            let scores = review
+                .evals
+                .get(i)
+                .copied()
+                .flatten()
+                .zip(review.evals.get(i + 1).copied().flatten());
+            scores.and_then(|(b, a)| {
+                let loss = 50.0 * pov(white, win_chances(b, white) - win_chances(a, !white));
+                let best = before.and_then(|v| v.get("best")).and_then(Value::as_str);
+                if loss <= 2.0 && best == Some(text) {
+                    Some(if sound_sacrifice(&pos, m, before, after) {
+                        "brilliant"
+                    } else {
+                        "best"
+                    })
+                } else if loss <= 2.0 {
+                    Some("excellent")
+                } else if loss < 5.0 {
+                    Some("good")
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        labels.push(label.map_or(Value::Null, |v| Value::String(v.into())));
+        pos.play_unchecked(m);
+    }
+    Some(Value::Array(labels))
+}
+
+/// A deliberately conservative brilliant: a non-forced best move whose deep engine line
+/// accepts a piece sacrifice, retaining at least equality without an already won position.
+/// Require the reply AND our next move so ordinary defended-piece exchanges do not qualify.
+fn sound_sacrifice(
+    pos: &shakmaty::variant::VariantPosition,
+    m: shakmaty::Move,
+    before: Option<&Value>,
+    after: Option<&Value>,
+) -> bool {
+    use shakmaty::{Color, Role};
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    if before.get("depth").and_then(Value::as_u64).unwrap_or(0) < 18
+        || after.get("depth").and_then(Value::as_u64).unwrap_or(0) < 18
+        || pos.legal_moves().len() < 2
+        || matches!(m.role(), Role::Pawn | Role::King)
+    {
+        return false;
+    }
+    let white = pos.turn() == Color::White;
+    let Some(b) = before.get("cp").and_then(Value::as_f64) else {
+        return false;
+    };
+    let viable = after
+        .get("cp")
+        .and_then(Value::as_f64)
+        .is_some_and(|v| pov(white, v) >= -50.0)
+        || after
+            .get("mate")
+            .and_then(Value::as_f64)
+            .is_some_and(|v| pov(white, v) > 0.0);
+    if !(-100.0..=200.0).contains(&pov(white, b)) || !viable {
+        return false;
+    }
+    let Some(pv) = after
+        .get("pv")
+        .and_then(Value::as_array)
+        .filter(|v| v.len() >= 2)
+    else {
+        return false;
+    };
+    let material = |p: &shakmaty::variant::VariantPosition| -> i32 {
+        p.board()
+            .iter()
+            .map(|(_, piece)| {
+                let value = match piece.role {
+                    Role::Pawn => 1,
+                    Role::Knight | Role::Bishop => 3,
+                    Role::Rook => 5,
+                    Role::Queen => 9,
+                    Role::King => 0,
+                };
+                if piece.color == pos.turn() {
+                    value
+                } else {
+                    -value
+                }
+            })
+            .sum()
+    };
+    let baseline = material(pos);
+    let mut line = pos.clone();
+    line.play_unchecked(m);
+    for (j, text) in pv.iter().take(2).enumerate() {
+        let Some(reply) = text
+            .as_str()
+            .and_then(rules::parse_uci)
+            .and_then(|u| rules::legal_move(&line, u))
+        else {
+            return false;
+        };
+        if j == 0 && (reply.to() != m.to() || reply.capture().is_none()) {
+            return false;
+        }
+        line.play_unchecked(reply);
+    }
+    material(&line) <= baseline - 2
 }
 
 /// `summarize`: what the game list shows for a review.
@@ -656,6 +855,66 @@ pub fn lichess_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sacrifice_review() -> Value {
+        json!({
+            "fen": "rnbq1rk1/ppp1bppp/4pn2/3pP3/3P4/3B1N2/PPP2PPP/RNBQ1RK1 w - - 0 1",
+            "moves": ["d3h7"], "source": "local",
+            "evals": [{"cp": 20, "best": "d3h7", "depth": 18},
+                {"cp": 20, "depth": 18, "pv": ["g8h7", "f3g5"]}]
+        })
+    }
+
+    #[test]
+    fn brilliant_requires_a_deep_sound_accepted_sacrifice() {
+        let raw = sacrifice_review();
+        assert_eq!(review_classifications(&raw), Some(json!(["brilliant"])));
+        let mut shallow = raw.clone();
+        shallow["evals"][1]["depth"] = json!(10);
+        assert_eq!(review_classifications(&shallow), Some(json!(["best"])));
+        let mut winning = raw.clone();
+        winning["evals"][0]["cp"] = json!(500);
+        winning["evals"][1]["cp"] = json!(500);
+        assert_eq!(review_classifications(&winning), Some(json!(["best"])));
+        let mut incomplete = raw.clone();
+        incomplete["evals"][1]["pv"] = json!(["g8h7"]);
+        assert_eq!(review_classifications(&incomplete), Some(json!(["best"])));
+        let mut illegal = raw.clone();
+        illegal["evals"][1]["pv"] = json!(["a8h7", "f3g5"]);
+        assert_eq!(review_classifications(&illegal), Some(json!(["best"])));
+        let mut unsound = raw.clone();
+        unsound["evals"][1]["cp"] = json!(-400);
+        assert_eq!(review_classifications(&unsound), Some(json!(["blunder"])));
+        let mut missing = raw;
+        missing["evals"][1] = Value::Null;
+        assert_eq!(review_classifications(&missing), Some(json!([null])));
+    }
+
+    #[test]
+    fn brilliant_uses_the_movers_perspective_for_black_too() {
+        let raw = json!({
+            "fen": "rnbq1rk1/ppp2ppp/3b1n2/3p4/3Pp3/4PN2/PPP1BPPP/RNBQ1RK1 b - - 0 1",
+            "moves": ["d6h2"], "source": "local",
+            "evals": [{"cp": -20, "best": "d6h2", "depth": 18},
+                {"cp": -20, "depth": 18, "pv": ["g1h2", "f6g4"]}]
+        });
+        assert_eq!(review_classifications(&raw), Some(json!(["brilliant"])));
+    }
+
+    #[test]
+    fn classifications_preserve_lichess_errors_and_exclude_ordinary_trades() {
+        let mut raw = sacrifice_review();
+        raw["source"] = json!("lichess");
+        raw["judgments"] = json!(["mistake"]);
+        assert_eq!(review_classifications(&raw), Some(json!(["mistake"])));
+        let trade = json!({
+            "fen": "3qk3/8/8/8/3n4/2B5/8/4K3 w - - 0 1",
+            "moves": ["c3d4"], "source": "local",
+            "evals": [{"cp": 0, "best": "c3d4", "depth": 18},
+                {"cp": 0, "depth": 18, "pv": ["d8d4", "e1f1"]}]
+        });
+        assert_eq!(review_classifications(&trade), Some(json!(["best"])));
+    }
 
     #[test]
     fn exp_matches_known_values() {

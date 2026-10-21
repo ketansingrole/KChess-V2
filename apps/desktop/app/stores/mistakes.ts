@@ -1,13 +1,21 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Puzzle, StoredReview } from '@kchess/contracts/types'
-import type { MistakeExercise } from '@kchess/rules/library'
+import type { MistakeExercise, MistakeGame } from '@kchess/rules/library'
 import { initialLibrary } from '../utils/library'
+
+/**
+ * Answered right this many times in a row, a position is next due in four days or more (the core
+ * doubles the wait from a day with each right answer): learned rather than still learning.
+ */
+export const LEARNED_STREAK = 3
 
 /** Drills made from reviewed mistakes, scheduled and kept by the core. */
 export const useMistakeStore = defineStore('mistakes', () => {
   const items = ref<MistakeExercise[]>(initialLibrary().mistakes)
   const error = ref('')
+  /** The reviewed games the drills come from, most recently played first. */
+  const games = ref<MistakeGame[]>([])
   async function update<T>(request: Promise<T>, apply: (value: T) => void): Promise<T> {
     try {
       const value = await request
@@ -36,5 +44,10 @@ export const useMistakeStore = defineStore('mistakes', () => {
       items.value = value
     })
   }
-  return { items, error, add, puzzle, answered }
+  async function loadGames(): Promise<void> {
+    await update(window.kchess.mistakeGames(), (value) => {
+      games.value = value
+    })
+  }
+  return { items, error, games, add, puzzle, answered, loadGames }
 })

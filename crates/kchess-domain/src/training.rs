@@ -1,11 +1,10 @@
 //! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md); reached through `api::call`.
 //!
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
-//! client clock, engine levels, UCI `info` lines and review coaching. Their constants are data
-//! shared with TypeScript (`crates/kchess-domain/data/`).
+//! client clock, engine levels and UCI `info` lines. Their constants are data shared with
+//! TypeScript (`crates/kchess-domain/data/`).
 
 mod clock;
-mod coach;
 mod data;
 mod endgames;
 mod engine_levels;
@@ -26,7 +25,7 @@ pub(super) type Out = Result<Value, String>;
 /// This module's methods for `api::call`; None when the method is not one of them.
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     type Module = fn(&str, &[Value]) -> Option<Out>;
-    let modules: [Module; 9] = [
+    let modules: [Module; 8] = [
         rush::call,
         puzzle::call,
         endgames::call,
@@ -35,7 +34,6 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         clock::call,
         engine_levels::call,
         uci_info::call,
-        coach::call,
     ];
     modules.iter().find_map(|call| call(method, args))
 }
@@ -167,7 +165,6 @@ mod tests {
             "formatClock",
             "normalizeEngineLevels",
             "parseInfo",
-            "explainReviewedMove",
         ] {
             assert!(
                 call(method, &[]).is_some(),

@@ -742,22 +742,34 @@ test('turns a reviewed game mistake into a scheduled practice position @seed:rev
   await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
   await page.getByRole('button', { name: /against rival/ }).click()
   await page.getByRole('button', { name: 'Review', exact: true }).click()
-  // Your own side (Black) is saved without asking; the review links to its practice.
-  await expect(page.getByText('1 position in practice', { exact: true })).toBeVisible()
-  await expect(
-    page.getByRole('button', { name: "Practice Black's mistakes", exact: true }),
-  ).toHaveCount(0)
-  // The opponent's side is offered once, then counted; it never stays as a dead button.
-  const opponent = page.getByRole('button', { name: "Practice rival's mistakes", exact: true })
-  await opponent.click()
-  await expect(page.getByText('2 positions in practice', { exact: true })).toBeVisible()
-  await expect(opponent).toHaveCount(0)
-  await page.getByRole('button', { name: 'Practice now', exact: true }).click()
-  await expect(page.getByRole('tab', { name: 'Your mistakes', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  )
-  await page.getByRole('button', { name: 'Start practice', exact: true }).click()
+  // Your own side (Black) is saved without asking, and only it: one button opens its practice.
+  await expect
+    .poll(() => page.evaluate(async () => (await window.kchess.library()).mistakes.length))
+    .toBe(1)
+  await expect(page.getByRole('button', { name: /rival's mistakes/ })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Practice your mistakes', exact: true }).click()
+  // Practice happens on the analysis board, beside the game's moves and chart, without the engine.
+  const card = page.getByRole('region', { name: "Practice this game's mistakes", exact: true })
+  await expect(card).toContainText('1 of 1')
+  await expect(card.getByRole('status')).toHaveText('Find a better move.')
+  await expect(page.getByRole('group', { name: 'Moves', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Engine', exact: true })).toHaveCount(0)
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'review-practice.png') })
+  await card.getByRole('button', { name: 'Show solution', exact: true }).click()
+  await expect(card.getByRole('status')).toContainText('The best move was')
+  await card.getByRole('button', { name: 'Finish', exact: true }).click()
+  await expect(card.getByRole('status')).toHaveText('You found 0 of 1.')
+  await card.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Engine', exact: true })).toBeVisible()
+  // The Practice page keeps every game's positions on their schedule, and lists their games.
+  await navigate(page, 'Practice')
+  await page.getByRole('tab', { name: 'Your mistakes', exact: true }).click()
+  const games = page.getByRole('region', { name: 'Games', exact: true })
+  await expect(games.getByRole('listitem')).toHaveCount(1)
+  await expect(games).toContainText('vs rival')
+  await expect(games.getByRole('button', { name: /^Practice vs rival/ })).toBeVisible()
+  await page.screenshot({ path: join(process.cwd(), 'test-results', 'mistake-games.png') })
+  await page.getByRole('button', { name: 'Review early', exact: true }).click()
   await expect(page.locator('cg-board')).toBeVisible()
   // The board fits the window beside its panel, as on the puzzle pages.
   const board = await page.locator('cg-board').boundingBox()
@@ -1402,11 +1414,10 @@ test('reviews a game on the analysis board, labelling the blunder and the better
   await expect(review.getByRole('table')).toContainText('%')
   await review.getByRole('button', { name: /1 blunder by Black/ }).click()
   await expect(page.locator('.tree-move.active')).toHaveText(/Nf6/)
-  await expect(review.getByText(/is a blunder\./)).toBeVisible()
-  await expect(review.getByText(/Best was/)).toBeVisible()
-  await review.getByRole('button', { name: 'Show', exact: true }).click()
-  await page.getByRole('tab', { name: /^Moves/ }).click()
-  await expect(moves.locator('.tree-variations')).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Blunder move on f6' })).toBeVisible()
+  await expect(page.locator('.classified-square')).toHaveAttribute('data-square', 'f6')
+  await expect(page.locator('cg-board piece.anim')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('analysis-move-feedback.png') })
 })
 
 test('shows a reviewed game’s accuracy in History and opens its review @seed:reviewed-game', async ({

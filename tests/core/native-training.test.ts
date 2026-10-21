@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest'
 import { wasmBinding, type RulesBinding } from '@kchess/rules/engine'
 import training from '../../crates/kchess-domain/data/training.json' with { type: 'json' }
 import type { GameSetup, Variant } from '@kchess/rules/variant'
-import type { StoredReview } from '@kchess/contracts/types'
 import { nativeRules } from '@kchess/native/native'
 import { goldenFile } from './golden'
 import { capture } from './helpers/capture.ts'
@@ -729,53 +728,6 @@ describe('uci info lines', { timeout: TIMEOUT }, () => {
     }
     for (const text of lines) {
       for (const white of [true, false]) check('uci-info', rust('parseInfo', text, white))
-    }
-  })
-})
-
-/* ── Coaching ─────────────────────────────────────────────────────────────────────────────── */
-
-describe('review coaching', { timeout: TIMEOUT }, () => {
-  it('explain a reviewed move from its scores', () => {
-    const random = rng(7371)
-    /** A scored position: a mate or centipawns (often ties such as 25 and -75), with a best move and PV. */
-    const scoreOf = (fen: string): StoredReview['evals'][number] => {
-      if (random() < 0.1) return null
-      const legalNow = legal(fen).map(uciOf)
-      const best =
-        random() < 0.8 && legalNow.length ? pick(random, legalNow) : random() < 0.5 ? '' : undefined
-      const pv =
-        random() < 0.7 && legalNow.length
-          ? [best ?? legalNow[0]!, ...randomLine(random, fen, 3)]
-          : undefined
-      const mate = random() < 0.1 ? Math.floor(random() * 9) - 4 : undefined
-      const cp = random() < 0.5 ? Math.floor(random() * 1200) - 600 : random() < 0.5 ? 25 : -75
-      const value: Record<string, unknown> = {
-        depth: random() < 0.9 ? Math.floor(random() * 30) : 0,
-      }
-      if (mate !== undefined && mate !== 0) value.mate = mate
-      else value.cp = cp
-      if (best !== undefined) value.best = best
-      if (pv !== undefined) value.pv = pv
-      return value as StoredReview['evals'][number]
-    }
-    for (let i = 0; i < 400; i++) {
-      const game = randomGame(random, 4 + Math.floor(random() * 14))
-      const moves = random() < 0.9 ? game.ucis : [...game.ucis, 'bogus']
-      const evals: StoredReview['evals'] = []
-      for (let k = 0; k <= moves.length; k++)
-        evals.push(scoreOf(game.fens[Math.min(k, game.fens.length - 1)]!))
-      const review = {
-        key: 'k',
-        fen: START,
-        moves,
-        source: random() < 0.5 ? 'lichess' : 'local',
-        evals,
-        complete: random() < 0.6,
-      }
-      for (let index = -1; index <= moves.length + 1; index++) {
-        check('coach', rust('explainReviewedMove', review, index))
-      }
     }
   })
 })

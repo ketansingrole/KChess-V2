@@ -39,6 +39,28 @@ export type ArchivedGame = { id: string, source: ArchivedSource, startedAt: numb
 
 export type MistakeExercise = { id: string, fen: string, solution: Array<string>, judgment: string, dueAt: number, streak: number, attempts: number, };
 
+export type MistakeGame = { 
+/**
+ * The review's key: its positions' ids start with it.
+ */
+key: string, 
+/**
+ * The reviewed line: its start position and UCI moves.
+ */
+fen: string, moves: Array<string>, 
+/**
+ * When the game was played, or else when it was reviewed.
+ */
+playedAt: number, white?: string, black?: string, 
+/**
+ * The side you played.
+ */
+player?: Color, 
+/**
+ * The synced Lichess game, and the account it belongs to.
+ */
+gameId?: string, account?: string, };
+
 export type JoinedTournament = { system: TournamentSystem, id: string, account: string, name: string, 
 /**
  * Stop keeping the event stream open for it after this time.

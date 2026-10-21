@@ -27,6 +27,7 @@ import {
 import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'
+import { useReviewPractice } from '../stores/reviewPractice'
 
 const store = useKChessStore()
 const { settings, engineReady } = storeToRefs(store)
@@ -53,6 +54,10 @@ const {
   cloudError,
 } = storeToRefs(analysis)
 const toast = useToast()
+/** Practising the reviewed game's mistakes here: board moves at its position are answers. */
+const practice = useReviewPractice()
+const { hidesEngine } = storeToRefs(practice)
+onUnmounted(practice.stop)
 
 onMounted(() => {
   void store.recheckEngine()
@@ -72,8 +77,16 @@ const lastMove = computed<Key[] | undefined>(() => {
   const uci = node.value.uci
   return uci ? [uci.slice(0, 2) as Key, uci.slice(2, 4) as Key] : undefined
 })
+const currentClassification = computed(() => analysis.reviewMarks.get(path.value)?.classification)
+const moveFeedback = computed(() => {
+  const classification = currentClassification.value
+  const square = lastMove.value?.[1]
+  return classification && square ? { square, classification } : undefined
+})
 function move(uci: string): void {
-  if (!analysis.play(uci)) resetKey.value++
+  const answer = practice.attempt(uci)
+  // A wrong answer is not kept: the board goes back to the position.
+  if (answer === 'wrong' || (!answer && !analysis.play(uci))) resetKey.value++
 }
 function flip(): void {
   orientation.value = orientation.value === 'white' ? 'black' : 'white'
@@ -95,6 +108,10 @@ const lines = computed<EngineLine[]>(() =>
 const best = computed(() => lines.value[0])
 /** Arrows for the engine's choices: the best one bold, the others thinner. */
 const shapes = computed<DrawShape[]>(() => {
+  if (hidesEngine.value) {
+    const square = practice.hintSquare as Key | undefined
+    return square ? [{ orig: square, brush: 'green' }] : []
+  }
   if ((!engineOn.value && !usingCloud.value) || !showArrows.value || gameOver.value) return []
   return lines.value.flatMap((line, index) => {
     const uci = line.pv[0]
@@ -164,6 +181,7 @@ function playLine(pv: readonly string[], upTo = 0): void {
   for (const uci of pv.slice(0, upTo + 1)) if (!analysis.play(uci)) break
 }
 function playBest(): void {
+  if (hidesEngine.value) return
   const uci = best.value?.pv[0]
   if (uci) analysis.play(uci)
 }
@@ -444,7 +462,7 @@ function hear(result: VoiceResult): void {
     const choice = voiceChoices.value[index - 1]
     log(result, 'command', `#${index}`)
     if (choice) {
-      analysis.play(choice.uci)
+      move(choice.uci)
       voiceFeedback.value = `Played ${choice.san}.`
     } else voiceFeedback.value = 'Choose one of the numbered moves.'
     return
@@ -464,7 +482,7 @@ function hear(result: VoiceResult): void {
     const only = parsed.choices[0]
     if (!only) return
     log(result, 'played', sans)
-    analysis.play(only.uci)
+    move(only.uci)
     voiceFeedback.value = `Played ${only.san}.`
     return
   }
@@ -489,7 +507,7 @@ function missed(result: VoiceResult): void {
       <div class="board-stack">
         <div class="analysis-board">
           <EvalBar
-            v-if="assistanceAllowed && (engineOn || usingCloud)"
+            v-if="assistanceAllowed && (engineOn || usingCloud) && !hidesEngine"
             class="analysis-eval"
             :line="best"
             :orientation="orientation"
@@ -510,6 +528,7 @@ function missed(result: VoiceResult): void {
               :promotion="settings?.promotion === 'queen' ? 'queen' : 'ask'"
               :dests="dests"
               :last-move="lastMove"
+              :move-feedback="moveFeedback"
               :check="position ? checkColor(position) : false"
               :turn-color="position?.turn"
               :shapes="shapes"
@@ -538,7 +557,7 @@ function missed(result: VoiceResult): void {
                       variant="outline"
                       size="xs"
                       class="shrink-0"
-                      @click="analysis.play(choice.uci)"
+                      @click="move(choice.uci)"
                       >{{ index + 1 }} · {{ choice.san }}</UButton
                     >
                   </template>
@@ -550,7 +569,8 @@ function missed(result: VoiceResult): void {
       </div>
 
       <div class="card side-panel analysis-panel">
-        <section class="ceval" aria-label="Engine">
+        <ReviewPractice v-if="practice.active" />
+        <section v-else class="ceval" aria-label="Engine">
           <div class="ceval-head">
             <USwitch
               v-model="engineOn"
@@ -706,7 +726,8 @@ function missed(result: VoiceResult): void {
           <p v-else class="tool-empty">Make some moves or import a game to review it.</p>
         </div>
         <div v-if="tool === 'explorer'" class="tool-body tool-scroll" role="tabpanel">
-          <PositionExplorer v-if="assistanceAllowed" />
+          <p v-if="hidesEngine" class="tool-empty">Shown once you find the move.</p>
+          <PositionExplorer v-else-if="assistanceAllowed" />
           <p v-else class="tool-empty">
             Engine assistance is paused until Lichess game status is verified.
           </p>

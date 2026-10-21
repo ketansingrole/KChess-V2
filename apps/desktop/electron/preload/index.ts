@@ -256,6 +256,7 @@ const api: DesktopApi = {
   saveArchivedGame: (game) => invoke('saveArchivedGame', game),
   removeArchivedGame: (id) => invoke('removeArchivedGame', id),
   addMistakes: (reviewKey, color) => invoke('addMistakes', reviewKey, color),
+  mistakeGames: () => invoke('mistakeGames'),
   answerMistake: (id, solved) => invoke('answerMistake', id, solved),
   saveSession: (kind, session) => invoke('saveSession', kind, session),
   joinedTournaments: () => invoke('joinedTournaments'),

@@ -14,6 +14,7 @@ const METHODS = [
   'removeArchivedGame',
   'addMistakes',
   'answerMistake',
+  'mistakeGames',
   'saveSession',
   'joinedTournaments',
   'recordRepertoireMiss',

@@ -103,6 +103,27 @@ pub struct MistakeExercise {
     pub attempts: f64,
 }
 
+/// A reviewed game that has positions in practice, and where it came from when that is known.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct MistakeGame {
+    /// The review's key: its positions' ids start with it.
+    pub key: String,
+    /// The reviewed line: its start position and UCI moves.
+    pub fen: String,
+    pub moves: Vec<String>,
+    /// When the game was played, or else when it was reviewed.
+    pub played_at: f64,
+    pub white: Option<String>,
+    pub black: Option<String>,
+    /// The side you played.
+    pub player: Option<Color>,
+    /// The synced Lichess game, and the account it belongs to.
+    pub game_id: Option<String>,
+    pub account: Option<String>,
+}
+
 /// A tournament joined from KChess; its pairings arrive on the account's event stream.
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -378,6 +399,7 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         ArchivedResult,
         ArchivedGame,
         MistakeExercise,
+        MistakeGame,
         JoinedTournament,
         ClockSide,
         LocalClock,

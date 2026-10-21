@@ -97,9 +97,6 @@ time('openingAt', () =>
 time('treeFromPgn', () => invoke('treeFromPgn', pgn))
 time('treeToPgn', () => invoke('treeToPgn', tree))
 time('analyseReview_120', () => invoke('analyseReview', review))
-time('explainReviewedMove_120', () =>
-  invoke('explainReviewedMove', review, Math.floor(moves.length / 2)),
-)
 time(
   'parseInfo',
   () =>

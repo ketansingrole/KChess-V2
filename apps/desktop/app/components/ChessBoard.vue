@@ -10,6 +10,8 @@ import { isPromotionMove, type Dests } from '@kchess/rules/chess'
 import type { SquareName } from '@kchess/rules/position'
 import type { CoordinateMode, PieceAnimation, PromotionMode } from '@kchess/contracts/types'
 import { setupStart, type Variant } from '@kchess/rules/variant'
+import type { MoveClassification } from '@kchess/rules/review'
+import BoardMoveFeedback from './BoardMoveFeedback.vue'
 import { animationMs, DEFAULT_PIECE_SET, pieceVars } from '../utils/pieces'
 
 const props = defineProps<{
@@ -27,6 +29,7 @@ const props = defineProps<{
   promotion?: PromotionMode
   dests?: Dests
   lastMove?: Key[]
+  moveFeedback?: { square: Key; classification: MoveClassification }
   check?: Color | false
   turnColor?: Color
   theme?: string
@@ -302,7 +305,15 @@ onBeforeUnmount(() => {
     :style="pieceStyle"
     @mousedown.capture="clearShapes"
   >
-    <div ref="el" :inert="pending ? true : undefined" role="group" aria-label="Chess board" />
+    <div class="board-surface">
+      <div ref="el" :inert="pending ? true : undefined" role="group" aria-label="Chess board" />
+      <BoardMoveFeedback
+        v-if="moveFeedback && !pending"
+        :square="moveFeedback.square"
+        :classification="moveFeedback.classification"
+        :orientation="orientation"
+      />
+    </div>
     <!-- The move box, and any controls the page adds (voice), share one row under the board. -->
     <Teleport v-if="typing || $slots.controls" defer :to="inputTo" :disabled="!inputTo">
       <div class="board-input-row" :class="{ inline: inputTo }">
@@ -369,3 +380,9 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.board-surface {
+  position: relative;
+}
+</style>

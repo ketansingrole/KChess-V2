@@ -64,6 +64,11 @@ impl Core {
                     )
                     .await
             }
+            "mistakeGames" => {
+                self.database
+                    .call_async("store.library.mistakeGames", &[])
+                    .await
+            }
             "saveSession" => {
                 let kind = normal("assertSessionKind", &arg(args, 0))?;
                 let value = normal_args("assertSession", &[kind.clone(), arg(args, 1)])?;

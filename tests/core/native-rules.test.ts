@@ -905,6 +905,85 @@ describe('positions held by the frontends match recorded outputs', { timeout: TI
   })
 })
 
+it(
+  'keeps move classifications identical in Node and WebAssembly',
+  () => {
+    const review = {
+      fen: 'rnbq1rk1/ppp1bppp/4pn2/3pP3/3P4/3B1N2/PPP2PPP/RNBQ1RK1 w - - 0 1',
+      moves: ['d3h7'],
+      source: 'local',
+      evals: [
+        { cp: 20, best: 'd3h7', depth: 18 },
+        { cp: 20, depth: 18, pv: ['g8h7', 'f3g5'] },
+      ],
+    }
+    expect(both('reviewClassifications', review)).toEqual(['brilliant'])
+    golden('reviewClassificationsSpecial', 0, both('reviewClassifications', review))
+    for (const cp of [-400, -120, -50, 0, 20, 500]) {
+      both('reviewClassifications', {
+        ...review,
+        evals: [review.evals[0], { ...review.evals[1], cp }],
+      })
+    }
+    const random = rng(7321)
+    for (let i = 0; i < 100 * SCALE; i++)
+      golden('reviewClassifications', i, both('reviewClassifications', randomReview(random, i)))
+  },
+  TIMEOUT,
+)
+
+it(
+  'divides a review into phases identically in Node and WebAssembly',
+  () => {
+    const scored = (fen: string, moves: string[]) => ({
+      key: 'p',
+      fen,
+      moves,
+      source: 'local',
+      evals: Array.from({ length: moves.length + 1 }, (_, i) => ({ cp: i % 2 ? 40 : 10 })),
+      depth: 18,
+      complete: true,
+      updatedAt: 0,
+    })
+    const phases = (fen: string, moves: string[]) => {
+      const found = both('reviewPhases', scored(fen, moves)) as Record<string, object>
+      return { white: Object.keys(found.white), black: Object.keys(found.black) }
+    }
+    expect(phases(INITIAL_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6'])).toEqual({
+      white: ['opening'],
+      black: ['opening'],
+    })
+    // Qe2 leaves White three pieces on the back rank: the middlegame begins after it.
+    expect(
+      phases('r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R2Q1RK1 w kq - 0 7', [
+        'd1e2',
+        'd7d6',
+        'h2h3',
+      ]),
+    ).toEqual({ white: ['opening', 'middlegame'], black: ['middlegame'] })
+    expect(phases('8/5k2/8/3r4/8/8/2R2K2/8 w - - 0 1', ['c2c7', 'f7e6'])).toEqual({
+      white: ['endgame'],
+      black: ['endgame'],
+    })
+    // Without a score for every position there is no accuracy to divide.
+    const partial = scored(INITIAL_FEN, ['e2e4', 'e7e5'])
+    partial.evals.pop()
+    expect(both('reviewPhases', partial)).toEqual({ white: {}, black: {} })
+    const random = rng(7331)
+    for (let i = 0; i < 100 * SCALE; i++) {
+      const review = randomReview(random, i)
+      // Half of them scored throughout, so they have figures to divide.
+      if (i % 2)
+        review.evals = Array.from({ length: review.moves.length + 1 }, (_, k) => {
+          const found = review.evals[k]
+          return found && (found.cp !== undefined || found.mate !== undefined) ? found : { cp: 0 }
+        })
+      golden('reviewPhases', i, both('reviewPhases', review))
+    }
+  },
+  TIMEOUT,
+)
+
 function randomReview(random: () => number, i: number): StoredReview {
   const fen =
     random() < 0.15

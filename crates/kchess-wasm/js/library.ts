@@ -21,6 +21,7 @@ export type {
   ArchivedGame,
   GameSnapshot,
   MistakeExercise,
+  MistakeGame,
   JoinedTournament,
   RepertoireMisses,
   LocalClock,

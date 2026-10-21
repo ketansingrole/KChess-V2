@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { commentText, moveGlyph, moveNumber, type TreeNode } from '@kchess/rules/analysisTree'
 import { useAnalysisStore } from '../stores/analysis'
-import type { Judgment } from '@kchess/contracts/types'
+import type { MoveClassification } from '@kchess/rules/review'
+import { MOVE_CLASSIFICATIONS } from '../utils/moveClassification'
 
 /**
  * One line of the analysis tree, Lichess-style: the moves of a line run on, and the alternatives
@@ -20,7 +21,6 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [path: string] }>()
 /** The game review's labels for main-line moves. */
 const { reviewMarks } = storeToRefs(useAnalysisStore())
-const GLYPHS = { inaccuracy: '?!', mistake: '?', blunder: '??' } as const
 
 type Item =
   | {
@@ -29,7 +29,7 @@ type Item =
       path: string
       number: string
       glyph?: ReturnType<typeof moveGlyph>
-      judgment?: Judgment
+      classification?: MoveClassification
       /** The move's comments as a reader sees them (a game's clock times are not notes). */
       comment: string
     }
@@ -51,7 +51,7 @@ const items = computed<Item[]>(() => {
       path,
       number: moveNumber(parent.ply, numbered),
       glyph: moveGlyph(node),
-      judgment: reviewMarks.value.get(path)?.judgment,
+      classification: reviewMarks.value.get(path)?.classification,
       comment: (node.comments ?? []).map(commentText).filter(Boolean).join(' '),
     })
     numbered = false
@@ -91,10 +91,11 @@ const items = computed<Item[]>(() => {
           item.glyph.glyph
         }}</span
         ><span
-          v-else-if="item.judgment"
-          :class="['tree-glyph', item.judgment]"
-          :title="item.judgment"
-          >{{ GLYPHS[item.judgment] }}</span
+          v-else-if="item.classification"
+          :class="['tree-glyph', item.classification]"
+          :style="{ color: MOVE_CLASSIFICATIONS[item.classification].color }"
+          :title="MOVE_CLASSIFICATIONS[item.classification].label"
+          >{{ MOVE_CLASSIFICATIONS[item.classification].glyph }}</span
         >
       </button>
       <span

@@ -74,3 +74,21 @@ export function analyseReview(review: StoredReview): GameAnalysis {
 
 /** Lichess speeds of standard chess; variants (Chess960, Crazyhouse …) are not reviewed. */
 export const isReviewablePerf = (perf: string): boolean => rules<boolean>('isReviewablePerf', perf)
+
+/** Display labels; error judgments stay compatible with Lichess and mistake practice. */
+export type MoveClassification = Judgment | 'brilliant' | 'best' | 'excellent' | 'good'
+
+export function reviewClassifications(review: StoredReview): (MoveClassification | null)[] {
+  return rules<(MoveClassification | null)[] | null>('reviewClassifications', review) ?? []
+}
+
+export interface PhaseAccuracy {
+  opening?: number
+  middlegame?: number
+  endgame?: number
+}
+
+/** Each side's accuracy in the opening, middlegame and endgame, as far as the review has scores. */
+export function reviewPhases(review: StoredReview): Record<Color, PhaseAccuracy> | null {
+  return rules<Record<Color, PhaseAccuracy> | null>('reviewPhases', review)
+}

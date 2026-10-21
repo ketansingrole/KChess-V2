@@ -14,7 +14,13 @@ import type { Color } from '@lichess-org/chessground/types'
 import type { AnalysisUpdate, CloudEval, Judgment } from '@kchess/contracts/types'
 import { RequestScope } from '@kchess/rules/requestScope'
 import { analysisContext } from '@kchess/rules/analysisContext'
-import { analyseReview, reviewKey, type GameAnalysis } from '@kchess/rules/review'
+import {
+  analyseReview,
+  reviewKey,
+  type GameAnalysis,
+  reviewClassifications,
+  type MoveClassification,
+} from '@kchess/rules/review'
 import { useKChessStore } from './kchess'
 import { useMistakeStore } from './mistakes'
 import { useReviewStore } from './review'
@@ -32,7 +38,7 @@ import {
   treeToPgn,
   type TreeNode,
 } from '@kchess/rules/analysisTree'
-import { playUci, positionFromFen } from '@kchess/rules/chess'
+import { positionFromFen } from '@kchess/rules/chess'
 import { setupFromFen, START_SETUP, type EditorSetup } from '@kchess/rules/boardEditor'
 import { stopAnalysisSafe } from '../utils/engineControl'
 
@@ -55,8 +61,7 @@ export interface ReviewMark {
   index: number
   color: 'white' | 'black'
   judgment?: Judgment
-  /** The engine's move instead of this one, and its line, from the position before it. */
-  best?: { uci: string; san: string; pv: string[] }
+  classification?: MoveClassification
 }
 
 /**
@@ -610,12 +615,33 @@ export const useAnalysisStore = defineStore('analysis', () => {
       ? analyseReview(review.value)
       : null,
   )
+  /** The review's evaluation chart: White's chances after each reviewed move, and its labels. */
+  const reviewChart = computed(() => {
+    const result = gameAnalysis.value
+    if (!result || !reviewedPlies.value) return null
+    const moves = result.moves.slice(0, reviewedPlies.value)
+    return {
+      points: [result.startChances, ...moves.map((move) => move.chances)],
+      judgments: moves.map((move) => move.judgment),
+    }
+  })
+  /** The board's position along the reviewed main line (0 is the start), or −1 off it. */
+  const reviewPly = computed(() => {
+    const moves = movesOf(path.value)
+    if (moves.length > reviewedPlies.value) return -1
+    return moves.every((uci, i) => mainline.value[i] === uci) ? moves.length : -1
+  })
+  /** The main-line position after `ply` moves. */
+  function goToPly(ply: number): void {
+    goTo(pathOf(mainline.value.slice(0, ply)))
+  }
   /** The review's verdict on each main-line move, by path. */
   const reviewMarks = computed(() => {
     const marks = new Map<string, ReviewMark>()
     const analysed = gameAnalysis.value
     const stored = review.value
     if (!analysed || !stored) return marks
+    const classifications = reviewClassifications(stored)
     let parent = root.value
     let path = ''
     for (let i = 0; i < reviewedPlies.value; i++) {
@@ -623,14 +649,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
       const move = analysed.moves[i]
       if (!child || !move) break
       path = path ? `${path} ${child.uci}` : child.uci
-      const mark: ReviewMark = { index: i, color: move.color, judgment: move.judgment }
-      const before = stored.evals[i]
-      if (move.judgment && before?.best && before.best !== child.uci) {
-        const pos = positionFromFen(parent.fen)
-        const san = pos && playUci(pos, before.best)
-        if (san) mark.best = { uci: before.best, san, pv: before.pv ?? [before.best] }
-      }
-      marks.set(path, mark)
+      marks.set(path, {
+        index: i,
+        color: move.color,
+        judgment: move.judgment,
+        classification: classifications[i] ?? undefined,
+      })
       parent = child
     }
     return marks
@@ -755,6 +779,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     reviewMarks,
     reviewedPlies,
     reviewWhole,
+    reviewChart,
+    reviewPly,
+    goToPly,
     reviewProgress,
     requestReview,
     startReview,

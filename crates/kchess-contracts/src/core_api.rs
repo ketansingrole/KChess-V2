@@ -11,7 +11,8 @@ use ts_rs::{Config, TS};
 
 use crate::generate::Item;
 use crate::library::{
-    ArchivedGame, JoinedTournament, LibrarySnapshot, MistakeExercise, StudyCommandResult,
+    ArchivedGame, JoinedTournament, LibrarySnapshot, MistakeExercise, MistakeGame,
+    StudyCommandResult,
 };
 use crate::types::*;
 
@@ -656,6 +657,12 @@ pub fn methods() -> Vec<Method> {
             "",
             vec![req("id", string), req("solved", boolean)],
             array(t::<MistakeExercise>()),
+        ),
+        method(
+            "mistakeGames",
+            "The reviewed games with positions in practice, most recently played first.",
+            vec![],
+            array(t::<MistakeGame>()),
         ),
         Method {
             name: "saveSession",

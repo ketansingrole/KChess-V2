@@ -1,23 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { explainReviewedMove } from '@kchess/rules/coach'
-import { useLocalStorage } from '@vueuse/core'
 import { useMistakeStore } from '../stores/mistakes'
-import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
-import { movesOf, pathOf } from '@kchess/rules/analysisTree'
-import { useAnalysisStore, type ReviewMark } from '../stores/analysis'
+import { useAnalysisStore } from '../stores/analysis'
 import { useReviewStore } from '../stores/review'
-import type { Judgment } from '@kchess/contracts/types'
+import { useReviewPractice } from '../stores/reviewPractice'
+import { reviewPhases, type MoveClassification, type PhaseAccuracy } from '@kchess/rules/review'
+import { MOVE_CLASSIFICATIONS } from '../utils/moveClassification'
 
 /**
- * The analysis board's game review: each side's accuracy and labelled moves, the evaluation chart,
- * and what the review says about the move on the board.
+ * The analysis board's game review: both sides' accuracy, labelled moves, centipawn loss and
+ * accuracy by phase, side by side, and the evaluation chart.
  */
 const store = useKChessStore()
 const { engineReady } = storeToRefs(store)
 const analysis = useAnalysisStore()
 const {
-  path,
   origin,
   mainline,
   mainlineKey,
@@ -26,12 +23,11 @@ const {
   reviewMarks,
   reviewedPlies,
   reviewWhole,
+  reviewChart,
+  reviewPly,
   reviewProgress,
   reviewRequestError,
 } = storeToRefs(analysis)
-
-const GLYPHS: Record<Judgment, string> = { inaccuracy: '?!', mistake: '?', blunder: '??' }
-const ARTICLE: Record<Judgment, string> = { inaccuracy: 'an', mistake: 'a', blunder: 'a' }
 
 /** Asked for in this visit and not started yet: another review is ahead of it. */
 const requested = ref('')
@@ -72,7 +68,7 @@ const canReview = computed(
 )
 const practice = useMistakeStore()
 const practiceFeedback = ref('')
-/** Sides asked for that had nothing new to add, by review. */
+/** Sides asked for that had nothing to add, by review. */
 const tried = ref(new Set<string>())
 /** This review's positions already in practice, and the sides they are from. */
 const saved = computed(() => {
@@ -81,48 +77,47 @@ const saved = computed(() => {
   const sides = new Set(items.map((item) => (item.fen.split(' ')[1] === 'b' ? 'black' : 'white')))
   return { count: items.length, sides }
 })
-/** Sides with labelled moves not yet in practice. */
-const unsaved = computed(() => {
+/**
+ * The sides whose labelled moves this review puts into practice: yours (saved as soon as the
+ * review completes), or both in a game you did not play.
+ */
+const practiceSides = computed(() => {
   const result = gameAnalysis.value
-  const key = review.value?.key
-  if (!complete.value || !result || !key) return []
-  return (['white', 'black'] as const).filter(
-    (color) =>
-      !saved.value.sides.has(color) &&
-      !tried.value.has(`${key}:${color}`) &&
-      result[color].inaccuracy + result[color].mistake + result[color].blunder > 0,
+  if (!complete.value || !result) return []
+  const player = origin.value?.player
+  return (player ? [player] : (['white', 'black'] as const)).filter(
+    (color) => result[color].inaccuracy + result[color].mistake + result[color].blunder > 0,
   )
 })
-const addLabel = computed(() => {
-  const [only, other] = unsaved.value
-  if (!only) return ''
-  if (other) return 'Practice all mistakes'
-  const name = origin.value?.[only] ?? (only === 'white' ? 'White' : 'Black')
-  return `Practice ${name}'s mistakes`
-})
-async function addPractice(): Promise<void> {
+const canPractice = computed(
+  () =>
+    saved.value.count > 0 ||
+    practiceSides.value.some((color) => !tried.value.has(`${review.value?.key}:${color}`)),
+)
+const reviewPractice = useReviewPractice()
+/** Saves whichever of those sides is not in practice yet, then practises them on the board. */
+async function practiceMistakes(): Promise<void> {
   const stored = review.value
-  const sides = unsaved.value
-  if (!stored || !sides.length) return
+  if (!stored) return
+  practiceFeedback.value = ''
   try {
-    const count = await practice.add(stored, sides.length === 1 ? sides[0] : undefined)
-    practiceFeedback.value = count ? '' : 'No new verified mistakes to add.'
-    if (!count) for (const color of sides) tried.value.add(`${stored.key}:${color}`)
+    for (const color of practiceSides.value) {
+      if (saved.value.sides.has(color) || tried.value.has(`${stored.key}:${color}`)) continue
+      if (!(await practice.add(stored, color))) tried.value.add(`${stored.key}:${color}`)
+    }
   } catch (cause) {
     console.warn('[analysis-review] Adding mistakes failed:', cause)
     practiceFeedback.value = cause instanceof Error ? cause.message : String(cause)
+    return
   }
+  if (!saved.value.count) {
+    practiceFeedback.value = 'No verified mistakes to practice.'
+    return
+  }
+  reviewPractice.start(stored.key)
+  // The move list beside the practice card shows the moves before and after each position.
+  analysis.tool = 'moves'
 }
-const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
-function openPractice(): void {
-  practiceTab.value = 'mistakes'
-  store.selectPage('practice')
-}
-const explanation = computed(() =>
-  review.value && currentIndex.value > 0
-    ? explainReviewedMove(review.value, currentIndex.value - 1)
-    : '',
-)
 
 const sourceLabel = computed(() => {
   const stored = review.value
@@ -139,58 +134,50 @@ const sides = computed(() => {
     color,
     name: origin.value?.[color] ?? (color === 'white' ? 'White' : 'Black'),
     side: result[color],
+    brilliant: [...reviewMarks.value.values()].filter(
+      (mark) => mark.color === color && mark.classification === 'brilliant',
+    ).length,
   }))
 })
+type Side = (typeof sides.value)[number]
+const percent = (value: number | undefined): string => (value === undefined ? '—' : `${value}%`)
 
-/* ── Chart ─────────────────────────────────────────────────────────── */
+type Counted = 'brilliant' | 'inaccuracy' | 'mistake' | 'blunder'
+const COUNTS: { key: Counted; label: string; one: string; many: string }[] = [
+  { key: 'brilliant', label: 'Brilliant', one: 'brilliant move', many: 'brilliant moves' },
+  { key: 'inaccuracy', label: 'Inaccuracies', one: 'inaccuracy', many: 'inaccuracies' },
+  { key: 'mistake', label: 'Mistakes', one: 'mistake', many: 'mistakes' },
+  { key: 'blunder', label: 'Blunders', one: 'blunder', many: 'blunders' },
+]
+const countOf = (row: Side, key: Counted): number =>
+  key === 'brilliant' ? row.brilliant : row.side[key]
+/** Brilliant moves are rare: their row shows only when there is one. */
+const counts = computed(() =>
+  COUNTS.filter(({ key }) => key !== 'brilliant' || sides.value.some((row) => row.brilliant)),
+)
 
-const chart = computed(() => {
-  const result = gameAnalysis.value
-  if (!result || !reviewedPlies.value) return null
-  const moves = result.moves.slice(0, reviewedPlies.value)
-  return {
-    points: [result.startChances, ...moves.map((move) => move.chances)],
-    judgments: moves.map((move) => move.judgment),
-  }
+const PHASES: { key: keyof PhaseAccuracy; label: string }[] = [
+  { key: 'opening', label: 'Opening' },
+  { key: 'middlegame', label: 'Middlegame' },
+  { key: 'endgame', label: 'Endgame' },
+]
+/** The phases the game reached, with each side's accuracy in them. */
+const phases = computed(() => {
+  const found = sides.value.length && review.value ? reviewPhases(review.value) : null
+  if (!found) return []
+  return PHASES.filter(
+    ({ key }) => found.white[key] !== undefined || found.black[key] !== undefined,
+  ).map(({ key, label }) => ({ key, label, white: found.white[key], black: found.black[key] }))
 })
-/** The board's position along the reviewed main line, or −1 off it. */
-const currentIndex = computed(() => {
-  const moves = movesOf(path.value)
-  if (moves.length > reviewedPlies.value) return -1
-  return moves.every((uci, i) => mainline.value[i] === uci) ? moves.length : -1
-})
-function select(index: number): void {
-  analysis.goTo(pathOf(mainline.value.slice(0, index)))
-}
-
-const PLURALS: Record<Judgment, string> = {
-  inaccuracy: 'inaccuracies',
-  mistake: 'mistakes',
-  blunder: 'blunders',
-}
-const countLabel = (count: number, judgment: Judgment, name: string): string =>
-  `${count} ${count === 1 ? judgment : PLURALS[judgment]} by ${name}: go to the next`
 
 /** Jump to the next move of `color` with this label, after the one on the board (wrapping). */
-function next(color: 'white' | 'black', judgment: Judgment): void {
+function next(color: 'white' | 'black', judgment: MoveClassification): void {
   const marks = [...reviewMarks.value.values()].filter(
-    (mark) => mark.color === color && mark.judgment === judgment,
+    (mark) => mark.color === color && mark.classification === judgment,
   )
-  const from = currentIndex.value
+  const from = reviewPly.value
   const target = marks.find((mark) => mark.index + 1 > from) ?? marks[0]
-  if (target) select(target.index + 1)
-}
-
-/* ── The move on the board ─────────────────────────────────────────── */
-
-const currentMark = computed<ReviewMark | undefined>(() => reviewMarks.value.get(path.value))
-const currentSan = computed(() => analysis.node.san)
-/** Show the engine's move instead, as a variation. */
-function showBest(): void {
-  const best = currentMark.value?.best
-  if (!best) return
-  analysis.goTo(pathOf(movesOf(path.value).slice(0, -1)))
-  analysis.play(best.uci)
+  if (target) analysis.goToPly(target.index + 1)
 }
 </script>
 
@@ -232,71 +219,80 @@ function showBest(): void {
     <p v-else-if="failure" class="review-note text-error">{{ failure }}</p>
 
     <table v-if="sides.length" class="review-table">
+      <colgroup>
+        <col />
+        <col class="player-col" />
+        <col class="player-col" />
+      </colgroup>
       <thead>
         <tr>
-          <th scope="col"><span class="sr-only">Player</span></th>
-          <th scope="col">Accuracy</th>
-          <th scope="col" title="Inaccuracies" class="inaccuracy">?!</th>
-          <th scope="col" title="Mistakes" class="mistake">?</th>
-          <th scope="col" title="Blunders" class="blunder">??</th>
+          <th scope="col"><span class="sr-only">Statistic</span></th>
+          <th v-for="row in sides" :key="row.color" scope="col" class="player" :title="row.name">
+            <span class="player-head">
+              <span :class="['side-dot', row.color]" aria-hidden="true" />
+              <span class="player-name">{{ row.name }}</span>
+            </span>
+          </th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in sides" :key="row.color">
-          <th scope="row">
-            <span :class="['side-dot', row.color]" aria-hidden="true" />{{ row.name }}
+        <tr class="accuracy">
+          <th scope="row">Accuracy</th>
+          <td v-for="row in sides" :key="row.color">{{ percent(row.side.accuracy) }}</td>
+        </tr>
+      </tbody>
+      <tbody>
+        <tr v-for="kind in counts" :key="kind.key">
+          <th scope="row" :style="{ color: MOVE_CLASSIFICATIONS[kind.key].color }">
+            {{ kind.label }}
           </th>
-          <td class="tabular">
-            {{ row.side.accuracy === undefined ? '—' : `${row.side.accuracy}%` }}
-          </td>
-          <td v-for="judgment in ['inaccuracy', 'mistake', 'blunder'] as const" :key="judgment">
+          <td v-for="row in sides" :key="row.color">
             <button
               type="button"
               class="count"
-              :class="judgment"
-              :disabled="!row.side[judgment]"
-              :aria-label="countLabel(row.side[judgment], judgment, row.name)"
-              @click="next(row.color, judgment)"
+              :disabled="!countOf(row, kind.key)"
+              :style="
+                countOf(row, kind.key) ? { color: MOVE_CLASSIFICATIONS[kind.key].color } : undefined
+              "
+              :aria-label="`${countOf(row, kind.key)} ${countOf(row, kind.key) === 1 ? kind.one : kind.many} by ${row.name}: go to the next`"
+              @click="next(row.color, kind.key)"
             >
-              {{ row.side[judgment] }}
+              {{ countOf(row, kind.key) }}
             </button>
           </td>
+        </tr>
+        <tr>
+          <th scope="row">Avg. centipawn loss</th>
+          <td v-for="row in sides" :key="row.color">{{ row.side.acpl ?? '—' }}</td>
+        </tr>
+      </tbody>
+      <tbody v-if="phases.length">
+        <tr v-for="phase in phases" :key="phase.key">
+          <th scope="row">{{ phase.label }}</th>
+          <td v-for="row in sides" :key="row.color">{{ percent(phase[row.color]) }}</td>
         </tr>
       </tbody>
     </table>
 
-    <div v-if="complete && (saved.count || addLabel)" class="practice-row">
-      <span v-if="saved.count" role="status"
-        >{{ saved.count }} {{ saved.count === 1 ? 'position' : 'positions' }} in practice</span
-      >
-      <UButton v-if="saved.count" size="xs" variant="link" class="px-0" @click="openPractice"
-        >Practice now</UButton
-      >
-      <span class="flex-1" />
-      <UButton v-if="addLabel" size="xs" variant="outline" @click="addPractice">{{
-        addLabel
-      }}</UButton>
-    </div>
+    <UButton
+      v-if="complete && canPractice && !reviewPractice.active"
+      block
+      variant="soft"
+      icon="i-lucide-target"
+      @click="practiceMistakes"
+      >{{ origin?.player ? 'Practice your mistakes' : 'Practice mistakes' }}</UButton
+    >
     <p v-if="practiceFeedback" role="status" class="review-note">{{ practiceFeedback }}</p>
-    <p v-if="explanation" class="review-note">{{ explanation }}</p>
+    <!-- While practising, the chart is on the practice card. -->
     <EvalChart
-      v-if="chart"
-      :points="chart.points"
-      :judgments="chart.judgments"
-      :current="currentIndex"
-      @select="select"
+      v-if="reviewChart && !reviewPractice.active"
+      :points="reviewChart.points"
+      :judgments="reviewChart.judgments"
+      :current="reviewPly"
+      @select="analysis.goToPly"
     />
 
-    <p v-if="currentMark?.judgment" class="review-comment" :class="currentMark.judgment">
-      <strong>{{ currentSan }}{{ GLYPHS[currentMark.judgment] }}</strong>
-      is {{ ARTICLE[currentMark.judgment] }} {{ currentMark.judgment }}.
-      <template v-if="currentMark.best">
-        Best was <strong>{{ currentMark.best.san }}</strong
-        >.
-        <UButton size="xs" variant="link" class="px-0" @click="showBest">Show</UButton>
-      </template>
-    </p>
-    <p v-else-if="!review && !canReview" class="review-note">
+    <p v-if="!review && !canReview" class="review-note">
       Set up Stockfish in Settings to review games.
     </p>
   </section>
@@ -322,14 +318,6 @@ function showBest(): void {
   color: var(--ui-text-muted);
   font-size: 12px;
 }
-.practice-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-}
 .review-progress {
   display: flex;
   align-items: center;
@@ -343,35 +331,66 @@ function showBest(): void {
 .review-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  table-layout: fixed;
+  font-size: 13px;
+}
+.player-col {
+  width: 33%;
 }
 .review-table th,
 .review-table td {
-  padding: 2px 4px;
+  padding: 3px 4px;
   text-align: center;
-}
-.review-table thead th {
-  color: var(--ui-text-dimmed);
-  font-size: 11px;
-  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .review-table tbody th {
-  max-width: 0;
-  width: 100%;
-  overflow: hidden;
+  padding-left: 0;
+  color: var(--ui-text-muted);
+  font-weight: 500;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.review-table td {
   font-weight: 600;
 }
+/* Rows come in groups: accuracy, moves, phases. */
+.review-table tbody + tbody tr:first-child > * {
+  border-top: 1px solid var(--ui-border);
+  padding-top: 6px;
+}
+.review-table tbody tr:last-child > * {
+  padding-bottom: 6px;
+}
+.player {
+  vertical-align: bottom;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+/* The side's dot sits above the name, so the name has the column's whole width. */
+.player-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.player-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accuracy td {
+  font-size: 16px;
+  font-weight: 700;
+}
+.accuracy th {
+  color: var(--ui-text);
+}
 .side-dot {
-  display: inline-block;
+  flex: none;
   width: 9px;
   height: 9px;
-  margin-right: 6px;
   border: 1px solid var(--ui-border-accented);
   border-radius: 50%;
-  vertical-align: -1px;
 }
 .side-dot.white {
   background: #f2f0ea;
@@ -380,15 +399,13 @@ function showBest(): void {
   background: #403d39;
 }
 .count {
-  min-width: 26px;
+  min-width: 30px;
   padding: 1px 6px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
   cursor: pointer;
 }
 .count:hover:not(:disabled) {
@@ -398,37 +415,5 @@ function showBest(): void {
   color: var(--ui-text-dimmed);
   font-weight: 400;
   cursor: default;
-}
-.inaccuracy {
-  color: var(--judgment-inaccuracy);
-}
-.mistake {
-  color: var(--judgment-mistake);
-}
-.blunder {
-  color: var(--judgment-blunder);
-}
-.count:disabled.inaccuracy,
-.count:disabled.mistake,
-.count:disabled.blunder {
-  color: var(--ui-text-dimmed);
-}
-.review-comment {
-  margin: 0;
-  padding: 6px 8px;
-  border-left: 3px solid currentColor;
-  border-radius: 4px;
-  background: var(--ui-bg-elevated);
-  font-size: 12.5px;
-  color: var(--ui-text);
-}
-.review-comment.inaccuracy {
-  border-left-color: var(--judgment-inaccuracy);
-}
-.review-comment.mistake {
-  border-left-color: var(--judgment-mistake);
-}
-.review-comment.blunder {
-  border-left-color: var(--judgment-blunder);
 }
 </style>

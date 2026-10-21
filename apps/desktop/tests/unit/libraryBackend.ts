@@ -17,6 +17,7 @@ import {
   type LegacyDocuments,
   type LibrarySnapshot,
   type MistakeExercise,
+  type MistakeGame,
   type RepertoireMisses,
   type SessionKind,
   type StudyCommand,
@@ -52,6 +53,7 @@ const library = {
     ),
   answerMistake: (id: string, solved: boolean, now = Date.now()) =>
     nativeCallSync<MistakeExercise[]>('store.library.answerMistake', id, solved, now),
+  mistakeGames: () => nativeCallSync<MistakeGame[]>('store.library.mistakeGames'),
   saveSession: (kind: SessionKind, session: unknown): void => {
     nativeCallSync('store.library.saveSession', kind, session)
   },
@@ -112,6 +114,7 @@ export function libraryApi(): Pick<CoreApi, LibraryMethod> {
     removeArchivedGame: (id) => run(() => library.removeArchivedGame(id)),
     addMistakes: (key, color) => run(() => library.addMistakes(key, color)),
     answerMistake: (id, solved) => run(() => library.answerMistake(id, solved)),
+    mistakeGames: () => run(() => library.mistakeGames()),
     saveSession: (kind, session) =>
       run(() => {
         const checked = assertSessionKind(kind)

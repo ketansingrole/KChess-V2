@@ -323,6 +323,7 @@ const CORE: &[Row] = &[
         2,
         &[Valid("assertLibraryId"), Valid("assertBoolean")],
     ),
+    ("mistakeGames", 0, &[]),
     (
         "saveSession",
         2,

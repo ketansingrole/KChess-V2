@@ -150,6 +150,14 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
             let (variant, fen) = setup(&args, 0)?;
             to_value(replay_setup(variant, fen, &texts(&args, 1, "moves")?))?
         }
+        "reviewClassifications" => crate::review::review_classifications(
+            arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
+        )
+        .unwrap_or(Value::Null),
+        "reviewPhases" => crate::review::review_phases(
+            arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
+        )
+        .unwrap_or(Value::Null),
         "analyseReview" => {
             analyse_review(arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
                 .unwrap_or(Value::Null)
