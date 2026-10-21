@@ -124,8 +124,8 @@ const ratingText = computed(() => {
   if (report.ratingDiff === undefined) return 'Sent to Lichess.'
   return `Lichess puzzle rating ${report.ratingDiff >= 0 ? '+' : ''}${report.ratingDiff}${rating.value ? ` → ${rating.value}` : ''}`
 })
-function onMove(correct: boolean, index: number): void {
-  puzzles.move(index, correct)
+function onMove(correct: boolean, index: number, uci: string): void {
+  puzzles.move(index, correct, uci)
 }
 function onOutcome(win: boolean, detail: PuzzleVerdictDetail): void {
   void puzzles.report(win, detail)
@@ -412,7 +412,7 @@ onBeforeUnmount(() => clearTimeout(autoNext))
       </div>
       <ul v-if="recentAttempts.length" class="attempt-strip" aria-label="Recent puzzles">
         <li v-for="attempt in recentAttempts" :key="attempt.id">
-          <UDropdownMenu :items="attemptActions.menu(attempt.puzzle)">
+          <UDropdownMenu :items="attemptActions.menu(attempt.puzzle, attempt.wrongMoves)">
             <UButton
               size="xs"
               square

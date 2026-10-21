@@ -1018,6 +1018,12 @@ export type PuzzleActivityEntry = {
  */
 date: number, win: boolean, puzzle: Puzzle, };
 
+export type PuzzleWrongMove = { 
+/**
+ * The index in the solution of the move it was played instead of.
+ */
+index: number, uci: string, };
+
 export type PuzzleAttemptInput = { puzzle: Puzzle, mode: PuzzleTrainMode, 
 /**
  * Tried again from the history: kept in the log, left out of totals and the day streak.
@@ -1038,7 +1044,11 @@ found: number, wrong: number, total: number,
 /**
  * The local calendar day (`YYYY-MM-DD`) it was played on.
  */
-day: string, };
+day: string, 
+/**
+ * What was played at each wrong first try.
+ */
+wrongMoves?: Array<PuzzleWrongMove>, };
 
 export type PuzzleAttempt = { id: number, 
 /**
@@ -1052,7 +1062,11 @@ found: number,
 /**
  * Player moves wrong at the first try.
  */
-wrong: number, total: number, };
+wrong: number, total: number, 
+/**
+ * What was played at each wrong first try, when the log kept it.
+ */
+wrongMoves?: Array<PuzzleWrongMove>, };
 
 export type PuzzleTotals = { attempts: number, solved: number, hinted: number, partial: number, missed: number, revealed: number, movesFound: number, movesTried: number, };
 

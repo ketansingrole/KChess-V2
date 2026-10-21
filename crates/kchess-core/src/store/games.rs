@@ -1009,6 +1009,11 @@ fn read_api_cache(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> 
     })
 }
 
+/// The `api_cache` keys of games kept from `exportGame`, so they open without a connection.
+pub const EXPORTED_GAME_CACHE: &str = "exportGame:";
+/// How many of those are kept, newest first.
+const EXPORTED_GAMES_KEPT: i64 = 200;
+
 fn write_api_cache(
     db: &Connection,
     key: &str,
@@ -1023,6 +1028,15 @@ fn write_api_cache(
         params![key, value.to_string(), now_ms()],
     )
     .sql()?;
+    if key.starts_with(EXPORTED_GAME_CACHE) {
+        let pattern = format!("{EXPORTED_GAME_CACHE}%");
+        db.execute(
+            "DELETE FROM api_cache WHERE key LIKE ?1 AND key NOT IN (
+               SELECT key FROM api_cache WHERE key LIKE ?1 ORDER BY fetchedAt DESC, rowid DESC LIMIT ?2)",
+            params![pattern, EXPORTED_GAMES_KEPT],
+        )
+        .sql()?;
+    }
     Ok(Value::Null)
 }
 

@@ -3,6 +3,7 @@ import type {
   PuzzleActivityEntry,
   PuzzleAttempt,
   PuzzleAttemptOutcome,
+  PuzzleWrongMove,
 } from '@kchess/contracts/types'
 import type { ResultBadge } from './games'
 
@@ -74,6 +75,8 @@ export interface PuzzleHistoryRow {
   /** “3/5 moves” for local attempts; Lichess records only the result. */
   moves?: string
   puzzle: Puzzle
+  /** What was played at each wrong first try, when the local log kept it. */
+  wrongMoves?: PuzzleWrongMove[]
   source: 'local' | 'lichess'
   mode: PuzzleHistoryMode
   /** The mode it was played in, a retry's included: what the filter matches. */
@@ -111,6 +114,7 @@ export function puzzleHistoryRows(
     badge: ATTEMPT_BADGES[attempt.outcome],
     moves: movesText(attempt),
     puzzle: attempt.puzzle,
+    wrongMoves: attempt.wrongMoves,
     source: 'local',
     mode: attempt.retry ? 'retry' : attempt.mode,
     playedIn: attempt.mode,

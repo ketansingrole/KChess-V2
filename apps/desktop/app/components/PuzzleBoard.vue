@@ -40,8 +40,11 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  /** Every attempted move, right or wrong, and its number among the player's moves of the solution. */
-  move: [correct: boolean, index: number]
+  /**
+   * Every attempted move, right or wrong, its number among the player's moves of the solution,
+   * and the move itself (UCI).
+   */
+  move: [correct: boolean, index: number, uci: string]
   /** The first verdict on the puzzle: solved cleanly, or not, and how far it got. Sent once. */
   outcome: [win: boolean, detail: PuzzleVerdictDetail]
   /** The puzzle is over: solved, or (without `retry`) failed. */
@@ -149,7 +152,7 @@ function onMove(uci: string): void {
     flashTimer = setTimeout(() => (flash.value = false), 900)
     hinted.value = false
     resetKey.value++
-    emit('move', false, index)
+    emit('move', false, index, uci)
     decide(false)
     if (!props.retry) {
       state.value = { ...state.value, status: 'failed' }
@@ -161,7 +164,7 @@ function onMove(uci: string): void {
   hinted.value = false
   state.value = result.state
   playMoveSound(result.state.sans.at(-1))
-  emit('move', true, index)
+  emit('move', true, index, uci)
   if (result.state.status === 'solved') {
     decide(mistakes.value === 0 && !revealed.value)
     void play('genericNotify')

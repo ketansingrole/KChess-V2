@@ -32,7 +32,19 @@ pub fn create_schema(db: &Connection) -> Result<(), String> {
 );
 CREATE INDEX IF NOT EXISTS idx_puzzle_attempts_day ON puzzle_attempts(day);",
     )
-    .map_err(|cause| cause.to_string())
+    .map_err(|cause| cause.to_string())?;
+    // Appended migration: what was played at each wrong first try, as `index:uci` words.
+    let has_wrong_moves = db
+        .prepare("SELECT 1 FROM pragma_table_info('puzzle_attempts') WHERE name = 'wrong_moves'")
+        .and_then(|mut statement| statement.exists([]))
+        .map_err(|cause| cause.to_string())?;
+    if !has_wrong_moves {
+        db.execute_batch(
+            "ALTER TABLE puzzle_attempts ADD COLUMN wrong_moves TEXT NOT NULL DEFAULT ''",
+        )
+        .map_err(|cause| cause.to_string())?;
+    }
+    Ok(())
 }
 
 /// `PuzzleAttemptInput`, already validated by the facade.
@@ -49,6 +61,15 @@ pub struct AttemptInput {
     pub wrong: u32,
     pub total: u32,
     pub day: String,
+    #[serde(default)]
+    pub wrong_moves: Vec<WrongMove>,
+}
+
+/// A wrong first try: the index in the solution of the move it replaced, and the move played.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WrongMove {
+    pub index: u32,
+    pub uci: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,10 +113,15 @@ pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<(), St
     let outcome = classify(&verdict);
     let (found, tried) = moves(outcome, &verdict);
     let puzzle = &attempt.puzzle;
+    let wrong_moves: Vec<String> = attempt
+        .wrong_moves
+        .iter()
+        .map(|entry| format!("{}:{}", entry.index, entry.uci))
+        .collect();
     db.execute(
         "INSERT INTO puzzle_attempts (at, day, puzzle_id, fen, last_move, solution, rating, themes,
-            game_id, mode, retry, outcome, hinted, found, total, tried)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            game_id, mode, retry, outcome, hinted, found, total, tried, wrong_moves)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             at,
             attempt.day,
@@ -113,6 +139,7 @@ pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<(), St
             found,
             attempt.total.max(found),
             tried,
+            wrong_moves.join(" "),
         ],
     )
     .map_err(sql_error)?;
@@ -141,7 +168,15 @@ fn attempt_from(row: &Row<'_>) -> rusqlite::Result<Value> {
     if let Some(game_id) = game_id {
         puzzle["gameId"] = json!(game_id);
     }
-    Ok(json!({
+    let wrong_moves: String = row.get("wrong_moves")?;
+    let wrong_moves: Vec<Value> = words(&wrong_moves)
+        .into_iter()
+        .filter_map(|word| {
+            let (index, uci) = word.split_once(':')?;
+            Some(json!({ "index": index.parse::<u32>().ok()?, "uci": uci }))
+        })
+        .collect();
+    let mut attempt = json!({
         "id": row.get::<_, i64>("id")?,
         "at": row.get::<_, i64>("at")?,
         "day": row.get::<_, String>("day")?,
@@ -153,7 +188,11 @@ fn attempt_from(row: &Row<'_>) -> rusqlite::Result<Value> {
         "found": row.get::<_, i64>("found")?,
         "wrong": row.get::<_, i64>("tried")? - row.get::<_, i64>("found")?,
         "total": row.get::<_, i64>("total")?,
-    }))
+    });
+    if !wrong_moves.is_empty() {
+        attempt["wrongMoves"] = Value::Array(wrong_moves);
+    }
+    Ok(attempt)
 }
 
 /// `PuzzleTotals` of first attempts, of one day or of all.
@@ -253,6 +292,7 @@ mod tests {
             wrong: u32::from(!win && !revealed),
             total: 3,
             day: day.into(),
+            wrong_moves: Vec::new(),
         }
     }
 
@@ -319,6 +359,53 @@ mod tests {
 
     fn progress_at(db: &Connection, today: &str) -> Value {
         progress(db, &query(today)).expect("progress")
+    }
+
+    #[test]
+    fn keeps_what_was_played_at_each_wrong_first_try() {
+        let db = setup();
+        let mut missed = attempt("2026-10-19", false, 1, false, false);
+        missed.wrong_moves = vec![
+            WrongMove {
+                index: 0,
+                uci: "d1d7".into(),
+            },
+            WrongMove {
+                index: 2,
+                uci: "g1h1".into(),
+            },
+        ];
+        record(&db, &missed, 1).expect("record");
+        record(&db, &attempt("2026-10-19", true, 3, false, false), 2).expect("record");
+        let recent = progress_at(&db, "2026-10-19")["recent"].clone();
+        assert!(recent[0].get("wrongMoves").is_none());
+        assert_eq!(
+            recent[1]["wrongMoves"],
+            json!([{ "index": 0, "uci": "d1d7" }, { "index": 2, "uci": "g1h1" }])
+        );
+    }
+
+    #[test]
+    fn adds_the_wrong_moves_to_a_log_from_before_them() {
+        let db = Connection::open_in_memory().expect("memory db");
+        db.execute_batch(
+            "CREATE TABLE puzzle_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL,
+               day TEXT NOT NULL, puzzle_id TEXT NOT NULL, fen TEXT NOT NULL, last_move TEXT,
+               solution TEXT NOT NULL, rating INTEGER NOT NULL, themes TEXT NOT NULL, game_id TEXT,
+               mode TEXT NOT NULL, retry INTEGER NOT NULL, outcome TEXT NOT NULL,
+               hinted INTEGER NOT NULL, found INTEGER NOT NULL, total INTEGER NOT NULL,
+               tried INTEGER NOT NULL);
+             INSERT INTO puzzle_attempts (at, day, puzzle_id, fen, solution, rating, themes, mode,
+               retry, outcome, hinted, found, total, tried)
+             VALUES (1, '2026-10-19', 'abc12', '6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1', 'd1d8',
+               1500, 'mateIn1', 'practice', 0, 'missed', 0, 0, 1, 1);",
+        )
+        .expect("earlier log");
+        create_schema(&db).expect("migrated");
+        create_schema(&db).expect("migrated again");
+        let recent = progress_at(&db, "2026-10-19")["recent"].clone();
+        assert_eq!(recent[0]["outcome"], "missed");
+        assert!(recent[0].get("wrongMoves").is_none());
     }
 
     #[test]

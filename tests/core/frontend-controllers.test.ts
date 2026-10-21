@@ -6,6 +6,7 @@ import {
   type PuzzleSelection,
 } from '@kchess/rules/puzzleSession'
 import type { OnlineEvent, Puzzle, PuzzleSolveResult } from '@kchess/contracts/types'
+import { rulesLossless } from '@kchess/rules/engine'
 import { deferred } from '../fixtures/deferred'
 
 function online(api = {}) {
@@ -257,6 +258,59 @@ it('scores every move by its first try, logs each attempt at its end, retries un
   expect(record).toHaveBeenCalledTimes(6)
   expect(record.mock.lastCall![0]).toMatchObject({ retry: true, win: true })
   expect(state.session.solved).toBe(1)
+})
+// Analysing an attempt showed nothing of what was played: only counts were kept.
+it('logs what was played at each wrong first try, as the core accepts it', async () => {
+  const opening: Puzzle = {
+    id: 'Ab12c',
+    fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    solution: ['e2e4', 'e7e5', 'g1f3'],
+    rating: 1500,
+    themes: ['opening'],
+  }
+  const record = vi.fn()
+  const state = puzzleSessionState()
+  const selection: PuzzleSelection = {
+    account: '',
+    mode: 'offline',
+    angle: 'mix',
+    difficulty: 'normal',
+    color: 'random',
+  }
+  const trainer = new PuzzleSession(state, {
+    api: {
+      localPuzzles: vi.fn(async () => [opening]),
+      puzzleNext: vi.fn(),
+      puzzleSolve: vi.fn(),
+    } as never,
+    selection: () => selection,
+    online: () => true,
+    record,
+  })
+  await trainer.loadNext()
+  trainer.move(0, false, 'a2a3')
+  await trainer.report(false, { revealed: false, hinted: false, total: 2 })
+  trainer.move(0, true, 'e2e4')
+  // A second wrong try at a move is not its first try.
+  trainer.move(1, false, 'h2h3')
+  trainer.move(1, false, 'h2h4')
+  trainer.move(1, true, 'g1f3')
+  trainer.end()
+  const logged = record.mock.lastCall![0]
+  // Indexes in the solution: the player's second move is its third.
+  expect(logged.wrongMoves).toEqual([
+    { index: 0, uci: 'a2a3' },
+    { index: 2, uci: 'h2h3' },
+  ])
+  expect(rulesLossless('assertPuzzleAttempt', logged)).toMatchObject({
+    wrongMoves: logged.wrongMoves,
+  })
+  // A clean solve logs none.
+  await trainer.loadNext()
+  trainer.move(0, true, 'e2e4')
+  await trainer.report(true, { revealed: false, hinted: false, total: 1 })
+  trainer.end()
+  expect(record.mock.lastCall![0]).not.toHaveProperty('wrongMoves')
 })
 // Lichess draws the account's next unplayed puzzle: an unreported one came back on every Next.
 it('sends practice results unrated so the next draw is a new puzzle', async () => {

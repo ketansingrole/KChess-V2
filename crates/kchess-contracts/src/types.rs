@@ -1504,9 +1504,19 @@ pub struct PuzzleActivityEntry {
     pub puzzle: Puzzle,
 }
 
+/// A move the player tried first at one of their moves of a puzzle, instead of the solution's.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleWrongMove {
+    /// The index in the solution of the move it was played instead of.
+    pub index: f64,
+    pub uci: String,
+}
+
 /// A training attempt as the board saw it at its first verdict, for the local log (`puzzles.db`).
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
 pub struct PuzzleAttemptInput {
     pub puzzle: Puzzle,
     pub mode: PuzzleTrainMode,
@@ -1523,10 +1533,14 @@ pub struct PuzzleAttemptInput {
     pub total: f64,
     /// The local calendar day (`YYYY-MM-DD`) it was played on.
     pub day: String,
+    /// What was played at each wrong first try.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrong_moves: Option<Vec<PuzzleWrongMove>>,
 }
 
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
 pub struct PuzzleAttempt {
     pub id: f64,
     /// When it was played, in ms since the epoch.
@@ -1542,6 +1556,9 @@ pub struct PuzzleAttempt {
     /// Player moves wrong at the first try.
     pub wrong: f64,
     pub total: f64,
+    /// What was played at each wrong first try, when the log kept it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrong_moves: Option<Vec<PuzzleWrongMove>>,
 }
 
 /// Attempts by outcome, and player moves found of those tried (found plus each ending wrong move).
@@ -2291,6 +2308,7 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         PuzzleThemeResult,
         PuzzleDashboard,
         PuzzleActivityEntry,
+        PuzzleWrongMove,
         PuzzleAttemptInput,
         PuzzleAttempt,
         PuzzleTotals,

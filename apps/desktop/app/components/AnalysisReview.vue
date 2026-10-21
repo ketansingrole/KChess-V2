@@ -95,6 +95,14 @@ const canPractice = computed(
     practiceSides.value.some((color) => !tried.value.has(`${review.value?.key}:${color}`)),
 )
 const reviewPractice = useReviewPractice()
+/**
+ * The board holds a studied puzzle: its line is a few moves, so side-by-side figures and practice
+ * mean nothing there; its chart and move labels still do.
+ */
+const puzzleLine = computed(() => {
+  const puzzle = origin.value?.puzzle
+  return !!puzzle && analysis.root.fen === puzzle.fen
+})
 /** Saves whichever of those sides is not in practice yet, then practises them on the board. */
 async function practiceMistakes(): Promise<void> {
   const stored = review.value
@@ -218,7 +226,7 @@ function next(color: 'white' | 'black', judgment: MoveClassification): void {
     <p v-else-if="queued" class="review-note">Waiting for another review to finish…</p>
     <p v-else-if="failure" class="review-note text-error">{{ failure }}</p>
 
-    <table v-if="sides.length" class="review-table">
+    <table v-if="sides.length && !puzzleLine" class="review-table">
       <colgroup>
         <col />
         <col class="player-col" />
@@ -275,7 +283,7 @@ function next(color: 'white' | 'black', judgment: MoveClassification): void {
     </table>
 
     <UButton
-      v-if="complete && canPractice && !reviewPractice.active"
+      v-if="complete && canPractice && !reviewPractice.active && !puzzleLine"
       block
       variant="soft"
       icon="i-lucide-target"

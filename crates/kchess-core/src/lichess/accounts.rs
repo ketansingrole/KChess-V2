@@ -26,6 +26,7 @@ use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::{Host, Level};
+use crate::store::games::EXPORTED_GAME_CACHE;
 
 /// `MAX_GAMES` of `store.ts`: the most games one sync keeps walking back through.
 pub const MAX_GAMES: usize = 5000;
@@ -925,9 +926,11 @@ impl Lichess {
         Ok(perf_stats(perf, raw))
     }
 
-    /// `exportGame`: a finished game as PGN with clocks, for the analysis board.
+    /// `exportGame`: a finished game as PGN with clocks, for the analysis board. A game fetched
+    /// once is kept (the newest of them), so without a connection it still opens.
     pub async fn export_game(&self, id: &str) -> CoreResult<String> {
-        let pgn = self
+        let key = format!("{EXPORTED_GAME_CACHE}{id}");
+        let fetched = self
             .client
             .policy()
             .with_usage("", "games", async {
@@ -944,12 +947,40 @@ impl Lichess {
                     )
                     .await
             })
-            .await?;
+            .await;
+        let pgn = match fetched {
+            Ok(pgn) => pgn,
+            Err(error) => {
+                let kept = match self.store.read_api_cache(&key).await {
+                    Ok(kept) => kept.and_then(|kept| kept.value.as_str().map(str::to_string)),
+                    Err(cause) => {
+                        self.host.log(
+                            Level::Debug,
+                            "lichess",
+                            &format!("Kept game read failed: {id} {}", cause.message),
+                        );
+                        None
+                    }
+                };
+                return kept.ok_or_else(|| error.into());
+            }
+        };
         if pgn.trim().is_empty() {
             return Err(CoreError::new("That game is not on Lichess."));
         }
         if pgn.encode_utf16().count() > MAX_PGN_UNITS {
             return Err(CoreError::new("That game is too long to open."));
+        }
+        if let Err(cause) = self
+            .store
+            .write_api_cache(&key, &Value::String(pgn.clone()), &|| true)
+            .await
+        {
+            self.host.log(
+                Level::Warn,
+                "lichess-cache",
+                &format!("Keeping a fetched game failed: {id} {}", cause.message),
+            );
         }
         Ok(pgn)
     }

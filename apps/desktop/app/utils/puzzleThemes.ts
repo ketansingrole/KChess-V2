@@ -220,3 +220,12 @@ export function themeItems(): SelectItem[] {
     ]),
   ]
 }
+
+/** A puzzle's first few themes by name, leaving out its length (short, long …). */
+export function puzzleThemeText(themes: readonly string[]): string {
+  return themes
+    .filter((theme) => !['short', 'long', 'veryLong', 'oneMove'].includes(theme))
+    .slice(0, 3)
+    .map(themeName)
+    .join(', ')
+}

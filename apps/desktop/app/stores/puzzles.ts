@@ -88,7 +88,8 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const loadNext = (): Promise<void> => trainer.loadNext()
   const report = (win: boolean, detail?: PuzzleVerdictDetail): Promise<void> =>
     trainer.report(win, detail)
-  const move = (index: number, correct: boolean): void => trainer.move(index, correct)
+  const move = (index: number, correct: boolean, uci?: string): void =>
+    trainer.move(index, correct, uci)
   const end = (): void => trainer.end()
   const resetSession = (): void => trainer.resetSession()
   const retry = (puzzle: Puzzle): void => {

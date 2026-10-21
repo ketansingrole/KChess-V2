@@ -103,9 +103,20 @@ struct Attempt {
     /// Each player move's first try, by its number in the solution: 1 right, 2 wrong, 0 untried.
     #[serde(default)]
     tries: Vec<u8>,
+    /// What was played at each wrong first try, for the log.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    wrong_moves: Vec<WrongMove>,
     /// The verdict's facts, once given; taken when the attempt ends and is logged.
     #[serde(default)]
     verdict: Option<VerdictFacts>,
+}
+
+/// A wrong first try: the index in the solution of the move it replaced, and the move played.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WrongMove {
+    index: usize,
+    uci: String,
 }
 
 /// What the board knew at the first verdict.
@@ -284,6 +295,7 @@ impl Session {
             anonymous: false,
             retry: self.state.is_retry,
             tries: Vec::new(),
+            wrong_moves: Vec::new(),
             verdict: None,
         });
         self.state.phase = "ready".into();
@@ -410,8 +422,9 @@ impl Session {
         }
     }
 
-    /// A player move of the shown puzzle: the first try at each move of the solution is its score.
-    fn played(&mut self, index: usize, correct: bool) {
+    /// A player move of the shown puzzle: the first try at each move of the solution is its score,
+    /// and a wrong one is kept as played (`uci`, when the board says).
+    fn played(&mut self, index: usize, correct: bool, uci: Option<&str>) {
         if self.state.phase != "ready" || index >= MAX_TRIES {
             return;
         }
@@ -423,6 +436,13 @@ impl Session {
         }
         if attempt.tries[index] == 0 {
             attempt.tries[index] = if correct { 1 } else { 2 };
+            if let (false, Some(uci)) = (correct, uci) {
+                // The player moves first, so their move `index` is the solution's `2 × index`.
+                attempt.wrong_moves.push(WrongMove {
+                    index: 2 * index,
+                    uci: uci.to_string(),
+                });
+            }
         }
     }
 
@@ -446,9 +466,10 @@ impl Session {
             total: facts.total,
         };
         let (mode, retry) = (attempt.mode.clone(), attempt.retry);
+        let wrong_moves = std::mem::take(&mut attempt.wrong_moves);
         let outcome = classify(&verdict);
         let (found, tried) = moves(outcome, &verdict);
-        self.record = Some(json!({
+        let mut record = json!({
             "puzzle": puzzle,
             "mode": mode,
             "retry": retry,
@@ -459,7 +480,11 @@ impl Session {
             "wrong": verdict.wrong,
             "total": verdict.total,
             "day": self.day,
-        }));
+        });
+        if !wrong_moves.is_empty() {
+            record["wrongMoves"] = json!(wrong_moves);
+        }
+        self.record = Some(record);
         if !retry {
             self.state.session.count(outcome, found, tried);
         }
@@ -691,7 +716,8 @@ pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
         "puzzleSessionMove" => session_from(args).and_then(|(arg, mut session)| {
             let index = arg.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX);
             let correct = arg.get("correct").and_then(Value::as_bool).unwrap_or(false);
-            session.played(usize::try_from(index).unwrap_or(usize::MAX), correct);
+            let uci = arg.get("uci").and_then(Value::as_str);
+            session.played(usize::try_from(index).unwrap_or(usize::MAX), correct, uci);
             session.finish()
         }),
         "puzzleSessionEnd" => session_from(args).and_then(|(_, mut session)| {

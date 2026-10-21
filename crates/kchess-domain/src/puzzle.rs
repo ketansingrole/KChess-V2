@@ -30,6 +30,28 @@ pub struct DbPuzzle {
     /// (`Kings_Gambit_Accepted Kings_Gambit_Accepted_Abbazia_Defense`). Empty when untagged.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub openings: String,
+    /// The Lichess game the puzzle comes from (from its `GameUrl`); empty when there is none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub game_id: String,
+}
+
+/// The game id of a puzzle's `GameUrl` (`https://lichess.org/787zsVup/black#48`): eight letters
+/// and digits after the host, or nothing.
+fn game_id_of(url: &[u8]) -> &str {
+    const HOST: &[u8] = b"https://lichess.org/";
+    let Some(rest) = url.strip_prefix(HOST) else {
+        return "";
+    };
+    let end = rest
+        .iter()
+        .position(|b| *b == b'/' || *b == b'#')
+        .unwrap_or(rest.len());
+    let id = &rest[..end];
+    if id.len() == 8 && id.iter().all(u8::is_ascii_alphanumeric) {
+        std::str::from_utf8(id).unwrap_or_default()
+    } else {
+        ""
+    }
 }
 
 /// The generator the TypeScript tests use (a 32-bit mix of a Weyl sequence), so a seeded
@@ -243,6 +265,7 @@ impl Sampler {
                 plays,
                 themes: themes.to_string(),
                 openings: openings.to_string(),
+                game_id: game_id_of(cells[8]).to_string(),
             })
         };
         if is_solid {
@@ -372,6 +395,20 @@ impl Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_source_game_of_a_game_url() {
+        assert_eq!(
+            game_id_of(b"https://lichess.org/787zsVup/black#48"),
+            "787zsVup"
+        );
+        assert_eq!(game_id_of(b"https://lichess.org/787zsVup#48"), "787zsVup");
+        assert_eq!(game_id_of(b"https://lichess.org/787zsVup"), "787zsVup");
+        assert_eq!(game_id_of(b""), "");
+        assert_eq!(game_id_of(b"https://example.org/787zsVup"), "");
+        assert_eq!(game_id_of(b"https://lichess.org/short#1"), "");
+        assert_eq!(game_id_of(b"https://lichess.org/787zs-up#1"), "");
+    }
 
     #[test]
     fn random_matches_the_typescript_generator() {

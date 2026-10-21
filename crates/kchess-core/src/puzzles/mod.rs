@@ -421,6 +421,7 @@ impl PuzzleService {
                         plays: Some(row.plays),
                         themes: row.themes.clone(),
                         openings: row.openings.clone(),
+                        game_id: row.game_id.clone(),
                     })
                     .collect();
                 Ok((rows, sampler.count()))

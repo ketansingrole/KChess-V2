@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
-import { themeName } from '../utils/puzzleThemes'
+import { puzzleThemeText } from '../utils/puzzleThemes'
 import { formatCount } from '../utils/format'
 import {
   HISTORY_FILTERS,
@@ -36,11 +36,7 @@ const rows = computed(() =>
     .map((row) => ({
       ...row,
       modeInfo: HISTORY_MODES[row.mode],
-      themeText: row.puzzle.themes
-        .filter((theme) => !['short', 'long', 'veryLong', 'oneMove'].includes(theme))
-        .slice(0, 3)
-        .map(themeName)
-        .join(', '),
+      themeText: puzzleThemeText(row.puzzle.themes),
     })),
 )
 
@@ -192,7 +188,7 @@ const summary = computed(() => {
               icon="i-lucide-microscope"
               aria-label="Open on the analysis board"
               title="Analysis board"
-              @click="attemptActions.analyse(row.puzzle)"
+              @click="attemptActions.analyse(row.puzzle, row.wrongMoves)"
             />
           </span>
         </div>

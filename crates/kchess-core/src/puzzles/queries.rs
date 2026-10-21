@@ -28,6 +28,9 @@ pub struct DbPuzzle {
     /// Lichess's `OpeningTags` (opening keys); empty for puzzles imported before they were kept.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub openings: String,
+    /// The Lichess game the puzzle comes from; empty for puzzles imported before it was kept.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub game_id: String,
 }
 
 /// One puzzle, whichever source it came from (`Puzzle` in `contracts/types.ts`).
@@ -113,7 +116,8 @@ fn serialize_js_number_opt<S: Serializer>(
     }
 }
 
-const COLUMNS: &str = "SELECT id, fen, moves, rating, plays, themes, openings FROM puzzles";
+const COLUMNS: &str =
+    "SELECT id, fen, moves, rating, plays, themes, openings, game_id FROM puzzles";
 /// A row's angles, padded for whole-token `LIKE` matching: its themes and its opening keys.
 const ANGLES: &str = "(' ' || themes || ' ' || openings || ' ')";
 
@@ -134,6 +138,15 @@ CREATE TABLE IF NOT EXISTS worker_meta (id INTEGER PRIMARY KEY CHECK(id = 1));",
         .map_err(|cause| cause.to_string())?;
     if !has_openings {
         db.execute_batch("ALTER TABLE puzzles ADD COLUMN openings TEXT NOT NULL DEFAULT ''")
+            .map_err(|cause| cause.to_string())?;
+    }
+    // Appended migration: each puzzle's source game, filled by the next download.
+    let has_game = db
+        .prepare("SELECT 1 FROM pragma_table_info('puzzles') WHERE name = 'game_id'")
+        .and_then(|mut statement| statement.exists([]))
+        .map_err(|cause| cause.to_string())?;
+    if !has_game {
+        db.execute_batch("ALTER TABLE puzzles ADD COLUMN game_id TEXT NOT NULL DEFAULT ''")
             .map_err(|cause| cause.to_string())?;
     }
     Ok(())
@@ -187,7 +200,7 @@ pub fn store_sample(
 ) -> Result<usize, String> {
     let mut insert = db
         .prepare(
-            "INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes, openings) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes, openings, game_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .map_err(sql_error)?;
     db.execute_batch("BEGIN IMMEDIATE").map_err(sql_error)?;
@@ -226,7 +239,8 @@ fn write_sample(
                 row.rating,
                 row.plays.unwrap_or(0.0),
                 row.themes,
-                row.openings
+                row.openings,
+                row.game_id
             ])
             .map_err(sql_error)?;
         count += changes;
@@ -314,7 +328,7 @@ fn puzzle_from_db(row: &DbPuzzle) -> Option<Puzzle> {
             .map(str::to_string)
             .collect(),
         plays: row.plays,
-        game_id: None,
+        game_id: Some(row.game_id.clone()).filter(|id| !id.is_empty()),
     })
 }
 
@@ -334,6 +348,7 @@ fn fetch(db: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<DbPuzz
                 plays: Some(row.get(4)?),
                 themes: row.get(5)?,
                 openings: row.get(6)?,
+                game_id: row.get(7)?,
             })
         })
         .map_err(sql_error)?;
@@ -556,13 +571,14 @@ mod tests {
             plays: Some(10.0),
             themes: themes.to_string(),
             openings: String::new(),
+            game_id: String::new(),
         }
     }
 
     fn setup(count: usize) -> Connection {
         let db = Connection::open_in_memory().expect("in-memory database");
         db.execute_batch(
-            "CREATE TABLE puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL, openings TEXT NOT NULL DEFAULT ''); CREATE INDEX idx_puzzles_rating ON puzzles(rating); CREATE TABLE puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);",
+            "CREATE TABLE puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL, openings TEXT NOT NULL DEFAULT '', game_id TEXT NOT NULL DEFAULT ''); CREATE INDEX idx_puzzles_rating ON puzzles(rating); CREATE TABLE puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);",
         )
         .expect("test schema");
         let themes = ["mate", "fork", "pin", "mate mateIn2", "fork pin"];
@@ -577,6 +593,24 @@ mod tests {
             .collect();
         store_sample(&db, &rows, &|| false).expect("store sample");
         db
+    }
+
+    #[test]
+    fn keeps_each_puzzles_source_game_and_adds_its_column_to_an_earlier_database() {
+        let db = Connection::open_in_memory().expect("memory db");
+        db.execute_batch(
+            "CREATE TABLE puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL, openings TEXT NOT NULL DEFAULT ''); INSERT INTO puzzles (id, fen, moves, rating, plays, themes) VALUES ('old', '6k1/5ppp/8/8/8/8/5PPP/3R2K1 b - - 0 1', 'g8h8 d1d8', 1500, 10, 'mateIn1');",
+        )
+        .expect("earlier database");
+        create_schema(&db).expect("migrated");
+        create_schema(&db).expect("migrated again");
+        let old = &to_puzzles(&fetch(&db, COLUMNS, &[]).expect("rows"))[0];
+        assert_eq!(old.game_id, None);
+        let mut from_game = row("new01", 1500.0, "fork");
+        from_game.game_id = "787zsVup".into();
+        store_sample(&db, &[from_game], &|| false).expect("stored");
+        let stored = &to_puzzles(&fetch(&db, COLUMNS, &[]).expect("rows"))[0];
+        assert_eq!(stored.game_id.as_deref(), Some("787zsVup"));
     }
 
     #[test]

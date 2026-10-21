@@ -769,6 +769,39 @@ async fn logout_during_a_cache_write_does_not_restore_the_memory_cache() {
     );
 }
 
+// A puzzle's source game could not be opened without a connection, even after it had been.
+#[tokio::test]
+async fn a_game_exported_once_opens_again_without_a_connection() {
+    let offline = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let down = Arc::clone(&offline);
+    let fixture = serve(move |seen| {
+        if down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Reply::Text(503, "text/plain", String::new());
+        }
+        match (seen.path(), seen.body.as_str()) {
+            ("/api/games/export/_ids", "game0001") => Reply::Text(
+                200,
+                "application/x-chess-pgn",
+                "[White \"Alice\"]\n[Black \"Bob\"]\n\n1. e4 e5 1-0\n".into(),
+            ),
+            _ => Reply::Text(200, "application/x-chess-pgn", String::new()),
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+    let pgn = lichess.export_game("game0001").await.unwrap();
+    offline.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(lichess.export_game("game0001").await.unwrap(), pgn);
+    // A game never fetched still says why it cannot open.
+    assert!(lichess.export_game("game0002").await.is_err());
+}
+
 #[tokio::test]
 async fn a_game_is_exported_without_an_account_and_a_missing_one_is_named() {
     let fixture = serve(|seen| match (seen.path(), seen.body.as_str()) {

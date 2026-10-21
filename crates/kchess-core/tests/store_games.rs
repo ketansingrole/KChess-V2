@@ -567,6 +567,46 @@ fn clearing_data_deletes_it_too_but_keeps_the_account_and_its_usage_history() {
 }
 
 #[test]
+fn keeps_the_newest_exported_games_and_every_other_cache_entry() {
+    let store = fresh();
+    store.ok(
+        "store.games.writeApiCache",
+        vec![
+            json!("alice:profile"),
+            json!({ "username": "Alice" }),
+            json!(true),
+        ],
+    );
+    for n in 0..205 {
+        store.ok(
+            "store.games.writeApiCache",
+            vec![
+                json!(format!("exportGame:g{n:04}")),
+                json!("1. e4 *"),
+                json!(true),
+            ],
+        );
+    }
+    let kept = rows(
+        &store,
+        "SELECT key FROM api_cache WHERE key LIKE 'exportGame:%'",
+    );
+    assert_eq!(kept.len(), 200);
+    // The five fetched first are the ones let go.
+    assert!(kept.contains(&json!({ "key": "exportGame:g0204" })));
+    assert!(kept.contains(&json!({ "key": "exportGame:g0005" })));
+    assert!(!kept.contains(&json!({ "key": "exportGame:g0004" })));
+    assert_eq!(
+        rows(
+            &store,
+            "SELECT key FROM api_cache WHERE key = 'alice:profile'"
+        )
+        .len(),
+        1
+    );
+}
+
+#[test]
 fn no_profile_data_is_cached_once_its_login_has_ended() {
     let store = fresh();
     store.ok(

@@ -1307,6 +1307,13 @@ struct AttemptPuzzle {
 
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
+struct AttemptWrongMove {
+    index: u64,
+    uci: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
 struct PuzzleAttempt {
     puzzle: AttemptPuzzle,
     mode: String,
@@ -1318,6 +1325,8 @@ struct PuzzleAttempt {
     wrong: u64,
     total: u64,
     day: String,
+    #[serde(rename = "wrongMoves", skip_serializing_if = "Option::is_none")]
+    wrong_moves: Option<Vec<AttemptWrongMove>>,
 }
 
 fn assert_puzzle_attempt(value: J) -> Checked<PuzzleAttempt> {
@@ -1351,6 +1360,13 @@ fn assert_puzzle_attempt(value: J) -> Checked<PuzzleAttempt> {
     within(attempt.wrong, 0, 32, MSG, "")?;
     within(attempt.total, 1, 32, MSG, "")?;
     local_day(&attempt.day, ATTEMPT)?;
+    if let Some(wrong) = &attempt.wrong_moves {
+        max_items(wrong, 32, MSG, "")?;
+        each(wrong, |entry| {
+            within(entry.index, 0, 63, MSG, "")?;
+            uci(&entry.uci)
+        })?;
+    }
     Ok(attempt)
 }
 

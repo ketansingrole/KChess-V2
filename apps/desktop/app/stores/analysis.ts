@@ -11,7 +11,13 @@ import {
 import { initialLibrary, persistSession, registerPersistenceFlush } from '../utils/library'
 import { useLocalStorage } from '@vueuse/core'
 import type { Color } from '@lichess-org/chessground/types'
-import type { AnalysisUpdate, CloudEval, Judgment } from '@kchess/contracts/types'
+import type {
+  AnalysisUpdate,
+  CloudEval,
+  Judgment,
+  Puzzle,
+  PuzzleWrongMove,
+} from '@kchess/contracts/types'
 import { RequestScope } from '@kchess/rules/requestScope'
 import { analysisContext } from '@kchess/rules/analysisContext'
 import {
@@ -53,6 +59,8 @@ export interface GameOrigin {
   black?: string
   /** The side you played: its mistakes are saved for practice once the review completes. */
   player?: Color
+  /** A puzzle studied here, and the moves tried in the attempt it was opened from. */
+  puzzle?: Puzzle & { wrongMoves: PuzzleWrongMove[] }
 }
 
 /** What the review says about one main-line move. */

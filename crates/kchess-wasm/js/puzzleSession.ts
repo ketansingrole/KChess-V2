@@ -164,9 +164,15 @@ export class PuzzleSession {
     await this.follow(step, 'puzzleSessionReportSettled')
   }
 
-  /** A player move: `index` is its number among the player's moves of the solution. */
-  move(index: number, correct: boolean): void {
-    this.apply('puzzleSessionMove', { index, correct })
+  /**
+   * A player move: `index` is its number among the player's moves of the solution, `uci` the move
+   * (kept for the log when it is a wrong first try).
+   */
+  move(index: number, correct: boolean, uci?: string): void {
+    this.apply(
+      'puzzleSessionMove',
+      uci === undefined ? { index, correct } : { index, correct, uci },
+    )
   }
 
   /** The puzzle is over (solved or its solution shown): count and log the attempt. */

@@ -74,7 +74,11 @@ onUnmounted(() => {
 const resetKey = ref(0)
 const dests = computed(() => (position.value ? destsFor(position.value) : new Map()))
 const lastMove = computed<Key[] | undefined>(() => {
-  const uci = node.value.uci
+  // A puzzle starts after the opponent's move that set it, as on the puzzle board.
+  const puzzle = analysis.origin?.puzzle
+  const uci =
+    node.value.uci ||
+    (puzzle && !path.value && root.value.fen === puzzle.fen ? puzzle.lastMove : '')
   return uci ? [uci.slice(0, 2) as Key, uci.slice(2, 4) as Key] : undefined
 })
 const currentClassification = computed(() => analysis.reviewMarks.get(path.value)?.classification)
@@ -577,6 +581,7 @@ function missed(result: VoiceResult): void {
       </div>
 
       <div class="card side-panel analysis-panel">
+        <AnalysisPuzzle />
         <ReviewPractice v-if="practice.active" />
         <section v-else class="ceval" aria-label="Engine">
           <div class="ceval-head">

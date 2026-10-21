@@ -57,6 +57,12 @@ describe('puzzle history rows', () => {
     expect(rows[0]!.badge.label).toBe('Solved')
   })
 
+  it('keeps a local attempt’s tried moves for studying it on the board', () => {
+    const tried = { ...local(4, 'eee', 5), wrongMoves: [{ index: 0, uci: 'd2d4' }] }
+    const [row] = puzzleHistoryRows([tried], [lichess('fff', 0, false)])
+    expect(row!.wrongMoves).toEqual([{ index: 0, uci: 'd2d4' }])
+  })
+
   it('reports move accuracy only once a move was tried', () => {
     expect(moveAccuracy(0, 0)).toBeUndefined()
     expect(moveAccuracy(8, 10)).toBe(80)
