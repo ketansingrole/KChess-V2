@@ -855,7 +855,10 @@ test('browses openings offline and drills one without a saved study', async ({
       'Only the named line: Connect a Lichess account in Settings to use the opening explorer.',
     ),
   ).toBeVisible()
-  await expect(page.getByText("Play the white moves of “King's Gambit”.")).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Lines from', exact: true })).toContainText(
+    "King's Gambit",
+  )
+  await expect(page.getByText('New line.', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'How replies are chosen', exact: true }).click()
   await expect(page.getByText(/^After the named line you play the most played move/)).toBeVisible()
   await page.keyboard.press('Escape')
@@ -873,7 +876,10 @@ test('browses openings offline and drills one without a saved study', async ({
   // A popular opening drills straight from its card.
   await navigate(page, 'Openings')
   await page.getByRole('button', { name: 'Train Sicilian Defense', exact: true }).click()
-  await expect(page.getByText('Play the white moves of “Sicilian Defense”.')).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Lines from', exact: true })).toContainText(
+    'Sicilian Defense',
+  )
+  await expect(page.getByText('New line.', { exact: true })).toBeVisible()
 })
 
 test('shows an opening’s continuations and games, and drills its popular replies @seed:opening-lookups', async ({
@@ -951,7 +957,10 @@ test('shows an opening’s continuations and games, and drills its popular repli
   await expect.poll(() => asked.some((path) => path.includes('Kings_Gambit'))).toBe(true)
   await page.goBack()
   await page.getByRole('button', { name: 'Train this line', exact: true }).click()
-  await expect(page.getByText("Play the white moves of “King's Gambit”.")).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Lines from', exact: true })).toContainText(
+    "King's Gambit",
+  )
+  await expect(page.getByText('New line.', { exact: true })).toBeVisible()
   await expect(page.getByText(/^Only the named line/)).toHaveCount(0)
   await move(page, 'e2', 'e4')
   await expect(async () => {

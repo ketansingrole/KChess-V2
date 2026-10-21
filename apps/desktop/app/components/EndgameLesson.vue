@@ -273,6 +273,7 @@ onBeforeUnmount(() => {
     <div class="board-stack">
       <div class="board-shell">
         <ChessBoard
+          keep-move-input
           :fen="status.fen"
           :orientation="orientation"
           :theme="settings.boardTheme"
@@ -313,7 +314,7 @@ onBeforeUnmount(() => {
 
       <div
         v-if="playable"
-        class="status-banner"
+        class="status-banner steady"
         :class="
           status.over
             ? status.success

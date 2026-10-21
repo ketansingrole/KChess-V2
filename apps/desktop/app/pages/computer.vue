@@ -442,6 +442,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
 
     <div v-board-fit class="play-layout">
       <PlayBoard
+        keep-move-input
         :fen="fen(localDisplay)"
         :orientation="orientation"
         :theme="settings.boardTheme"
@@ -556,7 +557,11 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
             :moves="localMoves"
             :ply="localPly"
           />
-          <div class="status-banner" :class="banner.kind" :role="localResult ? 'alert' : 'status'">
+          <div
+            class="status-banner steady"
+            :class="banner.kind"
+            :role="localResult ? 'alert' : 'status'"
+          >
             <UIcon
               :name="banner.icon"
               class="status-icon"

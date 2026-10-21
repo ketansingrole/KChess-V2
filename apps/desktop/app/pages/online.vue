@@ -520,6 +520,7 @@ function backToTournament(): void {
         </div>
       </div>
       <PlayBoard
+        keep-move-input
         :fen="fen(onlineDisplay)"
         :orientation="onlineOrientation"
         :theme="settings.boardTheme"

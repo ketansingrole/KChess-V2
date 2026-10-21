@@ -36,6 +36,8 @@ const props = withDefaults(
     variant?: Variant
     /** Change it to put the pieces back after a move the app rejected. */
     resetKey?: number
+    /** A game played here: the typed-move box stays between moves (see ChessBoard). */
+    keepMoveInput?: boolean
   }>(),
   { live: true, interactive: true, premove: false, showDests: true, promotion: 'ask' },
 )
@@ -82,6 +84,7 @@ const materialFen = computed(() => (props.blindfold ? undefined : props.fen))
         :variant="variant"
         :reset-key="resetKey"
         :input-to="`[data-move-entry='${entry}']`"
+        :keep-move-input="keepMoveInput"
         @move="emit('move', $event)"
       />
     </div>

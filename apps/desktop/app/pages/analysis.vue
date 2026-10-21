@@ -522,6 +522,7 @@ function missed(result: VoiceResult): void {
           />
           <div class="board-shell" @wheel="wheel">
             <ChessBoard
+              keep-move-input
               :fen="node.fen"
               :orientation="orientation"
               :theme="settings?.boardTheme"
@@ -646,8 +647,8 @@ function missed(result: VoiceResult): void {
             </UPopover>
           </div>
           <p
-            v-if="settings?.cloudEval && assistanceAllowed && !usingCloud && !gameOver"
-            class="text-xs muted"
+            v-if="settings?.cloudEval && assistanceAllowed && !usingCloud"
+            class="cloud-line text-xs muted"
           >
             <UIcon name="i-lucide-cloud" />
             <template v-if="cloudLines.length">
@@ -677,14 +678,16 @@ function missed(result: VoiceResult): void {
             >
             to see evaluations.
           </div>
+          <!-- At the end of a game the lines' room stays, so stepping onto it moves nothing. -->
           <EngineLines
-            v-else-if="assistanceAllowed && (engineOn || usingCloud) && !gameOver"
+            v-else-if="assistanceAllowed && (engineOn || usingCloud)"
             :fen="node.fen"
             :lines="lines"
             :orientation="orientation"
             :board-theme="settings?.boardTheme"
             :piece-set="settings?.pieceSet"
             :pending="usingCloud ? 0 : engineLines"
+            :ended="gameOver ? 'Nothing to analyse.' : undefined"
             @select="playLine"
           />
         </section>
@@ -959,6 +962,12 @@ function missed(result: VoiceResult): void {
 .moves-tool .moves-wrap {
   flex: 1 1 0;
   min-height: 96px;
+}
+/* One line whatever the cloud says, so stepping between positions moves nothing. */
+.cloud-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ceval-score {
   min-width: 3.4em;

@@ -506,13 +506,14 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
                 >Retry engine</UButton
               >
               <EngineLines
-                v-if="broadcastEngineActive && !broadcastTerminal"
+                v-if="broadcastEngineActive"
                 :fen="gameFen"
                 :lines="broadcastEval?.lines ?? []"
                 :orientation="gameOrientation"
                 :board-theme="settings.boardTheme"
                 :piece-set="settings.pieceSet"
                 :pending="broadcastEngineLines"
+                :ended="broadcastTerminal ? 'Nothing to analyse.' : undefined"
                 action-label="Explore"
                 @select="(pv, at) => previewBroadcastLine(pv.slice(0, at + 1))"
               />
@@ -525,7 +526,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
                 >Return to game</UButton
               >
             </section>
-            <div class="status-banner" role="status">
+            <div class="status-banner steady" role="status">
               <UIcon
                 :name="game.ongoing ? 'i-lucide-radio' : 'i-lucide-flag'"
                 class="status-icon"

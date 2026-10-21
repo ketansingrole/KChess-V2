@@ -260,6 +260,7 @@ function otbText(side: 'top' | 'bottom'): string {
 
     <div v-if="mode === 'board'" v-board-fit class="play-layout">
       <PlayBoard
+        keep-move-input
         :fen="fenOf(game.display)"
         :orientation="game.orientation"
         :theme="settings.boardTheme"
@@ -324,7 +325,7 @@ function otbText(side: 'top' | 'bottom'): string {
             :moves="game.moves"
             :ply="game.shownPly"
           />
-          <div class="status-banner" :class="{ win: game.result?.winner }" role="status">
+          <div class="status-banner steady" :class="{ win: game.result?.winner }" role="status">
             <UIcon :name="banner.icon" class="status-icon" />
             <div>
               <strong>{{ banner.title }}</strong>

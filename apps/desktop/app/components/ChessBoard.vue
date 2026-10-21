@@ -53,6 +53,11 @@ const props = defineProps<{
    * piece can go there. Games keep full moves, so a stray square never plays a piece.
    */
   squareInput?: boolean
+  /**
+   * A board that is played on keeps its typed-move box while no move can be made (the other
+   * side's turn, a finished game), read-only, so nothing under the board moves between moves.
+   */
+  keepMoveInput?: boolean
 }>()
 
 const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
@@ -63,6 +68,7 @@ const moveInput = ref('')
 const typing = computed(
   () => props.interactive !== false && props.movable !== false && Boolean(props.dests?.size),
 )
+const showsInput = computed(() => typing.value || props.keepMoveInput)
 const moveMessage = ref('')
 const keyboardInput = ref<HTMLInputElement | null>(null)
 let restoreFocus: HTMLElement | null = null
@@ -78,6 +84,7 @@ function submitMove(uci: string): void {
   })
 }
 function keyboardMove(): void {
+  if (!typing.value) return
   const text = moveInput.value.trim()
   if (props.squareInput) {
     const square = text.replace(/^[nbrqk]/i, '').toLowerCase() as SquareName
@@ -315,17 +322,21 @@ onBeforeUnmount(() => {
       />
     </div>
     <!-- The move box, and any controls the page adds (voice), share one row under the board. -->
-    <Teleport v-if="typing || $slots.controls" defer :to="inputTo" :disabled="!inputTo">
+    <Teleport v-if="showsInput || $slots.controls" defer :to="inputTo" :disabled="!inputTo">
       <div class="board-input-row" :class="{ inline: inputTo }">
         <form
-          v-if="typing"
+          v-if="showsInput"
           class="board-move-form"
+          :class="{ idle: !typing }"
           :inert="pending ? true : undefined"
           @submit.prevent="keyboardMove"
         >
+          <!-- Read-only rather than disabled while no move can be made: it keeps the focus. -->
           <input
             ref="keyboardInput"
             v-model="moveInput"
+            :readonly="!typing"
+            :aria-disabled="!typing"
             :aria-label="
               squareInput ? 'Enter the square to move to' : 'Enter a chess move in SAN or UCI'
             "
@@ -338,7 +349,7 @@ onBeforeUnmount(() => {
             class="board-move-submit"
             aria-label="Play move"
             title="Play move (Enter)"
-            :disabled="!moveInput.trim()"
+            :disabled="!typing || !moveInput.trim()"
           >
             ↵
           </button>

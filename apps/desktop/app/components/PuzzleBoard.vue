@@ -248,6 +248,7 @@ defineExpose({
     </div>
     <div class="board-shell puzzle-board" :class="{ wrong: flash }">
       <ChessBoard
+        keep-move-input
         :fen="state.fen"
         :orientation="orientation"
         :theme="settings.boardTheme"

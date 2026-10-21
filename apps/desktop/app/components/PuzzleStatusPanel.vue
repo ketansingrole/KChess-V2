@@ -66,7 +66,7 @@ const banner = computed<{
 </script>
 
 <template>
-  <div class="status-banner" :class="banner.kind" role="status">
+  <div class="status-banner steady" :class="banner.kind" role="status">
     <UIcon :name="banner.icon" class="status-icon" />
     <div>
       <strong>{{ banner.title }}</strong>

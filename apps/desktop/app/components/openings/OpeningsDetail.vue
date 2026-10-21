@@ -119,6 +119,7 @@ function analyse(): void {
   <div v-board-fit class="play-layout">
     <div class="board-stack">
       <ChessBoard
+        keep-move-input
         :fen="fen"
         :orientation="orientation"
         :theme="settings.boardTheme"

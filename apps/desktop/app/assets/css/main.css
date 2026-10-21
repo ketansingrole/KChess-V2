@@ -711,6 +711,9 @@ button:disabled {
 .board-move-form:focus-within {
   border-color: var(--ui-primary);
 }
+.board-move-form.idle {
+  opacity: 0.55;
+}
 .board-move-input {
   flex: 1;
   min-width: 0;
@@ -1269,6 +1272,18 @@ button.player-link {
 .status-banner .banner-action {
   flex: none;
   align-self: center;
+}
+/* A banner that changes with each move keeps the room of a title and a detail line, its text
+   centred, so the controls under it stay where they are. */
+.status-banner.steady {
+  align-items: center;
+  min-height: 58px;
+}
+.status-banner.steady strong {
+  line-height: 20px;
+}
+.status-banner.steady .detail {
+  line-height: 18px;
 }
 .status-banner.win {
   background: color-mix(in srgb, var(--ui-win) 18%, transparent);

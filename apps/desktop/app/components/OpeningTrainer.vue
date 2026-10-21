@@ -47,9 +47,6 @@ const ALL_CHAPTERS = 'all'
 const chapterId = useLocalStorage('kchess:repertoire-chapter', ALL_CHAPTERS)
 
 const study = computed(() => library.items.find((item) => item.id === studyId.value))
-const repertoireName = computed(() =>
-  drillsOpening.value ? opening.value?.name : study.value?.name,
-)
 const chapter = computed(() => study.value?.chapters.find((c) => c.id === chapterId.value))
 /** The trees drilled: one per starting position among the chosen chapters. */
 const roots = computed(() => {
@@ -79,7 +76,11 @@ const node = ref<TreeNode | null>(null)
 const nodeComment = computed(() =>
   (node.value?.comments ?? []).map(commentText).filter(Boolean).join(' '),
 )
-const feedback = ref<{ kind: 'ok' | 'wrong' | 'done' | 'info'; text: string } | null>(null)
+const feedback = ref<{
+  kind: 'ok' | 'wrong' | 'done' | 'info'
+  text: string
+  detail?: string
+} | null>(null)
 const hint = ref<DrawShape[]>([])
 const resetKey = ref(0)
 let reply: ReturnType<typeof setTimeout> | undefined
@@ -134,7 +135,7 @@ function opponentMove(): void {
 }
 function finishLine(): void {
   stats.value.lines++
-  feedback.value = { kind: 'done', text: 'End of this line. Next one in a moment…' }
+  feedback.value = { kind: 'done', text: 'End of this line', detail: 'Next one in a moment…' }
   reply = setTimeout(startLine, 1400)
 }
 function startLine(): void {
@@ -143,10 +144,7 @@ function startLine(): void {
   const start = pickWeak(roots.value)
   node.value = start ?? null
   if (!start) return
-  feedback.value = {
-    kind: 'info',
-    text: `Play the ${color.value} moves of “${repertoireName.value}”.`,
-  }
+  feedback.value = { kind: 'info', text: 'New line.' }
   if (!yourTurn.value) reply = setTimeout(opponentMove, 400)
 }
 watch([studyId, chapterId, color, drillTree], () => startLine(), { immediate: true })
@@ -161,7 +159,8 @@ function play(uci: string): void {
     library.recordMiss(missKey.value, current.fen)
     feedback.value = {
       kind: 'wrong',
-      text: `Not in your repertoire. Expected ${current.children.map((c) => c.san).join(' or ') || 'nothing (line ended)'}.`,
+      text: 'Not in your repertoire',
+      detail: `Expected ${current.children.map((c) => c.san).join(' or ') || 'nothing (line ended)'}.`,
     }
     hint.value = current.children.map((entry) => ({
       orig: entry.uci.slice(0, 2) as Key,
@@ -259,6 +258,7 @@ const accuracy = computed(() => {
     <div class="board-stack">
       <ChessBoard
         v-if="node"
+        keep-move-input
         :fen="node.fen"
         :orientation="color"
         :theme="settings.boardTheme"
@@ -337,7 +337,7 @@ const accuracy = computed(() => {
       </p>
       <div
         v-if="feedback && node"
-        class="status-banner"
+        class="status-banner steady trainer-feedback"
         :class="{
           win: feedback.kind === 'ok' || feedback.kind === 'done',
           loss: feedback.kind === 'wrong',
@@ -354,9 +354,9 @@ const accuracy = computed(() => {
           "
           class="status-icon"
         />
-        <div>
+        <div class="banner-text">
           <strong>{{ feedback.text }}</strong>
-          <span v-if="nodeComment" class="detail">{{ nodeComment }}</span>
+          <span v-if="feedback.detail" class="detail">{{ feedback.detail }}</span>
         </div>
       </div>
       <p class="text-sm tabular">
@@ -389,6 +389,20 @@ const accuracy = computed(() => {
           >Save as study</UButton
         >
       </div>
+      <!-- The study's note on this position: below the controls, however long it is. -->
+      <p v-if="nodeComment && node" class="trainer-comment">{{ nodeComment }}</p>
     </div>
   </div>
 </template>
+
+<style scoped>
+.trainer-comment {
+  padding: 6px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--ui-primary) 50%, transparent);
+  border-radius: 0 6px 6px 0;
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-toned);
+  font-size: 13px;
+  white-space: pre-line;
+}
+</style>

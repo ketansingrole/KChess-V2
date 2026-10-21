@@ -13,6 +13,8 @@ const props = withDefaults(
     pieceSet?: Settings['pieceSet']
     pending?: number
     actionLabel?: string
+    /** No lines to show, said in the room they take (`pending` rows), as at checkmate. */
+    ended?: string
   }>(),
   { pending: 0, actionLabel: 'Play' },
 )
@@ -70,7 +72,7 @@ onUnmounted(() => {
 
 <template>
   <ol aria-label="Engine lines" class="pv-list">
-    <li v-for="(entry, index) in pvMoves" :key="index" class="pv-row">
+    <li v-for="(entry, index) in ended ? [] : pvMoves" :key="index" class="pv-row">
       <button
         type="button"
         class="pv-eval"
@@ -96,8 +98,11 @@ onUnmounted(() => {
         </button>
       </span>
     </li>
+    <li v-if="ended" class="pv-row ended" :style="{ '--rows': Math.max(1, pending) }">
+      {{ ended }}
+    </li>
     <li
-      v-for="index in Math.max(0, pending - pvMoves.length)"
+      v-for="index in ended ? 0 : Math.max(0, pending - pvMoves.length)"
       :key="`wait-${index}`"
       class="pv-row pending"
     >
@@ -155,6 +160,12 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
   text-align: center;
   cursor: pointer;
+}
+.pv-row.ended {
+  /* As tall as the rows it stands in for (each row's top border is inside its height). */
+  height: calc(var(--rows) * 34px);
+  justify-content: center;
+  color: var(--ui-text-muted);
 }
 .pv-row.pending .pv-eval {
   cursor: default;

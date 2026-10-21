@@ -40,6 +40,9 @@ async function trainer(chapters: { name: string; pgn: string }[]) {
   const chapterSelect = () => wrapper.find('[data-label="Chapter"]').findComponent(SelectStub)
   return { wrapper, chapterSelect, study: useStudyStore().items[0]! }
 }
+/** The feedback banner's two lines. */
+const feedback = (wrapper: VueWrapper) =>
+  wrapper.findAll('.trainer-feedback strong, .trainer-feedback .detail').map((line) => line.text())
 const play = async (wrapper: VueWrapper, uci: string) => {
   wrapper.findComponent(BoardStub).vm.$emit('move', uci)
   await nextTick()
@@ -62,14 +65,14 @@ it('drills every chapter of a repertoire, together or one at a time', async () =
   chapterSelect().vm.$emit('update:modelValue', study.chapters[1]!.id)
   await flushPromises()
   await play(wrapper, 'e2e4')
-  expect(wrapper.text()).toContain('Not in your repertoire. Expected d4.')
+  expect(feedback(wrapper)).toEqual(['Not in your repertoire', 'Expected d4.'])
   await play(wrapper, 'd2d4')
   expect(wrapper.text()).toContain('d4 ✓')
 
   chapterSelect().vm.$emit('update:modelValue', study.chapters[0]!.id)
   await flushPromises()
   await play(wrapper, 'd2d4')
-  expect(wrapper.text()).toContain('Not in your repertoire. Expected e4.')
+  expect(feedback(wrapper)).toEqual(['Not in your repertoire', 'Expected e4.'])
   wrapper.unmount()
 })
 
@@ -86,5 +89,30 @@ it('keeps chapters from different starting positions apart', async () => {
   expect(wrapper.findComponent(BoardStub).props('fen')).toContain('4k3/8/8/8/8/8/4P3/4K3')
   await play(wrapper, 'e2e4')
   expect(wrapper.text()).toContain('correct 1 · wrong 0')
+  wrapper.unmount()
+})
+
+// Feedback of one line and of two, and a long study note inside the banner, moved the controls
+// below it on every move.
+it('keeps the feedback steady and the study note below the controls', async () => {
+  vi.spyOn(Math, 'random').mockReturnValue(0)
+  const { wrapper } = await trainer([
+    { name: 'Main', pgn: '1. e4 { The king pawn, for open games. } e5 2. Nf3 Nc6 *' },
+  ])
+  // A steady banner keeps the room of two lines, whichever it says.
+  expect(wrapper.get('.trainer-feedback').classes()).toContain('steady')
+  expect(feedback(wrapper)).toEqual(['New line.'])
+  await play(wrapper, 'e2e4')
+  expect(feedback(wrapper)).toEqual(['e4 ✓'])
+  const panel = wrapper.get('.side-panel').element
+  const note = wrapper.get('.trainer-comment')
+  expect(note.text()).toBe('The king pawn, for open games.')
+  const actions = panel.querySelector('.panel-actions')!
+  expect(
+    actions.compareDocumentPosition(note.element) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  expect(wrapper.find('.trainer-feedback').text()).not.toContain('king pawn')
+  await play(wrapper, 'd2d4')
+  expect(feedback(wrapper)).toEqual(['e4 ✓'])
   wrapper.unmount()
 })

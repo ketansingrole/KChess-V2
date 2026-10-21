@@ -219,6 +219,7 @@ async function finish(): Promise<void> {
     <div class="board-stack">
       <div class="board-shell">
         <ChessBoard
+          keep-move-input
           :fen="fen"
           orientation="white"
           :theme="settings.boardTheme"
