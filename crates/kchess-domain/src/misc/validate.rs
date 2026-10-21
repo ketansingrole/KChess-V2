@@ -411,7 +411,7 @@ fn assert_voice_audio(value: J) -> Checked<String> {
     let base64 = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=');
     ensure(
         audio.len().is_multiple_of(4)
-            && audio.len() <= (1 << 20) / 3 * 4 + 4
+            && audio.len() <= (1 << 20) / 3 * 4
             && audio.bytes().all(base64),
         Some(INVALID),
         "",

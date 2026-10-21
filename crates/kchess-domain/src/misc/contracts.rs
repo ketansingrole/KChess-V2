@@ -602,11 +602,17 @@ mod tests {
             );
         }
         assert_eq!(ok("voiceAccept", &[json!("AAD/fw==")]), Some(Ok(())));
+        // The largest chunk decodes to just under the helper's 1 MiB frame; one more quad is over.
+        let largest = (1 << 20) / 3 * 4;
+        assert_eq!(
+            ok("voiceAccept", &[json!("A".repeat(largest))]),
+            Some(Ok(()))
+        );
         for audio in [
             json!("AAD"),
             json!("AA-_"),
             json!(12),
-            json!("A".repeat((1 << 20) / 3 * 4 + 8)),
+            json!("A".repeat(largest + 4)),
         ] {
             assert_eq!(
                 ok("voiceAccept", &[audio]),

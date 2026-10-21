@@ -3,7 +3,8 @@
 //! SHA-256, unpacked as the `model` folder in the profile's voice folder, and recorded with a
 //! marker (`model.json`) listing every file's size and SHA-256. A cache is trusted only while the
 //! marker and the files still match; a damaged cache is replaced by the next `ensure`. The
-//! recognizer (`recognizer.rs`) reads the folder.
+//! recognizer (`recognizer.rs`) reads the folder. A verified `model.tar.gz` from an earlier
+//! release is unpacked into the folder instead of downloading the model again.
 //!
 //! Concurrent `ensure` calls share one preparation, which runs on its own task, so dropping a
 //! caller does not abandon the download. Preparation happens in a `.prepare-*` folder inside the
@@ -38,6 +39,8 @@ const MARKER_FILE: &str = "model.json";
 /// What earlier releases published (a repacked archive for the browser recognizer), removed by
 /// the next preparation.
 const LEGACY_FILES: [&str; 2] = ["model.tar.gz", "model.tar.gz.json"];
+const LEGACY_ARCHIVE: &str = LEGACY_FILES[0];
+const LEGACY_MARKER: &str = LEGACY_FILES[1];
 const USER_AGENT: &str = "KChess";
 const CHECKSUM_MESSAGE: &str = "Voice model checksum mismatch. Try downloading it again.";
 const INVALID_MESSAGE: &str = "Invalid voice model archive.";
@@ -165,6 +168,16 @@ impl Marker {
     }
 }
 
+/// The marker an earlier release wrote beside its repacked `model.tar.gz`.
+#[derive(Deserialize)]
+struct LegacyMarker {
+    /// The SHA-256 of the downloaded zip the archive was prepared from.
+    source: String,
+    /// The SHA-256 of `model.tar.gz`.
+    sha256: String,
+    size: u64,
+}
+
 type Pending = Shared<BoxFuture<'static, std::result::Result<PathBuf, String>>>;
 
 #[derive(Default)]
@@ -227,7 +240,11 @@ impl VoiceModelCache {
         if let Some(progress) = self.busy() {
             return busy(progress);
         }
-        let bytes = self.cached().await.unwrap_or(0);
+        let bytes = match self.cached().await {
+            Some(bytes) => bytes,
+            // An earlier release's archive is unpacked by the next `ensure` without a download.
+            None => self.legacy().await.map_or(0, |(_, size)| size),
+        };
         // Preparation may start while the cache checksums are being checked.
         if let Some(progress) = self.busy() {
             return busy(progress);
@@ -358,6 +375,29 @@ impl VoiceModelCache {
         Ok(verified)
     }
 
+    /// The path and size of an earlier release's `model.tar.gz` while it still matches its marker
+    /// and was prepared from the current model. Anything else is not a usable archive.
+    async fn legacy(&self) -> Option<(PathBuf, u64)> {
+        let legacy = self.inner.directory.join(LEGACY_ARCHIVE);
+        let text = tokio::fs::read_to_string(self.inner.directory.join(LEGACY_MARKER))
+            .await
+            .ok()?;
+        let marker: LegacyMarker = serde_json::from_str(&text).ok()?;
+        if marker.source != self.inner.model.sha256 || marker.size == 0 {
+            return None;
+        }
+        let length = tokio::fs::metadata(&legacy).await.ok()?.len();
+        if length != marker.size {
+            return None;
+        }
+        let path = legacy.clone();
+        let digest = tokio::task::spawn_blocking(move || archive::sha256_file(&path))
+            .await
+            .ok()?
+            .ok()?;
+        (digest == marker.sha256).then_some((legacy, marker.size))
+    }
+
     async fn prepare(&self) -> Result<PathBuf> {
         self.report(Progress {
             phase: Phase::Checking,
@@ -391,19 +431,24 @@ impl VoiceModelCache {
     /// Obtain, verify, prepare and publish the model through `staging`. Only a fully prepared
     /// folder reaches the voice folder; a missing marker makes an interrupted install retry.
     async fn stage(&self, staging: &Path) -> Result<()> {
-        self.report(Progress {
-            phase: Phase::Downloading,
-            received: 0,
-            total: None,
-        });
-        let zip = staging.join("model.zip");
-        let received = self.fetch(&zip).await?;
-        self.report(Progress {
-            phase: Phase::Preparing,
-            received,
-            total: None,
-        });
-        let marker = self.prepare_archive(&zip, staging).await?;
+        let marker = match self.migrate(staging).await {
+            Some(marker) => marker,
+            None => {
+                self.report(Progress {
+                    phase: Phase::Downloading,
+                    received: 0,
+                    total: None,
+                });
+                let zip = staging.join("model.zip");
+                let received = self.fetch(&zip).await?;
+                self.report(Progress {
+                    phase: Phase::Preparing,
+                    received,
+                    total: None,
+                });
+                self.prepare_archive(&zip, staging).await?
+            }
+        };
         let prepared = staging.join("unpacked").join(&self.inner.model.name);
         let path = self.path();
         let marker_file = self.marker_path();
@@ -425,6 +470,40 @@ impl VoiceModelCache {
         tokio::fs::rename(&ready, &marker_file)
             .await
             .map_err(|cause| io_error("Could not record the voice model", cause))
+    }
+
+    /// Unpack an earlier release's verified `model.tar.gz` into `staging/unpacked`, so upgrading
+    /// keeps the model without a download. `None` when there is none or it cannot be unpacked;
+    /// the caller then downloads the model, and publishing removes the legacy files.
+    async fn migrate(&self, staging: &Path) -> Option<Marker> {
+        let (legacy, size) = self.legacy().await?;
+        self.report(Progress {
+            phase: Phase::Preparing,
+            received: size,
+            total: None,
+        });
+        let staging = staging.to_path_buf();
+        let model = self.inner.model.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let built = unpack_legacy(&legacy, &staging, &model);
+            if built.is_err() {
+                let _ = fs::remove_dir_all(staging.join("unpacked"));
+            }
+            built
+        })
+        .await;
+        match outcome {
+            Ok(Ok(marker)) => Some(marker),
+            Ok(Err(error)) => {
+                self.inner.host.log(
+                    Level::Warn,
+                    "voice",
+                    &format!("Earlier voice model could not be reused: {}", error.message),
+                );
+                None
+            }
+            Err(_) => None,
+        }
     }
 
     /// Put the zip into `zip`, returning the bytes kept.
@@ -640,6 +719,54 @@ fn build(zip: &Path, staging: &Path, model: &VoiceModel, cancel: &AtomicBool) ->
     }
     let extracted = staging.join("unpacked");
     extract(zip, &extracted, &model.name, cancel)?;
+    let files = describe(&extracted.join(&model.name))
+        .map_err(|cause| io_error("Could not record the voice model", cause))?;
+    Ok(Marker {
+        source: model.sha256.clone(),
+        files,
+    })
+}
+
+/// The blocking half of a migration: unpack the files under `name/` of an earlier release's
+/// `model.tar.gz` into `staging/unpacked` and describe them. Links and members outside the folder
+/// fail, as they do for the zip.
+fn unpack_legacy(archive: &Path, staging: &Path, model: &VoiceModel) -> Result<Marker> {
+    let extracted = staging.join("unpacked");
+    fs::create_dir_all(&extracted)
+        .map_err(|cause| io_error("Could not unpack the voice model", cause))?;
+    let file = File::open(archive)
+        .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(BufReader::new(file)));
+    let folder = format!("{}/", model.name);
+    let mut budget = MAX_EXTRACTED_BYTES;
+    let mut files = 0_usize;
+    let invalid = |_| CoreError::new(INVALID_MESSAGE);
+    for entry in tar.entries().map_err(invalid)? {
+        let mut entry = entry.map_err(invalid)?;
+        let member = entry
+            .path()
+            .map_err(invalid)?
+            .to_string_lossy()
+            .into_owned();
+        let kind = entry.header().entry_type();
+        if kind.is_dir() {
+            continue;
+        }
+        if !kind.is_file() || !member.starts_with(&folder) {
+            return Err(CoreError::new(INVALID_MESSAGE));
+        }
+        let relative =
+            archive::safe_relative(&member).ok_or_else(|| CoreError::new(INVALID_MESSAGE))?;
+        match archive::write_member(&extracted, &relative, &mut entry, &mut budget)
+            .map_err(|cause| io_error("Could not unpack the voice model", cause))?
+        {
+            Member::Written => files += 1,
+            Member::OverBudget => return Err(CoreError::new(INVALID_MESSAGE)),
+        }
+    }
+    if files == 0 {
+        return Err(CoreError::new("Voice model archive is empty."));
+    }
     let files = describe(&extracted.join(&model.name))
         .map_err(|cause| io_error("Could not record the voice model", cause))?;
     Ok(Marker {

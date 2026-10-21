@@ -108,6 +108,7 @@ fn serve(args: &Args, out: &mut impl Write) -> io::Result<ExitCode> {
                 None => Answer::Error("No grammar was set.".into()),
                 Some(recognizer) => protocol::result(&recognizer.finish()),
             },
+            Request::Invalid(message) => Answer::Error(message.into()),
         };
         send(out, &answer)?;
     }

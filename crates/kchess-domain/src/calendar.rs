@@ -87,9 +87,15 @@ impl Cursor<'_> {
     }
 }
 
-/// `YYYY-MM-DD` at the cursor, as days since 1970-01-01.
-fn date(cursor: &mut Cursor) -> Option<i64> {
-    let year = cursor.digits(4)?;
+/// `YYYY-MM-DD` at the cursor, as days since 1970-01-01. With `expanded`, the year may also be
+/// a sign and six digits (`-000001`, never `-000000`), as `toISOString` writes years outside
+/// 0..=9999.
+fn date(cursor: &mut Cursor, expanded: bool) -> Option<i64> {
+    let year = match expanded.then(|| cursor.eat(b"+-")).flatten() {
+        Some(b'-') => -cursor.digits(6).filter(|year| *year != 0)?,
+        Some(_) => cursor.digits(6)?,
+        None => cursor.digits(4)?,
+    };
     cursor.eat(b"-")?;
     let month = cursor.digits(2)?;
     cursor.eat(b"-")?;
@@ -100,7 +106,7 @@ fn date(cursor: &mut Cursor) -> Option<i64> {
 /// Days since 1970-01-01 of a `YYYY-MM-DD` calendar day (ASCII digits, exactly that shape).
 pub fn day_number(day: &str) -> Option<i64> {
     let mut cursor = Cursor(day.as_bytes());
-    let days = date(&mut cursor)?;
+    let days = date(&mut cursor, false)?;
     cursor.done().then_some(days)
 }
 
@@ -108,7 +114,7 @@ pub fn day_number(day: &str) -> Option<i64> {
 /// seconds, fraction and offset (`Z`, `±HH:MM` or `±HHMM`). A date or time without an offset is UTC.
 pub fn parse_iso_millis(text: &str) -> Option<i64> {
     let mut cursor = Cursor(text.as_bytes());
-    let days = date(&mut cursor)?;
+    let days = date(&mut cursor, true)?;
     let mut ms = days * DAY_MS;
     if cursor.eat(b"Tt ").is_some() {
         let hour = cursor.digits(2).filter(|h| *h < 24)?;
@@ -277,9 +283,24 @@ mod tests {
             951_782_400_000,
             1_700_000_000_123,
             253_402_300_799_999,
+            -62_198_755_200_000,
+            -377_705_116_800_000,
         ] {
             let text = iso_millis(ms).expect("in range");
             assert_eq!(parse_iso_millis(&text), Some(ms), "{text}");
         }
+        assert_eq!(
+            parse_iso_millis("+002000-01-01"),
+            parse_iso_millis("2000-01-01")
+        );
+        for text in [
+            "-000000-01-01",
+            "+010000-01-01",
+            "-2000-01-01",
+            "-0000010-01-01",
+        ] {
+            assert_eq!(parse_iso_millis(text), None, "{text}");
+        }
+        assert_eq!(day_number("-000001-01-01"), None);
     }
 }

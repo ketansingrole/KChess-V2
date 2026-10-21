@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { execFileSync } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
 import { crc32 } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
@@ -523,7 +524,7 @@ test('offers account-free actions and manages offline downloads without signing 
 })
 
 test('loads cached voice recognition offline and releases the microphone after a training run @voice @packaged', async ({
-  desktop: { app, page },
+  desktop: { app, page, profile },
 }) => {
   await app.evaluate(() => {
     globalThis.fetch = () =>
@@ -554,6 +555,17 @@ test('loads cached voice recognition offline and releases the microphone after a
   await expect(bar).toHaveAttribute('data-state', 'listening', { timeout: 60_000 })
   await voice.click()
   await expect(bar).toHaveAttribute('data-state', 'off')
+  // A reload never unmounts the voice control; the main process still releases the helper.
+  if (process.platform === 'win32') return
+  const helpers = () =>
+    execFileSync('ps', ['-axww', '-o', 'command='], { encoding: 'utf8' })
+      .split('\n')
+      .filter((line) => line.includes('kchess-voice') && line.includes(profile)).length
+  await voice.click()
+  await expect(bar).toHaveAttribute('data-state', 'listening', { timeout: 60_000 })
+  expect(helpers()).toBe(1)
+  await page.reload()
+  await expect.poll(helpers, { timeout: 10_000 }).toBe(0)
 })
 
 async function navigate(page: Page, label: string) {
@@ -1856,6 +1868,12 @@ test('labels search results and keeps error notifications keyboard accessible', 
   const search = page.getByRole('textbox', { name: 'Search pages and commands', exact: true })
   await search.click()
   await expect(page.getByRole('listbox', { name: 'Search results', exact: true })).toBeVisible()
+  // Every page is listed before typing; Settings follows all 16 pages, past Nuxt UI's 12-item default.
+  await expect(
+    page
+      .getByRole('listbox', { name: 'Search results', exact: true })
+      .getByRole('option', { name: 'Settings' }),
+  ).toBeVisible()
   await search.fill('zzzz-no-results')
   await expect(page.getByRole('listbox', { name: 'Search results', exact: true })).toBeVisible()
   await search.fill('settings')

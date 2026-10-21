@@ -152,6 +152,24 @@ async fn refuses_without_a_helper_a_model_or_a_valid_chunk() {
             .message,
         "Invalid audio."
     );
+    // Requests larger than the helper's 1 MiB frame would end it.
+    assert_eq!(
+        voice
+            .accept(&STANDARD.encode(vec![0u8; (1 << 20) + 2]))
+            .await
+            .expect_err("too long")
+            .message,
+        "Invalid audio."
+    );
+    let wide = vec!["ж".repeat(200); 4096];
+    assert_eq!(
+        voice
+            .start(&wide, 16_000.0)
+            .await
+            .expect_err("too large")
+            .message,
+        "Invalid voice grammar."
+    );
     // Rejected chunks never reach the helper.
     assert_eq!(requests(folder.path()), "G");
 }

@@ -311,15 +311,20 @@ export class VoiceCapture {
     }
   }
 
-  /** Starts a fresh utterance with the current grammar; audio of earlier epochs is dropped. */
-  private resetRecognizer(): void {
+  /**
+   * Starts a fresh utterance with the current grammar; audio of earlier epochs is dropped.
+   * `continuing` (after a result) keeps this control's session without taking the recognizer
+   * back from a control that claimed it meanwhile.
+   */
+  private resetRecognizer(continuing = false): void {
     this.epoch++
     if (!this.ready || !this.context || !this.node || !this.active) return
     const epoch = this.epoch
     if (this.grammar.length) {
       const grammar = [...this.grammar]
       const sampleRate = this.context.sampleRate
-      void this.claim(() => window.kchess.voiceStart(grammar, sampleRate)).catch(
+      const start = () => window.kchess.voiceStart(grammar, sampleRate)
+      void (continuing ? this.owned(start, undefined) : this.claim(start)).catch(
         (error: unknown) => {
           console.warn('[voice-capture] starting speech recognition failed:', error)
           this.recognitionFailed(epoch, error)
@@ -360,11 +365,11 @@ export class VoiceCapture {
     this.callbacks.partial('')
     this.callbacks.result({ text, confidence, words })
     // One action per finalized utterance. A parent's synchronous context update may already reset it.
-    if (epoch === this.epoch) this.resetRecognizer()
+    if (epoch === this.epoch) this.resetRecognizer(true)
   }
 
   private recognitionFailed(epoch: number, error: unknown): void {
-    if (epoch !== this.epoch || this.disposed) return
+    if (epoch !== this.epoch || this.disposed || recognizerOwner !== this.owner) return
     this.fail(
       error instanceof Error && error.message
         ? error.message

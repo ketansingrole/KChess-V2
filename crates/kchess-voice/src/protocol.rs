@@ -10,7 +10,8 @@
 //! | `F` | empty                                          | `{"result":…}`                 |
 //!
 //! At start the helper answers `{"ready":true}` once the model has loaded, or `{"error":…}` and
-//! exits. A request that fails is answered with `{"error":…}` and the helper keeps running.
+//! exits. A request that fails, including a complete frame that is too large or malformed, is
+//! answered with `{"error":…}` and the helper keeps running; only a truncated frame ends it.
 
 use std::io::{self, Read};
 
@@ -28,6 +29,8 @@ pub enum Request {
     Grammar(Grammar),
     Audio(Vec<i16>),
     Final,
+    /// A complete frame that was refused; the stream is still aligned on the next frame.
+    Invalid(&'static str),
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -37,11 +40,8 @@ pub struct Grammar {
     pub grammar: Vec<String>,
 }
 
-fn invalid(message: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message)
-}
-
-/// The next request, or `None` when stdin closed between frames.
+/// The next request, or `None` when stdin closed between frames. An error means the stream broke
+/// mid-frame.
 pub fn read_request(input: &mut impl Read) -> io::Result<Option<Request>> {
     let mut tag = [0u8; 1];
     if input.read(&mut tag)? == 0 {
@@ -51,14 +51,25 @@ pub fn read_request(input: &mut impl Read) -> io::Result<Option<Request>> {
     input.read_exact(&mut length)?;
     let length = u32::from_le_bytes(length) as usize;
     if length > MAX_PAYLOAD {
-        return Err(invalid("request too large"));
+        // Skip the payload unread so the next frame is still found.
+        let skipped = io::copy(&mut input.take(length as u64), &mut io::sink())?;
+        if skipped < length as u64 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        return Ok(Some(Request::Invalid("request too large")));
     }
     let mut payload = vec![0u8; length];
     input.read_exact(&mut payload)?;
-    match tag[0] {
+    Ok(Some(parse(tag[0], &payload)))
+}
+
+fn parse(tag: u8, payload: &[u8]) -> Request {
+    let length = payload.len();
+    match tag {
         b'G' => {
-            let grammar: Grammar =
-                serde_json::from_slice(&payload).map_err(|_| invalid("invalid grammar"))?;
+            let Ok(grammar) = serde_json::from_slice::<Grammar>(payload) else {
+                return Request::Invalid("invalid grammar");
+            };
             let valid_rate = grammar.sample_rate.is_finite()
                 && (8_000.0..=192_000.0).contains(&grammar.sample_rate);
             let valid_phrases = grammar.grammar.len() <= MAX_PHRASES
@@ -67,19 +78,19 @@ pub fn read_request(input: &mut impl Read) -> io::Result<Option<Request>> {
                     .iter()
                     .all(|phrase| phrase.chars().count() <= MAX_PHRASE_CHARS);
             if !valid_rate || !valid_phrases {
-                return Err(invalid("invalid grammar"));
+                return Request::Invalid("invalid grammar");
             }
-            Ok(Some(Request::Grammar(grammar)))
+            Request::Grammar(grammar)
         }
-        b'A' if length.is_multiple_of(2) => Ok(Some(Request::Audio(
+        b'A' if length.is_multiple_of(2) => Request::Audio(
             payload
                 .chunks_exact(2)
                 .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                 .collect(),
-        ))),
-        b'A' => Err(invalid("odd audio length")),
-        b'F' if length == 0 => Ok(Some(Request::Final)),
-        _ => Err(invalid("unknown request")),
+        ),
+        b'A' => Request::Invalid("odd audio length"),
+        b'F' if length == 0 => Request::Final,
+        _ => Request::Invalid("unknown request"),
     }
 }
 
@@ -195,7 +206,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_malformed_frames() {
+    fn refuses_malformed_frames_and_reads_the_next_one() {
+        let long = format!(
+            r#"{{"sampleRate":16000,"grammar":["{}"]}}"#,
+            "a".repeat(MAX_PHRASE_CHARS + 1)
+        );
         for bytes in [
             frame(b'A', &[1, 2, 3]),
             frame(b'F', &[0]),
@@ -203,16 +218,34 @@ mod tests {
             frame(b'G', b"[]"),
             frame(b'G', br#"{"sampleRate":0,"grammar":[]}"#),
             frame(b'G', br#"{"sampleRate":16000,"grammar":[],"extra":1}"#),
+            frame(b'G', long.as_bytes()),
+            frame(b'A', &vec![0; MAX_PAYLOAD + 2]),
+        ] {
+            let mut bytes = bytes;
+            bytes.extend(frame(b'F', &[]));
+            let mut input = bytes.as_slice();
+            assert!(
+                matches!(read_request(&mut input), Ok(Some(Request::Invalid(_)))),
+                "{:?}",
+                &bytes[..5]
+            );
+            assert_eq!(
+                read_request(&mut input).expect("next"),
+                Some(Request::Final)
+            );
+        }
+        // The largest payload is read; a frame cut short ends the stream.
+        let largest = frame(b'A', &vec![0; MAX_PAYLOAD]);
+        assert!(matches!(
+            read_request(&mut largest.as_slice()),
+            Ok(Some(Request::Audio(samples))) if samples.len() == MAX_PAYLOAD / 2
+        ));
+        for bytes in [
             vec![b'A', 0xff, 0xff, 0xff, 0xff],
             vec![b'A', 4, 0, 0, 0, 1],
         ] {
             assert!(read_request(&mut bytes.as_slice()).is_err(), "{bytes:?}");
         }
-        let long = format!(
-            r#"{{"sampleRate":16000,"grammar":["{}"]}}"#,
-            "a".repeat(MAX_PHRASE_CHARS + 1)
-        );
-        assert!(read_request(&mut frame(b'G', long.as_bytes()).as_slice()).is_err());
     }
 
     #[test]
