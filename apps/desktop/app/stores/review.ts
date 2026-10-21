@@ -23,6 +23,8 @@ export const useReviewStore = defineStore('review', () => {
   const summaries = ref<Record<string, ReviewSummary>>({})
   /** When each game's summary last streamed in, so an older lookup cannot overwrite it. */
   const streamedAt = new Map<string, number>()
+  /** When each full review last streamed in, by review key, for the same reason. */
+  const reviewStreamedAt = new Map<string, number>()
   let tick = 0
   const status = ref<ReviewStatus>({ waiting: 0 })
   let listening = false
@@ -44,10 +46,24 @@ export const useReviewStore = defineStore('review', () => {
 
   function receive(update: ReviewUpdate): void {
     remember(update.review)
+    reviewStreamedAt.set(update.review.key, ++tick)
     const id = update.review.gameId
     if (!id) return
     summaries.value[id] = update.summary
-    streamedAt.set(id, ++tick)
+    streamedAt.set(id, tick)
+  }
+
+  /**
+   * Keep a looked-up review unless a newer one streamed in while the lookup was pending; returns
+   * whichever the cache now holds.
+   */
+  function adopt(review: StoredReview | null, startedAt: number): StoredReview | null {
+    if (!review) return null
+    if ((reviewStreamedAt.get(review.key) ?? 0) > startedAt) {
+      return reviews.value.get(review.key) ?? review
+    }
+    remember(review)
+    return review
   }
 
   /** Follow the main process's reviews; safe to call more than once. */
@@ -93,9 +109,8 @@ export const useReviewStore = defineStore('review', () => {
     if (!moves.length) return null
     try {
       listen()
-      const review = await window.kchess.reviewGet(fen, moves)
-      if (review) remember(review)
-      return review
+      const startedAt = tick
+      return adopt(await window.kchess.reviewGet(fen, moves), startedAt)
     } catch (cause) {
       console.warn('[review] loading review failed:', cause)
       return null
@@ -105,9 +120,11 @@ export const useReviewStore = defineStore('review', () => {
   /** Review a game now; returns what is stored so far. */
   async function request(request: ReviewRequest): Promise<StoredReview | null> {
     listen()
-    const review = await window.kchess.reviewRequest({ ...request, moves: [...request.moves] })
-    if (review) remember(review)
-    return review
+    const startedAt = tick
+    return adopt(
+      await window.kchess.reviewRequest({ ...request, moves: [...request.moves] }),
+      startedAt,
+    )
   }
 
   async function cancel(key: string): Promise<void> {

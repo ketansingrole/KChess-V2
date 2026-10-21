@@ -8,6 +8,7 @@ pub mod constants;
 mod contracts;
 mod documents;
 mod patterns;
+mod unicode_tables;
 mod validate;
 mod value;
 

@@ -1,4 +1,4 @@
-import { QuitPreparation, type QuitRetryChoice } from './quit'
+import { QuitPreparation, type QuitPurpose, type QuitRetryChoice } from './quit'
 import { PERFORMANCE_NAMES, type PerformanceName } from '../../contracts/rendererDiagnostics'
 import {
   app,
@@ -74,13 +74,14 @@ const quitPreparation = new QuitPreparation({
       gone: () => rendererGone,
     }
   },
-  async retry(): Promise<QuitRetryChoice> {
+  async retry(purpose: QuitPurpose): Promise<QuitRetryChoice> {
+    const verb = purpose === 'reload' ? 'reload' : 'quit'
     const options = {
       type: 'warning' as const,
-      title: 'Could not save before quitting',
+      title: `Could not save before ${purpose === 'reload' ? 'reloading' : 'quitting'}`,
       message: 'Some changes could not be saved.',
-      detail: 'Retry saving, quit without saving your changes, or cancel to keep them open.',
-      buttons: ['Retry', 'Quit without saving', 'Cancel'],
+      detail: `Retry saving, ${verb} without saving your changes, or cancel to keep them open.`,
+      buttons: ['Retry', `${verb === 'reload' ? 'Reload' : 'Quit'} without saving`, 'Cancel'],
       defaultId: 2,
       cancelId: 2,
       noLink: true,
@@ -348,6 +349,19 @@ function createWindow(): void {
     })
 }
 
+/**
+ * Replace the renderer only after its pending writes are saved (or the user chose to discard
+ * them), as closing the window does. False when the user kept the window open.
+ */
+async function reloadWindow(ignoreCache = false): Promise<boolean> {
+  if (!(await quitPreparation.prepare('reload'))) return false
+  const owner = window
+  if (!owner || owner.isDestroyed()) return false
+  if (ignoreCache) owner.webContents.reloadIgnoringCache()
+  else owner.webContents.reload()
+  return true
+}
+
 function setupAppMenu(): void {
   // View keeps the standard items, but zoom goes through the interface zoom so it is saved,
   // shown in Settings and reached by Ctrl/Cmd with "=" as well as "+". The accelerators are
@@ -356,8 +370,13 @@ function setupAppMenu(): void {
   const view: MenuItemConstructorOptions = {
     label: 'View',
     submenu: [
-      { role: 'reload' },
-      { role: 'forceReload' },
+      // Not the built-in roles: those replace the renderer without saving its pending writes.
+      { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => void reloadWindow() },
+      {
+        label: 'Force Reload',
+        accelerator: 'Shift+CmdOrCtrl+R',
+        click: () => void reloadWindow(true),
+      },
       { role: 'toggleDevTools' },
       { type: 'separator' },
       { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: zoom(0) },
@@ -421,13 +440,13 @@ void app
     // A second instance already quit above; its ready handler must not start a core.
     if (!singleInstance) return
     const voiceModel = new VoiceModelCache(join(app.getPath('userData'), 'voice'))
-    handleAppProtocol(voiceModel.path)
+    handleAppProtocol()
     handle('voiceModelStatus', () => voiceModel.status())
     handle('ensureVoiceModel', async (event) => {
+      // The core's recognizer reads the published folder (`voice/model` in the data directory).
       await voiceModel.ensure((progress) => {
         if (!event.sender.isDestroyed()) event.sender.send(IPC_EVENTS.voiceModelProgress, progress)
       })
-      return 'kchess://app/voice/model.tar.gz'
     })
     setupMediaPermissions(isAppUrl)
     setupDiagnostics()
@@ -573,6 +592,7 @@ void app
     })
     handle('microphoneAccess', (_event, request: unknown) => microphoneAccess(request === true))
     handle('openMicrophoneSettings', () => openMicrophoneSettings())
+    handle('reloadWindow', () => reloadWindow())
     handle('completeQuit', (_event, token, saved) => {
       if (typeof token !== 'string' || (saved !== undefined && typeof saved !== 'boolean'))
         throw new Error('Invalid quit acknowledgment.')

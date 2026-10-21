@@ -296,6 +296,14 @@ const CORE: &[Row] = &[
     ),
     ("voiceHistory", 1, &[Valid("assertVoiceLimit")]),
     ("clearVoiceHistory", 0, &[]),
+    (
+        "voiceStart",
+        2,
+        &[Valid("assertVoiceGrammar"), Valid("assertSampleRate")],
+    ),
+    ("voiceAccept", 1, &[Valid("assertVoiceAudio")]),
+    ("voiceFinish", 0, &[]),
+    ("voiceStop", 0, &[]),
     ("library", 0, &[]),
     ("importLibrary", 1, &[Valid("assertLegacyDocuments")]),
     (
@@ -365,6 +373,7 @@ const DESKTOP: &[Row] = &[
     ("ensureVoiceModel", 0, &[]),
     ("voiceModelStatus", 0, &[]),
     ("openMicrophoneSettings", 0, &[]),
+    ("reloadWindow", 0, &[]),
     ("exportVoiceHistory", 0, &[]),
     ("saveSettings", 1, &[Valid("assertSettings")]),
 ];
@@ -567,5 +576,44 @@ mod tests {
             check(Scope::Ipc, "unknownMethod", &[]),
             Err("Invalid argument count for unknownMethod.".into())
         );
+    }
+
+    #[test]
+    fn speech_recognition_takes_a_bounded_grammar_a_sample_rate_and_base64_audio() {
+        let ok = |method: &str, args: &[Value]| validate_arguments(method, args);
+        assert_eq!(
+            ok("voiceStart", &[json!(["e four", "[unk]"]), json!(16_000)]),
+            Some(Ok(()))
+        );
+        for (grammar, rate) in [
+            (json!([]), json!(16_000)),
+            (json!(["e four", 4]), json!(16_000)),
+            (json!(["a".repeat(201)]), json!(16_000)),
+            (json!(vec!["e four"; 4097]), json!(16_000)),
+            (json!(["e four"]), json!(7_999)),
+            (json!(["e four"]), json!("16000")),
+        ] {
+            assert!(
+                matches!(
+                    ok("voiceStart", &[grammar.clone(), rate.clone()]),
+                    Some(Err(_))
+                ),
+                "{grammar} {rate}"
+            );
+        }
+        assert_eq!(ok("voiceAccept", &[json!("AAD/fw==")]), Some(Ok(())));
+        for audio in [
+            json!("AAD"),
+            json!("AA-_"),
+            json!(12),
+            json!("A".repeat((1 << 20) / 3 * 4 + 8)),
+        ] {
+            assert_eq!(
+                ok("voiceAccept", &[audio]),
+                Some(Err("Invalid audio.".into()))
+            );
+        }
+        assert_eq!(ok("voiceFinish", &[]), Some(Ok(())));
+        assert_eq!(ok("voiceStop", &[]), Some(Ok(())));
     }
 }

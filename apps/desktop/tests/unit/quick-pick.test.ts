@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  highlightRanges,
+  labelSegments,
   matchQuickPick,
   parseQuickPick,
   pushRecent,
@@ -51,8 +51,14 @@ describe('quick pick', () => {
     ])
   })
 
-  it('escapes labels while marking matches', () => {
-    expect(highlightRanges('<b> & Bishop', [[6, 8]])).toBe('&lt;b&gt; &amp; <mark>Bis</mark>hop')
+  it('splits labels into plain and marked text without building HTML', () => {
+    expect(labelSegments('<b> & Bishop', [[6, 8]])).toEqual([
+      { text: '<b> & ', mark: false },
+      { text: 'Bis', mark: true },
+      { text: 'hop', mark: false },
+    ])
+    expect(labelSegments('Bishop', [])).toEqual([{ text: 'Bishop', mark: false }])
+    expect(labelSegments('Bishop', [[0, 5]])).toEqual([{ text: 'Bishop', mark: true }])
   })
 
   it('keeps recent entries unique and most recent first', () => {

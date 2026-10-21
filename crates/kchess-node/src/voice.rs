@@ -43,7 +43,7 @@ pub struct NativeVoiceModel {
 
 #[napi]
 impl NativeVoiceModel {
-    /// The cache in `directory`, which holds `model.tar.gz` and its marker.
+    /// The cache in `directory`, which holds the `model` folder and its marker.
     #[napi(constructor)]
     pub fn new(
         directory: String,
@@ -65,7 +65,7 @@ impl NativeVoiceModel {
         NativeVoiceModel { cache }
     }
 
-    /// The published archive's path (served as `kchess://app/voice/model.tar.gz`).
+    /// The published model folder's path, which the core's recognizer loads.
     #[napi(getter)]
     pub fn path(&self) -> String {
         self.cache.path().to_string_lossy().into_owned()

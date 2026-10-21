@@ -20,6 +20,28 @@ describe('release payload checks', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('budgets the voice runtime apart from the app payload', () => {
+    const MiB = 1024 * 1024
+    const runtime = [
+      { path: 'node_modules/@kchess/native/voice/kchess-voice.exe', size: 1 * MiB },
+      { path: 'node_modules/@kchess/native/voice/libvosk.dll', size: 25.2 * MiB },
+      { path: 'node_modules/@kchess/native/voice/libstdc++-6.dll', size: 25.4 * MiB },
+      { path: 'node_modules/@kchess/native/voice/libgcc_s_seh-1.dll', size: 0.6 * MiB },
+      { path: 'node_modules/@kchess/native/voice/libwinpthread-1.dll', size: 0.4 * MiB },
+      { path: 'node_modules/@kchess/native/voice/NOTICE.txt', size: 700 },
+    ]
+    expect(verifyEntries(runtime)).toBe(0)
+    expect(() =>
+      verifyEntries([
+        ...runtime,
+        { path: 'node_modules/@kchess/native/voice/libvosk.so', size: 25 * MiB },
+      ]),
+    ).toThrow('voice runtime exceeds')
+    expect(() =>
+      verifyEntries([{ path: 'node_modules/@kchess/native/voice/vosk_api.h', size: 1 }]),
+    ).toThrow('native rules sources or extra files')
+  })
+
   it.each([
     '.output/public/mac-arm64/Electron.app/Contents/MacOS/Electron',
     '.output/public/mac-arm64/KChess.app/Contents/Resources/app.asar',

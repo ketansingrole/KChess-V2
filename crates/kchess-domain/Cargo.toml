@@ -9,15 +9,14 @@ publish.workspace = true
 [dependencies]
 thiserror = "2"
 shakmaty.workspace = true
-jiff.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 memchr.workspace = true
-# Unicode general categories (`\p{L}`, `\p{N}`) for the arena name check; already in Cargo.lock.
-regex-syntax = "0.8"
 
 [dev-dependencies]
 regex = { version = "1" }
+# Regenerates and checks src/misc/unicode_tables.rs (patterns.rs tests).
+regex-syntax = "0.8"
 
 [lints]
 workspace = true

@@ -25,18 +25,22 @@ impl Core {
                 let detail = self
                     .inner(
                         "tournaments.get",
-                        vec![system.clone(), id.clone(), account, json!(page)],
+                        vec![system.clone(), id.clone(), account.clone(), json!(page)],
                     )
                     .await?;
-                // An arena says whether you are in it; forget it when it is over or you left.
-                let withdrew = detail["me"]["withdraw"].as_bool() == Some(true);
-                if system.as_str() == Some("arena")
-                    && (detail["status"].as_str() == Some("finished")
-                        || detail["me"].is_null()
-                        || withdrew)
-                {
-                    self.inner("store.library.forgetTournament", vec![system, id])
-                        .await?;
+                if system.as_str() == Some("arena") {
+                    // An arena that is over is over for every account.
+                    if detail["status"].as_str() == Some("finished") {
+                        self.inner("store.library.forgetTournament", vec![system, id])
+                            .await?;
+                    } else if account.as_str().is_some_and(|name| !name.is_empty())
+                        && (detail["me"].is_null()
+                            || detail["me"]["withdraw"].as_bool() == Some(true))
+                    {
+                        // `me` is the looked-up account's place only: another account's stays.
+                        self.inner("store.library.forgetTournament", vec![system, id, account])
+                            .await?;
+                    }
                 }
                 Ok(detail)
             }
@@ -103,11 +107,11 @@ impl Core {
                 let result = self
                     .inner(
                         "tournaments.leave",
-                        vec![system.clone(), id.clone(), account],
+                        vec![system.clone(), id.clone(), account.clone()],
                     )
                     .await?;
                 if result == json!(true) {
-                    self.inner("store.library.forgetTournament", vec![system, id])
+                    self.inner("store.library.forgetTournament", vec![system, id, account])
                         .await?;
                 }
                 Ok(result)

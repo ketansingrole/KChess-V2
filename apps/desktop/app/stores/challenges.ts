@@ -77,12 +77,13 @@ export const useChallengeStore = defineStore('challenges', () => {
 
   /** Which account's event stream should stay open while idle. */
   const tournaments = useTournamentStore()
-  // Tournament pairings arrive on the same stream, so it stays open while you are in one.
-  const lobbyAccount = computed(() =>
-    app.ready && (app.settings.receiveChallenges || tournaments.active)
-      ? app.activeOnlineAccount
-      : '',
-  )
+  // Tournament pairings arrive on the same stream, so the core's one stream stays with the
+  // account taking part until its event ends, whichever account is selected meanwhile.
+  const lobbyAccount = computed(() => {
+    if (!app.ready) return ''
+    if (tournaments.participant) return tournaments.participant
+    return app.settings.receiveChallenges ? app.activeOnlineAccount : ''
+  })
   watch(lobbyAccount, (account) => {
     if (!started) return
     void window.kchess.stayConnected(account).catch((error: unknown) => {

@@ -14,7 +14,8 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
 futures-util = "0.3"
-zstd = "0.14"
+# Pure-Rust zstd decoder for the puzzle database (no C library to build).
+ruzstd = "0.9"
 # `crypto.randomUUID()` for study and chapter ids (already in Cargo.lock through rustls and tempfile).
 getrandom = "0.4"
 # UUID layout and formatting over those random bytes (no `v4` feature: the bytes come from getrandom).
@@ -35,10 +36,6 @@ base64 = "0.23"
 # Cargo.lock through reqwest; no new code is pulled in.
 tokio-util = { version = "0.7", features = ["rt"] }
 
-# Rollback-failure diagnostics (`tracing::warn!` at the storage rollback sites). Already in
-# Cargo.lock through hyper; no new code is pulled in.
-tracing = "0.1"
-
 # rustix (already in Cargo.lock through tempfile): `access(2)` for engine/status.rs, and SIGTERM
 # before SIGKILL as Node's `ChildProcess.kill()` does (tokio can only send SIGKILL), without unsafe.
 # libc: only the fake engine's `ignore-term` mode (tests/support/fake_uci.rs) ignores SIGTERM.
@@ -54,6 +51,11 @@ kchess-contracts = { path = "../kchess-contracts" }
 [[bin]]
 name = "kchess-fake-uci"
 path = "tests/support/fake_uci.rs"
+
+# A scripted speech recognition helper for the voice tests (see tests/support/fake_voice.rs).
+[[bin]]
+name = "kchess-fake-voice"
+path = "tests/support/fake_voice.rs"
 
 [lints]
 workspace = true

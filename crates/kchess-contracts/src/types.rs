@@ -1714,6 +1714,23 @@ pub struct VoiceWord {
     pub conf: f64,
 }
 
+/// A finished utterance: its text and each word heard.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceRecognized {
+    pub text: String,
+    pub words: Vec<VoiceWord>,
+}
+
+/// What a chunk of audio produced: the words heard so far, or a finished utterance.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct VoiceHeard {
+    pub partial: Option<String>,
+    pub result: Option<VoiceRecognized>,
+}
+
 #[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
@@ -2292,6 +2309,8 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         RunSummary,
         RunSaved,
         VoiceWord,
+        VoiceRecognized,
+        VoiceHeard,
         VoiceModelProgress,
         VoiceModelStatus,
         VoiceAttemptInput,

@@ -35,6 +35,7 @@ function invoke<K extends InvokeMethod>(method: K, ...args: IpcArguments<K>): Ip
 
 const api: DesktopApi = {
   completeQuit: (token, saved) => invoke('completeQuit', token, saved),
+  reloadWindow: () => invoke('reloadWindow'),
   onPrepareQuit(callback) {
     const listener = (_event: unknown, token: string): void => callback(token)
     ipcRenderer.on(IPC_EVENTS.prepareQuit, listener)
@@ -245,6 +246,10 @@ const api: DesktopApi = {
   updateVoiceAttempt: (id, update) => invoke('updateVoiceAttempt', id, update),
   voiceHistory: (limit) => invoke('voiceHistory', limit),
   clearVoiceHistory: () => invoke('clearVoiceHistory'),
+  voiceStart: (grammar, sampleRate) => invoke('voiceStart', grammar, sampleRate),
+  voiceAccept: (audio) => invoke('voiceAccept', audio),
+  voiceFinish: () => invoke('voiceFinish'),
+  voiceStop: () => invoke('voiceStop'),
   library: () => invoke('library'),
   importLibrary: (documents) => invoke('importLibrary', documents),
   studyCommand: (command) => invoke('studyCommand', command),

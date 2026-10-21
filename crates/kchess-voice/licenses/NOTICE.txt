@@ -1,0 +1,17 @@
+KChess offline English voice recognition
+
+Vosk speech recognition toolkit (libvosk)
+Copyright Alpha Cephei Inc. and contributors
+https://github.com/alphacep/vosk-api
+Apache License 2.0 (APACHE-2.0.txt)
+The official prebuilt library is shipped unchanged (on macOS, only its arm64 slice).
+
+Kaldi speech recognition toolkit, OpenFst and their dependencies, built into libvosk
+Copyright the Kaldi authors, the OpenFst authors and contributors
+https://github.com/kaldi-asr/kaldi
+Apache License 2.0
+
+English model: vosk-model-small-en-us-0.15 (downloaded on first use)
+https://alphacephei.com/vosk/models
+Apache License 2.0
+The official model files are unchanged.

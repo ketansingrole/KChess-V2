@@ -82,7 +82,15 @@ export function writeRustLicenses() {
       maxBuffer: 64 * 1024 * 1024,
     }),
   )
-  const crates = runtimeCrates(metadata)
+  // The speech recognition helper ships in the same package (voice/kchess-voice).
+  const crates = [
+    ...new Map(
+      [...runtimeCrates(metadata), ...runtimeCrates(metadata, 'kchess-voice')].map((pkg) => [
+        pkg.id,
+        pkg,
+      ]),
+    ).values(),
+  ].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version))
   // Identical texts (Apache-2.0 above all) are printed once, with every crate they cover.
   const texts = new Map()
   for (const pkg of crates) {
@@ -98,7 +106,7 @@ export function writeRustLicenses() {
   )
   writeFileSync(
     join(root, 'crates/kchess-node/THIRD_PARTY_LICENSES.txt'),
-    `Rust crates compiled into the KChess rules: kchess-native.*.node, and the renderer's kchess.wasm (a subset):\n\n${index}\n\n${sections.join('\n')}`,
+    `Rust crates compiled into the KChess rules: kchess-native.*.node, voice/kchess-voice, and the renderer's kchess.wasm (a subset):\n\n${index}\n\n${sections.join('\n')}`,
   )
   console.info(`[kchess] Collected licenses for ${crates.length} Rust crates.`)
 }

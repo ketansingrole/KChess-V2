@@ -13,6 +13,9 @@ export interface CorePlatform {
   nodeEnv?: Record<string, string>
   /** Where KChess keeps the Stockfish build it downloads; defaults to the data directory. */
   managedEngineDir?: string
+  /** The `kchess-voice` speech recognition helper, with libvosk beside it; without it, voice
+   * input is unavailable. */
+  voiceHelperPath?: string
   /** OS-backed encryption for stored Lichess tokens. */
   secrets: SecretStore
   /** Open a URL in the user's browser (Lichess sign-in). */

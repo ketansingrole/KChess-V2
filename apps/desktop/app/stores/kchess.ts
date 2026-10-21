@@ -589,8 +589,9 @@ export const useKChessStore = defineStore('kchess', () => {
       localStorage.removeItem('kchess:puzzle-tab')
     }
     // Recreate renderer stores so account-only caches and pending requests cannot survive logout.
+    // The main process saves pending documents first; signing out never discards them.
     await navigateTo('/')
-    window.location.reload()
+    await window.kchess.reloadWindow()
   }
   async function removeAccount(username: string): Promise<void> {
     const wasConnected = connectedAccounts.value.some(

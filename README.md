@@ -5,7 +5,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the core, Node host, desktop and CLI 
 [![CI](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml/badge.svg)](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules run in Rust (`crates/kchess-domain`, on [`shakmaty`](https://github.com/niklasf/shakmaty), with the semantics of [`chessops`](https://github.com/niklasf/chessops)), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay on the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. The rating chart uses [Unovis](https://unovis.dev), and IPC input is validated by the same Rust rules. A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
+KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules run in Rust (`crates/kchess-domain`, on [`shakmaty`](https://github.com/niklasf/shakmaty), with the semantics of [`chessops`](https://github.com/niklasf/chessops)), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay on the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. IPC input is validated by the same Rust rules. A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
 
 ## Core and frontends
 
@@ -74,7 +74,7 @@ the highlighted square (“E four” or “Echo four”). Recognition is prepare
 These scores are stored separately from keyboard training. Unrecognized or uncertain speech asks
 for a repeat; a recognized incorrect square counts as a mistake.
 
-Audio is processed locally by Vosk WebAssembly in a worker, and is never uploaded or recorded by
+Audio is processed locally by the Vosk library in a separate helper process, and is never uploaded or recorded by
 KChess. Microphone tracks stop between runs/turns, when voice is disabled, and when leaving the
 page. Disabling voice also releases the model. The implementation currently recognizes English;
 accent/noise accuracy still needs evaluation with real speakers. Tests cover command parsing,

@@ -47,8 +47,11 @@ the same profile is rejected until the first has finished `close()`. Calls retai
 an async scope so a stale callback cannot access another profile.
 
 `VoiceModelCache` (from the same entry) downloads, verifies and caches the offline Vosk model
-in a directory the host chooses. Speech recognition and microphone capture stay in the frontend:
-desktop runs `vosk-browser` in the renderer and maps spoken text with `crates/kchess-wasm/js/voiceCommands`.
+in the `voice` folder of the data directory. Speech recognition is headless: `voiceStart`,
+`voiceAccept`, `voiceFinish` and `voiceStop` drive the `kchess-voice` helper process
+(`CorePlatform.voiceHelperPath`, with libvosk beside it). Microphone capture stays in the
+frontend: desktop streams PCM from the renderer and maps spoken text with
+`crates/kchess-wasm/js/voiceCommands`.
 
 ## Game controllers
 

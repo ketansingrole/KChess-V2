@@ -47,6 +47,7 @@ export interface NativeRules {
       nodePath?: string
       nodeEnv?: Record<string, string>
       managedEngineDir?: string
+      voiceHelperPath?: string
     },
     log: (json: string) => void,
     emit: (json: string) => void,

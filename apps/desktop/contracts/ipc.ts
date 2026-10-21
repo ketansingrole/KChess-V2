@@ -80,6 +80,7 @@ export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */
 export const IPC_CHANNELS = {
   completeQuit: 'app:quit-ready',
+  reloadWindow: 'app:reload',
   recordPerformance: 'diagnostics:performance',
   reportRendererError: 'diagnostics:renderer-error',
   positionLookup: 'analysis:position-lookup',
@@ -192,6 +193,10 @@ export const IPC_CHANNELS = {
   updateVoiceAttempt: 'voice:log-update',
   voiceHistory: 'voice:log',
   clearVoiceHistory: 'voice:log-clear',
+  voiceStart: 'voice:start',
+  voiceAccept: 'voice:accept',
+  voiceFinish: 'voice:finish',
+  voiceStop: 'voice:stop',
   exportVoiceHistory: 'voice:log-export',
   library: 'library:load',
   importLibrary: 'library:import',

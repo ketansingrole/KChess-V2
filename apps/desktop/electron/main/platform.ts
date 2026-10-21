@@ -1,7 +1,7 @@
 import { app, powerMonitor, safeStorage, shell } from 'electron'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { BUNDLED_ENGINE_SCRIPT, type CorePlatform } from '@kchess/native'
+import { BUNDLED_ENGINE_SCRIPT, VOICE_HELPER, type CorePlatform } from '@kchess/native'
 
 /** The core's host capabilities, backed by Electron. */
 export function electronPlatform(focus: () => void): CorePlatform {
@@ -9,6 +9,11 @@ export function electronPlatform(focus: () => void): CorePlatform {
     dataDir: app.getPath('userData'),
     // Packaged apps keep the engine outside the asar so a child process can load its .wasm.
     bundledEnginePath: join(app.getAppPath(), BUNDLED_ENGINE_SCRIPT).replace(
+      /app\.asar([\\/])/,
+      'app.asar.unpacked$1',
+    ),
+    // Native executables cannot run from inside the asar either.
+    voiceHelperPath: join(app.getAppPath(), VOICE_HELPER).replace(
       /app\.asar([\\/])/,
       'app.asar.unpacked$1',
     ),

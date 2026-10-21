@@ -4,7 +4,7 @@ import { nativeRules, type NativeRules } from './native.ts'
 
 /**
  * The offline voice model for voice input. The cache is Rust (`crates/kchess-core/src/voice`):
- * the verified download, unpacking, the `model.tar.gz` and its marker, status and progress.
+ * the verified download, unpacking, the `model` folder and its marker, status and progress.
  * This module keeps the TypeScript names the desktop shell and the tooling use; it has no
  * fallback, as the core requires `@kchess/native` (`RUST_MIGRATION.md`).
  */
@@ -35,7 +35,7 @@ export interface VoiceModelCacheOptions {
 
 /** One verified, persistent model per profile. Concurrent voice controls share preparation. */
 export class VoiceModelCache {
-  /** The published archive, served to the renderer as `kchess://app/voice/model.tar.gz`. */
+  /** The published model folder, which the core's recognizer loads. */
   readonly path: string
   private readonly model: InstanceType<NativeRules['NativeVoiceModel']>
 

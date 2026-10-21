@@ -594,6 +594,30 @@ pub fn methods() -> Vec<Method> {
         ),
         method("clearVoiceHistory", "", vec![], void),
         method(
+            "voiceStart",
+            "Offline speech recognition: listens for these phrases, discarding any utterance in progress.",
+            vec![req("grammar", array(string)), req("sampleRate", number)],
+            void,
+        ),
+        method(
+            "voiceAccept",
+            "Base64 16-bit little-endian mono PCM at the started sample rate.",
+            vec![req("audio", string)],
+            t::<VoiceHeard>(),
+        ),
+        method(
+            "voiceFinish",
+            "Ends the utterance (push-to-talk released).",
+            vec![],
+            t::<VoiceHeard>(),
+        ),
+        method(
+            "voiceStop",
+            "Releases the recognizer and its model.",
+            vec![],
+            void,
+        ),
+        method(
             "library",
             "The local library as saved: studies, played games, drills, sessions and training notes.",
             vec![],

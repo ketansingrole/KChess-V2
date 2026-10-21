@@ -71,7 +71,7 @@ services only through the bridge's host callbacks; TypeScript reaches Rust only 
 - Errors cross the bridge as `Error(message)`; expected cancellations keep `name = 'AbortError'`.
 - No `unwrap()`/`expect()` on input or I/O paths; panics are caught at the bridge.
 - Logging goes through the host log sink with the TypeScript scopes and redaction.
-- Crates: `tokio`, `rusqlite` (bundled), `reqwest` (rustls, stream), `zstd`, `ts-rs`, `serde`.
+- Crates: `tokio`, `rusqlite` (bundled), `reqwest` (rustls, stream), `ruzstd`, `ts-rs`, `serde`.
   Add others only with a reason in the commit message; licenses must be GPL-compatible.
 
 ## Phases

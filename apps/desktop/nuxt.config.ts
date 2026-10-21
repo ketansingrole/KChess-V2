@@ -1,4 +1,4 @@
-import { localIcons, voskWorkerPlugin } from '../../tooling/vosk-worker-plugin.ts'
+import { localIcons } from '../../tooling/local-icons.ts'
 import { rendererPackageAliases } from '../../tooling/package-aliases.ts'
 
 export default defineNuxtConfig({
@@ -25,5 +25,5 @@ export default defineNuxtConfig({
     '~/assets/css/main.css',
   ],
   icon: { clientBundle: { icons: localIcons() } },
-  vite: { server: { open: false }, plugins: [voskWorkerPlugin()] },
+  vite: { server: { open: false } },
 })

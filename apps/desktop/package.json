@@ -30,8 +30,6 @@
     "@nuxt/ui": "^4.12.0",
     "@pinia/nuxt": "^1.0.3",
     "@types/node": "^24.19.2",
-    "@unovis/ts": "^1.7.1",
-    "@unovis/vue": "^1.7.1",
     "@vueuse/core": "^15.0.0",
     "electron": "^44.9.0",
     "electron-builder": "^26.17.0",
@@ -40,7 +38,6 @@
     "pinia": "^4.1.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^6.0.3",
-    "vosk-browser": "0.0.8",
     "vue": "^3.5.44",
     "vue-router": "^5.4.0",
     "vue-tsc": "^3.3.13"
@@ -63,6 +60,7 @@
       "node_modules/@kchess/native/index.cjs",
       "node_modules/@kchess/native/kchess-native.*.node",
       "node_modules/@kchess/native/THIRD_PARTY_LICENSES.txt",
+      "node_modules/@kchess/native/voice/**",
       "!node_modules/@kchess/native/{src,examples,target}/**",
       "!node_modules/@kchess/native/{js,dist}/**",
       "!node_modules/@kchess/rules/**",
@@ -139,7 +137,8 @@
     },
     "asarUnpack": [
       "node_modules/stockfish/bin/**",
-      "node_modules/@kchess/native/*.node"
+      "node_modules/@kchess/native/*.node",
+      "node_modules/@kchess/native/voice/**"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "nsis": {

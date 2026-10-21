@@ -1,39 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { VoiceCapture } from '../../app/utils/voiceCapture'
+import type { VoiceHeard } from '@kchess/contracts/types'
+import { VoiceCapture, pcmBase64 } from '../../app/utils/voiceCapture'
 import { deferred } from './fixtures'
-
-const vosk = vi.hoisted(() => ({ models: [] as FakeModel[], recognizers: [] as FakeRecognizer[] }))
-type Recognition = { result: { text: string; result: { conf: number }[] } }
-class FakeRecognizer {
-  listeners = new Map<string, (message: Recognition) => void>()
-  remove = vi.fn()
-  setWords = vi.fn()
-  acceptWaveformFloat = vi.fn()
-  retrieveFinalResult = vi.fn()
-  constructor() {
-    vosk.recognizers.push(this)
-  }
-  on(event: string, callback: (message: Recognition) => void) {
-    this.listeners.set(event, callback)
-  }
-  speak(text: string) {
-    this.listeners.get('result')!({ result: { text, result: [{ conf: 0.95 }] } })
-  }
-}
-class FakeModel {
-  ready = true
-  terminate = vi.fn()
-  KaldiRecognizer = FakeRecognizer
-  constructor(readonly url: string) {
-    vosk.models.push(this)
-  }
-  on(event: string, callback: (message: { result: boolean }) => void) {
-    if (event === 'load') queueMicrotask(() => callback({ result: true }))
-  }
-}
-vi.mock('vosk-browser', () => ({
-  Model: FakeModel,
-}))
 
 class FakeContext {
   sampleRate = 16000
@@ -58,6 +26,20 @@ class FakeNode {
   }
 }
 
+/** The core's recognizer: answers come from `heard`, one per `voiceAccept`/`voiceFinish`. */
+function fakeRecognizer() {
+  const heard: Promise<VoiceHeard>[] = []
+  const answer = () => heard.shift() ?? Promise.resolve({ partial: '' })
+  return {
+    heard,
+    voiceStart: vi.fn(async (_grammar: string[], _sampleRate: number) => {}),
+    voiceAccept: vi.fn((_audio: string) => answer()),
+    voiceFinish: vi.fn(() => answer()),
+    voiceStop: vi.fn(async () => {}),
+  }
+}
+let core: ReturnType<typeof fakeRecognizer>
+
 function setupCapture() {
   const callbacks = { state: vi.fn(), partial: vi.fn(), result: vi.fn(), error: vi.fn() }
   const track = { stop: vi.fn(), onended: null }
@@ -67,24 +49,55 @@ function setupCapture() {
   return { capture: new VoiceCapture(callbacks), callbacks, track, stream, getUserMedia }
 }
 
+/** The worklet's current epoch, from its last `reset`. */
+function epochOf(node: FakeNode): number {
+  return (node.port.postMessage.mock.calls.at(-1)![0] as { epoch: number }).epoch
+}
+
+function said(text: string, words: [string, number][]): VoiceHeard {
+  return { result: { text, words: words.map(([word, conf]) => ({ word, conf })) } }
+}
+
+/** Lets queued recognizer calls and their answers run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
 beforeEach(() => {
-  vosk.models.length = 0
-  vosk.recognizers.length = 0
   FakeNode.nodes.length = 0
   vi.stubGlobal('AudioContext', FakeContext)
   vi.stubGlobal('AudioWorkletNode', FakeNode)
+  core = fakeRecognizer()
+  // Keep the setup's library API, which the app facade saves through on teardown.
   window.kchess = {
-    ensureVoiceModel: vi.fn(async () => 'kchess://app/voice/model.tar.gz'),
+    ...window.kchess,
+    ensureVoiceModel: vi.fn(async () => {}),
     onVoiceModelProgress: vi.fn(() => vi.fn()),
+    ...core,
   } as unknown as typeof window.kchess
 })
 
 describe('voice capture lifecycle', () => {
-  it('prepares the cached model before starting recognition', async () => {
+  it('prepares the cached model and loads the recognizer before a run starts', async () => {
     const { capture } = setupCapture()
     await capture.prepare(['e four'])
     expect(window.kchess.ensureVoiceModel).toHaveBeenCalledOnce()
-    expect(vosk.models[0]!.url).toBe('kchess://app/voice/model.tar.gz')
+    expect(core.voiceStart).toHaveBeenCalledExactlyOnceWith(['e four'], 16000)
+    capture.update(true, ['e four'], false)
+    await settle()
+    expect(core.voiceStart).toHaveBeenCalledTimes(2)
+    capture.dispose()
+  })
+
+  it('reports a model the recognizer cannot load and closes the microphone', async () => {
+    const { capture, callbacks, track } = setupCapture()
+    core.voiceStart.mockRejectedValueOnce(
+      new Error('The offline voice model couldn’t load. Try again.'),
+    )
+    await expect(capture.prepare(['e four'])).rejects.toThrow('couldn’t load')
+    expect(callbacks.error).toHaveBeenCalledWith(
+      'The offline voice model couldn’t load. Try again.',
+      'model',
+    )
+    expect(track.stop).toHaveBeenCalledOnce()
     capture.dispose()
   })
 
@@ -99,36 +112,65 @@ describe('voice capture lifecycle', () => {
       'model',
     )
     expect(track.stop).toHaveBeenCalledOnce()
-    expect(vosk.models).toHaveLength(0)
     await capture.prepare(['e four'])
-    expect(vosk.models).toHaveLength(1)
+    expect(window.kchess.ensureVoiceModel).toHaveBeenCalledTimes(2)
     capture.dispose()
   })
 
-  it('does not allocate a model after being disabled during download', async () => {
+  it('does not start recognition after being disabled during download', async () => {
     const { capture, callbacks, track } = setupCapture()
-    const download = deferred<string>()
+    const download = deferred<undefined>()
     vi.mocked(window.kchess.ensureVoiceModel).mockReturnValueOnce(download.promise)
     const opening = capture.prepare(['e four'])
     await vi.waitFor(() => expect(window.kchess.ensureVoiceModel).toHaveBeenCalled())
     capture.dispose()
-    download.resolve('kchess://app/voice/model.tar.gz')
+    download.resolve(undefined)
     await opening
-    expect(vosk.models).toHaveLength(0)
+    await settle()
+    expect(core.voiceStart).not.toHaveBeenCalled()
+    expect(core.voiceStop).not.toHaveBeenCalled()
     expect(track.stop).toHaveBeenCalledOnce()
     expect(callbacks.error).not.toHaveBeenCalled()
   })
-  it('drops queued results from a previous question and accepts each final utterance once', async () => {
+
+  it('drops answers from a previous question and accepts each final utterance once', async () => {
     const { capture, callbacks } = setupCapture()
     await capture.prepare(['e four', '[unk]'])
     capture.update(true, ['e four', '[unk]'], false)
-    const old = vosk.recognizers.at(-1)!
+    const node = FakeNode.nodes.at(-1)!
+    // An answer still in flight when the question changes is dropped.
+    const late = deferred<VoiceHeard>()
+    core.heard.push(late.promise)
+    node.port.onmessage!({ data: { epoch: epochOf(node), audio: new Float32Array(8) } })
     capture.update(true, ['e four', '[unk]'], false)
-    old.speak('e four')
+    late.resolve(
+      said('e four', [
+        ['e', 0.95],
+        ['four', 0.95],
+      ]),
+    )
+    await settle()
     expect(callbacks.result).not.toHaveBeenCalled()
-    const current = vosk.recognizers.at(-1)!
-    current.speak('e four')
-    current.speak('e four')
+
+    // Two chunks of the same utterance: the first result resets, so the second is not used.
+    const epoch = epochOf(node)
+    core.heard.push(
+      Promise.resolve(
+        said('e four', [
+          ['e', 0.95],
+          ['four', 0.95],
+        ]),
+      ),
+      Promise.resolve(
+        said('e four', [
+          ['e', 0.95],
+          ['four', 0.95],
+        ]),
+      ),
+    )
+    node.port.onmessage!({ data: { epoch, audio: new Float32Array(8) } })
+    node.port.onmessage!({ data: { epoch, audio: new Float32Array(8) } })
+    await settle()
     expect(callbacks.result).toHaveBeenCalledTimes(1)
     expect(callbacks.result).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'e four', confidence: 0.95 }),
@@ -136,19 +178,48 @@ describe('voice capture lifecycle', () => {
     capture.dispose()
   })
 
-  it('closes the mic between turns, reuses the loaded model, and terminates it on disable', async () => {
+  // Each control had its own queue to the one shared recognizer: a replaced control's stop,
+  // queued behind its pending audio, killed the replacement's session.
+  it('never lets a replaced control stop its replacement’s recognizer', async () => {
+    const old = setupCapture()
+    await old.capture.prepare(['e four'])
+    old.capture.update(true, ['e four'], false)
+    const oldNode = FakeNode.nodes.at(-1)!
+    const pending = deferred<VoiceHeard>()
+    core.heard.push(pending.promise)
+    oldNode.port.onmessage!({ data: { epoch: epochOf(oldNode), audio: new Float32Array(8) } })
+
+    // The replacement prepares (its start waits behind the old audio), then the old one goes.
+    const replacement = setupCapture()
+    const ready = replacement.capture.prepare(['d four'])
+    await settle()
+    old.capture.dispose()
+    pending.resolve({ partial: '' })
+    await ready
+    await settle()
+    expect(core.voiceStart.mock.lastCall![0]).toEqual(['d four'])
+    expect(core.voiceStop).not.toHaveBeenCalled()
+
+    replacement.capture.dispose()
+    await settle()
+    expect(core.voiceStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the mic between turns, reuses the recognizer, and releases it on disable', async () => {
     const { capture, track } = setupCapture()
     await capture.prepare(['e four'])
     capture.update(true, ['e four'], false)
     capture.update(false, ['e four'], false)
     expect(track.stop).toHaveBeenCalledOnce()
-    expect(vosk.models[0]!.terminate).not.toHaveBeenCalled()
     await capture.prepare(['e four'])
     capture.update(true, ['e four'], false)
-    expect(vosk.models).toHaveLength(1)
+    await settle()
+    expect(window.kchess.ensureVoiceModel).toHaveBeenCalledOnce()
+    expect(core.voiceStop).not.toHaveBeenCalled()
     capture.dispose()
+    await settle()
     expect(track.stop).toHaveBeenCalledTimes(2)
-    expect(vosk.models[0]!.terminate).toHaveBeenCalledOnce()
+    expect(core.voiceStop).toHaveBeenCalledOnce()
   })
 
   it('stops a microphone granted after the page was unmounted', async () => {
@@ -161,11 +232,11 @@ describe('voice capture lifecycle', () => {
     pending.resolve(stream)
     await opening
     expect(track.stop).toHaveBeenCalledOnce()
-    expect(vosk.models).toHaveLength(0)
+    expect(window.kchess.ensureVoiceModel).not.toHaveBeenCalled()
     expect(callbacks.error).not.toHaveBeenCalled()
   })
 
-  it('reports denied permission without allocating a recognition model', async () => {
+  it('reports denied permission without preparing the model', async () => {
     const { capture, getUserMedia, callbacks } = setupCapture()
     getUserMedia.mockRejectedValueOnce(new DOMException('denied', 'NotAllowedError'))
     await expect(capture.prepare(['e four'])).rejects.toThrow()
@@ -173,7 +244,7 @@ describe('voice capture lifecycle', () => {
       expect.stringContaining('isn’t allowed to use the microphone'),
       'denied',
     )
-    expect(vosk.models).toHaveLength(0)
+    expect(window.kchess.ensureVoiceModel).not.toHaveBeenCalled()
     capture.dispose()
   })
 
@@ -181,17 +252,19 @@ describe('voice capture lifecycle', () => {
     const { capture, callbacks } = setupCapture()
     await capture.prepare(['knight', 'f three'])
     capture.update(true, ['knight', 'f three'], false)
-    vosk.recognizers.at(-1)!.listeners.get('result')!({
-      result: {
-        text: 'knight f three',
-        result: [
-          { conf: 0.5, word: 'knight' },
-          { conf: 1, word: 'f' },
-          { conf: 1, word: 'three' },
-          { conf: 0.2, word: '[unk]' },
-        ],
-      },
-    } as never)
+    const node = FakeNode.nodes.at(-1)!
+    core.heard.push(
+      Promise.resolve(
+        said('knight f three', [
+          ['knight', 0.5],
+          ['f', 1],
+          ['three', 1],
+          ['[unk]', 0.2],
+        ]),
+      ),
+    )
+    node.port.onmessage!({ data: { epoch: epochOf(node), audio: new Float32Array(8) } })
+    await settle()
     expect(callbacks.result).toHaveBeenCalledWith({
       text: 'knight f three',
       confidence: expect.closeTo(0.833, 2),
@@ -202,6 +275,24 @@ describe('voice capture lifecycle', () => {
         { word: 'three', conf: 1 },
       ],
     })
+    capture.dispose()
+  })
+
+  it('shows partial words and reports a stopped recognizer with the core’s message', async () => {
+    const { capture, callbacks } = setupCapture()
+    await capture.prepare(['e four'])
+    capture.update(true, ['e four'], false)
+    const node = FakeNode.nodes.at(-1)!
+    core.heard.push(
+      Promise.resolve({ partial: 'e' }),
+      Promise.reject(new Error('Speech recognition stopped. Try again.')),
+    )
+    node.port.onmessage!({ data: { epoch: epochOf(node), audio: new Float32Array(8) } })
+    node.port.onmessage!({ data: { epoch: epochOf(node), audio: new Float32Array(8) } })
+    await settle()
+    expect(callbacks.partial).toHaveBeenCalledWith('e')
+    expect(callbacks.error).toHaveBeenCalledWith('Speech recognition stopped. Try again.', 'model')
+    expect(callbacks.state).toHaveBeenLastCalledWith('error')
     capture.dispose()
   })
 
@@ -232,22 +323,33 @@ describe('voice capture lifecycle', () => {
     capture.dispose()
   })
 
-  it('accepts PCM only from the current context and drains it before a push-to-talk final result', async () => {
+  it('sends PCM only from the current context and drains it before a push-to-talk final result', async () => {
     const { capture } = setupCapture()
     await capture.prepare(['e four'])
     capture.update(true, ['e four'], true)
     capture.talk(true)
     const node = FakeNode.nodes.at(-1)!
-    const epoch = (node.port.postMessage.mock.calls.at(-1)![0] as { epoch: number }).epoch
-    const rec = vosk.recognizers.at(-1)!
+    const epoch = epochOf(node)
     node.port.onmessage!({ data: { epoch: epoch - 1, audio: new Float32Array(128) } })
-    expect(rec.acceptWaveformFloat).not.toHaveBeenCalled()
+    expect(core.voiceAccept).not.toHaveBeenCalled()
     capture.talk(false)
     expect(node.port.postMessage).toHaveBeenLastCalledWith({ action: 'flush' })
     node.port.onmessage!({ data: { epoch, audio: new Float32Array(128) } })
     node.port.onmessage!({ data: { epoch, final: true } })
-    expect(rec.acceptWaveformFloat).toHaveBeenCalledOnce()
-    expect(rec.retrieveFinalResult).toHaveBeenCalledOnce()
+    await settle()
+    expect(core.voiceAccept).toHaveBeenCalledExactlyOnceWith(pcmBase64(new Float32Array(128)))
+    expect(core.voiceFinish).toHaveBeenCalledOnce()
+    // In order: the grammar, then the audio, then the end of the utterance.
+    const [start] = core.voiceStart.mock.invocationCallOrder.slice(-1)
+    const [accept] = core.voiceAccept.mock.invocationCallOrder
+    const [finish] = core.voiceFinish.mock.invocationCallOrder
+    expect(start! < accept! && accept! < finish!).toBe(true)
     capture.dispose()
+  })
+
+  it('encodes samples as clamped 16-bit little-endian PCM', () => {
+    const encoded = pcmBase64(new Float32Array([0, 1, -1, 0.5, 2]))
+    const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0))
+    expect([...new Int16Array(bytes.buffer)]).toEqual([0, 32767, -32767, 16384, 32767])
   })
 })

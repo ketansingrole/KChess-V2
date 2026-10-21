@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts", "crates/kchess-voice"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml).
 exclude = ["fuzz"]
 
@@ -25,8 +25,8 @@ missing_docs = "allow"
 undocumented_unsafe_blocks = "deny"
 # None of these entries changes a build: `-D warnings` only promotes lints that already fire,
 # and nothing in `check:rust-lint` enables these. They document what switching one on would
-# cost. Shipped Rust is library targets only (the N-API cdylib included): the workspace has no
-# shipped bin, and `kchess-core`'s `kchess-fake-uci` bin is test scaffolding.
+# cost. Shipped Rust is library targets (the N-API cdylib included) and the `kchess-voice` bin;
+# `kchess-core`'s `kchess-fake-uci` and `kchess-fake-voice` bins are test scaffolding.
 # unwrap_used/expect_used are enforced for shipped targets by the second clippy pass in
 # `check:rust-lint`; test targets keep this exemption, because a panicking test is a failing
 # test rather than a shipped panic path.
@@ -45,8 +45,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "unbounded_depth", "float_roundtrip"] }
 memchr = "2"
 thiserror = "2"
-# Calendar arithmetic and ISO 8601 (calendar.rs); no time-zone database, so it builds for wasm.
-jiff = { version = "0.2", default-features = false, features = ["std"] }
 
 [profile.release]
 lto = "fat"

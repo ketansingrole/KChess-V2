@@ -3,11 +3,13 @@ import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { writeRustLicenses } from './rust-licenses.mjs'
 import { replaceNative } from './replace-native.mjs'
+import { stageVoiceRuntime } from './voice-runtime.mjs'
 
 /**
  * Build the Rust rules for both runtimes: the Node module for this host, where `@kchess/native`
  * loads it (crates/kchess-node/kchess-native.<platform>-<arch>.node), and the WebAssembly module
- * the renderer imports (apps/desktop/app/assets/rules/kchess.wasm).
+ * the renderer imports (apps/desktop/app/assets/rules/kchess.wasm). Also builds the speech
+ * recognition helper and stages it with libvosk in crates/kchess-node/voice (voice-runtime.mjs).
  * `--debug` skips release optimizations for quicker local iteration.
  *
  * Windows size note: MSVC's DLL carries more code/unwind data than the other
@@ -25,6 +27,8 @@ execFileSync(
     'build',
     '-p',
     'kchess-node',
+    '-p',
+    'kchess-voice',
     '--locked',
     ...(debug ? [] : ['--release']),
     // MSVC's DLL carries more code/unwind data than the other hosts. Optimize
@@ -48,6 +52,7 @@ replaceNative(source, target)
 console.info(
   `[kchess] Built ${target.slice(root.length)} (${profile}, ${(statSync(target).size / 1024 / 1024).toFixed(2)} MiB).`,
 )
+await stageVoiceRuntime(profile)
 
 const wasmProfile = debug ? 'dev' : 'wasm'
 execFileSync(

@@ -5,11 +5,11 @@
 
 pub mod attempts;
 pub mod queries;
+mod zst;
 
 use futures_util::StreamExt;
 use rusqlite::Connection;
 use serde_json::json;
-use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -105,11 +105,9 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
                 INSERT OR REPLACE INTO worker_meta VALUES (1);
                 COMMIT;",
             )
-            .map_err(|e| {
-                if let Err(rollback) = db.execute_batch("ROLLBACK") {
-                    tracing::warn!("puzzle import rollback failed: {rollback}");
-                }
-                CoreError::new(e.to_string())
+            .map_err(|e| match db.execute_batch("ROLLBACK") {
+                Ok(()) => CoreError::new(e.to_string()),
+                Err(rollback) => CoreError::new(e.to_string()).with_rollback_failure(rollback),
             })?;
         }
         db.execute_batch("DETACH DATABASE legacy")
@@ -140,22 +138,6 @@ fn seed() -> u32 {
 fn random() -> impl FnMut() -> f64 {
     let mut generator = Random::new(seed());
     move || generator.next_f64()
-}
-
-/// The decompressed CSV goes straight into the sampler.
-struct SamplerSink(Sampler);
-
-impl Write for SamplerSink {
-    fn write(&mut self, chunk: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .push(chunk)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        Ok(chunk.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 impl Inner {
@@ -412,23 +394,21 @@ impl PuzzleService {
         }
         progress.total = response.content_length().filter(|&n| n > 0);
         // Decompression and sampling run on a blocking thread, fed chunk by chunk.
-        let (send, mut receive) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+        let (send, receive) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
         let counted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = Arc::clone(&counted);
         let sampling =
             tokio::task::spawn_blocking(move || -> Result<(Vec<queries::DbPuzzle>, usize)> {
-                let mut decoder = zstd::stream::write::Decoder::new(SamplerSink(Sampler::new(
-                    Random::new(seed()),
-                )))
+                // The decompressed CSV goes straight into the sampler.
+                let mut sampler = Sampler::new(Random::new(seed()));
+                zst::decode(zst::ChannelReader::new(receive), |chunk| {
+                    sampler
+                        .push(chunk)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                    count.store(sampler.count(), Ordering::Relaxed);
+                    Ok(())
+                })
                 .map_err(|e| CoreError::new(e.to_string()))?;
-                while let Some(chunk) = receive.blocking_recv() {
-                    decoder
-                        .write_all(&chunk)
-                        .map_err(|e| CoreError::new(e.to_string()))?;
-                    count.store(decoder.get_ref().0.count(), Ordering::Relaxed);
-                }
-                decoder.flush().map_err(|e| CoreError::new(e.to_string()))?;
-                let mut sampler = decoder.into_inner().0;
                 sampler.finish().map_err(CoreError::new)?;
                 let rows = sampler
                     .kept()

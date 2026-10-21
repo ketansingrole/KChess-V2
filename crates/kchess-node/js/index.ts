@@ -1,6 +1,6 @@
 export { createKChessCore, type KChessCore } from './service'
 export type { CorePlatform, SecretStore } from './platform'
-export { BUNDLED_ENGINE_SCRIPT } from './engine'
+export { BUNDLED_ENGINE_SCRIPT, VOICE_HELPER, VOICE_HELPER_FILE } from './engine'
 export { CORE_METHODS, type CoreEvents, type CoreMethod } from '@kchess/contracts/core'
 export type { CoreApi } from '@kchess/contracts/types'
 // Diagnostics infrastructure the frontends share with the core.

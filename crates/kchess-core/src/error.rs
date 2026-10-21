@@ -29,6 +29,14 @@ impl CoreError {
     pub fn wrap(message: impl Into<String>, err: impl std::fmt::Display) -> CoreError {
         CoreError::new(format!("{}: {err}", message.into()))
     }
+
+    /// This error with a failed `ROLLBACK` appended, so the host log that reports the error
+    /// also shows the connection may still be inside the transaction.
+    #[must_use]
+    pub fn with_rollback_failure(mut self, rollback: impl std::fmt::Display) -> CoreError {
+        self.message = format!("{}; rollback failed: {rollback}", self.message);
+        self
+    }
 }
 
 impl fmt::Display for CoreError {
