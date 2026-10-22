@@ -316,6 +316,7 @@ const bonusText = computed(() => (bonusFlash.value ? `+${bonusFlash.value / 1000
             <span v-if="bonusText" class="bonus-flash">{{ bonusText }}</span>
           </Transition>
         </div>
+        <PuzzleVoice v-if="puzzle" :board="board" :context-key="`${index}-${puzzle.id}`" />
       </div>
       <div class="card side-panel puzzle-panel">
         <h2 class="section-title">{{ config.title }}</h2>

@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
-import { storeToRefs } from 'pinia'
 import type { useTvPosition } from '../../composables/useTvPosition'
 import { useWatchStore } from '../../stores/watch'
-import { useKChessStore } from '../../stores/kchess'
 
 /**
  * The watched game beside a list of what can be watched (TV channels, followed players): board,
@@ -12,7 +10,6 @@ import { useKChessStore } from '../../stores/kchess'
 const props = defineProps<{ tv: ReturnType<typeof useTvPosition> }>()
 
 const watcher = useWatchStore()
-const { settings } = storeToRefs(useKChessStore())
 const {
   frame,
   tvSetup,
@@ -83,10 +80,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
         <ChessBoard
           :fen="tvFen"
           :orientation="tvOrientation"
-          :theme="settings.boardTheme"
-          :coordinates="settings.coordinates"
-          :piece-set="settings.pieceSet"
-          :animation="settings.pieceAnimation"
           :interactive="false"
           :last-move="tvLast"
         />

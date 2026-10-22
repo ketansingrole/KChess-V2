@@ -3,15 +3,12 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::rc::Rc;
 
 use super::{
-    Clock, Done, Flow, Reads, Setup, Times, arg, board_result, draw_reason, engine_level,
+    Clock, Clocked, Done, Flow, Reads, Session, Setup, Times, arg, board_result, engine_level,
     number_text, opponent, optional_arg, outcome_winner, pgn_result, position_info, timeout_winner,
-    to_value, transition,
+    to_value, transition, with_move,
 };
-use crate::position::Info;
-use crate::replay;
 
 /// `ComputerState`: the session document and the engine turn's bookkeeping.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,45 +87,32 @@ pub fn state(args: &[Value]) -> Result<Value, String> {
 }
 
 /// One computer game during a transition: its state, runtime and the effects it has produced.
-struct Game {
-    state: State,
-    rt: Runtime,
-    fx: Vec<Value>,
-    written: Vec<&'static str>,
+type Game = Session<State, Runtime>;
+
+impl Clocked for Game {
+    fn setup(&self) -> &Setup {
+        &self.state.setup
+    }
+    fn moves(&self) -> &[String] {
+        &self.state.moves
+    }
+    fn times(&self) -> Option<Times> {
+        self.state.times
+    }
+    fn turn_started(&self) -> f64 {
+        self.rt.turn_started
+    }
+
+    /// `running`: a clock is set, both sides have moved and the game goes on.
+    fn running(&self) -> Result<bool, String> {
+        Ok(self.rt.permitted
+            && self.state.times.is_some()
+            && !self.over()?
+            && self.state.moves.len() >= 2)
+    }
 }
 
 impl Game {
-    fn load(args: &[Value]) -> Result<Self, String> {
-        Ok(Self {
-            state: arg(args, 0, "state")?,
-            rt: arg(args, 1, "runtime")?,
-            fx: Vec::new(),
-            written: Vec::new(),
-        })
-    }
-
-    fn done(self, value: Value) -> Flow<Done> {
-        Ok(Done {
-            value,
-            state: Some(to_value(&self.state)?),
-            runtime: Some(to_value(&self.rt)?),
-            written: self.written,
-            effects: self.fx,
-        })
-    }
-
-    fn info(&self) -> Result<Rc<Info>, String> {
-        position_info(&self.state.setup, &self.state.moves)
-    }
-
-    fn turn(&self) -> Result<&'static str, String> {
-        Ok(self.info()?.turn)
-    }
-
-    fn draw(&self) -> Result<Option<String>, String> {
-        draw_reason(&self.state.setup, &self.state.moves)
-    }
-
     /// `over`: resigned, flagged, the position ended, or a draw reached.
     fn over(&self) -> Result<bool, String> {
         if self.state.resigned || self.state.flagged.is_some() {
@@ -197,37 +181,7 @@ impl Game {
         Ok(json!({ "kind": kind, "title": title, "detail": detail }))
     }
 
-    /// `running`: a clock is set, both sides have moved and the game goes on.
-    fn running(&self) -> Result<bool, String> {
-        Ok(self.rt.permitted
-            && self.state.times.is_some()
-            && !self.over()?
-            && self.state.moves.len() >= 2)
-    }
-
-    fn remaining_at(&self, color: &str, at: f64) -> Result<f64, String> {
-        let left = self.state.times.map_or(0.0, |times| times.get(color));
-        if self.running()? && self.turn()? == color {
-            Ok((left - (at - self.rt.turn_started)).max(0.0))
-        } else {
-            Ok(left)
-        }
-    }
-
-    /// `remaining(color, at?)`: `at` defaults to the host's clock, read when needed.
-    fn remaining(&self, reads: &mut Reads, color: &str, at: Option<f64>) -> Flow<f64> {
-        let at = match at {
-            Some(at) => at,
-            None => reads.now()?,
-        };
-        Ok(self.remaining_at(color, at)?)
-    }
-
     /// Stop the engine and invalidate any reply it may still send.
-    fn wrote(&mut self, key: &'static str) {
-        self.written.push(key);
-    }
-
     fn cancel(&mut self) {
         self.state.epoch += 1;
         self.wrote("epoch");
@@ -238,13 +192,9 @@ impl Game {
 
     /// `expire(at)`: flag the side on the clock when its time is up.
     fn expire_at(&mut self, at: f64) -> Result<bool, String> {
-        if !self.running()? {
+        let Some(turn) = self.out_of_time(at)? else {
             return Ok(false);
-        }
-        let turn = self.turn()?;
-        if self.remaining_at(turn, at)? > 0.0 {
-            return Ok(false);
-        }
+        };
         if let Some(times) = self.state.times.as_mut() {
             times.set(turn, 0.0);
         }
@@ -258,34 +208,16 @@ impl Game {
 
     /// `commit(uci, at, computer)`: play a legal move, charge the clock and report it.
     fn commit(&mut self, uci: &str, at: f64, computer: bool) -> Result<bool, String> {
-        let mut moves = self.state.moves.clone();
-        moves.push(uci.to_string());
-        let texts: Vec<&str> = moves.iter().map(String::as_str).collect();
-        let Some(replayed) =
-            replay::replay_setup(&self.state.setup.variant, &self.state.setup.fen, &texts)
-        else {
-            return Ok(false);
-        };
-        if replayed.played.len() != self.state.moves.len() + 1 {
-            return Ok(false);
-        }
-        let Some(san) = replayed.played.last().map(|played| played.san.clone()) else {
+        let Some((moves, san)) = with_move(&self.state.setup, &self.state.moves, uci) else {
             return Ok(false);
         };
         let mover = self.turn()?;
-        if let Some(mut times) = self.state.times {
-            let spent = if self.running()? {
-                at - self.rt.turn_started
-            } else {
-                0.0
-            };
-            let increment = if self.state.moves.len() >= 2 {
-                self.state.clock.map_or(0.0, |clock| clock.increment) * 1000.0
-            } else {
-                0.0
-            };
-            let left = (times.get(mover) - spent).max(0.0);
-            times.set(mover, left + increment);
+        let increment = if self.state.moves.len() >= 2 {
+            self.state.clock.map_or(0.0, |clock| clock.increment) * 1000.0
+        } else {
+            0.0
+        };
+        if let Some(times) = self.charged(mover, at, increment)? {
             self.state.times = Some(times);
             self.wrote("times");
         }
@@ -500,9 +432,7 @@ impl Game {
         let at = reads.now()?;
         if self.rt.permitted && !permitted {
             if self.state.times.is_some() {
-                let white = self.remaining_at("white", at)?;
-                let black = self.remaining_at("black", at)?;
-                self.state.times = Some(Times { white, black });
+                self.state.times = Some(self.times_at(at)?);
                 self.wrote("times");
             }
             self.cancel();
@@ -516,14 +446,7 @@ impl Game {
 
     /// `snapshot()`: the saved session, with each side's remaining time.
     fn snapshot(&self, reads: &mut Reads) -> Flow<Value> {
-        let times = match self.state.times {
-            Some(_) => {
-                let white = self.remaining(reads, "white", None)?;
-                let black = self.remaining(reads, "black", None)?;
-                json!({ "white": white, "black": black })
-            }
-            None => Value::Null,
-        };
+        let times = self.saved_times(reads)?;
         let clock = match self.state.clock {
             Some(clock) => json!({ "minutes": clock.minutes, "increment": clock.increment }),
             None => Value::Null,
@@ -595,31 +518,12 @@ impl Game {
             "result" => self.result()?,
             "running" => json!(self.running()?),
             "draw" => json!(self.draw()?),
-            "remaining" => {
-                let color = query
-                    .get("color")
-                    .and_then(Value::as_str)
-                    .unwrap_or("white");
-                let at = query.get("at").and_then(Value::as_f64);
-                json!(self.remaining(reads, color, at)?)
-            }
+            "remaining" => self.remaining_view(reads, query)?,
             "snapshot" => self.snapshot(reads)?,
             "archiveSnapshot" => self.archive_snapshot()?,
             other => return Err(super::Stop::Error(format!("unknown computer view {other}"))),
         })
     }
-}
-
-/// A transition that changes the game: `body` returns the value the host receives.
-fn step(
-    args: &[Value],
-    body: impl FnOnce(&mut Game, &[Value], &mut Reads) -> Flow<Value>,
-) -> Result<Value, String> {
-    transition(args, |inputs, reads| {
-        let mut game = Game::load(inputs)?;
-        let value = body(&mut game, inputs, reads)?;
-        game.done(value)
-    })
 }
 
 /// The runtime of a new game: the clock and availability as the host reports them now.
@@ -641,49 +545,38 @@ pub fn init(args: &[Value]) -> Result<Value, String> {
 
 /// A getter of the game (`computerView`), without changing it.
 pub fn view(args: &[Value]) -> Result<Value, String> {
-    transition(args, |inputs, reads| {
-        let game = Game::load(inputs)?;
-        let query: Value = arg(inputs, 2, "query")?;
-        let value = game.view(reads, &query)?;
-        Ok(Done {
-            value,
-            ..Done::default()
-        })
-    })
+    Game::query(args, |game, reads, query| game.view(reads, query))
 }
 
 pub fn availability(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, _, reads| {
+    Game::step(args, |game, _, reads| {
         game.availability(reads)?;
         Ok(Value::Null)
     })
 }
 
 pub fn expire(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, inputs, reads| {
-        let at = match inputs.get(2).and_then(Value::as_f64) {
-            Some(at) => at,
-            None => reads.now()?,
-        };
+    Game::step(args, |game, inputs, reads| {
+        let at = reads.now_or(inputs.get(2).and_then(Value::as_f64))?;
         Ok(json!(game.expire_at(at)?))
     })
 }
 
 pub fn play(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, inputs, reads| {
+    Game::step(args, |game, inputs, reads| {
         let uci: String = arg(inputs, 2, "uci")?;
         Ok(json!(game.play(reads, &uci)?))
     })
 }
 
 pub fn search_start(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, _, reads| {
+    Game::step(args, |game, _, reads| {
         Ok(game.search_start(reads)?.unwrap_or(Value::Null))
     })
 }
 
 pub fn search_reply(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, inputs, reads| {
+    Game::step(args, |game, inputs, reads| {
         let reply: Reply = arg(inputs, 2, "reply")?;
         game.search_reply(reads, &reply)?;
         Ok(Value::Null)
@@ -691,7 +584,7 @@ pub fn search_reply(args: &[Value]) -> Result<Value, String> {
 }
 
 pub fn search_failed(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, inputs, _| {
+    Game::step(args, |game, inputs, _| {
         let epoch: Epoch = arg(inputs, 2, "epoch")?;
         game.search_failed(epoch.epoch);
         Ok(Value::Null)
@@ -699,7 +592,7 @@ pub fn search_failed(args: &[Value]) -> Result<Value, String> {
 }
 
 pub fn search_end(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, inputs, _| {
+    Game::step(args, |game, inputs, _| {
         let epoch: Epoch = arg(inputs, 2, "epoch")?;
         game.search_end(epoch.epoch);
         Ok(Value::Null)
@@ -707,7 +600,7 @@ pub fn search_end(args: &[Value]) -> Result<Value, String> {
 }
 
 pub fn start(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, inputs, reads| {
+    Game::step(args, |game, inputs, reads| {
         let setup: Setup = arg(inputs, 2, "setup")?;
         let clock: Option<Clock> = optional_arg(inputs, 3)?;
         game.start(reads, setup, clock)?;
@@ -716,21 +609,21 @@ pub fn start(args: &[Value]) -> Result<Value, String> {
 }
 
 pub fn takeback(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, _, reads| {
+    Game::step(args, |game, _, reads| {
         game.takeback(reads)?;
         Ok(Value::Null)
     })
 }
 
 pub fn resign(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, _, _| {
+    Game::step(args, |game, _, _| {
         game.resign()?;
         Ok(Value::Null)
     })
 }
 
 pub fn dispose(args: &[Value]) -> Result<Value, String> {
-    step(args, |game, _, _| {
+    Game::step(args, |game, _, _| {
         game.dispose();
         Ok(Value::Null)
     })

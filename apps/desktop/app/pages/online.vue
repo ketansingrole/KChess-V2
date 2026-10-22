@@ -11,6 +11,7 @@ import { useChallengeStore } from '../stores/challenges'
 import { useAnalysisStore } from '../stores/analysis'
 import { useTournamentStore } from '../stores/tournaments'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
+import { opposite } from '@kchess/rules/position'
 
 const online = useOnline()
 const store = useKChessStore()
@@ -179,7 +180,7 @@ const summary = computed(() => {
 const playing = computed(() => onlinePhase.value === 'playing')
 const canTakeback = computed(() => playing.value && onlineHistory.value.length >= 2)
 const confirmResign = ref(false)
-const opponentColor = computed(() => (onlineColor.value === 'white' ? 'black' : 'white'))
+const opponentColor = computed(() => opposite(onlineColor.value))
 const hasClock = computed(() => Boolean(onlineClockConfig.value) || onlineCorrespondence.value)
 /** The board puts your side at the bottom unless it is flipped. */
 const youAtBottom = computed(() => onlineOrientation.value === onlineColor.value)
@@ -523,10 +524,6 @@ function backToTournament(): void {
         keep-move-input
         :fen="fen(onlineDisplay)"
         :orientation="onlineOrientation"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
         :movable="onlineInteractive"
         :interactive="onlineCanPlay"
         :movable-color="onlineColor"

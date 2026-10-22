@@ -64,13 +64,7 @@ onMounted(() => void puzzles.loadDaily())
           @solution="board?.showSolution()"
         >
           <template #actions>
-            <UButton
-              icon="i-lucide-arrow-up-down"
-              variant="ghost"
-              color="neutral"
-              aria-label="Flip board"
-              @click="flipped = !flipped"
-            />
+            <FlipBoardButton size="md" @flip="flipped = !flipped" />
           </template>
         </PuzzleStatusPanel>
       </template>

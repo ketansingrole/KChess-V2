@@ -39,7 +39,6 @@ const {
   busy,
   reviewGame,
   reviewPgn,
-  settings,
   historyAccount,
   historyResult,
   historyRated,
@@ -263,10 +262,6 @@ const reviewBadge = computed(() =>
           ref="reviewer"
           :pgn="reviewPgn"
           :orientation="reviewGame.color"
-          :theme="settings.boardTheme"
-          :coordinates="settings.coordinates"
-          :piece-set="settings.pieceSet"
-          :animation="settings.pieceAnimation"
           :player-name="reviewGame.account"
           :opponent-name="reviewGame.opponent"
           link-names

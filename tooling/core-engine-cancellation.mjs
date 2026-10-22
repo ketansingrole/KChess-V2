@@ -1,10 +1,10 @@
-import { spawn } from 'node:child_process'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { arch, cpus, hostname, platform, release, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { performance } from 'node:perf_hooks'
 import { attemptAsync } from './capture-error.mjs'
+import { runJsonWorker } from './run-worker.mjs'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const baselineRoot = resolve(
@@ -111,40 +111,11 @@ async function worker(implementation) {
 }
 
 async function runWorker(implementation, pair, order) {
-  const child = spawn(
-    process.execPath,
-    [fileURLToPath(import.meta.url), '--worker', implementation],
-    {
-      cwd: projectRoot,
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-  let stdout = ''
-  let stderr = ''
-  child.stdout.setEncoding('utf8').on('data', (chunk) => {
-    stdout += chunk
+  const result = await runJsonWorker([fileURLToPath(import.meta.url), '--worker', implementation], {
+    cwd: projectRoot,
+    label: `${implementation} engine worker in pair ${pair}`,
   })
-  child.stderr.setEncoding('utf8').on('data', (chunk) => {
-    stderr += chunk
-  })
-  const status = await new Promise((resolvePromise, reject) => {
-    child.once('error', reject)
-    child.once('close', (code, signal) => resolvePromise({ code, signal }))
-  })
-  if (status.code !== 0)
-    throw new Error(
-      `${implementation} engine worker failed in pair ${pair}: ${status.signal ?? status.code}\n${stderr}\n${stdout}`,
-    )
-  const resultLine = stdout
-    .trim()
-    .split('\n')
-    .reverse()
-    .find((line) => line.trim().startsWith('{'))
-  if (!resultLine)
-    throw new Error(`Missing JSON from ${implementation} engine worker: ${stderr}\n${stdout}`)
-  const result = JSON.parse(resultLine)
-  return { pair, order, ...result, stderr: stderr.trim() || undefined }
+  return { pair, order, ...result }
 }
 
 if (process.argv[2] === '--worker') {

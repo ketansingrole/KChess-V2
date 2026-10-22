@@ -1,10 +1,10 @@
-import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { performance } from 'node:perf_hooks'
+import { runJsonWorker } from '../run-worker.mjs'
 
 const repo = fileURLToPath(new URL('../..', import.meta.url))
 const baselineRoot = resolve(
@@ -379,39 +379,11 @@ async function worker(implementation) {
 }
 
 async function runWorker(implementation) {
-  const child = spawn(
-    process.execPath,
-    [fileURLToPath(import.meta.url), '--worker', implementation],
-    {
-      cwd: repo,
-      env: { ...process.env, TZ: 'Asia/Tokyo' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-  let stdout = ''
-  let stderr = ''
-  child.stdout.setEncoding('utf8').on('data', (chunk) => {
-    stdout += chunk
+  return runJsonWorker([fileURLToPath(import.meta.url), '--worker', implementation], {
+    cwd: repo,
+    env: { ...process.env, TZ: 'Asia/Tokyo' },
+    label: `${implementation} insights-hotspot worker`,
   })
-  child.stderr.setEncoding('utf8').on('data', (chunk) => {
-    stderr += chunk
-  })
-  const status = await new Promise((resolvePromise, reject) => {
-    child.once('error', reject)
-    child.once('close', (code, signal) => resolvePromise({ code, signal }))
-  })
-  if (status.code !== 0)
-    throw new Error(
-      `${implementation} insights-hotspot worker failed (${status.signal ?? status.code})\n${stderr}\n${stdout}`,
-    )
-  const line = stdout
-    .trim()
-    .split('\n')
-    .reverse()
-    .find((row) => row.trim().startsWith('{'))
-  if (!line)
-    throw new Error(`Missing ${implementation} insights worker JSON:\n${stderr}\n${stdout}`)
-  return { ...JSON.parse(line), stderr: stderr.trim() || undefined }
 }
 
 function percentile(values, fraction) {

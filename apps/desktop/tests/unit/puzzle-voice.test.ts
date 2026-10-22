@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, nextTick, ref } from 'vue'
 import PuzzleBoard from '../../app/components/PuzzleBoard.vue'
 import PuzzleDaily from '../../app/components/PuzzleDaily.vue'
+import PuzzleRush from '../../app/components/PuzzleRush.vue'
 import MaterialDiff from '../../app/components/MaterialDiff.vue'
 import VoiceMoveInput from '../../app/components/VoiceMoveInput.vue'
 import PuzzleVoice from '../../app/components/PuzzleVoice.vue'
@@ -120,6 +121,25 @@ describe('puzzle board extras', () => {
     expect(wrapper.findComponent(VoiceStub).vm).toBe(voice.vm)
     expect(rowOf()).not.toBeNull()
     expect(rowOf()).not.toBe(firstRow)
+    wrapper.unmount()
+  })
+
+  // Puzzle Rush used the same board as the other puzzle modes but offered no voice moves.
+  it('takes spoken moves on Puzzle Rush boards', async () => {
+    desktop()
+    await useKChessStore().init()
+    const wrapper = mount(PuzzleRush, {
+      global: { ...global, stubs: { ...global.stubs, StormStats: true } },
+    })
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('Start'))!
+      .trigger('click')
+    await flushPromises()
+    const voice = wrapper.findComponent(VoiceStub)
+    voice.vm.$emit('update:enabled', true)
+    await vi.waitFor(() => expect(voice.props('active')).toBe(true))
     wrapper.unmount()
   })
 })

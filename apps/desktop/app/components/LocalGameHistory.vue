@@ -254,10 +254,6 @@ async function exportGame(game: ArchivedGame): Promise<void> {
       <GameReview
         :pgn="pgn(selected)"
         orientation="white"
-        :theme="store.settings.boardTheme"
-        :coordinates="store.settings.coordinates"
-        :piece-set="store.settings.pieceSet"
-        :animation="store.settings.pieceAnimation"
         :player-name="selected.white"
         :opponent-name="selected.black"
       />

@@ -128,8 +128,9 @@ export function useComputerGame(options: {
     return formatClock(game.remaining(color))
   }
 
-  function makeMove(uci: string): void {
-    game.move(uci)
+  /** False when the move is not played (not legal, or not the player's turn). */
+  function makeMove(uci: string): boolean {
+    return game.move(uci)
   }
   function newGame(setup?: GameSetup, clock?: ComputerClock | null): void {
     if (setup && !isVariant((setup as Partial<GameSetup>).variant)) setup = undefined

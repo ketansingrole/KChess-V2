@@ -352,13 +352,7 @@ onBeforeUnmount(() => clearTimeout(autoNext))
           @solution="board?.showSolution()"
         >
           <template #actions>
-            <UButton
-              icon="i-lucide-arrow-up-down"
-              variant="ghost"
-              color="neutral"
-              aria-label="Flip board"
-              @click="flipped = !flipped"
-            />
+            <FlipBoardButton size="md" @flip="flipped = !flipped" />
             <UButton
               :variant="finished ? 'solid' : 'outline'"
               :color="finished ? 'primary' : 'neutral'"

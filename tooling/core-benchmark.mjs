@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { arch, cpus, hostname, platform, release, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runJsonWorker } from './run-worker.mjs'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const baselineRoot = resolve(
@@ -25,8 +25,7 @@ if (!Number.isInteger(pairs) || pairs < 1 || sizes.some((n) => !Number.isInteger
 async function runWorker(implementation, pair, order) {
   const profile = join('/private/tmp', `kchess-core-bench-${process.pid}-${pair}-${implementation}`)
   const worker = join(projectRoot, 'tooling/core-benchmark-worker.mjs')
-  const child = spawn(
-    process.execPath,
+  const result = await runJsonWorker(
     [worker, implementation, projectRoot, profile, ...sizes.map(String)],
     {
       cwd: projectRoot,
@@ -35,36 +34,10 @@ async function runWorker(implementation, pair, order) {
         KCHESS_BENCHMARK_ENTRY: baselineEntry,
         KCHESS_BENCHMARK_BASELINE_ROOT: baselineRoot,
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      label: `${implementation} worker in pair ${pair} (order ${order})`,
     },
   )
-  let stdout = ''
-  let stderr = ''
-  child.stdout.setEncoding('utf8').on('data', (chunk) => {
-    stdout += chunk
-  })
-  child.stderr.setEncoding('utf8').on('data', (chunk) => {
-    stderr += chunk
-  })
-  const status = await new Promise((resolvePromise, reject) => {
-    child.once('error', reject)
-    child.once('close', (code, signal) => resolvePromise({ code, signal }))
-  })
-  if (status.code !== 0)
-    throw new Error(
-      `${implementation} worker failed in pair ${pair} (order ${order}): ${status.signal ?? status.code}\n${stderr}\n${stdout}`,
-    )
-  const line = stdout.trim().split('\n').at(-1)
-  let result
-  try {
-    result = JSON.parse(line)
-  } catch (error) {
-    throw new Error(
-      `Could not parse ${implementation} worker output in pair ${pair}: ${error}\n${stderr}\n${stdout}`,
-      { cause: error },
-    )
-  }
-  return { pair, order, ...result, stderr: stderr.trim() || undefined }
+  return { pair, order, ...result }
 }
 
 const runs = []

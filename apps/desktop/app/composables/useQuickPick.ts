@@ -18,6 +18,7 @@ import {
   type LabelSegment,
   type QuickPickMode,
 } from '../utils/quickPick'
+import { opposite } from '@kchess/rules/position'
 
 /** One entry the palette can run. */
 export interface QuickCommand {
@@ -331,7 +332,7 @@ export function useQuickPick(query: Ref<string>) {
             run: () => {
               close()
               const board = analysis()
-              board.orientation = board.orientation === 'white' ? 'black' : 'white'
+              board.orientation = opposite(board.orientation)
             },
           },
         ]

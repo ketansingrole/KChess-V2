@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { summarizeStudy } from '@kchess/rules/studies'
 import { timeAgo } from '../utils/format'
-const app = useKChessStore()
 const props = defineProps<{
   name: string
   /** When the study was last edited; the card omits the date when it is unknown. */
@@ -27,15 +26,7 @@ const emit = defineEmits<{ open: [] }>()
 <template>
   <article class="study-card">
     <button type="button" class="study-preview" :aria-label="`Open ${name}`" @click="emit('open')">
-      <ChessBoard
-        v-if="previewFen"
-        :fen="previewFen"
-        :theme="app.settings?.boardTheme"
-        :piece-set="app.settings?.pieceSet"
-        coordinates="none"
-        animation="none"
-        :interactive="false"
-      />
+      <ChessBoard v-if="previewFen" preview :fen="previewFen" :interactive="false" />
       <UIcon v-else name="i-lucide-book-open" class="size-12 text-muted" />
     </button>
     <div class="study-body">

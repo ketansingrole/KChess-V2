@@ -234,14 +234,9 @@ pub struct TournamentDetail {
     /// Swiss: when the next round starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_round_in: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub featured: Option<Featured>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duels: Option<Vec<TournamentGame>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub podium: Option<Vec<PodiumEntry>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stats: Option<Stats>,
+    /// Arena: the games being played and, once it has finished, its results.
+    #[serde(flatten)]
+    pub extras: ArenaExtras,
 }
 
 /// What an arena to create asks for (`NewArena`).
@@ -1023,7 +1018,6 @@ async fn arena_detail(
                 .collect(),
         })
     });
-    let extras = arena_extras(&raw);
     Ok(TournamentDetail {
         summary,
         description: object
@@ -1038,10 +1032,7 @@ async fn arena_detail(
         me,
         verdicts,
         next_round_in: None,
-        featured: extras.featured,
-        duels: extras.duels,
-        podium: extras.podium,
-        stats: extras.stats,
+        extras: arena_extras(&raw),
     })
 }
 
@@ -1148,10 +1139,7 @@ async fn swiss_detail(
         me: None,
         verdicts: swiss.verdicts.map(Verdicts::from),
         next_round_in: swiss.next_round.and_then(|next| next.in_seconds),
-        featured: None,
-        duels: None,
-        podium: None,
-        stats: None,
+        extras: ArenaExtras::default(),
     })
 }
 

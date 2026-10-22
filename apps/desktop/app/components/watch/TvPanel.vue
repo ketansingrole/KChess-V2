@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
-import { storeToRefs } from 'pinia'
 import type { Key } from '@lichess-org/chessground/types'
 import type { TvPastGame } from '@kchess/contracts/types'
 import { CHANNEL_ICONS, useTvPosition } from '../../composables/useTvPosition'
 import { useWatchStore } from '../../stores/watch'
 import TvViewer from './TvViewer.vue'
-import { useKChessStore } from '../../stores/kchess'
+import { opposite } from '@kchess/rules/position'
 
 const props = defineProps<{
   online: boolean
@@ -15,8 +14,6 @@ const props = defineProps<{
 }>()
 
 const watcher = useWatchStore()
-const store = useKChessStore()
-const { settings } = storeToRefs(store)
 const tv = useTvPosition()
 const { frame, label, openPast } = tv
 
@@ -108,9 +105,7 @@ function pastScore(entry: TvPastGame, side: 'white' | 'black'): string {
               :username="(entry.orientation === 'white' ? entry.black : entry.white).name"
               >{{ label(entry.orientation === 'white' ? entry.black : entry.white) }}</PlayerLink
             >
-            <strong class="tabular">{{
-              pastScore(entry, entry.orientation === 'white' ? 'black' : 'white')
-            }}</strong>
+            <strong class="tabular">{{ pastScore(entry, opposite(entry.orientation)) }}</strong>
           </div>
           <button
             type="button"
@@ -119,12 +114,9 @@ function pastScore(entry: TvPastGame, side: 'white' | 'black'): string {
             @click="openPast(entry)"
           >
             <ChessBoard
+              preview
               :fen="entry.fen"
               :orientation="entry.orientation"
-              :theme="settings.boardTheme"
-              coordinates="none"
-              :piece-set="settings.pieceSet"
-              animation="none"
               :interactive="false"
               :last-move="
                 entry.lastMove && !entry.lastMove.includes('@')

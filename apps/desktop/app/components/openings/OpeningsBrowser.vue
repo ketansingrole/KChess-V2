@@ -12,7 +12,6 @@ import { useRecentOpenings, useTrainOpening } from '../../composables/useOpening
 import { OPENINGS_GROUP_KEY } from '../../utils/storageKeys'
 
 /** The openings landing page: recent and popular openings, every family by first move, a search. */
-const app = useKChessStore()
 const router = useRouter()
 const train = useTrainOpening()
 
@@ -144,14 +143,7 @@ function open(item: OpeningEntry): void {
           <li v-for="item in recentEntries" :key="item.name">
             <NuxtLink :to="openingLink(item.moves)" class="recent-item">
               <span class="recent-board" aria-hidden="true">
-                <ChessBoard
-                  :fen="item.fen"
-                  :theme="app.settings?.boardTheme"
-                  :piece-set="app.settings?.pieceSet"
-                  coordinates="none"
-                  animation="none"
-                  :interactive="false"
-                />
+                <ChessBoard preview :fen="item.fen" :interactive="false" />
               </span>
               <span class="recent-name">{{ item.name }}</span>
               <span class="muted tabular text-xs">{{ item.eco }}</span>

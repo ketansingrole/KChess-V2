@@ -6,7 +6,6 @@ import { useChallengeStore } from '../stores/challenges'
 
 const challenges = useChallengeStore()
 const store = useKChessStore()
-const { settings } = storeToRefs(store)
 
 const games = computed(() => challenges.ongoing)
 function lastMove(game: OngoingGame): Key[] | undefined {
@@ -55,12 +54,9 @@ async function open(game: OngoingGame): Promise<void> {
       <div v-for="game in games" :key="game.gameId" class="list-row">
         <div class="mini-board" aria-hidden="true">
           <ChessBoard
+            preview
             :fen="game.fen"
             :orientation="game.color"
-            :theme="settings.boardTheme"
-            coordinates="none"
-            :piece-set="settings.pieceSet"
-            animation="none"
             :interactive="false"
             :last-move="lastMove(game)"
           />

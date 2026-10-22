@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
-import type { EngineLine, Settings } from '@kchess/contracts/types'
+import type { EngineLine } from '@kchess/contracts/types'
 import { formatEval, pvSan } from '@kchess/rules/analysisTree'
 
 const props = withDefaults(
@@ -9,8 +9,6 @@ const props = withDefaults(
     fen: string
     lines: readonly EngineLine[]
     orientation: Color
-    boardTheme?: Settings['boardTheme']
-    pieceSet?: Settings['pieceSet']
     pending?: number
     actionLabel?: string
     /** No lines to show, said in the room they take (`pending` rows), as at checkmate. */
@@ -112,12 +110,9 @@ onUnmounted(() => {
   <Teleport to="body">
     <div v-if="preview" class="pv-preview" :style="preview.style" aria-hidden="true">
       <ChessBoard
+        preview
         :fen="preview.fen"
         :orientation="orientation"
-        :theme="boardTheme"
-        coordinates="none"
-        :piece-set="pieceSet"
-        animation="none"
         :interactive="false"
         :last-move="preview.lastMove"
       />

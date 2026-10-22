@@ -4,13 +4,15 @@ import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSummary } from '@kchess/contracts/types'
 import { ENDGAME_DRILLS, evaluateEndgame, sanFrom, type EndgameDrill } from '@kchess/rules/endgames'
-import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { moveSquares } from '@kchess/rules/puzzle'
 import { playMoveSound } from '../utils/sound'
 import { useZenSurface } from '../composables/useZenSurface'
 import { useEngineMove } from '../composables/useEngineMove'
 import BoardViewToggles from './BoardViewToggles.vue'
+import FlipBoardButton from './FlipBoardButton.vue'
+import TrainerBoard from './TrainerBoard.vue'
 import TrainingList from './TrainingList.vue'
+import { opposite } from '@kchess/rules/position'
 
 /**
  * Endgames you must convert (or hold) against Stockfish at full strength, from positions checked to be
@@ -18,7 +20,7 @@ import TrainingList from './TrainingList.vue'
  */
 const emit = defineEmits<{ back: [] }>()
 const store = useKChessStore()
-const { settings, engineReady } = storeToRefs(store)
+const { engineReady } = storeToRefs(store)
 useZenSurface(true)
 const { thinking, error: engineError, ask, cancel } = useEngineMove('endgame-drills')
 
@@ -34,10 +36,9 @@ let recorded = false
 const status = computed(() =>
   evaluateEndgame(drill.value.fen, moves.value, drill.value.player, drill.value.goal),
 )
-const position = computed(() => positionFromFen(status.value.fen))
 const yourTurn = computed(() => !status.value.over && status.value.turn === drill.value.player)
 const orientation = computed(() =>
-  flipped.value ? (drill.value.player === 'white' ? 'black' : 'white') : drill.value.player,
+  flipped.value ? opposite(drill.value.player) : drill.value.player,
 )
 const sans = computed(() => sanFrom(drill.value.fen, moves.value))
 const lastMove = computed(() => {
@@ -154,26 +155,14 @@ async function showHint(): Promise<void> {
   <div v-board-fit class="play-layout">
     <div class="board-stack">
       <div class="board-shell">
-        <ChessBoard
-          keep-move-input
+        <TrainerBoard
           :fen="status.fen"
           :orientation="orientation"
-          :theme="settings.boardTheme"
-          :coordinates="settings.coordinates"
-          :piece-set="settings.pieceSet"
-          :animation="settings.pieceAnimation"
-          :movable="yourTurn"
-          :interactive="yourTurn"
-          :movable-color="drill.player"
-          :premove="false"
-          :show-dests="settings.showLegalMoves"
-          :promotion="settings.promotion === 'queen' ? 'queen' : 'ask'"
-          :dests="yourTurn && position ? destsFor(position) : undefined"
+          :color="drill.player"
+          :active="yourTurn"
           :last-move="lastMove"
-          :check="position ? checkColor(position) : false"
-          :turn-color="status.turn"
           :shapes="shapes"
-          :blindfold="settings.blindfold && !status.over"
+          :reveal="status.over"
           @move="onMove"
         />
       </div>
@@ -252,13 +241,7 @@ async function showHint(): Promise<void> {
           @click="takeback"
           >Take back</UButton
         >
-        <UButton
-          variant="outline"
-          color="neutral"
-          icon="i-lucide-arrow-up-down"
-          aria-label="Flip board"
-          @click="flipped = !flipped"
-        />
+        <FlipBoardButton variant="outline" size="md" @flip="flipped = !flipped" />
         <UButton
           :variant="status.over ? 'solid' : 'outline'"
           :color="status.over ? 'primary' : 'neutral'"

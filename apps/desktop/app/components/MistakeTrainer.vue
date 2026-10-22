@@ -7,6 +7,7 @@ import type { MistakeGame } from '@kchess/rules/library'
 import { formatGameDate } from '../utils/games'
 import { judgmentCounts } from '../utils/review'
 import { usePracticeGame } from '../composables/usePracticeGame'
+import type PuzzleBoard from './PuzzleBoard.vue'
 const app = useKChessStore()
 const practice = useMistakeStore()
 onMounted(() => {
@@ -21,11 +22,7 @@ useIntervalFn(() => {
 }, 60_000)
 const due = computed(() => practice.items.filter((item) => item.dueAt <= now.value))
 const done = ref(false)
-const board = ref<{
-  hint: () => void
-  hinted: boolean
-  showSolution: () => Promise<void>
-} | null>(null)
+const board = ref<InstanceType<typeof PuzzleBoard> | null>(null)
 const learned = computed(
   () => practice.items.filter((item) => item.streak >= LEARNED_STREAK).length,
 )
@@ -83,6 +80,7 @@ function next(all = false): void {
         @outcome="practice.answered(current!.id, $event)"
         @done="done = true"
       />
+      <PuzzleVoice :board="board" :context-key="current.id" />
     </div>
     <div class="card side-panel puzzle-panel">
       <div>

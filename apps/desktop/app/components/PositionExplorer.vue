@@ -387,15 +387,7 @@ const heading = computed(() => {
             @click="playMove(tile.move.uci)"
           >
             <span class="explorer-tile-board" aria-hidden="true">
-              <ChessBoard
-                :fen="tile.fen"
-                :theme="store.settings.boardTheme"
-                coordinates="none"
-                :piece-set="store.settings.pieceSet"
-                animation="none"
-                :interactive="false"
-                :last-move="tile.lastMove"
-              />
+              <ChessBoard preview :fen="tile.fen" :interactive="false" :last-move="tile.lastMove" />
             </span>
             <span class="flex items-baseline justify-between gap-2">
               <strong>{{ tile.move.san }}</strong>

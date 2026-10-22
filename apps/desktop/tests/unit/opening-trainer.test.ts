@@ -9,7 +9,7 @@ import { desktop, componentStubs } from './fixtures'
 
 const BoardStub = defineComponent({
   name: 'ChessBoard',
-  props: ['fen'],
+  props: ['fen', 'promotion'],
   emits: ['move'],
   template: '<div data-board />',
 })
@@ -114,5 +114,15 @@ it('keeps the feedback steady and the study note below the controls', async () =
   expect(wrapper.find('.trainer-feedback').text()).not.toContain('king pawn')
   await play(wrapper, 'd2d4')
   expect(feedback(wrapper)).toEqual(['e4 ✓'])
+  wrapper.unmount()
+})
+
+// The opening trainer always asked for the promotion piece, ignoring the auto-queen setting.
+it('promotes as the promotion setting says', async () => {
+  const { wrapper } = await trainer([{ name: 'Main', pgn: '1. e4 e5 *' }])
+  expect(wrapper.findComponent(BoardStub).props('promotion')).toBe('ask')
+  useKChessStore().settings!.promotion = 'queen'
+  await nextTick()
+  expect(wrapper.findComponent(BoardStub).props('promotion')).toBe('queen')
   wrapper.unmount()
 })

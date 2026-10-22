@@ -32,6 +32,7 @@ const props = defineProps<{
   moveFeedback?: { square: Key; classification: MoveClassification }
   check?: Color | false
   turnColor?: Color
+  /** The look props below default to the player's settings; pass one only to override it. */
   theme?: string
   coordinates?: CoordinateMode
   /** Label every square with its name (coordinate drills), not just the edges. */
@@ -58,6 +59,8 @@ const props = defineProps<{
    * side's turn, a finished game), read-only, so nothing under the board moves between moves.
    */
   keepMoveInput?: boolean
+  /** A small picture of a position: no coordinates and no piece animation unless passed. */
+  preview?: boolean
 }>()
 
 const emit = defineEmits<{ move: [uci: string]; select: [square: Key] }>()
@@ -138,7 +141,18 @@ watch(pending, async (value) => {
   await nextTick()
   promoDialog.value?.querySelector<HTMLElement>('button')?.focus()
 })
-const pieceStyle = computed(() => pieceVars(props.pieceSet ?? DEFAULT_PIECE_SET))
+const { settings } = storeToRefs(useKChessStore())
+const boardTheme = computed(() => props.theme ?? settings.value?.boardTheme)
+const boardCoordinates = computed<CoordinateMode | undefined>(
+  () => props.coordinates ?? (props.preview ? 'none' : settings.value?.coordinates),
+)
+const boardPieceSet = computed(
+  () => props.pieceSet ?? settings.value?.pieceSet ?? DEFAULT_PIECE_SET,
+)
+const boardAnimation = computed<PieceAnimation>(
+  () => props.animation ?? (props.preview ? 'none' : settings.value?.pieceAnimation) ?? 'normal',
+)
+const pieceStyle = computed(() => pieceVars(boardPieceSet.value))
 const promotionChoices = computed<{ role: PromotionRole; label: string; image: string }[]>(() => {
   const color = props.movableColor === 'black' ? 'b' : 'w'
   return [
@@ -184,12 +198,12 @@ function configuration(): Config {
     turnColor: props.turnColor,
     check: props.check ?? false,
     lastMove: props.lastMove,
-    coordinates: props.coordinates !== 'none',
+    coordinates: boardCoordinates.value !== 'none',
     coordinatesOnSquares: Boolean(props.coordinatesOnSquares),
     highlight: { lastMove: true, check: true },
     animation: {
-      enabled: reducedMotion.value !== 'reduce' && animationMs[props.animation ?? 'normal'] > 0,
-      duration: reducedMotion.value === 'reduce' ? 0 : animationMs[props.animation ?? 'normal'],
+      enabled: reducedMotion.value !== 'reduce' && animationMs[boardAnimation.value] > 0,
+      duration: reducedMotion.value === 'reduce' ? 0 : animationMs[boardAnimation.value],
     },
     disableContextMenu: true,
     // Never view-only: Chessground ignores drawing and premoves entirely in that mode.
@@ -217,7 +231,7 @@ function configuration(): Config {
 /** Chessground draws coordinate labels only when it rebuilds the board, not on `set`. */
 let shownCoordinates = ''
 const coordinateLayout = (): string =>
-  `${props.coordinates !== 'none'}:${Boolean(props.coordinatesOnSquares)}`
+  `${boardCoordinates.value !== 'none'}:${Boolean(props.coordinatesOnSquares)}`
 onMounted(() => {
   shownReset = props.resetKey
   shownCoordinates = coordinateLayout()
@@ -248,10 +262,10 @@ watch(
     props.lastMove,
     props.check,
     props.turnColor,
-    props.coordinates,
+    boardCoordinates.value,
     props.coordinatesOnSquares,
-    props.pieceSet,
-    props.animation,
+    boardPieceSet.value,
+    boardAnimation.value,
     props.resetKey,
     props.blindfold,
     props.variant,
@@ -305,8 +319,8 @@ onBeforeUnmount(() => {
   <div
     class="cg-host"
     :class="[
-      `board-theme-${theme ?? 'brown'}`,
-      `coords-${coordinates ?? 'inside'}`,
+      `board-theme-${boardTheme ?? 'brown'}`,
+      `coords-${boardCoordinates ?? 'inside'}`,
       { blindfold: blindfold },
     ]"
     :style="pieceStyle"

@@ -15,6 +15,7 @@ import { useWatchStore } from '../stores/watch'
 import { useAnalysisStore } from '../stores/analysis'
 import { useKChessStore } from '../stores/kchess'
 import { useReplaceAnalysis } from './useReplaceAnalysis'
+import { opposite } from '@kchess/rules/position'
 
 export const CHANNEL_ICONS: Record<string, string> = {
   best: 'i-lucide-crown',
@@ -162,7 +163,7 @@ export function useTvPosition() {
   )
   const tvOrientation = computed(() => {
     const side = frame.value?.orientation ?? 'white'
-    return flipped.value ? (side === 'white' ? 'black' : 'white') : side
+    return flipped.value ? opposite(side) : side
   })
   function selectTvPly(ply: number): void {
     tvPly.value = ply >= tvMoves.value.length ? null : Math.max(0, ply)

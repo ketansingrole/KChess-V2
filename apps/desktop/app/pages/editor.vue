@@ -16,6 +16,7 @@ import type { VoiceResult } from '../utils/voiceCapture'
 import { heardFields, logVoice } from '../utils/voiceLog'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
+import { opposite } from '@kchess/rules/position'
 
 const { settings } = storeToRefs(useKChessStore())
 const analysis = useAnalysisStore()
@@ -55,7 +56,7 @@ function clearBoard(): void {
   editor.value = { ...editor.value, board: EMPTY_BOARD, ep: '' }
 }
 function flip(): void {
-  editorOrientation.value = editorOrientation.value === 'white' ? 'black' : 'white'
+  editorOrientation.value = opposite(editorOrientation.value)
 }
 const turn = computed({
   get: () => editor.value.turn,

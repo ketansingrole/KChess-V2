@@ -222,10 +222,7 @@ async function finish(): Promise<void> {
           keep-move-input
           :fen="fen"
           orientation="white"
-          :theme="settings.boardTheme"
           :coordinates="settings.coordinates === 'none' ? 'inside' : settings.coordinates"
-          :piece-set="settings.pieceSet"
-          :animation="settings.pieceAnimation"
           :movable="stage === 'running'"
           :interactive="stage === 'running'"
           movable-color="white"

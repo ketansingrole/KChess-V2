@@ -9,10 +9,6 @@ export interface GameResult {
   reason: string
 }
 
-export function opponent(color: Color): Color {
-  return rules<Color>('opponent', color)
-}
-
 /** How the position ended the game; `draw` is a repetition or fifty-move draw already found. */
 export function boardResult(pos: Position, variant: Variant, draw?: string): GameResult | null {
   return rules<GameResult | null>('boardResult', pos.setup, variant, draw ?? null)

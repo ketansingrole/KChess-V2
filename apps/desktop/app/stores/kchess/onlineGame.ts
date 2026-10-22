@@ -25,6 +25,7 @@ import {
 import { formatClock } from '@kchess/rules/clock'
 import { signalFromLatency } from '../../utils/format'
 import { play, playMoveSound } from '../../utils/sound'
+import { opposite } from '@kchess/rules/position'
 export type { FinishedGame } from '@kchess/rules/onlineGame'
 
 /** Live game, stream lifecycle, presence and clocks share a single owner across routes. */
@@ -195,7 +196,7 @@ export function useOnlineGame(options: {
     onlineViewPly.value = clamped === onlineMoves.value.length ? null : clamped
   }
   const onlineOrientation = computed(() =>
-    onlineFlipped.value ? (onlineColor.value === 'white' ? 'black' : 'white') : onlineColor.value,
+    onlineFlipped.value ? opposite(onlineColor.value) : onlineColor.value,
   )
 
   /** Lichess's view of each side's connection, for the player lines. */

@@ -120,15 +120,7 @@ function begin(): void {
           >
         </div>
         <div v-if="start === 'chess960'" class="mini-preview">
-          <ChessBoard
-            :fen="chosenSetup.fen"
-            orientation="white"
-            :theme="settings.boardTheme"
-            coordinates="none"
-            :piece-set="settings.pieceSet"
-            animation="none"
-            :interactive="false"
-          />
+          <ChessBoard preview :fen="chosenSetup.fen" orientation="white" :interactive="false" />
         </div>
         <UFormField v-if="start === 'fen'" label="FEN" :error="fenProblem || undefined">
           <UTextarea

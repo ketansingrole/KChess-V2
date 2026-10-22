@@ -19,6 +19,7 @@ import { useWatchStore } from '../../stores/watch'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useKChessStore } from '../../stores/kchess'
 import { useReplaceAnalysis } from '../../composables/useReplaceAnalysis'
+import { opposite } from '@kchess/rules/position'
 
 defineProps<{
   online: boolean
@@ -292,7 +293,7 @@ function keydown(event: KeyboardEvent): void {
   }
   if (event.key.toLowerCase() === 'f') {
     event.preventDefault()
-    gameOrientation.value = gameOrientation.value === 'white' ? 'black' : 'white'
+    gameOrientation.value = opposite(gameOrientation.value)
     return
   }
   const max = game.value.moves.length
@@ -414,10 +415,8 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
           <PlayerLine
             :player="boardPlayers(game).top"
             :material-fen="gameFen"
-            :color="gameOrientation === 'white' ? 'black' : 'white'"
-            :active="
-              watcher.broadcastClockRunning(game, gameOrientation === 'white' ? 'black' : 'white')
-            "
+            :color="opposite(gameOrientation)"
+            :active="watcher.broadcastClockRunning(game, opposite(gameOrientation))"
           />
           <div
             class="broadcast-board"
@@ -432,10 +431,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
             <ChessBoard
               :fen="gameFen"
               :orientation="gameOrientation"
-              :theme="settings.boardTheme"
-              :coordinates="settings.coordinates"
-              :piece-set="settings.pieceSet"
-              :animation="settings.pieceAnimation"
               :interactive="false"
               :last-move="lastMoveKeys(broadcastHistory)"
               :shapes="broadcastShapes"
@@ -453,8 +448,9 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
           :ply="shownPly"
           :fen="gameSetup.fen"
           empty-text="No moves yet."
+          flip-shortcut="F"
           @select="selectBroadcastPly"
-          @flip="gameOrientation = gameOrientation === 'white' ? 'black' : 'white'"
+          @flip="gameOrientation = opposite(gameOrientation)"
         >
           <template #top>
             <section class="broadcast-engine" aria-label="Broadcast engine analysis">
@@ -510,8 +506,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
                 :fen="gameFen"
                 :lines="broadcastEval?.lines ?? []"
                 :orientation="gameOrientation"
-                :board-theme="settings.boardTheme"
-                :piece-set="settings.pieceSet"
                 :pending="broadcastEngineLines"
                 :ended="broadcastTerminal ? 'Nothing to analyse.' : undefined"
                 action-label="Explore"
@@ -582,12 +576,9 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
               :result="entry.ongoing ? undefined : entry.result"
             />
             <ChessBoard
+              preview
               :fen="entry.fen"
               orientation="white"
-              :theme="settings.boardTheme"
-              coordinates="none"
-              :piece-set="settings.pieceSet"
-              animation="none"
               :interactive="false"
               :last-move="lastMoveKeys(entry.moves)"
             />

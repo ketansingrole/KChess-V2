@@ -6,6 +6,7 @@ import type { TournamentGame, TournamentSystem } from '@kchess/contracts/types'
 import { formatClock } from '@kchess/rules/clock'
 import { useTournamentStore } from '../stores/tournaments'
 import { useWatchStore } from '../stores/watch'
+import { opposite } from '@kchess/rules/position'
 
 /** One tournament: joining, its details, the top game, games in progress and the leaderboard. */
 const props = defineProps<{ system: TournamentSystem; id: string }>()
@@ -13,7 +14,7 @@ const emit = defineEmits<{ connect: [] }>()
 
 const online = useOnline()
 const store = useKChessStore()
-const { activeOnlineAccount, busy, settings } = storeToRefs(store)
+const { activeOnlineAccount, busy } = storeToRefs(store)
 /** Open this event's game on the Play page, as the ongoing games list does. */
 async function goToGame(gameId: string): Promise<void> {
   await store.openOngoing(activeOnlineAccount.value, gameId)
@@ -83,6 +84,8 @@ function goToPage(next: number): void {
   void tournaments.open(props.system, props.id, Math.min(pages.value, Math.max(1, next)))
 }
 
+/** The featured game's player at the top of its board. */
+const featuredTop = computed(() => opposite(detail.value?.featured?.orientation ?? 'white'))
 const featuredLast = computed<Key[] | undefined>(() => {
   const move = detail.value?.featured?.lastMove
   return move && !move.includes('@')
@@ -256,30 +259,13 @@ const playingOwnGame = computed(() =>
             <h3 id="featured-title" class="section-title mb-3">Top game</h3>
             <div class="featured-player">
               <span>
-                <span class="muted tabular"
-                  >#{{
-                    detail.featured[detail.featured.orientation === 'white' ? 'black' : 'white']
-                      .rank
-                  }}</span
-                >
-                <PlayerLink
-                  :username="
-                    detail.featured[detail.featured.orientation === 'white' ? 'black' : 'white']
-                      .name
-                  "
-                  >{{
-                    player(
-                      detail.featured[detail.featured.orientation === 'white' ? 'black' : 'white'],
-                    )
-                  }}</PlayerLink
-                >
+                <span class="muted tabular">#{{ detail.featured[featuredTop].rank }}</span>
+                <PlayerLink :username="detail.featured[featuredTop].name">{{
+                  player(detail.featured[featuredTop])
+                }}</PlayerLink>
               </span>
               <span v-if="detail.featured.clocks" class="tabular">{{
-                formatClock(
-                  detail.featured.clocks[
-                    detail.featured.orientation === 'white' ? 'black' : 'white'
-                  ] * 1000,
-                )
+                formatClock(detail.featured.clocks[featuredTop] * 1000)
               }}</span>
             </div>
             <button
@@ -290,12 +276,9 @@ const playingOwnGame = computed(() =>
               @click="watchGame(detail.featured.id)"
             >
               <ChessBoard
+                preview
                 :fen="detail.featured.fen"
                 :orientation="detail.featured.orientation"
-                :theme="settings.boardTheme"
-                coordinates="none"
-                :piece-set="settings.pieceSet"
-                animation="none"
                 :interactive="false"
                 :last-move="featuredLast"
               />

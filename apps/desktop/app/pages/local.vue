@@ -3,7 +3,7 @@ import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useZenSurface } from '../composables/useZenSurface'
 import { useLocalStorage } from '@vueuse/core'
-import { INITIAL_FEN } from '@kchess/rules/position'
+import { INITIAL_FEN, opposite } from '@kchess/rules/position'
 import {
   VARIANT_HINTS,
   VARIANT_LABELS,
@@ -119,7 +119,7 @@ function begin(): void {
 /* ── Board ─────────────────────────────────────────────────────────── */
 const players = computed(() => {
   const name = (color: 'white' | 'black') => (color === 'white' ? 'White' : 'Black')
-  const top = game.orientation === 'white' ? 'black' : 'white'
+  const top = opposite(game.orientation)
   const bottom = game.orientation
   return {
     top: { name: name(top), icon: 'i-lucide-user', clock: game.clockText(top) },
@@ -263,10 +263,6 @@ function otbText(side: 'top' | 'bottom'): string {
         keep-move-input
         :fen="fenOf(game.display)"
         :orientation="game.orientation"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
         :movable="!game.over && game.atLive"
         :interactive="!game.over && game.atLive"
         :movable-color="game.position.turn"
@@ -291,6 +287,7 @@ function otbText(side: 'top' | 'bottom'): string {
             :position="game.position"
             :active="voiceActive"
             :context-key="`${game.moves.length}:${game.shownPly}`"
+            :line="game.history"
             hint="Either player can say “E four” or “Knight F three”."
             :play="(uci: string) => game.move(uci)"
           />

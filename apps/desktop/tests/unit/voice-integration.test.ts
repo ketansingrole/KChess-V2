@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, shallowMount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import Computer from '../../app/pages/computer.vue'
 import Local from '../../app/pages/local.vue'
+import AnalysisPage from '../../app/pages/analysis.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import VoiceMoveInput from '../../app/components/VoiceMoveInput.vue'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useLocalGameStore } from '../../app/stores/local'
-import { desktop, deferred, componentStubs } from './fixtures'
+import { useAnalysisStore } from '../../app/stores/analysis'
+import { ButtonStub, desktop, deferred, componentStubs } from './fixtures'
 import type { RunInput } from '@kchess/contracts/types'
 
 const VoiceStub = defineComponent({
@@ -40,7 +42,7 @@ async function computer() {
   vi.stubGlobal('useRoute', () => ({ path: '/computer' }))
   const store = useKChessStore()
   await store.init()
-  const wrapper = mount(Computer, { global: { stubs } })
+  const wrapper = mount(Computer, { global: { stubs, components: { VoiceMoveInput } } })
   await flushPromises()
   const voice = wrapper.findComponent(VoiceStub)
   voice.vm.$emit('update:enabled', true)
@@ -183,6 +185,79 @@ describe('voice feature integration', () => {
     voice.vm.$emit('result', { text: 'confirm', confidence: 0.95 })
     expect(store.localMoves).toEqual([])
     wrapper.unmount()
+  })
+
+  // A phrase that missed was never told which move the player then made by hand, nor linked to
+  // the phrase that retried it, on any board but the computer's.
+  it('teaches missed phrases the move played next and links retries', async () => {
+    const saveVoiceAttempt = vi.fn(async () => 5)
+    const updateVoiceAttempt = vi.fn(async () => {})
+    desktop({ saveVoiceAttempt, updateVoiceAttempt })
+    vi.stubGlobal('useRoute', () => ({ path: '/local', query: {} }))
+    await useKChessStore().init()
+    const game = useLocalGameStore()
+    game.start()
+    const wrapper = mount(Local, { global: { stubs, components: { VoiceMoveInput } } })
+    await flushPromises()
+    const voice = wrapper.findComponent(VoiceStub)
+    voice.vm.$emit('update:enabled', true)
+    await flushPromises()
+    voice.vm.$emit('result', { text: 'e nine', confidence: 0.95 })
+    await flushPromises()
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: 'local', outcome: 'invalid' }),
+    )
+    voice.vm.$emit('result', { text: 'e five', confidence: 0.95 })
+    await flushPromises()
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(expect.objectContaining({ retryOf: 5 }))
+    game.move('e2e4')
+    await flushPromises()
+    expect(updateVoiceAttempt).toHaveBeenCalledWith(5, { expected: 'e4' })
+    wrapper.unmount()
+  })
+
+  // Analysis logged a choice among several moves as pending and never said how it ended.
+  it('settles a spoken analysis move picked among several matches', async () => {
+    const saveVoiceAttempt = vi.fn(async () => 9)
+    const updateVoiceAttempt = vi.fn(async () => {})
+    desktop({
+      reviewGet: async () => null,
+      onAnalysis: () => () => {},
+      stopAnalysis: async () => {},
+      saveVoiceAttempt,
+      updateVoiceAttempt,
+    })
+    await useKChessStore().init()
+    // Both knights can go to d2.
+    expect(useAnalysisStore().loadPgn('1. d4 d5 2. Nf3 Nf6 *', 4)).toBe(true)
+    const Board = defineComponent({ template: '<div><slot name="controls" /></div>' })
+    const page = shallowMount(AnalysisPage, {
+      global: {
+        stubs: {
+          ChessBoard: Board,
+          VoiceInput: VoiceStub,
+          UButton: ButtonStub,
+          VoiceMoveInput: false,
+        },
+        components: { VoiceMoveInput },
+      },
+    })
+    await flushPromises()
+    const voice = page.findComponent(VoiceStub)
+    voice.vm.$emit('update:enabled', true)
+    await flushPromises()
+    voice.vm.$emit('result', { text: 'knight d two', confidence: 0.95 })
+    await flushPromises()
+    const choices = page.findAll('button').filter((button) => / · N/.test(button.text()))
+    expect(choices.map((button) => button.text())).toEqual(['1 · Nbd2', '2 · Nfd2'])
+    expect(saveVoiceAttempt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: 'analysis', outcome: 'pending' }),
+    )
+    const san = choices[0]!.text().split(' · ')[1]
+    await choices[0]!.trigger('click')
+    await flushPromises()
+    expect(updateVoiceAttempt).toHaveBeenCalledWith(9, { outcome: 'picked', expected: san })
+    page.unmount()
   })
 
   it('scores spoken squares independently of keyboard runs and waits for microphone readiness', async () => {

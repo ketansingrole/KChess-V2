@@ -2,18 +2,15 @@
 import { computed, useId } from 'vue'
 import type { Color, Key } from '@lichess-org/chessground/types'
 import type { Dests } from '@kchess/rules/chess'
-import type { CoordinateMode, PieceAnimation, PromotionMode } from '@kchess/contracts/types'
+import type { PromotionMode } from '@kchess/contracts/types'
 import type { PlayerInfo } from './PlayerLine.vue'
 import type { Variant } from '@kchess/rules/variant'
+import { opposite } from '@kchess/rules/position'
 
 const props = withDefaults(
   defineProps<{
     fen: string
     orientation: Color
-    theme: string
-    coordinates: CoordinateMode
-    pieceSet?: string
-    animation?: PieceAnimation
     /** It is the player's turn. */
     movable: boolean
     /** Pieces may be touched (turn or premove); false when reviewing or the game is over. */
@@ -45,7 +42,7 @@ const props = withDefaults(
 const emit = defineEmits<{ move: [uci: string] }>()
 /** The typed-move box sits in the bottom player's line rather than on a row of its own. */
 const entry = useId()
-const topColor = computed<Color>(() => (props.orientation === 'white' ? 'black' : 'white'))
+const topColor = computed<Color>(() => opposite(props.orientation))
 /** Hidden while blindfolded: counting the pieces would give the position away. */
 const materialFen = computed(() => (props.blindfold ? undefined : props.fen))
 </script>
@@ -66,10 +63,6 @@ const materialFen = computed(() => (props.blindfold ? undefined : props.fen))
       <ChessBoard
         :fen="fen"
         :orientation="orientation"
-        :theme="theme"
-        :coordinates="coordinates"
-        :piece-set="pieceSet"
-        :animation="animation"
         :movable="movable"
         :interactive="interactive"
         :movable-color="movableColor"

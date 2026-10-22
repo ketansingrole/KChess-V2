@@ -15,6 +15,7 @@ import {
 import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import type { PuzzleVerdictDetail } from '@kchess/rules/puzzleSession'
 import { play, playMoveSound } from '../utils/sound'
+import { opposite } from '@kchess/rules/position'
 
 /**
  * One puzzle on a board: the player finds the moves, the board plays the opponent's replies. It
@@ -94,14 +95,12 @@ onBeforeUnmount(() => {
 })
 
 const color = computed(() => playerColor(props.puzzle))
-const orientation = computed(() =>
-  props.flipped ? (color.value === 'white' ? 'black' : 'white') : color.value,
-)
+const orientation = computed(() => (props.flipped ? opposite(color.value) : color.value))
 /** The move box joins the bottom material row, as in a game's bottom player line. */
 const entry = useId()
 /** Where the page puts controls that outlive this board, such as voice input (`PuzzleVoice`). */
 const controls = ref<HTMLElement | null>(null)
-const topColor = computed(() => (orientation.value === 'white' ? 'black' : 'white'))
+const topColor = computed(() => opposite(orientation.value))
 const position = computed(() => positionFromFen(state.value.fen))
 /** The player may move: not while the opponent replies or the solution plays itself out. */
 const playing = computed(
@@ -254,10 +253,6 @@ defineExpose({
         keep-move-input
         :fen="state.fen"
         :orientation="orientation"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
         :movable="playing"
         :interactive="playing"
         :movable-color="color"

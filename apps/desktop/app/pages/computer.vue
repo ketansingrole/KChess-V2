@@ -1,24 +1,21 @@
 <script setup lang="ts">
 import { useGameArchiveStore } from '../stores/gameArchive'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useZenSurface } from '../composables/useZenSurface'
 import type { PlayerInfo } from '../components/PlayerLine.vue'
 import {
   GAME_GRAMMAR,
-  spokenChoice,
   spokenCommand,
   spokenMove,
   type GameCommand,
-  type VoiceMoveChoice,
 } from '@kchess/rules/voiceCommands'
 import { setupPgn } from '@kchess/rules/chess'
 import { VARIANT_LABELS } from '@kchess/rules/variant'
 import { useAnalysisStore } from '../stores/analysis'
-import type { VoiceResult } from '../utils/voiceCapture'
-import { heardFields, logVoice, updateVoice } from '../utils/voiceLog'
-import type { VoiceOutcome } from '@kchess/contracts/types'
+import type { VoiceReply } from '../components/VoiceMoveInput.vue'
 import { DEFAULT_ENGINE_LEVELS, engineLevelLabel } from '@kchess/rules/engineLevels'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
+import { opposite } from '@kchess/rules/position'
 
 const archive = useGameArchiveStore()
 const store = useKChessStore()
@@ -58,7 +55,7 @@ const levels = computed(() =>
     value: id,
   })),
 )
-const otherColor = computed(() => (userColor.value === 'white' ? 'black' : 'white'))
+const otherColor = computed(() => opposite(userColor.value))
 /** The game's PGN result: the result card says it from the player's side. */
 const pgnResult = computed(() => {
   const kind = localResult.value?.kind
@@ -76,98 +73,19 @@ const pendingColor = ref<'white' | 'black' | null>(null)
 /** A yes/no question is on screen; “confirm” and “cancel” answer it. */
 const dialogOpen = computed(() => confirmNew.value || confirmResign.value || !!pendingColor.value)
 const voiceEnabled = ref(false)
-const voiceFeedback = ref('')
-const voiceChoices = ref<VoiceMoveChoice[]>([])
-let choiceContext = ''
 const voiceContext = computed(
   () => `${localGameEpoch.value}:${userColor.value}:${localMoves.value.join(' ')}`,
 )
 /** Spoken moves are taken only on your turn… */
 const voiceActive = computed(() => localInteractive.value && !thinking.value && !dialogOpen.value)
-/** …but game commands (“take back”, “new game”) work whenever the engine is there to play. */
-const voiceListening = computed(() => engineReady.value)
-/*
- * Voice history: every phrase is logged with what came of it. Phrases said in one position are
- * kept together so that, once the player's move is made (by voice or by hand), each learns what
- * was meant — that pairing of "heard" and "meant" is what shows where recognition goes wrong.
- */
-type LogEntry = Promise<number | undefined>
-let pendingEntry: LogEntry | undefined
-let lastMiss: LogEntry | undefined
-let positionEntries: LogEntry[] = []
-let positionMoves: string[] = []
-
-/** `track`: the phrase was about this position's move, so it learns which move was then played. */
-function record(
-  result: VoiceResult,
-  outcome: VoiceOutcome,
-  parsed?: string,
-  track = true,
-): LogEntry {
-  const retryOf = lastMiss
-  const entry = (async () =>
-    logVoice({
-      source: 'computer',
-      ...heardFields(result),
-      outcome,
-      parsed,
-      fen: fen(localGame.value),
-      retryOf: (await retryOf) ?? undefined,
-    }))()
-  if (!track) return entry
-  if (!positionEntries.length) positionMoves = [...localMoves.value]
-  positionEntries.push(entry)
-  if (['invalid', 'unclear'].includes(outcome)) lastMiss = entry
-  return entry
-}
-/** Close the pending choice with how it ended. */
-function settle(outcome: VoiceOutcome): void {
-  const entry = pendingEntry
-  pendingEntry = undefined
-  if (!entry) return
-  if (outcome !== 'confirmed' && outcome !== 'picked') lastMiss = entry
-  void entry.then((id) => updateVoice(id, { outcome }))
-}
-/** The position moved on: tell this position's phrases which move the player actually chose. */
-function learnMeaning(): void {
-  const entries = positionEntries
-  const before = positionMoves
-  positionEntries = []
-  lastMiss = undefined
-  if (!entries.length) return
-  const moves = localMoves.value
-  const played = moves.length === before.length + 1 && before.every((m, i) => moves[i] === m)
-  const san = played ? localHistory.value[before.length] : undefined
-  if (san) for (const entry of entries) void entry.then((id) => updateVoice(id, { expected: san }))
-}
-
-watch(
-  [voiceContext, voiceActive, voiceEnabled],
-  ([context], [previous]) => {
-    if (voiceChoices.value.length) settle('abandoned')
-    voiceChoices.value = []
-    choiceContext = ''
-    if (context !== previous) learnMeaning()
-  },
-  { flush: 'sync' },
+/** …and the voice bar says why not, otherwise. */
+const voiceIdle = computed(() =>
+  localResult.value
+    ? 'The game is over. Say “new game” to play again.'
+    : localPly.value !== localMoves.value.length
+      ? 'Go to the last move to keep playing.'
+      : 'Wait for Stockfish, then say your move.',
 )
-
-function playVoice(choice: VoiceMoveChoice, how: 'confirmed' | 'picked' = 'confirmed'): void {
-  if (!voiceActive.value || !voiceEnabled.value || choiceContext !== voiceContext.value) return
-  settle(how)
-  voiceChoices.value = []
-  voiceFeedback.value = `Played ${choice.san}.`
-  makeMove(choice.uci)
-}
-function cancelVoice(): void {
-  settle('cancelled')
-  voiceChoices.value = []
-  voiceFeedback.value = 'Move cancelled.'
-}
-/** Heard, but too unsure (or only noise) to act on. */
-function missedMove(result: VoiceResult): void {
-  if (voiceEnabled.value) void record(result, 'unclear', undefined, voiceActive.value)
-}
 
 const COMMAND_NAMES: Record<GameCommand, string> = {
   takeback: 'take back',
@@ -175,133 +93,59 @@ const COMMAND_NAMES: Record<GameCommand, string> = {
   resign: 'resign',
   flip: 'switch sides',
 }
-/** Game controls by voice; anything that throws the game away asks first, like its button. */
-function runCommand(command: GameCommand, result: VoiceResult): void {
-  void record(result, 'command', COMMAND_NAMES[command], false)
+/** Game controls by voice, which work whenever the engine is there to play. */
+function voiceCommand(text: string): VoiceReply | undefined {
+  if (dialogOpen.value) return answerDialog(text)
+  const command = spokenCommand(text)
+  return command ? { said: COMMAND_NAMES[command], feedback: runCommand(command) } : undefined
+}
+/** Anything that throws the game away asks first, like its button. */
+function runCommand(command: GameCommand): string {
   if (command === 'takeback') {
-    if (!localCanTakeback.value) voiceFeedback.value = 'Nothing to take back.'
-    else {
-      takeback()
-      voiceFeedback.value = 'Took back your last move.'
-    }
-  } else if (command === 'newGame') {
-    requestNewGame()
-    voiceFeedback.value = confirmNew.value
-      ? 'Start a new game? Say “confirm” or “cancel”.'
-      : 'New game started.'
-  } else if (command === 'resign') {
-    if (!inProgress.value) voiceFeedback.value = 'There’s no game in progress to resign.'
-    else {
-      confirmResign.value = true
-      voiceFeedback.value = 'Resign this game? Say “confirm” or “cancel”.'
-    }
-  } else {
-    switchSides()
-    voiceFeedback.value = pendingColor.value
-      ? 'Switch sides and restart? Say “confirm” or “cancel”.'
-      : `You now play ${userColor.value}.`
+    if (!localCanTakeback.value) return 'Nothing to take back.'
+    takeback()
+    return 'Took back your last move.'
   }
+  if (command === 'newGame') {
+    requestNewGame()
+    return confirmNew.value ? 'Start a new game? Say “confirm” or “cancel”.' : 'New game started.'
+  }
+  if (command === 'resign') {
+    if (!inProgress.value) return 'There’s no game in progress to resign.'
+    confirmResign.value = true
+    return 'Resign this game? Say “confirm” or “cancel”.'
+  }
+  switchSides()
+  return pendingColor.value
+    ? 'Switch sides and restart? Say “confirm” or “cancel”.'
+    : `You now play ${userColor.value}.`
 }
 /** Answer the open yes/no question. */
-function answerDialog(result: VoiceResult): void {
-  const answer = spokenMove(result.text, localGame.value).kind
-  if (answer !== 'confirm' && answer !== 'cancel') {
-    void record(result, 'invalid', 'expected confirm or cancel', false)
-    voiceFeedback.value = 'Say “confirm” or “cancel”.'
-    return
-  }
-  void record(result, 'command', answer, false)
+function answerDialog(text: string): VoiceReply {
+  const answer = spokenMove(text, localGame.value).kind
+  if (answer !== 'confirm' && answer !== 'cancel')
+    return {
+      said: 'expected confirm or cancel',
+      feedback: 'Say “confirm” or “cancel”.',
+      understood: false,
+    }
   if (answer === 'cancel') {
     confirmNew.value = confirmResign.value = false
     pendingColor.value = null
-    voiceFeedback.value = 'Cancelled.'
-  } else if (confirmResign.value) {
+    return { said: answer, feedback: 'Cancelled.' }
+  }
+  if (confirmResign.value) {
     confirmResign.value = false
     resign()
-    voiceFeedback.value = 'You resigned. Say “new game” to play again.'
-  } else if (confirmNew.value) {
+    return { said: answer, feedback: 'You resigned. Say “new game” to play again.' }
+  }
+  if (confirmNew.value) {
     confirmNew.value = false
     newGame()
-    voiceFeedback.value = 'New game started.'
-  } else {
-    confirmColorChange()
-    voiceFeedback.value = `New game: you play ${userColor.value}.`
+    return { said: answer, feedback: 'New game started.' }
   }
-}
-
-function hearMove(result: VoiceResult): void {
-  if (!voiceEnabled.value) return
-  if (dialogOpen.value) return answerDialog(result)
-  const command = spokenCommand(result.text)
-  if (command) return runCommand(command, result)
-  if (!voiceActive.value) {
-    void record(result, 'invalid', 'not your move', false)
-    voiceFeedback.value = localResult.value
-      ? 'The game is over. Say “new game” to play again.'
-      : localPly.value !== localMoves.value.length
-        ? 'Go to the last move to keep playing.'
-        : 'Wait for Stockfish, then say your move.'
-    return
-  }
-  const index = spokenChoice(result.text)
-  if (index && voiceChoices.value.length) {
-    const choice = voiceChoices.value[index - 1]
-    void record(result, 'command', `#${index}`)
-    if (choice) playVoice(choice)
-    else voiceFeedback.value = 'Choose one of the numbered moves.'
-    return
-  }
-  const parsed = spokenMove(result.text, localGame.value)
-  if (parsed.kind === 'cancel') {
-    void record(result, 'command', 'cancel')
-    cancelVoice()
-  } else if (parsed.kind === 'confirm') {
-    void record(result, 'command', 'confirm')
-    const only = voiceChoices.value[0]
-    if (voiceChoices.value.length === 1 && only) playVoice(only)
-    else voiceFeedback.value = 'Say a move, or choose its number.'
-  } else if (parsed.kind === 'invalid') {
-    if (voiceChoices.value.length) settle('replaced')
-    voiceChoices.value = []
-    void record(result, result.unclear ? 'unclear' : 'invalid')
-    voiceFeedback.value = result.unclear
-      ? 'Didn’t catch that. Repeat, or try “Echo four” for E4.'
-      : `Heard “${result.text}”: no legal move matches. Try “E two to E four” or “Knight F three”.`
-  } else {
-    const sans = parsed.choices.map((choice) => choice.san).join('|')
-    // Repeating the pending move confirms it, which is easier than a separate word.
-    const pending = voiceChoices.value
-    const pendingOnly = pending[0]
-    const parsedOnly = parsed.choices[0]
-    if (
-      pending.length === 1 &&
-      parsed.choices.length === 1 &&
-      pendingOnly &&
-      parsedOnly &&
-      parsedOnly.uci === pendingOnly.uci
-    ) {
-      void record(result, 'command', `repeat ${sans}`)
-      playVoice(pendingOnly)
-      return
-    }
-    if (pending.length) settle('replaced')
-    choiceContext = voiceContext.value
-    voiceChoices.value = parsed.choices
-    // An unsure hearing is never played blind: it always waits for a confirmation.
-    if (parsed.choices.length === 1 && !settings.value?.voiceConfirmMoves && !result.unclear) {
-      if (!parsedOnly) return
-      void record(result, 'played', sans)
-      playVoice(parsedOnly)
-      return
-    }
-    pendingEntry = record(result, 'pending', sans)
-    voiceFeedback.value =
-      parsed.choices.length > 1
-        ? 'Choose a move by saying its number, or select it.'
-        : result.unclear
-          ? `Did you mean ${parsedOnly?.san ?? 'that move'}? Say “confirm”, or repeat the move.`
-          : `Say “confirm” to play ${parsedOnly?.san ?? 'that move'}, or “cancel”.`
-  }
+  confirmColorChange()
+  return { said: answer, feedback: `New game: you play ${userColor.value}.` }
 }
 const analysis = useAnalysisStore()
 /** Review the game on the analysis board, opened at the move being looked at. */
@@ -420,7 +264,7 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
         ? { state: 'online', label: 'Live' }
         : { state: 'unavailable', label: 'Unavailable' },
   }
-  const other = userColor.value === 'white' ? 'black' : 'white'
+  const other = opposite(userColor.value)
   computerPlayer.clock = store.computerClockText(other)
   return {
     top: computerPlayer,
@@ -445,10 +289,6 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
         keep-move-input
         :fen="fen(localDisplay)"
         :orientation="orientation"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
         :movable="localInteractive"
         :interactive="localCanPlay"
         :movable-color="userColor"
@@ -483,42 +323,20 @@ const players = computed<{ top: PlayerInfo; bottom: PlayerInfo }>(() => {
           />
         </template>
         <template #bottom-aside>
-          <VoiceInput
+          <VoiceMoveInput
             v-model:enabled="voiceEnabled"
-            compact
-            :active="voiceListening"
+            source="computer"
+            :position="localGame"
+            :active="voiceActive"
+            :listen="engineReady"
+            :idle="voiceIdle"
             :context-key="voiceContext"
+            :line="localHistory"
             :grammar="GAME_GRAMMAR"
+            :command="voiceCommand"
             hint="Say “E four”, “Knight F three”, or “take back”."
-            :feedback="voiceFeedback"
-            allow-push-talk
-            accept-unclear
-            @result="hearMove"
-            @unclear="missedMove"
-          >
-            <template v-if="voiceChoices.length">
-              <UButton
-                v-for="(choice, index) in voiceChoices"
-                :key="choice.uci"
-                color="neutral"
-                variant="outline"
-                size="xs"
-                class="shrink-0"
-                @click="playVoice(choice, 'picked')"
-                >{{ index + 1 }} · {{ choice.san }}</UButton
-              >
-              <UTooltip text="Cancel move">
-                <UButton
-                  color="neutral"
-                  variant="ghost"
-                  size="xs"
-                  icon="i-lucide-x"
-                  aria-label="Cancel move"
-                  @click="cancelVoice"
-                />
-              </UTooltip>
-            </template>
-          </VoiceInput>
+            :play="makeMove"
+          />
         </template>
       </PlayBoard>
       <MovePanel

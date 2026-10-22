@@ -118,7 +118,7 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
 
 export const ChessBoardStub = defineComponent({
   name: 'ChessBoard',
-  props: ['fen'],
+  props: ['fen', 'blindfold', 'promotion'],
   emits: ['move'],
   template: '<div data-board />',
 })

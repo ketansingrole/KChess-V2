@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import type { Color, Key } from '@lichess-org/chessground/types'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { CoordinateMode, PieceAnimation } from '@kchess/contracts/types'
-import { INITIAL_FEN, uciSquares } from '@kchess/rules/position'
+import { INITIAL_FEN, uciSquares, opposite } from '@kchess/rules/position'
 import { pgnMainline } from '@kchess/rules/pgn'
 
 const props = defineProps<{
   pgn: string
   orientation?: Color
-  theme?: string
-  coordinates?: CoordinateMode
-  pieceSet?: string
-  animation?: PieceAnimation
   playerName?: string
   opponentName?: string
   /** The names are Lichess usernames, so they open the players' profiles. */
@@ -53,7 +48,7 @@ watch(
 
 const orientation = computed<Color>(() => {
   const color = props.orientation ?? 'white'
-  return flipped.value ? (color === 'white' ? 'black' : 'white') : color
+  return flipped.value ? opposite(color) : color
 })
 const step = computed(() => {
   const steps = replay.value.steps
@@ -103,10 +98,6 @@ onUnmounted(() => window.removeEventListener('keydown', keydown))
     <PlayBoard
       :fen="step.fen"
       :orientation="orientation"
-      :theme="theme ?? 'brown'"
-      :coordinates="coordinates ?? 'inside'"
-      :piece-set="pieceSet"
-      :animation="animation"
       :movable="false"
       :interactive="false"
       :movable-color="orientation"

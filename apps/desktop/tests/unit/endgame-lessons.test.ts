@@ -51,6 +51,29 @@ describe('endgame lessons', () => {
     wrapper.unmount()
   })
 
+  // Lessons showed the blindfold toggle but never passed the setting to their board.
+  it('hides the pieces while a step is played blindfolded, not while reading or once it ends', async () => {
+    desktop()
+    const store = useKChessStore()
+    await store.init()
+    store.settings!.blindfold = true
+    const course = LESSON_COURSES.find((entry) => entry.id === 'checkmate-patterns-2')!
+    const wrapper = mount(EndgameLesson, {
+      props: { course, summary: null },
+      global: { stubs: componentStubs },
+    })
+    const board = () => wrapper.findComponent(ChessBoardStub)
+    await button(wrapper, 'Balestra mate').trigger('click')
+    expect(board().props('blindfold')).toBe(false)
+    await button(wrapper, 'Next').trigger('click')
+    expect(board().props('blindfold')).toBe(true)
+    board().vm.$emit('move', 'd3b5')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Checkmate!')
+    expect(board().props('blindfold')).toBe(false)
+    wrapper.unmount()
+  })
+
   it('opens a course at its first unfinished chapter', async () => {
     desktop()
     await useKChessStore().init()

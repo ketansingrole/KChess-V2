@@ -279,11 +279,8 @@ async function finish(): Promise<void> {
         <ChessBoard
           :fen="boardFen"
           :orientation="orientation"
-          :theme="settings.boardTheme"
           :coordinates="boardCoordinates"
           :coordinates-on-squares="onSquares"
-          :piece-set="settings.pieceSet"
-          :animation="settings.pieceAnimation"
           :movable="false"
           :interactive="false"
           :shapes="shapes"

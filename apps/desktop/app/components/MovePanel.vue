@@ -13,10 +13,18 @@ const props = withDefaults(
     selectable?: boolean
     /** What the flip button does, for its tooltip and label. */
     flipLabel?: string
+    /** The page's key for the flip button, shown in its tooltip. */
+    flipShortcut?: string
     /** The starting position, when it is not White's first move: it sets the move numbers. */
     fen?: string
   }>(),
-  { title: 'Moves', controls: true, selectable: true, flipLabel: 'Flip board' },
+  {
+    title: 'Moves',
+    controls: true,
+    selectable: true,
+    flipLabel: 'Flip board',
+    flipShortcut: undefined,
+  },
 )
 
 /** Black to move at the start shifts every move one column, under the start's move number. */
@@ -126,16 +134,7 @@ const controlButtons = [
           @click="emit('select', [0, props.ply - 1, props.ply + 1, props.moves.length][index] ?? 0)"
         />
       </UTooltip>
-      <UTooltip :text="flipLabel">
-        <UButton
-          size="sm"
-          variant="ghost"
-          color="neutral"
-          icon="i-lucide-arrow-up-down"
-          :aria-label="flipLabel"
-          @click="emit('flip')"
-        />
-      </UTooltip>
+      <FlipBoardButton :label="flipLabel" :shortcut="flipShortcut" @flip="emit('flip')" />
     </div>
     <slot name="bottom" />
   </div>

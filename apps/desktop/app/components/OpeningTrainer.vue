@@ -4,13 +4,14 @@ import { StorageSerializers, useLocalStorage } from '@vueuse/core'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { commentText, treeFromPgn, treeToPgn, type TreeNode } from '@kchess/rules/analysisTree'
-import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
+import { positionFromFen } from '@kchess/rules/chess'
 import { chapterItems, useStudyStore } from '../stores/studies'
 import { playMoveSound } from '../utils/sound'
 import { REPERTOIRE_OPENING_KEY, REPERTOIRE_STUDY_KEY } from '../utils/storageKeys'
 import { useZenSurface } from '../composables/useZenSurface'
 import { useOpeningDrill, type OpeningChoice } from '../composables/useOpeningDrill'
 import BoardViewToggles from './BoardViewToggles.vue'
+import TrainerBoard from './TrainerBoard.vue'
 
 /**
  * Drill a repertoire: any saved study is a tree of moves. KChess plays the other side's moves
@@ -20,7 +21,6 @@ import BoardViewToggles from './BoardViewToggles.vue'
  * Openings page is drilled without a study: its named line, then the explorer's popular moves.
  */
 const store = useKChessStore()
-const { settings } = storeToRefs(store)
 const library = useStudyStore()
 const toast = useToast()
 /** The repertoire's value when it is the opening below rather than a study. */
@@ -256,26 +256,15 @@ const accuracy = computed(() => {
   </div>
   <div v-else v-board-fit class="play-layout">
     <div class="board-stack">
-      <ChessBoard
+      <TrainerBoard
         v-if="node"
-        keep-move-input
         :fen="node.fen"
         :orientation="color"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
-        :movable="yourTurn"
-        :interactive="yourTurn"
-        :movable-color="color"
-        :show-dests="settings.showLegalMoves"
-        :dests="position && yourTurn ? destsFor(position) : undefined"
+        :color="color"
+        :active="yourTurn"
         :last-move="lastMove"
-        :check="position ? checkColor(position) : false"
-        :turn-color="position?.turn"
         :shapes="hint"
         :reset-key="resetKey"
-        :blindfold="settings.blindfold"
         @move="play"
       />
       <div v-else-if="!(drillsOpening && preparing)" class="card">

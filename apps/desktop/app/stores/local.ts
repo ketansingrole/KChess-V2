@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch } from 'vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
-import { INITIAL_FEN } from '@kchess/rules/position'
+import { INITIAL_FEN, opposite } from '@kchess/rules/position'
 import { formatClock } from '@kchess/rules/clock'
 import { initialLibrary, persistSession } from '../utils/library'
 import type { LocalClock } from '@kchess/rules/library'
@@ -127,7 +127,7 @@ export const useLocalGameStore = defineStore('local', () => {
   function flip(): void {
     const shown = orientation.value
     autoFlipOn.value = false
-    fixedOrientation.value = shown === 'white' ? 'black' : 'white'
+    fixedOrientation.value = opposite(shown)
   }
   function view(next: number): void {
     const clamped = Math.max(0, Math.min(next, moves.value.length))

@@ -73,6 +73,13 @@ impl<'a> Reads<'a> {
     pub(crate) fn now(&mut self) -> Flow<f64> {
         self.typed("now", Value::as_f64)
     }
+    /// `at` when the host gave it, else the host's clock.
+    pub(crate) fn now_or(&mut self, at: Option<f64>) -> Flow<f64> {
+        match at {
+            Some(at) => Ok(at),
+            None => self.now(),
+        }
+    }
     pub(crate) fn allowed(&mut self) -> Flow<bool> {
         self.typed("allowed", Value::as_bool)
     }
@@ -132,6 +139,176 @@ pub(crate) fn transition(
         Err(Stop::Read(kind)) => Ok(json!({ "read": kind })),
         Err(Stop::Error(message)) => Err(message),
     }
+}
+
+/// One game session during a transition: its state, its runtime and what the transition did.
+pub(crate) struct Session<S, R> {
+    pub state: S,
+    pub rt: R,
+    pub fx: Vec<Value>,
+    pub written: Vec<&'static str>,
+}
+
+impl<S: Serialize + DeserializeOwned, R: Serialize + DeserializeOwned> Session<S, R> {
+    fn load(args: &[Value]) -> Result<Self, String> {
+        Ok(Self {
+            state: arg(args, 0, "state")?,
+            rt: arg(args, 1, "runtime")?,
+            fx: Vec::new(),
+            written: Vec::new(),
+        })
+    }
+
+    fn done(self, value: Value) -> Flow<Done> {
+        Ok(Done {
+            value,
+            state: Some(to_value(&self.state)?),
+            runtime: Some(to_value(&self.rt)?),
+            written: self.written,
+            effects: self.fx,
+        })
+    }
+
+    pub(crate) fn wrote(&mut self, key: &'static str) {
+        self.written.push(key);
+    }
+
+    /// A transition that changes the game: `body` returns the value the host receives.
+    pub(crate) fn step(
+        args: &[Value],
+        body: impl FnOnce(&mut Self, &[Value], &mut Reads) -> Flow<Value>,
+    ) -> Result<Value, String> {
+        transition(args, |inputs, reads| {
+            let mut game = Self::load(inputs)?;
+            let value = body(&mut game, inputs, reads)?;
+            game.done(value)
+        })
+    }
+
+    /// A getter of the game, asked by its third input, without changing it.
+    pub(crate) fn query(
+        args: &[Value],
+        get: impl FnOnce(&Self, &mut Reads, &Value) -> Flow<Value>,
+    ) -> Result<Value, String> {
+        transition(args, |inputs, reads| {
+            let game = Self::load(inputs)?;
+            let query: Value = arg(inputs, 2, "query")?;
+            Ok(Done {
+                value: get(&game, reads, &query)?,
+                ..Done::default()
+            })
+        })
+    }
+}
+
+/// The clock the board games (local and computer) share: each side's time, charged to the side to
+/// move while the game says its clock runs.
+pub(crate) trait Clocked {
+    fn setup(&self) -> &Setup;
+    fn moves(&self) -> &[String];
+    fn times(&self) -> Option<Times>;
+    /// When the side to move started its turn, on the host's clock.
+    fn turn_started(&self) -> f64;
+    /// `running`: the side to move is losing time now.
+    fn running(&self) -> Result<bool, String>;
+
+    fn info(&self) -> Result<Rc<Info>, String> {
+        position_info(self.setup(), self.moves())
+    }
+
+    fn turn(&self) -> Result<&'static str, String> {
+        Ok(self.info()?.turn)
+    }
+
+    fn draw(&self) -> Result<Option<String>, String> {
+        draw_reason(self.setup(), self.moves())
+    }
+
+    fn remaining_at(&self, color: &str, at: f64) -> Result<f64, String> {
+        let left = self.times().map_or(0.0, |times| times.get(color));
+        if self.running()? && self.turn()? == color {
+            Ok((left - (at - self.turn_started())).max(0.0))
+        } else {
+            Ok(left)
+        }
+    }
+
+    /// `remaining(color, at?)`: `at` defaults to the host's clock, read when needed.
+    fn remaining(&self, reads: &mut Reads, color: &str, at: Option<f64>) -> Flow<f64> {
+        let at = reads.now_or(at)?;
+        Ok(self.remaining_at(color, at)?)
+    }
+
+    /// The `remaining` view: `{ color, at? }`.
+    fn remaining_view(&self, reads: &mut Reads, query: &Value) -> Flow<Value> {
+        let color = query
+            .get("color")
+            .and_then(Value::as_str)
+            .unwrap_or("white");
+        let at = query.get("at").and_then(Value::as_f64);
+        Ok(json!(self.remaining(reads, color, at)?))
+    }
+
+    /// Both sides' time at `at`: what a clock keeps when it stops.
+    fn times_at(&self, at: f64) -> Result<Times, String> {
+        Ok(Times {
+            white: self.remaining_at("white", at)?,
+            black: self.remaining_at("black", at)?,
+        })
+    }
+
+    /// A snapshot's times: each side's remaining time now, or null without a clock.
+    fn saved_times(&self, reads: &mut Reads) -> Flow<Value> {
+        Ok(match self.times() {
+            Some(_) => {
+                let white = self.remaining(reads, "white", None)?;
+                let black = self.remaining(reads, "black", None)?;
+                json!({ "white": white, "black": black })
+            }
+            None => Value::Null,
+        })
+    }
+
+    /// The side to move, when its time has run out at `at` on a running clock.
+    fn out_of_time(&self, at: f64) -> Result<Option<&'static str>, String> {
+        if !self.running()? {
+            return Ok(None);
+        }
+        let turn = self.turn()?;
+        Ok((self.remaining_at(turn, at)? <= 0.0).then_some(turn))
+    }
+
+    /// The clock once `mover` moves at `at` and gains `increment` milliseconds; none without one.
+    fn charged(&self, mover: &str, at: f64, increment: f64) -> Result<Option<Times>, String> {
+        let Some(mut times) = self.times() else {
+            return Ok(None);
+        };
+        let spent = if self.running()? {
+            at - self.turn_started()
+        } else {
+            0.0
+        };
+        let left = (times.get(mover) - spent).max(0.0);
+        times.set(mover, left + increment);
+        Ok(Some(times))
+    }
+}
+
+/// The moves once `uci` is played after `moves`, with its SAN; none when it is not legal there.
+pub(crate) fn with_move(
+    setup: &Setup,
+    moves: &[String],
+    uci: &str,
+) -> Option<(Vec<String>, String)> {
+    let mut next = moves.to_vec();
+    next.push(uci.to_string());
+    let texts: Vec<&str> = next.iter().map(String::as_str).collect();
+    let replayed = replay::replay_setup(&setup.variant, &setup.fen, &texts)?;
+    if replayed.played.len() != moves.len() + 1 {
+        return None;
+    }
+    let san = replayed.played.last()?.san.clone();
+    Some((next, san))
 }
 
 /// A `{ variant, fen }` setup, as the TypeScript `GameSetup` carries it.

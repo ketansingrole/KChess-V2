@@ -12,13 +12,15 @@ import {
   type LessonStep,
 } from '@kchess/rules/lessons'
 import { sanFrom } from '@kchess/rules/endgames'
-import { checkColor, destsFor, positionFromFen } from '@kchess/rules/chess'
 import { moveSquares } from '@kchess/rules/puzzle'
 import { playMoveSound } from '../utils/sound'
 import { useZenSurface } from '../composables/useZenSurface'
 import { useEngineMove } from '../composables/useEngineMove'
 import BoardViewToggles from './BoardViewToggles.vue'
+import FlipBoardButton from './FlipBoardButton.vue'
+import TrainerBoard from './TrainerBoard.vue'
 import TrainingList from './TrainingList.vue'
+import { opposite } from '@kchess/rules/position'
 
 /**
  * One course: its chapters, each a few steps to read, follow or solve. Finished chapters are saved
@@ -27,7 +29,7 @@ import TrainingList from './TrainingList.vue'
 const props = defineProps<{ course: LessonCourse; summary: RunSummary | null }>()
 const emit = defineEmits<{ back: []; saved: [summary: RunSummary] }>()
 const store = useKChessStore()
-const { settings, engineReady } = storeToRefs(store)
+const { engineReady } = storeToRefs(store)
 useZenSurface(true)
 const { thinking, error: engineError, ask, cancel } = useEngineMove('endgame-lesson')
 
@@ -52,7 +54,6 @@ const step = computed<LessonStep>(() => chapter.value.steps[stepIndex.value] ?? 
 const lastStep = computed(() => stepIndex.value === chapter.value.steps.length - 1)
 const chapterIndex = computed(() => props.course.chapters.indexOf(chapter.value))
 const status = computed(() => lessonStatus(step.value.fen, step.value.task, moves.value))
-const position = computed(() => positionFromFen(status.value.fen))
 const playable = computed(() => step.value.task.kind !== 'read')
 const yourTurn = computed(
   () => playable.value && !status.value.over && status.value.turn === status.value.player,
@@ -60,7 +61,7 @@ const yourTurn = computed(
 const side = computed(() => (status.value.player === 'white' ? 'White' : 'Black'))
 const other = computed(() => (status.value.player === 'white' ? 'Black' : 'White'))
 const orientation = computed(() =>
-  flipped.value ? (status.value.player === 'white' ? 'black' : 'white') : status.value.player,
+  flipped.value ? opposite(status.value.player) : status.value.player,
 )
 const paragraphs = computed(() => step.value.text.split(/\n{2,}/))
 const lastMove = computed(() => {
@@ -272,26 +273,15 @@ onBeforeUnmount(() => {
 
     <div class="board-stack">
       <div class="board-shell">
-        <ChessBoard
-          keep-move-input
+        <TrainerBoard
           :fen="status.fen"
           :orientation="orientation"
-          :theme="settings.boardTheme"
-          :coordinates="settings.coordinates"
-          :piece-set="settings.pieceSet"
-          :animation="settings.pieceAnimation"
-          :movable="yourTurn"
-          :interactive="yourTurn"
-          :movable-color="status.player"
-          :premove="false"
-          :show-dests="settings.showLegalMoves"
-          :promotion="settings.promotion === 'queen' ? 'queen' : 'ask'"
-          :dests="yourTurn && position ? destsFor(position) : undefined"
+          :color="status.player"
+          :active="yourTurn"
           :last-move="lastMove"
-          :check="position ? checkColor(position) : false"
-          :turn-color="status.turn"
           :shapes="shapes"
           :reset-key="resetKey"
+          :reveal="status.over || !playable"
           @move="onMove"
         />
       </div>
@@ -379,13 +369,7 @@ onBeforeUnmount(() => {
             @click="takeback"
             >Take back</UButton
           >
-          <UButton
-            variant="outline"
-            color="neutral"
-            icon="i-lucide-arrow-up-down"
-            aria-label="Flip board"
-            @click="flipped = !flipped"
-          />
+          <FlipBoardButton variant="outline" size="md" @flip="flipped = !flipped" />
           <UButton
             :variant="status.over && !status.success ? 'solid' : 'outline'"
             :color="status.over && !status.success ? 'primary' : 'neutral'"

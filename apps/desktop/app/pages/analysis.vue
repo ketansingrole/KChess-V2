@@ -17,17 +17,11 @@ import {
   setMoveGlyph,
 } from '@kchess/rules/analysisTree'
 import { positionProblem, setupFromFen, setupFen } from '@kchess/rules/boardEditor'
-import {
-  ANALYSIS_GRAMMAR,
-  spokenAnalysisCommand,
-  spokenChoice,
-  spokenMove,
-  type VoiceMoveChoice,
-} from '@kchess/rules/voiceCommands'
-import type { VoiceResult } from '../utils/voiceCapture'
-import { heardFields, logVoice } from '../utils/voiceLog'
+import { ANALYSIS_GRAMMAR, spokenAnalysisCommand } from '@kchess/rules/voiceCommands'
+import type { VoiceReply } from '../components/VoiceMoveInput.vue'
 import { useAnalysisStore } from '../stores/analysis'
 import { useReviewPractice } from '../stores/reviewPractice'
+import { opposite } from '@kchess/rules/position'
 
 const store = useKChessStore()
 const { settings, engineReady } = storeToRefs(store)
@@ -87,13 +81,16 @@ const moveFeedback = computed(() => {
   const square = lastMove.value?.[1]
   return classification && square ? { square, classification } : undefined
 })
-function move(uci: string): void {
+/** False when the move is not kept: a wrong practice answer, or a move the board refused. */
+function move(uci: string): boolean {
   const answer = practice.attempt(uci)
+  const kept = answer === 'solved' || (!answer && analysis.play(uci))
   // A wrong answer is not kept: the board goes back to the position.
-  if (answer === 'wrong' || (!answer && !analysis.play(uci))) resetKey.value++
+  if (!kept) resetKey.value++
+  return kept
 }
 function flip(): void {
-  orientation.value = orientation.value === 'white' ? 'black' : 'white'
+  orientation.value = opposite(orientation.value)
 }
 
 /** Lichess's cloud lines for this position, when it has some. */
@@ -433,76 +430,25 @@ function keydown(event: KeyboardEvent): void {
 /* ── Voice: moves, “back”, “next”, “best move”, “flip board” ──────── */
 
 const voiceEnabled = ref(false)
-const voiceFeedback = ref('')
-const voiceChoices = ref<VoiceMoveChoice[]>([])
-watch(path, () => (voiceChoices.value = []))
-function log(
-  result: VoiceResult,
-  outcome: 'played' | 'pending' | 'command' | 'invalid' | 'unclear',
-  parsed?: string,
-): void {
-  void logVoice({
-    source: 'analysis',
-    ...heardFields(result),
-    outcome,
-    parsed,
-    fen: node.value.fen,
-  })
-}
-function hear(result: VoiceResult): void {
-  if (!voiceEnabled.value) return
-  const command = spokenAnalysisCommand(result.text)
-  if (command) {
-    log(result, 'command', command)
-    const run = {
-      back: analysis.back,
-      forward: analysis.forward,
-      start: analysis.toStart,
-      end: analysis.toEnd,
-      best: playBest,
-      flip,
-      engine: () => (engineOn.value = !engineOn.value),
-    }[command]
-    run()
-    voiceFeedback.value =
-      command === 'best' && !best.value ? 'The engine has no move yet.' : `“${result.text}”`
-    return
+/** The moves that led here, so that phrases said here learn which move was then played. */
+const voiceLine = computed(() => analysis.nodes.slice(1).map((entry) => entry.san))
+function voiceCommand(text: string): VoiceReply | undefined {
+  const command = spokenAnalysisCommand(text)
+  if (!command) return undefined
+  const run = {
+    back: analysis.back,
+    forward: analysis.forward,
+    start: analysis.toStart,
+    end: analysis.toEnd,
+    best: playBest,
+    flip,
+    engine: () => (engineOn.value = !engineOn.value),
+  }[command]
+  run()
+  return {
+    said: command,
+    feedback: command === 'best' && !best.value ? 'The engine has no move yet.' : `“${text}”`,
   }
-  const index = spokenChoice(result.text)
-  if (index && voiceChoices.value.length) {
-    const choice = voiceChoices.value[index - 1]
-    log(result, 'command', `#${index}`)
-    if (choice) {
-      move(choice.uci)
-      voiceFeedback.value = `Played ${choice.san}.`
-    } else voiceFeedback.value = 'Choose one of the numbered moves.'
-    return
-  }
-  const pos = position.value
-  const parsed = pos ? spokenMove(result.text, pos) : ({ kind: 'invalid' } as const)
-  if (parsed.kind !== 'move') {
-    log(result, result.unclear ? 'unclear' : 'invalid')
-    voiceFeedback.value = result.unclear
-      ? 'Didn’t catch that. Repeat, or try “Echo four” for E4.'
-      : `Heard “${result.text}”: no legal move matches. Try “Knight F three” or “back”.`
-    return
-  }
-  const sans = parsed.choices.map((choice) => choice.san).join('|')
-  // Trying a move in analysis loses nothing (it can be stepped back or deleted), so play it.
-  if (parsed.choices.length === 1) {
-    const only = parsed.choices[0]
-    if (!only) return
-    log(result, 'played', sans)
-    move(only.uci)
-    voiceFeedback.value = `Played ${only.san}.`
-    return
-  }
-  log(result, 'pending', sans)
-  voiceChoices.value = parsed.choices
-  voiceFeedback.value = 'Several moves match: say its number, or select it.'
-}
-function missed(result: VoiceResult): void {
-  if (voiceEnabled.value) log(result, 'unclear')
 }
 </script>
 
@@ -529,10 +475,6 @@ function missed(result: VoiceResult): void {
               keep-move-input
               :fen="node.fen"
               :orientation="orientation"
-              :theme="settings?.boardTheme"
-              :coordinates="settings?.coordinates"
-              :piece-set="settings?.pieceSet"
-              :animation="settings?.pieceAnimation"
               movable
               interactive
               :movable-color="position?.turn ?? 'white'"
@@ -548,32 +490,19 @@ function missed(result: VoiceResult): void {
               @move="move"
             >
               <template #controls>
-                <VoiceInput
+                <VoiceMoveInput
                   v-model:enabled="voiceEnabled"
-                  compact
+                  source="analysis"
+                  :position="position"
                   active
+                  immediate
                   :context-key="path"
+                  :line="voiceLine"
                   :grammar="ANALYSIS_GRAMMAR"
+                  :command="voiceCommand"
                   hint="Say a move like “Knight F three”, or “back”, “next”, “best move”."
-                  :feedback="voiceFeedback"
-                  allow-push-talk
-                  accept-unclear
-                  @result="hear"
-                  @unclear="missed"
-                >
-                  <template v-if="voiceChoices.length">
-                    <UButton
-                      v-for="(choice, index) in voiceChoices"
-                      :key="choice.uci"
-                      color="neutral"
-                      variant="outline"
-                      size="xs"
-                      class="shrink-0"
-                      @click="move(choice.uci)"
-                      >{{ index + 1 }} · {{ choice.san }}</UButton
-                    >
-                  </template>
-                </VoiceInput>
+                  :play="move"
+                />
               </template>
             </ChessBoard>
           </div>
@@ -689,8 +618,6 @@ function missed(result: VoiceResult): void {
             :fen="node.fen"
             :lines="lines"
             :orientation="orientation"
-            :board-theme="settings?.boardTheme"
-            :piece-set="settings?.pieceSet"
             :pending="usingCloud ? 0 : engineLines"
             :ended="gameOver ? 'Nothing to analyse.' : undefined"
             @select="playLine"
@@ -793,16 +720,7 @@ function missed(result: VoiceResult): void {
               @click="analysis.toEnd"
             />
           </UTooltip>
-          <UTooltip text="Flip board" :kbds="['F']">
-            <UButton
-              size="sm"
-              variant="ghost"
-              color="neutral"
-              icon="i-lucide-arrow-up-down"
-              aria-label="Flip board"
-              @click="flip"
-            />
-          </UTooltip>
+          <FlipBoardButton shortcut="F" @flip="flip" />
           <ExportGame
             :setup="{ variant: 'standard', fen: root.fen }"
             :moves="analysis.mainline"

@@ -78,9 +78,9 @@ it('asks for the promotion piece when queening applies only to premoves', async 
   await kchess.init()
   kchess.settings.promotion = 'premove'
   const board = mount(PuzzleBoard, { props: { puzzle }, global: { stubs: componentStubs } })
-  expect(board.findComponent(ChessBoardStub).vm.$attrs.promotion).toBe('ask')
+  expect(board.findComponent(ChessBoardStub).props('promotion')).toBe('ask')
   kchess.settings.promotion = 'queen'
   await board.vm.$nextTick()
-  expect(board.findComponent(ChessBoardStub).vm.$attrs.promotion).toBe('queen')
+  expect(board.findComponent(ChessBoardStub).props('promotion')).toBe('queen')
   board.unmount()
 })

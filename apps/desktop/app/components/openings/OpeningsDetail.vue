@@ -4,7 +4,7 @@ import { checkColor, destsFor, pgnFromUci } from '@kchess/rules/chess'
 import type { OpeningDescription, PopularityMonth } from '@kchess/contracts/types'
 import { openingAt, openingKey } from '@kchess/rules/openings'
 import { RequestScope } from '@kchess/rules/requestScope'
-import { INITIAL_FEN, Position, uciSquares } from '@kchess/rules/position'
+import { INITIAL_FEN, Position, uciSquares, opposite } from '@kchess/rules/position'
 import { STANDARD_SETUP } from '@kchess/rules/variant'
 import type { Key } from '@lichess-org/chessground/types'
 import { useAnalysisStore } from '../../stores/analysis'
@@ -122,10 +122,6 @@ function analyse(): void {
         keep-move-input
         :fen="fen"
         :orientation="orientation"
-        :theme="settings.boardTheme"
-        :coordinates="settings.coordinates"
-        :piece-set="settings.pieceSet"
-        :animation="settings.pieceAnimation"
         movable
         interactive
         movable-color="both"
@@ -148,14 +144,7 @@ function analyse(): void {
           >All openings</UButton
         >
         <span class="flex-1" />
-        <UButton
-          size="xs"
-          variant="ghost"
-          color="neutral"
-          icon="i-lucide-repeat"
-          aria-label="Flip board"
-          @click="orientation = orientation === 'white' ? 'black' : 'white'"
-        />
+        <FlipBoardButton size="xs" @flip="orientation = opposite(orientation)" />
       </div>
       <div>
         <h2 class="section-title">{{ title }}</h2>
