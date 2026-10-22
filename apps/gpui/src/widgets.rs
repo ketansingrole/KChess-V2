@@ -507,42 +507,91 @@ pub fn pill_tabs(
     choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     palette: &Palette,
 ) -> impl IntoElement {
+    pills(
+        id,
+        tabs.into_iter()
+            .map(|(glyph, label)| Pill {
+                icon: glyph,
+                label,
+                badge: None,
+                disabled: false,
+            })
+            .collect(),
+        selected,
+        choose,
+        false,
+        palette,
+    )
+}
+
+/// One choice of `pills`: its label, an icon or a count beside it, and whether it can be chosen.
+pub struct Pill {
+    pub icon: Option<Icon>,
+    pub label: SharedString,
+    pub badge: Option<SharedString>,
+    pub disabled: bool,
+}
+
+/// `UTabs variant="pill"`, full width or (`compact`, `size="sm"`) as wide as its choices.
+pub fn pills(
+    id: &'static str,
+    tabs: Vec<Pill>,
+    selected: usize,
+    choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    compact: bool,
+    palette: &Palette,
+) -> impl IntoElement {
     h_flex()
         .id(id)
-        .w_full()
+        .when(!compact, |row| row.w_full())
         .p(px(2.))
         .gap(px(4.))
         .rounded(px(8.))
         .border_1()
         .border_color(palette.border)
         .bg(palette.bg)
-        .children(
-            tabs.into_iter()
-                .enumerate()
-                .map(move |(index, (glyph, label))| {
-                    let chosen = index == selected;
-                    let choose = choose.clone();
-                    h_flex()
-                        .id((id, index))
-                        .flex_1()
-                        .justify_center()
-                        .gap(px(8.))
-                        .h(px(26.))
-                        .px(px(12.))
-                        .rounded(px(6.))
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .cursor_pointer()
-                        .when(chosen, |tab| {
-                            tab.bg(palette.primary).text_color(palette.inverted)
+        .children(tabs.into_iter().enumerate().map(move |(index, tab)| {
+            let chosen = index == selected;
+            let choose = choose.clone();
+            h_flex()
+                .id((id, index))
+                .when(!compact, |tab| tab.flex_1())
+                .justify_center()
+                .gap(px(if compact { 6. } else { 8. }))
+                .h(px(if compact { 20. } else { 26. }))
+                .px(px(if compact { 8. } else { 12. }))
+                .rounded(px(6.))
+                .text_size(px(if compact { 12. } else { 14. }))
+                .font_weight(FontWeight::MEDIUM)
+                .when(chosen, |tab| {
+                    tab.bg(palette.primary).text_color(palette.inverted)
+                })
+                .when(!chosen && tab.disabled, |tab| {
+                    tab.text_color(palette.text_muted).opacity(0.75)
+                })
+                .when(!chosen && !tab.disabled, |tab| {
+                    tab.cursor_pointer()
+                        .text_color(palette.text_muted)
+                        .hover(|tab| tab.text_color(palette.highlighted))
+                })
+                .when(!tab.disabled, |row| {
+                    row.on_click(move |_, window, cx| choose(index, window, cx))
+                })
+                .children(tab.icon.map(|glyph| glyph.size(px(18.))))
+                .child(tab.label)
+                .children(tab.badge.map(|badge| {
+                    div()
+                        .px(px(5.))
+                        .rounded(px(4.))
+                        .text_size(px(10.))
+                        .line_height(px(16.))
+                        .when(chosen, |badge| {
+                            badge.bg(palette.bg).text_color(palette.highlighted)
                         })
-                        .when(!chosen, |tab| {
-                            tab.text_color(palette.text_muted)
-                                .hover(|tab| tab.text_color(palette.highlighted))
+                        .when(!chosen, |badge| {
+                            badge.bg(palette.elevated).text_color(palette.toned)
                         })
-                        .on_click(move |_, window, cx| choose(index, window, cx))
-                        .children(glyph.map(|glyph| glyph.size(px(18.))))
-                        .child(label)
-                }),
-        )
+                        .child(badge)
+                }))
+        }))
 }

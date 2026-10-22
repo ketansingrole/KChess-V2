@@ -10,9 +10,11 @@ mod menu;
 mod online;
 mod pages;
 mod play_layout;
+mod played;
 mod power;
 mod prefs;
 mod profile;
+mod replay;
 mod settings;
 mod shell;
 mod sound;
@@ -46,6 +48,7 @@ fn main() {
             }
             settings::init(cx);
             prefs::init(cx);
+            played::init(cx);
             sound::init(cx);
             online::init(cx);
             cx.on_app_quit(core::quit).detach();

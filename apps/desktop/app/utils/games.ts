@@ -1,4 +1,6 @@
 import type { ArchivedGame } from '@kchess/rules/library'
+import { archivedOutcome, type ArchivedOutcome } from '@kchess/rules/gameStatus'
+export { archivedOutcome, archivedPlayerSide, type ArchivedOutcome } from '@kchess/rules/gameStatus'
 
 const GAME_DATE = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -24,28 +26,6 @@ export const OUTCOME_BADGES = {
   loss: { label: 'Loss', color: 'error', variant: 'soft' },
   draw: { label: 'Draw', color: 'neutral', variant: 'subtle' },
 } as const satisfies Record<'win' | 'loss' | 'draw', ResultBadge>
-
-export type ArchivedOutcome =
-  'win' | 'loss' | 'draw' | 'white' | 'black' | 'unfinished' | 'ongoing' | 'clock'
-
-/** The side named “You” in a computer game; over-the-board games have none. */
-export function archivedPlayerSide(game: ArchivedGame): 'white' | 'black' | null {
-  return game.white === 'You' ? 'white' : game.black === 'You' ? 'black' : null
-}
-
-/**
- * A saved local game's outcome: won or lost for the side named “You” (computer games), or the
- * winning colour when both players were at the board.
- */
-export function archivedOutcome(game: ArchivedGame): ArchivedOutcome {
-  if (game.source === 'clock') return 'clock'
-  if (game.result === '*') return game.finished ? 'unfinished' : 'ongoing'
-  if (game.result === '1/2-1/2') return 'draw'
-  const winner = game.result === '1-0' ? 'white' : 'black'
-  const you = archivedPlayerSide(game)
-  if (!you) return winner
-  return you === winner ? 'win' : 'loss'
-}
 
 const ARCHIVED_BADGES: Record<ArchivedOutcome, ResultBadge> = {
   ...OUTCOME_BADGES,

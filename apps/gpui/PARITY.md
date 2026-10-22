@@ -69,10 +69,25 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Interface size; Notifications' "Try it"; Voice input, Chess engine, My accounts, Offline
       downloads, Data & storage, Updates
 
+## Game history
+
+- [x] Computer and Over the board tabs: result filters with counts, the list, 20 to a page,
+      a game opened to go through move by move (`replay.rs`), Export PGN, Copy summary, Delete
+- [x] One list of played games for every page (`played.rs`), written in order and at quit
+- [ ] Lichess tab (synced games, filters, review); Open analysis; swipe back and forward
+- [ ] Export copy inside the delete dialog
+
+## Home
+
+- [x] Start tiles (Continue your game with its move, side and level), shortcuts, recent games
+      opening in Game history, Connect Lichess (signs in, then syncs)
+- [ ] Your Lichess activity (stats, rating chart, synced games) and Sync games for a connected
+      account; Connect Lichess is not yet tried against Lichess from this app
+
 ## Pages not started
 
-Home, Puzzles, Practice, Openings, Analysis board, Game history, Studies,
-Board editor, Play on Lichess, Tournaments, Watch, Lichess insights, Following, Players.
+Puzzles, Practice, Openings, Analysis board, Studies, Board editor, Play on Lichess,
+Tournaments, Watch, Lichess insights, Following, Players.
 
 ## Packaging
 

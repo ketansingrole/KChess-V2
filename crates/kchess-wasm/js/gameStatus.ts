@@ -1,4 +1,5 @@
 import type { LichessGame } from '@kchess/contracts/types'
+import type { ArchivedGame } from '@kchess/contracts/library'
 import { rules } from './engine.ts'
 
 /**
@@ -16,5 +17,31 @@ export function gameResult(game: LichessGame): 'win' | 'loss' | 'draw' {
   return rules<'win' | 'loss' | 'draw'>('gameResult', {
     winner: game.winner,
     color: game.color,
+  })
+}
+
+export type ArchivedOutcome =
+  'win' | 'loss' | 'draw' | 'white' | 'black' | 'unfinished' | 'ongoing' | 'clock'
+
+/** The side named “You” in a computer game; over-the-board games have none. */
+export function archivedPlayerSide(game: ArchivedGame): 'white' | 'black' | null {
+  return rules<'white' | 'black' | null>('archivedPlayerSide', {
+    white: game.white,
+    black: game.black,
+  })
+}
+
+/**
+ * A saved local game's outcome: won or lost for the side named “You” (computer games), or the
+ * winning colour when both players were at the board.
+ */
+export function archivedOutcome(game: ArchivedGame): ArchivedOutcome {
+  // The rule reads only these fields; the moves would be serialized once per history row.
+  return rules<ArchivedOutcome>('archivedOutcome', {
+    source: game.source,
+    result: game.result,
+    finished: game.finished,
+    white: game.white,
+    black: game.black,
   })
 }

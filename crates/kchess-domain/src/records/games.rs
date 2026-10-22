@@ -1,5 +1,6 @@
 //! `crates/kchess-wasm/js/gameResult.ts` and `gameStatus.ts`: how a position ended a game, who won
-//! on time, PGN result tokens, and whether a Lichess game is still being played.
+//! on time, PGN result tokens, whether a Lichess game is still being played, and how a game in
+//! Game history ended for its player.
 
 use serde_json::{Map, Value, json};
 
@@ -28,6 +29,8 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         ))),
         "isGameInProgress" => Ok(json!(is_game_in_progress(arg(args, 0)))),
         "gameResult" => Ok(json!(game_result(arg(args, 0)))),
+        "archivedPlayerSide" => Ok(json!(archived_player_side(arg(args, 0)))),
+        "archivedOutcome" => Ok(json!(archived_outcome(arg(args, 0)))),
         _ => return None,
     })
 }
@@ -117,5 +120,81 @@ fn game_result(game: Option<&Value>) -> &'static str {
         "win"
     } else {
         "loss"
+    }
+}
+
+/// `archivedPlayerSide(game)`: the side named “You” in a computer game; none at the board.
+fn archived_player_side(game: Option<&Value>) -> Option<&'static str> {
+    let name = |side: &str| game.and_then(|g| g.get(side)).and_then(Value::as_str);
+    if name("white") == Some("You") {
+        Some("white")
+    } else if name("black") == Some("You") {
+        Some("black")
+    } else {
+        None
+    }
+}
+
+/// `archivedOutcome(game)`: a saved local game's outcome, won or lost for the side named “You”
+/// (computer games) or the winning colour when both players were at the board; `unfinished`,
+/// `ongoing` or `clock` when it has no result.
+fn archived_outcome(game: Option<&Value>) -> &'static str {
+    let field = |key: &str| game.and_then(|g| g.get(key));
+    if field("source").and_then(Value::as_str) == Some("clock") {
+        return "clock";
+    }
+    match field("result").and_then(Value::as_str) {
+        Some("*") if js::falsy(field("finished")) => "ongoing",
+        Some("*") => "unfinished",
+        Some("1/2-1/2") => "draw",
+        result => {
+            let winner = if result == Some("1-0") {
+                "white"
+            } else {
+                "black"
+            };
+            match archived_player_side(game) {
+                None => winner,
+                Some(you) if you == winner => "win",
+                Some(_) => "loss",
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(game: Value) -> &'static str {
+        archived_outcome(Some(&game))
+    }
+
+    #[test]
+    fn archived_games_end_for_their_player_or_by_colour() {
+        let computer = |white: &str, black: &str, result: &str| json!({ "source": "computer", "white": white, "black": black, "result": result, "finished": true });
+        assert_eq!(outcome(computer("You", "Stockfish", "1-0")), "win");
+        assert_eq!(outcome(computer("You", "Stockfish", "0-1")), "loss");
+        assert_eq!(outcome(computer("Stockfish", "You", "1-0")), "loss");
+        assert_eq!(outcome(computer("Stockfish", "You", "0-1")), "win");
+        assert_eq!(outcome(computer("You", "Stockfish", "1/2-1/2")), "draw");
+        assert_eq!(outcome(computer("White", "Black", "0-1")), "black");
+        assert_eq!(outcome(computer("You", "Stockfish", "*")), "unfinished");
+        assert_eq!(
+            outcome(json!({ "source": "board", "result": "*", "finished": false })),
+            "ongoing"
+        );
+        assert_eq!(
+            outcome(json!({ "source": "clock", "result": "1-0" })),
+            "clock"
+        );
+        assert_eq!(
+            archived_player_side(Some(&computer("White", "You", "*"))),
+            Some("black")
+        );
+        assert_eq!(
+            archived_player_side(Some(&computer("White", "Black", "*"))),
+            None
+        );
     }
 }

@@ -186,7 +186,7 @@ impl ComputerPage {
             let (session, history) = page.update(cx, |page, cx| {
                 (
                     page.save_now(cx),
-                    page.history.as_ref().map(HistoryPlace::flushed),
+                    page.history.as_ref().map(|history| history.flushed(cx)),
                 )
             });
             let pending: Vec<crate::core::BoxedSave> =
@@ -501,18 +501,18 @@ impl ComputerPage {
             !self.moves().is_empty(),
         );
         if let Some(history) = &mut self.history {
-            history.save(false, source, has_play);
+            history.save(false, source, has_play, cx);
         }
     }
 
     /// A new game starts: the one before keeps its place in history and this one gets its own.
-    fn reset_archive(&mut self) {
+    fn reset_archive(&mut self, cx: &mut Context<Self>) {
         let (source, has_play) = (
             self.game.archive_snapshot(&self.host()),
             !self.moves().is_empty(),
         );
         if let Some(history) = &mut self.history {
-            history.reset(source, has_play);
+            history.reset(source, has_play, cx);
         }
     }
 
@@ -644,7 +644,7 @@ impl ComputerPage {
     fn begin(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         self.game.state["level"] = json!(chosen.level);
         self.game.state["color"] = json!(chosen.color);
-        self.reset_archive();
+        self.reset_archive(cx);
         let host = self.host();
         let effects = self
             .game
@@ -656,7 +656,7 @@ impl ComputerPage {
     }
 
     fn new_game(&mut self, cx: &mut Context<Self>) {
-        self.reset_archive();
+        self.reset_archive(cx);
         let host = self.host();
         let effects = self.game.start(None, None, &host);
         self.perform(effects, cx);

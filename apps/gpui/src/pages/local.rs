@@ -352,7 +352,7 @@ impl LocalPage {
         }));
         let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
         if let Some(history) = &mut self.history {
-            history.save(false, source, has_play);
+            history.save(false, source, has_play, cx);
         }
     }
 
@@ -380,11 +380,11 @@ impl LocalPage {
         self.clock.pause(now);
         let (source, has_play) = (self.clock_snapshot(), self.clock.has_play());
         if let Some(history) = &mut self.clock_history {
-            history.save(true, source, has_play);
-            pending.push(history.flushed());
+            history.save(true, source, has_play, cx);
+            pending.push(history.flushed(cx));
         }
         if let Some(history) = &self.history {
-            pending.push(history.flushed());
+            pending.push(history.flushed(cx));
         }
         pending
     }
@@ -466,7 +466,7 @@ impl LocalPage {
     fn start(&mut self, setup: Value, clock: Value, cx: &mut Context<Self>) {
         let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
         if let Some(history) = &mut self.history {
-            history.reset(source, has_play);
+            history.reset(source, has_play, cx);
         }
         let flagged = self.game.start(setup, clock, self.now());
         self.flagged(flagged, cx);
@@ -659,7 +659,7 @@ impl LocalPage {
     fn clock_flagged(&mut self, cx: &mut Context<Self>) {
         let (source, has_play) = (self.clock_snapshot(), self.clock.has_play());
         if let Some(history) = &mut self.clock_history {
-            history.save(true, source, has_play);
+            history.save(true, source, has_play, cx);
         }
         self.clock_changed(cx);
     }
@@ -678,7 +678,7 @@ impl LocalPage {
             self.clock.pause(now)
         } else {
             if self.clock.flagged.is_some() {
-                self.reset_clock_history();
+                self.reset_clock_history(cx);
             }
             self.clock.start(now)
         };
@@ -690,15 +690,15 @@ impl LocalPage {
     }
 
     fn reset_clock(&mut self, cx: &mut Context<Self>) {
-        self.reset_clock_history();
+        self.reset_clock_history(cx);
         self.clock.reset();
         self.clock_changed(cx);
     }
 
-    fn reset_clock_history(&mut self) {
+    fn reset_clock_history(&mut self, cx: &mut Context<Self>) {
         let (source, has_play) = (self.clock_snapshot(), self.clock.has_play());
         if let Some(history) = &mut self.clock_history {
-            history.reset(source, has_play);
+            history.reset(source, has_play, cx);
         }
     }
 

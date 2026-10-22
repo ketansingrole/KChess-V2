@@ -3,6 +3,8 @@
 
 pub mod computer;
 pub mod computer_options;
+pub mod history;
+pub mod home;
 pub mod local;
 pub mod settings;
 
@@ -80,8 +82,13 @@ impl Pages {
 
     /// The Settings page, once it has been shown.
     pub fn settings(&self) -> Option<Entity<settings::SettingsPage>> {
+        self.view_of(Page::Settings)
+    }
+
+    /// A page's view, once it has been shown.
+    pub fn view_of<V: 'static>(&self, page: Page) -> Option<Entity<V>> {
         self.views
-            .get(&Page::Settings)
+            .get(&page)
             .and_then(|shown| shown.view.clone().downcast().ok())
     }
 
@@ -107,6 +114,14 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Local => {
             let view = cx.new(|cx| local::LocalPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Dashboard => {
+            let view = cx.new(home::HomePage::new);
+            focused(view, cx)
+        }
+        Page::History => {
+            let view = cx.new(history::HistoryPage::new);
             focused(view, cx)
         }
         Page::Settings => {

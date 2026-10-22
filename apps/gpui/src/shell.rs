@@ -13,6 +13,8 @@ use gpui_kit::*;
 
 use crate::assets::icon;
 
+use crate::pages::history::HistoryPage;
+use crate::pages::home::HomePage;
 use crate::pages::settings::{Section, sections};
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -90,6 +92,42 @@ impl SidebarItem for NavBlock {
     }
 }
 
+/// The window's workspace, so a page can open another (`selectPage`).
+struct Navigator(WeakEntity<Workspace>);
+
+impl Global for Navigator {}
+
+/// Open `page` as the sidebar would.
+pub fn open(page: Page, window: &mut Window, cx: &mut App) {
+    let Some(workspace) = cx
+        .try_global::<Navigator>()
+        .map(|navigator| navigator.0.clone())
+    else {
+        return;
+    };
+    let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
+}
+
+/// Open a played game in Game history (Home's recent games).
+pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
+    open(Page::History, window, cx);
+    let Some(workspace) = cx
+        .try_global::<Navigator>()
+        .map(|navigator| navigator.0.clone())
+    else {
+        return;
+    };
+    let history = workspace.upgrade().and_then(|workspace| {
+        workspace
+            .read(cx)
+            .pages
+            .view_of::<HistoryPage>(Page::History)
+    });
+    if let Some(history) = history {
+        history.update(cx, |history, cx| history.show_game(id, window, cx));
+    }
+}
+
 pub struct Workspace {
     sidebar_open: bool,
     pages: Pages,
@@ -101,6 +139,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Workspace {
         crate::theme::apply(window, cx);
+        cx.set_global(Navigator(cx.entity().downgrade()));
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
             cx.observe_window_appearance(window, |_, window, cx| crate::theme::apply(window, cx)),
@@ -124,6 +163,12 @@ impl Workspace {
             self.back = current;
         }
         self.pages.show(page, window, cx);
+        // Home shows the unfinished game and accounts as they are now.
+        if page == Page::Dashboard
+            && let Some(home) = self.pages.view_of::<HomePage>(Page::Dashboard)
+        {
+            home.update(cx, |home, cx| home.refresh(cx));
+        }
         cx.notify();
     }
 
