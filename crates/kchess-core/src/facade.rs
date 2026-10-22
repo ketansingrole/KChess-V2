@@ -383,68 +383,9 @@ impl Core {
     /// The plaintext tokens of an earlier database are encrypted with the OS store here.
     pub(crate) async fn ensure_migrated(&self) -> Result<()> {
         self.migrated
-            .get_or_try_init(|| async {
-                self.migrate().await?;
-                self.reseal_tokens().await;
-                Ok(())
-            })
+            .get_or_try_init(|| async { self.migrate().await })
             .await
             .map(|_| ())
-    }
-
-    /// Reseals, once per launch, the tokens the host sealed (an earlier release's `safeStorage`)
-    /// with the profile's credentials, so every KChess app opens them. A token that cannot be
-    /// resealed keeps working through the host and is tried again next launch.
-    pub(crate) async fn reseal_tokens(&self) {
-        if !self.capabilities.reseals() {
-            return;
-        }
-        let tokens = match self
-            .database
-            .call_async("store.games.tokenCiphertexts", &[])
-            .await
-        {
-            Ok(tokens) => tokens,
-            Err(cause) => {
-                self.host.log(
-                    Level::Warn,
-                    "credentials",
-                    &format!("Saved logins could not be listed: {}", cause.message),
-                );
-                return;
-            }
-        };
-        for entry in tokens.as_array().cloned().unwrap_or_default() {
-            let (Some(account), Some(previous)) =
-                (entry["account"].as_str(), entry["encrypted"].as_str())
-            else {
-                continue;
-            };
-            if crate::secrets::is_sealed(previous) {
-                continue;
-            }
-            let resealed = async {
-                let token = self.capabilities.decrypt(previous).await?;
-                let sealed = self.capabilities.encrypt(&token).await?;
-                self.database
-                    .call_async(
-                        "store.games.resealTokenCiphertext",
-                        &[json!(account), json!(previous), json!(sealed)],
-                    )
-                    .await
-            }
-            .await;
-            if let Err(cause) = resealed {
-                self.host.log(
-                    Level::Warn,
-                    "credentials",
-                    &format!(
-                        "The saved login of {account} was not resealed: {}",
-                        cause.message
-                    ),
-                );
-            }
-        }
     }
 
     pub(crate) async fn migrate(&self) -> Result<()> {

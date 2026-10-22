@@ -90,7 +90,6 @@ fn invalidates_counts(method: &str) -> bool {
                 | "dismissedFriends"
                 | "legacyImportPending"
                 | "tokenCiphertext"
-                | "tokenCiphertexts"
                 | "resealTokenCiphertext"
         );
     }

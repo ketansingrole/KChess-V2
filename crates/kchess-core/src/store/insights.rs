@@ -263,16 +263,16 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
     };
 
     let mut by_speed = speeds.into_items();
-    by_speed.sort_by(|a, b| b.1.total.cmp(&a.1.total));
+    by_speed.sort_by_key(|a| std::cmp::Reverse(a.1.total));
     let mut by_opening: Vec<(String, (Record, i64))> = openings
         .into_items()
         .into_iter()
         .filter(|(_, (record, _))| record.total >= 2)
         .collect();
-    by_opening.sort_by(|a, b| (b.1).0.total.cmp(&(a.1).0.total));
+    by_opening.sort_by_key(|a| std::cmp::Reverse((a.1).0.total));
     by_opening.truncate(25);
     let mut by_ending = endings.into_items();
-    by_ending.sort_by(|a, b| b.1.total.cmp(&a.1.total));
+    by_ending.sort_by_key(|a| std::cmp::Reverse(a.1.total));
 
     let mut report = Map::new();
     report.insert(

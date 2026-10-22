@@ -97,7 +97,7 @@ struct Lanes {
 
 /// Hands the freed slots to the highest-priority waiters (stable among equal priorities).
 fn pump(lanes: &mut Lanes) {
-    lanes.waiting.sort_by(|a, b| b.priority.cmp(&a.priority));
+    lanes.waiting.sort_by_key(|a| std::cmp::Reverse(a.priority));
     while lanes.active < MAX_ACTIVE && !lanes.waiting.is_empty() {
         let waiter = lanes.waiting.remove(0);
         lanes.active += 1;

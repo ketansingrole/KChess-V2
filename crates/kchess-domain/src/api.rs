@@ -273,6 +273,7 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
                 crate::games::call,
                 crate::online_game::call,
                 crate::trainer::call,
+                crate::theme::call,
             ];
             return match moved.iter().find_map(|call| call(method, &args)) {
                 Some(result) => {
@@ -339,9 +340,8 @@ fn pv_san(fen: &str, pv: &[&str], max: usize) -> Value {
     let Some(mut pos) = rules::standard_from_fen(fen) else {
         return json!([]);
     };
-    let mut ply = ply_of(&pos);
     let mut moves = Vec::new();
-    for &uci in pv.iter().take(max) {
+    for (ply, &uci) in (ply_of(&pos)..).zip(pv.iter().take(max)) {
         let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
             break;
         };
@@ -353,7 +353,6 @@ fn pv_san(fen: &str, pv: &[&str], max: usize) -> Value {
             format!("{number} {san}")
         };
         moves.push(json!({ "san": san, "uci": uci, "label": label, "fen": rules::make_fen(&pos) }));
-        ply += 1;
     }
     Value::Array(moves)
 }

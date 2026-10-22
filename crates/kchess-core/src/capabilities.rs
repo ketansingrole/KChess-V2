@@ -46,6 +46,11 @@ impl Capabilities {
         }
     }
 
+    /// A log line through the host.
+    pub fn log(&self, level: crate::host::Level, scope: &str, message: &str) {
+        self.host.log(level, scope, message);
+    }
+
     /// Whether tokens the host sealed should be resealed with the profile's credentials.
     pub fn reseals(&self) -> bool {
         self.credentials.is_some()
@@ -158,7 +163,9 @@ impl Capabilities {
 }
 
 /// OS credential stores block (and may prompt): keep them off the core's worker threads.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|_| CoreError::new("The credential store is unavailable."))?

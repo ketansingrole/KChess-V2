@@ -1028,7 +1028,7 @@ fn knight_distance(from: &str, to: &str) -> Option<u32> {
 /// retries; null when the draws run out.
 fn knight_challenge(min: f64, max: f64, draws: &[f64]) -> Value {
     let squares = all_squares();
-    for pair in draws.chunks_exact(2) {
+    for pair in draws.as_chunks::<2>().0 {
         let (Some(a), Some(b)) = (square_index(pair[0]), square_index(pair[1])) else {
             continue;
         };

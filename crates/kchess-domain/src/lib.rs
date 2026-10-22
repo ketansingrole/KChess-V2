@@ -17,6 +17,7 @@ pub mod records;
 pub mod replay;
 pub mod review;
 pub mod rules;
+pub mod theme;
 pub mod trainer;
 pub mod training;
 pub mod tree;

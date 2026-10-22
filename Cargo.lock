@@ -3555,7 +3555,15 @@ dependencies = [
 name = "kchess-gpui"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gpui-kit",
+ "kchess-core",
+ "kchess-domain",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "shakmaty",
+ "tokio",
 ]
 
 [[package]]

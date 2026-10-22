@@ -32,7 +32,8 @@ const TEST_KEY_FILE: &str = "credentials.test-key";
 const NONCE: usize = 12;
 const TAG: usize = 16;
 
-const UNAVAILABLE: &str = "OS credential storage is unavailable. Unlock the system keychain and retry.";
+const UNAVAILABLE: &str =
+    "OS credential storage is unavailable. Unlock the system keychain and retry.";
 
 /// Whether `text` was sealed by `Credentials`, rather than by an earlier release's host.
 pub fn is_sealed(text: &str) -> bool {
@@ -318,7 +319,10 @@ mod tests {
     #[test]
     fn sealing_twice_gives_different_text() {
         let credentials = Credentials::new(Box::new(Arc::new(Memory::default())));
-        assert_ne!(credentials.seal("t").unwrap(), credentials.seal("t").unwrap());
+        assert_ne!(
+            credentials.seal("t").unwrap(),
+            credentials.seal("t").unwrap()
+        );
     }
 
     #[test]
@@ -346,8 +350,13 @@ mod tests {
             .seal("t")
             .unwrap_err();
         assert_eq!(error.message, UNAVAILABLE);
-        memory.fail.store(false, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(memory.key.lock().unwrap().as_deref(), Some("ab".repeat(32).as_str()));
+        memory
+            .fail
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            memory.key.lock().unwrap().as_deref(),
+            Some("ab".repeat(32).as_str())
+        );
     }
 
     #[test]
@@ -357,7 +366,10 @@ mod tests {
             ..Memory::default()
         });
         let error = Credentials::new(Box::new(memory)).seal("t").unwrap_err();
-        assert_eq!(error.message, "The OS credential key could not be saved. Retry login.");
+        assert_eq!(
+            error.message,
+            "The OS credential key could not be saved. Retry login."
+        );
     }
 
     #[test]

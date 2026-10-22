@@ -157,7 +157,7 @@ impl Shared {
                 if state.active.is_some() || state.waiting.is_empty() {
                     return;
                 }
-                state.waiting.sort_by(|a, b| b.priority.cmp(&a.priority));
+                state.waiting.sort_by_key(|a| std::cmp::Reverse(a.priority));
                 let next = state.waiting.remove(0);
                 state.active = Some(Active {
                     id: next.id,

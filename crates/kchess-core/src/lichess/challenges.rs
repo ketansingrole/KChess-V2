@@ -135,7 +135,7 @@ impl ChallengeInbox {
 /// Newest first; a stable sort keeps the insertion order of equal times, as JavaScript does.
 fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
     let mut list = entries.to_vec();
-    list.sort_by(|a, b| b.received_at.cmp(&a.received_at));
+    list.sort_by_key(|a| std::cmp::Reverse(a.received_at));
     list
 }
 

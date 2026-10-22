@@ -848,7 +848,7 @@ impl Lichess {
             self.last_following_epoch.store(epoch, Ordering::SeqCst);
         }
         let mut users: Vec<FollowedUser> = by_name.into_values().collect();
-        users.sort_by(|a, b| a.username.to_lowercase().cmp(&b.username.to_lowercase()));
+        users.sort_by_key(|a| a.username.to_lowercase());
         users.truncate(1000);
         Ok(FollowingReport { users, problems })
     }

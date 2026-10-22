@@ -11,7 +11,18 @@ name = "kchess-gpui"
 path = "src/main.rs"
 
 [dependencies]
+kchess-core = { path = "../../crates/kchess-core" }
+kchess-domain = { path = "../../crates/kchess-domain" }
 gpui-kit = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+shakmaty.workspace = true
+# The core's runtime: its services are Tokio tasks (`kchess-core`).
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# Channels from the core's threads to the UI thread.
+futures = "0.3"
+# The Electron renderer's boards, pieces and sounds, embedded (already in Cargo.lock through GPUI Kit).
+rust-embed = "8"
 
 [lints]
 workspace = true

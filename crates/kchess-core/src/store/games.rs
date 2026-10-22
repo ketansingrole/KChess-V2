@@ -404,14 +404,13 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "tokenCiphertext" => {
             arg(args, 0, "username").and_then(|username: String| token_ciphertext(db, &username))
         }
-        "tokenCiphertexts" => token_ciphertexts(db),
         // Replaces a token only while it is still the one that was read, so a logout or a new
         // login in the meantime is never overwritten.
         "resealTokenCiphertext" => arg(args, 0, "username").and_then(|username: String| {
             arg(args, 1, "previous").and_then(|previous: String| {
                 arg(args, 2, "encrypted").and_then(|encrypted: String| {
                     db.execute(
-                        "UPDATE tokens SET encrypted = ? WHERE username = ? AND encrypted = ?",
+                        "UPDATE tokens SET encrypted = ? WHERE username = ? COLLATE NOCASE AND encrypted = ?",
                         params![encrypted, username, previous],
                     )
                     .sql()
@@ -766,21 +765,6 @@ fn token_ciphertext(db: &Connection, username: &str) -> Result<Value> {
         .optional()
         .sql()?;
     Ok(encrypted.map_or(Value::Null, Value::String))
-}
-
-/// Every saved login's ciphertext, as `{ account, encrypted }`.
-fn token_ciphertexts(db: &Connection) -> Result<Value> {
-    let mut statement = db
-        .prepare("SELECT username, encrypted FROM tokens ORDER BY username")
-        .sql()?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(json!({ "account": row.get::<_, String>(0)?, "encrypted": row.get::<_, String>(1)? }))
-        })
-        .sql()?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .sql()?;
-    Ok(Value::Array(rows))
 }
 
 // ---- Games ----------------------------------------------------------------------------------

@@ -78,7 +78,7 @@ pub async fn lichess_studies(
                     },
                 )
                 .await?;
-            studies.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            studies.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
             Ok(studies)
         })
         .await
@@ -172,9 +172,9 @@ fn tag_value(pgn: &str, name: &str) -> Option<String> {
                 }
             }
         }
-        match pgn[line_start..].find('\n') {
-            Some(newline) => line_start += newline + 1,
-            None => return None,
+        {
+            let newline = pgn[line_start..].find('\n')?;
+            line_start += newline + 1
         }
     }
 }

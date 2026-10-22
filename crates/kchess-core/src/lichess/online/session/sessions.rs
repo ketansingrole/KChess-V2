@@ -458,7 +458,7 @@ impl OnlineSession {
         if let Some(error) = first_error.filter(|_| games.is_empty()) {
             return Err(error);
         }
-        games.sort_by(|a, b| b.is_my_turn.cmp(&a.is_my_turn));
+        games.sort_by_key(|a| std::cmp::Reverse(a.is_my_turn));
         Ok(games)
     }
 

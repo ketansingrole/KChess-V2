@@ -106,10 +106,9 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Value> {
     line.insert("pv".into(), json!(pv));
     if let Some(mate) = mate.filter(|m| m.is_finite()) {
         line.insert("mate".into(), num_out(mate * sign));
-    } else if let Some(cp) = cp.filter(|c| c.is_finite()) {
-        line.insert("cp".into(), num_out(cp * sign));
     } else {
-        return None;
+        let cp = cp.filter(|c| c.is_finite())?;
+        line.insert("cp".into(), num_out(cp * sign));
     }
     let mut out = Map::new();
     out.insert("line".into(), Value::Object(line));
