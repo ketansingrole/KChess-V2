@@ -17,6 +17,7 @@ const LOOKS_JSON: &str = include_str!("../../../../crates/kchess-domain/data/loo
 #[serde(rename_all = "camelCase")]
 pub struct BoardLook {
     pub id: String,
+    pub name: String,
     /// The image in `apps/desktop/app/assets/boards`.
     pub image: String,
     /// Coordinate labels on dark squares.
@@ -28,6 +29,7 @@ pub struct BoardLook {
 #[derive(Deserialize)]
 pub struct PieceSet {
     pub id: String,
+    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +46,16 @@ static LOOKS: LazyLock<Looks> = LazyLock::new(|| match serde_json::from_str(LOOK
     // `looks.json` is checked in and read by this crate's tests.
     Err(cause) => panic!("looks.json does not decode: {cause}"),
 });
+
+/// Every board look, in the order Settings shows them.
+pub fn boards() -> &'static [BoardLook] {
+    &LOOKS.boards
+}
+
+/// Every piece set, in the order Settings shows them.
+pub fn piece_sets() -> &'static [PieceSet] {
+    &LOOKS.piece_sets
+}
 
 /// The board look `id`, or the default one.
 pub fn board(id: &str) -> &'static BoardLook {

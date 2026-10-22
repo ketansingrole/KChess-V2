@@ -60,10 +60,19 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Electron's chess clock (`stores/clock.ts`) still keeps its own copy of the rules now in
       `kchess-domain/src/games/otb_clock.rs`
 
+## Settings
+
+- [x] Sidebar lists the categories with Back; changes save after 400ms, in order, and at quit
+- [x] Appearance (theme, coordinates, animation, piece set, board), App theme (light and dark
+      pickers, own themes folder and reload), Gameplay (levels included), Gestures, Online play,
+      Analysis, Sound, Notifications (switches)
+- [ ] Interface size; Notifications' "Try it"; Voice input, Chess engine, My accounts, Offline
+      downloads, Data & storage, Updates
+
 ## Pages not started
 
 Home, Puzzles, Practice, Openings, Analysis board, Game history, Studies,
-Board editor, Play on Lichess, Tournaments, Watch, Lichess insights, Following, Players, Settings.
+Board editor, Play on Lichess, Tournaments, Watch, Lichess insights, Following, Players.
 
 ## Packaging
 

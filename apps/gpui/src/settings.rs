@@ -1,16 +1,37 @@
 //! The profile's settings as the app holds them: the core's and the desktop's together
-//! (`desktopSettings`), shared with the Electron app. Views read `AppSettings` and save through it.
+//! (`desktopSettings`), shared with the Electron app. Views read `AppSettings` and save through it;
+//! saves wait for a pause in editing and are written one at a time (`settingsPersistence.ts`).
 
-use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global};
+use std::time::Duration;
+
+use futures::StreamExt as _;
+use futures::channel::{mpsc, oneshot};
+use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, Task, WeakEntity};
 use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
-use kchess_core::Level;
+use kchess_core::{CoreError, Level};
+use serde_json::Value;
 
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, BoxedSave, CoreEvent};
+
+/// How long edits settle before they are saved, as in the Electron app.
+const SAVE_DELAY: Duration = Duration::from_millis(400);
 
 /// The settings and the user's own themes, as last read from the core.
 pub struct AppSettings {
     pub settings: Settings,
     pub custom_themes: Vec<AppTheme>,
+    /// The folder the user's themes are read from, and the files that could not be used.
+    pub themes_dir: String,
+    pub theme_problems: Vec<String>,
+    /// Edits not yet stored: the core's copy is not reloaded over them.
+    dirty: bool,
+    save_soon: Option<Task<()>>,
+    writes: mpsc::UnboundedSender<Write>,
+}
+
+enum Write {
+    Save(Settings),
+    Flushed(oneshot::Sender<()>),
 }
 
 /// Sent when the settings or themes change.
@@ -42,15 +63,29 @@ pub fn init(cx: &mut App) {
         .ok()
         .and_then(|settings| serde_json::from_value::<Settings>(settings).ok())
         .unwrap_or_else(defaults);
-    let custom_themes = bridge
+    let report = bridge
         .call_now("customThemes", Vec::new())
         .ok()
         .and_then(|report| serde_json::from_value::<CustomThemeReport>(report).ok())
-        .map(|report| report.themes)
-        .unwrap_or_default();
+        .unwrap_or_else(|| CustomThemeReport {
+            themes: Vec::new(),
+            dir: String::new(),
+            problems: Vec::new(),
+        });
+    let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| AppSettings {
         settings,
-        custom_themes,
+        custom_themes: report.themes,
+        themes_dir: report.dir,
+        theme_problems: report.problems,
+        dirty: false,
+        save_soon: None,
+        writes,
+    });
+    write_in_order(entity.downgrade(), queue, cx);
+    crate::core::on_quit(cx, {
+        let entity = entity.clone();
+        move |cx| Some(entity.update(cx, |settings, _| settings.flushed()))
     });
     cx.set_global(SettingsHandle(entity.clone()));
     let events = cx.global::<AppCore>().events.clone();
@@ -76,6 +111,8 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
         let themes = themes.await;
         let _ = entity.update(cx, |this, cx| {
             match settings.map(serde_json::from_value::<Settings>) {
+                // Edits not yet stored stay; their own save brings the rest.
+                Ok(Ok(_)) if this.dirty => {}
                 Ok(Ok(settings)) => this.settings = settings,
                 Ok(Err(cause)) => crate::log::write(
                     Level::Warn,
@@ -89,7 +126,11 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
                 ),
             }
             match themes.map(serde_json::from_value::<CustomThemeReport>) {
-                Ok(Ok(report)) => this.custom_themes = report.themes,
+                Ok(Ok(report)) => {
+                    this.custom_themes = report.themes;
+                    this.themes_dir = report.dir;
+                    this.theme_problems = report.problems;
+                }
                 Ok(Err(cause)) => crate::log::write(
                     Level::Warn,
                     "themes",
@@ -108,32 +149,109 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
     .detach();
 }
 
-impl AppSettings {
-    /// Change settings and save them; the views see the change at once.
-    pub fn update(&mut self, change: impl FnOnce(&mut Settings), cx: &mut gpui_kit::Context<Self>) {
-        change(&mut self.settings);
-        cx.emit(SettingsChanged);
-        cx.notify();
-        let saving = cx.global::<AppCore>().call(
-            "saveDesktopSettings",
-            vec![serde_json::json!(self.settings)],
-        );
-        cx.background_executor()
-            .spawn(async move {
-                if let Err(cause) = saving.await {
-                    crate::log::write(
+/// Write saves one at a time, in the order they were made, off the UI thread so they also finish
+/// while the app quits. A save that the core stored as sent leaves nothing unsaved; one that
+/// failed shows what is stored again.
+fn write_in_order(
+    entity: WeakEntity<AppSettings>,
+    mut queue: mpsc::UnboundedReceiver<Write>,
+    cx: &mut App,
+) {
+    let core = cx.global::<AppCore>().clone();
+    let (stored, mut results) = mpsc::unbounded::<(Settings, Result<Value, CoreError>)>();
+    cx.background_executor()
+        .spawn(async move {
+            while let Some(write) = queue.next().await {
+                match write {
+                    Write::Save(sent) => {
+                        let saved = core
+                            .call("saveDesktopSettings", vec![serde_json::json!(sent)])
+                            .await;
+                        let _ = stored.unbounded_send((sent, saved));
+                    }
+                    Write::Flushed(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        })
+        .detach();
+    cx.spawn(async move |cx| {
+        while let Some((sent, saved)) = results.next().await {
+            let _ = entity.update(cx, |this, cx| {
+                let unchanged = this.settings == sent;
+                match saved.map(serde_json::from_value::<Settings>) {
+                    Ok(Ok(stored)) => {
+                        if unchanged {
+                            this.dirty = this.save_soon.is_some();
+                            this.settings = stored;
+                        }
+                    }
+                    Ok(Err(cause)) => crate::log::write(
                         Level::Warn,
                         "settings",
-                        &format!("Saving settings failed: {}", cause.message),
-                    );
+                        &format!("The saved settings could not be read: {cause}"),
+                    ),
+                    Err(cause) => {
+                        crate::log::write(
+                            Level::Warn,
+                            "settings",
+                            &format!("Saving settings failed: {}", cause.message),
+                        );
+                        if unchanged {
+                            this.dirty = false;
+                            reload(&cx.entity(), cx);
+                        }
+                    }
                 }
-            })
-            .detach();
+                cx.emit(SettingsChanged);
+                cx.notify();
+            });
+        }
+    })
+    .detach();
+}
+
+impl AppSettings {
+    /// Change settings; the views see the change at once and it is saved after a pause.
+    pub fn update(&mut self, change: impl FnOnce(&mut Settings), cx: &mut gpui_kit::Context<Self>) {
+        let before = self.settings.clone();
+        change(&mut self.settings);
+        if self.settings == before {
+            return;
+        }
+        self.dirty = true;
+        cx.emit(SettingsChanged);
+        cx.notify();
+        self.save_soon = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SAVE_DELAY).await;
+            let _ = this.update(cx, |this, _| this.save_now());
+        }));
+    }
+
+    /// Send the edits to be saved now.
+    fn save_now(&mut self) {
+        self.save_soon = None;
+        let _ = self
+            .writes
+            .unbounded_send(Write::Save(self.settings.clone()));
+    }
+
+    /// Save waiting edits now and wait for every save so far (before the app quits).
+    fn flushed(&mut self) -> BoxedSave {
+        if self.save_soon.is_some() {
+            self.save_now();
+        }
+        let (done, wait) = oneshot::channel();
+        let _ = self.writes.unbounded_send(Write::Flushed(done));
+        Box::pin(async move {
+            let _ = wait.await;
+        })
     }
 }
 
-/// Flip a setting the game pages toggle from their panel (`toggleSetting`).
-pub fn toggle(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
+/// Change settings from a view (`toggleSetting`, the Settings page); they save themselves.
+pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     let handle = cx.global::<SettingsHandle>().0.clone();
     handle.update(cx, |settings, cx| settings.update(change, cx));
 }

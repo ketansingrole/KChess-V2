@@ -25,17 +25,48 @@ pub fn side_padding(window: &Window) -> Pixels {
         .min(px(36.))
 }
 
+/// An area measured as it is laid out, so the next frame can size what goes in it.
+#[derive(Default)]
+pub struct Measured {
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+}
+
+impl Measured {
+    /// The area at the last layout; empty before the first.
+    pub fn size(&self) -> Size<Pixels> {
+        self.bounds.get().size
+    }
+
+    /// Put this, absolutely positioned to fill it, in the element to measure; a change of size
+    /// redraws the view.
+    pub fn probe<V: 'static>(&self, cx: &mut Context<V>) -> impl IntoElement + use<V> {
+        let bounds = Rc::clone(&self.bounds);
+        let entity = cx.entity().downgrade();
+        canvas(
+            move |area, _, cx| {
+                if bounds.get() != area {
+                    bounds.set(area);
+                    let _ = entity.update(cx, |_, cx| cx.notify());
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+}
+
 /// A page's measured area, so its board is sized for the space it has.
 #[derive(Default)]
 pub struct PlayLayout {
-    bounds: Rc<Cell<Bounds<Pixels>>>,
+    area: Measured,
 }
 
 impl PlayLayout {
     /// The board's side (`--board-size`): the height left after the page's padding and the player
     /// lines, or the width left beside a 344px panel, between 260px and `--board-max`.
     pub fn board_size(&self, window: &Window) -> Pixels {
-        let page = self.bounds.get().size;
+        let page = self.area.size();
         let width = if page.width > px(0.) {
             page.width
         } else {
@@ -66,27 +97,13 @@ impl PlayLayout {
         window: &Window,
         cx: &mut Context<V>,
     ) -> Stateful<Div> {
-        let bounds = Rc::clone(&self.bounds);
-        let entity = cx.entity().downgrade();
         div()
             .id(id)
             .size_full()
             .relative()
             .overflow_y_scroll()
-            .child(
-                canvas(
-                    move |area, _, cx| {
-                        if bounds.get() != area {
-                            bounds.set(area);
-                            // Size the board for the new area on the next frame.
-                            let _ = entity.update(cx, |_, cx| cx.notify());
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            // Size the board for the new area on the next frame.
+            .child(self.area.probe(cx))
             .child(
                 h_flex()
                     .items_start()

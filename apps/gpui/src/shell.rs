@@ -3,16 +3,20 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::sidebar::{
-    Sidebar, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuItem,
+    Sidebar, SidebarFooter, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
 };
-use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Collapsible, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::assets::icon;
 
+use crate::pages::settings::{Section, sections};
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
+use crate::theme::Palette;
 
 /// The window's height above the page; matches `--topbar-height`.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
@@ -38,9 +42,59 @@ fn nav() -> [(Page, &'static str, Icon); 16] {
         (Page::Players, "Players", icon("user-search")),
     ]
 }
+/// What the sidebar lists: menus, with a heading between them while Settings is open.
+#[derive(Clone)]
+enum NavBlock {
+    Menu(Box<SidebarMenu>),
+    Heading(&'static str, bool),
+}
+
+impl Collapsible for NavBlock {
+    fn is_collapsed(&self) -> bool {
+        match self {
+            NavBlock::Menu(menu) => menu.is_collapsed(),
+            NavBlock::Heading(_, collapsed) => *collapsed,
+        }
+    }
+
+    fn collapsed(self, collapsed: bool) -> Self {
+        match self {
+            NavBlock::Menu(menu) => NavBlock::Menu(Box::new(menu.collapsed(collapsed))),
+            NavBlock::Heading(label, _) => NavBlock::Heading(label, collapsed),
+        }
+    }
+}
+
+impl SidebarItem for NavBlock {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        match self {
+            NavBlock::Menu(menu) => menu.render(id, window, cx).into_any_element(),
+            // A collapsed sidebar shows icons only.
+            NavBlock::Heading(_, true) => div().into_any_element(),
+            // The navigation menu's label: `font-semibold text-xs/5 text-highlighted px-2.5 py-1.5`.
+            NavBlock::Heading(label, false) => div()
+                .px(px(10.))
+                .py(px(6.))
+                .text_size(px(12.))
+                .line_height(px(20.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(cx.global::<Palette>().highlighted)
+                .child(label)
+                .into_any_element(),
+        }
+    }
+}
+
 pub struct Workspace {
     sidebar_open: bool,
     pages: Pages,
+    /// Where Settings' Back returns to: the page open before it.
+    back: Page,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -59,13 +113,69 @@ impl Workspace {
         Workspace {
             sidebar_open: true,
             pages: Pages::new(window, cx),
+            back: Page::Dashboard,
             _subscriptions: subscriptions,
         }
     }
 
     fn choose(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.pages.current();
+        if page == Page::Settings && current != Page::Settings {
+            self.back = current;
+        }
         self.pages.show(page, window, cx);
         cx.notify();
+    }
+
+    fn choose_section(&mut self, section: Section, cx: &mut Context<Self>) {
+        if let Some(settings) = self.pages.settings() {
+            settings.update(cx, |page, cx| page.show(section, cx));
+        }
+        cx.notify();
+    }
+
+    /// The pages, or while Settings is open its categories with a way back (`navItems`).
+    fn nav_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
+        let current = self.pages.current();
+        if current != Page::Settings {
+            return vec![NavBlock::Menu(Box::new(SidebarMenu::new().children(
+                nav().into_iter().map(|(page, label, glyph)| {
+                    SidebarMenuItem::new(label)
+                        .icon(glyph)
+                        .active(current == page)
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.choose(page, window, cx)),
+                        )
+                }),
+            )))];
+        }
+        let shown = self
+            .pages
+            .settings()
+            .map_or(Section::Appearance, |page| page.read(cx).section());
+        let back = self.back;
+        vec![
+            NavBlock::Menu(Box::new(
+                SidebarMenu::new().child(
+                    SidebarMenuItem::new("Back")
+                        .icon(icon("arrow-left"))
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
+                        ),
+                ),
+            )),
+            NavBlock::Heading("Settings", false),
+            NavBlock::Menu(Box::new(SidebarMenu::new().children(
+                sections().into_iter().map(|(section, label, glyph)| {
+                    SidebarMenuItem::new(label)
+                        .icon(glyph)
+                        .active(shown == section)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
+                        )
+                }),
+            ))),
+        ]
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -97,16 +207,7 @@ impl Workspace {
                         ),
                 ),
             )
-            .child(
-                SidebarMenu::new().children(nav().into_iter().map(|(page, label, glyph)| {
-                    SidebarMenuItem::new(label)
-                        .icon(glyph)
-                        .active(current == page)
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.choose(page, window, cx)),
-                        )
-                })),
-            )
+            .children(self.nav_blocks(cx))
             .footer(
                 SidebarFooter::new().child(
                     Button::new("settings")

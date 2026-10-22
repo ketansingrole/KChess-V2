@@ -453,12 +453,12 @@ pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
                 blindfold,
             )
             .on_click(|_, _, cx| {
-                crate::settings::toggle(cx, |s| s.frontend.blindfold = !s.frontend.blindfold)
+                crate::settings::change(cx, |s| s.frontend.blindfold = !s.frontend.blindfold)
             }),
         )
         .child(
             toggle("zen", icon("maximize"), "Zen mode (Z)", zen).on_click(|_, _, cx| {
-                crate::settings::toggle(cx, |s| s.frontend.zen_mode = !s.frontend.zen_mode)
+                crate::settings::change(cx, |s| s.frontend.zen_mode = !s.frontend.zen_mode)
             }),
         )
 }
@@ -488,6 +488,16 @@ pub fn field(
         }))
 }
 
+/// `.card`: a bordered, raised box with the page's standard padding.
+pub fn card(palette: &Palette) -> Div {
+    v_flex()
+        .p(px(20.))
+        .rounded(px(14.))
+        .border_1()
+        .border_color(palette.border)
+        .bg(palette.elevated)
+}
+
 /// `UTabs variant="pill"`: a full-width row of choices, the chosen one filled with the primary
 /// color. `choose` gets the index picked.
 pub fn pill_tabs(
@@ -500,7 +510,7 @@ pub fn pill_tabs(
     h_flex()
         .id(id)
         .w_full()
-        .p(px(4.))
+        .p(px(2.))
         .gap(px(4.))
         .rounded(px(8.))
         .border_1()
@@ -517,7 +527,7 @@ pub fn pill_tabs(
                         .flex_1()
                         .justify_center()
                         .gap(px(8.))
-                        .h(px(32.))
+                        .h(px(26.))
                         .px(px(12.))
                         .rounded(px(6.))
                         .text_size(px(14.))

@@ -4,6 +4,7 @@
 pub mod computer;
 pub mod computer_options;
 pub mod local;
+pub mod settings;
 
 use std::collections::HashMap;
 
@@ -77,6 +78,13 @@ impl Pages {
         }
     }
 
+    /// The Settings page, once it has been shown.
+    pub fn settings(&self) -> Option<Entity<settings::SettingsPage>> {
+        self.views
+            .get(&Page::Settings)
+            .and_then(|shown| shown.view.clone().downcast().ok())
+    }
+
     pub fn view(&self) -> AnyView {
         self.views
             .get(&self.current)
@@ -99,6 +107,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Local => {
             let view = cx.new(|cx| local::LocalPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Settings => {
+            let view = cx.new(|cx| settings::SettingsPage::new(window, cx));
             focused(view, cx)
         }
         page => Shown {
