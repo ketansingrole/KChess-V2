@@ -1,5 +1,5 @@
-//! Move and game sounds, as the Electron app plays them (`utils/sound.ts`): the move, capture and
-//! low-time clips in `apps/desktop/app/assets/sounds`. A sound thread owns the
+//! Move and game sounds, as the Electron app plays them (`utils/sound.ts`): the move, capture,
+//! low-time and notification clips in `apps/desktop/app/assets/sounds`. A sound thread owns the
 //! output device, opened at the first sound, and decodes each clip once.
 
 use std::collections::HashMap;
@@ -18,6 +18,7 @@ pub enum Sound {
     Move,
     Capture,
     LowTime,
+    GenericNotify,
 }
 
 impl Sound {
@@ -26,6 +27,7 @@ impl Sound {
             Sound::Move => "Move.mp3",
             Sound::Capture => "Capture.mp3",
             Sound::LowTime => "LowTime.mp3",
+            Sound::GenericNotify => "GenericNotify.mp3",
         }
     }
 }
@@ -141,7 +143,12 @@ mod tests {
 
     #[test]
     fn every_clip_decodes() {
-        for sound in [Sound::Move, Sound::Capture, Sound::LowTime] {
+        for sound in [
+            Sound::Move,
+            Sound::Capture,
+            Sound::LowTime,
+            Sound::GenericNotify,
+        ] {
             let clip = decode(sound).unwrap_or_else(|| panic!("{} did not decode", sound.file()));
             assert!(
                 clip.total_duration()

@@ -16,6 +16,7 @@ use crate::assets::icon;
 use crate::pages::analysis::AnalysisPage;
 use crate::pages::history::HistoryPage;
 use crate::pages::home::HomePage;
+use crate::pages::puzzles::PuzzlesPage;
 use crate::pages::settings::{Section, sections};
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -187,6 +188,11 @@ impl Workspace {
             && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
         {
             analysis.update(cx, |analysis, cx| analysis.attach(cx));
+        }
+        if page == Page::Puzzles
+            && let Some(puzzles) = self.pages.view_of::<PuzzlesPage>(Page::Puzzles)
+        {
+            puzzles.update(cx, |puzzles, cx| puzzles.shown(cx));
         }
         // Home shows the unfinished game and accounts as they are now.
         if page == Page::Dashboard

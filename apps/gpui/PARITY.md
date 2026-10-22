@@ -97,9 +97,19 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       from a study are not saved to it (Electron then keeps them as an unsaved copy)
 - [ ] Edit this position, Play Stockfish or a friend from here
 
+## Puzzles
+
+- [x] Train: Practice, Downloaded and Rated modes on the Rust puzzle session; theme (from the
+      shared `data/puzzle-themes.json`), difficulty and side; hint ring, solution, wrong-move
+      flash, next after a solve; the session tally, day streak and attempt strip from the log
+- [x] The puzzle database card: download with progress, cancel, delete
+- [ ] Daily, Storm · Streak · Rush, Lichess stats and History tabs; the attempt strip's menu
+- [ ] Theme groups in the picker, an opening's puzzles, Connect or Reconnect from the panel,
+      choosing the rated account, voice input
+
 ## Pages not started
 
-Puzzles, Practice, Openings, Studies, Board editor, Play on Lichess, Tournaments, Watch,
+Practice, Openings, Studies, Board editor, Play on Lichess, Tournaments, Watch,
 Lichess insights, Following, Players.
 
 ## Packaging

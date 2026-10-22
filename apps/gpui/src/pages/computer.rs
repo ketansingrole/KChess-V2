@@ -422,7 +422,7 @@ impl ComputerPage {
     }
 
     fn ply(&self) -> usize {
-        self.game.state["ply"].as_u64().unwrap_or_default() as usize
+        crate::game::whole(&self.game.state["ply"]) as usize
     }
 
     fn user_color(&self) -> Color {
@@ -957,7 +957,7 @@ fn board_state(game: &ComputerGame, interactive: bool) -> BoardState {
     let fen = setup["fen"].as_str().unwrap_or_default();
     let moves: Vec<String> =
         serde_json::from_value(game.state["moves"].clone()).unwrap_or_default();
-    let ply = (game.state["ply"].as_u64().unwrap_or_default() as usize).min(moves.len());
+    let ply = (crate::game::whole(&game.state["ply"]) as usize).min(moves.len());
     let position = kchess_domain::replay::replay_setup(variant, fen, &moves[..ply])
         .and_then(|replay| kchess_domain::rules::setup_start(variant, &replay.fen));
     let orientation = if game.state["color"] == "black" {

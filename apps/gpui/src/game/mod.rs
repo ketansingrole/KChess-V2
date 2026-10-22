@@ -6,6 +6,7 @@ pub mod archive;
 pub mod computer;
 pub mod history;
 pub mod local;
+pub mod puzzle;
 pub mod tree;
 pub mod view;
 
@@ -13,6 +14,14 @@ pub mod view;
 pub const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 use serde_json::{Map, Value, json};
+
+/// A count or index from the rules, which write JavaScript numbers: `2` and `2.0` alike.
+pub fn whole(value: &Value) -> u64 {
+    value
+        .as_u64()
+        .or_else(|| value.as_f64().filter(|n| *n >= 0.).map(|n| n as u64))
+        .unwrap_or_default()
+}
 
 /// A rules method by name, as `rules()` calls it in the renderer.
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {

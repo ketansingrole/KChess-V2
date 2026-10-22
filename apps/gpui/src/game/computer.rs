@@ -165,8 +165,8 @@ impl ComputerGame {
             return Ok(None);
         }
         Ok(Some(SearchRequest {
-            epoch: request["epoch"].as_u64().unwrap_or_default(),
-            count: request["count"].as_u64().unwrap_or_default(),
+            epoch: super::whole(&request["epoch"]),
+            count: super::whole(&request["count"]),
             moves: serde_json::from_value(request["moves"].clone()).unwrap_or_default(),
             level: request["level"].as_str().unwrap_or("beginner").to_string(),
             options: request["options"].clone(),

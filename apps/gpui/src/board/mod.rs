@@ -47,6 +47,8 @@ pub struct BoardState {
     pub preview: bool,
     /// Arrows over the pieces (the engine's choices), drawn as Chessground draws them.
     pub arrows: Vec<Arrow>,
+    /// A puzzle hint: the piece to move, ringed under it.
+    pub hint: Option<Square>,
 }
 
 /// An arrow from one square to another: Chessground's brush color and opacity, and its line
@@ -61,6 +63,17 @@ pub struct Arrow {
 }
 
 impl Arrow {
+    /// The solution's next move, shown (Chessground's `green` brush).
+    pub fn solution(from: Square, to: Square) -> Arrow {
+        Arrow {
+            from,
+            to,
+            color: 0x15781b,
+            opacity: 1.,
+            width: 10.,
+        }
+    }
+
     /// The analysis board's arrows (`paleBlue` for the best line, `paleGrey` for the rest):
     /// the best one bold, the others thinner.
     pub fn engine(from: Square, to: Square, rank: usize) -> Arrow {
@@ -113,6 +126,7 @@ impl BoardState {
             blindfold: false,
             preview: false,
             arrows: Vec::new(),
+            hint: None,
         }
     }
 }
@@ -559,6 +573,9 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
             }
         }
     }
+    if let Some(square) = frame.state.hint {
+        paint_hint(at(square), window);
+    }
     if !frame.state.blindfold {
         paint_pieces(&frame, side, &at, window, cx);
     }
@@ -593,6 +610,47 @@ fn paint_pieces(
             let _ = window.paint_image(cell, cell, Corners::default(), image, 0, false);
         }
     }
+}
+
+/// The puzzle hint (`PuzzleBoard.vue`, `HINT_MARK`): a thick green ring on a soft white halo,
+/// over a faint green tint, in a square's 100 units: radius 42, halo 14 wide, ring 9 wide.
+fn paint_hint(cell: Bounds<Pixels>, window: &mut Window) {
+    let unit = cell.size.width / 100.;
+    let center = cell.center();
+    let ring = |radius: f32, width: f32, fill_color: Hsla, border: Hsla, window: &mut Window| {
+        let outer = unit * (radius + width / 2.);
+        let bounds = Bounds::new(
+            point(center.x - outer, center.y - outer),
+            size(outer * 2., outer * 2.),
+        );
+        window.paint_quad(
+            gpui_kit::fill(bounds, fill_color)
+                .corner_radii(outer)
+                .border_widths(unit * width)
+                .border_color(border),
+        );
+    };
+    let green = rgb(0x16a34a);
+    let tint = Hsla::from(green).opacity(0.22);
+    let disc = unit * 42.;
+    window.paint_quad(
+        gpui_kit::fill(
+            Bounds::new(
+                point(center.x - disc, center.y - disc),
+                size(disc * 2., disc * 2.),
+            ),
+            tint,
+        )
+        .corner_radii(disc),
+    );
+    ring(
+        42.,
+        14.,
+        Hsla::transparent_black(),
+        Hsla::white().opacity(0.8),
+        window,
+    );
+    ring(42., 9., Hsla::transparent_black(), green.into(), window);
 }
 
 /// Chessground's arrow (`svg.js`, `renderArrow`), in one fill so its overlaps are not darker: a
