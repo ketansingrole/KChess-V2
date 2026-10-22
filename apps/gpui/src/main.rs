@@ -2,7 +2,9 @@
 //! accounts as the Electron app (`apps/desktop`), drawn natively.
 
 mod assets;
+mod board;
 mod core;
+mod game;
 mod log;
 mod pages;
 mod power;
