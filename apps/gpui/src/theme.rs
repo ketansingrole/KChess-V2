@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{Theme, ThemeConfig};
-use gpui_kit::{App, Window, WindowAppearance};
+use gpui_kit::{App, Global, Hsla, Window, WindowAppearance};
 use kchess_contracts::types::{AppTheme, Appearance, ThemePalette};
 use kchess_domain::theme;
 use serde_json::{Map, Value, json};
@@ -45,10 +45,11 @@ const KEYS: &[(&str, &str)] = &[
     ("popover.background", "--ui-bg"),
     ("popover.foreground", "--ui-text"),
     ("sidebar.background", "--ui-bg"),
-    ("sidebar.foreground", "--ui-text"),
+    // Nuxt UI's navigation: muted items, the current one in the primary color.
+    ("sidebar.foreground", "--ui-text-muted"),
     ("sidebar.border", "--ui-border"),
     ("sidebar.accent.background", "--ui-bg-elevated"),
-    ("sidebar.accent.foreground", "--ui-text-highlighted"),
+    ("sidebar.accent.foreground", "--ui-primary"),
     ("sidebar.primary.background", "--ui-primary"),
     ("sidebar.primary.foreground", "--ui-text-inverted"),
     ("title_bar.background", "--ui-bg"),
@@ -67,6 +68,75 @@ const KEYS: &[(&str, &str)] = &[
     ("base.blue", "--ui-info"),
     ("base.yellow", "--ui-warning"),
 ];
+
+/// KChess's own colors, by their Nuxt UI names, for what GPUI Kit's theme has no slot for
+/// (accented backgrounds, toned and dimmed text, wins and losses): `cx.global::<Palette>()`.
+#[derive(Clone, Copy)]
+// The whole palette, as the stylesheet defines it; each view reads what it paints with.
+#[allow(dead_code)]
+pub struct Palette {
+    pub dark: bool,
+    pub bg: Hsla,
+    pub muted: Hsla,
+    pub elevated: Hsla,
+    pub accented: Hsla,
+    pub border: Hsla,
+    pub border_accented: Hsla,
+    pub text: Hsla,
+    pub highlighted: Hsla,
+    pub toned: Hsla,
+    pub text_muted: Hsla,
+    pub dimmed: Hsla,
+    pub inverted: Hsla,
+    pub primary: Hsla,
+    pub success: Hsla,
+    pub warning: Hsla,
+    pub error: Hsla,
+    pub info: Hsla,
+    pub win: Hsla,
+    pub loss: Hsla,
+}
+
+impl Global for Palette {}
+
+impl Palette {
+    fn of(colors: &Map<String, Value>, dark: bool) -> Palette {
+        let c = |name: &str| {
+            colors
+                .get(name)
+                .and_then(Value::as_str)
+                .map(crate::board::looks::hex)
+                .unwrap_or_default()
+        };
+        Palette {
+            dark,
+            bg: c("--ui-bg"),
+            muted: c("--ui-bg-muted"),
+            elevated: c("--ui-bg-elevated"),
+            accented: c("--ui-bg-accented"),
+            border: c("--ui-border"),
+            border_accented: c("--ui-border-accented"),
+            text: c("--ui-text"),
+            highlighted: c("--ui-text-highlighted"),
+            toned: c("--ui-text-toned"),
+            text_muted: c("--ui-text-muted"),
+            dimmed: c("--ui-text-dimmed"),
+            inverted: c("--ui-text-inverted"),
+            primary: c("--ui-primary"),
+            success: c("--ui-success"),
+            warning: c("--ui-warning"),
+            error: c("--ui-error"),
+            info: c("--ui-info"),
+            win: c("--ui-win"),
+            loss: c("--ui-loss"),
+        }
+    }
+}
+
+/// `color-mix(in srgb, color share%, transparent)`.
+pub fn tint(color: Hsla, share: f32) -> Hsla {
+    color.opacity(share / 100.)
+}
 
 /// Whether the window should be dark: the setting, or the system's appearance.
 pub fn is_dark(appearance: Appearance, window: &Window) -> bool {
@@ -126,6 +196,7 @@ pub fn apply(window: &mut Window, cx: &mut App) {
     let dark = is_dark(appearance, window);
     let chosen = if dark { &dark_theme } else { &light };
     let resolved = colors(chosen, &custom, dark);
+    cx.set_global(Palette::of(&resolved, dark));
     let mut keys = Map::new();
     for (key, name) in KEYS {
         if let Some(value) = resolved.get(*name) {

@@ -46,7 +46,7 @@ async fn bundled_stockfish_reviews_a_game_with_castling() {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
         bundled_script: script,
-        runtime_path: PathBuf::from("node"),
+        runtime_path: Some(PathBuf::from("node")),
         runtime_env: BTreeMap::new(),
     };
     let ctx = EngineContext::new(

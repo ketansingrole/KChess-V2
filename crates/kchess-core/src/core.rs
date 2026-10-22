@@ -152,10 +152,7 @@ fn engine_locations(config: &Config) -> EngineLocations {
         managed_dir: default_dir(&config.data_dir, config.managed_engine_dir.as_deref()),
         target: Target::current(),
         bundled_script: config.bundled_engine_path.clone().unwrap_or_default(),
-        runtime_path: config
-            .runtime_path
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("node")),
+        runtime_path: config.runtime_path.clone(),
         runtime_env: config.runtime_env.clone(),
     }
 }

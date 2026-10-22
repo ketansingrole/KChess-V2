@@ -34,10 +34,23 @@ fn defaults() -> Settings {
 }
 
 /// Starts with the defaults and loads the saved settings and themes from the core.
+/// Read the settings and themes before the window opens, so it opens in the chosen theme.
 pub fn init(cx: &mut App) {
+    let bridge = std::sync::Arc::clone(&cx.global::<AppCore>().bridge);
+    let settings = bridge
+        .call_now("desktopSettings", Vec::new())
+        .ok()
+        .and_then(|settings| serde_json::from_value::<Settings>(settings).ok())
+        .unwrap_or_else(defaults);
+    let custom_themes = bridge
+        .call_now("customThemes", Vec::new())
+        .ok()
+        .and_then(|report| serde_json::from_value::<CustomThemeReport>(report).ok())
+        .map(|report| report.themes)
+        .unwrap_or_default();
     let entity = cx.new(|_| AppSettings {
-        settings: defaults(),
-        custom_themes: Vec::new(),
+        settings,
+        custom_themes,
     });
     cx.set_global(SettingsHandle(entity.clone()));
     let events = cx.global::<AppCore>().events.clone();
@@ -50,7 +63,6 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
-    reload(&entity, cx);
 }
 
 /// Read the settings and themes again.
@@ -94,4 +106,34 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
         });
     })
     .detach();
+}
+
+impl AppSettings {
+    /// Change settings and save them; the views see the change at once.
+    pub fn update(&mut self, change: impl FnOnce(&mut Settings), cx: &mut gpui_kit::Context<Self>) {
+        change(&mut self.settings);
+        cx.emit(SettingsChanged);
+        cx.notify();
+        let saving = cx.global::<AppCore>().call(
+            "saveDesktopSettings",
+            vec![serde_json::json!(self.settings)],
+        );
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(cause) = saving.await {
+                    crate::log::write(
+                        Level::Warn,
+                        "settings",
+                        &format!("Saving settings failed: {}", cause.message),
+                    );
+                }
+            })
+            .detach();
+    }
+}
+
+/// Flip a setting the game pages toggle from their panel (`toggleSetting`).
+pub fn toggle(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
+    let handle = cx.global::<SettingsHandle>().0.clone();
+    handle.update(cx, |settings, cx| settings.update(change, cx));
 }

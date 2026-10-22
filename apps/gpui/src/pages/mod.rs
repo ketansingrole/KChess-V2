@@ -1,6 +1,10 @@
 //! The app's pages, one per sidebar entry, created when first shown and kept while the app runs,
 //! as the Electron app keeps its page stores.
 
+pub mod computer;
+pub mod computer_options;
+pub mod local;
+
 use std::collections::HashMap;
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
@@ -27,9 +31,23 @@ pub enum Page {
     Settings,
 }
 
+impl Page {
+    /// A game page, where zen mode hides everything but the game (`useZenSurface(true)`).
+    pub fn zen_surface(self) -> bool {
+        matches!(self, Page::Computer | Page::Local)
+    }
+}
+
+/// A page and where its keys go.
+#[derive(Clone)]
+struct Shown {
+    view: AnyView,
+    focus: Option<FocusHandle>,
+}
+
 pub struct Pages {
     current: Page,
-    views: HashMap<Page, AnyView>,
+    views: HashMap<Page, Shown>,
 }
 
 impl Pages {
@@ -46,23 +64,48 @@ impl Pages {
         self.current
     }
 
+    /// Show a page, creating it the first time, with its keys going to it.
     pub fn show<T>(&mut self, page: Page, window: &mut Window, cx: &mut Context<T>) {
         self.current = page;
-        self.views
+        let shown = self
+            .views
             .entry(page)
-            .or_insert_with(|| create(page, window, cx));
+            .or_insert_with(|| create(page, window, cx))
+            .clone();
+        if let Some(focus) = shown.focus {
+            window.focus(&focus, cx);
+        }
     }
 
     pub fn view(&self) -> AnyView {
         self.views
             .get(&self.current)
-            .cloned()
+            .map(|shown| shown.view.clone())
             .expect("the current page was created by show")
     }
 }
 
-fn create<T>(page: Page, _window: &mut Window, cx: &mut Context<T>) -> AnyView {
-    cx.new(|_| Placeholder { page }).into()
+fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
+    fn focused<V: Focusable + Render>(view: Entity<V>, cx: &App) -> Shown {
+        Shown {
+            focus: Some(view.read(cx).focus_handle(cx)),
+            view: view.into(),
+        }
+    }
+    match page {
+        Page::Computer => {
+            let view = cx.new(|cx| computer::ComputerPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Local => {
+            let view = cx.new(|cx| local::LocalPage::new(window, cx));
+            focused(view, cx)
+        }
+        page => Shown {
+            view: cx.new(|_| Placeholder { page }).into(),
+            focus: None,
+        },
+    }
 }
 
 /// A page this app does not draw yet.

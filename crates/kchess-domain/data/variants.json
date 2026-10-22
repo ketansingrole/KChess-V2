@@ -1,0 +1,42 @@
+[
+  {
+    "key": "standard",
+    "label": "Standard",
+    "hint": "Normal chess."
+  },
+  {
+    "key": "chess960",
+    "label": "Chess960",
+    "hint": "Pieces on the back rank are shuffled; castling still works."
+  },
+  {
+    "key": "kingOfTheHill",
+    "label": "King of the Hill",
+    "hint": "Win by bringing your king to one of the four centre squares."
+  },
+  {
+    "key": "threeCheck",
+    "label": "Three-check",
+    "hint": "Win by giving check three times."
+  },
+  {
+    "key": "antichess",
+    "label": "Antichess",
+    "hint": "Captures are forced; lose all your pieces to win."
+  },
+  {
+    "key": "atomic",
+    "label": "Atomic",
+    "hint": "Captures explode, removing every piece next to them except pawns."
+  },
+  {
+    "key": "horde",
+    "label": "Horde",
+    "hint": "White has 36 pawns and must checkmate; Black must capture them all."
+  },
+  {
+    "key": "racingKings",
+    "label": "Racing Kings",
+    "hint": "No checks allowed; the first king to reach the eighth rank wins."
+  }
+]

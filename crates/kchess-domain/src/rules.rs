@@ -960,3 +960,82 @@ pub fn turn_name(color: Color) -> &'static str {
 pub fn default_position(variant: Variant) -> VariantPosition {
     VariantPosition::new(variant)
 }
+
+/// The Chess960 starting position numbered `n` in the Scharnagl scheme (any whole number, taken
+/// modulo 960; 518 is the standard start). Castling rights use X-FEN letters so every engine and
+/// Lichess can read it.
+pub fn chess960_fen(n: i64) -> String {
+    let mut rest = n.rem_euclid(960) as usize;
+    let mut rank: [Option<char>; 8] = [None; 8];
+    let light = rest % 4;
+    rest /= 4;
+    rank[light * 2 + 1] = Some('b');
+    let dark = rest % 4;
+    rest /= 4;
+    rank[dark * 2] = Some('b');
+    let free = |rank: &[Option<char>; 8]| -> Vec<usize> {
+        (0..8).filter(|&square| rank[square].is_none()).collect()
+    };
+    let queen = rest % 6;
+    rest /= 6;
+    let queen_square = free(&rank)[queen];
+    rank[queen_square] = Some('q');
+    const KNIGHTS: [(usize, usize); 10] = [
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (0, 4),
+        (1, 2),
+        (1, 3),
+        (1, 4),
+        (2, 3),
+        (2, 4),
+        (3, 4),
+    ];
+    let (first, second) = KNIGHTS[rest];
+    let open = free(&rank);
+    rank[open[first]] = Some('n');
+    rank[open[second]] = Some('n');
+    let last = free(&rank);
+    rank[last[0]] = Some('r');
+    rank[last[1]] = Some('k');
+    rank[last[2]] = Some('r');
+    let black: String = rank.iter().map(|piece| piece.unwrap_or('r')).collect();
+    format!(
+        "{black}/pppppppp/8/8/8/8/PPPPPPPP/{} w KQkq - 0 1",
+        black.to_uppercase()
+    )
+}
+
+#[cfg(test)]
+mod chess960_tests {
+    use super::chess960_fen;
+
+    #[test]
+    fn the_scharnagl_numbers_give_the_known_starts() {
+        assert_eq!(
+            chess960_fen(518),
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        );
+        assert!(chess960_fen(0).starts_with("bbqnnrkr/"));
+        assert_eq!(chess960_fen(959), chess960_fen(-1));
+        assert_eq!(chess960_fen(960), chess960_fen(0));
+    }
+
+    #[test]
+    fn every_start_has_bishops_on_both_colors_and_the_king_between_the_rooks() {
+        let mut seen = std::collections::HashSet::new();
+        for n in 0..960 {
+            let fen = chess960_fen(n);
+            let back = &fen[..8];
+            assert!(seen.insert(back.to_string()), "{n} repeats {back}");
+            let at = |c: char| back.match_indices(c).map(|(i, _)| i).collect::<Vec<_>>();
+            let bishops = at('b');
+            assert_eq!(bishops.len(), 2);
+            assert_ne!(bishops[0] % 2, bishops[1] % 2, "{n}");
+            let rooks = at('r');
+            let king = at('k')[0];
+            assert!(rooks[0] < king && king < rooks[1], "{n}");
+        }
+    }
+}

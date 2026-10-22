@@ -6,12 +6,18 @@ mod board;
 mod core;
 mod game;
 mod log;
+mod menu;
+mod online;
 mod pages;
+mod play_layout;
 mod power;
+mod prefs;
 mod profile;
 mod settings;
 mod shell;
+mod sound;
 mod theme;
+mod widgets;
 
 use gpui_kit::*;
 use kchess_core::Level;
@@ -32,17 +38,16 @@ fn main() {
         .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            menu::init(cx);
             if let Err(message) = core::start(data_dir, cx) {
                 log::write(Level::Error, "app", &message);
                 cx.quit();
                 return;
             }
             settings::init(cx);
-            cx.on_app_quit(|cx| {
-                let bridge = std::sync::Arc::clone(&cx.global::<core::AppCore>().bridge);
-                async move { bridge.close() }
-            })
-            .detach();
+            prefs::init(cx);
+            online::init(cx);
+            cx.on_app_quit(core::quit).detach();
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some(profile::APP_NAME.into()),

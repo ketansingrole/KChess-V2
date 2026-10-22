@@ -60,3 +60,19 @@ pub fn managed_engine_dir() -> PathBuf {
 pub fn legacy_database(_data_dir: &std::path::Path) -> Option<PathBuf> {
     (cfg!(target_os = "macos") && !isolated()).then(|| home().join(".kchess/kchess.db"))
 }
+
+/// The Stockfish this app ships: a native executable beside the app's own (`Contents/MacOS` in the
+/// macOS bundle), started without a runtime. `KCHESS_ENGINE_PATH` names another one (development
+/// builds, which ship none).
+pub fn bundled_engine() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("KCHESS_ENGINE_PATH").filter(|path| !path.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
+    let name = if cfg!(windows) {
+        "stockfish.exe"
+    } else {
+        "stockfish"
+    };
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join(name))
+}

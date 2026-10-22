@@ -40,7 +40,7 @@ async fn bundled_stockfish_answers_a_move_for_the_position() {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
         bundled_script: script,
-        runtime_path: PathBuf::from("node"),
+        runtime_path: Some(PathBuf::from("node")),
         runtime_env: BTreeMap::new(),
     };
     let ctx = EngineContext::new(

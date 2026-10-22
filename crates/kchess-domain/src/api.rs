@@ -251,6 +251,12 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
                 }
             }
         }
+        "chess960Fen" => {
+            let n = arg(&args, 0)
+                .and_then(Value::as_f64)
+                .ok_or_else(|| DomainError::Message("n must be a number".to_string()))?;
+            Value::String(rules::chess960_fen(n.floor() as i64))
+        }
         "defaultFen" => {
             let variant = rules::lichess_variant(text(&args, 0, "variant")?)
                 .ok_or_else(|| DomainError::Message("variant".to_string()))?;

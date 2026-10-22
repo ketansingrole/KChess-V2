@@ -2,7 +2,11 @@
 //! every decision is a Rust transition in `kchess-domain`; these drivers only answer the reads a
 //! transition asks for, keep the state it wrote and hand its effects to the page, in order.
 
+pub mod archive;
 pub mod computer;
+pub mod history;
+pub mod local;
+pub mod view;
 
 use serde_json::{Map, Value};
 
@@ -10,6 +14,23 @@ use serde_json::{Map, Value};
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
     let text = kchess_domain::api::call(method, &Value::Array(args.to_vec()).to_string())?;
     serde_json::from_str(&text).map_err(|e| format!("{method} answered something unreadable: {e}"))
+}
+
+/// The Chess960 start numbered `n` (`chess960Fen`).
+pub fn chess960(n: i64) -> String {
+    kchess_domain::rules::chess960_fen(n)
+}
+
+/// Why a position cannot be played, in the words the board editor uses (`positionProblem`).
+pub fn position_problem(fen: &str) -> Option<&'static str> {
+    Some(match kchess_domain::position::fen_problem(fen)? {
+        "fen" => "That is not a valid FEN.",
+        "empty" => "The board is empty.",
+        "kings" => "Each side needs exactly one king.",
+        "pawnsOnBackrank" => "Pawns can’t stand on the first or last rank.",
+        "oppositeCheck" => "The side not to move is in check.",
+        _ => "This position is not legal.",
+    })
 }
 
 /// Run a session transition: the rules answer with the finished transition or with the next

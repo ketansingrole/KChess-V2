@@ -20,6 +20,8 @@ serde_json.workspace = true
 shakmaty.workspace = true
 # The core's runtime: its services are Tokio tasks (`kchess-core`).
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# A random Chess960 start (already in Cargo.lock through the core).
+getrandom = "0.4"
 # Channels from the core's threads to the UI thread.
 futures = "0.3"
 # The Electron renderer's boards, pieces and sounds, embedded (already in Cargo.lock through GPUI Kit).

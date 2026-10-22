@@ -17,7 +17,6 @@ const LOOKS_JSON: &str = include_str!("../../../../crates/kchess-domain/data/loo
 #[serde(rename_all = "camelCase")]
 pub struct BoardLook {
     pub id: String,
-    pub name: String,
     /// The image in `apps/desktop/app/assets/boards`.
     pub image: String,
     /// Coordinate labels on dark squares.
@@ -29,7 +28,6 @@ pub struct BoardLook {
 #[derive(Deserialize)]
 pub struct PieceSet {
     pub id: String,
-    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -39,7 +37,6 @@ struct Looks {
     piece_sets: Vec<PieceSet>,
     default_piece_set: String,
     default_board: String,
-    animation_ms: HashMap<String, u64>,
 }
 
 static LOOKS: LazyLock<Looks> = LazyLock::new(|| match serde_json::from_str(LOOKS_JSON) {
@@ -47,14 +44,6 @@ static LOOKS: LazyLock<Looks> = LazyLock::new(|| match serde_json::from_str(LOOK
     // `looks.json` is checked in and read by this crate's tests.
     Err(cause) => panic!("looks.json does not decode: {cause}"),
 });
-
-pub fn boards() -> &'static [BoardLook] {
-    &LOOKS.boards
-}
-
-pub fn piece_sets() -> &'static [PieceSet] {
-    &LOOKS.piece_sets
-}
 
 /// The board look `id`, or the default one.
 pub fn board(id: &str) -> &'static BoardLook {
@@ -78,11 +67,6 @@ pub fn piece_set(id: &str) -> &'static str {
         .iter()
         .find(|set| set.id == id)
         .map_or(LOOKS.default_piece_set.as_str(), |set| set.id.as_str())
-}
-
-/// How long a piece slides for a `pieceAnimation` setting, in milliseconds.
-pub fn animation_ms(setting: &str) -> u64 {
-    LOOKS.animation_ms.get(setting).copied().unwrap_or(0)
 }
 
 /// `#rrggbb` as a color; transparent when it is not one.
@@ -154,7 +138,7 @@ mod tests {
     #[test]
     fn every_board_matches_the_electron_stylesheet() {
         let css = include_str!("../../../desktop/app/assets/css/main.css");
-        for board in boards() {
+        for board in &LOOKS.boards {
             let rule = format!(
                 ".board-theme-{} {{\n  --board-coord-white: {};\n  --board-coord-black: {};\n}}",
                 board.id, board.coord_white, board.coord_black
@@ -179,7 +163,7 @@ mod tests {
 
     #[test]
     fn every_piece_image_is_embedded() {
-        for set in piece_sets() {
+        for set in &LOOKS.piece_sets {
             for color in Color::ALL {
                 for role in Role::ALL {
                     let path = piece_path(&set.id, Piece { color, role });
@@ -190,7 +174,7 @@ mod tests {
                 }
             }
         }
-        for board in boards() {
+        for board in &LOOKS.boards {
             let path = format!("boards/{}", board.image);
             assert!(
                 crate::assets::Assets.load(&path).ok().flatten().is_some(),
@@ -203,7 +187,5 @@ mod tests {
     fn unknown_names_fall_back_to_the_defaults() {
         assert_eq!(board("gone").id, "brown");
         assert_eq!(piece_set("gone"), "cburnett");
-        assert_eq!(animation_ms("normal"), 180);
-        assert_eq!(animation_ms("gone"), 0);
     }
 }

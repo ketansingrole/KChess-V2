@@ -47,7 +47,8 @@ pub struct Config {
     /// `None` when the host bundles none; the bundled engine is then not ready.
     pub bundled_engine_path: Option<PathBuf>,
     /// The runtime executable that runs the bundled script (Node's `process.execPath`
-    /// on Node/Electron hosts).
+    /// on Node/Electron hosts). `None`: the bundled engine is a native executable, started as is
+    /// (the GPUI app ships Stockfish itself).
     pub runtime_path: Option<PathBuf>,
     /// Extra environment for running the bundled script (`CorePlatform.nodeEnv`).
     pub runtime_env: BTreeMap<String, String>,

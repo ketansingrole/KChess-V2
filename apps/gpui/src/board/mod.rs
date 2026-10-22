@@ -41,6 +41,10 @@ pub struct BoardState {
     pub last_move: Option<(Square, Square)>,
     /// The king in check.
     pub check: Option<Square>,
+    /// Hide the pieces (blindfold play); highlights and moves stay.
+    pub blindfold: bool,
+    /// A small picture of a position: no coordinates, nothing to touch.
+    pub preview: bool,
 }
 
 impl BoardState {
@@ -70,6 +74,8 @@ impl BoardState {
             dests,
             last_move,
             check,
+            blindfold: false,
+            preview: false,
         }
     }
 }
@@ -180,7 +186,7 @@ impl ChessBoard {
     }
 
     fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        if self.promotion.is_some() {
+        if self.promotion.is_some() || self.state.preview {
             return;
         }
         let Some(square) = self.square_at(event.position) else {
@@ -220,11 +226,7 @@ impl ChessBoard {
             return;
         };
         drag.position = position;
-        let (dx, dy) = (
-            (position.x - drag.start.x).as_f32(),
-            (position.y - drag.start.y).as_f32(),
-        );
-        if (dx * dx + dy * dy).sqrt() > DRAG_THRESHOLD.as_f32() {
+        if far(drag.start, position) {
             drag.moved = true;
         }
         cx.notify();
@@ -235,7 +237,8 @@ impl ChessBoard {
             return;
         };
         let target = self.square_at(position);
-        if drag.moved {
+        // The moves of a quick drag may all have come before the board was listening.
+        if drag.moved || far(drag.start, position) {
             match target {
                 Some(to) if self.reaches(drag.from, to) => {
                     self.selected = None;
@@ -319,6 +322,8 @@ impl ChessBoard {
             Color::White => (File::H, Rank::First),
             Color::Black => (File::A, Rank::Eighth),
         };
+        // Chessground sets rank labels 39% down their square, below a 2px inset.
+        let rank_offset = self.square_size() * 0.39 + px(2.);
         let mut labels = Vec::new();
         for rank in Rank::ALL {
             let square = Square::from_coords(edge_file, rank);
@@ -327,7 +332,7 @@ impl ChessBoard {
                 div()
                     .absolute()
                     .top(relative(row as f32 / 8.))
-                    .when(inside, |label| label.right(px(2.)).pt(px(1.)))
+                    .when(inside, |label| label.right_0().w(px(10.)).mt(rank_offset))
                     .when(!inside, |label| {
                         label
                             .right(px(-15.))
@@ -342,6 +347,7 @@ impl ChessBoard {
                         FontWeight::SEMIBOLD
                     })
                     .text_color(color(square))
+                    .opacity(0.8)
                     .child(rank.char().to_string())
                     .into_any_element(),
             );
@@ -353,7 +359,7 @@ impl ChessBoard {
                 div()
                     .absolute()
                     .left(relative(column as f32 / 8.))
-                    .when(inside, |label| label.bottom(px(1.)).pl(px(4.)))
+                    .when(inside, |label| label.bottom_0().h(px(15.)).pl(px(4.)))
                     .when(!inside, |label| {
                         label
                             .bottom(px(-17.))
@@ -368,7 +374,8 @@ impl ChessBoard {
                         FontWeight::SEMIBOLD
                     })
                     .text_color(color(square))
-                    .child(file.char().to_string())
+                    .opacity(0.8)
+                    .child(file.char().to_ascii_uppercase().to_string())
                     .into_any_element(),
             );
         }
@@ -442,6 +449,12 @@ impl ChessBoard {
     }
 }
 
+/// Whether the pointer went far enough from where it was pressed to be a drag.
+fn far(start: Point<Pixels>, now: Point<Pixels>) -> bool {
+    let (dx, dy) = ((now.x - start.x).as_f32(), (now.y - start.y).as_f32());
+    (dx * dx + dy * dy).sqrt() > DRAG_THRESHOLD.as_f32()
+}
+
 fn board_of(fen: &str) -> Board {
     let placement = fen.split(' ').next().unwrap_or_default();
     Board::from_ascii_board_fen(placement.as_bytes()).unwrap_or_else(|_| Board::empty())
@@ -508,6 +521,9 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
                 }
             }
         }
+    }
+    if frame.state.blindfold {
+        return;
     }
     let pixels = (side.as_f32() * window.scale_factor()).round() as u32;
     for square in frame.pieces.occupied() {
@@ -639,7 +655,11 @@ impl Render for ChessBoard {
             )
             .with_priority(1)
         });
-        let coordinates = self.render_coordinates(frontend.coordinates, look, cx);
+        let coordinates = if self.state.preview {
+            Vec::new()
+        } else {
+            self.render_coordinates(frontend.coordinates, look, cx)
+        };
         let promotion = self.render_promotion(&set, cx);
 
         div()
@@ -666,7 +686,13 @@ impl Render for ChessBoard {
                             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
                                 if phase == DispatchPhase::Bubble {
                                     let _ = moving.update(cx, |this, cx| {
-                                        this.pointer_moved(event.position, cx)
+                                        // A release this listener missed (it arrived before
+                                        // this frame) ends the drag at the next move.
+                                        if event.pressed_button == Some(MouseButton::Left) {
+                                            this.pointer_moved(event.position, cx)
+                                        } else {
+                                            this.release(event.position, cx)
+                                        }
                                     });
                                 }
                             });
@@ -690,6 +716,15 @@ impl Render for ChessBoard {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, _, cx| this.press(event, cx)),
+            )
+            // The press's own frame has no window-wide listeners yet: a quick release lands here.
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
             )
             .children(held)
             .children(promotion)

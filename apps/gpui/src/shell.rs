@@ -112,6 +112,7 @@ impl Workspace {
                     Button::new("settings")
                         .ghost()
                         .w_full()
+                        .justify_start()
                         .icon(icon("settings-2"))
                         .when(open, |button| button.label("Settings"))
                         .when(!open, |button| button.tooltip("Settings"))
@@ -145,11 +146,20 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
+        let zen = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .zen_mode
+            && self.pages.current().zen_surface();
         h_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_sidebar(cx))
+            .when(!zen, |shell| shell.child(self.render_sidebar(cx)))
             .child(
                 v_flex()
                     .flex_1()

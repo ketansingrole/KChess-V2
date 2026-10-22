@@ -75,7 +75,7 @@ impl CoreBridge {
         &self,
         method: &str,
         args: Vec<Value>,
-    ) -> impl Future<Output = Result<Value, CoreError>> + 'static {
+    ) -> impl Future<Output = Result<Value, CoreError>> + 'static + use<> {
         let core = Arc::clone(&self.core);
         let method = method.to_string();
         let task = self
@@ -85,6 +85,14 @@ impl CoreBridge {
             task.await
                 .unwrap_or_else(|_| Err(CoreError::new("The KChess core stopped.")))
         }
+    }
+
+    /// Run a core method and wait for it: only before the window opens, as the Electron renderer
+    /// waits for its library and preferences before it mounts.
+    pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
+        let core = Arc::clone(&self.core);
+        self.runtime
+            .block_on(async move { core.call(method, args).await })
     }
 
     /// Cancel the core's work and release the profile, waiting at most a few seconds.
@@ -98,6 +106,33 @@ impl CoreBridge {
         let _ = self.runtime.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(5), closing).await
         });
+    }
+}
+
+/// Saves to finish before the core closes (`on_quit`): each returns the work still to wait for.
+#[derive(Default)]
+pub struct QuitFlushes(Vec<Flush>);
+
+type Flush = Box<dyn Fn(&mut App) -> Option<BoxedSave>>;
+
+pub type BoxedSave = std::pin::Pin<Box<dyn Future<Output = ()>>>;
+
+impl Global for QuitFlushes {}
+
+/// Run `flush` when the app quits, before the core closes, so unsaved work reaches the profile.
+/// The Electron app does the same through its prepare-quit handshake.
+pub fn on_quit(cx: &mut App, flush: impl Fn(&mut App) -> Option<BoxedSave> + 'static) {
+    cx.default_global::<QuitFlushes>().0.push(Box::new(flush));
+}
+
+/// Every registered flush, then the core's close.
+pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
+    let flushes = std::mem::take(&mut cx.default_global::<QuitFlushes>().0);
+    let pending: Vec<BoxedSave> = flushes.iter().filter_map(|flush| flush(cx)).collect();
+    let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
+    async move {
+        futures::future::join_all(pending).await;
+        bridge.close();
     }
 }
 
@@ -115,7 +150,7 @@ impl AppCore {
         &self,
         method: &str,
         args: Vec<Value>,
-    ) -> impl Future<Output = Result<Value, CoreError>> + 'static {
+    ) -> impl Future<Output = Result<Value, CoreError>> + 'static + use<> {
         self.bridge.call(method, args)
     }
 }
@@ -125,6 +160,8 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     let config = Config {
         legacy_database_path: crate::profile::legacy_database(&data_dir),
         managed_engine_dir: Some(crate::profile::managed_engine_dir()),
+        // A native executable, so no runtime runs it (`runtime_path: None`).
+        bundled_engine_path: crate::profile::bundled_engine(),
         system_credentials: true,
         ..Config::new(data_dir.clone())
     };

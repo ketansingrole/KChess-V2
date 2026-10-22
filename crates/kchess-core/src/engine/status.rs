@@ -22,6 +22,10 @@ use crate::host::{Host, Level};
 pub const BUNDLED_ENGINE_SCRIPT: &str = "node_modules/stockfish/bin/stockfish-19-lite.js";
 /// The identity of the bundled engine, which never changes within a build.
 pub const BUNDLED_ENGINE_IDENTITY: &str = "stockfish-19-lite";
+/// The identity of a bundled native engine (a host without a runtime ships Stockfish itself).
+/// It differs from the WebAssembly build's, so analyses cached in a profile that both an
+/// Electron and a GPUI app open never mix the two engines.
+pub const BUNDLED_NATIVE_IDENTITY: &str = "stockfish-native";
 
 /// What the host supplies to find and start engines.
 #[derive(Clone, Debug)]
@@ -30,11 +34,12 @@ pub struct EngineLocations {
     pub managed_dir: PathBuf,
     /// The platform whose official build may be downloaded.
     pub target: Target,
-    /// Absolute path of `BUNDLED_ENGINE_SCRIPT`.
+    /// Absolute path of `BUNDLED_ENGINE_SCRIPT`, or of a native executable when there is no
+    /// runtime.
     pub bundled_script: PathBuf,
-    /// The host runtime executable, which runs the bundled script
-    /// (Node's `process.execPath` on Node/Electron hosts).
-    pub runtime_path: PathBuf,
+    /// The host runtime executable, which runs the bundled script (Node's `process.execPath` on
+    /// Node/Electron hosts); `None` when the bundled engine is a native executable (GPUI).
+    pub runtime_path: Option<PathBuf>,
     /// Extra environment for running the bundled script, on top of the inherited one.
     pub runtime_env: BTreeMap<String, String>,
 }
@@ -51,6 +56,9 @@ pub struct EngineStatus {
     pub managed: ManagedEngine,
     /// An official native download exists for this platform and architecture.
     pub can_download: bool,
+    /// The bundled engine is a native executable rather than a script (no runtime).
+    #[serde(skip)]
+    pub native: bool,
 }
 
 /// The engine the computer would use: a configured executable that is executable, else the
@@ -69,15 +77,23 @@ pub async fn engine_status(
             bundled: false,
             managed,
             can_download,
+            native: false,
         };
     }
-    if access(&locations.bundled_script, AccessMode::Read) {
+    let native = locations.runtime_path.is_none();
+    let bundled = if native {
+        is_executable_file(host, &locations.bundled_script).await
+    } else {
+        access(&locations.bundled_script, AccessMode::Read)
+    };
+    if bundled {
         return EngineStatus {
             ready: true,
             path: PathBuf::new(),
             bundled: true,
             managed,
             can_download,
+            native,
         };
     }
     host.log(
@@ -94,6 +110,7 @@ pub async fn engine_status(
         bundled: false,
         managed,
         can_download,
+        native: false,
     }
 }
 
@@ -119,10 +136,15 @@ async fn is_executable_file(host: &dyn Host, path: &Path) -> bool {
 /// caller chooses its stdio.
 pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Command {
     if status.bundled {
-        let mut command = Command::new(&locations.runtime_path);
-        command
-            .arg(&locations.bundled_script)
-            .envs(&locations.runtime_env);
+        let mut command = match &locations.runtime_path {
+            Some(runtime) => {
+                let mut command = Command::new(runtime);
+                command.arg(&locations.bundled_script);
+                command
+            }
+            None => Command::new(&locations.bundled_script),
+        };
+        command.envs(&locations.runtime_env);
         command
     } else {
         Command::new(&status.path)
@@ -133,7 +155,12 @@ pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Com
 /// its size and modification time.
 pub async fn engine_identity(status: &EngineStatus) -> Result<String> {
     if status.bundled {
-        return Ok(BUNDLED_ENGINE_IDENTITY.to_string());
+        return Ok(if status.native {
+            BUNDLED_NATIVE_IDENTITY
+        } else {
+            BUNDLED_ENGINE_IDENTITY
+        }
+        .to_string());
     }
     let metadata = tokio::fs::metadata(&status.path)
         .await
@@ -239,7 +266,7 @@ mod tests {
                 arch: "x64",
             },
             bundled_script: dir.join("bundled.js"),
-            runtime_path: PathBuf::from("/usr/bin/node"),
+            runtime_path: Some(PathBuf::from("/usr/bin/node")),
             runtime_env: BTreeMap::from([("KCHESS_TEST".to_string(), "1".to_string())]),
         }
     }
@@ -275,12 +302,13 @@ mod tests {
                 version: None,
             },
             can_download: true,
+            native: false,
         };
         let command = engine_command(&locations, &status);
         let std_command = command.as_std();
         assert_eq!(
             std_command.get_program(),
-            locations.runtime_path.as_os_str()
+            locations.runtime_path.as_deref().unwrap().as_os_str()
         );
         let args: Vec<_> = std_command.get_args().collect();
         assert_eq!(args, [locations.bundled_script.as_os_str()]);

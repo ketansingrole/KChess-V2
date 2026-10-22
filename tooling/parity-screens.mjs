@@ -2,8 +2,9 @@
 // Screenshots of every page of the built Electron app, on a fresh profile and a fixed window size,
 // as the reference the GPUI app (apps/gpui) is compared with. Run after `pnpm run build`:
 //
-//   node tooling/with-branded-electron.mjs node tooling/parity-screens.mjs <output-dir> [light|dark]
+//   node tooling/with-branded-electron.mjs node tooling/parity-screens.mjs <output-dir> [light|dark] [profile]
 //
+// Naming a profile opens that one (one the GPUI app played in, say) and leaves it in place.
 // The wrapper supplies ELECTRON_EXEC_PATH, as `pnpm run test:e2e` does.
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -38,7 +39,8 @@ const PAGES = [
 ]
 
 mkdirSync(out, { recursive: true })
-const profile = mkdtempSync(join(tmpdir(), 'kchess-parity-'))
+const given = process.argv[4]
+const profile = given ?? mkdtempSync(join(tmpdir(), 'kchess-parity-'))
 const app = await _electron.launch({
   executablePath,
   args: ['apps/desktop'],
@@ -70,5 +72,5 @@ try {
   console.log(`parity: ${PAGES.length + 1} screenshots in ${out}`)
 } finally {
   await app.close()
-  rmSync(profile, { recursive: true, force: true })
+  if (!given) rmSync(profile, { recursive: true, force: true })
 }

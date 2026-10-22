@@ -119,12 +119,6 @@ impl ComputerGame {
         Some(self.view(json!({ "view": "result" }), host)).filter(|value| !value.is_null())
     }
 
-    pub fn draw(&self, host: &Host) -> Option<String> {
-        self.view(json!({ "view": "draw" }), host)
-            .as_str()
-            .map(str::to_string)
-    }
-
     /// A side's clock in milliseconds.
     pub fn remaining(&self, color: &str, host: &Host) -> f64 {
         self.view(
@@ -233,10 +227,6 @@ impl ComputerGame {
 
     pub fn resign(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
         Ok(self.apply("computerResign", &[], host)?.effects)
-    }
-
-    pub fn dispose(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
-        Ok(self.apply("computerDispose", &[], host)?.effects)
     }
 }
 

@@ -3,6 +3,7 @@
  * Rules come from Rust (`position.ts`); Lichess names variants by its own keys.
  */
 import { rules } from './engine.ts'
+import variantText from '../../kchess-domain/data/variants.json' with { type: 'json' }
 import { INITIAL_FEN, Position } from './position.ts'
 
 import { VARIANTS } from '@kchess/contracts/variant'
@@ -13,27 +14,17 @@ export type { GameSetup, Variant } from '@kchess/contracts/variant'
 /** Every key Lichess uses, including the ones KChess cannot play. */
 export type LichessVariantKey = Variant | 'fromPosition' | 'crazyhouse'
 
-export const VARIANT_LABELS: Record<Variant, string> = {
-  standard: 'Standard',
-  chess960: 'Chess960',
-  kingOfTheHill: 'King of the Hill',
-  threeCheck: 'Three-check',
-  antichess: 'Antichess',
-  atomic: 'Atomic',
-  horde: 'Horde',
-  racingKings: 'Racing Kings',
-}
+const VARIANT_TEXT = variantText as readonly { key: Variant; label: string; hint: string }[]
 
-export const VARIANT_HINTS: Record<Variant, string> = {
-  standard: 'Normal chess.',
-  chess960: 'Pieces on the back rank are shuffled; castling still works.',
-  kingOfTheHill: 'Win by bringing your king to one of the four centre squares.',
-  threeCheck: 'Win by giving check three times.',
-  antichess: 'Captures are forced; lose all your pieces to win.',
-  atomic: 'Captures explode, removing every piece next to them except pawns.',
-  horde: 'White has 36 pawns and must checkmate; Black must capture them all.',
-  racingKings: 'No checks allowed; the first king to reach the eighth rank wins.',
-}
+/** Each variant's name (shared data, `data/variants.json`). */
+export const VARIANT_LABELS = Object.fromEntries(
+  VARIANT_TEXT.map(({ key, label }) => [key, label]),
+) as Record<Variant, string>
+
+/** What sets each variant apart, in a line. */
+export const VARIANT_HINTS = Object.fromEntries(
+  VARIANT_TEXT.map(({ key, hint }) => [key, hint]),
+) as Record<Variant, string>
 
 export const STANDARD_SETUP: GameSetup = { variant: 'standard', fen: INITIAL_FEN }
 
@@ -70,53 +61,7 @@ export const valid960 = (n: unknown): n is number =>
  * standard start. Castling rights use X-FEN letters so every engine and Lichess can read it.
  */
 export function chess960Fen(n: number): string {
-  const index = ((Math.floor(n) % 960) + 960) % 960
-  const rank: (string | undefined)[] = Array(8).fill(undefined)
-  let rest = index
-  const light = rest % 4
-  rest = Math.floor(rest / 4)
-  rank[light * 2 + 1] = 'b'
-  const dark = rest % 4
-  rest = Math.floor(rest / 4)
-  rank[dark * 2] = 'b'
-  const queen = rest % 6
-  rest = Math.floor(rest / 6)
-  const free = (): number[] => rank.flatMap((piece, square) => (piece ? [] : [square]))
-  const queenSquare = free()[queen]
-  if (queenSquare === undefined) throw new Error('Invalid Chess960 index.')
-  rank[queenSquare] = 'q'
-  const knights = [
-    [0, 1],
-    [0, 2],
-    [0, 3],
-    [0, 4],
-    [1, 2],
-    [1, 3],
-    [1, 4],
-    [2, 3],
-    [2, 4],
-    [3, 4],
-  ][rest]
-  if (!knights) throw new Error('Invalid Chess960 index.')
-  const open = free()
-  const firstKnight = knights[0]
-  const secondKnight = knights[1]
-  if (firstKnight === undefined || secondKnight === undefined)
-    throw new Error('Invalid Chess960 index.')
-  const firstSquare = open[firstKnight]
-  const secondSquare = open[secondKnight]
-  if (firstSquare === undefined || secondSquare === undefined)
-    throw new Error('Invalid Chess960 index.')
-  rank[firstSquare] = 'n'
-  rank[secondSquare] = 'n'
-  const [a, b, c] = free()
-  if (a === undefined || b === undefined || c === undefined)
-    throw new Error('Invalid Chess960 index.')
-  rank[a] = 'r'
-  rank[b] = 'k'
-  rank[c] = 'r'
-  const black = rank.join('')
-  return `${black}/pppppppp/8/8/8/8/PPPPPPPP/${black.toUpperCase()} w KQkq - 0 1`
+  return rules<string>('chess960Fen', n)
 }
 
 /** A random Chess960 start. */

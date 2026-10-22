@@ -3556,6 +3556,7 @@ name = "kchess-gpui"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "getrandom 0.4.3",
  "gpui-kit",
  "kchess-contracts",
  "kchess-core",

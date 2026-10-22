@@ -102,7 +102,7 @@ pub fn locations() -> EngineLocations {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
         bundled_script: PathBuf::from("/nonexistent/kchess-bundled-stockfish.js"),
-        runtime_path: PathBuf::from("node"),
+        runtime_path: Some(PathBuf::from("node")),
         runtime_env: BTreeMap::new(),
     }
 }
