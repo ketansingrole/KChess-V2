@@ -150,10 +150,95 @@ pub fn colors(palette: &Value, dark: bool) -> Option<Map<String, Value>> {
     )
 }
 
+/// The colors KChess ships with (the default theme, which has no palette): Nuxt UI's slate
+/// neutrals with the overrides of `apps/desktop/app/assets/css/main.css`, as `#rrggbb`. The
+/// Electron renderer gets them from its stylesheet; the GPUI app paints with these.
+pub fn default_colors(dark: bool) -> Map<String, Value> {
+    // Tailwind's slate, converted from its OKLCH values.
+    const SLATE: [(u16, &str); 10] = [
+        (50, "#f8fafc"),
+        (100, "#f1f5f9"),
+        (200, "#e2e8f0"),
+        (300, "#cad5e2"),
+        (400, "#90a1b9"),
+        (500, "#62748e"),
+        (600, "#45556c"),
+        (700, "#314158"),
+        (800, "#1d293d"),
+        (900, "#0f172b"),
+    ];
+    let slate = |step: u16| {
+        SLATE
+            .iter()
+            .find(|(s, _)| *s == step)
+            .map_or("#000000", |(_, hex)| hex)
+    };
+    let values: [&str; 22] = if dark {
+        [
+            slate(900),
+            slate(800),
+            slate(800),
+            slate(700),
+            "#ffffff",
+            slate(800),
+            slate(700),
+            slate(700),
+            "#ffffff",
+            slate(200),
+            "#ffffff",
+            slate(300),
+            slate(400),
+            slate(500),
+            slate(900),
+            "#91af6a",
+            "#62b57a",
+            // Nuxt UI's dark warning and info: yellow-400 and blue-400.
+            "#fdc700",
+            "#e07979",
+            "#51a2ff",
+            "#62b57a",
+            "#e07979",
+        ]
+    } else {
+        [
+            "#ffffff",
+            slate(50),
+            slate(100),
+            slate(200),
+            slate(900),
+            slate(200),
+            slate(200),
+            slate(300),
+            slate(900),
+            slate(700),
+            slate(900),
+            slate(600),
+            "#52637b",
+            slate(400),
+            "#ffffff",
+            "#4b6231",
+            "#246b37",
+            "#805500",
+            "#b4232c",
+            "#1d5b91",
+            "#246b37",
+            "#d05f5f",
+        ]
+    };
+    NAMES
+        .iter()
+        .zip(values)
+        .map(|(name, value)| ((*name).to_string(), Value::String(value.to_string())))
+        .collect()
+}
+
 /// This module's methods for `api::call`; None when the method is not one of them.
 pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
     Some(match method {
         "presetThemes" => Ok(presets().clone()),
+        "defaultThemeColors" => Ok(Value::Object(default_colors(
+            args.first().and_then(Value::as_bool).unwrap_or(false),
+        ))),
         "themeColors" => {
             let palette = args.first().unwrap_or(&Value::Null);
             let dark = args.get(1).and_then(Value::as_bool).unwrap_or(false);
@@ -213,6 +298,21 @@ mod tests {
         assert_eq!(resolved["--ui-border"], "#123456");
         assert_eq!(resolved["--ui-loss"], "#ff0000");
         assert_eq!(resolved["--ui-warning"], "#e0b25c");
+    }
+
+    #[test]
+    fn the_default_look_names_every_color() {
+        for dark in [false, true] {
+            let colors = default_colors(dark);
+            assert_eq!(colors.len(), NAMES.len());
+            assert!(
+                colors
+                    .values()
+                    .all(|value| Rgb::parse(value.as_str().unwrap()).is_some())
+            );
+        }
+        assert_eq!(default_colors(false)["--ui-primary"], "#4b6231");
+        assert_eq!(default_colors(true)["--ui-bg"], "#0f172b");
     }
 
     #[test]

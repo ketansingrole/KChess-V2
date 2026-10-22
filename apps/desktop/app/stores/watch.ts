@@ -3,6 +3,7 @@ import { computed, ref, shallowRef } from 'vue'
 import { RequestScope, SubscriptionScope } from '@kchess/rules/requestScope'
 import { Clock } from '@kchess/rules/clock'
 import { WATCH_TAB_KEY } from '../utils/storageKeys'
+import { useViewPreference } from '../composables/useViewPreference'
 import { useKChessStore } from './kchess'
 import type {
   BroadcastGame,
@@ -173,7 +174,7 @@ export const useWatchStore = defineStore('watch', () => {
   }
   /** Watch a live game from a card or list: selects the friends tab, streams it, shows Watch. */
   async function watchGame(gameId: string): Promise<void> {
-    localStorage.setItem(WATCH_TAB_KEY, 'friends')
+    useViewPreference(WATCH_TAB_KEY, 'tv').value = 'friends'
     await watch({ gameId })
     useKChessStore().selectPage('watch')
   }

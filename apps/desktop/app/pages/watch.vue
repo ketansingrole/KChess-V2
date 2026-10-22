@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, onMounted, onUnmounted, watch as watchValue } from 'vue'
-import { useLocalStorage, useOnline } from '@vueuse/core'
+import { useOnline } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import TvPanel from '../components/watch/TvPanel.vue'
 import FriendsPanel from '../components/watch/FriendsPanel.vue'
@@ -16,7 +17,7 @@ const store = useKChessStore()
 const watcher = useWatchStore()
 const friends = useFriendsStore()
 const { onlinePhase } = storeToRefs(store)
-const tab = useLocalStorage<WatchTab>(WATCH_TAB_KEY, 'tv')
+const tab = useViewPreference<WatchTab>(WATCH_TAB_KEY, 'tv')
 const playingOwnGame = computed(
   () =>
     onlinePhase.value === 'playing' ||

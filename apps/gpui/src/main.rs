@@ -7,7 +7,9 @@ mod log;
 mod pages;
 mod power;
 mod profile;
+mod settings;
 mod shell;
+mod theme;
 
 use gpui_kit::*;
 use kchess_core::Level;
@@ -33,6 +35,7 @@ fn main() {
                 cx.quit();
                 return;
             }
+            settings::init(cx);
             cx.on_app_quit(|cx| {
                 let bridge = std::sync::Arc::clone(&cx.global::<core::AppCore>().bridge);
                 async move { bridge.close() }

@@ -336,6 +336,13 @@ const CORE: &[Row] = &[
         &[Valid("assertRepertoireKey"), Position],
     ),
     ("clearRepertoireMisses", 1, &[Valid("assertRepertoireKey")]),
+    ("viewPreferences", 0, &[]),
+    ("customThemes", 0, &[]),
+    (
+        "setViewPreference",
+        2,
+        &[Valid("assertViewPreferenceKey"), Any],
+    ),
 ];
 
 /// The desktop's own invocations (`IPC_CHANNELS` that are not core methods, and `saveSettings`,
@@ -367,7 +374,6 @@ const DESKTOP: &[Row] = &[
     ("openAppReleases", 0, &[]),
     ("chooseEngine", 0, &[]),
     ("notify", 1, &[Valid("assertNotification")]),
-    ("loadThemes", 0, &[]),
     ("openThemesFolder", 0, &[]),
     ("openNotificationSettings", 0, &[]),
     ("microphoneAccess", 1, &[Valid("assertBoolean")]),

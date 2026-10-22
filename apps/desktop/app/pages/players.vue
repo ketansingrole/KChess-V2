@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { RequestScope } from '@kchess/rules/requestScope'
-import { useLocalStorage, useOnline } from '@vueuse/core'
+import { useOnline } from '@vueuse/core'
 import type {
   Crosstable,
   LichessGame,
@@ -28,7 +29,7 @@ const replaceAnalysis = useReplaceAnalysis()
 const toast = useToast()
 
 const query = ref(typeof route.query.name === 'string' ? route.query.name : '')
-const recent = useLocalStorage<string[]>('kchess:players-recent', [])
+const recent = useViewPreference<string[]>('kchess:players-recent', [])
 /** Recent lookups first, then followed players, for one-click lookups. */
 const suggestions = computed(() => {
   const seen = new Set<string>()

@@ -1,5 +1,6 @@
+import { useViewPreference } from './useViewPreference'
 import { computed, type Ref } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import type { CommandPaletteGroup, CommandPaletteItem } from '@nuxt/ui'
 import { DEFAULT_ENGINE_LEVELS, engineLevelInfo } from '@kchess/rules/engineLevels'
 import { canPlayOnline, perfFor } from '@kchess/rules/timeControl'
@@ -104,9 +105,9 @@ export function useQuickPick(query: Ref<string>) {
   const local = () => useLocalGameStore()
   const analysis = () => useAnalysisStore()
   // The same keys the Puzzles and Practice pages remember their tab in.
-  const puzzleTab = useLocalStorage<PuzzleTab>('kchess:puzzle-tab', 'train')
-  const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
-  const recent = useLocalStorage<string[]>('kchess:palette-recent', [])
+  const puzzleTab = useViewPreference<PuzzleTab>('kchess:puzzle-tab', 'train')
+  const practiceTab = useViewPreference(PRACTICE_TAB_KEY, 'coordinates')
+  const recent = useViewPreference<string[]>('kchess:palette-recent', [])
 
   const close = (): void => {
     store.searchOpen = false

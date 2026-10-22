@@ -192,7 +192,7 @@ const api: DesktopApi = {
   usage: () => invoke('usage'),
   resetUsage: () => invoke('resetUsage'),
   notify: (request) => invoke('notify', request),
-  loadThemes: () => invoke('loadThemes'),
+  customThemes: () => invoke('customThemes'),
   openThemesFolder: () => invoke('openThemesFolder'),
   openNotificationSettings: () => invoke('openNotificationSettings'),
   microphoneAccess: (request) => invoke('microphoneAccess', request),
@@ -262,6 +262,8 @@ const api: DesktopApi = {
   joinedTournaments: () => invoke('joinedTournaments'),
   recordRepertoireMiss: (key, fen) => invoke('recordRepertoireMiss', key, fen),
   clearRepertoireMisses: (key) => invoke('clearRepertoireMisses', key),
+  viewPreferences: () => invoke('viewPreferences'),
+  setViewPreference: (key, value) => invoke('setViewPreference', key, value),
   exportVoiceHistory: () => invoke('exportVoiceHistory'),
   onOnlineError: (callback) => {
     const listener = (_: unknown, message: string): void => callback(message)

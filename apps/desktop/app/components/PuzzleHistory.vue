@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, onMounted, watch } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import { puzzleThemeText } from '../utils/puzzleThemes'
 import { formatCount } from '../utils/format'
 import {
@@ -28,7 +29,7 @@ onMounted(() => {
 })
 watch(account, () => void puzzles.loadActivity())
 
-const filter = useLocalStorage<PuzzleHistoryFilter>('kchess:puzzle-history-filter', 'all')
+const filter = useViewPreference<PuzzleHistoryFilter>('kchess:puzzle-history-filter', 'all')
 const allRows = computed(() => puzzleHistoryRows(history.value?.recent ?? [], activity.value))
 const rows = computed(() =>
   allRows.value

@@ -1,4 +1,4 @@
-import { StorageSerializers, useLocalStorage } from '@vueuse/core'
+import { readJson, useViewPreference } from './useViewPreference'
 import { useKChessStore } from '../stores/kchess'
 import type { OpeningChoice } from './useOpeningDrill'
 import {
@@ -11,10 +11,10 @@ import {
 /** Opens Practice → Repertoire on an opening, through the Practice page's own keys. */
 export function useTrainOpening(): (choice: OpeningChoice) => void {
   const store = useKChessStore()
-  const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
-  const repertoire = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
-  const drilled = useLocalStorage<OpeningChoice | null>(REPERTOIRE_OPENING_KEY, null, {
-    serializer: StorageSerializers.object,
+  const practiceTab = useViewPreference(PRACTICE_TAB_KEY, 'coordinates')
+  const repertoire = useViewPreference(REPERTOIRE_STUDY_KEY, '')
+  const drilled = useViewPreference<OpeningChoice | null>(REPERTOIRE_OPENING_KEY, null, {
+    legacy: readJson,
   })
   return (choice) => {
     drilled.value = { name: choice.name, moves: [...choice.moves] }
@@ -27,7 +27,7 @@ export function useTrainOpening(): (choice: OpeningChoice) => void {
 const RECENT_LIMIT = 6
 /** The openings opened most recently, newest first, one line per name. */
 export function useRecentOpenings() {
-  const recent = useLocalStorage<OpeningChoice[]>(RECENT_OPENINGS_KEY, [])
+  const recent = useViewPreference<OpeningChoice[]>(RECENT_OPENINGS_KEY, [])
   function remember(choice: OpeningChoice): void {
     const list = Array.isArray(recent.value) ? recent.value : []
     recent.value = [

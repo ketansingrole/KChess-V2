@@ -83,6 +83,8 @@ pub struct Core {
     pub(crate) requests: AtomicU64,
     /// This core's claim on its profile directory, released when it closes.
     pub(crate) claim: ProfileClaim,
+    /// The profile directory (`Config::data_dir`).
+    data_dir: PathBuf,
 }
 
 fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -226,7 +228,9 @@ impl Core {
             config.voice_helper_path.clone(),
             crate::voice::model_dir(&config.data_dir),
         );
+        let data_dir = config.data_dir.clone();
         Ok(Core {
+            data_dir,
             puzzles: PuzzleService::new(config, services_host),
             voice,
             host,
@@ -249,6 +253,11 @@ impl Core {
             requests: AtomicU64::new(0),
             claim,
         })
+    }
+
+    /// The profile directory this core owns.
+    pub(crate) fn data_dir(&self) -> PathBuf {
+        self.data_dir.clone()
     }
 
     /// Run one method: a facade method (`CoreApi`) or an internal service method. Unknown

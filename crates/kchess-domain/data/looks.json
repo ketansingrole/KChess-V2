@@ -1,0 +1,149 @@
+{
+  "boards": [
+    {
+      "id": "brown",
+      "name": "Brown",
+      "image": "brown.png",
+      "coordWhite": "#f0d9b5",
+      "coordBlack": "#946f51"
+    },
+    {
+      "id": "blue",
+      "name": "Blue",
+      "image": "blue.png",
+      "coordWhite": "#dee3e6",
+      "coordBlack": "#788a94"
+    },
+    {
+      "id": "blue2",
+      "name": "Blue 2",
+      "image": "blue2.jpg",
+      "coordWhite": "#97b2c7",
+      "coordBlack": "#546f82"
+    },
+    {
+      "id": "green",
+      "name": "Green",
+      "image": "green.png",
+      "coordWhite": "#ffffdd",
+      "coordBlack": "#6d8753"
+    },
+    {
+      "id": "green-plastic",
+      "name": "Green plastic",
+      "image": "green-plastic.png",
+      "coordWhite": "#f2f9bb",
+      "coordBlack": "#59935d"
+    },
+    {
+      "id": "purple",
+      "name": "Purple",
+      "image": "purple.png",
+      "coordWhite": "#9f90b0",
+      "coordBlack": "#7d4a8d"
+    },
+    {
+      "id": "purple-diag",
+      "name": "Purple diagonal",
+      "image": "purple-diag.png",
+      "coordWhite": "#e5daf0",
+      "coordBlack": "#957ab0"
+    },
+    {
+      "id": "ic",
+      "name": "IC",
+      "image": "ic.png",
+      "coordWhite": "#ececec",
+      "coordBlack": "#c1c18e"
+    },
+    {
+      "id": "wood",
+      "name": "Wood",
+      "image": "wood.jpg",
+      "coordWhite": "#d8a45b",
+      "coordBlack": "#9b4d0f"
+    },
+    {
+      "id": "maple",
+      "name": "Maple",
+      "image": "maple.jpg",
+      "coordWhite": "#e8ceab",
+      "coordBlack": "#bc7944"
+    },
+    {
+      "id": "grey",
+      "name": "Grey",
+      "image": "grey.jpg",
+      "coordWhite": "#b8b8b8",
+      "coordBlack": "#7d7d7d"
+    },
+    {
+      "id": "marble",
+      "name": "Marble",
+      "image": "marble.jpg",
+      "coordWhite": "#93ab91",
+      "coordBlack": "#4f644e"
+    },
+    {
+      "id": "leather",
+      "name": "Leather",
+      "image": "leather.jpg",
+      "coordWhite": "#d1d1c9",
+      "coordBlack": "#c28e16"
+    }
+  ],
+  "pieceSets": [
+    {
+      "id": "cburnett",
+      "name": "Cburnett"
+    },
+    {
+      "id": "merida",
+      "name": "Merida"
+    },
+    {
+      "id": "chessnut",
+      "name": "Chessnut"
+    },
+    {
+      "id": "pirouetti",
+      "name": "Pirouetti"
+    },
+    {
+      "id": "letter",
+      "name": "Letter"
+    },
+    {
+      "id": "mpchess",
+      "name": "MPChess"
+    },
+    {
+      "id": "fantasy",
+      "name": "Fantasy"
+    },
+    {
+      "id": "spatial",
+      "name": "Spatial"
+    },
+    {
+      "id": "celtic",
+      "name": "Celtic"
+    },
+    {
+      "id": "rhosgfx",
+      "name": "RhosGFX"
+    },
+    {
+      "id": "pixel",
+      "name": "Pixel"
+    }
+  ],
+  "defaultPieceSet": "cburnett",
+  "defaultBoard": "brown",
+  "animationMs": {
+    "none": 0,
+    "fast": 100,
+    "normal": 180,
+    "slow": 350
+  }
+}

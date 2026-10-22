@@ -4,6 +4,7 @@ use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 use serde_json::Value;
+use std::sync::Arc;
 
 impl Core {
     /// Answers the facade's system methods.
@@ -12,6 +13,12 @@ impl Core {
             "usage" => self.usage.report().await,
             "resetUsage" => self.usage.reset().await,
             "trustEnginePath" => self.call_sync(method, args.to_vec()),
+            "customThemes" => {
+                let (host, data_dir) = (Arc::clone(&self.host), self.data_dir());
+                tokio::task::spawn_blocking(move || crate::themes::custom_themes(&*host, &data_dir))
+                    .await
+                    .map_err(|_| CoreError::new("Custom themes could not be read."))?
+            }
             "voiceHistoryDocument" => {
                 self.database
                     .call_async("store.voiceLog.voiceHistoryDocument", &[])

@@ -84,7 +84,9 @@ fn parse(tag: u8, payload: &[u8]) -> Request {
         }
         b'A' if length.is_multiple_of(2) => Request::Audio(
             payload
-                .as_chunks::<2>().0.iter()
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                 .collect(),
         ),

@@ -87,12 +87,6 @@ impl CoreBridge {
         }
     }
 
-    /// Run a synchronous core method (storage).
-    pub fn call_sync(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
-        let _entered = self.runtime.enter();
-        self.core.call_sync(method, args)
-    }
-
     /// Cancel the core's work and release the profile, waiting at most a few seconds.
     pub fn close(&self) {
         let core = Arc::clone(&self.core);
@@ -112,7 +106,6 @@ impl CoreBridge {
 pub struct AppCore {
     pub bridge: Arc<CoreBridge>,
     pub events: Entity<CoreEvents>,
-    pub data_dir: Arc<PathBuf>,
 }
 
 impl Global for AppCore {}
@@ -139,7 +132,6 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     let core = AppCore {
         bridge: Arc::new(bridge),
         events: cx.new(|_| CoreEvents),
-        data_dir: Arc::new(data_dir),
     };
     cx.set_global(core.clone());
     cx.spawn(async move |cx| {

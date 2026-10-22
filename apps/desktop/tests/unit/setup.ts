@@ -5,6 +5,7 @@ import { usePuzzleStore } from '../../app/stores/puzzles'
 import { useUsageStore } from '../../app/stores/usage'
 import type { DesktopApi } from '../../contracts/types'
 import { detachedLibraryApi, resetLibrary } from './testLibrary'
+import { resetViewPreferences } from '../../app/composables/useViewPreference'
 // The renderer loads the rules as WebAssembly; tests use the same rules as a Node module
 // (crates/kchess-node/js/rules.ts installs them when it loads).
 import '@kchess/native/rules'
@@ -40,6 +41,7 @@ vi.mock('../../app/utils/sound', () => ({
 
 beforeEach(() => {
   localStorage.clear()
+  resetViewPreferences()
   resetLibrary()
   window.kchess = detachedLibraryApi() as unknown as DesktopApi
   setActivePinia(createPinia())

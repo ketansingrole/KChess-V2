@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useDebounceFn, useLocalStorage } from '@vueuse/core'
+import { useDebounceFn } from '@vueuse/core'
 import type {
   ExplorerGame,
   ExplorerSpeed,
@@ -37,7 +38,7 @@ const result = ref<PositionLookup | null>(null)
 const error = ref('')
 const busy = ref(false)
 /** Explorer preferences, remembered on this device like Lichess's explorer settings. */
-const prefs = useLocalStorage<{
+const prefs = useViewPreference<{
   kind: PositionLookupKind
   speeds: ExplorerSpeed[]
   ratings: number[]

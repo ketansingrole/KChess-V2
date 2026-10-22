@@ -1,4 +1,5 @@
 import { flushSavedDocuments, loadLibrary } from '../utils/library'
+import { flushViewPreferences } from '../composables/useViewPreference'
 
 declare global {
   interface Window {
@@ -14,7 +15,7 @@ export default defineNuxtPlugin(async () => {
   window.__kchessQuitDispose?.()
   window.__kchessQuitDispose = undefined
   window.__kchessQuitDispose = window.kchess?.onPrepareQuit((token) => {
-    void flushSavedDocuments()
+    void Promise.all([flushSavedDocuments(), flushViewPreferences()])
       .then(() => window.kchess?.completeQuit(token))
       .catch((cause) => {
         console.warn('[library] Preparing to quit failed:', cause)

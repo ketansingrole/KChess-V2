@@ -1,25 +1,18 @@
 import type { PieceAnimation } from '@kchess/contracts/types'
+import {
+  ANIMATION_MS,
+  DEFAULT_PIECE_SET as SHARED_DEFAULT_PIECE_SET,
+  PIECE_SETS,
+} from '@kchess/rules/looks'
 
 /**
  * Lichess piece sets whose licenses are compatible with this project's GPL-3.0-or-later
  * (see `apps/desktop/app/assets/ATTRIBUTION.md`). Each folder in `apps/desktop/app/assets/pieces` holds `wK.svg` … `bP.svg`.
  */
-export const pieceSets = [
-  { id: 'cburnett', name: 'Cburnett' },
-  { id: 'merida', name: 'Merida' },
-  { id: 'chessnut', name: 'Chessnut' },
-  { id: 'pirouetti', name: 'Pirouetti' },
-  { id: 'letter', name: 'Letter' },
-  { id: 'mpchess', name: 'MPChess' },
-  { id: 'fantasy', name: 'Fantasy' },
-  { id: 'spatial', name: 'Spatial' },
-  { id: 'celtic', name: 'Celtic' },
-  { id: 'rhosgfx', name: 'RhosGFX' },
-  { id: 'pixel', name: 'Pixel' },
-] as const
+export const pieceSets = PIECE_SETS
 
-export type PieceSet = (typeof pieceSets)[number]['id']
-export const DEFAULT_PIECE_SET: PieceSet = 'cburnett'
+export type PieceSet = string
+export const DEFAULT_PIECE_SET: PieceSet = SHARED_DEFAULT_PIECE_SET
 
 const urls = import.meta.glob<string>('../assets/pieces/*/*.svg', {
   eager: true,
@@ -45,12 +38,7 @@ export function pieceVars(id: string): Record<string, string> {
 }
 
 /** Slide time in milliseconds for each animation setting. */
-export const animationMs: Record<PieceAnimation, number> = {
-  none: 0,
-  fast: 100,
-  normal: 180,
-  slow: 350,
-}
+export const animationMs: Record<PieceAnimation, number> = ANIMATION_MS
 
 /** The image of one piece of a set (`color` w/b, `role` P N B R Q K), for drawing on a canvas. */
 export function pieceUrl(id: string, color: 'w' | 'b', role: (typeof ROLES)[number]): string {

@@ -1,6 +1,7 @@
+import { readJson, useViewPreference } from '../composables/useViewPreference'
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch, onScopeDispose } from 'vue'
-import { StorageSerializers, useLocalStorage, useOnline } from '@vueuse/core'
+import { useOnline } from '@vueuse/core'
 import { pickConnectedAccount } from '@kchess/rules/accounts'
 import type {
   LichessRatingHistory,
@@ -32,17 +33,17 @@ const message = (cause: unknown): string => (cause instanceof Error ? cause.mess
 export const usePuzzleStore = defineStore('puzzles', () => {
   const kchess = useKChessStore()
 
-  const tab = useLocalStorage<PuzzleTab>('kchess:puzzle-tab', 'train')
-  const angle = useLocalStorage('kchess:puzzle-angle', 'mix')
-  const difficulty = useLocalStorage<PuzzleDifficulty>('kchess:puzzle-difficulty', 'normal')
-  const color = useLocalStorage<'random' | 'white' | 'black'>('kchess:puzzle-color', 'random')
+  const tab = useViewPreference<PuzzleTab>('kchess:puzzle-tab', 'train')
+  const angle = useViewPreference('kchess:puzzle-angle', 'mix')
+  const difficulty = useViewPreference<PuzzleDifficulty>('kchess:puzzle-difficulty', 'normal')
+  const color = useViewPreference<'random' | 'white' | 'black'>('kchess:puzzle-color', 'random')
   const online = useOnline()
   // Remember explicit choices; new users start with account-free training.
-  const mode = useLocalStorage<TrainMode>(
+  const mode = useViewPreference<TrainMode>(
     'kchess:puzzle-mode',
     online.value ? 'practice' : 'offline',
   )
-  const accountPreference = useLocalStorage('kchess:puzzle-account', '')
+  const accountPreference = useViewPreference('kchess:puzzle-account', '')
 
   const account = computed(
     () => pickConnectedAccount(kchess.data.accounts, accountPreference.value)?.username ?? '',
@@ -97,10 +98,10 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     tab.value = 'train'
   }
   /** The opening an opening page asked for puzzles of: its key is the angle while it is chosen. */
-  const openingAngle = useLocalStorage<{ key: string; name: string } | null>(
+  const openingAngle = useViewPreference<{ key: string; name: string } | null>(
     'kchess:puzzle-opening',
     null,
-    { serializer: StorageSerializers.object },
+    { legacy: readJson },
   )
   /** Puzzles from one opening: from Lichess when online, else from the downloaded database. */
   function startOpening(key: string, name: string): void {
@@ -166,7 +167,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const profile = ref<LichessUser | null>(null)
   const ratingHistory = ref<LichessRatingHistory>([])
   const dashboard = ref<PuzzleDashboard | null>(null)
-  const dashboardDays = useLocalStorage('kchess:puzzle-dashboard-days', 30)
+  const dashboardDays = useViewPreference('kchess:puzzle-dashboard-days', 30)
   const storm = ref<StormDashboard | null>(null)
   const stats = ref({ loading: false, error: '', needsReconnect: false, account: '' })
   let statsToken = 0

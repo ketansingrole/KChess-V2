@@ -1,3 +1,4 @@
+import { useViewPreference } from '../composables/useViewPreference'
 import { defineStore } from 'pinia'
 import {
   computed,
@@ -9,7 +10,7 @@ import {
   type EffectScope,
 } from 'vue'
 import { initialLibrary, persistSession, registerPersistenceFlush } from '../utils/library'
-import { useLocalStorage } from '@vueuse/core'
+
 import type { Color } from '@lichess-org/chessground/types'
 import type {
   AnalysisUpdate,
@@ -121,12 +122,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const editor = ref<EditorSetup>(structuredClone(START_SETUP))
   const editorOrientation = ref<Color>('white')
 
-  const engineOn = useLocalStorage('kchess:analysis-engine', true)
-  const engineLines = useLocalStorage('kchess:analysis-lines', 3)
-  const infinite = useLocalStorage('kchess:analysis-infinite', false)
-  const showArrows = useLocalStorage('kchess:analysis-arrows', true)
+  const engineOn = useViewPreference('kchess:analysis-engine', true)
+  const engineLines = useViewPreference('kchess:analysis-lines', 3)
+  const infinite = useViewPreference('kchess:analysis-infinite', false)
+  const showArrows = useViewPreference('kchess:analysis-arrows', true)
   /** The tool shown under the engine lines. */
-  const tool = useLocalStorage<'moves' | 'review' | 'explorer'>('kchess:analysis-tool', 'moves')
+  const tool = useViewPreference<'moves' | 'review' | 'explorer'>('kchess:analysis-tool', 'moves')
 
   const nodes = computed(() => nodesAlong(root.value, path.value))
   const node = computed(() => {

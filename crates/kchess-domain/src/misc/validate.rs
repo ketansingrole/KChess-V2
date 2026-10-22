@@ -1972,6 +1972,21 @@ fn assert_repertoire_key(value: J) -> Checked<String> {
     Ok(key)
 }
 
+/// A view preference's name: `kchess:` and lowercase letters, digits, `-` and `:`, as the Electron
+/// renderer named its `localStorage` keys; at most 100 characters.
+fn assert_view_preference_key(value: J) -> Checked<String> {
+    let key: String = decode(value, plain)?;
+    let valid = key.len() <= 100
+        && key.strip_prefix("kchess:").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b':')
+        });
+    ensure(valid, None, "", || "a view preference name".into())?;
+    Ok(key)
+}
+
 fn assert_session_kind(value: J) -> Checked<String> {
     picked(value, SESSION_KINDS, None)
 }
@@ -2143,6 +2158,7 @@ validators! {
     "assertStudyCommandShape" => assert_study_command_shape,
     "assertLibraryId" => assert_library_id,
     "assertRepertoireKey" => assert_repertoire_key,
+    "assertViewPreferenceKey" => assert_view_preference_key,
     "assertSessionKind" => assert_session_kind,
     "assertSide" => assert_side,
     "assertLegacyDocuments" => assert_legacy_documents,

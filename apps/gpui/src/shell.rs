@@ -12,6 +12,7 @@ use gpui_kit::*;
 use crate::assets::icon;
 
 use crate::pages::{Page, Pages};
+use crate::settings::{SettingsChanged, SettingsHandle};
 
 /// The window's height above the page; matches `--topbar-height`.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
@@ -40,13 +41,25 @@ fn nav() -> [(Page, &'static str, Icon); 16] {
 pub struct Workspace {
     sidebar_open: bool,
     pages: Pages,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Workspace {
+        crate::theme::apply(window, cx);
+        let settings = cx.global::<SettingsHandle>().0.clone();
+        let subscriptions = vec![
+            cx.observe_window_appearance(window, |_, window, cx| crate::theme::apply(window, cx)),
+            cx.subscribe_in(
+                &settings,
+                window,
+                |_, _, _: &SettingsChanged, window, cx| crate::theme::apply(window, cx),
+            ),
+        ];
         Workspace {
             sidebar_open: true,
             pages: Pages::new(window, cx),
+            _subscriptions: subscriptions,
         }
     }
 

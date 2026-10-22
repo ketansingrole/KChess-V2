@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, ref } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useAnalysisStore } from '../stores/analysis'
 import { useStudyStore, type SavedStudy } from '../stores/studies'
@@ -18,7 +19,7 @@ const analysis = useAnalysisStore()
 const library = useStudyStore()
 const toast = useToast()
 
-const tab = useLocalStorage('kchess:studies-tab', 'device')
+const tab = useViewPreference('kchess:studies-tab', 'device')
 const tabs = computed(() => [
   {
     label: `On this device · ${library.items.length}`,
@@ -30,7 +31,7 @@ const tabs = computed(() => [
 
 /* ── Browsing ── */
 const query = ref('')
-const sort = useLocalStorage<'recent' | 'name'>('kchess:studies-sort', 'recent')
+const sort = useViewPreference<'recent' | 'name'>('kchess:studies-sort', 'recent')
 const sorts = [
   { label: 'Recently edited', value: 'recent' },
   { label: 'Name', value: 'name' },
@@ -127,8 +128,8 @@ async function copyPgn(study: SavedStudy): Promise<void> {
   }
 }
 // The Practice page's own keys: open its repertoire drill on this study.
-const practiceTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
-const repertoire = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
+const practiceTab = useViewPreference(PRACTICE_TAB_KEY, 'coordinates')
+const repertoire = useViewPreference(REPERTOIRE_STUDY_KEY, '')
 function drill(study: SavedStudy): void {
   repertoire.value = study.id
   practiceTab.value = 'openings'

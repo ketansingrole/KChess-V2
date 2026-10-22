@@ -1,6 +1,11 @@
+import {
+  flushViewPreferences,
+  forgetViewPreference,
+  useViewPreference,
+} from '../composables/useViewPreference'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { useLocalStorage, useMediaQuery } from '@vueuse/core'
+import { useMediaQuery } from '@vueuse/core'
 import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
 import { pickConnectedAccount } from '@kchess/rules/accounts'
 import { nearestEngineLevel } from '@kchess/rules/engineLevels'
@@ -117,7 +122,7 @@ export const useKChessStore = defineStore('kchess', () => {
   })
   const settingsSection = ref<SettingsSection>('appearance')
   const usage = useUsageStore()
-  const sidebarOpen = useLocalStorage('kchess:sidebar-open', true)
+  const sidebarOpen = useViewPreference('kchess:sidebar-open', true)
   const isNarrow = useMediaQuery('(max-width: 1023px)')
   const searchOpen = ref(false)
   const toast = useToast()
@@ -450,7 +455,7 @@ export const useKChessStore = defineStore('kchess', () => {
   const trackedAccounts = computed(() => data.value?.accounts.filter((a) => !a.connected) ?? [])
   // The connected account that plays online games (remembered on this device). Falls back
   // to the first connected account when the remembered one was disconnected.
-  const onlineAccountPreference = useLocalStorage('kchess:online-account', '')
+  const onlineAccountPreference = useViewPreference('kchess:online-account', '')
   const activeOnlineAccount = computed(
     () =>
       pickConnectedAccount(data.value?.accounts ?? [], onlineAccountPreference.value)?.username ??
@@ -578,18 +583,16 @@ export const useKChessStore = defineStore('kchess', () => {
     onlineAccountPreference.value = result.accounts.find((a) => a.connected)?.username ?? ''
     selectedAccount.value = onlineAccountPreference.value
     reviewGame.value = null
-    const puzzleAccount = localStorage
-      .getItem('kchess:puzzle-account')
-      ?.replaceAll('"', '')
-      .toLowerCase()
+    const puzzleAccount = useViewPreference('kchess:puzzle-account', '').value.toLowerCase()
     if (!account || puzzleAccount === account.toLowerCase())
-      localStorage.removeItem('kchess:puzzle-account')
+      forgetViewPreference('kchess:puzzle-account')
     if (!result.accounts.some((a) => a.connected)) {
-      localStorage.removeItem('kchess:puzzle-mode')
-      localStorage.removeItem('kchess:puzzle-tab')
+      forgetViewPreference('kchess:puzzle-mode')
+      forgetViewPreference('kchess:puzzle-tab')
     }
     // Recreate renderer stores so account-only caches and pending requests cannot survive logout.
     // The main process saves pending documents first; signing out never discards them.
+    await flushViewPreferences()
     await navigateTo('/')
     await window.kchess.reloadWindow()
   }
@@ -677,7 +680,7 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   async function reloadThemes(): Promise<void> {
     try {
-      const report = await window.kchess.loadThemes()
+      const report = await window.kchess.customThemes()
       customThemes.value = report.themes
       themeProblems.value = report.problems
       themesDir.value = report.dir

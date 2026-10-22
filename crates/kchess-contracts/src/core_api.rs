@@ -689,6 +689,24 @@ pub fn methods() -> Vec<Method> {
             vec![req("key", string)],
             "RepertoireMisses",
         ),
+        method(
+            "customThemes",
+            "The user's own app themes from the profile's themes folder, with a line per file that could not be used.",
+            vec![],
+            t::<CustomThemeReport>(),
+        ),
+        method(
+            "viewPreferences",
+            "How each page was last left (tabs, filters, toggles), by `kchess:` preference name.",
+            vec![],
+            "Record<string, unknown>",
+        ),
+        method(
+            "setViewPreference",
+            "Remember a view preference for every KChess app on this profile; null forgets it.",
+            vec![req("key", string), req("value", "unknown")],
+            void,
+        ),
     ]
 }
 

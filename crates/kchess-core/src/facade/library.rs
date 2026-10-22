@@ -100,6 +100,17 @@ impl Core {
                     .call_async("store.library.clearRepertoireMisses", &[key])
                     .await
             }
+            "viewPreferences" => {
+                self.database
+                    .call_async("store.viewPreferences.all", &[])
+                    .await
+            }
+            "setViewPreference" => {
+                let key = normal("assertViewPreferenceKey", &arg(args, 0))?;
+                self.database
+                    .call_async("store.viewPreferences.set", &[key, arg(args, 1)])
+                    .await
+            }
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
     }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../../composables/useViewPreference'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useDocumentVisibility, useIntervalFn, useLocalStorage } from '@vueuse/core'
+import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
@@ -130,12 +131,12 @@ const gameFen = computed(() =>
 )
 const gameOrientation = ref<'white' | 'black'>('white')
 const broadcastRetry = ref(0)
-const broadcastEngineOn = useLocalStorage('kchess:broadcast-engine', false)
-const broadcastEngineLines = useLocalStorage('kchess:broadcast-engine-lines', 3)
-const broadcastInfinite = useLocalStorage('kchess:broadcast-engine-infinite', false)
-const broadcastArrows = useLocalStorage('kchess:broadcast-engine-arrows', true)
-const broadcastBar = useLocalStorage('kchess:broadcast-engine-bar', true)
-const gridEvaluations = useLocalStorage('kchess:broadcast-grid-evaluations', true)
+const broadcastEngineOn = useViewPreference('kchess:broadcast-engine', false)
+const broadcastEngineLines = useViewPreference('kchess:broadcast-engine-lines', 3)
+const broadcastInfinite = useViewPreference('kchess:broadcast-engine-infinite', false)
+const broadcastArrows = useViewPreference('kchess:broadcast-engine-arrows', true)
+const broadcastBar = useViewPreference('kchess:broadcast-engine-bar', true)
+const gridEvaluations = useViewPreference('kchess:broadcast-grid-evaluations', true)
 const visibility = useDocumentVisibility()
 const broadcastAssistance = computed(
   () => !['playing', 'seeking', 'disconnected'].includes(onlinePhase.value),

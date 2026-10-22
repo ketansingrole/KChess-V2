@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import type { RunSaved, RunSummary, VoiceOutcome } from '@kchess/contracts/types'
@@ -40,13 +41,13 @@ const starting = ref(false)
 const runEpoch = ref(0)
 const question = ref(0)
 const side = ref<'white' | 'black' | 'random'>('white')
-const showCoordinates = useLocalStorage('kchess:coordinates-show', false)
-const onSquares = useLocalStorage('kchess:coordinates-on-squares', false)
-const showPieces = useLocalStorage('kchess:coordinates-pieces', false)
+const showCoordinates = useViewPreference('kchess:coordinates-show', false)
+const onSquares = useViewPreference('kchess:coordinates-on-squares', false)
+const showPieces = useViewPreference('kchess:coordinates-pieces', false)
 /** Practice only some files and ranks; such runs are not records. */
-const limited = useLocalStorage('kchess:coordinates-limited', false)
-const storedFiles = useLocalStorage<string[]>('kchess:coordinates-files', [...FILES])
-const storedRanks = useLocalStorage<string[]>('kchess:coordinates-ranks', [...RANKS])
+const limited = useViewPreference('kchess:coordinates-limited', false)
+const storedFiles = useViewPreference<string[]>('kchess:coordinates-files', [...FILES])
+const storedRanks = useViewPreference<string[]>('kchess:coordinates-ranks', [...RANKS])
 /** The stored choice, in board order; all of them when nothing valid was stored. */
 function chosen<T extends string>(all: readonly T[], stored: unknown): T[] {
   const list = all.filter((item) => Array.isArray(stored) && stored.includes(item))

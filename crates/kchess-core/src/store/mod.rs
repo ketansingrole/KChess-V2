@@ -17,6 +17,7 @@ pub mod reviews;
 pub mod runs;
 pub mod studies;
 pub mod usage;
+pub mod view_preferences;
 pub mod voice_log;
 
 use rusqlite::Connection;
@@ -311,7 +312,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         "store.debug.query" if debug::enabled() => return debug::query(ctx.db, args),
         _ => {}
     }
-    let modules: [Dispatch; 9] = [
+    let modules: [Dispatch; 10] = [
         migrations::call,
         games::call,
         library::call,
@@ -321,6 +322,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         usage::call,
         voice_log::call,
         lookups::call,
+        view_preferences::call,
     ];
     modules
         .iter()

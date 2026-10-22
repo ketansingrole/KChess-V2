@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { useGameArchiveStore } from '../stores/gameArchive'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useZenSurface } from '../composables/useZenSurface'
-import { useLocalStorage } from '@vueuse/core'
+
 import { INITIAL_FEN, opposite } from '@kchess/rules/position'
 import {
   VARIANT_HINTS,
@@ -28,15 +29,18 @@ const game = useLocalGameStore()
 const analysis = useAnalysisStore()
 const { settings } = storeToRefs(store)
 const route = useRoute()
-const mode = useLocalStorage<'board' | 'clock'>('kchess:local-mode', 'board')
+const mode = useViewPreference<'board' | 'clock'>('kchess:local-mode', 'board')
 const modeItems = [
   { label: 'Shared board', value: 'board', icon: 'i-lucide-users-round' },
   { label: 'Chess clock', value: 'clock', icon: 'i-lucide-timer' },
 ]
 // The chess clock has no board, so no zen toggle: zen mode is for the board.
 useZenSurface(() => mode.value === 'board')
-const clockLayout = useLocalStorage<'horizontal' | 'vertical'>('kchess:clock-layout', 'horizontal')
-const clockRotation = useLocalStorage('kchess:clock-rotation', { top: 0, bottom: 0 })
+const clockLayout = useViewPreference<'horizontal' | 'vertical'>(
+  'kchess:clock-layout',
+  'horizontal',
+)
+const clockRotation = useViewPreference('kchess:clock-rotation', { top: 0, bottom: 0 })
 const clockSides = ['top', 'bottom'] as const
 const clockLayoutItems = [
   { label: 'Side by side', value: 'horizontal' },

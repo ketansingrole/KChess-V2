@@ -1,13 +1,13 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, nextTick, ref, watch } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
 
 /** The game chat, docked at the bottom right like a messenger window so it never pushes the game around. */
 const store = useKChessStore()
 const { chat, onlinePhase, onlineId } = storeToRefs(store)
 
-const open = useLocalStorage('kchess:chat-open', false)
-const showSpectators = useLocalStorage('kchess:chat-spectators', false)
+const open = useViewPreference('kchess:chat-open', false)
+const showSpectators = useViewPreference('kchess:chat-spectators', false)
 const draft = ref('')
 const log = ref<HTMLElement | null>(null)
 /** Lichess's own quick messages. */

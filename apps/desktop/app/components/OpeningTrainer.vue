@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { readJson, useViewPreference } from '../composables/useViewPreference'
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { StorageSerializers, useLocalStorage } from '@vueuse/core'
+
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { commentText, treeFromPgn, treeToPgn, type TreeNode } from '@kchess/rules/analysisTree'
@@ -25,11 +26,11 @@ const library = useStudyStore()
 const toast = useToast()
 /** The repertoire's value when it is the opening below rather than a study. */
 const OPENING = 'opening'
-const studyId = useLocalStorage(REPERTOIRE_STUDY_KEY, '')
-const opening = useLocalStorage<OpeningChoice | null>(REPERTOIRE_OPENING_KEY, null, {
-  serializer: StorageSerializers.object,
+const studyId = useViewPreference(REPERTOIRE_STUDY_KEY, '')
+const opening = useViewPreference<OpeningChoice | null>(REPERTOIRE_OPENING_KEY, null, {
+  legacy: readJson,
 })
-const color = useLocalStorage<'white' | 'black'>('kchess:repertoire-color', 'white')
+const color = useViewPreference<'white' | 'black'>('kchess:repertoire-color', 'white')
 const stats = ref({ lines: 0, correct: 0, wrong: 0 })
 // The board (and its zen toggle) shows once there is a study or an opening to train from.
 useZenSurface(() => library.items.length > 0 || !!opening.value)
@@ -44,7 +45,7 @@ const {
 )
 
 const ALL_CHAPTERS = 'all'
-const chapterId = useLocalStorage('kchess:repertoire-chapter', ALL_CHAPTERS)
+const chapterId = useViewPreference('kchess:repertoire-chapter', ALL_CHAPTERS)
 
 const study = computed(() => library.items.find((item) => item.id === studyId.value))
 const chapter = computed(() => study.value?.chapters.find((c) => c.id === chapterId.value))

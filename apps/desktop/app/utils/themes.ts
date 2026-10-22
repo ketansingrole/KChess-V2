@@ -5,7 +5,7 @@ import type {
   OAuthPageLook,
   ThemePalette,
 } from '@kchess/contracts/types'
-import { presetThemes } from './themePresets'
+import { presetThemes, themeColors } from '@kchess/rules/themes'
 
 export const DEFAULT_THEME_ID = 'kchess'
 
@@ -29,42 +29,9 @@ export function paletteFor(theme: AppTheme, dark: boolean): ThemePalette | undef
   return dark ? (theme.dark ?? theme.light) : (theme.light ?? theme.dark)
 }
 
-const mix = (a: string, share: number, b: string): string =>
-  `color-mix(in srgb, ${a} ${share}%, ${b})`
-
 /** Nuxt UI's color variables for a palette; colors left out are derived from `bg`, `text` and `primary`. */
 export function themeVars(p: ThemePalette, dark: boolean): Record<string, string> {
-  const muted = p.muted ?? mix(p.bg, 95, p.text)
-  const elevated = p.elevated ?? mix(p.bg, 91, p.text)
-  const accented = p.accented ?? mix(p.bg, 84, p.text)
-  const border = p.border ?? mix(p.bg, 82, p.text)
-  const textMuted = p.textMuted ?? mix(p.text, 62, p.bg)
-  const success = p.success ?? (dark ? '#62b57a' : '#246b37')
-  const error = p.error ?? (dark ? '#e07979' : '#b4232c')
-  return {
-    '--ui-bg': p.bg,
-    '--ui-bg-muted': muted,
-    '--ui-bg-elevated': elevated,
-    '--ui-bg-accented': accented,
-    '--ui-bg-inverted': p.text,
-    '--ui-border': border,
-    '--ui-border-muted': mix(border, 55, p.bg),
-    '--ui-border-accented': mix(border, 65, p.text),
-    '--ui-border-inverted': p.text,
-    '--ui-text': p.text,
-    '--ui-text-highlighted': p.text,
-    '--ui-text-toned': mix(p.text, 80, textMuted),
-    '--ui-text-muted': textMuted,
-    '--ui-text-dimmed': mix(textMuted, 60, p.bg),
-    '--ui-text-inverted': p.bg,
-    '--ui-primary': p.primary,
-    '--ui-success': success,
-    '--ui-warning': p.warning ?? (dark ? '#e0b25c' : '#b8862b'),
-    '--ui-error': error,
-    '--ui-info': p.info ?? (dark ? '#6cb6ff' : '#2f7fd0'),
-    '--ui-win': success,
-    '--ui-loss': error,
-  }
+  return themeColors(p, dark)
 }
 
 /** What the default look resembles, for the picker's preview only (the stylesheet supplies the real colors). */
@@ -122,12 +89,15 @@ export function oauthPageLook(
   return { appearance, light: colors(lightTheme, false), dark: colors(darkTheme, true) }
 }
 
-const VAR_NAMES = Object.keys(themeVars({ bg: '#000', text: '#fff', primary: '#888' }, true))
+let varNames: string[] | undefined
+/** Every variable a theme sets, asked of the rules once they have loaded (not at import). */
+const themeVarNames = (): string[] =>
+  (varNames ??= Object.keys(themeVars({ bg: '#000', text: '#fff', primary: '#888' }, true)))
 
 /** Paint the whole app; the default theme just removes what an earlier one set. */
 export function applyTheme(root: HTMLElement, theme: AppTheme, dark: boolean): void {
   const palette = paletteFor(theme, dark)
-  for (const name of VAR_NAMES) root.style.removeProperty(name)
+  for (const name of themeVarNames()) root.style.removeProperty(name)
   if (!palette) return
   for (const [name, value] of Object.entries(themeVars(palette, dark)))
     root.style.setProperty(name, value)

@@ -1,5 +1,6 @@
+import { useViewPreference } from './useViewPreference'
 import { computed, ref } from 'vue'
-import { useIntervalFn, useLocalStorage } from '@vueuse/core'
+import { useIntervalFn } from '@vueuse/core'
 import { formatRunClock } from '@kchess/rules/rush'
 import { useCountdown } from '../utils/countdown'
 
@@ -18,7 +19,7 @@ export const RUN_LENGTHS = [
  * original length keeps the original record name, so earlier bests still count.
  */
 export function useRunLength(storageKey: string, defaultSeconds: number, onEnd: () => void) {
-  const length = useLocalStorage(storageKey, defaultSeconds)
+  const length = useViewPreference(storageKey, defaultSeconds)
   const untimed = computed(() => length.value === 0)
   /** Whether the run on screen (or just ended) was untimed, whatever is chosen since. */
   const runUntimed = ref(false)

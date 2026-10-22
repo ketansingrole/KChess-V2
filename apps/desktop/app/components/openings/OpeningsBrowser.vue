@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../../composables/useViewPreference'
 import { computed, ref } from 'vue'
-import { refDebounced, useLocalStorage } from '@vueuse/core'
+import { refDebounced } from '@vueuse/core'
 import { sanHistory } from '@kchess/rules/chess'
 import { openingAt, openingTree, type OpeningNode } from '@kchess/rules/openings'
 import { Position } from '@kchess/rules/position'
@@ -105,7 +106,7 @@ function groupOf(node: OpeningNode): string {
   const move = firstMove(node)
   return GROUPS.find((group) => move && group.first.includes(move))?.value ?? 'other'
 }
-const group = useLocalStorage(OPENINGS_GROUP_KEY, 'e4')
+const group = useViewPreference(OPENINGS_GROUP_KEY, 'e4')
 const families = computed(() => tree.filter((node) => groupOf(node) === group.value))
 
 function open(item: OpeningEntry): void {

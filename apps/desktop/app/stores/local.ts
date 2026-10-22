@@ -1,6 +1,7 @@
+import { useViewPreference } from '../composables/useViewPreference'
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, toRefs, watch } from 'vue'
-import { useIntervalFn, useLocalStorage } from '@vueuse/core'
+import { useIntervalFn } from '@vueuse/core'
 import { INITIAL_FEN, opposite } from '@kchess/rules/position'
 import { formatClock } from '@kchess/rules/clock'
 import { initialLibrary, persistSession } from '../utils/library'
@@ -35,7 +36,7 @@ export const useLocalGameStore = defineStore('local', () => {
   )
   const ply = ref<number | null>(null)
   /** Turn the board towards whoever is to move. */
-  const autoFlipOn = useLocalStorage('kchess:local-autoflip', false)
+  const autoFlipOn = useViewPreference('kchess:local-autoflip', false)
   const autoFlip = computed({
     get: () => autoFlipOn.value,
     // Switching the automatic turning off leaves the board facing the way it is now.

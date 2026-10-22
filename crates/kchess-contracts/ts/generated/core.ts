@@ -2,7 +2,7 @@
 // Do not edit: change the Rust contract types and run `pnpm run build:native`.
 
 import type { ArchivedGame, JoinedTournament, LegacyDocuments, LibrarySnapshot, MistakeExercise, MistakeGame, RepertoireMisses, SessionDocuments, SessionKind, StudyCommand, StudyCommandResult } from './library'
-import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
+import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, CustomThemeReport, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
 
 export type CoreEvents = { "online:state": OnlineConnection, "online:event": OnlineEvent, "online:error": string, "puzzledb:progress": PuzzleDbProgress, "engine:analysis": AnalysisUpdate, "review:update": ReviewUpdate, "review:status": ReviewStatus, "challenges:update": Array<ChallengeInfo>, "online:lobby": LobbyState, "online:ongoing-changed": null, "watch:state": WatchState, "watch:frame": WatchFrame, "watch:broadcast": BroadcastUpdate, 
 /**
@@ -314,6 +314,18 @@ export interface CoreApi {
   joinedTournaments(): Promise<JoinedTournament[]>
   recordRepertoireMiss(key: string, fen: string): Promise<RepertoireMisses>
   clearRepertoireMisses(key: string): Promise<RepertoireMisses>
+  /**
+   * The user's own app themes from the profile's themes folder, with a line per file that could not be used.
+   */
+  customThemes(): Promise<CustomThemeReport>
+  /**
+   * How each page was last left (tabs, filters, toggles), by `kchess:` preference name.
+   */
+  viewPreferences(): Promise<Record<string, unknown>>
+  /**
+   * Remember a view preference for every KChess app on this profile; null forgets it.
+   */
+  setViewPreference(key: string, value: unknown): Promise<void>
 }
 
 export type CoreMethod = keyof CoreApi;
@@ -429,4 +441,7 @@ export const CORE_METHODS: CoreMethod[] = [
   'joinedTournaments',
   'recordRepertoireMiss',
   'clearRepertoireMisses',
+  'customThemes',
+  'viewPreferences',
+  'setViewPreference',
 ]

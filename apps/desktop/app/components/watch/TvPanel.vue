@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../../composables/useViewPreference'
 import { computed, onMounted, watch } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import type { Key } from '@lichess-org/chessground/types'
 import type { TvPastGame } from '@kchess/contracts/types'
 import { CHANNEL_ICONS, useTvPosition } from '../../composables/useTvPosition'
@@ -18,7 +19,7 @@ const tv = useTvPosition()
 const { frame, label, openPast } = tv
 
 /* ── Channels ─────────────────────────────────────────────────────────── */
-const lastChannel = useLocalStorage('kchess:watch-channel', 'best')
+const lastChannel = useViewPreference('kchess:watch-channel', 'best')
 function watchChannel(key: string): void {
   lastChannel.value = key
   void watcher.watch({ channel: key })

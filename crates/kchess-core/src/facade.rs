@@ -149,6 +149,9 @@ pub const FACADE_METHODS: &[&str] = &[
     "joinedTournaments",
     "recordRepertoireMiss",
     "clearRepertoireMisses",
+    "viewPreferences",
+    "setViewPreference",
+    "customThemes",
     "settings",
     "desktopSettings",
     "saveDesktopSettings",
@@ -633,10 +636,15 @@ impl Core {
             | "saveSession"
             | "joinedTournaments"
             | "recordRepertoireMiss"
-            | "clearRepertoireMisses" => self.run_library(method, args).await,
-            "usage" | "resetUsage" | "trustEnginePath" | "voiceHistoryDocument" | "suspend" => {
-                self.run_system(method, args).await
-            }
+            | "clearRepertoireMisses"
+            | "viewPreferences"
+            | "setViewPreference" => self.run_library(method, args).await,
+            "usage"
+            | "resetUsage"
+            | "trustEnginePath"
+            | "voiceHistoryDocument"
+            | "suspend"
+            | "customThemes" => self.run_system(method, args).await,
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
     }

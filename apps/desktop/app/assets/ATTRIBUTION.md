@@ -18,7 +18,7 @@ Lichess's standard `Check`/`Checkmate` clips are silence (they are symlinks to
 `Silence.mp3` in lila), so this app ships the move, capture, low-time and
 generic notification clips only.
 
-## App color themes — `apps/desktop/app/utils/themePresets.ts`
+## App color themes — `crates/kchess-domain/data/themes.json`
 
 Source: the built-in themes of [OpenChamber](https://github.com/openchamber/openchamber)
 (`packages/ui/src/lib/theme/themes`), MIT licensed. Only the colors this app uses were kept,

@@ -29,7 +29,6 @@ import { setupAppUpdates, APP_RELEASES_URL } from './setupAppUpdates'
 import type { AppUpdates } from './appUpdates'
 import { setupDiagnostics, exportDiagnostics } from './diagnostics'
 import { notify } from './notify'
-import { loadCustomThemes, themesDir } from './themes'
 import {
   createKChessCore,
   CORE_METHODS,
@@ -578,11 +577,11 @@ void app
         service.desktopSettings,
       ),
     )
-    handle('loadThemes', () => loadCustomThemes())
     handle('openThemesFolder', async () => {
-      await loadCustomThemes() // makes sure the folder exists
+      // Reading the themes makes sure the folder exists.
+      const { dir } = await service.customThemes()
       // openPath reports failure as a message rather than a rejection.
-      const problem = await shell.openPath(themesDir())
+      const problem = await shell.openPath(dir)
       if (problem) throw new Error(`Could not open the themes folder: ${problem}`)
     })
     handle('openNotificationSettings', async () => {

@@ -5,7 +5,6 @@ import type {
   BroadcastUpdate,
   ChallengeInfo,
   CoreApi,
-  CustomThemeReport,
   ExportRequest,
   LobbyState,
   MicrophoneAccess,
@@ -85,7 +84,6 @@ export interface DesktopApi extends CoreApi {
   /** Show a desktop notification if Settings allow it for this kind and the window's state. */
   notify(request: NotificationRequest): Promise<NotificationResult>
   /** Custom themes from the themes folder (created on first use). */
-  loadThemes(): Promise<CustomThemeReport>
   openThemesFolder(): Promise<void>
   /** Open the operating system's notification settings (macOS and Windows); false where unsupported. */
   openNotificationSettings(): Promise<boolean>

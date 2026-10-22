@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed, onMounted, ref } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import type { RunSummary } from '@kchess/contracts/types'
 import { ENDGAME_DRILLS } from '@kchess/rules/endgames'
 import { COURSE_GROUPS, LESSON_COURSES, courseProgress } from '@kchess/rules/lessons'
@@ -10,7 +11,7 @@ import EndgameDrills from './EndgameDrills.vue'
 import EndgameLesson from './EndgameLesson.vue'
 
 /** Practice → Endgames: the checkmate and endgame courses, and the drills against Stockfish. */
-const view = useLocalStorage(ENDGAME_VIEW_KEY, 'courses')
+const view = useViewPreference(ENDGAME_VIEW_KEY, 'courses')
 const lessons = ref<RunSummary | null>(null)
 const drills = ref<RunSummary | null>(null)
 const course = computed(() => LESSON_COURSES.find((entry) => entry.id === view.value))

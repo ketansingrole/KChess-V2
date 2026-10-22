@@ -80,7 +80,7 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
       canDownload: false,
       managed: { installed: false, path: '' },
     }),
-    loadThemes: async () => ({ themes: [], problems: [], dir: '' }),
+    customThemes: async () => ({ themes: [], problems: [], dir: '' }),
     onOnlineEvent: (fn: (event: OnlineEvent) => void) => {
       onEvent = fn
       return vi.fn()

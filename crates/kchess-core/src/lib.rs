@@ -14,6 +14,7 @@ pub mod puzzles;
 pub mod secrets;
 pub mod store;
 mod tasks;
+pub mod themes;
 pub mod usage;
 pub mod voice;
 

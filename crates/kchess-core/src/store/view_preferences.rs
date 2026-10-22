@@ -20,14 +20,12 @@ const MAX_KEYS: usize = 500;
 /// `kchess:` and then lowercase letters, digits, `-` and `:`, at most 100 characters.
 pub fn valid_key(key: &str) -> bool {
     key.len() <= 100
-        && key
-            .strip_prefix("kchess:")
-            .is_some_and(|rest| {
-                !rest.is_empty()
-                    && rest
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b':')
-            })
+        && key.strip_prefix("kchess:").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b':')
+        })
 }
 
 /// This module's storage methods; None when the method is not one of them.
@@ -100,28 +98,55 @@ mod tests {
     }
 
     fn run(db: &Connection, method: &str, args: &[Value]) -> Result<Value> {
-        let host = Quiet;
-        let ctx = StoreContext::for_tests(db, &host);
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = StoreContext {
+            db,
+            host: &Quiet,
+            config: &config,
+            cache: &cache,
+        };
         call(&ctx, method, args).unwrap()
     }
 
     #[test]
     fn preferences_are_saved_replaced_and_forgotten() {
         let db = database();
-        assert_eq!(run(&db, "store.viewPreferences.all", &[]).unwrap(), json!({}));
-        run(&db, "store.viewPreferences.set", &[json!("kchess:watch-tab"), json!("tv")]).unwrap();
+        assert_eq!(
+            run(&db, "store.viewPreferences.all", &[]).unwrap(),
+            json!({})
+        );
         run(
             &db,
             "store.viewPreferences.set",
-            &[json!("kchess:clock-rotation"), json!({ "top": 180, "bottom": 0 })],
+            &[json!("kchess:watch-tab"), json!("tv")],
         )
         .unwrap();
-        run(&db, "store.viewPreferences.set", &[json!("kchess:watch-tab"), json!("friends")]).unwrap();
+        run(
+            &db,
+            "store.viewPreferences.set",
+            &[
+                json!("kchess:clock-rotation"),
+                json!({ "top": 180, "bottom": 0 }),
+            ],
+        )
+        .unwrap();
+        run(
+            &db,
+            "store.viewPreferences.set",
+            &[json!("kchess:watch-tab"), json!("friends")],
+        )
+        .unwrap();
         assert_eq!(
             run(&db, "store.viewPreferences.all", &[]).unwrap(),
             json!({ "kchess:watch-tab": "friends", "kchess:clock-rotation": { "top": 180, "bottom": 0 } })
         );
-        run(&db, "store.viewPreferences.set", &[json!("kchess:watch-tab"), Value::Null]).unwrap();
+        run(
+            &db,
+            "store.viewPreferences.set",
+            &[json!("kchess:watch-tab"), Value::Null],
+        )
+        .unwrap();
         assert_eq!(
             run(&db, "store.viewPreferences.all", &[]).unwrap(),
             json!({ "kchess:clock-rotation": { "top": 180, "bottom": 0 } })
@@ -131,9 +156,17 @@ mod tests {
     #[test]
     fn names_and_sizes_are_bounded() {
         let db = database();
-        for key in ["watch-tab", "kchess:", "kchess:Tab", "kchess:a b", &format!("kchess:{}", "a".repeat(100))] {
+        for key in [
+            "watch-tab",
+            "kchess:",
+            "kchess:Tab",
+            "kchess:a b",
+            &format!("kchess:{}", "a".repeat(100)),
+        ] {
             assert_eq!(
-                run(&db, "store.viewPreferences.set", &[json!(key), json!(1)]).unwrap_err().message,
+                run(&db, "store.viewPreferences.set", &[json!(key), json!(1)])
+                    .unwrap_err()
+                    .message,
                 "Invalid view preference name.",
                 "{key}"
             );
@@ -142,7 +175,13 @@ mod tests {
         assert!(valid_key("kchess:history-session:board"));
         let large = json!("x".repeat(MAX_VALUE));
         assert_eq!(
-            run(&db, "store.viewPreferences.set", &[json!("kchess:big"), large]).unwrap_err().message,
+            run(
+                &db,
+                "store.viewPreferences.set",
+                &[json!("kchess:big"), large]
+            )
+            .unwrap_err()
+            .message,
             "This view preference is too large to save."
         );
     }

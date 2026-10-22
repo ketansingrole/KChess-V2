@@ -53,8 +53,3 @@ impl AssetSource for Assets {
         Ok(names)
     }
 }
-
-/// The bytes of a shared asset (sounds), if it is embedded.
-pub fn shared(path: &str) -> Option<Cow<'static, [u8]>> {
-    Shared::get(path).map(|file| file.data)
-}

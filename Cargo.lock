@@ -3557,6 +3557,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "gpui-kit",
+ "kchess-contracts",
  "kchess-core",
  "kchess-domain",
  "rust-embed",

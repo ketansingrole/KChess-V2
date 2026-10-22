@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { useViewPreference } from '../composables/useViewPreference'
 import { computed } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+
 import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
 
-const storedTab = useLocalStorage(PRACTICE_TAB_KEY, 'coordinates')
+const storedTab = useViewPreference(PRACTICE_TAB_KEY, 'coordinates')
 
 const tabs = [
   { label: 'Coordinates', value: 'coordinates', icon: 'i-lucide-grid-3x3' },
