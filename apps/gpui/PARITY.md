@@ -95,3 +95,5 @@ Tournaments, Watch, Lichess insights, Following, Players.
 - [ ] Rust updater reading the same GitHub release feed; the switch from Electron through it
 - [ ] Signing and notarization on macOS (the Electron build is unsigned today)
 - [ ] CI: build and test `kchess-gpui` on macOS, Windows and Linux
+- [ ] THIRD_PARTY_NOTICES.md rows for the app's own crates (GPUI Kit, rodio, Symphonia,
+      chrono, dirs) once it ships

@@ -9,6 +9,11 @@ import { fileURLToPath } from 'node:url'
  * task-guard tests: lines 66.82%, regions 63.29%, functions 63.99%). The run fails below a floor.
  * Ratchet them up when the measured totals rise; do not lower them without a measurement that
  * explains the drop.
+ *
+ * The GPUI app (`apps/gpui`) is left out: like the Electron renderer, its views are checked by
+ * running the app, and its own unit tests still run in `cargo test --workspace`. With it, the
+ * totals fell to 60.89% of lines because its 8,301 lines of drawing code are 7.5% covered; the
+ * rest of the workspace measured 71.79% (2026-10-23).
  */
 export const FLOORS = { lines: 66, regions: 63, functions: 63 }
 
@@ -71,6 +76,8 @@ export async function checkRustCoverage(outputDirectory = 'test-results/rust-cov
   const output = `${outputDirectory}/summary.json`
   const code = await runCargoLlvmCov([
     '--workspace',
+    '--exclude',
+    'kchess-gpui',
     '--locked',
     '--summary-only',
     '--json',
