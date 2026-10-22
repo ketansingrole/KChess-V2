@@ -11,6 +11,7 @@ pub mod host;
 pub mod lichess;
 mod panics;
 pub mod puzzles;
+pub mod secrets;
 pub mod store;
 mod tasks;
 pub mod usage;

@@ -26,6 +26,9 @@ export function electronPlatform(focus: () => void): CorePlatform {
       process.platform === 'darwin' && !process.env.KCHESS_USER_DATA_DIR
         ? join(homedir(), '.kchess', 'kchess.db')
         : undefined,
+    // Tokens are sealed with the profile's own credentials, which the GPUI app opens too;
+    // `safeStorage` only opens the ones earlier releases sealed, until the core reseals them.
+    systemCredentials: true,
     secrets: {
       // `safeStorage` reports "available" on Linux even with its plaintext fallback backend.
       available: () =>

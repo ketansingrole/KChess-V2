@@ -90,6 +90,8 @@ fn invalidates_counts(method: &str) -> bool {
                 | "dismissedFriends"
                 | "legacyImportPending"
                 | "tokenCiphertext"
+                | "tokenCiphertexts"
+                | "resealTokenCiphertext"
         );
     }
     method.starts_with("store.import.") || method.starts_with("store.debug.")

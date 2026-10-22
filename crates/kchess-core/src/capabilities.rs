@@ -2,6 +2,9 @@
 //! bringing the window forward and power state. The core emits `host:request`
 //! `{ id, kind, payload }`; the host answers with `host.reply(id, { value } | { error })`.
 //! Every request is bounded, so a host that never answers cannot hang the core.
+//!
+//! A host that uses the profile's own credentials (`Config::system_credentials`) is asked only to
+//! open tokens an earlier release sealed; the core seals and opens the rest (`secrets.rs`).
 
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -12,6 +15,7 @@ use tokio::sync::oneshot;
 
 use crate::error::{CoreError, Result};
 use crate::host::Host;
+use crate::secrets::{self, Credentials};
 
 const DEADLINE: Duration = Duration::from_secs(30);
 
@@ -21,15 +25,30 @@ pub struct Capabilities {
     host: Arc<dyn Host>,
     next: AtomicU64,
     pending: Pending,
+    /// The profile's credentials, when the host uses them instead of sealing tokens itself.
+    credentials: Option<Arc<Credentials>>,
 }
 
 impl Capabilities {
     pub fn new(host: Arc<dyn Host>) -> Capabilities {
+        Capabilities::with_credentials(host, None)
+    }
+
+    pub fn with_credentials(
+        host: Arc<dyn Host>,
+        credentials: Option<Arc<Credentials>>,
+    ) -> Capabilities {
         Capabilities {
             host,
             next: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
+            credentials,
         }
+    }
+
+    /// Whether tokens the host sealed should be resealed with the profile's credentials.
+    pub fn reseals(&self) -> bool {
+        self.credentials.is_some()
     }
 
     /// Ask the host; its error message becomes the error.
@@ -85,8 +104,12 @@ impl Capabilities {
         }
     }
 
-    /// `SecretStore.available()`.
+    /// `SecretStore.available()`, or whether the profile's credentials can be used.
     pub async fn secrets_available(&self) -> Result<bool> {
+        if let Some(credentials) = &self.credentials {
+            let credentials = Arc::clone(credentials);
+            return blocking(move || Ok(credentials.available())).await;
+        }
         Ok(self
             .request("secrets.available", Value::Null)
             .await?
@@ -94,13 +117,27 @@ impl Capabilities {
             == Some(true))
     }
 
-    /// `SecretStore.encrypt(plain)`: base64 ciphertext.
+    /// Seal a token: with the profile's credentials, or `SecretStore.encrypt(plain)`.
     pub async fn encrypt(&self, plain: &str) -> Result<String> {
+        if let Some(credentials) = &self.credentials {
+            let (credentials, plain) = (Arc::clone(credentials), plain.to_string());
+            return blocking(move || credentials.seal(&plain)).await;
+        }
         text(self.request("secrets.encrypt", json!(plain)).await?)
     }
 
-    /// `SecretStore.decrypt(base64)`.
+    /// Open a token. One the profile's credentials sealed opens here; any other was sealed by
+    /// the host (`SecretStore.decrypt(base64)`), possibly in an earlier release.
     pub async fn decrypt(&self, ciphertext: &str) -> Result<String> {
+        if secrets::is_sealed(ciphertext) {
+            let Some(credentials) = &self.credentials else {
+                return Err(CoreError::new(
+                    "This account was saved by another KChess app. Reconnect your account.",
+                ));
+            };
+            let (credentials, sealed) = (Arc::clone(credentials), ciphertext.to_string());
+            return blocking(move || credentials.open(&sealed)).await;
+        }
         text(self.request("secrets.decrypt", json!(ciphertext)).await?)
     }
 
@@ -118,6 +155,13 @@ impl Capabilities {
     pub async fn on_battery(&self) -> Result<bool> {
         Ok(self.request("onBattery", Value::Null).await?.as_bool() == Some(true))
     }
+}
+
+/// OS credential stores block (and may prompt): keep them off the core's worker threads.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| CoreError::new("The credential store is unavailable."))?
 }
 
 fn text(value: Value) -> Result<String> {

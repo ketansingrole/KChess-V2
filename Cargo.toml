@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts", "crates/kchess-voice"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts", "crates/kchess-voice", "apps/gpui"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml).
 exclude = ["fuzz"]
 
@@ -8,7 +8,7 @@ exclude = ["fuzz"]
 version = "0.1.0"
 edition = "2024"
 # Matches rust-toolchain.toml so `cargo` warns on older toolchains.
-rust-version = "1.94.0"
+rust-version = "1.98.0"
 license = "GPL-3.0-or-later"
 publish = false
 

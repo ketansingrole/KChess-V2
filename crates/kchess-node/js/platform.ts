@@ -18,6 +18,11 @@ export interface CorePlatform {
   voiceHelperPath?: string
   /** OS-backed encryption for stored Lichess tokens. */
   secrets: SecretStore
+  /**
+   * Seal tokens with the profile's own credentials (`crates/kchess-core/src/secrets.rs`), which
+   * every KChess desktop app opens; `secrets` then only opens tokens an earlier release sealed.
+   */
+  systemCredentials?: boolean
   /** Open a URL in the user's browser (Lichess sign-in). */
   openExternal(url: string): Promise<void>
   /** A database from an earlier KChess release, imported once into an empty profile. */

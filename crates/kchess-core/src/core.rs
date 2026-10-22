@@ -34,6 +34,7 @@ use crate::facade::{GatedHost, ProfileClaim};
 use crate::host::{Config, Host};
 use crate::lichess::services::{LiveGame, Services};
 use crate::puzzles::PuzzleService;
+use crate::secrets::Credentials;
 use crate::store::Database;
 use crate::store::debug;
 use crate::usage::{UsageBatch, UsageHost};
@@ -165,7 +166,13 @@ impl Core {
         let host: Arc<dyn Host> = Arc::new(GatedHost::new(host, Arc::clone(&closed)));
         crate::panics::report_to(&host);
         let database = Arc::new(Database::new(config.clone(), Arc::clone(&host)));
-        let capabilities = Arc::new(Capabilities::new(Arc::clone(&host)));
+        let credentials = config
+            .system_credentials
+            .then(|| Arc::new(Credentials::for_profile(&config.data_dir)));
+        let capabilities = Arc::new(Capabilities::with_credentials(
+            Arc::clone(&host),
+            credentials,
+        ));
         let battery = Battery::new(Arc::clone(&host));
         let scheduler = {
             let battery = Arc::clone(&battery);

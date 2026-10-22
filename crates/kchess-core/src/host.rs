@@ -58,6 +58,10 @@ pub struct Config {
     /// (`CorePlatform.voiceHelperPath`). `None` when the host ships none; voice input is then
     /// unavailable.
     pub voice_helper_path: Option<PathBuf>,
+    /// Seal Lichess tokens with the profile's own credentials (`secrets.rs`), so every KChess app
+    /// opens them; the host then only opens tokens an earlier release sealed. Off, the host seals
+    /// every token itself (`CorePlatform.secrets`).
+    pub system_credentials: bool,
 }
 
 impl Config {
@@ -71,6 +75,7 @@ impl Config {
             runtime_env: BTreeMap::new(),
             managed_engine_dir: None,
             voice_helper_path: None,
+            system_credentials: false,
         }
     }
 }

@@ -1,0 +1,17 @@
+[package]
+name = "kchess-gpui"
+description = "KChess desktop application built with GPUI Kit over the Rust core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kchess-gpui"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.8"
+
+[lints]
+workspace = true

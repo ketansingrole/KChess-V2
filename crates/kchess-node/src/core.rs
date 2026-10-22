@@ -50,6 +50,8 @@ pub struct NativeCoreOptions {
     pub managed_engine_dir: Option<String>,
     /// `CorePlatform.voiceHelperPath`: the speech recognition helper, with libvosk beside it.
     pub voice_helper_path: Option<String>,
+    /// `CorePlatform.systemCredentials`: seal tokens with the profile's own credentials.
+    pub system_credentials: Option<bool>,
 }
 
 #[napi]
@@ -79,6 +81,7 @@ impl NativeCore {
                 .collect::<BTreeMap<_, _>>(),
             managed_engine_dir: options.managed_engine_dir.map(PathBuf::from),
             voice_helper_path: options.voice_helper_path.map(PathBuf::from),
+            system_credentials: options.system_credentials.unwrap_or(false),
             ..Config::new(PathBuf::from(options.data_dir))
         };
         let core = Core::open(config, Arc::new(JsHost { log, emit }))
