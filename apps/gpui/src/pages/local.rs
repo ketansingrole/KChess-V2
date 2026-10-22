@@ -24,7 +24,7 @@ use crate::board::{BoardEvent, ChessBoard};
 use crate::core::AppCore;
 use crate::game::history::HistoryPlace;
 use crate::game::local::{Flagged, LocalGame};
-use crate::game::{chess960, position_problem, rules, view};
+use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
@@ -33,7 +33,6 @@ use crate::widgets::{self, Side as PieceSide, Tone};
 /// Clocks are checked this often while one runs (`useIntervalFn(…, 100)`).
 const TICK: Duration = Duration::from_millis(100);
 const SAVE_DELAY: Duration = Duration::from_millis(150);
-const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// The clocks the new-game form offers (`CLOCKS`).
 const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[

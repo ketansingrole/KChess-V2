@@ -84,10 +84,23 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Your Lichess activity (stats, rating chart, synced games) and Sync games for a connected
       account; Connect Lichess is not yet tried against Lichess from this app
 
+## Analysis board
+
+- [x] The session both apps keep (`sessions.analysis`): the tree, the move shown, orientation
+- [x] Move tree with variations and comments, typed moves, keys (← → ↑ ↓, F, L, Space), wheel
+- [x] Stockfish lines and arrows, evaluation bar, engine settings, Lichess cloud evaluation, the
+      same evaluation cache and paused engine during a live game
+- [x] Import FEN or PGN, Copy FEN and PGN, Make main line, Delete from here, New analysis
+- [ ] Comments and annotations (`MoveNotes`), the move list's right-click menu, scrolling the
+      shown move into view
+- [ ] Review and Explorer tools, Export, voice input, the study bar; edits to a board opened
+      from a study are not saved to it (Electron then keeps them as an unsaved copy)
+- [ ] Edit this position, Play Stockfish or a friend from here
+
 ## Pages not started
 
-Puzzles, Practice, Openings, Analysis board, Studies, Board editor, Play on Lichess,
-Tournaments, Watch, Lichess insights, Following, Players.
+Puzzles, Practice, Openings, Studies, Board editor, Play on Lichess, Tournaments, Watch,
+Lichess insights, Following, Players.
 
 ## Packaging
 

@@ -1,6 +1,7 @@
 //! The app's pages, one per sidebar entry, created when first shown and kept while the app runs,
 //! as the Electron app keeps its page stores.
 
+pub mod analysis;
 pub mod computer;
 pub mod computer_options;
 pub mod history;
@@ -114,6 +115,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Local => {
             let view = cx.new(|cx| local::LocalPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Analysis => {
+            let view = cx.new(|cx| analysis::AnalysisPage::new(window, cx));
             focused(view, cx)
         }
         Page::Dashboard => {

@@ -13,6 +13,7 @@ use gpui_kit::*;
 
 use crate::assets::icon;
 
+use crate::pages::analysis::AnalysisPage;
 use crate::pages::history::HistoryPage;
 use crate::pages::home::HomePage;
 use crate::pages::settings::{Section, sections};
@@ -108,6 +109,18 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
 }
 
+/// Open Settings at one section (`openSettings`), e.g. the engine setup a page points at.
+pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
+    open(Page::Settings, window, cx);
+    let Some(workspace) = cx
+        .try_global::<Navigator>()
+        .map(|navigator| navigator.0.clone())
+    else {
+        return;
+    };
+    let _ = workspace.update(cx, |workspace, cx| workspace.choose_section(section, cx));
+}
+
 /// Open a played game in Game history (Home's recent games).
 pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);
@@ -162,7 +175,19 @@ impl Workspace {
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
         }
+        // The analysis board's engine follows the board only while it is shown.
+        if current == Page::Analysis
+            && page != Page::Analysis
+            && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
+        {
+            analysis.update(cx, |analysis, cx| analysis.detach(cx));
+        }
         self.pages.show(page, window, cx);
+        if page == Page::Analysis
+            && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
+        {
+            analysis.update(cx, |analysis, cx| analysis.attach(cx));
+        }
         // Home shows the unfinished game and accounts as they are now.
         if page == Page::Dashboard
             && let Some(home) = self.pages.view_of::<HomePage>(Page::Dashboard)

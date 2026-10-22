@@ -45,6 +45,42 @@ pub struct BoardState {
     pub blindfold: bool,
     /// A small picture of a position: no coordinates, nothing to touch.
     pub preview: bool,
+    /// Arrows over the pieces (the engine's choices), drawn as Chessground draws them.
+    pub arrows: Vec<Arrow>,
+}
+
+/// An arrow from one square to another: Chessground's brush color and opacity, and its line
+/// width in 64ths of a square.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Arrow {
+    pub from: Square,
+    pub to: Square,
+    pub color: u32,
+    pub opacity: f32,
+    pub width: f32,
+}
+
+impl Arrow {
+    /// The analysis board's arrows (`paleBlue` for the best line, `paleGrey` for the rest):
+    /// the best one bold, the others thinner.
+    pub fn engine(from: Square, to: Square, rank: usize) -> Arrow {
+        let (color, opacity) = if rank == 0 {
+            (0x003088, 0.4)
+        } else {
+            (0x4a4a4a, 0.35)
+        };
+        Arrow {
+            from,
+            to,
+            color,
+            opacity,
+            width: if rank == 0 {
+                12.
+            } else {
+                (9. - rank as f32 * 2.).max(4.)
+            },
+        }
+    }
 }
 
 impl BoardState {
@@ -76,6 +112,7 @@ impl BoardState {
             check,
             blindfold: false,
             preview: false,
+            arrows: Vec::new(),
         }
     }
 }
@@ -522,9 +559,27 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
             }
         }
     }
-    if frame.state.blindfold {
-        return;
+    if !frame.state.blindfold {
+        paint_pieces(&frame, side, &at, window, cx);
     }
+    for arrow in &frame.state.arrows {
+        paint_arrow(
+            arrow,
+            side,
+            at(arrow.from).center(),
+            at(arrow.to).center(),
+            window,
+        );
+    }
+}
+
+fn paint_pieces(
+    frame: &Frame,
+    side: Pixels,
+    at: &dyn Fn(Square) -> Bounds<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let pixels = (side.as_f32() * window.scale_factor()).round() as u32;
     for square in frame.pieces.occupied() {
         if Some(square) == frame.lifted {
@@ -537,6 +592,62 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
             let cell = at(square);
             let _ = window.paint_image(cell, cell, Corners::default(), image, 0, false);
         }
+    }
+}
+
+/// Chessground's arrow (`svg.js`, `renderArrow`), in one fill so its overlaps are not darker: a
+/// shaft with a round tail, stopping 10/64 of a square short of the target's centre, and a head
+/// 4 widths wide and 3 long whose point sits 0.95 widths past that end.
+fn paint_arrow(
+    arrow: &Arrow,
+    side: Pixels,
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+    window: &mut Window,
+) {
+    let side = side.as_f32();
+    let width = arrow.width / 64. * side;
+    let (dx, dy) = (
+        to.x.as_f32() - from.x.as_f32(),
+        to.y.as_f32() - from.y.as_f32(),
+    );
+    let length = (dx * dx + dy * dy).sqrt();
+    if length <= f32::EPSILON {
+        return;
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    // Perpendicular, to the left of the arrow's direction.
+    let (nx, ny) = (-uy, ux);
+    let end = (
+        to.x.as_f32() - ux * 10. / 64. * side,
+        to.y.as_f32() - uy * 10. / 64. * side,
+    );
+    let base = (end.0 - ux * 2.05 * width, end.1 - uy * 2.05 * width);
+    let tip = (end.0 + ux * 0.95 * width, end.1 + uy * 0.95 * width);
+    let at = |(x, y): (f32, f32), offset: f32| point(px(x + nx * offset), px(y + ny * offset));
+    let start = (from.x.as_f32(), from.y.as_f32());
+    let half = width / 2.;
+    let mut path = PathBuilder::fill();
+    path.move_to(at(start, half));
+    path.line_to(at(base, half));
+    path.line_to(at(base, 2. * width));
+    path.line_to(at(tip, 0.));
+    path.line_to(at(base, -2. * width));
+    path.line_to(at(base, -half));
+    path.line_to(at(start, -half));
+    // The round tail.
+    path.arc_to(
+        point(px(half), px(half)),
+        px(0.),
+        false,
+        false,
+        at(start, half),
+    );
+    path.close();
+    if let Ok(path) = path.build() {
+        let mut color = rgba((arrow.color << 8) | 0xff);
+        color.a = arrow.opacity;
+        window.paint_path(path, color);
     }
 }
 
