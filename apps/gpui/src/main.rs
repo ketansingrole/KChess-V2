@@ -46,6 +46,7 @@ fn main() {
             }
             settings::init(cx);
             prefs::init(cx);
+            sound::init(cx);
             online::init(cx);
             cx.on_app_quit(core::quit).detach();
             let options = WindowOptions {

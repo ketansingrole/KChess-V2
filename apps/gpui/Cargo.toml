@@ -26,6 +26,8 @@ getrandom = "0.4"
 futures = "0.3"
 # The Electron renderer's boards, pieces and sounds, embedded (already in Cargo.lock through GPUI Kit).
 rust-embed = "8"
+# Move and game sounds: the default output device (cpal) and the MP3 clips (Symphonia).
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
 
 [lints]
 workspace = true

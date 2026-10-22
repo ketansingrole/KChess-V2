@@ -42,8 +42,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Move list, navigation, switch sides, take back, resign, new game, confirmations
 - [x] Opening name, status banner, material difference, blindfold and zen toggles
 - [x] Saved session and Game history, flushed before quit
-- [ ] Sounds (move, capture, low time) — `sound.rs` is silent until a GPL-compatible MP3
-      decoder is chosen
+- [x] Sounds (move, capture, low time) at the volume Settings chooses (rodio, Symphonia MP3)
 - [ ] Desktop notification when Stockfish moves in the background
 - [ ] Premoves and piece animation
 - [ ] Voice input, Export (PGN, GIF), Review game

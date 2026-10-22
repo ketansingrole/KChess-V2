@@ -28,6 +28,11 @@ pub fn icon(name: &'static str) -> Icon {
 #[include = "sounds/*.mp3"]
 struct Shared;
 
+/// A sound clip by its file name in `sounds/`.
+pub fn sound(name: &str) -> Option<Cow<'static, [u8]>> {
+    Shared::get(&format!("sounds/{name}")).map(|file| file.data)
+}
+
 pub struct Assets;
 
 impl AssetSource for Assets {
