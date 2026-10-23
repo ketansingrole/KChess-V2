@@ -183,10 +183,16 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       copied; Starting position, Clear, Flip; Analyse, Play Stockfish, Play a friend
 - [ ] Voice input
 
+## Following
+
+- [x] The players followed: ratings, online or playing (presence every 20 seconds), the record
+      against them, their synced games; Follow player, Import from Lichess, Sync all, and each
+      player's Games, Sync, Clear data and Remove
+- [ ] Watch, Challenge and the player link once Watch, Play on Lichess and Players are drawn
+
 ## Pages not started
 
-Play on Lichess, Tournaments, Watch,
-Lichess insights, Following, Players.
+Play on Lichess, Tournaments, Watch, Lichess insights, Players.
 
 ## Packaging
 

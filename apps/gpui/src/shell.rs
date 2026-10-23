@@ -119,6 +119,35 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
 }
 
+/// Game history's Lichess tab showing one account's games (`historyAccount`).
+pub fn open_history_account(account: &str, window: &mut Window, cx: &mut App) {
+    open(Page::History, window, cx);
+    if let Some(history) = view_of::<crate::pages::history::HistoryPage>(Page::History, cx) {
+        let account = account.to_string();
+        history.update(cx, |history, cx| {
+            history.show_lichess_account(account, window, cx)
+        });
+    }
+}
+
+/// A player's profile on Players (`PlayerLink`).
+pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Players, window, cx);
+    let _ = username;
+}
+
+/// Watch a game being played on Lichess (`watchGame`).
+pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Watch, window, cx);
+    let _ = id;
+}
+
+/// Challenge a player to a casual game on Lichess (`challengeFriend`).
+pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Online, window, cx);
+    let _ = username;
+}
+
 /// Game history's Lichess tab (`/history?source=lichess`).
 pub fn open_history_lichess(window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);

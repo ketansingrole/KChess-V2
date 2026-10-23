@@ -5,6 +5,7 @@ pub mod analysis;
 pub mod computer;
 pub mod computer_options;
 pub mod editor;
+pub mod friends;
 pub mod history;
 pub mod home;
 pub mod local;
@@ -173,6 +174,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Settings => {
             let view = cx.new(|cx| settings::SettingsPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Friends => {
+            let view = cx.new(|cx| friends::FriendsPage::new(window, cx));
             focused(view, cx)
         }
         page => Shown {

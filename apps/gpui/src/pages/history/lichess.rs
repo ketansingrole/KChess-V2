@@ -228,6 +228,20 @@ impl HistoryPage {
         .detach();
     }
 
+    pub(super) fn set_lichess_account(
+        &mut self,
+        account: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.lichess.account = account.clone();
+        self.lichess.page = 0;
+        self.lichess.account_select.update(cx, |state, cx| {
+            state.set_selected_value(&SharedString::from(account), window, cx)
+        });
+        self.load_lichess(cx);
+    }
+
     fn choose_result(&mut self, result: &'static str, cx: &mut Context<Self>) {
         self.lichess.result = result;
         self.lichess.page = 0;

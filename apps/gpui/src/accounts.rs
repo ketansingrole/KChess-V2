@@ -65,6 +65,14 @@ impl Accounts {
             .collect()
     }
 
+    /// The players followed (`trackedAccounts`): accounts kept here that are not signed in.
+    pub fn tracked(&self) -> Vec<Value> {
+        self.all()
+            .into_iter()
+            .filter(|account| account["connected"] != json!(true))
+            .collect()
+    }
+
     /// The account that plays online (`activeOnlineAccount`).
     pub fn active(&self, cx: &App) -> Option<String> {
         crate::online::active_account(&self.all(), cx)
@@ -192,6 +200,105 @@ impl Accounts {
                             "Lichess games synced.".into()
                         };
                         say(window, cx, message);
+                    }
+                    Err(cause) => say(window, cx, cause.message),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `addAccount`: follow a player and download their games; `done` hears whether it worked.
+    pub fn follow(
+        &mut self,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(bool, &mut Window, &mut App) + 'static,
+    ) {
+        let typed = name.trim().trim_start_matches('@').to_lowercase();
+        self.busy = true;
+        cx.notify();
+        let added = cx.global::<AppCore>().call("addAccount", vec![json!(name)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = added.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(data) => {
+                        this.data = data;
+                        let username = this
+                            .all()
+                            .iter()
+                            .filter_map(|account| account["username"].as_str())
+                            .find(|username| username.to_lowercase() == typed)
+                            .map(str::to_string);
+                        // After this update: the caller reads the accounts again.
+                        window.defer(cx, move |window, cx| done(true, window, cx));
+                        this.sync(username, window, cx);
+                    }
+                    Err(cause) => {
+                        say(window, cx, cause.message);
+                        window.defer(cx, move |window, cx| done(false, window, cx));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `clearSyncedData`: free a followed player's games and profile, still following them.
+    pub fn clear_data(&mut self, username: String, window: &mut Window, cx: &mut Context<Self>) {
+        let cleared = cx
+            .global::<AppCore>()
+            .call("clearAccountData", vec![json!(username)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cleared.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(data) => {
+                        this.data = data;
+                        this.refresh(cx);
+                        say(
+                            window,
+                            cx,
+                            format!("Cleared @{username}'s synced data. You still follow them; sync to download again."),
+                        );
+                    }
+                    Err(cause) => say(window, cx, cause.message),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `importFriends`: follow players without downloading their games.
+    pub fn import(&mut self, names: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let count = names.len();
+        self.busy = true;
+        cx.notify();
+        let added = cx
+            .global::<AppCore>()
+            .call("addFriends", vec![json!(names)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = added.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(data) => {
+                        this.data = data;
+                        this.refresh(cx);
+                        say(
+                            window,
+                            cx,
+                            format!(
+                                "Added {count} {} to Following. Their games aren't downloaded until you sync them.",
+                                if count == 1 { "player" } else { "players" }
+                            ),
+                        );
                     }
                     Err(cause) => say(window, cx, cause.message),
                 }

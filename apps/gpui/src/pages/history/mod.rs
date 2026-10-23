@@ -258,6 +258,17 @@ impl HistoryPage {
         games
     }
 
+    /// Show the Lichess tab's list of one account's games (Following's Games).
+    pub fn show_lichess_account(
+        &mut self,
+        account: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_source(Source::Lichess, cx);
+        self.set_lichess_account(account, window, cx);
+    }
+
     /// Show the Lichess tab's list (Home's View all).
     pub fn show_lichess(&mut self, cx: &mut Context<Self>) {
         self.choose_source(Source::Lichess, cx);
