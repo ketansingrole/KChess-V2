@@ -866,30 +866,14 @@ impl Repertoire {
     }
 
     fn empty(title: &'static str, description: Option<&'static str>, palette: &Palette) -> Div {
-        v_flex()
-            .items_center()
-            .gap(px(10.))
-            .py(px(32.))
-            .child(
-                icon("book-marked")
-                    .size(px(24.))
-                    .text_color(palette.text_muted),
-            )
-            .child(
-                div()
-                    .text_size(px(16.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(palette.highlighted)
-                    .child(title),
-            )
-            .children(description.map(|description| {
-                div()
-                    .text_size(px(14.))
-                    .text_center()
-                    .text_color(palette.text_muted)
-                    .child(description)
-            }))
-            .child(Self::empty_actions())
+        widgets::empty_state(
+            icon("book-marked"),
+            title,
+            description.map(SharedString::from),
+            palette,
+        )
+        .py(px(32.))
+        .child(Self::empty_actions())
     }
 }
 

@@ -120,7 +120,10 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Endgames: the 14 courses (read, follow and solve steps, scripted or Stockfish replies, hints,
       take back) and the 9 drills against Stockfish at full strength, each finished chapter or
       drill kept by the core (`runSummary`, `saveRun`)
-- [ ] Your mistakes trainer; voice answers
+- [x] Your mistakes: due, learning and learned counts, the positions on the shared puzzle board
+      (hint, solution), rescheduled by the core (`answerMistake`), and the games they come from
+- [ ] A game's Practice button (its positions on the analysis board, waiting for the analysis
+      Review tool); voice answers
 
 ## Openings
 

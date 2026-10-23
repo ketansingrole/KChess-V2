@@ -832,24 +832,7 @@ impl PuzzlesPage {
     /// What stands in for the board while there is no puzzle to play.
     fn render_placeholder(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let empty = |glyph: Icon, title: String, description: Option<String>| {
-            v_flex()
-                .items_center()
-                .gap(px(10.))
-                .child(glyph.size(px(24.)).text_color(palette.text_muted))
-                .child(
-                    div()
-                        .text_size(px(16.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(palette.highlighted)
-                        .child(title),
-                )
-                .children(description.map(|description| {
-                    div()
-                        .text_size(px(14.))
-                        .text_center()
-                        .text_color(palette.text_muted)
-                        .child(description)
-                }))
+            widgets::empty_state(glyph, title, description.map(SharedString::from), palette)
         };
         let other = |cx: &mut Context<Self>| {
             Button::new("other-mode")

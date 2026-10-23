@@ -19,6 +19,7 @@ use crate::pages::analysis::AnalysisPage;
 use crate::pages::history::HistoryPage;
 use crate::pages::home::HomePage;
 use crate::pages::openings::OpeningsPage;
+use crate::pages::practice::PracticePage;
 use crate::pages::puzzles::PuzzlesPage;
 use crate::pages::settings::{Section, sections};
 use crate::pages::{Page, Pages};
@@ -247,6 +248,11 @@ impl Workspace {
             && let Some(puzzles) = self.pages.view_of::<PuzzlesPage>(Page::Puzzles)
         {
             puzzles.update(cx, |puzzles, cx| puzzles.shown(cx));
+        }
+        if page == Page::Practice
+            && let Some(practice) = self.pages.view_of::<PracticePage>(Page::Practice)
+        {
+            practice.update(cx, |practice, _| practice.shown());
         }
         // The sidebar's Openings is the browser (`/openings`), not the line shown last.
         if page == Page::Openings

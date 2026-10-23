@@ -653,3 +653,45 @@ pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) 
                 .child("↵"),
         )
 }
+
+/// `UEmpty`: an icon, a title and an optional line under it; the caller adds the actions.
+pub fn empty_state(
+    glyph: Icon,
+    title: impl Into<SharedString>,
+    description: Option<SharedString>,
+    palette: &Palette,
+) -> Div {
+    v_flex()
+        .items_center()
+        .gap(px(10.))
+        .child(glyph.size(px(24.)).text_color(palette.text_muted))
+        .child(
+            div()
+                .text_size(px(16.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.highlighted)
+                .child(title.into()),
+        )
+        .children(description.map(|description| {
+            div()
+                .text_size(px(14.))
+                .text_center()
+                .text_color(palette.text_muted)
+                .child(description)
+        }))
+}
+
+/// `.side-dot`: a piece colour, the same light or dark disc in either theme.
+pub fn side_dot(color: shakmaty::Color) -> Div {
+    div()
+        .size(px(9.))
+        .flex_none()
+        .rounded_full()
+        .border_1()
+        .border_color(rgb(0x6b6b6b))
+        .bg(rgb(if color == shakmaty::Color::White {
+            0xf4f4f2
+        } else {
+            0x1f1f1f
+        }))
+}

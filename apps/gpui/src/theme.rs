@@ -133,6 +133,19 @@ impl Palette {
     }
 }
 
+/// A review judgment's colour (`--judgment-*`, Lichess's): inaccuracy, mistake or blunder.
+pub fn judgment_color(judgment: &str, dark: bool) -> Hsla {
+    let hex = match (judgment, dark) {
+        ("inaccuracy", false) => 0x3d9ad6,
+        ("inaccuracy", true) => 0x56b4e9,
+        ("mistake", false) => 0xd48a00,
+        ("mistake", true) => 0xe69f00,
+        (_, false) => 0xd14848,
+        (_, true) => 0xdf5353,
+    };
+    gpui_kit::rgb(hex).into()
+}
+
 /// `color-mix(in srgb, color share%, transparent)`.
 pub fn tint(color: Hsla, share: f32) -> Hsla {
     color.opacity(share / 100.)

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -104,21 +104,6 @@ fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
     }
 }
 
-/// `.side-dot`: a piece colour, the same light or dark disc in either theme.
-fn side_dot(color: Color) -> Div {
-    div()
-        .size(px(9.))
-        .flex_none()
-        .rounded_full()
-        .border_1()
-        .border_color(rgb(0x6b6b6b))
-        .bg(rgb(if color == Color::White {
-            0xf4f4f2
-        } else {
-            0x1f1f1f
-        }))
-}
-
 /// `ResultBadge.vue`.
 fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
     let (label, look, side) = badge_of(outcome);
@@ -146,7 +131,7 @@ fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoEl
         .line_height(px(16.))
         .font_weight(FontWeight::MEDIUM)
         .when_some(ring, |badge, ring| badge.border_1().border_color(ring))
-        .children(side.map(side_dot))
+        .children(side.map(widgets::side_dot))
         .child(label)
 }
 
@@ -459,32 +444,11 @@ fn source_tabs(
 }
 
 /// An empty list's message and the action that fills it (`UEmpty`).
-fn empty(
-    glyph: &'static str,
-    title: &'static str,
-    action: Button,
-    palette: &Palette,
-) -> impl IntoElement {
+fn empty(glyph: Icon, title: &'static str, action: Button, palette: &Palette) -> impl IntoElement {
     widgets::card(palette)
         .items_center()
-        .gap(px(12.))
         .py(px(28.))
-        .child(
-            match glyph {
-                "search-x" => icon("search-x"),
-                _ => icon("history"),
-            }
-            .size(px(24.))
-            .text_color(palette.text_muted),
-        )
-        .child(
-            div()
-                .text_size(px(16.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(palette.highlighted)
-                .child(title),
-        )
-        .child(action)
+        .child(widgets::empty_state(glyph, title, None, palette).child(action))
 }
 
 impl HistoryPage {
@@ -548,7 +512,7 @@ impl HistoryPage {
                 ("Play over the board", Page::Local)
             };
             return empty(
-                "history",
+                icon("history"),
                 "No saved games yet",
                 Button::new("history-play")
                     .primary()
@@ -685,7 +649,7 @@ impl HistoryPage {
                             .gap(px(6.))
                             .min_w_0()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .children(side.map(side_dot))
+                            .children(side.map(widgets::side_dot))
                             .child(div().min_w_0().truncate().child(opponent(&game))),
                     )
                     .when(!details.is_empty(), |cell| {

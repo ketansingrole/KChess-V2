@@ -7,6 +7,7 @@ mod endgame_lesson;
 mod endgames;
 mod engine_move;
 mod knight;
+mod mistakes;
 mod repertoire;
 mod run;
 mod square_color;
@@ -37,6 +38,9 @@ pub struct PracticePage {
     knight: Option<Entity<knight::KnightPaths>>,
     repertoire: Option<Entity<repertoire::Repertoire>>,
     endgames: Option<Entity<endgames::Endgames>>,
+    mistakes: Option<Entity<mistakes::Mistakes>>,
+    /// The tab on screen at the last frame: Your mistakes starts at its overview when opened.
+    shown_tab: Option<&'static str>,
     focus: FocusHandle,
 }
 
@@ -54,6 +58,8 @@ impl PracticePage {
             knight: None,
             repertoire: None,
             endgames: None,
+            mistakes: None,
+            shown_tab: None,
             focus: cx.focus_handle(),
         }
     }
@@ -64,6 +70,11 @@ impl PracticePage {
         TABS.iter()
             .find(|(key, _)| *key == stored)
             .map_or("coordinates", |(key, _)| key)
+    }
+
+    /// The page was opened from the sidebar: its tab starts afresh where Electron remounts it.
+    pub fn shown(&mut self) {
+        self.shown_tab = None;
     }
 
     /// The tab's drill, made the first time it is shown.
@@ -95,18 +106,21 @@ impl PracticePage {
                 .clone()
                 .into(),
             _ => {
-                let palette = *cx.global::<Palette>();
-                return div()
-                    .px(side_padding(window))
-                    .pt(px(20.))
-                    .child(
-                        widgets::card(&palette)
-                            .items_center()
-                            .py(px(40.))
-                            .text_color(palette.text_muted)
-                            .child("Use the Electron app for this trainer for now."),
-                    )
-                    .into_any_element();
+                let opened = self.shown_tab != Some("mistakes");
+                let mistakes = match &self.mistakes {
+                    Some(mistakes) => {
+                        if opened {
+                            mistakes.update(cx, |mistakes, cx| mistakes.shown(cx));
+                        }
+                        mistakes.clone()
+                    }
+                    None => {
+                        let mistakes = cx.new(|cx| mistakes::Mistakes::new(window, cx));
+                        self.mistakes = Some(mistakes.clone());
+                        mistakes
+                    }
+                };
+                mistakes.into()
             }
         };
         view.into_any_element()
@@ -160,6 +174,7 @@ impl Render for PracticePage {
             &palette,
         );
         let body = self.body(tab, window, cx);
+        self.shown_tab = Some(tab);
         v_flex()
             .size_full()
             .track_focus(&self.focus)
