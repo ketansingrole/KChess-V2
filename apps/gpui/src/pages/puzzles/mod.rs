@@ -23,6 +23,8 @@ use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, tint};
+mod daily;
+
 use crate::widgets::{self, Pill, Tone};
 
 const TAB: &str = "kchess:puzzle-tab";
@@ -67,14 +69,14 @@ struct ThemeGroup {
 }
 
 #[derive(serde::Deserialize, Clone)]
-struct Theme {
+pub(crate) struct Theme {
     key: String,
     name: String,
 }
 
 fn themes() -> Vec<Theme> {
     let groups: Vec<ThemeGroup> = serde_json::from_str(include_str!(
-        "../../../../crates/kchess-domain/data/puzzle-themes.json"
+        "../../../../../crates/kchess-domain/data/puzzle-themes.json"
     ))
     .unwrap_or_default();
     std::iter::once(Theme {
@@ -137,6 +139,8 @@ pub struct PuzzlesPage {
     difficulty_select: Entity<SelectState<Vec<SharedString>>>,
     color_select: Entity<SelectState<Vec<SharedString>>>,
     timers: Vec<Task<()>>,
+    /// The Daily tab, made when first shown.
+    daily: Option<Entity<daily::DailyPuzzle>>,
     progress: Value,
     accounts: Vec<String>,
     started: bool,
@@ -274,6 +278,7 @@ impl PuzzlesPage {
             difficulty_select,
             color_select,
             timers: Vec::new(),
+            daily: None,
             progress: Value::Null,
             accounts: Vec::new(),
             started: false,
@@ -477,6 +482,13 @@ impl PuzzlesPage {
         }
     }
 
+    /// `startTheme('mix', 'offline')`: train any theme from the downloaded puzzles.
+    fn use_downloaded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "train");
+        crate::prefs::set(cx, MODE, "offline");
+        self.choose_angle("mix", window, cx);
+    }
+
     fn choose_mode(&mut self, mode: &'static str, cx: &mut Context<Self>) {
         crate::prefs::set(cx, MODE, mode);
         self.load_next(cx);
@@ -542,6 +554,187 @@ impl PuzzlesPage {
         self.follow(step, "puzzleSessionLoadSettled", cx);
         cx.notify();
     }
+}
+
+/// `PuzzleStatusPanel.vue`: what to do, how it went, and the buttons that help.
+/// What the status panel's Next button does.
+pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
+
+pub(crate) fn status_panel(
+    board_entity: &Entity<PuzzleBoard>,
+    themes: &[Theme],
+    next: Option<NextPuzzle>,
+    cx: &App,
+    palette: &Palette,
+) -> AnyElement {
+    let shown = board_entity.read(cx);
+    let Some(board) = shown.puzzle() else {
+        return div().into_any_element();
+    };
+    let puzzle = board.puzzle.clone();
+    let player = board.player_color();
+    let status = shown.status().to_string();
+    let (outcome, feedback, waiting, hinted) = (
+        shown.outcome(),
+        shown.feedback(),
+        shown.waiting(),
+        shown.hinted(),
+    );
+    let status = status.as_str();
+    let color = if player == Color::White {
+        "white"
+    } else {
+        "black"
+    };
+    let (tone, glyph, title) = match status {
+        "revealed" => (
+            Tone::Loss,
+            icon("eye"),
+            "Solution shown — not counted as solved".to_string(),
+        ),
+        "solved" if outcome == Some(true) => {
+            (Tone::Win, icon("trophy"), "Puzzle solved!".to_string())
+        }
+        "solved" => (
+            Tone::Plain,
+            icon("check"),
+            "Solved after a mistake — not counted".to_string(),
+        ),
+        "failed" => (
+            Tone::Loss,
+            icon("x"),
+            "Not the move — puzzle over".to_string(),
+        ),
+        _ if feedback == Feedback::Wrong => (
+            Tone::Loss,
+            icon("x"),
+            "That’s not the move — try again".to_string(),
+        ),
+        _ if waiting => (Tone::Plain, icon("hourglass"), "Good move…".to_string()),
+        _ => (
+            Tone::Plain,
+            icon("mouse-pointer-click"),
+            format!("Find the best move for {color}"),
+        ),
+    };
+    let playing = status == "playing";
+    let finished = matches!(status, "solved" | "revealed" | "failed");
+    let facts = finished.then(|| {
+        v_flex()
+            .gap(px(6.))
+            .text_size(px(13.))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .w(px(64.))
+                            .text_color(palette.text_muted)
+                            .child("Rating"),
+                    )
+                    .child(format!("{}", puzzle["rating"].as_f64().unwrap_or_default())),
+            )
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .w(px(64.))
+                            .text_color(palette.text_muted)
+                            .child("Themes"),
+                    )
+                    .child(
+                        h_flex().flex_1().flex_wrap().gap(px(4.)).children(
+                            puzzle["themes"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(Value::as_str)
+                                .map(|theme| {
+                                    div()
+                                        .px(px(6.))
+                                        .py(px(1.))
+                                        .rounded(px(6.))
+                                        .border_1()
+                                        .border_color(palette.border_accented)
+                                        .bg(palette.elevated)
+                                        .text_size(px(12.))
+                                        .child(theme_name(theme, themes))
+                                }),
+                        ),
+                    ),
+            )
+    });
+    v_flex()
+        .gap(px(12.))
+        .child(widgets::status_banner(
+            tone,
+            glyph,
+            title.into(),
+            None,
+            None,
+            palette,
+        ))
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .flex_wrap()
+                .child(
+                    Button::new("puzzle-hint")
+                        .when(hinted, |button| button.primary())
+                        .when(!hinted, |button| button.outline())
+                        .icon(icon("lightbulb"))
+                        .label("Hint")
+                        .disabled(!playing)
+                        .on_click({
+                            let board = board_entity.downgrade();
+                            move |_, _, cx| {
+                                let _ = board.update(cx, |board, cx| board.hint(cx));
+                            }
+                        }),
+                )
+                .child(
+                    Button::new("puzzle-solution")
+                        .outline()
+                        .icon(icon("eye"))
+                        .label("Solution")
+                        .disabled(!playing)
+                        .on_click({
+                            let board = board_entity.downgrade();
+                            move |_, _, cx| {
+                                let _ = board.update(cx, |board, cx| board.show_solution(cx));
+                            }
+                        }),
+                )
+                .child(
+                    Button::new("puzzle-flip")
+                        .outline()
+                        .icon(icon("arrow-up-down"))
+                        .tooltip("Flip board")
+                        .accessibility_label("Flip board")
+                        .on_click({
+                            let board = board_entity.downgrade();
+                            move |_, _, cx| {
+                                let _ = board.update(cx, |board, cx| board.flip(cx));
+                            }
+                        }),
+                )
+                .children(next.map(|next| {
+                    Button::new("puzzle-next")
+                        .when(finished, |button| button.primary())
+                        .when(!finished, |button| button.outline())
+                        .child(
+                            h_flex()
+                                .gap(px(6.))
+                                .child("Next")
+                                .child(icon("arrow-right").size(px(14.))),
+                        )
+                        .on_click(move |_, window, cx| next(window, cx))
+                })),
+        )
+        .children(facts)
+        .into_any_element()
 }
 
 /* ── Rendering ────────────────────────────────────────────────────────── */
@@ -683,170 +876,6 @@ impl PuzzlesPage {
                 .into_any_element(),
         };
         content
-    }
-
-    /// `PuzzleStatusPanel.vue`: what to do, how it went, and the buttons that help.
-    fn render_status(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
-        let shown = self.puzzle.read(cx);
-        let Some(board) = shown.puzzle() else {
-            return div().into_any_element();
-        };
-        let puzzle = board.puzzle.clone();
-        let player = board.player_color();
-        let status = shown.status().to_string();
-        let (outcome, feedback, waiting, hinted) = (
-            shown.outcome(),
-            shown.feedback(),
-            shown.waiting(),
-            shown.hinted(),
-        );
-        let status = status.as_str();
-        let color = if player == Color::White {
-            "white"
-        } else {
-            "black"
-        };
-        let (tone, glyph, title) = match status {
-            "revealed" => (
-                Tone::Loss,
-                icon("eye"),
-                "Solution shown — not counted as solved".to_string(),
-            ),
-            "solved" if outcome == Some(true) => {
-                (Tone::Win, icon("trophy"), "Puzzle solved!".to_string())
-            }
-            "solved" => (
-                Tone::Plain,
-                icon("check"),
-                "Solved after a mistake — not counted".to_string(),
-            ),
-            "failed" => (
-                Tone::Loss,
-                icon("x"),
-                "Not the move — puzzle over".to_string(),
-            ),
-            _ if feedback == Feedback::Wrong => (
-                Tone::Loss,
-                icon("x"),
-                "That’s not the move — try again".to_string(),
-            ),
-            _ if waiting => (Tone::Plain, icon("hourglass"), "Good move…".to_string()),
-            _ => (
-                Tone::Plain,
-                icon("mouse-pointer-click"),
-                format!("Find the best move for {color}"),
-            ),
-        };
-        let playing = status == "playing";
-        let finished = matches!(status, "solved" | "revealed" | "failed");
-        let themes = &self.theme_list;
-        let facts = finished.then(|| {
-            v_flex()
-                .gap(px(6.))
-                .text_size(px(13.))
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .w(px(64.))
-                                .text_color(palette.text_muted)
-                                .child("Rating"),
-                        )
-                        .child(format!("{}", puzzle["rating"].as_f64().unwrap_or_default())),
-                )
-                .child(
-                    h_flex()
-                        .items_start()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .w(px(64.))
-                                .text_color(palette.text_muted)
-                                .child("Themes"),
-                        )
-                        .child(
-                            h_flex().flex_1().flex_wrap().gap(px(4.)).children(
-                                puzzle["themes"]
-                                    .as_array()
-                                    .into_iter()
-                                    .flatten()
-                                    .filter_map(Value::as_str)
-                                    .map(|theme| {
-                                        div()
-                                            .px(px(6.))
-                                            .py(px(1.))
-                                            .rounded(px(6.))
-                                            .border_1()
-                                            .border_color(palette.border_accented)
-                                            .bg(palette.elevated)
-                                            .text_size(px(12.))
-                                            .child(theme_name(theme, themes))
-                                    }),
-                            ),
-                        ),
-                )
-        });
-        v_flex()
-            .gap(px(12.))
-            .child(widgets::status_banner(
-                tone,
-                glyph,
-                title.into(),
-                None,
-                None,
-                palette,
-            ))
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .flex_wrap()
-                    .child(
-                        Button::new("puzzle-hint")
-                            .when(hinted, |button| button.primary())
-                            .when(!hinted, |button| button.outline())
-                            .icon(icon("lightbulb"))
-                            .label("Hint")
-                            .disabled(!playing)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.puzzle.update(cx, |board, cx| board.hint(cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("puzzle-solution")
-                            .outline()
-                            .icon(icon("eye"))
-                            .label("Solution")
-                            .disabled(!playing)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.puzzle.update(cx, |board, cx| board.show_solution(cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("puzzle-flip")
-                            .outline()
-                            .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board")
-                            .accessibility_label("Flip board")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.puzzle.update(cx, |board, cx| board.flip(cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("puzzle-next")
-                            .when(finished, |button| button.primary())
-                            .when(!finished, |button| button.outline())
-                            .child(
-                                h_flex()
-                                    .gap(px(6.))
-                                    .child("Next")
-                                    .child(icon("arrow-right").size(px(14.))),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.load_next(cx))),
-                    ),
-            )
-            .children(facts)
-            .into_any_element()
     }
 
     /// The session's tally, the day streak and the latest attempts.
@@ -1139,7 +1168,18 @@ impl PuzzlesPage {
             .when(ready, |panel| {
                 panel
                     .child(div().h(px(1.)).bg(palette.border))
-                    .child(self.render_status(cx, palette))
+                    .child(status_panel(
+                        &self.puzzle,
+                        &self.theme_list,
+                        Some(Box::new({
+                            let page = cx.entity().downgrade();
+                            move |_, cx| {
+                                let _ = page.update(cx, |page, cx| page.load_next(cx));
+                            }
+                        })),
+                        cx,
+                        palette,
+                    ))
                     .children(rating_text.map(|(text, failed)| {
                         div()
                             .text_size(px(12.))
@@ -1196,6 +1236,24 @@ impl Render for PuzzlesPage {
         );
         let body = if tab == "train" {
             self.render_train(window, cx, &palette)
+        } else if tab == "daily" {
+            let daily = match &self.daily {
+                Some(daily) => daily.clone(),
+                None => {
+                    let themes = self.theme_list.clone();
+                    let daily = cx.new(|cx| daily::DailyPuzzle::new(themes, window, cx));
+                    self._subscriptions.push(cx.subscribe_in(
+                        &daily,
+                        window,
+                        |this, _, event: &daily::DailyEvent, window, cx| match event {
+                            daily::DailyEvent::UseDownloaded => this.use_downloaded(window, cx),
+                        },
+                    ));
+                    self.daily = Some(daily.clone());
+                    daily
+                }
+            };
+            daily.into_any_element()
         } else {
             div()
                 .px(side_padding(window))
