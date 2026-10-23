@@ -187,6 +187,15 @@ fn fen(text: &str, length: Msg, msg: Msg, path: &str) -> Checked<()> {
     matches(text, patterns::fen, msg, path, "a FEN position")
 }
 
+/// A position the engine can be given: Stockfish refuses more than 16 pieces for a side, and quits
+/// rather than search it.
+fn engine_position(text: &str) -> Checked<()> {
+    if crate::position::fen_problem(text) == Some("tooManyPieces") {
+        return Err("Each side can have at most 16 pieces.".into());
+    }
+    Ok(())
+}
+
 fn local_day(text: &str, msg: &'static str) -> Checked<()> {
     matches(text, patterns::local_day, Some(msg), "", "")
 }
@@ -1407,6 +1416,7 @@ fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
     })?;
     if let Some(position) = &options.fen {
         fen(position, None, Some("Invalid position."), "fen")?;
+        engine_position(position)?;
     }
     if let Some(movetime) = options.movetime {
         within(movetime, 50, 5000, Some("Invalid think time."), "")?;
@@ -1442,6 +1452,7 @@ fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
         _ => None,
     })?;
     fen(&request.fen, None, Some("Invalid position."), "fen")?;
+    engine_position(&request.fen)?;
     let lines = Some("Invalid number of engine lines.");
     within(request.lines, 1, 5, lines, "")?;
     if let Some(root) = &request.root_fen {
@@ -1488,6 +1499,7 @@ fn assert_review_request(value: J) -> Checked<ReviewRequest> {
         _ => Some("Invalid review request."),
     })?;
     fen(&request.fen, None, Some("Invalid position."), "fen")?;
+    engine_position(&request.fen)?;
     move_list(&request.moves)?;
     if let Some(id) = &request.game_id {
         game_id(id)?;
@@ -2305,6 +2317,25 @@ mod tests {
             run("assertReviewRequest", moves),
             Err("Invalid move.".into())
         );
+    }
+
+    #[test]
+    fn the_engine_is_not_given_positions_stockfish_refuses() {
+        // Black has a seventeenth piece: Stockfish quit on it ("More than 32 pieces").
+        let crowded = "rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1";
+        let refused = Err("Each side can have at most 16 pieces.".into());
+        let analysis = obj(vec![
+            ("fen", J::Str(crowded.into())),
+            ("lines", J::Num(3.0)),
+        ]);
+        assert_eq!(run("assertAnalysisRequest", analysis), refused);
+        let search = obj(vec![("fen", J::Str(crowded.into()))]);
+        assert_eq!(run("assertBestMoveOptions", search), refused);
+        let review = obj(vec![
+            ("fen", J::Str(crowded.into())),
+            ("moves", J::Arr(vec![])),
+        ]);
+        assert_eq!(run("assertReviewRequest", review), refused);
     }
 
     #[test]
