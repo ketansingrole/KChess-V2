@@ -1037,34 +1037,9 @@ impl Render for LocalPage {
             )
         };
         let interactive = !over && self.at_live();
-        let entry = h_flex()
+        let entry = widgets::move_entry(&self.move_input, interactive, &palette)
             .flex_1()
-            .min_w(px(160.))
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(8.))
-            .bg(palette.bg)
-            .when(!interactive, |entry| entry.opacity(0.55))
-            .child(
-                div().flex_1().min_w_0().child(
-                    Input::new(&self.move_input)
-                        .appearance(false)
-                        .small()
-                        .disabled(!interactive),
-                ),
-            )
-            .child(
-                div()
-                    .w(px(32.))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .border_l_1()
-                    .border_color(palette.border)
-                    .text_color(palette.text_muted)
-                    .child("↵"),
-            );
+            .min_w(px(160.));
         let board_column = v_flex()
             .w(board_size)
             .flex_none()

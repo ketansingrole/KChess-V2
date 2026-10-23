@@ -112,6 +112,17 @@ impl Arrow {
 
     /// The analysis board's arrows (`paleBlue` for the best line, `paleGrey` for the rest):
     /// the best one bold, the others thinner.
+    /// Chessground's blue brush: a move shown on request.
+    pub fn hint(from: Square, to: Square) -> Arrow {
+        Arrow {
+            from,
+            to,
+            color: 0x003088,
+            opacity: 1.,
+            width: 10.,
+        }
+    }
+
     pub fn engine(from: Square, to: Square, rank: usize) -> Arrow {
         let (color, opacity) = if rank == 0 {
             (0x003088, 0.4)

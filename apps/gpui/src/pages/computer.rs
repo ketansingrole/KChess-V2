@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -1096,34 +1096,9 @@ impl Render for ComputerPage {
                 .into_any_element()
             }),
         );
-        let entry = h_flex()
+        let entry = widgets::move_entry(&self.move_input, interactive, &palette)
             .flex_1()
-            .min_w(px(160.))
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(8.))
-            .bg(palette.bg)
-            .when(!interactive, |entry| entry.opacity(0.55))
-            .child(
-                div().flex_1().min_w_0().text_size(px(13.)).child(
-                    Input::new(&self.move_input)
-                        .appearance(false)
-                        .small()
-                        .disabled(!interactive),
-                ),
-            )
-            .child(
-                div()
-                    .w(px(32.))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .border_l_1()
-                    .border_color(palette.border)
-                    .text_color(palette.text_muted)
-                    .child("↵"),
-            );
+            .min_w(px(160.));
         let you_line = widgets::player_line(
             h_flex()
                 .gap(px(10.))

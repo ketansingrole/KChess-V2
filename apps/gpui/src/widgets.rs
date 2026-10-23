@@ -2,6 +2,7 @@
 //! line above and below a board, the status banner and the move list panel.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -602,4 +603,35 @@ pub fn pills(
                         .child(badge)
                 }))
         }))
+}
+
+/// The typed-move box under a board (`.board-move-form` in `ChessBoard.vue`): the input, dimmed
+/// while no move can be made, and its Return hint.
+pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) -> Div {
+    h_flex()
+        .border_1()
+        .border_color(palette.border)
+        .rounded(px(8.))
+        .bg(palette.bg)
+        .when(!enabled, |entry| entry.opacity(0.55))
+        .child(
+            div().flex_1().min_w_0().text_size(px(13.)).child(
+                Input::new(input)
+                    .appearance(false)
+                    .small()
+                    .disabled(!enabled),
+            ),
+        )
+        .child(
+            div()
+                .w(px(32.))
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_l_1()
+                .border_color(palette.border)
+                .text_color(palette.text_muted)
+                .child("↵"),
+        )
 }

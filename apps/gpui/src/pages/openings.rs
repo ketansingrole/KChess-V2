@@ -822,30 +822,7 @@ impl OpeningsPage {
             .as_ref()
             .map_or_else(|| "Starting position".to_string(), |(name, _)| name.clone());
         let board_size = self.layout.board_size(window);
-        let entry = h_flex()
-            .h(px(36.))
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(8.))
-            .bg(palette.bg)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Input::new(&self.move_input).appearance(false).small()),
-            )
-            .child(
-                div()
-                    .w(px(32.))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .border_l_1()
-                    .border_color(palette.border)
-                    .text_color(palette.text_muted)
-                    .child("↵"),
-            );
+        let entry = widgets::move_entry(&self.move_input, true, palette).h(px(36.));
         let board_column = v_flex()
             .w(board_size)
             .flex_none()

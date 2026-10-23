@@ -112,7 +112,11 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Coordinates (find and name, lengths, sides, some files and ranks, coordinates on every
       square, pieces), Square colours and Knight paths, with their best scores and averages kept
       by the core (`runSummary`, `saveRun`)
-- [ ] Endgames, Repertoire and Your mistakes trainers; voice answers
+- [x] Repertoire: drill a saved study (one chapter or all) or an opening chosen on Openings
+      (its named line, then the explorer's popular moves), as White or Black, steered towards the
+      lines missed before (`recordRepertoireMiss`); Show move, Restart line, Forget mistakes and
+      Save as study
+- [ ] Endgames and Your mistakes trainers; voice answers
 
 ## Openings
 

@@ -3,6 +3,7 @@
 
 mod coordinates;
 mod knight;
+mod repertoire;
 mod run;
 mod square_color;
 
@@ -30,6 +31,7 @@ pub struct PracticePage {
     coordinates: Option<Entity<coordinates::Coordinates>>,
     colors: Option<Entity<square_color::SquareColors>>,
     knight: Option<Entity<knight::KnightPaths>>,
+    repertoire: Option<Entity<repertoire::Repertoire>>,
     focus: FocusHandle,
 }
 
@@ -45,6 +47,7 @@ impl PracticePage {
             coordinates: None,
             colors: None,
             knight: None,
+            repertoire: None,
             focus: cx.focus_handle(),
         }
     }
@@ -73,6 +76,11 @@ impl PracticePage {
             "knight" => self
                 .knight
                 .get_or_insert_with(|| cx.new(|cx| knight::KnightPaths::new(window, cx)))
+                .clone()
+                .into(),
+            "openings" => self
+                .repertoire
+                .get_or_insert_with(|| cx.new(|cx| repertoire::Repertoire::new(window, cx)))
                 .clone()
                 .into(),
             _ => {
@@ -145,9 +153,14 @@ impl Render for PracticePage {
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            // The drills that answer keys keep them; a trainer's move box keeps its own focus.
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
+                cx.listener(|this, _, window, cx| {
+                    if matches!(Self::tab(cx), "coordinates" | "colors") {
+                        window.focus(&this.focus, cx)
+                    }
+                }),
             )
             .child(
                 div()

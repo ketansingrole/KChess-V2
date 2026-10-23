@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, Icon, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -1584,31 +1584,9 @@ impl PuzzlesPage {
             .piece_set
             .clone();
         let orientation = self.orientation();
-        let entry = h_flex()
+        let entry = widgets::move_entry(&self.move_input, true, palette)
             .h(px(36.))
-            .flex_1()
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(8.))
-            .bg(palette.bg)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Input::new(&self.move_input).appearance(false).small()),
-            )
-            .child(
-                div()
-                    .w(px(32.))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .border_l_1()
-                    .border_color(palette.border)
-                    .text_color(palette.text_muted)
-                    .child("↵"),
-            );
+            .flex_1();
         let board_column = if ready {
             v_flex()
                 .w(board_size)
