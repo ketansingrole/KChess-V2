@@ -41,7 +41,6 @@ const MARKER_FILE: &str = "model.json";
 const LEGACY_FILES: [&str; 2] = ["model.tar.gz", "model.tar.gz.json"];
 const LEGACY_ARCHIVE: &str = LEGACY_FILES[0];
 const LEGACY_MARKER: &str = LEGACY_FILES[1];
-const USER_AGENT: &str = "KChess";
 const CHECKSUM_MESSAGE: &str = "Voice model checksum mismatch. Try downloading it again.";
 const INVALID_MESSAGE: &str = "Invalid voice model archive.";
 const STOPPED_MESSAGE: &str = "Voice model preparation stopped unexpectedly.";
@@ -211,7 +210,7 @@ impl VoiceModelCache {
         model: VoiceModel,
     ) -> VoiceModelCache {
         let client = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
+            .user_agent(crate::USER_AGENT)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         VoiceModelCache {

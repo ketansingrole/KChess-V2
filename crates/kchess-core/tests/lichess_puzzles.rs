@@ -213,6 +213,25 @@ async fn an_answer_that_is_not_a_puzzle_is_refused() {
     assert!(fixture.requests()[0].header("authorization").is_none());
 }
 
+#[tokio::test]
+async fn requests_name_the_app() {
+    // Lichess answers a request without a User-Agent with a 403 page: Practice puzzles failed with
+    // "Lichess 403 from GET /api/puzzle/next: unexpected page response".
+    let fixture = serve(|_| Reply::Json(404, "{\"error\":\"Not found\"}".into())).await;
+    let lichess = service(&fixture.base);
+    let request = PuzzleRequest {
+        account: String::new(),
+        angle: "mix".into(),
+        difficulty: "normal".into(),
+        color: None,
+    };
+    puzzle_next(&lichess, &request).await.unwrap();
+    assert_eq!(
+        fixture.requests()[0].header("user-agent"),
+        Some(kchess_core::USER_AGENT)
+    );
+}
+
 /// A puzzle `puzzleFromApi` reads, as an entry of a Lichess batch.
 fn batch_entry(id: &str) -> Value {
     json!({

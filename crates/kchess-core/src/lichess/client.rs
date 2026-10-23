@@ -24,8 +24,11 @@ pub const BASE_URL: &str = "https://lichess.org";
 /// Shared transport configuration. Streams have no total response deadline; the policy bounds
 /// headers, ordinary calls bound their bodies, line-stream readers bound silence between chunks,
 /// and chunk feeds wait until the body ends or is cancelled.
+/// Every request names the app: Lichess answers one that names no program with a 403 page.
 pub fn http_client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder().connect_timeout(super::policy::REQUEST_TIMEOUT)
+    reqwest::Client::builder()
+        .user_agent(crate::USER_AGENT)
+        .connect_timeout(super::policy::REQUEST_TIMEOUT)
 }
 
 /// A limit checked as decoded text arrives, before it is appended to the collected response.

@@ -45,7 +45,6 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const DEFAULT_EXIT_DEADLINE: Duration = Duration::from_secs(4);
 const PROBE_OUTPUT_LIMIT: usize = 1_000_000;
 const VERSION_FILE: &str = "VERSION";
-const USER_AGENT: &str = "KChess";
 
 const EXIT_TIMEOUT_MESSAGE: &str = "Stockfish did not exit. The previous engine was retained.";
 const COULD_NOT_START: &str =
@@ -312,7 +311,7 @@ async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallR
     let dir = location.dir.clone();
     let mut cancel = location.cancel.clone();
     let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
+        .user_agent(crate::USER_AGENT)
         .build()
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
