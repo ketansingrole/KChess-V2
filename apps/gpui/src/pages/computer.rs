@@ -21,6 +21,7 @@ use shakmaty::{Color, Square};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
+use crate::export::{Exporter, GameExport};
 use crate::game::computer::{ComputerGame, Effect, Host, SearchRequest};
 use crate::game::history::HistoryPlace;
 use crate::game::rules;
@@ -56,6 +57,7 @@ enum Question {
 pub struct ComputerPage {
     game: ComputerGame,
     board: Entity<ChessBoard>,
+    exporter: Entity<Exporter>,
     level: Entity<SelectState<Vec<SharedString>>>,
     /// The level ids in the order `level` lists them.
     levels: Vec<String>,
@@ -174,6 +176,7 @@ impl ComputerPage {
             pending: None,
             history: None,
             layout: PlayLayout::default(),
+            exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -417,6 +420,37 @@ impl ComputerPage {
     }
 
     /// Review the game on the analysis board, opened at the move being looked at.
+    /// The game an Export saves, named "You" and "Stockfish" (`pgnResult` for its result).
+    fn game_export(&self) -> GameExport {
+        let user = self.user_color();
+        let setup = &self.game.state["setup"];
+        let result = self.game.result(&self.host()).map(|result| {
+            match result["kind"].as_str() {
+                Some("draw") => "1/2-1/2",
+                kind => {
+                    let winner = if kind == Some("win") { user } else { !user };
+                    if winner == Color::White { "1-0" } else { "0-1" }
+                }
+            }
+            .to_string()
+        });
+        let (white, black) = if user == Color::White {
+            ("You", "Stockfish")
+        } else {
+            ("Stockfish", "You")
+        };
+        GameExport {
+            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
+            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
+            moves: self.moves(),
+            orientation: user,
+            white: white.into(),
+            black: black.into(),
+            ply: Some(self.ply()),
+            result: Some(result.unwrap_or_else(|| "*".into())),
+        }
+    }
+
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pgn = rules(
             "setupPgn",
@@ -1362,7 +1396,16 @@ impl Render for ComputerPage {
                                 this.ask(Question::NewGame, window, cx)
                             })),
                     ),
-            );
+            )
+            .when(!zen, |panel| {
+                panel.child(h_flex().child(crate::export::export_menu(
+                    "computer-export",
+                    &self.exporter,
+                    self.game_export(),
+                    Anchor::BottomLeft,
+                    cx,
+                )))
+            });
 
         self.layout
             .render("computer-page", board_column, panel, window, cx)

@@ -22,6 +22,7 @@ use shakmaty::Color;
 use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::core::AppCore;
+use crate::export::{Exporter, GameExport};
 use crate::game::history::HistoryPlace;
 use crate::game::local::{Flagged, LocalGame};
 use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
@@ -78,6 +79,7 @@ fn variants() -> Vec<VariantText> {
 pub struct LocalPage {
     game: LocalGame,
     board: Entity<ChessBoard>,
+    exporter: Entity<Exporter>,
     move_input: Entity<InputState>,
     move_message: Option<SharedString>,
     started: Instant,
@@ -216,6 +218,7 @@ impl LocalPage {
             ticker: None,
             clock_ticker: None,
             layout: PlayLayout::default(),
+            exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -597,6 +600,35 @@ impl LocalPage {
                 _ => "1/2-1/2",
             },
         }
+    }
+
+    /// The game an Export saves, between "White" and "Black".
+    fn game_export(&self, cx: &App) -> GameExport {
+        let setup = self.setup();
+        GameExport {
+            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
+            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
+            moves: self.moves(),
+            orientation: self.orientation(cx),
+            white: "White".into(),
+            black: "Black".into(),
+            ply: None,
+            result: Some(self.pgn_result().into()),
+        }
+    }
+
+    /// Analyse the game on the analysis board at the position shown (standard rules only).
+    fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pgn = rules(
+            "setupPgn",
+            &[self.setup().clone(), json!(self.moves()), json!({})],
+        );
+        let Ok(Value::String(pgn)) = pgn else { return };
+        let ply = self.shown_ply();
+        let origin = json!({ "white": "White", "black": "Black" });
+        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+            analysis.open_game(&pgn, ply, None, Some(origin.clone()), false, cx)
+        });
     }
 
     fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1315,16 +1347,43 @@ impl Render for LocalPage {
                     ),
             )
             .when(!frontend.zen_mode, |panel| {
+                let standard = self.setup()["variant"].as_str().unwrap_or("standard") == "standard";
                 panel.child(
-                    h_flex().justify_center().child(
-                        Button::new("copy-pgn")
-                            .ghost()
-                            .xsmall()
-                            .icon(icon("copy"))
-                            .label("Copy PGN")
-                            .disabled(moves.is_empty())
-                            .on_click(cx.listener(|this, _, window, cx| this.copy_pgn(window, cx))),
-                    ),
+                    h_flex()
+                        .justify_center()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .child(
+                            Button::new("copy-pgn")
+                                .ghost()
+                                .xsmall()
+                                .icon(icon("copy"))
+                                .label("Copy PGN")
+                                .disabled(moves.is_empty())
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.copy_pgn(window, cx)),
+                                ),
+                        )
+                        .child(crate::export::export_menu(
+                            "local-export",
+                            &self.exporter,
+                            self.game_export(cx),
+                            Anchor::BottomCenter,
+                            cx,
+                        ))
+                        .when(standard, |row| {
+                            row.child(
+                                Button::new("local-analyse")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(icon("microscope"))
+                                    .label("Analyse")
+                                    .disabled(moves.is_empty())
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.analyse(window, cx)),
+                                    ),
+                            )
+                        }),
                 )
             });
         self.layout

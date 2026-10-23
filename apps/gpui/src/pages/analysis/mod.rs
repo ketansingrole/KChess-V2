@@ -33,6 +33,7 @@ use crate::assets::icon;
 use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::{AppCore, BoxedSave, CoreEvent};
 use crate::explorer::{ExplorerEvent, PositionExplorer};
+use crate::export::{Exporter, GameExport};
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san, winning_chances,
@@ -145,6 +146,7 @@ pub struct AnalysisPage {
     /// The Explorer tool, and whether it was shown at the last render.
     explorer: Entity<PositionExplorer>,
     explorer_open: bool,
+    exporter: Entity<Exporter>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_input: Entity<InputState>,
@@ -384,6 +386,7 @@ impl AnalysisPage {
             reveal_move: std::rc::Rc::new(std::cell::Cell::new(true)),
             explorer,
             explorer_open: false,
+            exporter: cx.new(|_| Exporter::default()),
             board,
             layout: PlayLayout::default(),
             move_input,
@@ -1306,45 +1309,24 @@ impl AnalysisPage {
         cx.stop_propagation();
     }
 
-    /// The main line as a PGN file (`ExportGame`), named after its players and today.
-    fn export_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (white, black) = (
-            self.player_name(Color::White),
-            self.player_name(Color::Black),
-        );
-        let result = Some(self.header("Result")).filter(|result| !result.is_empty());
-        let today = chrono::Local::now().format("%Y.%m.%d").to_string();
-        let pgn = rules(
-            "setupPgn",
-            &[
-                json!({ "variant": "standard", "fen": self.root.fen }),
-                json!(self.mainline()),
-                json!({
-                    "White": white,
-                    "Black": black,
-                    "Result": result.unwrap_or_else(|| "*".into()),
-                    "Date": today,
-                }),
-            ],
-        )
-        .ok()
-        .and_then(|pgn| pgn.as_str().map(str::to_string));
-        let Some(pgn) = pgn else { return };
-        let name = format!("{}.pgn", crate::export::game_file_name(&white, &black));
-        let saved = crate::export::save_text(&name, pgn, cx);
-        cx.spawn_in(window, async move |_, cx| {
-            let outcome = saved.await;
-            let _ = cx.update(|window, cx| match outcome {
-                Some(Ok(())) => window.push_notification("Saved the PGN", cx),
-                Some(Err(cause)) => window.push_notification(
-                    gpui_kit::component::notification::Notification::error(cause)
-                        .title("Could not export the game"),
-                    cx,
-                ),
-                None => {}
-            });
-        })
-        .detach();
+    /// The game an Export saves: the main line, and the position shown on it.
+    fn game_export(&self) -> GameExport {
+        let mainline = self.mainline();
+        let depth = if self.path.is_empty() {
+            0
+        } else {
+            self.path.split(' ').count()
+        };
+        GameExport {
+            variant: "standard".into(),
+            fen: self.root.fen.clone(),
+            ply: Some(depth.min(mainline.len())),
+            moves: mainline,
+            orientation: self.orientation,
+            white: self.player_name(Color::White),
+            black: self.player_name(Color::Black),
+            result: Some(self.header("Result")).filter(|result| !result.is_empty()),
+        }
     }
 
     fn copy(&self, text: String, what: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -2489,28 +2471,13 @@ impl AnalysisPage {
                     .accessibility_label("Flip board")
                     .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
             )
-            .child(
-                Button::new("analysis-export")
-                    .ghost()
-                    .xsmall()
-                    .icon(icon("download"))
-                    .label("Export")
-                    .disabled(self.mainline().is_empty())
-                    .dropdown_menu_with_anchor(Anchor::BottomRight, {
-                        let page = cx.entity().downgrade();
-                        move |menu, _, _| {
-                            let page = page.clone();
-                            menu.item(
-                                PopupMenuItem::new("PGN file")
-                                    .icon(icon("file-text"))
-                                    .on_click(move |_, window, cx| {
-                                        let _ =
-                                            page.update(cx, |page, cx| page.export_pgn(window, cx));
-                                    }),
-                            )
-                        }
-                    }),
-            )
+            .child(crate::export::export_menu(
+                "analysis-export",
+                &self.exporter,
+                self.game_export(),
+                Anchor::BottomRight,
+                cx,
+            ))
             .child(
                 Button::new("analysis-import")
                     .ghost()
@@ -2782,11 +2749,14 @@ impl Render for AnalysisPage {
             }
         };
         self.explorer_open = tool == Tool::Explorer;
+        // A click in the panel gives the keys back to the board, before a text field in it
+        // (a comment, the explorer's player) takes them for itself.
         let panel = widgets::side_panel(&palette)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
-            )
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .h(board_size + px(36.) + widgets::STACK_GAP)
             .flex_1()
             .min_w(PANEL_MIN)

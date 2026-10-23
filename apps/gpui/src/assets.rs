@@ -28,6 +28,11 @@ pub fn icon(name: &'static str) -> Icon {
 #[include = "sounds/*.mp3"]
 struct Shared;
 
+/// A board image or piece of the Electron renderer's, by its path (`boards/brown.png`).
+pub fn shared(path: &str) -> Option<Cow<'static, [u8]>> {
+    Shared::get(path).map(|file| file.data)
+}
+
 /// A sound clip by its file name in `sounds/`.
 pub fn sound(name: &str) -> Option<Cow<'static, [u8]>> {
     Shared::get(&format!("sounds/{name}")).map(|file| file.data)

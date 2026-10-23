@@ -46,7 +46,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Desktop notification when Stockfish moves in the background
 - [ ] Premoves and piece animation
 - [x] Review game: the game on the analysis board at the move shown, reviewed
-- [ ] Voice input, Export (PGN, GIF)
+- [x] Export: animated GIF of the game, PNG of the position shown, PGN file
+- [ ] Voice input
 - [ ] Right-click arrows and circles on the board
 
 ## Over the board
@@ -57,7 +58,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Chess clock: two faces, side by side or stacked, Start/Pause/Reset, minutes and
       increment, Space presses the running face, P pauses
 - [ ] Rotating each clock face (GPUI cannot rotate text yet)
-- [ ] Voice input, Export (PGN, GIF), Analyse
+- [x] Export (GIF, PNG, PGN) and Analyse
+- [ ] Voice input
 - [ ] Electron's chess clock (`stores/clock.ts`) still keeps its own copy of the rules now in
       `kchess-domain/src/games/otb_clock.rs`
 
@@ -96,7 +98,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Comments and annotations (`MoveNotes`, C), the move list's right-click menu (comment,
       Annotate, Make main line, Delete from here, Copy FEN; Copy PGN), scrolling the shown move
       into view
-- [x] Export: PGN file of the main line, saved where you choose
+- [x] Export: animated GIF of the main line, PNG of the position shown, PGN file
 - [x] The study bar: the open study saved as you go (to its chapter), its name edited in place,
       chapters (switch, add, rename, duplicate, delete), Save as study, Save a copy, Close and
       Delete study with Undo, Game details; a recovered session that differs from its study stays
@@ -108,7 +110,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       on the board
 - [x] Explorer tool: Lichess, Masters, Player and Tablebase lookups with their filters, Follow
       moves, saved lookups, playing a move and opening a listed game
-- [ ] Export as GIF or PNG, voice input
+- [ ] Voice input
 - [x] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles

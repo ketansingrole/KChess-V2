@@ -8,6 +8,7 @@ mod core;
 mod explorer;
 mod export;
 mod game;
+mod game_image;
 mod log;
 mod menu;
 mod name_dialog;
