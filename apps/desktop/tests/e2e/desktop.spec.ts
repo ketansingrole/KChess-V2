@@ -2650,6 +2650,16 @@ test('validates study import, editor FEN and analysis import', async ({ desktop:
   await page.getByLabel('FEN', { exact: true }).fill('bad-fen')
   await page.keyboard.press('Enter')
   await expect(page.getByText('That is not a valid FEN.', { exact: true })).toBeVisible()
+  // A side with 17 pieces: Stockfish refuses the FEN and quits, so the editor must not offer it.
+  const crowded = 'rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+  await page.getByLabel('FEN', { exact: true }).fill(crowded)
+  await page.keyboard.press('Enter')
+  await expect(
+    page.getByText('Each side can have at most 16 pieces.', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Analyse this position', exact: true }),
+  ).toBeDisabled()
 
   await navigate(page, 'Analysis board')
   await page.locator('.analysis-panel').getByRole('button', { name: 'Import', exact: true }).click()
@@ -2657,6 +2667,11 @@ test('validates study import, editor FEN and analysis import', async ({ desktop:
   await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
   await expect(
     page.getByText('Use a valid FEN or one PGN game with legal moves, under 2 MB.'),
+  ).toBeVisible()
+  await page.getByRole('textbox', { name: 'FEN or PGN' }).fill(crowded)
+  await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(
+    page.getByRole('dialog').getByText('Each side can have at most 16 pieces.', { exact: true }),
   ).toBeVisible()
 })
 
