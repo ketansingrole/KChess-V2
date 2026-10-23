@@ -2,6 +2,7 @@
 //! board, Stockfish's lines and arrows for the position shown, Lichess's cloud evaluation, and the
 //! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
 
+mod notes;
 mod practice;
 mod review;
 
@@ -14,7 +15,7 @@ use futures::FutureExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
@@ -135,6 +136,11 @@ pub struct AnalysisPage {
     practice: Option<practice::Practice>,
     /// The engine made way for a review of this game.
     paused_for_review: bool,
+    /// The comment and annotation of the move shown.
+    notes: notes::Notes,
+    /// The move list's scrolling, brought to the move shown after it changes.
+    moves_scroll: ScrollHandle,
+    reveal_move: std::rc::Rc<std::cell::Cell<bool>>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_input: Entity<InputState>,
@@ -272,7 +278,24 @@ impl AnalysisPage {
         let settings = cx.global::<SettingsHandle>().0.clone();
         let online = cx.global::<OnlineHandle>().0.clone();
         let events = cx.global::<AppCore>().events.clone();
+        let notes_field = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(2)
+                .placeholder("What's the idea here?")
+        });
         let subscriptions = vec![
+            cx.subscribe(
+                &notes_field,
+                |this, _, event: &InputEvent, cx| match event {
+                    InputEvent::Change => this.write_comment(cx),
+                    InputEvent::Focus => this.notes.editing = true,
+                    InputEvent::Blur => {
+                        this.notes.editing = false;
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            ),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.play(uci, cx);
@@ -343,6 +366,13 @@ impl AnalysisPage {
             review: review::ReviewState::new(mistakes),
             practice: None,
             paused_for_review: false,
+            notes: notes::Notes {
+                field: notes_field,
+                editing: false,
+                filled_for: None,
+            },
+            moves_scroll: ScrollHandle::new(),
+            reveal_move: std::rc::Rc::new(std::cell::Cell::new(true)),
             board,
             layout: PlayLayout::default(),
             move_input,
@@ -773,6 +803,7 @@ impl AnalysisPage {
 
     /// The board, the engine and the saved session follow a change.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.reveal_move.set(true);
         self.follow_review(cx);
         self.check_practice(cx);
         self.redraw(cx);
@@ -1221,6 +1252,7 @@ impl AnalysisPage {
             "down" => self.go_to_end(cx),
             "f" => self.flip(cx),
             "l" => self.toggle_engine(cx),
+            "c" => self.focus_notes(window, cx),
             "space"
                 if !cx
                     .global::<SettingsHandle>()
@@ -1261,6 +1293,47 @@ impl AnalysisPage {
         }
         self.wheel = 0.;
         cx.stop_propagation();
+    }
+
+    /// The main line as a PGN file (`ExportGame`), named after its players and today.
+    fn export_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (white, black) = (
+            self.player_name(Color::White),
+            self.player_name(Color::Black),
+        );
+        let result = Some(self.header("Result")).filter(|result| !result.is_empty());
+        let today = chrono::Local::now().format("%Y.%m.%d").to_string();
+        let pgn = rules(
+            "setupPgn",
+            &[
+                json!({ "variant": "standard", "fen": self.root.fen }),
+                json!(self.mainline()),
+                json!({
+                    "White": white,
+                    "Black": black,
+                    "Result": result.unwrap_or_else(|| "*".into()),
+                    "Date": today,
+                }),
+            ],
+        )
+        .ok()
+        .and_then(|pgn| pgn.as_str().map(str::to_string));
+        let Some(pgn) = pgn else { return };
+        let name = format!("{}.pgn", crate::export::game_file_name(&white, &black));
+        let saved = crate::export::save_text(&name, pgn, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            let outcome = saved.await;
+            let _ = cx.update(|window, cx| match outcome {
+                Some(Ok(())) => window.push_notification("Saved the PGN", cx),
+                Some(Err(cause)) => window.push_notification(
+                    gpui_kit::component::notification::Notification::error(cause)
+                        .title("Could not export the game"),
+                    cx,
+                ),
+                None => {}
+            });
+        })
+        .detach();
     }
 
     fn copy(&self, text: String, what: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1413,12 +1486,103 @@ enum Piece {
     Block(AnyElement),
 }
 
+/// What a move's menu needs to know of it.
+#[derive(Clone)]
+struct MoveMenu {
+    commented: bool,
+    nag: Option<i64>,
+    mainline: bool,
+    fen: String,
+}
+
+/// What a menu item does to the page.
+type PageAction = Box<dyn Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>)>;
+
+/// Right-click a move to comment on it, annotate it, promote or delete it.
+fn move_menu(
+    page: &WeakEntity<AnalysisPage>,
+    path: &str,
+    state: &MoveMenu,
+    menu: PopupMenu,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let act = |run: PageAction| {
+        let page = page.clone();
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+            let _ = page.update(cx, |page, cx| run(page, window, cx));
+        }
+    };
+    let (at, current) = (path.to_string(), state.nag);
+    let annotate = {
+        let (page, at) = (page.clone(), at.clone());
+        move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+            notes::MOVE_GLYPHS
+                .iter()
+                .fold(menu, |menu, (nag, glyph, label)| {
+                    let (page, at, nag) = (page.clone(), at.clone(), *nag);
+                    menu.item(
+                        PopupMenuItem::new(format!("{glyph}  {label}"))
+                            .checked(current == Some(nag))
+                            .on_click(move |_, _, cx| {
+                                let _ = page.update(cx, |page, cx| page.toggle_glyph(&at, nag, cx));
+                            }),
+                    )
+                })
+        }
+    };
+    let (promote_at, delete_at, fen) = (at.clone(), at.clone(), state.fen.clone());
+    menu.item(
+        PopupMenuItem::new(if state.commented {
+            "Edit comment"
+        } else {
+            "Add comment"
+        })
+        .icon(icon("message-square-text"))
+        .on_click(act(Box::new(|page, window, cx| {
+            page.focus_notes(window, cx)
+        }))),
+    )
+    .submenu_with_icon(Some(icon("highlighter")), "Annotate", window, cx, annotate)
+    .separator()
+    .item(
+        PopupMenuItem::new("Make main line")
+            .icon(icon("arrow-up-to-line"))
+            .disabled(state.mainline)
+            .on_click(act(Box::new(move |page, _, cx| {
+                page.path = promote_at.clone();
+                page.promote(cx)
+            }))),
+    )
+    .item(
+        PopupMenuItem::new("Delete from here")
+            .icon(icon("scissors"))
+            .on_click(act(Box::new(move |page, window, cx| {
+                page.path = delete_at.clone();
+                page.ask_remove(window, cx)
+            }))),
+    )
+    .separator()
+    .item(
+        PopupMenuItem::new("Copy FEN")
+            .icon(icon("copy"))
+            .on_click(act(Box::new(move |page, window, cx| {
+                page.copy(fen.clone(), "FEN", window, cx)
+            }))),
+    )
+}
+
 struct TreeView<'a> {
     current: &'a str,
     page: WeakEntity<AnalysisPage>,
     palette: Palette,
     /// The review's label on each main-line move, by path.
     marks: HashMap<String, review::ReviewMark>,
+    /// Paths on the main line.
+    mainline: std::collections::HashSet<String>,
+    /// Bring the move shown into view after it changes (`block: 'nearest'`).
+    reveal: std::rc::Rc<std::cell::Cell<bool>>,
+    scroll: ScrollHandle,
 }
 
 impl TreeView<'_> {
@@ -1428,6 +1592,22 @@ impl TreeView<'_> {
         let (page, target) = (self.page.clone(), path.to_string());
         let glyph = move_glyph(node);
         let annotated = glyph.is_some();
+        let menu_state = MoveMenu {
+            commented: node
+                .comments
+                .iter()
+                .flatten()
+                .any(|comment| !comment_text(comment).is_empty()),
+            nag: node
+                .nags
+                .iter()
+                .flatten()
+                .copied()
+                .find(|nag| (1..=6).contains(nag)),
+            mainline: self.mainline.contains(path),
+            fen: node.fen.clone(),
+        };
+        let (menu_page, menu_path) = (page.clone(), path.to_string());
         h_flex()
             .id(SharedString::from(format!("tree-{path}")))
             .px(px(4.))
@@ -1442,8 +1622,45 @@ impl TreeView<'_> {
                     .text_color(palette.highlighted)
             })
             .when(!active, |chip| chip.hover(|chip| chip.bg(palette.accented)))
-            .on_click(move |_, _, cx| {
-                let _ = page.update(cx, |page, cx| page.go_to(&target, cx));
+            .on_click({
+                let (page, target) = (page.clone(), target.clone());
+                move |_, _, cx| {
+                    let _ = page.update(cx, |page, cx| page.go_to(&target, cx));
+                }
+            })
+            // A right-click shows the move it is about, then its menu.
+            .on_mouse_down(MouseButton::Right, {
+                let (page, target) = (page.clone(), target.clone());
+                move |_, _, cx| {
+                    let _ = page.update(cx, |page, cx| page.go_to(&target, cx));
+                }
+            })
+            .when(active, |chip| {
+                let (reveal, scroll) = (self.reveal.clone(), self.scroll.clone());
+                chip.relative().child(
+                    canvas(
+                        move |bounds, window, _| {
+                            if !reveal.replace(false) {
+                                return;
+                            }
+                            let view = scroll.bounds();
+                            let mut offset = scroll.offset();
+                            let margin = px(8.);
+                            if bounds.bottom() + margin > view.bottom() {
+                                offset.y -= bounds.bottom() + margin - view.bottom();
+                            } else if bounds.top() - margin < view.top() {
+                                offset.y += view.top() - (bounds.top() - margin);
+                            } else {
+                                return;
+                            }
+                            scroll.set_offset(offset);
+                            window.refresh();
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
             })
             .when(!number.is_empty(), |chip| {
                 chip.child(
@@ -1479,6 +1696,9 @@ impl TreeView<'_> {
                                 .child(glyph)
                         }),
                 )
+            })
+            .context_menu(move |menu, window, cx| {
+                move_menu(&menu_page, &menu_path, &menu_state, menu, window, cx)
             })
             .into_any_element()
     }
@@ -2190,6 +2410,14 @@ impl AnalysisPage {
             page: cx.entity().downgrade(),
             palette: *palette,
             marks: self.review_marks(cx),
+            mainline: {
+                let moves = self.mainline();
+                (1..=moves.len())
+                    .map(|count| path_of(&moves[..count]))
+                    .collect()
+            },
+            reveal: self.reveal_move.clone(),
+            scroll: self.moves_scroll.clone(),
         };
         let mut pieces = Vec::new();
         view.line(&self.root, "", None, 0, &mut pieces);
@@ -2249,6 +2477,28 @@ impl AnalysisPage {
                     .tooltip("Flip board (F)")
                     .accessibility_label("Flip board")
                     .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
+            )
+            .child(
+                Button::new("analysis-export")
+                    .ghost()
+                    .xsmall()
+                    .icon(icon("download"))
+                    .label("Export")
+                    .disabled(self.mainline().is_empty())
+                    .dropdown_menu_with_anchor(Anchor::BottomRight, {
+                        let page = cx.entity().downgrade();
+                        move |menu, _, _| {
+                            let page = page.clone();
+                            menu.item(
+                                PopupMenuItem::new("PGN file")
+                                    .icon(icon("file-text"))
+                                    .on_click(move |_, window, cx| {
+                                        let _ =
+                                            page.update(cx, |page, cx| page.export_pgn(window, cx));
+                                    }),
+                            )
+                        }
+                    }),
             )
             .child(
                 Button::new("analysis-import")
@@ -2359,6 +2609,7 @@ impl AnalysisPage {
 
 impl Render for AnalysisPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_notes(window, cx);
         let palette = *cx.global::<Palette>();
         let tool = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
         let allowed = Self::assistance_allowed(cx);
@@ -2423,17 +2674,42 @@ impl Render for AnalysisPage {
                     })),
             );
         let tool_body: AnyElement = match tool {
-            Tool::Moves => div()
-                .id("analysis-moves")
+            Tool::Moves => v_flex()
                 .flex_1()
-                .min_h(px(96.))
-                .overflow_y_scroll()
-                .p(px(8.))
-                .border_1()
-                .border_color(palette.border)
-                .rounded(px(10.))
-                .bg(palette.bg)
-                .child(self.render_moves(cx, &palette))
+                .min_h_0()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .id("analysis-moves")
+                        .flex_1()
+                        .min_h(px(96.))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.moves_scroll)
+                        .p(px(8.))
+                        .border_1()
+                        .border_color(palette.border)
+                        .rounded(px(10.))
+                        .bg(palette.bg)
+                        // Away from any move, the list's menu copies the game.
+                        .context_menu({
+                            let page = cx.entity().downgrade();
+                            move |menu, _, _| {
+                                let page = page.clone();
+                                menu.item(
+                                    PopupMenuItem::new("Copy PGN")
+                                        .icon(icon("file-text"))
+                                        .on_click(move |_, window, cx| {
+                                            let _ = page.update(cx, |page, cx| {
+                                                let pgn = page.root.to_pgn();
+                                                page.copy(pgn, "PGN", window, cx)
+                                            });
+                                        }),
+                                )
+                            }
+                        })
+                        .child(self.render_moves(cx, &palette)),
+                )
+                .child(self.render_notes(cx, &palette))
                 .into_any_element(),
             Tool::Review => {
                 let note = |text: &'static str| {

@@ -2,8 +2,6 @@
 //! computer and over the board, filtered by result, twenty to a page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
-use std::path::PathBuf;
-
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -369,19 +367,13 @@ impl HistoryPage {
             cx.notify();
             return;
         };
-        let folder = dirs::download_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."));
         let name = format!("kchess-{}.pgn", text(game, "id"));
-        let chosen = cx.prompt_for_new_path(&folder, Some(&name));
+        let saved = crate::export::save_text(&name, pgn, cx);
         cx.spawn(async move |this, cx| {
-            let message: Option<SharedString> = match chosen.await {
-                Ok(Ok(Some(path))) => Some(match std::fs::write(&path, pgn) {
-                    Ok(()) => "Saved the PGN".into(),
-                    Err(cause) => format!("Export failed: {cause}").into(),
-                }),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(cause)) => Some(format!("Export failed: {cause}").into()),
+            let message: Option<SharedString> = match saved.await {
+                Some(Ok(())) => Some("Saved the PGN".into()),
+                Some(Err(cause)) => Some(format!("Export failed: {cause}").into()),
+                None => None,
             };
             let _ = this.update(cx, |this, cx| {
                 if message.is_some() {

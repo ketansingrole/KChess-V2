@@ -181,7 +181,7 @@ impl TreeNode {
         self.nodes_along(path).last().copied().unwrap_or(self)
     }
 
-    fn node_at_mut(&mut self, path: &str) -> &mut TreeNode {
+    pub fn node_at_mut(&mut self, path: &str) -> &mut TreeNode {
         let mut node = self;
         for uci in moves_of(path) {
             let Some(index) = node.children.iter().position(|child| child.uci == uci) else {
@@ -304,6 +304,14 @@ impl TreeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pgn_keeps_its_annotations() {
+        let tree = TreeNode::from_pgn("1. e4!? e5 2. Nf3 $1 *").unwrap();
+        let e4 = &tree.children[0];
+        assert_eq!(e4.nags, Some(vec![5]));
+        assert_eq!(e4.children[0].children[0].nags, Some(vec![1]));
+    }
 
     #[test]
     fn moves_branch_and_promote_like_the_electron_tree() {

@@ -93,8 +93,10 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Stockfish lines and arrows, evaluation bar, engine settings, Lichess cloud evaluation, the
       same evaluation cache and paused engine during a live game
 - [x] Import FEN or PGN, Copy FEN and PGN, Make main line, Delete from here, New analysis
-- [ ] Comments and annotations (`MoveNotes`), the move list's right-click menu, scrolling the
-      shown move into view
+- [x] Comments and annotations (`MoveNotes`, C), the move list's right-click menu (comment,
+      Annotate, Make main line, Delete from here, Copy FEN; Copy PGN), scrolling the shown move
+      into view
+- [x] Export: PGN file of the main line, saved where you choose
 - [x] The study bar: the open study saved as you go (to its chapter), its name edited in place,
       chapters (switch, add, rename, duplicate, delete), Save as study, Save a copy, Close and
       Delete study with Undo, Game details; a recovered session that differs from its study stays
@@ -104,7 +106,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       evaluation chart, labels in the move list and on the board, the engine paused while this
       game is reviewed, your mistakes saved once it completes, and practising the game's mistakes
       on the board
-- [ ] Explorer tool, Export, voice input
+- [ ] Explorer tool, Export as GIF or PNG, voice input
 - [x] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles

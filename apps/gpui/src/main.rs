@@ -4,6 +4,7 @@
 mod assets;
 mod board;
 mod core;
+mod export;
 mod game;
 mod log;
 mod menu;
