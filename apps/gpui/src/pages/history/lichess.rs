@@ -249,7 +249,7 @@ impl HistoryPage {
     }
 
     /// `openReview`: read the game's PGN (list rows carry none) and go through it.
-    fn open_lichess(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_lichess(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
         let read = if game["pgn"].is_string() {
             None
         } else {
@@ -588,7 +588,22 @@ impl HistoryPage {
                 .games
                 .iter()
                 .enumerate()
-                .map(|(index, game)| self.game_row(index, game, cx, palette))
+                .map(|(index, game)| {
+                    let chosen = game.clone();
+                    let page = cx.entity().downgrade();
+                    game_row(
+                        ("lichess-game", index),
+                        game,
+                        self.side_of(game),
+                        true,
+                        move |window, cx| {
+                            let _ = page.update(cx, |this, cx| {
+                                this.open_lichess(chosen.clone(), window, cx)
+                            });
+                        },
+                        palette,
+                    )
+                })
                 .collect();
             v_flex().child(head).children(rows).into_any_element()
         };
@@ -627,131 +642,6 @@ impl HistoryPage {
     }
 
     /// `GameRow.vue detailed`: result, opponent and opening, mode, rating change, accuracy, date.
-    fn game_row(
-        &self,
-        index: usize,
-        game: &Value,
-        cx: &mut Context<Self>,
-        palette: &Palette,
-    ) -> AnyElement {
-        let outcome = result_of(game);
-        let opponent = game["opponent"].as_str().unwrap_or("?").to_string();
-        let mut sub = game["opening"]
-            .as_str()
-            .or(game["account"].as_str())
-            .unwrap_or_default()
-            .to_string();
-        if let Some(rating) = game["opponentRating"].as_f64() {
-            sub.push_str(&format!(" · {rating}"));
-        }
-        let speed = game["speed"].as_str().unwrap_or_default();
-        let speed = {
-            let mut chars = speed.chars();
-            chars
-                .next()
-                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
-                .unwrap_or_default()
-        };
-        let diff = game["ratingDiff"].as_f64().filter(|diff| *diff != 0.);
-        let side = self.side_of(game);
-        let accuracy = match &side {
-            Some(side) => side["accuracy"]
-                .as_f64()
-                .map_or_else(|| "Reviewed".to_string(), |accuracy| format!("{accuracy}%")),
-            None => "—".into(),
-        };
-        let worst = side
-            .as_ref()
-            .and_then(|side| crate::reviews::judgment_counts(side).into_iter().next());
-        let muted = palette.text_muted;
-        let line = |text: String| {
-            div()
-                .text_size(px(12.))
-                .text_color(muted)
-                .truncate()
-                .child(text)
-        };
-        let chosen = game.clone();
-        h_flex()
-            .id(("lichess-game", index))
-            .px(px(14.))
-            .py(px(10.))
-            .gap(px(12.))
-            .rounded(px(8.))
-            .text_size(px(14.))
-            .cursor_pointer()
-            .hover(|row| row.bg(palette.accented))
-            .on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.open_lichess(chosen.clone(), window, cx)
-                }),
-            )
-            .child(
-                div()
-                    .w(px(64.))
-                    .child(super::badge(outcome, Some(px(52.)), palette)),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::BOLD)
-                            .truncate()
-                            .child(opponent),
-                    )
-                    .child(line(sub)),
-            )
-            .child(
-                v_flex()
-                    .w(px(90.))
-                    .child(speed)
-                    .child(line(if game["rated"] == json!(true) {
-                        "Rated".into()
-                    } else {
-                        "Casual".into()
-                    })),
-            )
-            .child(
-                div()
-                    .w(px(60.))
-                    .text_color(match diff {
-                        Some(diff) if diff > 0. => palette.win,
-                        Some(_) => palette.loss,
-                        None => muted,
-                    })
-                    .child(match diff {
-                        Some(diff) if diff > 0. => format!("+{diff}"),
-                        Some(diff) => format!("{diff}"),
-                        None => "—".into(),
-                    }),
-            )
-            .child(
-                v_flex()
-                    .w(px(110.))
-                    .child(
-                        div()
-                            .when(side.is_none(), |text| text.text_color(muted))
-                            .child(accuracy),
-                    )
-                    .children(worst.map(|(judgment, text)| {
-                        let (_, _, color) =
-                            crate::pages::analysis::classification_look(judgment, palette.dark);
-                        div().text_size(px(12.)).text_color(color).child(text)
-                    })),
-            )
-            .child(
-                div()
-                    .w(px(100.))
-                    .text_color(muted)
-                    .child(crate::game::game_date(
-                        game["createdAt"].as_f64().unwrap_or_default(),
-                    )),
-            )
-            .into_any_element()
-    }
-
     fn lichess_pager(
         &self,
         current: usize,
@@ -798,6 +688,129 @@ impl HistoryPage {
             cx,
         ))
     }
+}
+
+/// `GameRow.vue`: result, opponent, mode and date; `detailed` adds the opening and rating, the
+/// rating change and the review's accuracy and worst mistakes (`side`).
+pub fn game_row(
+    id: impl Into<ElementId>,
+    game: &Value,
+    side: Option<Value>,
+    detailed: bool,
+    select: impl Fn(&mut Window, &mut App) + 'static,
+    palette: &Palette,
+) -> AnyElement {
+    let outcome = result_of(game);
+    let opponent = game["opponent"].as_str().unwrap_or("?").to_string();
+    let mut sub = game["opening"]
+        .as_str()
+        .or(game["account"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    if let Some(rating) = game["opponentRating"].as_f64() {
+        sub.push_str(&format!(" · {rating}"));
+    }
+    let speed = game["speed"].as_str().unwrap_or_default();
+    let speed = {
+        let mut chars = speed.chars();
+        chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+            .unwrap_or_default()
+    };
+    let diff = game["ratingDiff"].as_f64().filter(|diff| *diff != 0.);
+    let accuracy = match &side {
+        Some(side) => side["accuracy"]
+            .as_f64()
+            .map_or_else(|| "Reviewed".to_string(), |accuracy| format!("{accuracy}%")),
+        None => "—".into(),
+    };
+    let worst = side
+        .as_ref()
+        .and_then(|side| crate::reviews::judgment_counts(side).into_iter().next());
+    let muted = palette.text_muted;
+    let line = |text: String| {
+        div()
+            .text_size(px(12.))
+            .text_color(muted)
+            .truncate()
+            .child(text)
+    };
+    h_flex()
+        .id(id)
+        .px(px(14.))
+        .py(px(10.))
+        .gap(px(12.))
+        .rounded(px(8.))
+        .text_size(px(14.))
+        .cursor_pointer()
+        .hover(|row| row.bg(palette.accented))
+        .on_click(move |_, window, cx| select(window, cx))
+        .child(
+            div()
+                .w(px(64.))
+                .child(super::badge(outcome, Some(px(52.)), palette)),
+        )
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .font_weight(FontWeight::BOLD)
+                        .truncate()
+                        .child(opponent),
+                )
+                .when(detailed, |column| column.child(line(sub))),
+        )
+        .child(v_flex().w(px(90.)).child(speed).when(detailed, |column| {
+            column.child(line(if game["rated"] == json!(true) {
+                "Rated".into()
+            } else {
+                "Casual".into()
+            }))
+        }))
+        .when(detailed, |row| {
+            row.child(
+                div()
+                    .w(px(60.))
+                    .text_color(match diff {
+                        Some(diff) if diff > 0. => palette.win,
+                        Some(_) => palette.loss,
+                        None => muted,
+                    })
+                    .child(match diff {
+                        Some(diff) if diff > 0. => format!("+{diff}"),
+                        Some(diff) => format!("{diff}"),
+                        None => "—".into(),
+                    }),
+            )
+        })
+        .when(detailed, |row| {
+            row.child(
+                v_flex()
+                    .w(px(110.))
+                    .child(
+                        div()
+                            .when(side.is_none(), |text| text.text_color(muted))
+                            .child(accuracy),
+                    )
+                    .children(worst.map(|(judgment, text)| {
+                        let (_, _, color) =
+                            crate::pages::analysis::classification_look(judgment, palette.dark);
+                        div().text_size(px(12.)).text_color(color).child(text)
+                    })),
+            )
+        })
+        .child(
+            div()
+                .w(px(100.))
+                .text_color(muted)
+                .child(crate::game::game_date(
+                    game["createdAt"].as_f64().unwrap_or_default(),
+                )),
+        )
+        .into_any_element()
 }
 
 /// Review a synced game on the analysis board, opened at the move being looked at

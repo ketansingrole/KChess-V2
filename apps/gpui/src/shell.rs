@@ -119,6 +119,24 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
 }
 
+/// Game history's Lichess tab (`/history?source=lichess`).
+pub fn open_history_lichess(window: &mut Window, cx: &mut App) {
+    open(Page::History, window, cx);
+    if let Some(history) = view_of::<crate::pages::history::HistoryPage>(Page::History, cx) {
+        history.update(cx, |history, cx| history.show_lichess(cx));
+    }
+}
+
+/// Open a synced Lichess game in Game history (`openReview`).
+pub fn open_lichess_game(game: serde_json::Value, window: &mut Window, cx: &mut App) {
+    open(Page::History, window, cx);
+    if let Some(history) = view_of::<crate::pages::history::HistoryPage>(Page::History, cx) {
+        history.update(cx, |history, cx| {
+            history.show_lichess_game(game, window, cx)
+        });
+    }
+}
+
 /// Start every page afresh at Home (after signing out, as Electron reloads its window), so
 /// nothing a page kept for an account outlives it.
 pub fn restart_pages(window: &mut Window, cx: &mut App) {

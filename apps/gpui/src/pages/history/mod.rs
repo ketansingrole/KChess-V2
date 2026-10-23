@@ -18,7 +18,7 @@ use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
 use crate::replay::GameReplay;
 
-mod lichess;
+pub(crate) mod lichess;
 use crate::theme::Palette;
 use crate::widgets::{self, Look, Pill};
 
@@ -95,7 +95,7 @@ fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
 }
 
 /// `ResultBadge.vue`.
-fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
+pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
     let (label, look, side) = badge_of(outcome);
     widgets::badge(label, look, palette)
         .when_some(width, |badge, width| badge.w(width))
@@ -256,6 +256,17 @@ impl HistoryPage {
             started(b).total_cmp(&started(a))
         });
         games
+    }
+
+    /// Show the Lichess tab's list (Home's View all).
+    pub fn show_lichess(&mut self, cx: &mut Context<Self>) {
+        self.choose_source(Source::Lichess, cx);
+    }
+
+    /// Open a synced Lichess game on the Lichess tab (Home's recent games).
+    pub fn show_lichess_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_source(Source::Lichess, cx);
+        self.open_lichess(game, window, cx);
     }
 
     fn choose_source(&mut self, source: Source, cx: &mut Context<Self>) {

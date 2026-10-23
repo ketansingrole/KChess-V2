@@ -17,6 +17,8 @@ use crate::played::PlayedHandle;
 use crate::theme::Palette;
 use crate::widgets;
 
+mod lichess;
+
 /// Recent games on Home (`localGames`).
 const RECENT: usize = 6;
 /// The page header's empty row above the tiles.
@@ -25,6 +27,8 @@ const HEADER: Pixels = px(20.);
 pub struct HomePage {
     /// "Move 4 · White · Club Player · ~1600" while a computer game is unfinished.
     continue_game: Option<String>,
+    /// Your Lichess activity, once an account is connected, and the account it shows.
+    activity: Option<(String, Entity<lichess::LichessActivity>)>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -85,6 +89,7 @@ impl HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
         let mut page = HomePage {
             continue_game: None,
+            activity: None,
             focus: cx.focus_handle(),
             _subscriptions: vec![
                 cx.observe(&played, |_, _, cx| cx.notify()),
@@ -100,6 +105,10 @@ impl HomePage {
         let core = cx.global::<AppCore>().clone();
         let library = core.call("library", Vec::new());
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
+        if let Some((account, activity)) = &self.activity {
+            let account = account.clone();
+            activity.update(cx, |activity, cx| activity.load(&account, cx));
+        }
         cx.spawn(async move |this, cx| {
             let library = library.await;
             let _ = this.update(cx, |this, cx| {
@@ -407,6 +416,29 @@ impl Render for HomePage {
                 }
             });
         let stacked = width < px(900.);
+        // A connected account's activity replaces the local cards (`hasConnectedAccount`).
+        let activity = match connected.clone() {
+            Some(account) => {
+                let stale = self
+                    .activity
+                    .as_ref()
+                    .is_none_or(|(shown, _)| *shown != account);
+                if stale {
+                    let view = self
+                        .activity
+                        .take()
+                        .map(|(_, view)| view)
+                        .unwrap_or_else(|| cx.new(|cx| lichess::LichessActivity::new(window, cx)));
+                    view.update(cx, |view, cx| view.load(&account, cx));
+                    self.activity = Some((account, view));
+                }
+                self.activity.as_ref().map(|(_, view)| view.clone())
+            }
+            None => {
+                self.activity = None;
+                None
+            }
+        };
         div()
             .id("home-page")
             .track_focus(&self.focus)
@@ -449,26 +481,30 @@ impl Render for HomePage {
                                 )),
                         ),
                     )
-                    .child(
-                        // `.two-columns`: 1.15 to 1, the cards as tall as each other.
-                        if stacked {
-                            v_flex().gap(px(20.))
-                        } else {
-                            h_flex().items_stretch().gap(px(20.))
+                    .child(match activity {
+                        Some(activity) => activity.into_any_element(),
+                        None => {
+                            // `.two-columns`: 1.15 to 1, the cards as tall as each other.
+                            if stacked {
+                                v_flex().gap(px(20.))
+                            } else {
+                                h_flex().items_stretch().gap(px(20.))
+                            }
+                            .child(
+                                div()
+                                    .flex_basis(relative(0.535))
+                                    .min_w_0()
+                                    .child(recent.h_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex_basis(relative(0.465))
+                                    .min_w_0()
+                                    .child(lichess.h_full()),
+                            )
+                            .into_any_element()
                         }
-                        .child(
-                            div()
-                                .flex_basis(relative(0.535))
-                                .min_w_0()
-                                .child(recent.h_full()),
-                        )
-                        .child(
-                            div()
-                                .flex_basis(relative(0.465))
-                                .min_w_0()
-                                .child(lichess.h_full()),
-                        ),
-                    ),
+                    }),
             )
     }
 }

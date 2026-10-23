@@ -92,8 +92,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 
 - [x] Start tiles (Continue your game with its move, side and level), shortcuts, recent games
       opening in Game history, Connect Lichess (signs in, then syncs)
-- [ ] Your Lichess activity (stats, rating chart, synced games) and Sync games for a connected
-      account; Connect Lichess is not yet tried against Lichess from this app
+- [x] Your Lichess activity: games and ratings, the rating history by mode and range (built
+      from synced games when Lichess has none), recent synced games, and Sync games
 
 ## Analysis board
 
