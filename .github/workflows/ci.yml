@@ -12,6 +12,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The headers the GPUI app (apps/gpui) builds against on Linux: X11/XCB, Wayland, xkbcommon,
+# fontconfig, Vulkan and ALSA. tooling/linux/Dockerfile installs the same for `pnpm run linux`.
+env:
+  GPUI_LINUX_LIBS: >-
+    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -30,6 +37,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The workspace includes the GPUI app, which builds against these system headers.
+      - name: Install GPUI build libraries
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
       # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
       - uses: Swatinem/rust-cache@v2
@@ -211,3 +221,36 @@ jobs:
             test-results/
             playwright-report/
           retention-days: 7
+
+  # The GPUI app on every platform it ships for: lint, unit tests, and a package with its own
+  # Stockfish (tooling/gpui-package.mjs), kept as an artifact to try.
+  gpui:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gpui
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy -p kchess-gpui --all-targets --locked -- -D warnings
+      - run: cargo test -p kchess-gpui --locked
+      - run: node tooling/gpui-package.mjs
+        env:
+          # Release packages are made by the Release workflow; CI's are ad hoc signed previews.
+          KCHESS_SIGN_IDENTITY: ''
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gpui-${{ matrix.os }}
+          path: apps/gpui/dist/
+          retention-days: 14

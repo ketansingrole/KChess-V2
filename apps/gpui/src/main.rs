@@ -28,6 +28,7 @@ mod shell;
 mod sound;
 mod studies;
 mod theme;
+mod updates;
 mod widgets;
 
 use gpui_kit::*;
@@ -61,6 +62,7 @@ fn main() {
             studies::init(cx);
             reviews::init(cx);
             puzzle_db::init(cx);
+            updates::init(cx);
             sound::init(cx);
             online::init(cx);
             cx.on_app_quit(core::quit).detach();

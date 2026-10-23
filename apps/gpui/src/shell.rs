@@ -7,8 +7,8 @@ use gpui_kit::component::sidebar::{
     Sidebar, SidebarFooter, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible, Icon, Selectable as _, Sizable as _, WindowExt as _, h_flex,
-    v_flex,
+    ActiveTheme as _, Collapsible, Disableable as _, Icon, Selectable as _, Sizable as _,
+    WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -300,6 +300,10 @@ impl Workspace {
         cx.set_global(Navigator(cx.entity().downgrade()));
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
+            cx.observe(
+                &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
+                |_, _, cx| cx.notify(),
+            ),
             cx.observe_window_appearance(window, |_, window, cx| crate::theme::apply(window, cx)),
             cx.subscribe_in(
                 &settings,
@@ -468,6 +472,7 @@ impl Workspace {
             .h(TOPBAR_HEIGHT)
             .flex_none()
             .px_5()
+            .gap(px(8.))
             .border_b_1()
             .border_color(cx.theme().border)
             .window_control_area(WindowControlArea::Drag)
@@ -478,7 +483,72 @@ impl Workspace {
                     window.start_window_move();
                 }
             })
+            .child(div().flex_1())
+            .children(update_button(cx))
     }
+}
+
+/// `AppUpdateButton.vue`: a newer KChess, its download, or the restart that installs it.
+fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
+    use crate::updates::{Phase, UpdatesHandle};
+    let handle = cx.global::<UpdatesHandle>().0.clone();
+    let updates = handle.read(cx);
+    let version = updates.version.clone()?;
+    let from = updates.current.clone();
+    let (label, tooltip) = match updates.phase {
+        Phase::Available => (
+            format!("Update to {version}"),
+            format!("Download KChess {version} (you have {from})"),
+        ),
+        Phase::Downloading => (
+            match updates.progress {
+                Some((received, total)) if total > 0 => {
+                    format!("Updating {}%", (100 * received / total).min(100))
+                }
+                _ => "Updating…".into(),
+            },
+            format!("Downloading KChess {version} (you have {from})"),
+        ),
+        Phase::Downloaded => (
+            "Restart to update".into(),
+            format!("KChess {version} is ready. Restart now, or it installs when you quit."),
+        ),
+        Phase::Error => (
+            "Retry update".into(),
+            updates
+                .error
+                .clone()
+                .unwrap_or_else(|| "The update could not finish.".into()),
+        ),
+        _ => return None,
+    };
+    let phase = updates.phase;
+    let target = handle.downgrade();
+    Some(
+        Button::new("update-button")
+            .small()
+            .when(phase == Phase::Downloaded, |button| button.primary())
+            .when(phase == Phase::Error, |button| button.danger())
+            .when(
+                !matches!(phase, Phase::Downloaded | Phase::Error),
+                |button| button.outline(),
+            )
+            .icon(icon(match phase {
+                Phase::Downloaded => "rotate-cw",
+                Phase::Error => "circle-alert",
+                _ => "download",
+            }))
+            .label(label)
+            .tooltip(tooltip)
+            .disabled(phase == Phase::Downloading)
+            .on_click(move |_, window, cx| {
+                if phase == Phase::Downloaded {
+                    crate::pages::settings::updates::ask_restart(window, cx);
+                } else {
+                    let _ = target.update(cx, |updates, cx| updates.download(cx));
+                }
+            }),
+    )
 }
 
 impl Render for Workspace {

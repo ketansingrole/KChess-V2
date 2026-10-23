@@ -3,6 +3,7 @@
 
 mod engine;
 mod offline;
+pub mod updates;
 
 use std::path::Path;
 use std::rc::Rc;
@@ -179,6 +180,10 @@ impl SettingsPage {
             ),
             cx.observe(
                 &cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone(),
+                |_, _, cx| cx.notify(),
+            ),
+            cx.observe(
+                &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
             ),
             // Settings changed elsewhere (the other app, a reload) show in the controls too.
@@ -1142,13 +1147,12 @@ impl Render for SettingsPage {
             Section::Notifications => self.notifications(&settings, &palette),
             Section::Engine => self.engine(&settings, cx, &palette),
             Section::Offline => self.offline(cx, &palette),
-            Section::Voice | Section::Accounts | Section::Data | Section::Updates => {
-                widgets::card(&palette)
-                    .items_center()
-                    .py(px(40.))
-                    .text_color(palette.text_muted)
-                    .child("Use the Electron app for this section for now.")
-            }
+            Section::Updates => self.updates(&settings, cx, &palette),
+            Section::Voice | Section::Accounts | Section::Data => widgets::card(&palette)
+                .items_center()
+                .py(px(40.))
+                .text_color(palette.text_muted)
+                .child("Use the Electron app for this section for now."),
         };
         div()
             .id("settings-page")

@@ -29,7 +29,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Search box and command palette in the top bar (⌘K)
 - [ ] Connect Lichess and the account menu in the sidebar footer
 - [ ] Sidebar item spacing (32px rows, 20px icons in Electron)
-- [ ] Startup screen, offline badge, "Working…" status, update button
+- [x] Update button in the top bar
+- [ ] Startup screen, offline badge, "Working…" status
 - [ ] Reopening the window from the Dock on macOS (closing it quits for now)
 - [ ] Two-finger swipe between pages, keyboard shortcuts (arrows, Z for zen)
 
@@ -174,9 +175,15 @@ Lichess insights, Following, Players.
 
 ## Packaging
 
-- [ ] A native Stockfish shipped beside the app (the core runs it without a runtime)
-- [ ] Rust updater reading the same GitHub release feed; the switch from Electron through it
-- [ ] Signing and notarization on macOS (the Electron build is unsigned today)
-- [ ] CI: build and test `kchess-gpui` on macOS, Windows and Linux
-- [ ] THIRD_PARTY_NOTICES.md rows for the app's own crates (GPUI Kit, rodio, Symphonia,
-      chrono, dirs) once it ships
+- [x] Packages for macOS (.dmg, .zip), Windows (.zip) and Linux (.tar.gz) with the official
+      native Stockfish beside the app (`tooling/gpui-package.mjs`; the preview installs beside
+      Electron as "KChess Preview", `--final` takes Electron's identity)
+- [x] Rust updater on the same GitHub release feed: check, background download checked against
+      `SHA256SUMS.txt`, restart to install or install on quit, the top bar's button and Settings
+- [ ] The switch from Electron: the Release workflow publishing these packages, and Electron's
+      updater installing the final GPUI build
+- [x] Signing: ad hoc without credentials; a Developer ID (`KCHESS_SIGN_IDENTITY`) signs with the
+      hardened runtime and notarizes (untried here: no certificate)
+- [x] CI: lint, test and package `kchess-gpui` on macOS, Windows and Linux (`gpui` job); Linux
+      builds checked in CI's image (`pnpm run linux`)
+- [x] THIRD_PARTY_NOTICES.md rows for the app's own crates and its Stockfish

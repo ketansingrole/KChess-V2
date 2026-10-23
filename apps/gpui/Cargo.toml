@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 shakmaty.workspace = true
 # The core's runtime: its services are Tokio tasks (`kchess-core`).
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "fs", "io-util"] }
 # A random Chess960 start (already in Cargo.lock through the core).
 getrandom = "0.4"
 # Channels from the core's threads to the UI thread.
@@ -36,6 +36,10 @@ dirs = "6"
 # both already in Cargo.lock through GPUI.
 resvg = "0.46"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+# App updates: the release feed and its packages (the core's HTTP client), checked against the
+# release's SHA-256 sums; both already in Cargo.lock through the core.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
+sha2 = { version = "0.11", default-features = false }
 
 [lints]
 workspace = true

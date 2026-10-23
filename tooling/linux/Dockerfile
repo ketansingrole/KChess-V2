@@ -7,12 +7,16 @@ ARG PNPM_VERSION
 ARG RUST_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build tools, Xvfb for Electron, and the shared libraries Electron and Chromium load.
+# Build tools, Xvfb for Electron, the shared libraries Electron and Chromium load, and the
+# headers the GPUI app (apps/gpui) builds against: X11/XCB, Wayland, xkbcommon, fontconfig,
+# Vulkan and ALSA (sound).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git rsync xz-utils build-essential pkg-config python3 \
       xvfb xauth dbus-x11 \
       libgtk-3-0t64 libnss3 libxss1 libasound2t64 libgbm1 libxshmfence1 libdrm2 \
       libxkbcommon0 libatk-bridge2.0-0t64 libcups2t64 libsecret-1-0 libnotify4 \
+      libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
+      libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN arch="$(dpkg --print-architecture | sed 's/amd64/x64/')" \
