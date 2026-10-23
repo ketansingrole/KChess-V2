@@ -217,13 +217,22 @@ impl Render for LineChart {
             }))
             .child(
                 canvas(
-                    move |bounds, _, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            if this.bounds != bounds {
-                                this.bounds = bounds;
-                                cx.notify();
-                            }
-                        });
+                    move |bounds, window, cx| {
+                        let resized = entity
+                            .update(cx, |this, cx| {
+                                let resized = this.bounds != bounds;
+                                if resized {
+                                    this.bounds = bounds;
+                                    cx.notify();
+                                }
+                                resized
+                            })
+                            .unwrap_or(false);
+                        // The points are placed for the measured width: draw again with it,
+                        // whether or not anything else asks for a frame.
+                        if resized {
+                            window.refresh();
+                        }
                     },
                     move |bounds, (), window, _| {
                         let (xs, ys, tick_ys, hovered) = &painted;

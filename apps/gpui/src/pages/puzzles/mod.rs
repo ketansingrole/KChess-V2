@@ -26,6 +26,8 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, tint};
 mod daily;
 mod history;
+mod rush;
+mod stats;
 
 use crate::widgets::{self, Pill, Tone};
 
@@ -144,9 +146,10 @@ pub struct PuzzlesPage {
     /// The Daily and History tabs, made when first shown, and the tab shown last.
     daily: Option<Entity<daily::DailyPuzzle>>,
     history: Option<Entity<history::PuzzleHistory>>,
+    stats: Option<Entity<stats::PuzzleStats>>,
+    rush: Option<Entity<rush::PuzzleRush>>,
     shown_tab: String,
     progress: Value,
-    accounts: Vec<String>,
     started: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -264,6 +267,11 @@ impl PuzzlesPage {
                     this.load_next(cx);
                 },
             ),
+            // Another account (or none): the tabs show it afresh.
+            cx.observe(&crate::accounts::handle(cx), |this, _, cx| {
+                this.shown_tab.clear();
+                cx.notify();
+            }),
             // A database just downloaded has puzzles for a session waiting on it.
             cx.observe(&puzzle_db, |this, db, cx| {
                 if db.read(cx).installed() && this.session.phase() == "nodb" {
@@ -284,9 +292,10 @@ impl PuzzlesPage {
             timers: Vec::new(),
             daily: None,
             history: None,
+            stats: None,
+            rush: None,
             shown_tab: String::new(),
             progress: Value::Null,
-            accounts: Vec::new(),
             started: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -297,7 +306,6 @@ impl PuzzlesPage {
     /// puzzle if there is none.
     pub fn shown(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
-        let data = core.call("loadData", Vec::new());
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         puzzle_db.update(cx, |db, cx| db.refresh(cx));
         let progress = core.call(
@@ -307,17 +315,8 @@ impl PuzzlesPage {
         let first = !self.started;
         self.started = true;
         cx.spawn(async move |this, cx| {
-            let (data, progress) = (data.await, progress.await);
+            let progress = progress.await;
             let _ = this.update(cx, |this, cx| {
-                if let Ok(data) = data {
-                    this.accounts = data["accounts"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|account| account["connected"] == json!(true))
-                        .filter_map(|account| account["username"].as_str().map(str::to_string))
-                        .collect();
-                }
                 if let Ok(progress) = progress {
                     this.progress = progress;
                 }
@@ -336,11 +335,16 @@ impl PuzzlesPage {
         crate::prefs::get::<String>(cx, MODE, "practice".into())
     }
 
+    /// The connected accounts (`connectedAccounts`).
+    fn accounts(&self, cx: &App) -> Vec<String> {
+        crate::accounts::handle(cx).read(cx).connected()
+    }
+
     /// The connected account rated puzzles go to (`pickConnectedAccount`).
     fn account(&self, cx: &App) -> String {
         let preferred = crate::prefs::get::<String>(cx, ACCOUNT, String::new());
-        let accounts: Vec<Value> = self
-            .accounts
+        let connected = self.accounts(cx);
+        let accounts: Vec<Value> = connected
             .iter()
             .map(|username| json!({ "username": username, "connected": true }))
             .collect();
@@ -351,7 +355,7 @@ impl PuzzlesPage {
         .ok()
         .filter(|index| !index.is_null())
         .map(|index| crate::game::whole(&index))
-        .and_then(|index| self.accounts.get(index as usize).cloned())
+        .and_then(|index| connected.get(index as usize).cloned())
         .unwrap_or_default()
     }
 
@@ -486,6 +490,42 @@ impl PuzzlesPage {
                 });
             }));
         }
+    }
+
+    /// The Lichess stats view, made when first needed (the Stats tab, and Rush's results).
+    fn stats_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<stats::PuzzleStats> {
+        if let Some(stats) = &self.stats {
+            return stats.clone();
+        }
+        let themes = self.theme_list.clone();
+        let stats = cx.new(|cx| stats::PuzzleStats::new(themes, window, cx));
+        self._subscriptions.push(cx.subscribe_in(
+            &stats,
+            window,
+            |this, view, event: &stats::StatsEvent, window, cx| match event {
+                stats::StatsEvent::Train(key) => {
+                    crate::prefs::set(cx, TAB, "train");
+                    let key = key.clone();
+                    this.choose_angle(&key, window, cx);
+                }
+                stats::StatsEvent::Connect | stats::StatsEvent::Reconnect => {
+                    crate::accounts::handle(cx)
+                        .update(cx, |accounts, cx| accounts.connect(window, cx));
+                }
+                stats::StatsEvent::Account(name) => {
+                    crate::prefs::set(cx, ACCOUNT, name.clone());
+                    let (account, accounts) = (this.account(cx), this.accounts(cx));
+                    view.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
+                    this.load_next(cx);
+                }
+            },
+        ));
+        self.stats = Some(stats.clone());
+        stats
     }
 
     /// `retry`: play an earlier puzzle again on the Train tab (unrated, not counted).
@@ -1342,6 +1382,30 @@ impl Render for PuzzlesPage {
                 history.update(cx, |history, cx| history.shown(account, cx));
             }
             history.into_any_element()
+        } else if tab == "stats" {
+            let stats = self.stats_view(window, cx);
+            if self.shown_tab != tab {
+                let (account, accounts) = (self.account(cx), self.accounts(cx));
+                stats.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
+            }
+            stats.into_any_element()
+        } else if tab == "rush" {
+            let stats = self.stats_view(window, cx);
+            if self.shown_tab != tab {
+                let (account, accounts) = (self.account(cx), self.accounts(cx));
+                stats.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
+            }
+            let rush = match &self.rush {
+                Some(rush) => rush.clone(),
+                None => {
+                    let rush = cx.new(|cx| rush::PuzzleRush::new(window, cx));
+                    self.rush = Some(rush.clone());
+                    rush
+                }
+            };
+            let beside = stats.update(cx, |stats, cx| stats.storm_panel(cx, &palette));
+            rush.update(cx, |rush, _| rush.beside = Some(beside));
+            rush.into_any_element()
         } else {
             div()
                 .px(side_padding(window))
@@ -1355,6 +1419,12 @@ impl Render for PuzzlesPage {
                 )
                 .into_any_element()
         };
+        if self.shown_tab == "rush"
+            && tab != "rush"
+            && let Some(rush) = &self.rush
+        {
+            rush.update(cx, |rush, cx| rush.leave(cx));
+        }
         self.shown_tab = tab;
         v_flex()
             .size_full()

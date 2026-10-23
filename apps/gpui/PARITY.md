@@ -131,7 +131,12 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       today's and all-time totals; Try again, or study it on the analysis board (the solution
       as the line, each move tried a "Your move" variation, reviewed)
 - [x] The attempt strip's menu (Try again, Analysis board)
-- [ ] Storm · Streak · Rush and Lichess stats tabs; labels on a studied puzzle's tried moves
+- [x] Storm · Streak · Rush: Storm, Streak and the Rush runs over the downloaded puzzles, with
+      the clock, combo, strikes and skips, scores kept here, and Lichess's Storm and Streak
+      results beside the menu
+- [x] Lichess stats: puzzle rating and games, the dashboard's first-try share and performance by
+      theme over a period (Train a theme from it), the puzzle rating history
+- [ ] Labels on a studied puzzle's tried moves once the engine has judged them
 - [x] An opening's puzzles, chosen on Openings
 - [ ] Theme groups in the picker, Connect or Reconnect from the panel, choosing the rated
       account, voice input

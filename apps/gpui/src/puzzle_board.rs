@@ -63,6 +63,11 @@ pub struct PuzzleBoard {
     /// The board's red outline: a brief flash on a wrong move, while the panel keeps the message.
     flash: bool,
     flipped: bool,
+    /// A wrong move may be tried again (Train); without it the puzzle fails at once (runs).
+    retry: bool,
+    /// No moves for now (a run between puzzles, or over).
+    frozen: bool,
+    reply_delay: Duration,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
     generation: u64,
     timers: Vec<Task<()>>,
@@ -114,6 +119,9 @@ impl PuzzleBoard {
             feedback: Feedback::None,
             flash: false,
             flipped: false,
+            retry: true,
+            frozen: false,
+            reply_delay: REPLY_DELAY,
             generation: 0,
             timers: Vec::new(),
             _subscriptions: subscriptions,
@@ -181,6 +189,21 @@ impl PuzzleBoard {
             .is_some_and(|board| board.status() == "playing")
             && !self.waiting
             && !self.revealed
+            && !self.frozen
+    }
+
+    /// Runs (`retry: false`, `reply-delay`): a wrong move fails the puzzle, replies come faster.
+    pub fn for_runs(&mut self, reply_delay: Duration) {
+        self.retry = false;
+        self.reply_delay = reply_delay;
+    }
+
+    /// Stop or allow moves (`frozen`).
+    pub fn set_frozen(&mut self, frozen: bool, cx: &mut Context<Self>) {
+        if self.frozen != frozen {
+            self.frozen = frozen;
+            self.redraw(cx);
+        }
     }
 
     fn orientation(&self) -> Color {
@@ -265,6 +288,12 @@ impl PuzzleBoard {
                 uci: uci.to_string(),
             });
             self.decide(false, cx);
+            if !self.retry {
+                if let Some(board) = &mut self.on_board {
+                    board.state["status"] = json!("failed");
+                }
+                cx.emit(PuzzleBoardEvent::Done);
+            }
             self.redraw(cx);
             return;
         }
@@ -290,9 +319,10 @@ impl PuzzleBoard {
 
     fn reply(&mut self, uci: String, cx: &mut Context<Self>) {
         self.waiting = true;
+        let delay = self.reply_delay;
         let generation = self.generation;
         self.timers.push(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(REPLY_DELAY).await;
+            cx.background_executor().timer(delay).await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation != generation {
                     return;
