@@ -64,7 +64,9 @@ fn theme_rows(dashboard: &Value, sort: &str) -> Vec<ThemeRow> {
             ThemeRow {
                 key: key.clone(),
                 attempts,
-                first_try: (wins * 100 + attempts / 2).checked_div(attempts).unwrap_or(0),
+                first_try: (wins * 100 + attempts / 2)
+                    .checked_div(attempts)
+                    .unwrap_or(0),
                 performance: results["performance"].as_f64().unwrap_or_default(),
             }
         })
