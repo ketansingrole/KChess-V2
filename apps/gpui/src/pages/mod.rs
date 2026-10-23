@@ -4,6 +4,7 @@
 pub mod analysis;
 pub mod computer;
 pub mod computer_options;
+pub mod editor;
 pub mod history;
 pub mod home;
 pub mod local;
@@ -160,6 +161,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Puzzles => {
             let view = cx.new(|cx| puzzles::PuzzlesPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Editor => {
+            let view = cx.new(|cx| editor::EditorPage::new(window, cx));
             focused(view, cx)
         }
         Page::Studies => {

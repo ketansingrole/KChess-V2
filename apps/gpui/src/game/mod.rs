@@ -89,6 +89,7 @@ pub fn position_problem(fen: &str) -> Option<&'static str> {
         "empty" => "The board is empty.",
         "kings" => "Each side needs exactly one king.",
         "pawnsOnBackrank" => "Pawns can’t stand on the first or last rank.",
+        "tooManyPieces" => "Each side can have at most 16 pieces.",
         "oppositeCheck" => "The side not to move is in check.",
         _ => "This position is not legal.",
     })

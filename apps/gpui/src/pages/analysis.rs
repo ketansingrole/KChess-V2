@@ -449,6 +449,12 @@ impl AnalysisPage {
         self.changed(cx);
     }
 
+    /// Analyse a position set up in the board editor, facing as it did there (`analyseSetup`).
+    pub fn analyse_setup(&mut self, fen: &str, orientation: Color, cx: &mut Context<Self>) {
+        self.orientation = orientation;
+        self.load(Some(fen), cx);
+    }
+
     /// Load a game (`loadPgn`), opened at its start.
     fn load_pgn(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         let Some(tree) = TreeNode::from_pgn(text) else {
@@ -2097,6 +2103,8 @@ impl AnalysisPage {
         let at_start = self.path.is_empty();
         let at_end = self.node().children.is_empty();
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
+        // A finished game cannot be played on from its last position.
+        let over = game_over(self.position().as_ref()).is_some();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -2167,6 +2175,20 @@ impl AnalysisPage {
                                 let _ = page.update(cx, |page, cx| run(page, window, cx));
                             }
                         };
+                        // Leaving for another page takes the position and orientation first: the
+                        // switch stops this page's engine, which must not happen inside an update
+                        // of this page.
+                        let leave = |run: fn(String, Color, &mut Window, &mut App)| {
+                            let page = page.clone();
+                            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let Some(page) = page.upgrade() else { return };
+                                let (fen, orientation) = {
+                                    let page = page.read(cx);
+                                    (page.node().fen.clone(), page.orientation)
+                                };
+                                run(fen, orientation, window, cx);
+                            }
+                        };
                         menu.item(PopupMenuItem::new("Copy FEN").icon(icon("copy")).on_click(
                             action(|page, window, cx| {
                                 let fen = page.node().fen.clone();
@@ -2198,6 +2220,30 @@ impl AnalysisPage {
                                 .icon(icon("scissors"))
                                 .disabled(at_start)
                                 .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
+                        )
+                        .separator()
+                        .item(
+                            PopupMenuItem::new("Edit this position")
+                                .icon(icon("pencil-ruler"))
+                                .on_click(leave(|fen, orientation, window, cx| {
+                                    crate::shell::edit_position(fen, orientation, window, cx)
+                                })),
+                        )
+                        .item(
+                            PopupMenuItem::new("Play Stockfish from here")
+                                .icon(icon("cpu"))
+                                .disabled(over)
+                                .on_click(leave(|fen, _, window, cx| {
+                                    crate::shell::play_computer_from(fen, window, cx)
+                                })),
+                        )
+                        .item(
+                            PopupMenuItem::new("Play a friend from here")
+                                .icon(icon("users-round"))
+                                .disabled(over)
+                                .on_click(leave(|fen, _, window, cx| {
+                                    crate::shell::play_local_from(fen, window, cx)
+                                })),
                         )
                         .separator()
                         .item(

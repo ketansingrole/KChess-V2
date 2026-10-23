@@ -98,7 +98,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Delete study with Undo, Game details; a recovered session that differs from its study stays
       an unsaved copy, as in Electron
 - [ ] Review and Explorer tools, Export, voice input
-- [ ] Edit this position, Play Stockfish or a friend from here
+- [x] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles
 
@@ -145,9 +145,16 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       repertoire, Delete with Undo, Upload to Lichess (changes or a new cloud copy)
 - [ ] The Lichess tab (studies on Lichess, downloading them)
 
+## Board editor
+
+- [x] Drag pieces anywhere (off the board removes them), drag spare pieces in, or paint with a
+      spare piece or the bin; side to move, castling the pieces allow, en passant, a FEN typed or
+      copied; Starting position, Clear, Flip; Analyse, Play Stockfish, Play a friend
+- [ ] Voice input
+
 ## Pages not started
 
-Board editor, Play on Lichess, Tournaments, Watch,
+Play on Lichess, Tournaments, Watch,
 Lichess insights, Following, Players.
 
 ## Packaging

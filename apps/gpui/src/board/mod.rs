@@ -55,7 +55,21 @@ pub struct BoardState {
     pub coordinates: Option<CoordinateMode>,
     /// Every square's name on it (`coordinatesOnSquares`).
     pub square_names: bool,
+    /// The board editor's tool: pieces move anywhere, are put down or taken off.
+    pub edit: Option<EditTool>,
 }
+
+/// The board editor's tools (`EditorTool`): move pieces (dragged off the board, they are gone),
+/// put one piece down (or take it off again where it already stands), or take pieces off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditTool {
+    Pointer,
+    Place(Piece),
+    Trash,
+}
+
+/// A spare piece dragged onto the editor's board.
+pub struct SparePiece(pub Piece);
 
 /// A ring over a square in a Chessground brush color (`yellow`, `green`, `red`).
 #[derive(Clone, Debug, PartialEq)]
@@ -185,6 +199,7 @@ impl BoardState {
             circles: Vec::new(),
             coordinates: None,
             square_names: false,
+            edit: None,
         }
     }
 }
@@ -195,6 +210,8 @@ pub enum BoardEvent {
     Move(String),
     /// A square was clicked (`select`): the coordinate drills' answers.
     Select(Square),
+    /// The editor's pieces changed: their placement (a FEN's first field).
+    Edited(String),
 }
 
 struct Drag {
@@ -303,6 +320,9 @@ impl ChessBoard {
         let Some(square) = self.square_at(event.position) else {
             return;
         };
+        if let Some(tool) = self.state.edit {
+            return self.edit_press(tool, square, event.position, cx);
+        }
         cx.emit(BoardEvent::Select(square));
         if let Some(from) = self.selected
             && from != square
@@ -344,11 +364,83 @@ impl ChessBoard {
         cx.notify();
     }
 
+    /// The editor's press: put a piece down or take it off, or pick one up to move it.
+    fn edit_press(
+        &mut self,
+        tool: EditTool,
+        square: Square,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        match tool {
+            EditTool::Place(piece) => {
+                if self.pieces.piece_at(square) == Some(piece) {
+                    self.pieces.discard_piece_at(square);
+                } else {
+                    self.pieces.set_piece_at(square, piece);
+                }
+                self.edited(cx);
+            }
+            EditTool::Trash => {
+                if self.pieces.remove_piece_at(square).is_some() {
+                    self.edited(cx);
+                }
+            }
+            EditTool::Pointer => {
+                if let Some(piece) = self.pieces.piece_at(square) {
+                    self.drag = Some(Drag {
+                        from: square,
+                        piece,
+                        position,
+                        start: position,
+                        moved: false,
+                    });
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// A spare piece dropped on the board.
+    fn drop_spare(&mut self, piece: Piece, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if self.state.edit.is_none() {
+            return;
+        }
+        if let Some(square) = self.square_at(position) {
+            self.pieces.set_piece_at(square, piece);
+            self.edited(cx);
+        }
+    }
+
+    fn edited(&mut self, cx: &mut Context<Self>) {
+        cx.emit(BoardEvent::Edited(self.pieces.to_string()));
+        cx.notify();
+    }
+
     fn release(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(drag) = self.drag.take() else {
             return;
         };
         let target = self.square_at(position);
+        if self.state.edit.is_some() {
+            // Dragged anywhere on the board, the piece moves there; dragged off it, it is gone.
+            if drag.moved || far(drag.start, position) {
+                match target {
+                    Some(to) if to == drag.from => {}
+                    Some(to) => {
+                        self.pieces.discard_piece_at(drag.from);
+                        self.pieces.set_piece_at(to, drag.piece);
+                        self.edited(cx);
+                    }
+                    None => {
+                        self.pieces.discard_piece_at(drag.from);
+                        self.edited(cx);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
         // The moves of a quick drag may all have come before the board was listening.
         if drag.moved || far(drag.start, position) {
             match target {
@@ -1019,10 +1111,14 @@ impl Render for ChessBoard {
             )
             .children(held)
             .children(promotion)
-            .cursor(if self.state.movable.is_some() {
-                CursorStyle::PointingHand
-            } else {
-                CursorStyle::Arrow
+            .on_drop(cx.listener(|this, spare: &SparePiece, window, cx| {
+                this.drop_spare(spare.0, window.mouse_position(), cx)
+            }))
+            .cursor(match self.state.edit {
+                Some(EditTool::Place(_) | EditTool::Trash) => CursorStyle::Crosshair,
+                Some(EditTool::Pointer) => CursorStyle::PointingHand,
+                None if self.state.movable.is_some() => CursorStyle::PointingHand,
+                None => CursorStyle::Arrow,
             })
     }
 }

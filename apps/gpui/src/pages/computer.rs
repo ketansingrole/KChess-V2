@@ -630,6 +630,31 @@ impl ComputerPage {
         crate::pages::computer_options::open(options, window, cx);
     }
 
+    /// Play Stockfish from a position (the board editor's, the analysis board's), as the side to
+    /// move, at the level and clock chosen last (`startComputerFrom`).
+    pub fn start_from(
+        &mut self,
+        setup: Value,
+        color: Color,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let chosen = Chosen {
+            setup,
+            clock: self.game.state["clock"].clone(),
+            color: if color == Color::White {
+                "white"
+            } else {
+                "black"
+            },
+            level: self.game.state["level"]
+                .as_str()
+                .unwrap_or("club")
+                .to_string(),
+        };
+        self.start_chosen(chosen, window, cx);
+    }
+
     /// Like the page's own New game, a game in progress is only thrown away when confirmed.
     fn start_chosen(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         if self.in_progress() {

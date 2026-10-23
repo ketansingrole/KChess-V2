@@ -16,8 +16,11 @@ use gpui_kit::*;
 use crate::assets::icon;
 
 use crate::pages::analysis::AnalysisPage;
+use crate::pages::computer::ComputerPage;
+use crate::pages::editor::EditorPage;
 use crate::pages::history::HistoryPage;
 use crate::pages::home::HomePage;
+use crate::pages::local::LocalPage;
 use crate::pages::openings::OpeningsPage;
 use crate::pages::practice::PracticePage;
 use crate::pages::puzzles::PuzzlesPage;
@@ -141,15 +144,58 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// A page's view, made now (without showing it) if it has not been shown.
+pub fn page_view<V: 'static>(page: Page, window: &mut Window, cx: &mut App) -> Option<Entity<V>> {
+    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
+    workspace.update(cx, |workspace, cx| {
+        workspace.pages.view_made::<V, _>(page, window, cx)
+    })
+}
+
 /// The analysis board, made now if it has not been shown (so analysis kept from an earlier run
 /// counts).
 pub fn analysis_board(window: &mut Window, cx: &mut App) -> Option<Entity<AnalysisPage>> {
-    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
-    workspace.update(cx, |workspace, cx| {
-        workspace
-            .pages
-            .view_made::<AnalysisPage, _>(Page::Analysis, window, cx)
-    })
+    page_view::<AnalysisPage>(Page::Analysis, window, cx)
+}
+
+/// Play Stockfish from a position, as the side to move (`startComputerFrom`).
+pub fn play_computer_from(fen: String, window: &mut Window, cx: &mut App) {
+    let color = if fen.split(' ').nth(1) == Some("b") {
+        shakmaty::Color::Black
+    } else {
+        shakmaty::Color::White
+    };
+    open(Page::Computer, window, cx);
+    // A position Stockfish refuses (one with too many pieces) only opens the page.
+    if crate::game::position_problem(&fen).is_some() {
+        return;
+    }
+    if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
+        let setup = serde_json::json!({ "variant": "standard", "fen": fen });
+        page.update(cx, |page, cx| page.start_from(setup, color, window, cx));
+    }
+}
+
+/// A game over the board from a position (`/local?fen=`).
+pub fn play_local_from(fen: String, window: &mut Window, cx: &mut App) {
+    open(Page::Local, window, cx);
+    // As the page does with `?fen=`: a position that cannot be played only opens it.
+    if crate::game::position_problem(&fen).is_some() {
+        return;
+    }
+    if let Some(page) = view_of::<LocalPage>(Page::Local, cx) {
+        page.update(cx, |page, cx| page.start_from(&fen, window, cx));
+    }
+}
+
+/// The board editor on a position (`editPosition`).
+pub fn edit_position(fen: String, orientation: shakmaty::Color, window: &mut Window, cx: &mut App) {
+    if let Some(editor) = page_view::<EditorPage>(Page::Editor, window, cx) {
+        editor.update(cx, |editor, cx| {
+            editor.set_position(&fen, orientation, window, cx)
+        });
+    }
+    open(Page::Editor, window, cx);
 }
 
 /// Put something else on the analysis board and show it, asking first while the board holds

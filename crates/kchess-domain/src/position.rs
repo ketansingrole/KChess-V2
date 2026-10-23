@@ -310,7 +310,9 @@ pub fn fen_problem(fen: &str) -> Option<&'static str> {
         return Some("fen");
     };
     if rules::standard_from_fen(fen).is_some() {
-        return None;
+        // Stockfish refuses more than 16 pieces for a side, and quits rather than analyse them.
+        let crowded = setup.board.white().count() > 16 || setup.board.black().count() > 16;
+        return crowded.then_some("tooManyPieces");
     }
     let board = &setup.board;
     let turn = setup.turn;
@@ -539,6 +541,15 @@ mod tests {
         assert_eq!(
             fen_problem("P3k3/8/8/8/8/8/8/4K3 w - - 0 1"),
             Some("pawnsOnBackrank")
+        );
+        // A queen added to a full set: Stockfish quit on it ("More than 32 pieces").
+        assert_eq!(
+            fen_problem("rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1"),
+            Some("tooManyPieces")
+        );
+        assert_eq!(
+            fen_problem("4k3/8/8/8/8/PPPPPPPP/PPPPPPPP/RNBQKBNR w - - 0 1"),
+            Some("tooManyPieces")
         );
     }
 
