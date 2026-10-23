@@ -239,6 +239,29 @@ pub fn replace_analysis(
     });
 }
 
+/// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game
+/// replaces the board's only after asking, when that would lose unsaved analysis.
+pub fn practise_game(
+    game: serde_json::Value,
+    items: Vec<serde_json::Value>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let shown = analysis_board(window, cx).is_some_and(|analysis| {
+        analysis.read(cx).mainline_key() == game["key"].as_str().unwrap_or_default()
+    });
+    if shown {
+        if let Some(analysis) = analysis_board(window, cx) {
+            analysis.update(cx, |analysis, cx| analysis.practise_game(&game, items, cx));
+        }
+        open(Page::Analysis, window, cx);
+        return;
+    }
+    replace_analysis(window, cx, move |analysis, _, cx| {
+        analysis.practise_game(&game, items.clone(), cx)
+    });
+}
+
 /// Analyse a line from the starting position.
 pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
     replace_analysis(window, cx, move |analysis, _, cx| {

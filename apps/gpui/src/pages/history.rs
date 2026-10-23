@@ -492,6 +492,23 @@ impl HistoryPage {
                                 cx.listener(move |this, _, _, cx| this.export(&exported, cx)),
                             ),
                     )
+                    .child({
+                        let opened = pgn(game);
+                        Button::new("open-analysis")
+                            .primary()
+                            .icon(icon("sparkles"))
+                            .label("Open analysis")
+                            .on_click(move |_, window, cx| {
+                                let Some(pgn) = opened.clone() else { return };
+                                crate::shell::replace_analysis(
+                                    window,
+                                    cx,
+                                    move |analysis, _, cx| {
+                                        analysis.open_game(&pgn, 0, None, None, false, cx)
+                                    },
+                                );
+                            })
+                    })
                     .children(self.message.clone().map(|message| {
                         div()
                             .text_size(px(12.))

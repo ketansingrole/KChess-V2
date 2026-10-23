@@ -45,7 +45,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Sounds (move, capture, low time) at the volume Settings chooses (rodio, Symphonia MP3)
 - [ ] Desktop notification when Stockfish moves in the background
 - [ ] Premoves and piece animation
-- [ ] Voice input, Export (PGN, GIF), Review game
+- [x] Review game: the game on the analysis board at the move shown, reviewed
+- [ ] Voice input, Export (PGN, GIF)
 - [ ] Right-click arrows and circles on the board
 
 ## Over the board
@@ -74,7 +75,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Computer and Over the board tabs: result filters with counts, the list, 20 to a page,
       a game opened to go through move by move (`replay.rs`), Export PGN, Copy summary, Delete
 - [x] One list of played games for every page (`played.rs`), written in order and at quit
-- [ ] Lichess tab (synced games, filters, review); Open analysis; swipe back and forward
+- [x] Open analysis
+- [ ] Lichess tab (synced games, filters, review); swipe back and forward
 - [ ] Export copy inside the delete dialog
 
 ## Home
@@ -130,8 +132,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       drill kept by the core (`runSummary`, `saveRun`)
 - [x] Your mistakes: due, learning and learned counts, the positions on the shared puzzle board
       (hint, solution), rescheduled by the core (`answerMistake`), and the games they come from
-- [ ] A game's Practice button (its positions on the analysis board, waiting for the analysis
-      Review tool); voice answers
+- [x] A game's Practice button: its positions practised on the analysis board
+- [ ] Voice answers
 
 ## Openings
 

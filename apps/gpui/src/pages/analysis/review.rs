@@ -505,6 +505,78 @@ impl AnalysisPage {
         .detach();
     }
 
+    /// Open a game on the board (`loadPgn`) at a move, facing as it was played, with where it came
+    /// from, and review it when asked (`startReview`).
+    pub fn open_game(
+        &mut self,
+        pgn: &str,
+        ply: usize,
+        orientation: Option<Color>,
+        origin: Option<Value>,
+        review: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.load_pgn(pgn, cx) {
+            return false;
+        }
+        if let Some(orientation) = orientation {
+            self.orientation = orientation;
+        }
+        self.review.origin = origin;
+        self.go_to_ply(ply, cx);
+        if review {
+            self.request_review(cx);
+        }
+        true
+    }
+
+    /// Practise a reviewed game's positions on the board (`usePracticeGame`): `game` is a
+    /// `MistakeGame`, `items` the positions in practice. A game already on the board is kept as
+    /// it is, variations and all.
+    pub fn practise_game(
+        &mut self,
+        game: &Value,
+        items: Vec<Value>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let key = game["key"].as_str().unwrap_or_default().to_string();
+        if self.mainline_key() != key {
+            let mut headers = serde_json::Map::new();
+            for (field, header) in [("white", "White"), ("black", "Black")] {
+                if let Some(name) = game[field].as_str() {
+                    headers.insert(header.into(), json!(name));
+                }
+            }
+            let pgn = rules(
+                "setupPgn",
+                &[
+                    json!({ "variant": "standard", "fen": game["fen"] }),
+                    game["moves"].clone(),
+                    Value::Object(headers),
+                ],
+            )
+            .ok()
+            .and_then(|pgn| pgn.as_str().map(str::to_string));
+            let Some(pgn) = pgn else {
+                return false;
+            };
+            if !self.load_pgn(&pgn, cx) {
+                return false;
+            }
+            self.review.origin = Some(json!({
+                "gameId": game["gameId"],
+                "account": game["account"],
+                "white": game["white"],
+                "black": game["black"],
+                "player": game["player"],
+            }));
+        }
+        self.review.mistakes = items;
+        self.start_practice(&key, cx);
+        crate::prefs::set(cx, TOOL, "moves");
+        true
+    }
+
     /// The players' names: from where the game came from, or else its PGN headers.
     pub(super) fn player_name(&self, color: Color) -> String {
         let key = if color == Color::White {

@@ -438,6 +438,28 @@ impl Mistakes {
                                 },
                             )),
                     )
+                    .child({
+                        let (practised, all) = (game.clone(), self.items.clone());
+                        Button::new(SharedString::from(format!("practise-game-{index}")))
+                            .outline()
+                            .small()
+                            .label("Practice")
+                            .accessibility_label(format!(
+                                "Practice {}, {}",
+                                title(game),
+                                crate::game::game_date(
+                                    game["playedAt"].as_f64().unwrap_or_default()
+                                )
+                            ))
+                            .on_click(move |_, window, cx| {
+                                crate::shell::practise_game(
+                                    practised.clone(),
+                                    all.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })
+                    })
             });
         Some(
             widgets::card(palette)

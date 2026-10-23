@@ -416,6 +416,42 @@ impl ComputerPage {
         }
     }
 
+    /// Review the game on the analysis board, opened at the move being looked at.
+    fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pgn = rules(
+            "setupPgn",
+            &[
+                self.game.state["setup"].clone(),
+                json!(self.moves()),
+                json!({}),
+            ],
+        )
+        .ok()
+        .and_then(|pgn| pgn.as_str().map(str::to_string));
+        let Some(pgn) = pgn else { return };
+        let (ply, color) = (self.ply(), self.user_color());
+        let computer = format!(
+            "Stockfish ({})",
+            rules("engineLevelLabel", &[self.game.state["level"].clone()])
+                .ok()
+                .and_then(|label| label.as_str().map(str::to_string))
+                .unwrap_or_default()
+        );
+        let (white, black) = if color == Color::White {
+            ("You".to_string(), computer)
+        } else {
+            (computer, "You".to_string())
+        };
+        let origin = json!({
+            "white": white,
+            "black": black,
+            "player": if color == Color::White { "white" } else { "black" },
+        });
+        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+            analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
+        });
+    }
+
     fn moves(&self) -> Vec<String> {
         serde_json::from_value(self.game.state["moves"].clone()).unwrap_or_default()
     }
@@ -871,7 +907,16 @@ impl ComputerPage {
                 result["detail"]
                     .as_str()
                     .map(|detail| SharedString::from(detail.to_string())),
-                None,
+                // The analysis board and reviews play standard rules (from any position).
+                (!self.moves().is_empty() && self.setup_variant() == "standard").then(|| {
+                    Button::new("review-game")
+                        .outline()
+                        .small()
+                        .icon(icon("sparkles"))
+                        .label("Review game")
+                        .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
+                        .into_any_element()
+                }),
                 palette,
             )
             .into_any_element();
