@@ -173,7 +173,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       position, chapters and last edit; open (asking before replacing unsaved analysis), New
       study, Import PGN (chapters by `ChapterName`), Rename, Duplicate, Copy PGN, Drill as
       repertoire, Delete with Undo, Upload to Lichess (changes or a new cloud copy)
-- [ ] The Lichess tab (studies on Lichess, downloading them)
+- [x] The Lichess tab: an account's studies, opened (kept offline first) or kept offline, and
+      the analysis board sent to one of them or to a new private study
 
 ## Board editor
 

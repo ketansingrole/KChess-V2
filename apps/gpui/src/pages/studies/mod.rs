@@ -30,6 +30,8 @@ use crate::studies::{
     MAX_CHAPTERS, MAX_STUDIES, StudyHandle, StudyLibrary, document_pgn, now, time_ago,
 };
 use crate::theme::Palette;
+mod lichess;
+
 use crate::widgets::{self, Pill};
 
 const TAB: &str = "kchess:studies-tab";
@@ -126,7 +128,8 @@ fn import_name(first: &str) -> Option<String> {
 pub struct StudiesPage {
     search: Entity<InputState>,
     sort: Entity<SelectState<Vec<SharedString>>>,
-    accounts: Vec<Value>,
+    /// The Lichess tab: the account's studies and what is being done with them.
+    lichess: lichess::LichessTab,
     uploading: Option<String>,
     previews: HashMap<String, Entity<ChessBoard>>,
     area: Measured,
@@ -163,7 +166,8 @@ impl StudiesPage {
             )
         });
         let library = cx.global::<StudyHandle>().0.clone();
-        let subscriptions = vec![
+        let (lichess, lichess_subscriptions) = lichess::new_tab(window, cx);
+        let mut subscriptions = vec![
             cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -178,7 +182,9 @@ impl StudiesPage {
                 cx.notify();
             }),
             cx.observe(&library, |_, _, cx| cx.notify()),
+            cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
         ];
+        subscriptions.extend(lichess_subscriptions);
         let clock = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(CLOCK).await;
@@ -190,7 +196,7 @@ impl StudiesPage {
         let mut page = StudiesPage {
             search,
             sort,
-            accounts: Vec::new(),
+            lichess,
             uploading: None,
             previews: HashMap::new(),
             area: Measured::default(),
@@ -202,28 +208,19 @@ impl StudiesPage {
         page
     }
 
-    /// The page was opened: the accounts, for the Lichess tab and uploads.
+    /// The page was opened: the Lichess tab's list, when it is the one shown.
     pub fn shown(&mut self, cx: &mut Context<Self>) {
-        let data = cx.global::<AppCore>().call("loadData", Vec::new());
-        cx.spawn(async move |this, cx| {
-            if let Ok(data) = data.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.accounts = data["accounts"].as_array().cloned().unwrap_or_default();
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
+        if crate::prefs::get::<String>(cx, TAB, "device".into()) == "lichess" {
+            self.load_lichess(false, cx);
+        }
     }
 
     fn library(cx: &App) -> Entity<StudyLibrary> {
         cx.global::<StudyHandle>().0.clone()
     }
 
-    fn connected(&self) -> bool {
-        self.accounts
-            .iter()
-            .any(|account| account["connected"] == json!(true))
+    fn connected(cx: &App) -> bool {
+        !crate::accounts::handle(cx).read(cx).connected().is_empty()
     }
 
     /// A small board picturing a position, made once per position.
@@ -390,7 +387,7 @@ impl StudiesPage {
 
     /// Upload a study to Lichess: its changes to the cloud copy it came from, or as a new study.
     fn upload(&mut self, id: String, copy: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(account) = crate::online::active_account(&self.accounts, cx) else {
+        let Some(account) = crate::accounts::handle(cx).read(cx).active(cx) else {
             window.push_notification(
                 Notification::warning("Connect Lichess to upload a study"),
                 cx,
@@ -882,7 +879,7 @@ impl StudiesPage {
 impl Render for StudiesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let connected = self.connected();
+        let connected = Self::connected(cx);
         let tab = if connected {
             crate::prefs::get::<String>(cx, TAB, "device".into())
         } else {
@@ -896,12 +893,7 @@ impl Render for StudiesPage {
             window.viewport_size().width - px(400.)
         };
         let body = if tab == "lichess" {
-            widgets::card(&palette)
-                .items_center()
-                .py(px(40.))
-                .text_color(palette.text_muted)
-                .child("Use the Electron app for Lichess studies for now.")
-                .into_any_element()
+            self.render_lichess(width, window, cx, &palette)
         } else {
             self.render_device(width, cx, &palette)
         };
@@ -941,13 +933,20 @@ impl Render for StudiesPage {
                                 },
                             ],
                             usize::from(tab == "lichess"),
-                            |index, window, cx| {
-                                crate::prefs::set(
-                                    cx,
-                                    TAB,
-                                    if index == 1 { "lichess" } else { "device" },
-                                );
-                                window.refresh();
+                            {
+                                let page = cx.entity().downgrade();
+                                move |index, window, cx| {
+                                    crate::prefs::set(
+                                        cx,
+                                        TAB,
+                                        if index == 1 { "lichess" } else { "device" },
+                                    );
+                                    if index == 1 {
+                                        let _ = page
+                                            .update(cx, |page, cx| page.load_lichess(false, cx));
+                                    }
+                                    window.refresh();
+                                }
                             },
                             false,
                             &palette,

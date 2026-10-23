@@ -557,6 +557,11 @@ impl AnalysisPage {
 
     /* ── Studies ──────────────────────────────────────────────────────── */
 
+    /// The whole tree as PGN (`analysis.pgn()`).
+    pub fn pgn(&self) -> String {
+        self.root.to_pgn()
+    }
+
     pub fn study_id(&self) -> &str {
         &self.study
     }
