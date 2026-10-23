@@ -840,3 +840,16 @@ pub fn action_notification(
         })
     })
 }
+
+/// `formatCount`: "100,000".
+pub fn format_count(count: f64) -> String {
+    let digits = (count.max(0.).round() as u64).to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}

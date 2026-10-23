@@ -106,7 +106,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       evaluation chart, labels in the move list and on the board, the engine paused while this
       game is reviewed, your mistakes saved once it completes, and practising the game's mistakes
       on the board
-- [ ] Explorer tool, Export as GIF or PNG, voice input
+- [x] Explorer tool: Lichess, Masters, Player and Tablebase lookups with their filters, Follow
+      moves, saved lookups, playing a move and opening a listed game
+- [ ] Export as GIF or PNG, voice input
 - [x] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles
@@ -144,7 +146,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] One opening: a board to explore it (drag or type a move), its moves, Train this line
       (Practice → Repertoire), Analyse (asks before replacing unsaved analysis) and Train with
       puzzles (its Lichess puzzle key as the theme); its Wikibooks excerpt when the core has one
-- [ ] The popularity chart and the position explorer beside the line
+- [x] The popularity chart and the position explorer beside the line (a grid of boards)
 
 ## Studies
 

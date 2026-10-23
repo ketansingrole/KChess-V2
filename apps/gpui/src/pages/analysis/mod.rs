@@ -32,6 +32,7 @@ use shakmaty::{Color, Position as _, Square};
 use crate::assets::icon;
 use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::{AppCore, BoxedSave, CoreEvent};
+use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san, winning_chances,
@@ -141,6 +142,9 @@ pub struct AnalysisPage {
     /// The move list's scrolling, brought to the move shown after it changes.
     moves_scroll: ScrollHandle,
     reveal_move: std::rc::Rc<std::cell::Cell<bool>>,
+    /// The Explorer tool, and whether it was shown at the last render.
+    explorer: Entity<PositionExplorer>,
+    explorer_open: bool,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_input: Entity<InputState>,
@@ -283,7 +287,12 @@ impl AnalysisPage {
                 .rows(2)
                 .placeholder("What's the idea here?")
         });
+        let explorer = cx.new(|cx| PositionExplorer::new(false, window, cx));
         let subscriptions = vec![
+            cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
+                let ExplorerEvent::Play(uci) = event;
+                this.play(uci, cx);
+            }),
             cx.subscribe(
                 &notes_field,
                 |this, _, event: &InputEvent, cx| match event {
@@ -373,6 +382,8 @@ impl AnalysisPage {
             },
             moves_scroll: ScrollHandle::new(),
             reveal_move: std::rc::Rc::new(std::cell::Cell::new(true)),
+            explorer,
+            explorer_open: false,
             board,
             layout: PlayLayout::default(),
             move_input,
@@ -2737,20 +2748,40 @@ impl Render for AnalysisPage {
                     .child(body)
                     .into_any_element()
             }
-            Tool::Explorer => div()
-                .flex_1()
-                .px(px(8.))
-                .py(px(24.))
-                .text_size(px(13.))
-                .text_center()
-                .text_color(palette.text_muted)
-                .child(if self.hides_engine() {
-                    "Shown once you find the move."
+            Tool::Explorer => {
+                let note = if self.hides_engine() {
+                    Some("Shown once you find the move.")
+                } else if !allowed {
+                    Some("Engine assistance is paused until Lichess game status is verified.")
                 } else {
-                    "The opening explorer is not in this app yet."
-                })
-                .into_any_element(),
+                    None
+                };
+                match note {
+                    Some(note) => div()
+                        .flex_1()
+                        .px(px(8.))
+                        .py(px(24.))
+                        .text_size(px(13.))
+                        .text_center()
+                        .text_color(palette.text_muted)
+                        .child(note)
+                        .into_any_element(),
+                    None => {
+                        let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
+                        self.explorer
+                            .update(cx, |explorer, cx| explorer.show(&fen, None, opened, cx));
+                        div()
+                            .id("analysis-explorer")
+                            .flex_1()
+                            .min_h(px(96.))
+                            .overflow_y_scroll()
+                            .child(self.explorer.clone())
+                            .into_any_element()
+                    }
+                }
+            }
         };
+        self.explorer_open = tool == Tool::Explorer;
         let panel = widgets::side_panel(&palette)
             .on_mouse_down(
                 MouseButton::Left,

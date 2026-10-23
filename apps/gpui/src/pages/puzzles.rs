@@ -143,19 +143,6 @@ fn format_bytes(bytes: f64) -> String {
     }
 }
 
-/// `formatCount`: "100,000".
-fn format_count(count: f64) -> String {
-    let digits = (count.max(0.).round() as u64).to_string();
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
-}
-
 pub struct PuzzlesPage {
     session: PuzzleSession,
     /// The puzzle key the board shows (`:key="puzzleKey"`): a new key starts the board afresh.
@@ -722,7 +709,10 @@ impl PuzzlesPage {
                         ),
                 )
                 .child(hint(if kept > 0. {
-                    format!("{text} · {} puzzles picked so far", format_count(kept))
+                    format!(
+                        "{text} · {} puzzles picked so far",
+                        widgets::format_count(kept)
+                    )
                 } else {
                     text
                 }))
@@ -740,7 +730,7 @@ impl PuzzlesPage {
         } else if self.db["installed"] == json!(true) {
             let mut line = format!(
                 "{} puzzles · {} on disk",
-                format_count(self.db["count"].as_f64().unwrap_or_default()),
+                widgets::format_count(self.db["count"].as_f64().unwrap_or_default()),
                 format_bytes(self.db["bytes"].as_f64().unwrap_or_default())
             );
             if let Some(at) = self.db["importedAt"].as_f64() {
@@ -1507,15 +1497,16 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, format_count, theme_name, themes};
+    use super::{format_bytes, theme_name, themes};
+    use crate::widgets;
 
     #[test]
     fn sizes_and_counts_read_as_in_electron() {
         assert_eq!(format_bytes(0.), "0 B");
         assert_eq!(format_bytes(1536.), "1.5 KB");
         assert_eq!(format_bytes(300. * 1024. * 1024.), "300 MB");
-        assert_eq!(format_count(100_000.), "100,000");
-        assert_eq!(format_count(999.), "999");
+        assert_eq!(widgets::format_count(100_000.), "100,000");
+        assert_eq!(widgets::format_count(999.), "999");
     }
 
     #[test]

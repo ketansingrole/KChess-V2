@@ -18,7 +18,9 @@ use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard};
+use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
+use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::game::{STANDARD_FEN, rules, view};
 use crate::pages::Page;
 use crate::play_layout::{
@@ -89,6 +91,15 @@ struct Entry {
 }
 
 /// The moves as far as they are legal, each with its SAN and the position after it.
+/// `percent`: a share of games, to one decimal under 10%.
+fn percent(value: f64) -> String {
+    if value < 10. {
+        format!("{value:.1}%")
+    } else {
+        format!("{}%", value.round())
+    }
+}
+
 fn line_of(moves: &[String]) -> Vec<(String, String, String)> {
     let Some(replay) = kchess_domain::replay::replay_setup("standard", STANDARD_FEN, moves) else {
         return Vec::new();
@@ -222,6 +233,13 @@ pub struct OpeningsPage {
     description: Option<Value>,
     full_description: bool,
     description_task: Option<Task<()>>,
+    /// Month by month, how often the line's last move was chosen; shown once there is a year of it.
+    popularity: Entity<LineChart>,
+    popularity_months: usize,
+    popularity_san: String,
+    popularity_task: Option<Task<()>>,
+    /// Popular continuations as a grid of boards (`PositionExplorer grid`).
+    explorer: Entity<PositionExplorer>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -258,7 +276,14 @@ impl OpeningsPage {
                 None,
             ))
         });
+        let explorer = cx.new(|cx| PositionExplorer::new(true, window, cx));
         let subscriptions = vec![
+            cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
+                let ExplorerEvent::Play(uci) = event;
+                let mut moves = this.line.clone().unwrap_or_default();
+                moves.push(uci.clone());
+                this.show_line(Some(moves), cx);
+            }),
             cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
@@ -307,6 +332,11 @@ impl OpeningsPage {
             description: None,
             full_description: false,
             description_task: None,
+            popularity: cx.new(|_| LineChart::new(px(110.), percent)),
+            popularity_months: 0,
+            popularity_san: String::new(),
+            popularity_task: None,
+            explorer,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -350,6 +380,8 @@ impl OpeningsPage {
         self.description = None;
         self.full_description = false;
         self.description_task = None;
+        self.popularity_months = 0;
+        self.popularity_task = None;
         let Some(moves) = moves else {
             self.line = None;
             cx.notify();
@@ -382,8 +414,74 @@ impl OpeningsPage {
                 ),
             }));
         }
+        if !line.is_empty() {
+            let months = cx
+                .global::<AppCore>()
+                .call("openingPopularity", vec![json!(line)]);
+            let san = steps
+                .last()
+                .map(|(_, san, _)| san.clone())
+                .unwrap_or_default();
+            self.popularity_task = Some(cx.spawn(async move |this, cx| match months.await {
+                Ok(months) => {
+                    let _ = this.update(cx, |this, cx| this.show_popularity(&months, &san, cx));
+                }
+                Err(cause) => crate::log::write(
+                    Level::Warn,
+                    "openings",
+                    &format!("Loading the popularity failed: {}", cause.message),
+                ),
+            }));
+        }
+        let fen = steps
+            .last()
+            .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
+        let shown = line.clone();
+        self.explorer.update(cx, |explorer, cx| {
+            explorer.show(&fen, Some(shown), false, cx)
+        });
         self.line = Some(line);
         self.redraw(cx);
+    }
+
+    /// `popularityPoints`: each month's share of games, once there is a year of them.
+    fn show_popularity(&mut self, months: &Value, san: &str, cx: &mut Context<Self>) {
+        let points: Vec<ChartPoint> = months
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|month| {
+                let key = month["month"].as_str()?;
+                let date =
+                    chrono::NaiveDate::parse_from_str(&format!("{key}-01"), "%Y-%m-%d").ok()?;
+                Some(ChartPoint {
+                    value: (month["share"].as_f64()? * 1000.).round() / 10.,
+                    short: date.format("%b %y").to_string().into(),
+                    long: date.format("%b %-d, %Y").to_string().into(),
+                })
+            })
+            .collect();
+        self.popularity_months = if points.len() >= 12 { points.len() } else { 0 };
+        if self.popularity_months == 0 {
+            cx.notify();
+            return;
+        }
+        let top = points.iter().map(|point| point.value).fold(1., f64::max);
+        let (first, last) = (&points[0], &points[points.len() - 1]);
+        let first_month = months[0]["month"].as_str().unwrap_or_default();
+        let last_month = months[points.len() - 1]["month"]
+            .as_str()
+            .unwrap_or_default();
+        let summary = format!(
+            "{san} was chosen in {} of games in {first_month} and {} in {last_month}",
+            percent(first.value),
+            percent(last.value)
+        );
+        self.popularity_san = san.to_string();
+        self.popularity.update(cx, |chart, cx| {
+            chart.set(points, (0., (top * 1.15).min(100.)), summary, cx)
+        });
+        cx.notify();
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
@@ -981,7 +1079,50 @@ impl OpeningsPage {
                             })
                     })),
             )
-            .children(description);
+            .child(
+                v_flex()
+                    .id("opening-more")
+                    .flex_1()
+                    .min_h_0()
+                    .gap(px(14.))
+                    .overflow_y_scroll()
+                    .children(description)
+                    .when(self.popularity_months > 0, |more| {
+                        more.child(
+                            v_flex()
+                                .gap(px(4.))
+                                .child(
+                                    h_flex()
+                                        .gap(px(4.))
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(palette.text_muted)
+                                        .child(format!("Popularity of {}", self.popularity_san))
+                                        .child(
+                                            div()
+                                                .id("popularity-about")
+                                                .tooltip(|window, cx| {
+                                                    gpui_kit::component::tooltip::Tooltip::new(
+                                                        "Share of Lichess blitz, rapid and classical \
+                                                         games from the previous position that \
+                                                         continued with this move, by month.",
+                                                    )
+                                                    .build(window, cx)
+                                                })
+                                                .child(icon("info").size(px(13.))),
+                                        ),
+                                )
+                                .child(self.popularity.clone()),
+                        )
+                    })
+                    .child(
+                        div()
+                            .pt(px(14.))
+                            .border_t_1()
+                            .border_color(palette.border)
+                            .child(self.explorer.clone()),
+                    ),
+            );
         self.layout
             .render("opening-detail", board_column, panel, window, cx)
             .into_any_element()

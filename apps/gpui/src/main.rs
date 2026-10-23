@@ -3,7 +3,9 @@
 
 mod assets;
 mod board;
+mod chart;
 mod core;
+mod explorer;
 mod export;
 mod game;
 mod log;
