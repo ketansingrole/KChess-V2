@@ -5,12 +5,9 @@
 
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{
-    Disableable as _, Icon, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_core::Level;
@@ -18,11 +15,12 @@ use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::core::{AppCore, CoreEvent};
+use crate::core::AppCore;
 use crate::game::puzzle::{PuzzleSession, Step, local_day};
 use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
+use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, tint};
 use crate::widgets::{self, Pill, Tone};
@@ -128,21 +126,6 @@ fn theme_name(key: &str, themes: &[Theme]) -> String {
     name
 }
 
-/// `formatBytes`: "312 MB", "1.5 GB".
-fn format_bytes(bytes: f64) -> String {
-    if !bytes.is_finite() || bytes <= 0. {
-        return "0 B".into();
-    }
-    let units = ["B", "KB", "MB", "GB"];
-    let exponent = ((bytes.ln() / 1024f64.ln()).floor() as usize).min(units.len() - 1);
-    let value = bytes / 1024f64.powi(exponent as i32);
-    if exponent == 0 || value >= 100. {
-        format!("{} {}", value.round(), units[exponent])
-    } else {
-        format!("{value:.1} {}", units[exponent])
-    }
-}
-
 pub struct PuzzlesPage {
     session: PuzzleSession,
     /// The puzzle key the board shows (`:key="puzzleKey"`): a new key starts the board afresh.
@@ -156,9 +139,6 @@ pub struct PuzzlesPage {
     timers: Vec<Task<()>>,
     progress: Value,
     accounts: Vec<String>,
-    db: Value,
-    db_progress: Option<Value>,
-    db_error: Option<String>,
     started: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -219,7 +199,7 @@ impl PuzzlesPage {
             cx,
         );
         let puzzle = cx.new(|cx| PuzzleBoard::new(true, window, cx));
-        let events = cx.global::<AppCore>().events.clone();
+        let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         let subscriptions = vec![
             cx.subscribe(
                 &puzzle,
@@ -276,11 +256,12 @@ impl PuzzlesPage {
                     this.load_next(cx);
                 },
             ),
-            cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-                if event.name == "puzzledb:progress" {
-                    this.db_progress = Some(event.payload.clone());
-                    cx.notify();
+            // A database just downloaded has puzzles for a session waiting on it.
+            cx.observe(&puzzle_db, |this, db, cx| {
+                if db.read(cx).installed() && this.session.phase() == "nodb" {
+                    this.load_next(cx);
                 }
+                cx.notify();
             }),
         ];
         PuzzlesPage {
@@ -295,9 +276,6 @@ impl PuzzlesPage {
             timers: Vec::new(),
             progress: Value::Null,
             accounts: Vec::new(),
-            db: Value::Null,
-            db_progress: None,
-            db_error: None,
             started: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -309,7 +287,8 @@ impl PuzzlesPage {
     pub fn shown(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
         let data = core.call("loadData", Vec::new());
-        let db = core.call("puzzleDbStatus", Vec::new());
+        let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
+        puzzle_db.update(cx, |db, cx| db.refresh(cx));
         let progress = core.call(
             "puzzleProgress",
             vec![json!({ "today": local_day(), "limit": 10 })],
@@ -317,7 +296,7 @@ impl PuzzlesPage {
         let first = !self.started;
         self.started = true;
         cx.spawn(async move |this, cx| {
-            let (data, db, progress) = (data.await, db.await, progress.await);
+            let (data, progress) = (data.await, progress.await);
             let _ = this.update(cx, |this, cx| {
                 if let Ok(data) = data {
                     this.accounts = data["accounts"]
@@ -327,10 +306,6 @@ impl PuzzlesPage {
                         .filter(|account| account["connected"] == json!(true))
                         .filter_map(|account| account["username"].as_str().map(str::to_string))
                         .collect();
-                }
-                match db {
-                    Ok(db) => this.db = db,
-                    Err(cause) => this.db_error = Some(cause.message),
                 }
                 if let Ok(progress) = progress {
                     this.progress = progress;
@@ -567,258 +542,11 @@ impl PuzzlesPage {
         self.follow(step, "puzzleSessionLoadSettled", cx);
         cx.notify();
     }
-
-    /* ── The downloaded database ──────────────────────────────────────── */
-
-    fn install_db(&mut self, cx: &mut Context<Self>) {
-        self.db_error = None;
-        self.db_progress = Some(json!({ "phase": "downloading", "received": 0, "kept": 0 }));
-        cx.notify();
-        let install = cx.global::<AppCore>().call("puzzleDbInstall", Vec::new());
-        cx.spawn(async move |this, cx| {
-            let result = install.await;
-            let _ = this.update(cx, |this, cx| {
-                match result {
-                    Ok(db) => this.db = db,
-                    Err(cause) => this.db_error = Some(cause.message),
-                }
-                let phase = this
-                    .db_progress
-                    .as_ref()
-                    .and_then(|progress| progress["phase"].as_str().map(str::to_string));
-                if matches!(phase.as_deref(), Some("done" | "cancelled") | None)
-                    || this.db_error.is_none()
-                {
-                    this.db_progress = None;
-                }
-                if this.session.phase() == "nodb" {
-                    this.load_next(cx);
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn cancel_db(&mut self, cx: &mut Context<Self>) {
-        let cancel = cx.global::<AppCore>().call("puzzleDbCancel", Vec::new());
-        cx.background_executor()
-            .spawn(async move {
-                let _ = cancel.await;
-            })
-            .detach();
-    }
-
-    fn ask_delete_db(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
-            let page = page.clone();
-            dialog
-                .title("Delete the puzzle database?")
-                .description(
-                    "This removes the puzzles stored on this computer. Storm, Streak, Rush and offline puzzles stop working until you download it again. Your scores are kept.",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| page.delete_db(cx));
-                    true
-                })
-        });
-    }
-
-    fn delete_db(&mut self, cx: &mut Context<Self>) {
-        self.db_error = None;
-        let delete = cx.global::<AppCore>().call("puzzleDbDelete", Vec::new());
-        cx.spawn(async move |this, cx| {
-            let result = delete.await;
-            let _ = this.update(cx, |this, cx| {
-                match result {
-                    Ok(db) => {
-                        this.db = db;
-                        this.db_progress = None;
-                    }
-                    Err(cause) => this.db_error = Some(cause.message),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn db_busy(&self) -> bool {
-        self.db["busy"] == json!(true)
-            || self.db_progress.as_ref().is_some_and(|progress| {
-                matches!(
-                    progress["phase"].as_str(),
-                    Some("downloading" | "importing")
-                )
-            })
-    }
 }
 
 /* ── Rendering ────────────────────────────────────────────────────────── */
 
 impl PuzzlesPage {
-    /// `PuzzleDbCard.vue`: download, see and delete the puzzles Downloaded mode plays from.
-    fn render_db_card(&self, cx: &mut Context<Self>, palette: &Palette) -> impl IntoElement {
-        let hint = |text: String| {
-            div()
-                .text_size(px(12.))
-                .text_color(palette.text_muted)
-                .child(text)
-        };
-        let body: AnyElement = if self.db_busy() {
-            let progress = self.db_progress.clone().unwrap_or(Value::Null);
-            let received = progress["received"].as_f64().unwrap_or_default();
-            let total = progress["total"].as_f64();
-            let text = match progress["phase"].as_str() {
-                Some("importing") => "Saving puzzles…".to_string(),
-                Some("failed") => progress["message"]
-                    .as_str()
-                    .unwrap_or("The download failed.")
-                    .to_string(),
-                _ => format!(
-                    "Downloading… {}{}",
-                    format_bytes(received),
-                    total
-                        .map(|total| format!(" of {}", format_bytes(total)))
-                        .unwrap_or_default()
-                ),
-            };
-            let kept = progress["kept"].as_f64().unwrap_or_default();
-            let share = total
-                .filter(|total| *total > 0.)
-                .map(|total| (received / total).min(1.));
-            v_flex()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .h(px(8.))
-                        .w_full()
-                        .rounded_full()
-                        .bg(palette.accented)
-                        .child(
-                            div()
-                                .h_full()
-                                .rounded_full()
-                                .bg(palette.primary)
-                                .w(relative(share.unwrap_or(0.1) as f32)),
-                        ),
-                )
-                .child(hint(if kept > 0. {
-                    format!(
-                        "{text} · {} puzzles picked so far",
-                        widgets::format_count(kept)
-                    )
-                } else {
-                    text
-                }))
-                .child(
-                    h_flex().child(
-                        Button::new("db-cancel")
-                            .outline()
-                            .small()
-                            .icon(icon("x"))
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_db(cx))),
-                    ),
-                )
-                .into_any_element()
-        } else if self.db["installed"] == json!(true) {
-            let mut line = format!(
-                "{} puzzles · {} on disk",
-                widgets::format_count(self.db["count"].as_f64().unwrap_or_default()),
-                format_bytes(self.db["bytes"].as_f64().unwrap_or_default())
-            );
-            if let Some(at) = self.db["importedAt"].as_f64() {
-                use chrono::TimeZone as _;
-                if let Some(day) = chrono::Local.timestamp_millis_opt(at as i64).single() {
-                    line.push_str(&format!(" · downloaded {}", day.format("%-m/%-d/%Y")));
-                }
-            }
-            v_flex()
-                .gap(px(8.))
-                .child(
-                    h_flex()
-                        .gap(px(6.))
-                        .text_size(px(14.))
-                        .child(
-                            icon("circle-check")
-                                .size(px(16.))
-                                .text_color(palette.success),
-                        )
-                        .child(line),
-                )
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .flex_wrap()
-                        .child(
-                            Button::new("db-refresh")
-                                .outline()
-                                .small()
-                                .icon(icon("refresh-cw"))
-                                .label("Download a fresh sample (~300 MB)")
-                                .on_click(cx.listener(|this, _, _, cx| this.install_db(cx))),
-                        )
-                        .child(
-                            Button::new("db-delete")
-                                .danger()
-                                .small()
-                                .icon(icon("trash-2"))
-                                .label("Delete")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.ask_delete_db(window, cx)
-                                })),
-                        ),
-                )
-                .into_any_element()
-        } else {
-            v_flex()
-                .gap(px(8.))
-                .child(hint(
-                    "About 300 MB download · keeps 100,000 puzzles.".into(),
-                ))
-                .child(
-                    h_flex().child(
-                        Button::new("db-install")
-                            .primary()
-                            .icon(icon("download"))
-                            .label("Download puzzle database")
-                            .on_click(cx.listener(|this, _, _, cx| this.install_db(cx))),
-                    ),
-                )
-                .into_any_element()
-        };
-        v_flex()
-            .w_full()
-            .max_w(px(440.))
-            .gap(px(4.))
-            .p(px(16.))
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(12.))
-            .bg(palette.bg)
-            .child(
-                div()
-                    .text_size(px(15.))
-                    .font_weight(FontWeight(650.))
-                    .text_color(palette.highlighted)
-                    .child("Puzzle database"),
-            )
-            .child(hint("For offline puzzles, Storm, Streak and Rush.".into()))
-            .child(div().mt(px(8.)).child(body))
-            .children(self.db_error.clone().map(|error| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.error)
-                    .child(error)
-            }))
-    }
-
     /// What stands in for the board while there is no puzzle to play.
     fn render_placeholder(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let empty = |glyph: Icon, title: String, description: Option<String>| {
@@ -848,7 +576,7 @@ impl PuzzlesPage {
             )
             .child(other(cx))
             .into_any_element(),
-            "nodb" => self.render_db_card(cx, palette).into_any_element(),
+            "nodb" => crate::puzzle_db::card(false, cx, palette).into_any_element(),
             "exhausted" => {
                 let difficulty = crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into());
                 let label = DIFFICULTIES
@@ -1497,8 +1225,8 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, theme_name, themes};
-    use crate::widgets;
+    use super::{theme_name, themes};
+    use crate::widgets::{self, format_bytes};
 
     #[test]
     fn sizes_and_counts_read_as_in_electron() {

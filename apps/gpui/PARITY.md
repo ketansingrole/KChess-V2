@@ -69,7 +69,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Appearance (theme, coordinates, animation, piece set, board), App theme (light and dark
       pickers, own themes folder and reload), Gameplay (levels included), Gestures, Online play,
       Analysis, Sound, Notifications (switches)
-- [ ] Interface size; Notifications' "Try it"; Voice input, Chess engine, My accounts, Offline
+- [x] Chess engine (bundled, downloaded or your own Stockfish; download, update, delete) and
+      Game review; Offline downloads (the engine, the shared puzzle database card, saved games)
+- [ ] Interface size; Notifications' "Try it"; Voice input, My accounts, Offline voice model
       downloads, Data & storage, Updates
 
 ## Game history

@@ -853,3 +853,60 @@ pub fn format_count(count: f64) -> String {
     }
     out
 }
+
+/// `formatBytes`: "312 MB", "1.5 GB".
+pub fn format_bytes(bytes: f64) -> String {
+    if !bytes.is_finite() || bytes <= 0. {
+        return "0 B".into();
+    }
+    let units = ["B", "KB", "MB", "GB"];
+    let exponent = ((bytes.ln() / 1024f64.ln()).floor() as usize).min(units.len() - 1);
+    let value = bytes / 1024f64.powi(exponent as i32);
+    if exponent == 0 || value >= 100. {
+        format!("{} {}", value.round(), units[exponent])
+    } else {
+        format!("{value:.1} {}", units[exponent])
+    }
+}
+
+/// How a badge is drawn (`UBadge` color and variant).
+#[derive(Clone, Copy)]
+pub enum Look {
+    Success,
+    Error,
+    Warning,
+    Primary,
+    Info,
+    NeutralSoft,
+    NeutralSubtle,
+}
+
+/// `UBadge`: a short label in a soft color; callers add an icon, a width or a dot.
+pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> Div {
+    let (bg, fg, ring) = match look {
+        Look::Success => (tint(palette.success, 10.), palette.success, None),
+        Look::Error => (tint(palette.error, 10.), palette.error, None),
+        Look::Warning => (tint(palette.warning, 10.), palette.warning, None),
+        Look::Primary => (tint(palette.primary, 10.), palette.primary, None),
+        Look::Info => (tint(palette.info, 10.), palette.info, None),
+        Look::NeutralSoft => (palette.elevated, palette.toned, None),
+        Look::NeutralSubtle => (
+            palette.elevated,
+            palette.toned,
+            Some(palette.border_accented),
+        ),
+    };
+    h_flex()
+        .flex_none()
+        .gap(px(6.))
+        .px(px(8.))
+        .py(px(4.))
+        .rounded(px(6.))
+        .bg(bg)
+        .text_color(fg)
+        .text_size(px(12.))
+        .line_height(px(16.))
+        .font_weight(FontWeight::MEDIUM)
+        .when_some(ring, |badge, ring| badge.border_1().border_color(ring))
+        .child(label.into())
+}

@@ -1,6 +1,9 @@
 //! Settings (`pages/settings.vue`): one category at a time, picked in the sidebar while Settings is
 //! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
 
+mod engine;
+mod offline;
+
 use std::path::Path;
 use std::rc::Rc;
 
@@ -13,7 +16,8 @@ use gpui_kit::component::{Disableable as _, Icon, IndexPath, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::{
-    AppTheme, Appearance, CoordinateMode, EngineLevel, PieceAnimation, PromotionMode, Settings,
+    AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, PromotionMode,
+    Settings,
 };
 use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
@@ -111,6 +115,9 @@ pub struct SettingsPage {
     poll: Entity<SelectState<Vec<SharedString>>>,
     ladder: Vec<Rung>,
     default_levels: Vec<EngineLevel>,
+    /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.
+    engine: Option<EngineStatus>,
+    engine_busy: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -165,6 +172,15 @@ impl SettingsPage {
                     }
                 },
             ),
+            // The background review's progress and the puzzle database show as they change.
+            cx.observe(
+                &cx.global::<crate::reviews::ReviewHandle>().0.clone(),
+                |_, _, cx| cx.notify(),
+            ),
+            cx.observe(
+                &cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone(),
+                |_, _, cx| cx.notify(),
+            ),
             // Settings changed elsewhere (the other app, a reload) show in the controls too.
             cx.subscribe_in(
                 &handle,
@@ -206,6 +222,8 @@ impl SettingsPage {
             poll,
             ladder,
             default_levels,
+            engine: None,
+            engine_busy: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -218,6 +236,13 @@ impl SettingsPage {
     /// Show one category, from the top (`jumpToSection`).
     pub fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
+        if matches!(section, Section::Engine | Section::Offline) {
+            self.refresh_engine(cx);
+        }
+        if section == Section::Offline {
+            let db = cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone();
+            db.update(cx, |db, cx| db.refresh(cx));
+        }
         cx.notify();
     }
 
@@ -1115,16 +1140,15 @@ impl Render for SettingsPage {
             Section::Analysis => self.analysis(&settings, &palette),
             Section::Sound => self.sound(&settings, &palette),
             Section::Notifications => self.notifications(&settings, &palette),
-            Section::Voice
-            | Section::Engine
-            | Section::Accounts
-            | Section::Offline
-            | Section::Data
-            | Section::Updates => widgets::card(&palette)
-                .items_center()
-                .py(px(40.))
-                .text_color(palette.text_muted)
-                .child("Use the Electron app for this section for now."),
+            Section::Engine => self.engine(&settings, cx, &palette),
+            Section::Offline => self.offline(cx, &palette),
+            Section::Voice | Section::Accounts | Section::Data | Section::Updates => {
+                widgets::card(&palette)
+                    .items_center()
+                    .py(px(40.))
+                    .text_color(palette.text_muted)
+                    .child("Use the Electron app for this section for now.")
+            }
         };
         div()
             .id("settings-page")

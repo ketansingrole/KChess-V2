@@ -20,6 +20,7 @@ mod power;
 mod prefs;
 mod profile;
 mod puzzle_board;
+mod puzzle_db;
 mod replay;
 mod reviews;
 mod settings;
@@ -59,6 +60,7 @@ fn main() {
             played::init(cx);
             studies::init(cx);
             reviews::init(cx);
+            puzzle_db::init(cx);
             sound::init(cx);
             online::init(cx);
             cx.on_app_quit(core::quit).detach();

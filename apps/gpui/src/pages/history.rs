@@ -17,8 +17,8 @@ use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
 use crate::replay::GameReplay;
-use crate::theme::{Palette, tint};
-use crate::widgets::{self, Pill};
+use crate::theme::Palette;
+use crate::widgets::{self, Look, Pill};
 
 const PAGE_SIZE: usize = 20;
 /// Below this page width the list keeps only the result and the players.
@@ -78,16 +78,6 @@ fn text<'a>(game: &'a Value, key: &str) -> &'a str {
     game[key].as_str().unwrap_or_default()
 }
 
-/// How a badge is drawn (`UBadge` color and variant).
-#[derive(Clone, Copy)]
-enum Look {
-    Success,
-    Error,
-    NeutralSubtle,
-    NeutralSoft,
-    Info,
-}
-
 /// `ARCHIVED_BADGES`: the label, look and winning side of an outcome.
 fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
     match outcome {
@@ -105,32 +95,10 @@ fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
 /// `ResultBadge.vue`.
 fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
     let (label, look, side) = badge_of(outcome);
-    let (bg, fg, ring) = match look {
-        Look::Success => (tint(palette.success, 10.), palette.success, None),
-        Look::Error => (tint(palette.error, 10.), palette.error, None),
-        Look::Info => (tint(palette.info, 10.), palette.info, None),
-        Look::NeutralSoft => (palette.elevated, palette.toned, None),
-        Look::NeutralSubtle => (
-            palette.elevated,
-            palette.toned,
-            Some(palette.border_accented),
-        ),
-    };
-    h_flex()
+    widgets::badge(label, look, palette)
         .when_some(width, |badge, width| badge.w(width))
         .justify_center()
-        .gap(px(6.))
-        .px(px(8.))
-        .py(px(4.))
-        .rounded(px(6.))
-        .bg(bg)
-        .text_color(fg)
-        .text_size(px(12.))
-        .line_height(px(16.))
-        .font_weight(FontWeight::MEDIUM)
-        .when_some(ring, |badge, ring| badge.border_1().border_color(ring))
         .children(side.map(widgets::side_dot))
-        .child(label)
 }
 
 /// `moveCount`: full moves, a lone white move counting as one.

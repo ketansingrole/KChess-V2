@@ -255,3 +255,9 @@ pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     let handle = cx.global::<SettingsHandle>().0.clone();
     handle.update(cx, |settings, cx| settings.update(change, cx));
 }
+
+/// Save waiting edits now; done once the core has them (before asking it about what they set).
+pub fn flush(cx: &mut App) -> BoxedSave {
+    let handle = cx.global::<SettingsHandle>().0.clone();
+    handle.update(cx, |settings, _| settings.flushed())
+}
