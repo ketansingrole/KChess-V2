@@ -34,6 +34,8 @@ const ANGLE: &str = "kchess:puzzle-angle";
 const DIFFICULTY: &str = "kchess:puzzle-difficulty";
 const COLOR: &str = "kchess:puzzle-color";
 const ACCOUNT: &str = "kchess:puzzle-account";
+/// The opening an opening page chose puzzles of: its key is the angle while it is chosen.
+const OPENING: &str = "kchess:puzzle-opening";
 
 /// Milliseconds before the opponent replies, and the solution's pace when it plays itself.
 const REPLY_DELAY: Duration = Duration::from_millis(350);
@@ -89,6 +91,28 @@ fn themes() -> Vec<Theme> {
     })
     .chain(groups.into_iter().flat_map(|group| group.themes))
     .collect()
+}
+
+/// An opening chosen for puzzles (`openingAngle`).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct OpeningAngle {
+    key: String,
+    name: String,
+}
+
+/// The themes, and after the mix the opening an opening page chose puzzles of.
+fn theme_items(cx: &App) -> Vec<Theme> {
+    let mut list = themes();
+    if let Some(opening) = crate::prefs::get::<Option<OpeningAngle>>(cx, OPENING, None) {
+        list.insert(
+            1,
+            Theme {
+                key: opening.key,
+                name: opening.name,
+            },
+        );
+    }
+    list
 }
 
 /// `themeName`: the name Lichess gives a theme key; unknown keys split into words.
@@ -197,7 +221,7 @@ fn select_of(
 
 impl PuzzlesPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> PuzzlesPage {
-        let theme_list = themes();
+        let theme_list = theme_items(cx);
         let angle = crate::prefs::get::<String>(cx, ANGLE, "mix".into());
         let difficulty = crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into());
         let color = crate::prefs::get::<String>(cx, COLOR, "random".into());
@@ -777,6 +801,61 @@ impl PuzzlesPage {
         self.load_next(cx);
     }
 
+    /// Train another theme, as choosing it in the select does.
+    fn choose_angle(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, ANGLE, key);
+        let index = self
+            .theme_list
+            .iter()
+            .position(|theme| theme.key == key)
+            .unwrap_or(0);
+        self.theme_select.update(cx, |state, cx| {
+            state.set_selected_index(Some(IndexPath::new(index)), window, cx)
+        });
+        self.load_next(cx);
+    }
+
+    fn choose_difficulty(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, DIFFICULTY, key);
+        let index = DIFFICULTIES
+            .iter()
+            .position(|(value, _)| *value == key)
+            .unwrap_or(2);
+        self.difficulty_select.update(cx, |state, cx| {
+            state.set_selected_index(Some(IndexPath::new(index)), window, cx)
+        });
+        self.load_next(cx);
+    }
+
+    /// `startOpening`: remember the opening an opening page asked for puzzles of, as the theme to
+    /// train; a page made after this starts with it.
+    pub fn choose_opening(key: &str, name: &str, cx: &mut App) {
+        crate::prefs::set(
+            cx,
+            OPENING,
+            OpeningAngle {
+                key: key.to_string(),
+                name: name.to_string(),
+            },
+        );
+        crate::prefs::set(cx, ANGLE, key);
+        crate::prefs::set(cx, TAB, "train");
+    }
+
+    /// The opening chosen with [`Self::choose_opening`], on a page made before it.
+    pub fn opening_chosen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_list = theme_items(cx);
+        let names: Vec<SharedString> = self
+            .theme_list
+            .iter()
+            .map(|theme| SharedString::from(theme.name.clone()))
+            .collect();
+        self.theme_select
+            .update(cx, |state, cx| state.set_items(names, window, cx));
+        let angle = crate::prefs::get::<String>(cx, ANGLE, "mix".into());
+        self.choose_angle(&angle, window, cx);
+    }
+
     fn reset_session(&mut self, cx: &mut Context<Self>) {
         let step = self.session.apply("puzzleSessionResetSession", json!({}));
         self.follow(step, "puzzleSessionLoadSettled", cx);
@@ -1093,35 +1172,23 @@ impl PuzzlesPage {
                 let mut actions: Vec<Button> = Vec::new();
                 if index > 0 {
                     let (key, easier) = DIFFICULTIES[index - 1];
-                    let select = self.difficulty_select.clone();
                     actions.push(
                         Button::new("try-easier")
                             .icon(icon("chevrons-down"))
                             .label(format!("Try {easier}"))
-                            .on_click(move |_, window, cx| {
-                                crate::prefs::set(cx, DIFFICULTY, key);
-                                select.update(cx, |state, cx| {
-                                    state.set_selected_index(
-                                        Some(IndexPath::new(index - 1)),
-                                        window,
-                                        cx,
-                                    )
-                                });
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.choose_difficulty(key, window, cx)
+                            })),
                     );
                 }
                 if angle != "mix" {
-                    let select = self.theme_select.clone();
                     actions.push(
                         Button::new("try-mix")
                             .icon(icon("shuffle"))
                             .label("Try Healthy mix")
-                            .on_click(move |_, window, cx| {
-                                crate::prefs::set(cx, ANGLE, "mix");
-                                select.update(cx, |state, cx| {
-                                    state.set_selected_index(Some(IndexPath::new(0)), window, cx)
-                                });
-                            }),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.choose_angle("mix", window, cx)
+                            })),
                     );
                 }
                 if mode != "offline" {

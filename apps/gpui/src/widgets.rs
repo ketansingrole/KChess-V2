@@ -488,6 +488,14 @@ pub fn field(
         }))
 }
 
+/// A grid's columns for a width (`repeat(auto-fill, minmax(min, 1fr))`): as many as fit at
+/// `min`, `gap` apart, sharing the width.
+pub fn columns(width: Pixels, min: Pixels, gap: Pixels) -> (usize, Pixels) {
+    let count = ((width + gap) / (min + gap)).floor().max(1.) as usize;
+    let item = (width - gap * (count as f32 - 1.)) / count as f32;
+    (count, item)
+}
+
 /// `.card`: a bordered, raised box with the page's standard padding.
 pub fn card(palette: &Palette) -> Div {
     v_flex()

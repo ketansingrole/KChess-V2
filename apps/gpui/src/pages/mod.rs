@@ -7,6 +7,7 @@ pub mod computer_options;
 pub mod history;
 pub mod home;
 pub mod local;
+pub mod openings;
 pub mod practice;
 pub mod puzzles;
 pub mod settings;
@@ -95,6 +96,22 @@ impl Pages {
             .and_then(|shown| shown.view.clone().downcast().ok())
     }
 
+    /// A page's view, made now (without showing it) if it has not been shown.
+    pub fn view_made<V: 'static, T>(
+        &mut self,
+        page: Page,
+        window: &mut Window,
+        cx: &mut Context<T>,
+    ) -> Option<Entity<V>> {
+        self.views
+            .entry(page)
+            .or_insert_with(|| create(page, window, cx))
+            .view
+            .clone()
+            .downcast()
+            .ok()
+    }
+
     pub fn view(&self) -> AnyView {
         self.views
             .get(&self.current)
@@ -129,6 +146,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::History => {
             let view = cx.new(history::HistoryPage::new);
+            focused(view, cx)
+        }
+        Page::Openings => {
+            let view = cx.new(|cx| openings::OpeningsPage::new(window, cx));
             focused(view, cx)
         }
         Page::Practice => {

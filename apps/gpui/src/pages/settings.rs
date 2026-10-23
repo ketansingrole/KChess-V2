@@ -24,7 +24,7 @@ use crate::game::rules;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
-use crate::widgets;
+use crate::widgets::{self, columns};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -392,14 +392,6 @@ fn choice<T: Copy + PartialEq + 'static>(
         },
         palette,
     )
-}
-
-/// A grid's columns for a width (`repeat(auto-fill, minmax(min, 1fr))`): as many as fit at
-/// `min`, `gap` apart, sharing the width.
-fn columns(width: Pixels, min: Pixels, gap: Pixels) -> (usize, Pixels) {
-    let count = ((width + gap) / (min + gap)).floor().max(1.) as usize;
-    let item = (width - gap * (count as f32 - 1.)) / count as f32;
-    (count, item)
 }
 
 /// `.theme-option`: a picture and its name; the chosen one is ringed in the primary color.

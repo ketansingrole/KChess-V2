@@ -114,9 +114,18 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       by the core (`runSummary`, `saveRun`)
 - [ ] Endgames, Repertoire and Your mistakes trainers; voice answers
 
+## Openings
+
+- [x] Search (case, accents and apostrophes folded), Recent, Popular cards with Train, and every
+      family by first move as an expandable tree, from the shared `openingTree`
+- [x] One opening: a board to explore it (drag or type a move), its moves, Train this line
+      (Practice → Repertoire), Analyse (asks before replacing unsaved analysis) and Train with
+      puzzles (its Lichess puzzle key as the theme); its Wikibooks excerpt when the core has one
+- [ ] The popularity chart and the position explorer beside the line
+
 ## Pages not started
 
-Openings, Studies, Board editor, Play on Lichess, Tournaments, Watch,
+Studies, Board editor, Play on Lichess, Tournaments, Watch,
 Lichess insights, Following, Players.
 
 ## Packaging

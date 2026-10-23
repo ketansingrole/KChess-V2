@@ -29,7 +29,7 @@ use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san, winning_chances,
 };
-use crate::game::{STANDARD_FEN, view};
+use crate::game::{STANDARD_FEN, rules, view};
 use crate::online::OnlineHandle;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -376,6 +376,21 @@ impl AnalysisPage {
         self.study = Value::String(String::new());
         self.changed(cx);
         true
+    }
+
+    /// The board holds moves no study keeps (`useReplaceAnalysis`), so replacing it asks first.
+    pub fn unsaved(&self) -> bool {
+        self.study.as_str().unwrap_or_default().is_empty() && !self.root.children.is_empty()
+    }
+
+    /// Load a line from the starting position, opened at its end (an opening's Analyse).
+    pub fn load_line(&mut self, moves: &[String], cx: &mut Context<Self>) {
+        let Ok(pgn) = rules("pgnFromUci", &[json!(moves)]) else {
+            return;
+        };
+        if self.load_pgn(pgn.as_str().unwrap_or_default(), cx) {
+            self.go_to_end(cx);
+        }
     }
 
     fn clear_evaluations(&mut self) {
