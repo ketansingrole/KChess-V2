@@ -4,6 +4,7 @@
 
 use gpui_kit::{App, AppContext as _, Entity, Global};
 use kchess_core::Level;
+use serde_json::{Value, json};
 
 use crate::core::AppCore;
 
@@ -25,6 +26,24 @@ impl OnlineState {
     pub fn assistance_allowed(&self) -> bool {
         self.phase == Phase::Idle
     }
+}
+
+/// The account Lichess actions use (`activeOnlineAccount`): the one chosen for online play when it
+/// is connected, else the first connected one.
+pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
+    let preferred = crate::prefs::get::<String>(cx, "kchess:online-account", String::new());
+    let listed: Vec<Value> = accounts
+        .iter()
+        .map(
+            |account| json!({ "username": account["username"], "connected": account["connected"] }),
+        )
+        .collect();
+    let index = crate::game::rules("connectedAccountIndex", &[json!(listed), json!(preferred)])
+        .ok()
+        .filter(|index| !index.is_null())?;
+    accounts.get(crate::game::whole(&index) as usize)?["username"]
+        .as_str()
+        .map(str::to_string)
 }
 
 #[derive(Clone)]

@@ -3,7 +3,10 @@
 //! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
 
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use std::time::Duration;
+
+use futures::FutureExt as _;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
@@ -31,10 +34,18 @@ use crate::game::tree::{
 };
 use crate::game::{STANDARD_FEN, rules, view};
 use crate::online::OnlineHandle;
+use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
+use crate::studies::StudyHandle;
 use crate::theme::{Palette, tint};
 use crate::widgets;
+
+const CONFLICT: &str = "Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.";
+
+/// A study write's answer, which the quit and the page's own handling both wait on.
+type StudySave =
+    futures::future::Shared<std::pin::Pin<Box<dyn Future<Output = Result<Value, String>>>>>;
 
 /// Evaluations kept per position, so stepping back and forth shows them at once.
 const CACHE_SIZE: usize = 600;
@@ -104,9 +115,17 @@ pub struct AnalysisPage {
     root: TreeNode,
     path: String,
     orientation: Color,
-    /// The study the Electron app links the board to; kept as it was.
-    study: Value,
-    chapter: Value,
+    /// The saved study the board is showing, and its chapter; edits are saved back to it.
+    study: String,
+    chapter: String,
+    /// The PGN last written to the open study, so opening one does not count as an edit.
+    study_pgn: String,
+    /// Why the study could not be saved (or a recovered session that differs from it).
+    study_error: Option<String>,
+    study_save: Option<Task<()>>,
+    /// Bumped whenever another document takes the board, so a late save-as does not link it.
+    navigation: u64,
+    study_bar: Entity<StudyBar>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_input: Entity<InputState>,
@@ -163,6 +182,52 @@ impl AnalysisPage {
         } else {
             Color::White
         };
+        // A recovered session that differs from its study stays an unsaved copy; it never
+        // overwrites the library.
+        let library = cx.global::<StudyHandle>().0.clone();
+        let linked = library
+            .read(cx)
+            .study(session["study"].as_str().unwrap_or_default())
+            .cloned();
+        let chapter_of = |study: &Value, id: &str| {
+            study["chapters"]
+                .as_array()
+                .and_then(|chapters| chapters.iter().find(|chapter| chapter["id"] == json!(id)))
+                .cloned()
+        };
+        let linked_pgn = linked.as_ref().map(|study| {
+            chapter_of(study, session["chapter"].as_str().unwrap_or_default())
+                .and_then(|chapter| chapter["pgn"].as_str().map(str::to_string))
+                .unwrap_or_else(|| study["pgn"].as_str().unwrap_or_default().to_string())
+        });
+        let conflict = session["pgn"].is_string()
+            && linked_pgn
+                .as_deref()
+                .and_then(TreeNode::from_pgn)
+                .is_some_and(|tree| tree.to_pgn() != root.to_pgn());
+        let study = if conflict || linked.is_none() {
+            String::new()
+        } else {
+            session["study"].as_str().unwrap_or_default().to_string()
+        };
+        let chapter = session["chapter"]
+            .as_str()
+            .filter(|chapter| !chapter.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                linked
+                    .as_ref()
+                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string))
+            })
+            .unwrap_or_default();
+        let study_pgn = if study.is_empty() {
+            String::new()
+        } else {
+            linked_pgn.unwrap_or_default()
+        };
+        let study_error = conflict.then(|| CONFLICT.to_string());
+        let page = cx.weak_entity();
+        let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
                 &position_of(STANDARD_FEN).unwrap_or_default(),
@@ -228,6 +293,14 @@ impl AnalysisPage {
                 this.redraw(cx);
             }),
             cx.observe(&online, |this, _, cx| this.engine_changed(cx)),
+            // A study removed from the library (here or on the Studies page) gets no more edits.
+            cx.observe(&library, |this, library, cx| {
+                if !this.study.is_empty() && library.read(cx).study(&this.study).is_none() {
+                    this.study.clear();
+                    this.schedule_save(cx);
+                    cx.notify();
+                }
+            }),
             cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
                 if event.name == "engine:analysis" {
                     this.receive(event.payload.clone(), cx);
@@ -238,8 +311,13 @@ impl AnalysisPage {
             root,
             path,
             orientation,
-            study: session["study"].clone(),
-            chapter: session["chapter"].clone(),
+            study,
+            chapter,
+            study_pgn,
+            study_error,
+            study_save: None,
+            navigation: 0,
+            study_bar,
             board,
             layout: PlayLayout::default(),
             move_input,
@@ -272,7 +350,16 @@ impl AnalysisPage {
         let weak = cx.entity().downgrade();
         crate::core::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
-            Some(page.update(cx, |page, cx| page.save_now(cx)))
+            Some(page.update(cx, |page, cx| {
+                let study = page.persist_study(cx);
+                let session = page.save_now(cx);
+                Box::pin(async move {
+                    if let Some(study) = study {
+                        let _ = study.await;
+                    }
+                    session.await;
+                }) as BoxedSave
+            }))
         });
         page
     }
@@ -357,11 +444,8 @@ impl AnalysisPage {
     }
 
     /// Start again from a position (`load`), or the usual start.
-    fn load(&mut self, fen: Option<&str>, cx: &mut Context<Self>) {
-        self.root = TreeNode::new(fen);
-        self.path.clear();
-        self.clear_evaluations();
-        self.study = Value::String(String::new());
+    pub fn load(&mut self, fen: Option<&str>, cx: &mut Context<Self>) {
+        self.take_board(TreeNode::new(fen), cx);
         self.changed(cx);
     }
 
@@ -370,17 +454,242 @@ impl AnalysisPage {
         let Some(tree) = TreeNode::from_pgn(text) else {
             return false;
         };
-        self.root = tree;
-        self.path.clear();
-        self.clear_evaluations();
-        self.study = Value::String(String::new());
+        self.take_board(tree, cx);
         self.changed(cx);
         true
     }
 
+    /// Another document takes the board: the open study keeps its last edits and is let go.
+    fn take_board(&mut self, tree: TreeNode, cx: &mut Context<Self>) {
+        self.navigation += 1;
+        self.persist_study(cx);
+        self.root = tree;
+        self.path.clear();
+        self.clear_evaluations();
+        self.study.clear();
+    }
+
+    /* ── Studies ──────────────────────────────────────────────────────── */
+
+    pub fn study_id(&self) -> &str {
+        &self.study
+    }
+
+    pub fn chapter_id(&self) -> &str {
+        &self.chapter
+    }
+
+    pub fn study_error(&self) -> Option<&str> {
+        self.study_error.as_deref()
+    }
+
+    /// The game's PGN headers (White, Black, Event, Date, Result).
+    pub fn header(&self, key: &str) -> String {
+        self.root
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get(key))
+            .and_then(Value::as_str)
+            .filter(|value| *value != "?")
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    pub fn set_header(&mut self, key: &str, value: &str, cx: &mut Context<Self>) {
+        self.root
+            .headers
+            .get_or_insert_with(Default::default)
+            .insert(key.to_string(), json!(value));
+        self.changed(cx);
+    }
+
+    /// The white and black players named in the headers, for a new study's name.
+    pub fn players(&self) -> Option<String> {
+        let (white, black) = (self.header("White"), self.header("Black"));
+        (!white.is_empty() && !black.is_empty()).then(|| format!("{white} – {black}"))
+    }
+
+    /// Write the board to its study when it changed there (`persistStudy`); the answer, for a
+    /// quit to wait on.
+    fn persist_study(&mut self, cx: &mut Context<Self>) -> Option<StudySave> {
+        self.study_save = None;
+        if self.study.is_empty() {
+            return None;
+        }
+        let library = cx.global::<StudyHandle>().0.clone();
+        let name = library.read(cx).study(&self.study)?["name"].clone();
+        let text = self.root.to_pgn();
+        if text == self.study_pgn {
+            return None;
+        }
+        // Counted as saved while the core writes it; a failure makes it unsaved again.
+        let previous = std::mem::replace(&mut self.study_pgn, text.clone());
+        let command = library.read(cx).command(json!({
+            "op": "save",
+            "name": name,
+            "pgn": text,
+            "id": self.study,
+            "chapterId": self.chapter,
+        }));
+        let answer = (Box::pin(command) as std::pin::Pin<Box<dyn Future<Output = _>>>).shared();
+        let outcome = answer.clone();
+        cx.spawn(async move |this, cx| {
+            let result = outcome.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => this.study_error = None,
+                    Err(cause) => {
+                        if this.study_pgn == text {
+                            this.study_pgn = previous;
+                        }
+                        this.study_error = Some(cause);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        Some(answer)
+    }
+
+    /// Every edit so far written to the study, or why it could not be.
+    pub fn flush_study(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = Result<(), String>> + 'static + use<> {
+        let save = self.persist_study(cx);
+        async move {
+            match save {
+                Some(save) => save.await.map(|_| ()),
+                None => Ok(()),
+            }
+        }
+    }
+
+    /// Show a study's chapter (its first by default); its edits are saved to it from now on.
+    pub fn open_study(
+        &mut self,
+        id: &str,
+        chapter: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let library = cx.global::<StudyHandle>().0.clone();
+        let found = library.read(cx).study(id).cloned();
+        let chapters = found
+            .as_ref()
+            .and_then(|study| study["chapters"].as_array().cloned())
+            .unwrap_or_default();
+        let opened = chapters
+            .iter()
+            .find(|entry| Some(entry["id"].as_str().unwrap_or_default()) == chapter)
+            .or_else(|| chapters.first())
+            .cloned();
+        let tree = opened
+            .as_ref()
+            .and_then(|chapter| chapter["pgn"].as_str())
+            .and_then(TreeNode::from_pgn);
+        let (Some(opened), Some(tree)) = (opened, tree) else {
+            return Err("This study could not be opened.".into());
+        };
+        self.take_board(tree, cx);
+        self.study = id.to_string();
+        self.chapter = opened["id"].as_str().unwrap_or_default().to_string();
+        self.study_pgn = self.root.to_pgn();
+        self.study_error = None;
+        self.changed(cx);
+        Ok(())
+    }
+
+    /// Keep the board as a new study (named), and save its edits to it from now on.
+    pub fn save_as_study(
+        &mut self,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String, String>> {
+        self.persist_study(cx);
+        self.navigation += 1;
+        let navigation = self.navigation;
+        let text = self.root.to_pgn();
+        let library = cx.global::<StudyHandle>().0.clone();
+        let answer = library
+            .read(cx)
+            .command(json!({ "op": "save", "name": name, "pgn": text }));
+        cx.spawn(async move |this, cx| {
+            let result = answer.await?;
+            let id = result["id"]
+                .as_str()
+                .ok_or("The study could not be saved.")?
+                .to_string();
+            this.update(cx, |this, cx| {
+                library.update(cx, |library, cx| {
+                    library.apply(&result);
+                    cx.notify();
+                });
+                // The new study stays in the library either way; only the board it was made
+                // from links to it.
+                if this.navigation != navigation {
+                    return Ok(id.clone());
+                }
+                let chapter = library
+                    .read(cx)
+                    .study(&id)
+                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string));
+                let Some(chapter) = chapter else {
+                    return Err("The saved study has no chapter.".to_string());
+                };
+                this.study = id.clone();
+                this.chapter = chapter;
+                this.study_pgn = text;
+                this.study_error = None;
+                this.schedule_save(cx);
+                cx.notify();
+                Ok(id)
+            })
+            .map_err(|_| "The analysis board closed.".to_string())?
+        })
+    }
+
+    /// Save the open study, then return to an empty board; the study stays open when it cannot
+    /// be saved.
+    pub fn close_study(&mut self, cx: &mut Context<Self>) -> Task<bool> {
+        let flush = self.flush_study(cx);
+        cx.spawn(async move |this, cx| {
+            let saved = flush.await;
+            this.update(cx, |this, cx| match saved {
+                Ok(()) => {
+                    this.study.clear();
+                    this.chapter.clear();
+                    this.study_pgn.clear();
+                    this.load(None, cx);
+                    true
+                }
+                Err(cause) => {
+                    this.study_error = Some(cause);
+                    cx.notify();
+                    false
+                }
+            })
+            .unwrap_or(false)
+        })
+    }
+
+    /// Link the board to a study again (a deleted one restored), while the board still holds it.
+    pub fn relink(&mut self, id: String, chapter: String, navigation: u64, cx: &mut Context<Self>) {
+        if self.navigation == navigation && self.study.is_empty() {
+            self.study = id;
+            self.chapter = chapter;
+            self.schedule_save(cx);
+            cx.notify();
+        }
+    }
+
+    pub fn navigation(&self) -> u64 {
+        self.navigation
+    }
+
     /// The board holds moves no study keeps (`useReplaceAnalysis`), so replacing it asks first.
     pub fn unsaved(&self) -> bool {
-        self.study.as_str().unwrap_or_default().is_empty() && !self.root.children.is_empty()
+        self.study.is_empty() && !self.root.children.is_empty()
     }
 
     /// Load a line from the starting position, opened at its end (an opening's Analyse).
@@ -427,6 +736,17 @@ impl AnalysisPage {
         self.redraw(cx);
         self.analyse(cx);
         self.ask_cloud(cx);
+        self.schedule_save(cx);
+    }
+
+    /// Save the session, and the open study's chapter, shortly after the last change.
+    fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        if !self.study.is_empty() {
+            self.study_save = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(SAVE_DELAY).await;
+                let _ = this.update(cx, |this, cx| this.persist_study(cx));
+            }));
+        }
         self.save = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
             let save = this.update(cx, |this, cx| this.save_now(cx)).ok();
@@ -443,8 +763,8 @@ impl AnalysisPage {
             "pgn": self.root.to_pgn(),
             "path": self.path,
             "orientation": if self.orientation == Color::White { "white" } else { "black" },
-            "study": self.study.as_str().unwrap_or_default(),
-            "chapter": self.chapter.as_str().unwrap_or_default(),
+            "study": self.study,
+            "chapter": self.chapter,
         });
         let save = cx
             .global::<AppCore>()
@@ -1913,7 +2233,7 @@ impl Render for AnalysisPage {
                 "½-½"
             }
         });
-        let board_size = self.layout.board_size(window);
+        let board_size = self.layout.board_size_in(px(0.), STUDY_BAR, window);
         let entry = widgets::move_entry(&self.move_input, true, &palette)
             .h(px(36.))
             .flex_1();
@@ -2000,9 +2320,13 @@ impl Render for AnalysisPage {
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
-            .child(
-                self.layout
-                    .render("analysis", board_column, panel, window, cx),
-            )
+            .child(self.layout.render_under(
+                "analysis",
+                self.study_bar.clone(),
+                board_column,
+                panel,
+                window,
+                cx,
+            ))
     }
 }

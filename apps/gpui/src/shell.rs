@@ -22,6 +22,7 @@ use crate::pages::openings::OpeningsPage;
 use crate::pages::practice::PracticePage;
 use crate::pages::puzzles::PuzzlesPage;
 use crate::pages::settings::{Section, sections};
+use crate::pages::studies::StudiesPage;
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
@@ -127,7 +128,7 @@ pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
 }
 
 /// A page's view, once it has been shown.
-fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
+pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
     workspace.read(cx).pages.view_of::<V>(page)
 }
@@ -140,33 +141,44 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// Analyse a line from the starting position, asking first when the board holds unsaved
-/// analysis (`useReplaceAnalysis`).
-pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
-    fn load(moves: &[String], window: &mut Window, cx: &mut App) {
-        open(Page::Analysis, window, cx);
-        if let Some(analysis) = view_of::<AnalysisPage>(Page::Analysis, cx) {
-            analysis.update(cx, |analysis, cx| analysis.load_line(moves, cx));
+/// The analysis board, made now if it has not been shown (so analysis kept from an earlier run
+/// counts).
+pub fn analysis_board(window: &mut Window, cx: &mut App) -> Option<Entity<AnalysisPage>> {
+    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
+    workspace.update(cx, |workspace, cx| {
+        workspace
+            .pages
+            .view_made::<AnalysisPage, _>(Page::Analysis, window, cx)
+    })
+}
+
+/// Put something else on the analysis board and show it, asking first while the board holds
+/// moves no study keeps (`useReplaceAnalysis`). `load` says whether the board took it.
+pub fn replace_analysis(
+    window: &mut Window,
+    cx: &mut App,
+    load: impl Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>) -> bool + 'static,
+) {
+    let Some(analysis) = analysis_board(window, cx) else {
+        return;
+    };
+    let load = std::rc::Rc::new(load);
+    let run = {
+        let analysis = analysis.clone();
+        move |load: &dyn Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>) -> bool,
+              window: &mut Window,
+              cx: &mut App| {
+            if analysis.update(cx, |analysis, cx| load(analysis, window, cx)) {
+                open(Page::Analysis, window, cx);
+            }
         }
-    }
-    // Made first, so analysis kept from an earlier run counts.
-    let analysis = cx
-        .try_global::<Navigator>()
-        .and_then(|navigator| navigator.0.upgrade())
-        .and_then(|workspace| {
-            workspace.update(cx, |workspace, cx| {
-                workspace
-                    .pages
-                    .view_made::<AnalysisPage, _>(Page::Analysis, window, cx)
-            })
-        });
-    let unsaved = analysis.is_some_and(|analysis| analysis.read(cx).unsaved());
-    if !unsaved {
-        load(&moves, window, cx);
+    };
+    if !analysis.read(cx).unsaved() {
+        run(&*load, window, cx);
         return;
     }
     window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
-        let moves = moves.clone();
+        let (load, run) = (load.clone(), run.clone());
         dialog
             .title("Replace the unsaved analysis?")
             .description("The analysis board has moves that are not saved as a study.")
@@ -175,9 +187,17 @@ pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App)
             .cancel_text("Cancel")
             .show_cancel(true)
             .on_ok(move |_, window, cx| {
-                load(&moves, window, cx);
+                run(&*load, window, cx);
                 true
             })
+    });
+}
+
+/// Analyse a line from the starting position.
+pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
+    replace_analysis(window, cx, move |analysis, _, cx| {
+        analysis.load_line(&moves, cx);
+        true
     });
 }
 
@@ -253,6 +273,11 @@ impl Workspace {
             && let Some(practice) = self.pages.view_of::<PracticePage>(Page::Practice)
         {
             practice.update(cx, |practice, _| practice.shown());
+        }
+        if page == Page::Studies
+            && let Some(studies) = self.pages.view_of::<StudiesPage>(Page::Studies)
+        {
+            studies.update(cx, |studies, cx| studies.shown(cx));
         }
         // The sidebar's Openings is the browser (`/openings`), not the line shown last.
         if page == Page::Openings

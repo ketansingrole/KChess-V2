@@ -81,13 +81,23 @@ impl PlayLayout {
 
     /// The board's side with another column of `extra` beside it (a lesson's chapters).
     pub fn board_size_beside(&self, extra: Pixels, window: &Window) -> Pixels {
+        self.board_size_in(extra, px(0.), window)
+    }
+
+    /// The board's side with `extra_width` beside it and `extra_height` above (the study bar).
+    pub fn board_size_in(
+        &self,
+        extra_width: Pixels,
+        extra_height: Pixels,
+        window: &Window,
+    ) -> Pixels {
         let page = self.area.size();
-        let width = self.width(window) - extra;
+        let width = self.width(window) - extra_width;
         let height = if page.height > px(0.) {
             page.height
         } else {
             window.viewport_size().height - crate::shell::TOPBAR_HEIGHT
-        };
+        } - extra_height;
         let chrome = PAGE_TOP + PAGE_BOTTOM + widgets::PLAYER_LINE * 2. + widgets::STACK_GAP * 2.;
         let by_height = height - chrome;
         let by_width = width - side_padding(window) * 2. - px(344.);
@@ -97,6 +107,35 @@ impl PlayLayout {
     /// The panel's height: the board's column, player lines included.
     pub fn panel_height(&self, board: Pixels) -> Pixels {
         board + widgets::PLAYER_LINE * 2. + widgets::STACK_GAP * 2.
+    }
+
+    /// The page with a row above the board and panel (the analysis board's study bar).
+    pub fn render_under<V: 'static>(
+        &self,
+        id: &'static str,
+        header: impl IntoElement,
+        board_column: impl IntoElement,
+        panel: impl IntoElement,
+        window: &Window,
+        cx: &mut Context<V>,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .size_full()
+            .relative()
+            .overflow_y_scroll()
+            .child(self.area.probe(cx))
+            .child(div().pt(PAGE_TOP).px(side_padding(window)).child(header))
+            .child(
+                h_flex()
+                    .items_start()
+                    .justify_center()
+                    .gap(LAYOUT_GAP)
+                    .pb(PAGE_BOTTOM)
+                    .px(side_padding(window))
+                    .child(board_column)
+                    .child(panel),
+            )
     }
 
     /// The page: the board's column and the panel, measured so the next frame fits them.

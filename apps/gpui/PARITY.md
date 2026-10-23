@@ -93,8 +93,11 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Import FEN or PGN, Copy FEN and PGN, Make main line, Delete from here, New analysis
 - [ ] Comments and annotations (`MoveNotes`), the move list's right-click menu, scrolling the
       shown move into view
-- [ ] Review and Explorer tools, Export, voice input, the study bar; edits to a board opened
-      from a study are not saved to it (Electron then keeps them as an unsaved copy)
+- [x] The study bar: the open study saved as you go (to its chapter), its name edited in place,
+      chapters (switch, add, rename, duplicate, delete), Save as study, Save a copy, Close and
+      Delete study with Undo, Game details; a recovered session that differs from its study stays
+      an unsaved copy, as in Electron
+- [ ] Review and Explorer tools, Export, voice input
 - [ ] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles
@@ -134,9 +137,17 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       puzzles (its Lichess puzzle key as the theme); its Wikibooks excerpt when the core has one
 - [ ] The popularity chart and the position explorer beside the line
 
+## Studies
+
+- [x] The library from the core (one writer, flushed on quit): search, sort, cards with their
+      position, chapters and last edit; open (asking before replacing unsaved analysis), New
+      study, Import PGN (chapters by `ChapterName`), Rename, Duplicate, Copy PGN, Drill as
+      repertoire, Delete with Undo, Upload to Lichess (changes or a new cloud copy)
+- [ ] The Lichess tab (studies on Lichess, downloading them)
+
 ## Pages not started
 
-Studies, Board editor, Play on Lichess, Tournaments, Watch,
+Board editor, Play on Lichess, Tournaments, Watch,
 Lichess insights, Following, Players.
 
 ## Packaging

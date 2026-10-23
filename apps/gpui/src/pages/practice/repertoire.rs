@@ -10,7 +10,6 @@ use std::time::Duration;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::searchable_list::SearchableListItem;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -30,8 +29,9 @@ use crate::pages::Page;
 use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
+use crate::studies::StudyHandle;
 use crate::theme::Palette;
-use crate::widgets::{self, Pill, Tone};
+use crate::widgets::{self, Choice, Pill, Tone};
 
 const STUDY: &str = "kchess:repertoire-study";
 const OPENING_CHOICE: &str = "kchess:repertoire-opening";
@@ -74,25 +74,6 @@ struct Feedback {
     kind: Kind,
     text: String,
     detail: Option<String>,
-}
-
-/// A select's entry, known by its value: a study and the opening may share a name.
-#[derive(Clone)]
-struct Choice {
-    value: SharedString,
-    label: SharedString,
-}
-
-impl SearchableListItem for Choice {
-    type Value = SharedString;
-
-    fn title(&self) -> SharedString {
-        self.label.clone()
-    }
-
-    fn value(&self) -> &SharedString {
-        &self.value
-    }
 }
 
 /// e1g1 and e1h1 are the same castling move.
@@ -265,13 +246,19 @@ impl Repertoire {
                     }
                 },
             ),
+            // Studies saved, renamed or removed anywhere show in the select.
+            cx.observe(&cx.global::<StudyHandle>().0.clone(), |this, _, cx| {
+                this.studies = Self::studies_of(cx);
+                this.stale_selects = true;
+                cx.notify();
+            }),
             // The board follows blindfold mode.
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
             }),
         ];
         let mut drill = Repertoire {
-            studies: Vec::new(),
+            studies: Self::studies_of(cx),
             misses: Value::Null,
             drill: None,
             drill_for: None,
@@ -296,34 +283,34 @@ impl Repertoire {
             built_for: Value::Null,
             _subscriptions: subscriptions,
         };
-        drill.load_library(true, cx);
+        drill.load_misses(cx);
         drill.rebuild(cx);
         drill
     }
 
-    /// The studies and the missed moves, as the core keeps them; `restart` starts a line from them.
-    fn load_library(&mut self, restart: bool, cx: &mut Context<Self>) {
+    /// The missed moves, as the core keeps them.
+    fn load_misses(&mut self, cx: &mut Context<Self>) {
         let library = cx.global::<AppCore>().call("library", Vec::new());
         cx.spawn(async move |this, cx| match library.await {
             Ok(library) => {
                 let _ = this.update(cx, |this, cx| {
-                    this.studies =
-                        serde_json::from_value(library["studies"].clone()).unwrap_or_default();
                     this.misses = library["repertoireMisses"].clone();
-                    this.stale_selects = true;
-                    if restart {
-                        this.rebuild(cx);
-                    }
                     cx.notify();
                 });
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
                 "repertoire",
-                &format!("Reading the studies failed: {}", cause.message),
+                &format!("Reading the missed moves failed: {}", cause.message),
             ),
         })
         .detach();
+    }
+
+    /// The saved studies, as the library has them.
+    fn studies_of(cx: &App) -> Vec<Study> {
+        serde_json::from_value(json!(cx.global::<StudyHandle>().0.read(cx).items()))
+            .unwrap_or_default()
     }
 
     /* ── What is drilled ──────────────────────────────────────────────── */
@@ -375,7 +362,14 @@ impl Repertoire {
     }
 
     fn choices(cx: &App) -> Value {
+        let edited = cx
+            .global::<StudyHandle>()
+            .0
+            .read(cx)
+            .study(&Self::study_id(cx))
+            .map(|study| study["updatedAt"].clone());
         json!([
+            edited,
             Self::study_id(cx),
             crate::prefs::get::<String>(cx, CHAPTER, ALL_CHAPTERS.into()),
             color_name(Self::color(cx)),
@@ -724,20 +718,6 @@ impl Repertoire {
         .detach();
     }
 
-    /// A name no study has yet (`freshName`).
-    fn fresh_name(&self, base: &str) -> String {
-        (1..)
-            .map(|n| {
-                if n == 1 {
-                    base.to_string()
-                } else {
-                    format!("{base} {n}")
-                }
-            })
-            .find(|name| !self.studies.iter().any(|study| &study.name == name))
-            .unwrap_or_else(|| base.to_string())
-    }
-
     /// Keep the drilled opening, with the replies found for it, as a study to edit or drill later.
     fn save_opening(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(mut tree), Some(opening)) = (self.drill.clone(), Self::opening(cx)) else {
@@ -746,30 +726,30 @@ impl Repertoire {
         let mut headers = Map::new();
         headers.insert("Event".into(), json!(opening.name));
         tree.headers = Some(headers);
-        let name = self.fresh_name(&opening.name);
+        let library = cx.global::<StudyHandle>().0.clone();
+        let name = library.read(cx).fresh_name(&opening.name);
         self.saving = true;
         cx.notify();
-        let saved = cx.global::<AppCore>().call(
-            "studyCommand",
-            vec![
-                json!({ "op": "save", "name": name, "pgn": tree.to_pgn() }),
-                json!(true),
-            ],
-        );
+        let saved = library
+            .read(cx)
+            .command(json!({ "op": "save", "name": name, "pgn": tree.to_pgn() }));
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.saving = false;
                 match saved {
-                    Ok(_) => {
+                    Ok(result) => {
+                        library.update(cx, |library, cx| {
+                            library.apply(&result);
+                            cx.notify();
+                        });
                         window.push_notification("Saved to Studies", cx);
-                        this.load_library(false, cx);
                     }
                     Err(cause) => {
                         crate::log::write(
                             Level::Warn,
                             "opening-trainer",
-                            &format!("Saving the opening failed: {}", cause.message),
+                            &format!("Saving the opening failed: {cause}"),
                         );
                         window.push_notification("Could not save the study", cx);
                     }

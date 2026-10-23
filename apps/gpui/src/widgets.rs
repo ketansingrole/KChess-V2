@@ -637,7 +637,8 @@ pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) 
                 Input::new(input)
                     .appearance(false)
                     .small()
-                    .disabled(!enabled),
+                    .disabled(!enabled)
+                    .aria_label("Enter a chess move in SAN or UCI"),
             ),
         )
         .child(
@@ -694,4 +695,148 @@ pub fn side_dot(color: shakmaty::Color) -> Div {
         } else {
             0x1f1f1f
         }))
+}
+
+/// A select's entry, known by its value: two entries may share a label (a study and an opening).
+#[derive(Clone)]
+pub struct Choice {
+    pub value: SharedString,
+    pub label: SharedString,
+}
+
+impl gpui_kit::component::searchable_list::SearchableListItem for Choice {
+    type Value = SharedString;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn value(&self) -> &SharedString {
+        &self.value
+    }
+}
+
+impl Choice {
+    pub fn new(value: impl Into<SharedString>, label: impl Into<SharedString>) -> Choice {
+        Choice {
+            value: value.into(),
+            label: label.into(),
+        }
+    }
+}
+
+/// What `StudyCard.vue` shows: a study or an opening as a card in a grid.
+pub struct StudyCard {
+    pub id: String,
+    pub name: String,
+    /// The position as a small board; a book stands in when there is none.
+    pub board: Option<AnyView>,
+    /// The first detail line (where it is kept, or an opening's code).
+    pub location: String,
+    /// The second line (its players and event, or an opening's moves).
+    pub description: Option<String>,
+    /// "Edited 2 days ago".
+    pub edited: Option<String>,
+    /// Detail rows kept for every card, so cards in a grid line up (3 with dates, 2 without).
+    pub rows: usize,
+    pub menu: Option<AnyElement>,
+    pub action: AnyElement,
+}
+
+/// `StudyCard.vue`; clicking its picture or its name opens it.
+pub fn study_card(
+    card: StudyCard,
+    width: Pixels,
+    open: impl Fn(&mut Window, &mut App) + 'static,
+    palette: &Palette,
+) -> AnyElement {
+    let open = std::rc::Rc::new(open);
+    let open_title = open.clone();
+    let row = |text: Option<String>| {
+        div()
+            .h(px(15.))
+            .text_size(px(12.))
+            .text_color(palette.text_muted)
+            .truncate()
+            .children(text)
+    };
+    let mut details = vec![
+        row(Some(card.location)),
+        row(card.description),
+        row(card.edited),
+    ];
+    details.truncate(card.rows);
+    v_flex()
+        .id(SharedString::from(format!("card-{}", card.id)))
+        .w(width)
+        .overflow_hidden()
+        .border_1()
+        .border_color(palette.border)
+        .rounded(px(12.))
+        .bg(palette.elevated)
+        .child(
+            div()
+                .id(SharedString::from(format!("card-picture-{}", card.id)))
+                .w_full()
+                .aspect_ratio(1.)
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(palette.bg)
+                .cursor_pointer()
+                .on_click(move |_, window, cx| open(window, cx))
+                .child(match card.board {
+                    Some(board) => div().size_full().child(board).into_any_element(),
+                    None => icon("book-open")
+                        .size(px(48.))
+                        .text_color(palette.text_muted)
+                        .into_any_element(),
+                }),
+        )
+        .child(
+            v_flex()
+                .flex_1()
+                .p(px(12.))
+                .gap(px(8.))
+                .child(
+                    h_flex()
+                        .items_start()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("card-name-{}", card.id)))
+                                .flex_1()
+                                .min_w_0()
+                                .min_h(px(44.))
+                                .text_size(px(16.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .line_height(relative(1.4))
+                                .line_clamp(2)
+                                .cursor_pointer()
+                                .on_click(move |_, window, cx| open_title(window, cx))
+                                .child(card.name),
+                        )
+                        .children(card.menu),
+                )
+                .child(v_flex().gap(px(8.)).children(details))
+                .child(div().mt_auto().pt(px(4.)).child(card.action)),
+        )
+        .into_any_element()
+}
+
+/// A notification with one action (Undo, Open) that closes it when used.
+pub fn action_notification(
+    note: gpui_kit::component::notification::Notification,
+    id: &'static str,
+    label: &'static str,
+    run: impl Fn(&mut Window, &mut App) + 'static,
+) -> gpui_kit::component::notification::Notification {
+    let run = std::rc::Rc::new(run);
+    note.action(move |_, _, cx| {
+        let (run, note) = (run.clone(), cx.entity().downgrade());
+        Button::new(id).label(label).on_click(move |_, window, cx| {
+            run(window, cx);
+            let _ = note.update(cx, |note, cx| note.dismiss(window, cx));
+        })
+    })
 }

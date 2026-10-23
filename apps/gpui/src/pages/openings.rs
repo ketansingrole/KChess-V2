@@ -437,77 +437,42 @@ impl OpeningsPage {
         let board = self.preview(&item.fen, cx);
         let (open, train) = (item.moves.clone(), item.clone());
         let page = cx.entity().downgrade();
-        v_flex()
-            .id(SharedString::from(format!("card-{}", item.name)))
-            .w(width)
-            .overflow_hidden()
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(12.))
-            .bg(palette.elevated)
-            .child(
-                div()
-                    .id(SharedString::from(format!("card-board-{}", item.name)))
-                    .cursor_pointer()
-                    .on_click({
-                        let page = page.clone();
-                        let open = open.clone();
-                        move |_, _, cx| {
-                            let _ =
-                                page.update(cx, |page, cx| page.show_line(Some(open.clone()), cx));
-                        }
+        widgets::study_card(
+            widgets::StudyCard {
+                id: item.name.clone(),
+                name: item.name.clone(),
+                board: Some(board.into()),
+                location: item.eco.clone(),
+                description: Some(item.san.clone()),
+                edited: None,
+                rows: 2,
+                menu: None,
+                action: Button::new(SharedString::from(format!("train-{}", item.name)))
+                    .outline()
+                    .small()
+                    .h(px(28.))
+                    .w_full()
+                    .icon(icon("graduation-cap"))
+                    .label("Train")
+                    .accessibility_label(format!("Train {}", item.name))
+                    .on_click(move |_, window, cx| {
+                        Self::train(
+                            OpeningChoice {
+                                name: train.name.clone(),
+                                moves: train.moves.clone(),
+                            },
+                            window,
+                            cx,
+                        )
                     })
-                    .child(board),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .p(px(12.))
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("card-name-{}", item.name)))
-                            .min_h(px(44.))
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .line_height(relative(1.4))
-                            .cursor_pointer()
-                            .on_click(move |_, _, cx| {
-                                let _ = page
-                                    .update(cx, |page, cx| page.show_line(Some(open.clone()), cx));
-                            })
-                            .child(item.name.clone()),
-                    )
-                    .child(
-                        v_flex()
-                            .gap(px(4.))
-                            .text_size(px(12.))
-                            .text_color(palette.text_muted)
-                            .child(item.eco.clone())
-                            .child(div().truncate().child(item.san.clone())),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("train-{}", item.name)))
-                            .outline()
-                            .small()
-                            .h(px(28.))
-                            .w_full()
-                            .icon(icon("graduation-cap"))
-                            .label("Train")
-                            .accessibility_label(format!("Train {}", item.name))
-                            .on_click(move |_, window, cx| {
-                                Self::train(
-                                    OpeningChoice {
-                                        name: train.name.clone(),
-                                        moves: train.moves.clone(),
-                                    },
-                                    window,
-                                    cx,
-                                )
-                            }),
-                    ),
-            )
-            .into_any_element()
+                    .into_any_element(),
+            },
+            width,
+            move |_, cx| {
+                let _ = page.update(cx, |page, cx| page.show_line(Some(open.clone()), cx));
+            },
+            palette,
+        )
     }
 
     /// `OpeningsTreeNode.vue`: one entry, with its variations below it once opened.
@@ -624,11 +589,11 @@ impl OpeningsPage {
             .split_whitespace()
             .map(str::to_string)
             .collect();
-        let mut body = v_flex()
-            .gap(px(24.))
-            .w_full()
-            .max_w(px(1100.))
-            .child(Input::new(&self.search).prefix(icon("search")));
+        let mut body = v_flex().gap(px(24.)).w_full().max_w(px(1100.)).child(
+            Input::new(&self.search)
+                .prefix(icon("search"))
+                .aria_label("Search openings"),
+        );
         if !words.is_empty() {
             let matches: Vec<_> = self
                 .named

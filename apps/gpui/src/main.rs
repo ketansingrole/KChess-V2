@@ -7,6 +7,7 @@ mod core;
 mod game;
 mod log;
 mod menu;
+mod name_dialog;
 mod online;
 mod pages;
 mod play_layout;
@@ -19,6 +20,7 @@ mod replay;
 mod settings;
 mod shell;
 mod sound;
+mod studies;
 mod theme;
 mod widgets;
 
@@ -50,6 +52,7 @@ fn main() {
             settings::init(cx);
             prefs::init(cx);
             played::init(cx);
+            studies::init(cx);
             sound::init(cx);
             online::init(cx);
             cx.on_app_quit(core::quit).detach();

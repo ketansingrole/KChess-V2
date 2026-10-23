@@ -11,6 +11,8 @@ pub mod openings;
 pub mod practice;
 pub mod puzzles;
 pub mod settings;
+pub mod studies;
+pub mod study_bar;
 
 use std::collections::HashMap;
 
@@ -158,6 +160,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Puzzles => {
             let view = cx.new(|cx| puzzles::PuzzlesPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Studies => {
+            let view = cx.new(|cx| studies::StudiesPage::new(window, cx));
             focused(view, cx)
         }
         Page::Settings => {
