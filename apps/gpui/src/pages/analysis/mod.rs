@@ -6,6 +6,8 @@ mod notes;
 mod practice;
 mod review;
 
+pub use review::classification_look;
+
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;

@@ -74,6 +74,11 @@ impl GameReplay {
         }
     }
 
+    /// The move shown.
+    pub fn ply(&self) -> usize {
+        self.ply
+    }
+
     fn show(&mut self, ply: usize, cx: &mut Context<Self>) {
         self.ply = ply.min(self.moves.len());
         self.redraw(cx);

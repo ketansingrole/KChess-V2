@@ -83,7 +83,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       a game opened to go through move by move (`replay.rs`), Export PGN, Copy summary, Delete
 - [x] One list of played games for every page (`played.rs`), written in order and at quit
 - [x] Open analysis
-- [ ] Lichess tab (synced games, filters, review); swipe back and forward
+- [x] Lichess tab: synced games a page at a time, filtered by account, result and rating, with
+      their reviews; a game gone through move by move, or reviewed on the analysis board
+- [ ] Swipe back and forward
 - [ ] Export copy inside the delete dialog
 
 ## Home

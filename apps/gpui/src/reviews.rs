@@ -121,9 +121,42 @@ impl ReviewStore {
     }
 }
 
+/// `judgmentCounts`: "2 blunders", worst first, leaving out the kinds that did not happen, from a
+/// side's counts (`ReviewSide`: `blunder`, `mistake`, `inaccuracy`).
+pub fn judgment_counts(side: &Value) -> Vec<(&'static str, String)> {
+    [
+        ("blunder", "blunders"),
+        ("mistake", "mistakes"),
+        ("inaccuracy", "inaccuracies"),
+    ]
+    .into_iter()
+    .filter_map(|(judgment, plural)| {
+        let count = side[judgment].as_u64().unwrap_or_default();
+        (count > 0).then(|| {
+            (
+                judgment,
+                format!("{count} {}", if count == 1 { judgment } else { plural }),
+            )
+        })
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CACHE_SIZE, ReviewCache};
+    use super::{CACHE_SIZE, ReviewCache, judgment_counts};
+
+    #[test]
+    fn judgments_are_counted_worst_first() {
+        let counts = judgment_counts(&json!({ "blunder": 1, "mistake": 0, "inaccuracy": 3 }));
+        assert_eq!(
+            counts,
+            vec![
+                ("blunder", "1 blunder".to_string()),
+                ("inaccuracy", "3 inaccuracies".to_string())
+            ]
+        );
+    }
     use serde_json::json;
 
     #[test]

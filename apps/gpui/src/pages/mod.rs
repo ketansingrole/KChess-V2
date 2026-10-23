@@ -148,7 +148,7 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
             focused(view, cx)
         }
         Page::History => {
-            let view = cx.new(history::HistoryPage::new);
+            let view = cx.new(|cx| history::HistoryPage::new(window, cx));
             focused(view, cx)
         }
         Page::Openings => {

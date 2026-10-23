@@ -72,27 +72,19 @@ fn title(game: &Value) -> String {
     }
 }
 
-/// `judgmentCounts`: "2 blunders", worst first, leaving out the kinds that did not happen.
+/// `judgmentCounts` over a game's drills.
 fn judgment_counts(items: &[&Value]) -> Vec<(&'static str, String)> {
-    [
-        ("blunder", "blunders"),
-        ("mistake", "mistakes"),
-        ("inaccuracy", "inaccuracies"),
-    ]
-    .into_iter()
-    .filter_map(|(judgment, plural)| {
-        let count = items
+    let count = |judgment: &str| {
+        items
             .iter()
             .filter(|item| item["judgment"] == json!(judgment))
-            .count();
-        (count > 0).then(|| {
-            (
-                judgment,
-                format!("{count} {}", if count == 1 { judgment } else { plural }),
-            )
-        })
-    })
-    .collect()
+            .count()
+    };
+    crate::reviews::judgment_counts(&json!({
+        "blunder": count("blunder"),
+        "mistake": count("mistake"),
+        "inaccuracy": count("inaccuracy"),
+    }))
 }
 
 pub struct Mistakes {

@@ -17,6 +17,8 @@ use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
 use crate::replay::GameReplay;
+
+mod lichess;
 use crate::theme::Palette;
 use crate::widgets::{self, Look, Pill};
 
@@ -197,6 +199,8 @@ pub struct HistoryPage {
     /// The game being gone through, and its board.
     open: Option<(Value, Entity<GameReplay>)>,
     message: Option<SharedString>,
+    /// The Lichess tab: synced games, their filters and the game open.
+    lichess: lichess::LichessTab,
     area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -209,25 +213,28 @@ impl Focusable for HistoryPage {
 }
 
 impl HistoryPage {
-    pub fn new(cx: &mut Context<Self>) -> HistoryPage {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> HistoryPage {
         let played = cx.global::<PlayedHandle>().0.clone();
+        let (lichess, mut subscriptions) = lichess::new_tab(window, cx);
+        subscriptions.push(cx.observe(&played, |this, _, cx| {
+            // A deleted game closes; the pages left shrink with the list.
+            if let Some((game, _)) = &this.open
+                && !this.games(cx).iter().any(|entry| entry["id"] == game["id"])
+            {
+                this.open = None;
+            }
+            cx.notify();
+        }));
         HistoryPage {
             source: Source::Computer,
             filter: Filter::All,
             page: 0,
             open: None,
             message: None,
+            lichess,
             area: Measured::default(),
             focus: cx.focus_handle(),
-            _subscriptions: vec![cx.observe(&played, |this, _, cx| {
-                // A deleted game closes; the pages left shrink with the list.
-                if let Some((game, _)) = &this.open
-                    && !this.games(cx).iter().any(|entry| entry["id"] == game["id"])
-                {
-                    this.open = None;
-                }
-                cx.notify();
-            })],
+            _subscriptions: subscriptions,
         }
     }
 
@@ -256,6 +263,10 @@ impl HistoryPage {
         self.filter = Filter::All;
         self.page = 0;
         self.open = None;
+        if source == Source::Lichess {
+            self.lichess.open = None;
+            self.load_lichess(cx);
+        }
         cx.notify();
     }
 
@@ -826,13 +837,13 @@ impl Render for HistoryPage {
         if let Some((game, replay)) = self.open.clone() {
             return self.render_open(&game, &replay, window, cx, &palette);
         }
+        if self.source == Source::Lichess
+            && let Some((game, replay)) = self.lichess.open.clone()
+        {
+            return self.render_lichess_open(&game, &replay, window, cx, &palette);
+        }
         let body = match self.source {
-            Source::Lichess => widgets::card(&palette)
-                .items_center()
-                .py(px(40.))
-                .text_color(palette.text_muted)
-                .child("Use the Electron app for Lichess games for now.")
-                .into_any_element(),
+            Source::Lichess => self.render_lichess(window, cx, &palette),
             _ => self.render_list(cx, &palette),
         };
         div()
