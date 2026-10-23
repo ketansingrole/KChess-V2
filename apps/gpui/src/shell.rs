@@ -728,3 +728,16 @@ impl Render for Workspace {
             )
     }
 }
+
+/// Study an earlier puzzle on the analysis board, asking first when that would replace unsaved
+/// analysis (`usePuzzleAttemptActions().analyse`).
+pub fn analyse_puzzle(
+    puzzle: serde_json::Value,
+    wrong_moves: Vec<serde_json::Value>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    replace_analysis(window, cx, move |analysis, _, cx| {
+        analysis.open_puzzle(&puzzle, &wrong_moves, cx)
+    });
+}

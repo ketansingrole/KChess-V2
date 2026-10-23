@@ -530,6 +530,51 @@ impl AnalysisPage {
         true
     }
 
+    /// Study a puzzle (`usePuzzleAnalysis().open`): its solution is the line, each move tried
+    /// instead in that attempt a variation beside it marked "Your move", and the solution is
+    /// reviewed like a game.
+    pub fn open_puzzle(
+        &mut self,
+        puzzle: &Value,
+        wrong_moves: &[Value],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let solution: Vec<String> =
+            serde_json::from_value(puzzle["solution"].clone()).unwrap_or_default();
+        let Ok(Value::String(pgn)) = crate::game::rules(
+            "setupPgn",
+            &[
+                serde_json::json!({ "variant": "standard", "fen": puzzle["fen"] }),
+                serde_json::json!(solution),
+                serde_json::json!({}),
+            ],
+        ) else {
+            return false;
+        };
+        if !self.load_pgn(&pgn, cx) {
+            return false;
+        }
+        for wrong in wrong_moves {
+            let index = crate::game::whole(&wrong["index"]) as usize;
+            let Some(uci) = wrong["uci"].as_str() else {
+                continue;
+            };
+            if index > solution.len() || solution.get(index).map(String::as_str) == Some(uci) {
+                continue;
+            }
+            let before = crate::game::tree::path_of(&solution[..index]);
+            if let Some(path) = self.root.add_move(&before, uci) {
+                self.root.node_at_mut(&path).comments = Some(vec!["Your move".into()]);
+            }
+        }
+        self.orientation = crate::game::puzzle::OnBoard::start(puzzle).player_color();
+        self.review.origin = None;
+        self.go_to_ply(0, cx);
+        self.request_review(cx);
+        self.changed(cx);
+        true
+    }
+
     /// Practise a reviewed game's positions on the board (`usePracticeGame`): `game` is a
     /// `MistakeGame`, `items` the positions in practice. A game already on the board is kept as
     /// it is, variations and all.

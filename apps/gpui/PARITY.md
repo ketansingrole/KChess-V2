@@ -126,7 +126,12 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       shared `data/puzzle-themes.json`), difficulty and side; hint ring, solution, wrong-move
       flash, next after a solve; the session tally, day streak and attempt strip from the log
 - [x] The puzzle database card: download with progress, cancel, delete
-- [ ] Daily, Storm · Streak · Rush, Lichess stats and History tabs; the attempt strip's menu
+- [x] Daily: the puzzle of the day on its own board
+- [x] History: every attempt kept here and every one Lichess recorded, filtered by mode, with
+      today's and all-time totals; Try again, or study it on the analysis board (the solution
+      as the line, each move tried a "Your move" variation, reviewed)
+- [x] The attempt strip's menu (Try again, Analysis board)
+- [ ] Storm · Streak · Rush and Lichess stats tabs; labels on a studied puzzle's tried moves
 - [x] An opening's puzzles, chosen on Openings
 - [ ] Theme groups in the picker, Connect or Reconnect from the panel, choosing the rated
       account, voice input

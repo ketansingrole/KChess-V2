@@ -5,7 +5,8 @@
 
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -24,6 +25,7 @@ use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, tint};
 mod daily;
+mod history;
 
 use crate::widgets::{self, Pill, Tone};
 
@@ -139,8 +141,10 @@ pub struct PuzzlesPage {
     difficulty_select: Entity<SelectState<Vec<SharedString>>>,
     color_select: Entity<SelectState<Vec<SharedString>>>,
     timers: Vec<Task<()>>,
-    /// The Daily tab, made when first shown.
+    /// The Daily and History tabs, made when first shown, and the tab shown last.
     daily: Option<Entity<daily::DailyPuzzle>>,
+    history: Option<Entity<history::PuzzleHistory>>,
+    shown_tab: String,
     progress: Value,
     accounts: Vec<String>,
     started: bool,
@@ -279,6 +283,8 @@ impl PuzzlesPage {
             color_select,
             timers: Vec::new(),
             daily: None,
+            history: None,
+            shown_tab: String::new(),
             progress: Value::Null,
             accounts: Vec::new(),
             started: false,
@@ -480,6 +486,18 @@ impl PuzzlesPage {
                 });
             }));
         }
+    }
+
+    /// `retry`: play an earlier puzzle again on the Train tab (unrated, not counted).
+    pub(crate) fn retry(&mut self, puzzle: Value, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "train");
+        let step = self.session.apply(
+            "puzzleSessionRetry",
+            json!({ "puzzle": puzzle, "selection": self.selection(cx) }),
+        );
+        self.follow(step, "puzzleSessionLoadSettled", cx);
+        self.sync_board(cx);
+        cx.notify();
     }
 
     /// `startTheme('mix', 'offline')`: train any theme from the downloaded puzzles.
@@ -1000,22 +1018,54 @@ impl PuzzlesPage {
                         },
                         attempt["puzzle"]["rating"].as_f64().unwrap_or_default()
                     );
-                    div()
-                        .id(("attempt", index))
+                    let (puzzle, wrong) = (
+                        attempt["puzzle"].clone(),
+                        attempt["wrongMoves"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                    let page = cx.entity().downgrade();
+                    // `attemptActions.menu`: try it again, or study it on the board.
+                    Button::new(("attempt", index))
+                        .custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(bg)
+                                .foreground(fg)
+                                .hover(tint(fg, 22.))
+                                .active(tint(fg, 30.)),
+                        )
                         .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(6.))
-                        .bg(bg)
+                        .p_0()
                         .border_1()
                         .border_color(tint(fg, 40.))
-                        .text_color(fg)
-                        .tooltip(move |window, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new(label.clone())
-                                .build(window, cx)
-                        })
+                        .tooltip(label)
                         .child(glyph.size(px(14.)))
+                        .dropdown_menu(move |menu, _, _| {
+                            let (puzzle, wrong, page) =
+                                (puzzle.clone(), wrong.clone(), page.clone());
+                            let studied = puzzle.clone();
+                            menu.item(
+                                PopupMenuItem::new("Try again")
+                                    .icon(icon("rotate-ccw"))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = page
+                                            .update(cx, |page, cx| page.retry(puzzle.clone(), cx));
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Analysis board")
+                                    .icon(icon("microscope"))
+                                    .on_click(move |_, window, cx| {
+                                        crate::shell::analyse_puzzle(
+                                            studied.clone(),
+                                            wrong.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                            )
+                        })
                 }),
             )
         });
@@ -1254,6 +1304,44 @@ impl Render for PuzzlesPage {
                 }
             };
             daily.into_any_element()
+        } else if tab == "history" {
+            let history = match &self.history {
+                Some(history) => history.clone(),
+                None => {
+                    let themes = self.theme_list.clone();
+                    let history = cx.new(|cx| history::PuzzleHistory::new(themes, window, cx));
+                    self._subscriptions.push(cx.subscribe_in(
+                        &history,
+                        window,
+                        |this, _, event: &history::HistoryEvent, window, cx| match event {
+                            history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
+                            history::HistoryEvent::Analyse(puzzle, wrong) => {
+                                crate::shell::analyse_puzzle(
+                                    puzzle.clone(),
+                                    wrong.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                            history::HistoryEvent::Train => {
+                                crate::prefs::set(cx, TAB, "train");
+                                cx.notify();
+                            }
+                            history::HistoryEvent::Reconnect => {
+                                crate::accounts::handle(cx)
+                                    .update(cx, |accounts, cx| accounts.connect(window, cx));
+                            }
+                        },
+                    ));
+                    self.history = Some(history.clone());
+                    history
+                }
+            };
+            if self.shown_tab != tab {
+                let account = self.account(cx);
+                history.update(cx, |history, cx| history.shown(account, cx));
+            }
+            history.into_any_element()
         } else {
             div()
                 .px(side_padding(window))
@@ -1267,6 +1355,7 @@ impl Render for PuzzlesPage {
                 )
                 .into_any_element()
         };
+        self.shown_tab = tab;
         v_flex()
             .size_full()
             .track_focus(&self.focus)
