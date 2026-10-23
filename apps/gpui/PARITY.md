@@ -27,7 +27,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Theme colors, light and dark, following Settings or the system
 - [x] Menus: KChess (Services, Hide, Quit), File, Edit, View, Window
 - [ ] Search box and command palette in the top bar (⌘K)
-- [ ] Connect Lichess and the account menu in the sidebar footer
+- [x] Connect Lichess and the account menu in the sidebar footer (play as, connect another,
+      Settings, log out); signing out starts the pages afresh
 - [ ] Sidebar item spacing (32px rows, 20px icons in Electron)
 - [x] Update button in the top bar
 - [ ] Startup screen, offline badge, "Working…" status
@@ -72,7 +73,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Analysis, Sound, Notifications (switches)
 - [x] Chess engine (bundled, downloaded or your own Stockfish; download, update, delete) and
       Game review; Offline downloads (the engine, the shared puzzle database card, saved games)
-- [ ] Interface size; Notifications' "Try it"; Voice input, My accounts, Offline voice model
+- [x] My accounts: connect, sync, use for online play, disconnect, with what each keeps
+- [ ] Interface size; Notifications' "Try it"; Voice input, Offline voice model
       downloads, Data & storage, Updates
 
 ## Game history

@@ -2,11 +2,10 @@
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_core::Level;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -26,9 +25,6 @@ const HEADER: Pixels = px(20.);
 pub struct HomePage {
     /// "Move 4 · White · Club Player · ~1600" while a computer game is unfinished.
     continue_game: Option<String>,
-    /// The connected Lichess account, if any.
-    connected: Option<String>,
-    busy: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -89,10 +85,11 @@ impl HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
         let mut page = HomePage {
             continue_game: None,
-            connected: None,
-            busy: false,
             focus: cx.focus_handle(),
-            _subscriptions: vec![cx.observe(&played, |_, _, cx| cx.notify())],
+            _subscriptions: vec![
+                cx.observe(&played, |_, _, cx| cx.notify()),
+                cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+            ],
         };
         page.refresh(cx);
         page
@@ -102,92 +99,18 @@ impl HomePage {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
         let library = core.call("library", Vec::new());
-        let data = core.call("loadData", Vec::new());
+        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         cx.spawn(async move |this, cx| {
-            let (library, data) = (library.await, data.await);
+            let library = library.await;
             let _ = this.update(cx, |this, cx| {
                 if let Ok(library) = library {
                     this.continue_game = continue_line(&library["sessions"]["computer"]);
                 }
-                if let Ok(data) = data {
-                    this.connected = connected_account(&data);
-                }
                 cx.notify();
             });
         })
         .detach();
     }
-
-    /// `connect`: sign in through the browser, then bring the account's games in.
-    fn connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.busy = true;
-        cx.notify();
-        let core = cx.global::<AppCore>().clone();
-        let known = self.connected.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let connected = core.call("connectLichess", Vec::new()).await;
-            let username = match connected {
-                Ok(result) => result["username"].as_str().map(str::to_string),
-                Err(cause) => {
-                    let _ = this.update_in(cx, |this, window, cx| {
-                        this.busy = false;
-                        window.push_notification(SharedString::from(cause.message), cx);
-                        cx.notify();
-                    });
-                    return;
-                }
-            };
-            let Some(username) = username else { return };
-            if known
-                .as_deref()
-                .is_some_and(|known| known.eq_ignore_ascii_case(&username))
-            {
-                let _ = this.update_in(cx, |this, window, cx| {
-                    this.busy = false;
-                    window.push_notification(
-                        SharedString::from(format!(
-                            "@{username} was already connected, so its login was refreshed. To add another account, sign in to it on lichess.org first."
-                        )),
-                        cx,
-                    );
-                    cx.notify();
-                });
-                return;
-            }
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.connected = Some(username.clone());
-                crate::prefs::set(cx, "kchess:online-account", json!(username));
-                window.push_notification(SharedString::from(format!("Connected @{username}.")), cx);
-                cx.notify();
-            });
-            let synced = core.call("syncGames", vec![json!(username)]).await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.busy = false;
-                match synced {
-                    Ok(_) => window.push_notification("Lichess games synced.", cx),
-                    Err(cause) => {
-                        crate::log::write(
-                            Level::Warn,
-                            "home",
-                            &format!("syncing games failed: {}", cause.message),
-                        );
-                        window.push_notification(SharedString::from(cause.message), cx);
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-}
-
-/// The first connected account (`connectedAccounts`).
-fn connected_account(data: &Value) -> Option<String> {
-    data["accounts"]
-        .as_array()?
-        .iter()
-        .find(|account| account["connected"] == json!(true))
-        .and_then(|account| account["username"].as_str().map(str::to_string))
 }
 
 /// `.home-tile`: an activity to start, its icon in the primary color.
@@ -286,6 +209,11 @@ fn empty(glyph: Icon, title: &'static str, action: Option<Button>, palette: &Pal
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
+        let (connected, busy) = {
+            let accounts = crate::accounts::handle(cx);
+            let accounts = accounts.read(cx);
+            (accounts.active(cx), accounts.busy)
+        };
         let width = window.viewport_size().width;
         let columns = if width < px(560.) {
             1
@@ -449,7 +377,7 @@ impl Render for HomePage {
             .flex_1()
             .min_w_0()
             .child(card_title("Lichess", &palette))
-            .child(match &self.connected {
+            .child(match &connected {
                 None => empty(
                     icon("chart-line"),
                     "Ratings, games and puzzle progress",
@@ -459,9 +387,12 @@ impl Render for HomePage {
                             .small()
                             .icon(icon("log-in"))
                             .label("Connect Lichess")
-                            .loading(self.busy)
-                            .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx))),
+                            .loading(busy)
+                            .disabled(busy)
+                            .on_click(|_, window, cx| {
+                                crate::accounts::handle(cx)
+                                    .update(cx, |accounts, cx| accounts.connect(window, cx))
+                            }),
                     ),
                     &palette,
                 ),

@@ -1,6 +1,7 @@
 //! Settings (`pages/settings.vue`): one category at a time, picked in the sidebar while Settings is
 //! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
 
+mod accounts;
 mod engine;
 mod offline;
 pub mod updates;
@@ -186,6 +187,7 @@ impl SettingsPage {
                 &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
             ),
+            cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
             // Settings changed elsewhere (the other app, a reload) show in the controls too.
             cx.subscribe_in(
                 &handle,
@@ -243,6 +245,9 @@ impl SettingsPage {
         self.section = section;
         if matches!(section, Section::Engine | Section::Offline) {
             self.refresh_engine(cx);
+        }
+        if section == Section::Accounts {
+            crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         }
         if section == Section::Offline {
             let db = cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone();
@@ -1148,7 +1153,8 @@ impl Render for SettingsPage {
             Section::Engine => self.engine(&settings, cx, &palette),
             Section::Offline => self.offline(cx, &palette),
             Section::Updates => self.updates(&settings, cx, &palette),
-            Section::Voice | Section::Accounts | Section::Data => widgets::card(&palette)
+            Section::Accounts => self.accounts(cx, &palette),
+            Section::Voice | Section::Data => widgets::card(&palette)
                 .items_center()
                 .py(px(40.))
                 .text_color(palette.text_muted)

@@ -184,6 +184,13 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
+/// The core serves Lichess from a local stand-in (`KCHESS_TEST_LICHESS_BASE` under the test
+/// switch, as the Electron end-to-end suite runs it).
+fn test_lichess() -> bool {
+    kchess_core::store::debug::enabled()
+        && std::env::var("KCHESS_TEST_LICHESS_BASE").is_ok_and(|base| !base.is_empty())
+}
+
 /// Answer a `host:request` (`crates/kchess-core/src/capabilities.rs`). Tokens are sealed by the
 /// core (`system_credentials`); the host is only asked to open ones Electron's `safeStorage`
 /// sealed, which this app cannot read.
@@ -198,6 +205,22 @@ fn answer_host(request: &Value, cx: &mut App) {
             "error": "This login was saved by an earlier KChess release. Reconnect your account."
         }),
         "openExternal" => match payload.as_str() {
+            // With a local stand-in for Lichess (the test switch), the page a sign-in opens is
+            // written to the profile for the test to follow, instead of the person's browser.
+            Some(url) if test_lichess() => {
+                let line = format!("{url}\n");
+                let written = crate::profile::data_dir().and_then(|dir| {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(dir.join("opened-urls.txt"))
+                        .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()))
+                });
+                match written {
+                    Ok(()) => json!({ "value": null }),
+                    Err(cause) => json!({ "error": cause.to_string() }),
+                }
+            }
             Some(url) if url.starts_with("https://") || url.starts_with("http://127.0.0.1") => {
                 cx.open_url(url);
                 json!({ "value": null })

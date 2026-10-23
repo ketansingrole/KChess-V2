@@ -3,6 +3,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarFooter, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
 };
@@ -116,6 +117,21 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
         return;
     };
     let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
+}
+
+/// Start every page afresh at Home (after signing out, as Electron reloads its window), so
+/// nothing a page kept for an account outlives it.
+pub fn restart_pages(window: &mut Window, cx: &mut App) {
+    let Some(workspace) = cx
+        .try_global::<Navigator>()
+        .and_then(|navigator| navigator.0.upgrade())
+    else {
+        return;
+    };
+    workspace.update(cx, |workspace, cx| {
+        workspace.pages = Pages::new(window, cx);
+        workspace.choose(Page::Dashboard, window, cx);
+    });
 }
 
 /// Open Settings at one section (`openSettings`), e.g. the engine setup a page points at.
@@ -450,18 +466,24 @@ impl Workspace {
             .children(self.nav_blocks(cx))
             .footer(
                 SidebarFooter::new().child(
-                    Button::new("settings")
-                        .ghost()
+                    v_flex()
                         .w_full()
-                        .justify_start()
-                        .icon(icon("settings-2"))
-                        .when(open, |button| button.label("Settings"))
-                        .when(!open, |button| button.tooltip("Settings"))
-                        .accessibility_label("Settings")
-                        .selected(current == Page::Settings)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.choose(Page::Settings, window, cx)
-                        })),
+                        .gap(px(4.))
+                        .child(
+                            Button::new("settings")
+                                .ghost()
+                                .w_full()
+                                .justify_start()
+                                .icon(icon("settings-2"))
+                                .when(open, |button| button.label("Settings"))
+                                .when(!open, |button| button.tooltip("Settings"))
+                                .accessibility_label("Settings")
+                                .selected(current == Page::Settings)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.choose(Page::Settings, window, cx)
+                                })),
+                        )
+                        .child(account_button(open, cx)),
                 ),
             )
     }
@@ -486,6 +508,117 @@ impl Workspace {
             .child(div().flex_1())
             .children(update_button(cx))
     }
+}
+
+/// The sidebar's account button: Connect Lichess while no account plays online, else the account
+/// menu (`userMenuItems`): which account plays, connecting another, Settings and logging out.
+fn account_button(expanded: bool, cx: &App) -> AnyElement {
+    let handle = crate::accounts::handle(cx);
+    let accounts = handle.read(cx);
+    let Some(active) = accounts.active(cx) else {
+        let target = handle.downgrade();
+        return Button::new("connect-lichess")
+            .ghost()
+            .w_full()
+            .justify_start()
+            .icon(icon("log-in"))
+            .when(expanded, |button| button.label("Connect Lichess"))
+            .when(!expanded, |button| button.tooltip("Connect Lichess"))
+            .accessibility_label("Connect Lichess")
+            .loading(accounts.busy)
+            .disabled(accounts.busy)
+            .on_click(move |_, window, cx| {
+                let _ = target.update(cx, |accounts, cx| accounts.connect(window, cx));
+            })
+            .into_any_element();
+    };
+    let connected = accounts.connected();
+    let label = format!("@{active}");
+    let target = handle.downgrade();
+    Button::new("account-menu")
+        .ghost()
+        .w_full()
+        .justify_start()
+        .icon(icon("user"))
+        .when(expanded, |button| button.label(label.clone()))
+        .when(!expanded, |button| button.tooltip(label.clone()))
+        .accessibility_label(if expanded {
+            format!("{label} account menu")
+        } else {
+            "Account menu".into()
+        })
+        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+            let act = |run: fn(
+                &mut crate::accounts::Accounts,
+                &mut Window,
+                &mut Context<crate::accounts::Accounts>,
+            )| {
+                let target = target.clone();
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    let _ = target.update(cx, |accounts, cx| run(accounts, window, cx));
+                }
+            };
+            let several = connected.len() > 1;
+            let mut menu = menu.item(
+                PopupMenuItem::label(if several {
+                    "Play as".into()
+                } else {
+                    label.clone()
+                })
+                .icon(icon("user")),
+            );
+            if several {
+                for name in &connected {
+                    let (name, target) = (name.clone(), target.clone());
+                    menu = menu.item(
+                        PopupMenuItem::new(format!("@{name}"))
+                            .checked(name == active)
+                            .on_click(move |_, _, cx| {
+                                let _ = target
+                                    .update(cx, |accounts, cx| accounts.set_active(&name, cx));
+                            }),
+                    );
+                }
+            }
+            let mut menu = menu
+                .separator()
+                .item(
+                    PopupMenuItem::new(if connected.is_empty() {
+                        "Connect Lichess account"
+                    } else {
+                        "Connect another account"
+                    })
+                    .icon(icon("link"))
+                    .on_click(act(|accounts, window, cx| accounts.connect(window, cx))),
+                )
+                .item(
+                    PopupMenuItem::new("Settings")
+                        .icon(icon("settings-2"))
+                        .on_click(|_, window, cx| open(Page::Settings, window, cx)),
+                )
+                .item(
+                    PopupMenuItem::new(if several {
+                        format!("Log out @{active}")
+                    } else {
+                        "Log out".into()
+                    })
+                    .icon(icon("log-out"))
+                    .on_click(act(|accounts, window, cx| {
+                        accounts.logout(false, window, cx)
+                    })),
+                );
+            if several {
+                menu = menu.item(
+                    PopupMenuItem::new("Log out all accounts")
+                        .icon(icon("log-out"))
+                        .on_click(act(|accounts, window, cx| {
+                            accounts.logout(true, window, cx)
+                        })),
+                );
+            }
+            menu
+        })
+        .into_any_element()
 }
 
 /// `AppUpdateButton.vue`: a newer KChess, its download, or the restart that installs it.

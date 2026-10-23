@@ -1,6 +1,7 @@
 //! KChess as a GPUI Kit application over the Rust core: the same profile, games, settings and
 //! accounts as the Electron app (`apps/desktop`), drawn natively.
 
+mod accounts;
 mod assets;
 mod board;
 mod chart;
@@ -61,6 +62,7 @@ fn main() {
             played::init(cx);
             studies::init(cx);
             reviews::init(cx);
+            accounts::init(cx);
             puzzle_db::init(cx);
             updates::init(cx);
             sound::init(cx);

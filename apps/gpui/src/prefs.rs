@@ -70,3 +70,19 @@ pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {
         })
         .detach();
 }
+
+/// Forget a preference (`forgetViewPreference`): its default applies again in both apps.
+pub fn forget(cx: &mut App, key: &str) {
+    let prefs = cx.default_global::<ViewPreferences>();
+    if prefs.values.remove(key).is_none() {
+        return;
+    }
+    let save = cx
+        .global::<AppCore>()
+        .call("setViewPreference", vec![json!(key), Value::Null]);
+    cx.background_executor()
+        .spawn(async move {
+            let _ = save.await;
+        })
+        .detach();
+}
