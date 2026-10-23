@@ -97,7 +97,12 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       chapters (switch, add, rename, duplicate, delete), Save as study, Save a copy, Close and
       Delete study with Undo, Game details; a recovered session that differs from its study stays
       an unsaved copy, as in Electron
-- [ ] Review and Explorer tools, Export, voice input
+- [x] Review: the core's game review of the main line (asked for, followed while it runs, or
+      found stored), accuracy, labelled moves (next by count), centipawn loss and phases, the
+      evaluation chart, labels in the move list and on the board, the engine paused while this
+      game is reviewed, your mistakes saved once it completes, and practising the game's mistakes
+      on the board
+- [ ] Explorer tool, Export, voice input
 - [x] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles

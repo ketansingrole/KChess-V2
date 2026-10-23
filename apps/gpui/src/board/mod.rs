@@ -57,6 +57,16 @@ pub struct BoardState {
     pub square_names: bool,
     /// The board editor's tool: pieces move anywhere, are put down or taken off.
     pub edit: Option<EditTool>,
+    /// A review's label on the move just played (`BoardMoveFeedback.vue`).
+    pub badge: Option<Badge>,
+}
+
+/// A move's label as a badge over its square's top-right corner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Badge {
+    pub square: Square,
+    pub glyph: &'static str,
+    pub color: Hsla,
 }
 
 /// The board editor's tools (`EditorTool`): move pieces (dragged off the board, they are gone),
@@ -200,6 +210,7 @@ impl BoardState {
             coordinates: None,
             square_names: false,
             edit: None,
+            badge: None,
         }
     }
 }
@@ -1044,6 +1055,39 @@ impl Render for ChessBoard {
             coordinates.extend(self.render_square_names(look));
         }
         let promotion = self.render_promotion(&set, cx);
+        // The badge overhangs the square's top-right corner, except where that would leave the
+        // board.
+        let badge = self
+            .state
+            .badge
+            .as_ref()
+            .filter(|_| !self.state.preview)
+            .map(|badge| {
+                let (column, row) = self.cell(badge.square);
+                let diameter = (side * 0.42).max(px(16.));
+                let x = if column == 7 {
+                    side - diameter
+                } else {
+                    side - diameter * 0.68
+                };
+                let y = if row == 0 { px(0.) } else { -diameter * 0.32 };
+                div()
+                    .absolute()
+                    .left(side * column as f32 + x)
+                    .top(side * row as f32 + y)
+                    .size(diameter)
+                    .rounded_full()
+                    .bg(badge.color)
+                    .border_1()
+                    .border_color(rgb(0xffffff))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(diameter * 0.55)
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(0xffffff))
+                    .child(badge.glyph)
+            });
 
         div()
             .id("chess-board")
@@ -1096,6 +1140,7 @@ impl Render for ChessBoard {
             )
             .children(ghost)
             .children(coordinates)
+            .children(badge)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, _, cx| this.press(event, cx)),

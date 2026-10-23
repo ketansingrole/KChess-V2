@@ -17,6 +17,7 @@ mod prefs;
 mod profile;
 mod puzzle_board;
 mod replay;
+mod reviews;
 mod settings;
 mod shell;
 mod sound;
@@ -53,6 +54,7 @@ fn main() {
             prefs::init(cx);
             played::init(cx);
             studies::init(cx);
+            reviews::init(cx);
             sound::init(cx);
             online::init(cx);
             cx.on_app_quit(core::quit).detach();

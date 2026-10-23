@@ -2,6 +2,9 @@
 //! board, Stockfish's lines and arrows for the position shown, Lichess's cloud evaluation, and the
 //! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
 
+mod practice;
+mod review;
+
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
@@ -26,7 +29,7 @@ use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position as _, Square};
 
 use crate::assets::icon;
-use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
+use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::{AppCore, BoxedSave, CoreEvent};
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
@@ -36,6 +39,7 @@ use crate::game::{STANDARD_FEN, rules, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use crate::reviews::ReviewHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, tint};
@@ -126,6 +130,11 @@ pub struct AnalysisPage {
     /// Bumped whenever another document takes the board, so a late save-as does not link it.
     navigation: u64,
     study_bar: Entity<StudyBar>,
+    /// The main line's game review, and practising its mistakes.
+    review: review::ReviewState,
+    practice: Option<practice::Practice>,
+    /// The engine made way for a review of this game.
+    paused_for_review: bool,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_input: Entity<InputState>,
@@ -166,12 +175,13 @@ impl Focusable for AnalysisPage {
 
 impl AnalysisPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> AnalysisPage {
-        let session = cx
+        let library = cx
             .global::<AppCore>()
             .bridge
             .call_now("library", Vec::new())
-            .map(|library| library["sessions"]["analysis"].clone())
             .unwrap_or(Value::Null);
+        let session = library["sessions"]["analysis"].clone();
+        let mistakes = library["mistakes"].as_array().cloned().unwrap_or_default();
         let root = session["pgn"]
             .as_str()
             .and_then(TreeNode::from_pgn)
@@ -293,6 +303,18 @@ impl AnalysisPage {
                 this.redraw(cx);
             }),
             cx.observe(&online, |this, _, cx| this.engine_changed(cx)),
+            // Reviews streaming in, and the review queue: labels follow, and the engine makes way
+            // while this game is reviewed.
+            cx.observe(&cx.global::<ReviewHandle>().0.clone(), |this, _, cx| {
+                this.follow_review(cx);
+                this.check_practice(cx);
+                let reviewing = this.reviewing(cx).is_some();
+                if reviewing != this.paused_for_review {
+                    this.paused_for_review = reviewing;
+                    this.analyse(cx);
+                }
+                this.redraw(cx);
+            }),
             // A study removed from the library (here or on the Studies page) gets no more edits.
             cx.observe(&library, |this, library, cx| {
                 if !this.study.is_empty() && library.read(cx).study(&this.study).is_none() {
@@ -318,6 +340,9 @@ impl AnalysisPage {
             study_save: None,
             navigation: 0,
             study_bar,
+            review: review::ReviewState::new(mistakes),
+            practice: None,
+            paused_for_review: false,
             board,
             layout: PlayLayout::default(),
             move_input,
@@ -378,8 +403,16 @@ impl AnalysisPage {
         analysis_context(&self.root.fen, &moves_of(&self.path))
     }
 
-    /// Play a move from the position shown; false when it is not legal there.
+    /// Play a move from the position shown; false when it is not kept (not legal there, or a
+    /// wrong answer while practising).
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
+        if let Some(kept) = self.practice_attempt(uci, cx) {
+            return kept;
+        }
+        self.play_move(uci, cx)
+    }
+
+    fn play_move(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
         match self.root.add_move(&self.path, uci) {
             Some(next) => {
                 self.path = next;
@@ -473,6 +506,7 @@ impl AnalysisPage {
         self.path.clear();
         self.clear_evaluations();
         self.study.clear();
+        self.review.origin = None;
     }
 
     /* ── Studies ──────────────────────────────────────────────────────── */
@@ -739,6 +773,8 @@ impl AnalysisPage {
 
     /// The board, the engine and the saved session follow a change.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.follow_review(cx);
+        self.check_practice(cx);
         self.redraw(cx);
         self.analyse(cx);
         self.ask_cloud(cx);
@@ -790,6 +826,13 @@ impl AnalysisPage {
 
     fn engine_on(cx: &App) -> bool {
         crate::prefs::get(cx, ENGINE_ON, true)
+    }
+
+    /// Practising a position: the engine (and anything else that knows) would tell.
+    fn hides_engine(&self) -> bool {
+        self.practice
+            .as_ref()
+            .is_some_and(practice::Practice::hides_engine)
     }
 
     fn assistance_allowed(cx: &App) -> bool {
@@ -859,6 +902,7 @@ impl AnalysisPage {
             || position.is_none()
             || game_over(position.as_ref()).is_some()
             || !Self::assistance_allowed(cx)
+            || self.reviewing(cx).is_some()
         {
             self.wanted.clear();
             self.engine_busy = false;
@@ -1089,6 +1133,9 @@ impl AnalysisPage {
     }
 
     fn play_best(&mut self, cx: &mut Context<Self>) {
+        if self.hides_engine() {
+            return;
+        }
         let best = self
             .lines(cx)
             .first()
@@ -1109,6 +1156,34 @@ impl AnalysisPage {
             Some(position.turn()),
             last_move,
         );
+        // The review's label on the move just played.
+        let marks = self.review_marks(cx);
+        state.badge = marks
+            .get(&self.path)
+            .and_then(|mark| mark.classification.as_deref())
+            .zip(last_move)
+            .map(|(classification, (_, to))| {
+                let (_, glyph, color) =
+                    review::classification_look(classification, cx.global::<Palette>().dark);
+                Badge {
+                    square: to,
+                    glyph,
+                    color,
+                }
+            });
+        // Practising: the game's move in red, to find a better one, and the piece to move once
+        // hinted.
+        if let Some(practice::PracticeShapes { played, hint }) = self.practice_shapes() {
+            state.arrows = played
+                .map(|(from, to)| Arrow::brush("red", from, to))
+                .into_iter()
+                .collect();
+            state.circles = hint.map(Circle::green).into_iter().collect();
+            self.board
+                .update(cx, |board, cx| board.set_state(state, cx));
+            cx.notify();
+            return;
+        }
         let engine_shown = (Self::engine_on(cx) || self.using_cloud(cx))
             && crate::prefs::get(cx, ARROWS, true)
             && game_over(Some(&position)).is_none();
@@ -1342,6 +1417,8 @@ struct TreeView<'a> {
     current: &'a str,
     page: WeakEntity<AnalysisPage>,
     palette: Palette,
+    /// The review's label on each main-line move, by path.
+    marks: HashMap<String, review::ReviewMark>,
 }
 
 impl TreeView<'_> {
@@ -1350,6 +1427,7 @@ impl TreeView<'_> {
         let palette = &self.palette;
         let (page, target) = (self.page.clone(), path.to_string());
         let glyph = move_glyph(node);
+        let annotated = glyph.is_some();
         h_flex()
             .id(SharedString::from(format!("tree-{path}")))
             .px(px(4.))
@@ -1380,6 +1458,28 @@ impl TreeView<'_> {
             .children(
                 glyph.map(|(glyph, _)| div().ml(px(1.)).font_weight(FontWeight::BOLD).child(glyph)),
             )
+            // Without an annotation, the review's label.
+            .when(!annotated, |chip| {
+                chip.children(
+                    self.marks
+                        .get(path)
+                        .and_then(|mark| mark.classification.as_deref())
+                        .map(|classification| {
+                            let (label, glyph, color) =
+                                review::classification_look(classification, palette.dark);
+                            div()
+                                .id(SharedString::from(format!("label-{path}")))
+                                .ml(px(1.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(color)
+                                .tooltip(move |window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(label)
+                                        .build(window, cx)
+                                })
+                                .child(glyph)
+                        }),
+                )
+            })
             .into_any_element()
     }
 
@@ -2089,6 +2189,7 @@ impl AnalysisPage {
             current: &self.path,
             page: cx.entity().downgrade(),
             palette: *palette,
+            marks: self.review_marks(cx),
         };
         let mut pieces = Vec::new();
         view.line(&self.root, "", None, 0, &mut pieces);
@@ -2262,7 +2363,7 @@ impl Render for AnalysisPage {
         let tool = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
         let allowed = Self::assistance_allowed(cx);
         let using_cloud = self.using_cloud(cx);
-        let show_bar = allowed && (Self::engine_on(cx) || using_cloud);
+        let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
         let lines = self.lines(cx);
         let position = self.position();
         let result = game_over(position.as_ref()).map(|_| {
@@ -2334,15 +2435,41 @@ impl Render for AnalysisPage {
                 .bg(palette.bg)
                 .child(self.render_moves(cx, &palette))
                 .into_any_element(),
-            Tool::Review | Tool::Explorer => div()
+            Tool::Review => {
+                let note = |text: &'static str| {
+                    div()
+                        .px(px(8.))
+                        .py(px(24.))
+                        .text_size(px(13.))
+                        .text_center()
+                        .text_color(palette.text_muted)
+                        .child(text)
+                        .into_any_element()
+                };
+                let body = if !allowed {
+                    note("Engine assistance is paused until Lichess game status is verified.")
+                } else if self.root.children.is_empty() {
+                    note("Make some moves or import a game to review it.")
+                } else {
+                    self.render_review(cx, &palette)
+                };
+                div()
+                    .id("analysis-review")
+                    .flex_1()
+                    .min_h(px(96.))
+                    .overflow_y_scroll()
+                    .child(body)
+                    .into_any_element()
+            }
+            Tool::Explorer => div()
                 .flex_1()
                 .px(px(8.))
                 .py(px(24.))
                 .text_size(px(13.))
                 .text_center()
                 .text_color(palette.text_muted)
-                .child(if tool == Tool::Review {
-                    "Game review is not in this app yet."
+                .child(if self.hides_engine() {
+                    "Shown once you find the move."
                 } else {
                     "The opening explorer is not in this app yet."
                 })
@@ -2358,7 +2485,12 @@ impl Render for AnalysisPage {
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
             .gap(px(12.))
-            .child(self.render_engine(cx, &palette))
+            .when(self.practice.is_some(), |panel| {
+                panel.child(self.render_practice(cx, &palette))
+            })
+            .when(self.practice.is_none(), |panel| {
+                panel.child(self.render_engine(cx, &palette))
+            })
             .child(self.render_tabs(tool, &palette))
             .child(tool_body)
             .child(self.render_controls(cx));
