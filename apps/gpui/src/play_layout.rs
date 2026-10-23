@@ -66,12 +66,23 @@ impl PlayLayout {
     /// The board's side (`--board-size`): the height left after the page's padding and the player
     /// lines, or the width left beside a 344px panel, between 260px and `--board-max`.
     pub fn board_size(&self, window: &Window) -> Pixels {
+        self.board_size_beside(px(0.), window)
+    }
+
+    /// The page's width at the last layout, or the window's before it.
+    pub fn width(&self, window: &Window) -> Pixels {
         let page = self.area.size();
-        let width = if page.width > px(0.) {
+        if page.width > px(0.) {
             page.width
         } else {
             window.viewport_size().width
-        };
+        }
+    }
+
+    /// The board's side with another column of `extra` beside it (a lesson's chapters).
+    pub fn board_size_beside(&self, extra: Pixels, window: &Window) -> Pixels {
+        let page = self.area.size();
+        let width = self.width(window) - extra;
         let height = if page.height > px(0.) {
             page.height
         } else {

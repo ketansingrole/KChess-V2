@@ -150,16 +150,6 @@ fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoEl
         .child(label)
 }
 
-/// `formatGameDate`: "Oct 22, 2026" in local time.
-fn date(millis: f64) -> String {
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(millis as i64)
-        .single()
-        .map(|date| date.format("%b %-d, %Y").to_string())
-        .unwrap_or_default()
-}
-
 /// `moveCount`: full moves, a lone white move counting as one.
 fn move_count(plies: usize) -> String {
     let moves = plies.div_ceil(2);
@@ -729,7 +719,7 @@ impl HistoryPage {
                     .icon(icon("ellipsis"))
                     .accessibility_label(format!(
                         "Actions for the game from {}",
-                        date(game["startedAt"].as_f64().unwrap_or_default())
+                        crate::game::game_date(game["startedAt"].as_f64().unwrap_or_default())
                     ))
                     // Aligned to the button's end, as Electron's menu is, so it stays in the window.
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
@@ -784,7 +774,9 @@ impl HistoryPage {
                         game_cell.into_any_element(),
                         div()
                             .text_color(palette.text_muted)
-                            .child(date(game["startedAt"].as_f64().unwrap_or_default()))
+                            .child(crate::game::game_date(
+                                game["startedAt"].as_f64().unwrap_or_default(),
+                            ))
                             .into_any_element(),
                         actions.into_any_element(),
                     ],

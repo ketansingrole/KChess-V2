@@ -30,6 +30,16 @@ pub fn whole(value: &Value) -> u64 {
         .unwrap_or_default()
 }
 
+/// `formatGameDate`: "Oct 22, 2026" in local time.
+pub fn game_date(millis: f64) -> String {
+    use chrono::TimeZone as _;
+    chrono::Local
+        .timestamp_millis_opt(millis as i64)
+        .single()
+        .map(|date| date.format("%b %-d, %Y").to_string())
+        .unwrap_or_default()
+}
+
 /// A rules method by name, as `rules()` calls it in the renderer.
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
     let text = kchess_domain::api::call(method, &Value::Array(args.to_vec()).to_string())?;

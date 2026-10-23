@@ -104,8 +104,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       flash, next after a solve; the session tally, day streak and attempt strip from the log
 - [x] The puzzle database card: download with progress, cancel, delete
 - [ ] Daily, Storm · Streak · Rush, Lichess stats and History tabs; the attempt strip's menu
-- [ ] Theme groups in the picker, an opening's puzzles, Connect or Reconnect from the panel,
-      choosing the rated account, voice input
+- [x] An opening's puzzles, chosen on Openings
+- [ ] Theme groups in the picker, Connect or Reconnect from the panel, choosing the rated
+      account, voice input
 
 ## Practice
 
@@ -116,7 +117,10 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       (its named line, then the explorer's popular moves), as White or Black, steered towards the
       lines missed before (`recordRepertoireMiss`); Show move, Restart line, Forget mistakes and
       Save as study
-- [ ] Endgames and Your mistakes trainers; voice answers
+- [x] Endgames: the 14 courses (read, follow and solve steps, scripted or Stockfish replies, hints,
+      take back) and the 9 drills against Stockfish at full strength, each finished chapter or
+      drill kept by the core (`runSummary`, `saveRun`)
+- [ ] Your mistakes trainer; voice answers
 
 ## Openings
 

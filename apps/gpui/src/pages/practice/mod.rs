@@ -2,6 +2,10 @@
 //! each made the first time it is shown and kept, as the Electron page keeps its stores.
 
 mod coordinates;
+mod endgame_drills;
+mod endgame_lesson;
+mod endgames;
+mod engine_move;
 mod knight;
 mod repertoire;
 mod run;
@@ -32,6 +36,7 @@ pub struct PracticePage {
     colors: Option<Entity<square_color::SquareColors>>,
     knight: Option<Entity<knight::KnightPaths>>,
     repertoire: Option<Entity<repertoire::Repertoire>>,
+    endgames: Option<Entity<endgames::Endgames>>,
     focus: FocusHandle,
 }
 
@@ -48,6 +53,7 @@ impl PracticePage {
             colors: None,
             knight: None,
             repertoire: None,
+            endgames: None,
             focus: cx.focus_handle(),
         }
     }
@@ -76,6 +82,11 @@ impl PracticePage {
             "knight" => self
                 .knight
                 .get_or_insert_with(|| cx.new(|cx| knight::KnightPaths::new(window, cx)))
+                .clone()
+                .into(),
+            "endgames" => self
+                .endgames
+                .get_or_insert_with(|| cx.new(endgames::Endgames::new))
                 .clone()
                 .into(),
             "openings" => self

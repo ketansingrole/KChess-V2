@@ -65,25 +65,24 @@ pub struct Circle {
 }
 
 impl Circle {
-    pub fn yellow(square: Square) -> Circle {
+    /// A circle in one of Chessground's brushes.
+    pub fn brush(brush: &str, square: Square) -> Circle {
         Circle {
             square,
-            color: 0xe68f00,
+            color: brush_color(brush),
         }
+    }
+
+    pub fn yellow(square: Square) -> Circle {
+        Circle::brush("yellow", square)
     }
 
     pub fn green(square: Square) -> Circle {
-        Circle {
-            square,
-            color: 0x15781b,
-        }
+        Circle::brush("green", square)
     }
 
     pub fn red(square: Square) -> Circle {
-        Circle {
-            square,
-            color: 0x882020,
-        }
+        Circle::brush("red", square)
     }
 }
 
@@ -98,31 +97,40 @@ pub struct Arrow {
     pub width: f32,
 }
 
+/// Chessground's brushes by name: `green`, `red`, `blue` and `yellow`.
+pub fn brush_color(brush: &str) -> u32 {
+    match brush {
+        "red" => 0x882020,
+        "blue" => 0x003088,
+        "yellow" => 0xe68f00,
+        _ => 0x15781b,
+    }
+}
+
 impl Arrow {
-    /// The solution's next move, shown (Chessground's `green` brush).
-    pub fn solution(from: Square, to: Square) -> Arrow {
+    /// An arrow in one of Chessground's brushes (a lesson's drawings).
+    pub fn brush(brush: &str, from: Square, to: Square) -> Arrow {
         Arrow {
             from,
             to,
-            color: 0x15781b,
+            color: brush_color(brush),
             opacity: 1.,
             width: 10.,
         }
+    }
+
+    /// The solution's next move, shown (the `green` brush).
+    pub fn solution(from: Square, to: Square) -> Arrow {
+        Arrow::brush("green", from, to)
+    }
+
+    /// A move shown on request (the `blue` brush).
+    pub fn hint(from: Square, to: Square) -> Arrow {
+        Arrow::brush("blue", from, to)
     }
 
     /// The analysis board's arrows (`paleBlue` for the best line, `paleGrey` for the rest):
     /// the best one bold, the others thinner.
-    /// Chessground's blue brush: a move shown on request.
-    pub fn hint(from: Square, to: Square) -> Arrow {
-        Arrow {
-            from,
-            to,
-            color: 0x003088,
-            opacity: 1.,
-            width: 10.,
-        }
-    }
-
     pub fn engine(from: Square, to: Square, rank: usize) -> Arrow {
         let (color, opacity) = if rank == 0 {
             (0x003088, 0.4)

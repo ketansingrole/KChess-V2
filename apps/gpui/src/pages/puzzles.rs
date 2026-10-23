@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, Icon, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -19,11 +18,11 @@ use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::{AppCore, CoreEvent};
-use crate::game::puzzle::{OnBoard, PuzzleSession, Step, local_day};
-use crate::game::{STANDARD_FEN, rules, view};
+use crate::game::puzzle::{PuzzleSession, Step, local_day};
+use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, tint};
 use crate::widgets::{self, Pill, Tone};
@@ -37,13 +36,8 @@ const ACCOUNT: &str = "kchess:puzzle-account";
 /// The opening an opening page chose puzzles of: its key is the angle while it is chosen.
 const OPENING: &str = "kchess:puzzle-opening";
 
-/// Milliseconds before the opponent replies, and the solution's pace when it plays itself.
-const REPLY_DELAY: Duration = Duration::from_millis(350);
-const SOLUTION_STEP: Duration = Duration::from_millis(650);
-const SOLUTION_REPLY: Duration = Duration::from_millis(450);
 /// A pause on the final position before the next puzzle replaces it.
 const AUTO_NEXT_DELAY: Duration = Duration::from_millis(800);
-const FLASH: Duration = Duration::from_millis(900);
 
 const MODES: [(&str, &str); 3] = [
     ("practice", "Practice"),
@@ -162,37 +156,16 @@ fn format_count(count: f64) -> String {
     out
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Feedback {
-    None,
-    Good,
-    Wrong,
-}
-
 pub struct PuzzlesPage {
     session: PuzzleSession,
-    on_board: Option<OnBoard>,
     /// The puzzle key the board shows (`:key="puzzleKey"`): a new key starts the board afresh.
     shown_key: u64,
-    board: Entity<ChessBoard>,
+    puzzle: Entity<PuzzleBoard>,
     layout: PlayLayout,
-    move_input: Entity<InputState>,
-    move_message: Option<SharedString>,
     theme_list: Vec<Theme>,
     theme_select: Entity<SelectState<Vec<SharedString>>>,
     difficulty_select: Entity<SelectState<Vec<SharedString>>>,
     color_select: Entity<SelectState<Vec<SharedString>>>,
-    waiting: bool,
-    mistakes: u32,
-    outcome: Option<bool>,
-    revealed: bool,
-    hinted: bool,
-    hint_used: bool,
-    feedback: Feedback,
-    flash: bool,
-    flipped: bool,
-    /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
-    generation: u64,
     timers: Vec<Task<()>>,
     progress: Value,
     accounts: Vec<String>,
@@ -258,30 +231,27 @@ impl PuzzlesPage {
             window,
             cx,
         );
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let puzzle = cx.new(|cx| PuzzleBoard::new(true, window, cx));
         let events = cx.global::<AppCore>().events.clone();
         let subscriptions = vec![
-            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
-                if let BoardEvent::Move(uci) = event {
-                    this.on_move(uci, cx)
-                }
-            }),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
+            cx.subscribe(
+                &puzzle,
+                |this, _, event: &PuzzleBoardEvent, cx| match event {
+                    PuzzleBoardEvent::Move {
+                        index,
+                        correct,
+                        uci,
+                    } => {
+                        let step = this.session.apply(
+                            "puzzleSessionMove",
+                            json!({ "index": index, "correct": correct, "uci": uci }),
+                        );
+                        this.follow(step, "puzzleSessionLoadSettled", cx);
                     }
+                    PuzzleBoardEvent::Outcome { win, detail } => {
+                        this.report(*win, detail.clone(), cx)
+                    }
+                    PuzzleBoardEvent::Done => this.done(cx),
                 },
             ),
             cx.subscribe(
@@ -328,26 +298,13 @@ impl PuzzlesPage {
         ];
         PuzzlesPage {
             session: PuzzleSession::new(),
-            on_board: None,
             shown_key: 0,
-            board,
+            puzzle,
             layout: PlayLayout::default(),
-            move_input,
-            move_message: None,
             theme_list,
             theme_select,
             difficulty_select,
             color_select,
-            waiting: false,
-            mistakes: 0,
-            outcome: None,
-            revealed: false,
-            hinted: false,
-            hint_used: false,
-            feedback: Feedback::None,
-            flash: false,
-            flipped: false,
-            generation: 0,
             timers: Vec::new(),
             progress: Value::Null,
             accounts: Vec::new(),
@@ -504,12 +461,7 @@ impl PuzzlesPage {
         .detach();
     }
 
-    fn report(&mut self, win: bool, cx: &mut Context<Self>) {
-        let detail = json!({
-            "revealed": self.revealed,
-            "hinted": self.hint_used,
-            "total": self.on_board.as_ref().map_or(0, OnBoard::player_moves),
-        });
+    fn report(&mut self, win: bool, detail: Value, cx: &mut Context<Self>) {
         let step = self.session.apply(
             "puzzleSessionReportBegin",
             json!({ "win": win, "detail": detail, "selection": self.selection(cx) }),
@@ -523,164 +475,25 @@ impl PuzzlesPage {
     fn sync_board(&mut self, cx: &mut Context<Self>) {
         let ready = self.session.phase() == "ready";
         let key = self.session.puzzle_key();
+        let shown = self.puzzle.read(cx).puzzle().is_some();
         match self.session.current().cloned() {
-            Some(puzzle) if ready && (self.on_board.is_none() || key != self.shown_key) => {
-                self.generation += 1;
-                self.timers.clear();
-                self.on_board = Some(OnBoard::start(&puzzle));
+            Some(puzzle) if ready && (!shown || key != self.shown_key) => {
                 self.shown_key = key;
-                self.waiting = false;
-                self.outcome = self.session.state["attemptOutcome"].as_bool();
-                self.mistakes = u32::from(self.outcome == Some(false));
-                self.revealed = false;
-                self.hinted = false;
-                self.hint_used = false;
-                self.feedback = Feedback::None;
-                self.flash = false;
-                self.move_message = None;
+                let outcome = self.session.state["attemptOutcome"].as_bool();
+                self.puzzle
+                    .update(cx, |board, cx| board.start(&puzzle, outcome, cx));
             }
-            _ if !ready => self.on_board = None,
+            _ if !ready => self.puzzle.update(cx, |board, cx| board.clear(cx)),
             _ => {}
         }
-        self.redraw(cx);
-    }
-
-    fn status(&self) -> &str {
-        match &self.on_board {
-            Some(_) if self.revealed => "revealed",
-            Some(board) => board.status(),
-            None => "playing",
-        }
-    }
-
-    /// The player may move: not while the opponent replies or the solution plays itself out.
-    fn playing(&self) -> bool {
-        self.on_board
-            .as_ref()
-            .is_some_and(|board| board.status() == "playing")
-            && !self.waiting
-            && !self.revealed
-    }
-
-    fn orientation(&self) -> Color {
-        let color = self
-            .on_board
-            .as_ref()
-            .map_or(Color::White, OnBoard::player_color);
-        if self.flipped { !color } else { color }
-    }
-
-    fn redraw(&mut self, cx: &mut Context<Self>) {
-        let Some(on_board) = &self.on_board else {
-            cx.notify();
-            return;
-        };
-        let position =
-            kchess_domain::rules::setup_start("standard", on_board.fen()).unwrap_or_default();
-        let movable = self.playing().then(|| on_board.player_color());
-        let mut state =
-            BoardState::of(&position, self.orientation(), movable, on_board.last_move());
-        if on_board.status() == "playing"
-            && let Some((from, to)) = on_board.next_squares()
-        {
-            if self.revealed {
-                state.arrows = vec![Arrow::solution(from, to)];
-            } else if self.hinted {
-                state.hint = Some(from);
-            }
-        }
-        self.board
-            .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();
-    }
-
-    /// The first verdict on the puzzle, sent once.
-    fn decide(&mut self, win: bool, cx: &mut Context<Self>) {
-        if self.outcome.is_some() {
-            return;
-        }
-        self.outcome = Some(win);
-        self.report(win, cx);
-    }
-
-    fn on_move(&mut self, uci: &str, cx: &mut Context<Self>) {
-        if !self.playing() {
-            self.redraw(cx);
-            return;
-        }
-        let Some(board) = &mut self.on_board else {
-            return;
-        };
-        let index = board.index() / 2;
-        let (correct, reply) = board.player_move(uci);
-        let session_move =
-            |correct: bool| json!({ "index": index, "correct": correct, "uci": uci });
-        if !correct {
-            self.mistakes += 1;
-            self.feedback = Feedback::Wrong;
-            self.flash = true;
-            self.hinted = false;
-            let generation = self.generation;
-            self.timers.push(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(FLASH).await;
-                let _ = this.update(cx, |this, cx| {
-                    if this.generation == generation {
-                        this.flash = false;
-                        cx.notify();
-                    }
-                });
-            }));
-            let step = self.session.apply("puzzleSessionMove", session_move(false));
-            self.follow(step, "puzzleSessionLoadSettled", cx);
-            self.decide(false, cx);
-            self.redraw(cx);
-            return;
-        }
-        self.feedback = Feedback::Good;
-        self.hinted = false;
-        crate::sound::move_sound(&board.last_san(), cx);
-        let solved = board.status() == "solved";
-        let step = self.session.apply("puzzleSessionMove", session_move(true));
-        self.follow(step, "puzzleSessionLoadSettled", cx);
-        if solved {
-            let clean = self.mistakes == 0 && !self.revealed;
-            self.decide(clean, cx);
-            crate::sound::play(crate::sound::Sound::GenericNotify, cx);
-            self.done(cx);
-        } else if let Some(reply) = reply {
-            self.reply(reply, cx);
-        }
-        self.redraw(cx);
-    }
-
-    fn reply(&mut self, uci: String, cx: &mut Context<Self>) {
-        self.waiting = true;
-        let generation = self.generation;
-        self.timers.push(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(REPLY_DELAY).await;
-            let _ = this.update(cx, |this, cx| {
-                if this.generation != generation {
-                    return;
-                }
-                if let Some(board) = &mut this.on_board {
-                    board.opponent_reply(&uci);
-                    crate::sound::move_sound(&board.last_san(), cx);
-                }
-                this.waiting = false;
-                this.redraw(cx);
-            });
-        }));
     }
 
     /// The puzzle is over: count and log it, and go on to the next one after a solve when asked.
     fn done(&mut self, cx: &mut Context<Self>) {
         let step = self.session.apply("puzzleSessionEnd", json!({}));
         self.follow(step, "puzzleSessionLoadSettled", cx);
-        let solved = self
-            .on_board
-            .as_ref()
-            .is_some_and(|board| board.status() == "solved")
-            && !self.revealed;
+        let solved = self.puzzle.read(cx).status() == "solved";
         let auto_next = cx
             .global::<SettingsHandle>()
             .0
@@ -699,100 +512,6 @@ impl PuzzlesPage {
                     }
                 });
             }));
-        }
-    }
-
-    /// Light up the piece to move, or hide it again.
-    fn hint(&mut self, cx: &mut Context<Self>) {
-        if self.status() != "playing" {
-            return;
-        }
-        self.hinted = !self.hinted;
-        if self.hinted {
-            self.hint_used = true;
-        }
-        self.redraw(cx);
-    }
-
-    /// Play out the rest of the solution; the puzzle then counts as failed.
-    fn show_solution(&mut self, cx: &mut Context<Self>) {
-        if self.status() != "playing" {
-            return;
-        }
-        self.revealed = true;
-        self.decide(false, cx);
-        self.redraw(cx);
-        let generation = self.generation;
-        self.timers.push(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(SOLUTION_STEP).await;
-                let reply = this
-                    .update(cx, |this, cx| {
-                        if this.generation != generation {
-                            return Err(());
-                        }
-                        let Some(board) = &mut this.on_board else {
-                            return Err(());
-                        };
-                        if board.status() != "playing" {
-                            return Err(());
-                        }
-                        let Some(uci) = board.solution(board.index()) else {
-                            return Err(());
-                        };
-                        let (correct, reply) = board.player_move(&uci);
-                        if !correct {
-                            return Err(());
-                        }
-                        crate::sound::move_sound(&board.last_san(), cx);
-                        this.redraw(cx);
-                        Ok(reply)
-                    })
-                    .unwrap_or(Err(()));
-                let Ok(reply) = reply else { break };
-                if let Some(reply) = reply {
-                    cx.background_executor().timer(SOLUTION_REPLY).await;
-                    let _ = this.update(cx, |this, cx| {
-                        if this.generation != generation {
-                            return;
-                        }
-                        if let Some(board) = &mut this.on_board {
-                            board.opponent_reply(&reply);
-                            crate::sound::move_sound(&board.last_san(), cx);
-                        }
-                        this.redraw(cx);
-                    });
-                }
-            }
-            let _ = this.update(cx, |this, cx| {
-                if this.generation == generation {
-                    this.done(cx);
-                    this.redraw(cx);
-                }
-            });
-        }));
-    }
-
-    fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.move_input.read(cx).value().trim().to_string();
-        let Some(board) = &self.on_board else { return };
-        if text.is_empty() || !self.playing() {
-            return;
-        }
-        let setup = json!({ "variant": "standard", "fen": board.fen() });
-        let typed = kchess_domain::rules::setup_start("standard", board.fen())
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
-        match typed {
-            Some(uci) => {
-                self.move_message = None;
-                self.move_input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.on_move(&uci, cx);
-            }
-            None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3.".into());
-                cx.notify();
-            }
         }
     }
 
@@ -1267,11 +986,21 @@ impl PuzzlesPage {
 
     /// `PuzzleStatusPanel.vue`: what to do, how it went, and the buttons that help.
     fn render_status(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
-        let Some(board) = &self.on_board else {
+        let shown = self.puzzle.read(cx);
+        let Some(board) = shown.puzzle() else {
             return div().into_any_element();
         };
-        let status = self.status();
-        let color = if board.player_color() == Color::White {
+        let puzzle = board.puzzle.clone();
+        let player = board.player_color();
+        let status = shown.status().to_string();
+        let (outcome, feedback, waiting, hinted) = (
+            shown.outcome(),
+            shown.feedback(),
+            shown.waiting(),
+            shown.hinted(),
+        );
+        let status = status.as_str();
+        let color = if player == Color::White {
             "white"
         } else {
             "black"
@@ -1282,7 +1011,7 @@ impl PuzzlesPage {
                 icon("eye"),
                 "Solution shown — not counted as solved".to_string(),
             ),
-            "solved" if self.outcome == Some(true) => {
+            "solved" if outcome == Some(true) => {
                 (Tone::Win, icon("trophy"), "Puzzle solved!".to_string())
             }
             "solved" => (
@@ -1295,12 +1024,12 @@ impl PuzzlesPage {
                 icon("x"),
                 "Not the move — puzzle over".to_string(),
             ),
-            _ if self.feedback == Feedback::Wrong => (
+            _ if feedback == Feedback::Wrong => (
                 Tone::Loss,
                 icon("x"),
                 "That’s not the move — try again".to_string(),
             ),
-            _ if self.waiting => (Tone::Plain, icon("hourglass"), "Good move…".to_string()),
+            _ if waiting => (Tone::Plain, icon("hourglass"), "Good move…".to_string()),
             _ => (
                 Tone::Plain,
                 icon("mouse-pointer-click"),
@@ -1311,7 +1040,6 @@ impl PuzzlesPage {
         let finished = matches!(status, "solved" | "revealed" | "failed");
         let themes = &self.theme_list;
         let facts = finished.then(|| {
-            let puzzle = &board.puzzle;
             v_flex()
                 .gap(px(6.))
                 .text_size(px(13.))
@@ -1374,12 +1102,14 @@ impl PuzzlesPage {
                     .flex_wrap()
                     .child(
                         Button::new("puzzle-hint")
-                            .when(self.hinted, |button| button.primary())
-                            .when(!self.hinted, |button| button.outline())
+                            .when(hinted, |button| button.primary())
+                            .when(!hinted, |button| button.outline())
                             .icon(icon("lightbulb"))
                             .label("Hint")
                             .disabled(!playing)
-                            .on_click(cx.listener(|this, _, _, cx| this.hint(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.puzzle.update(cx, |board, cx| board.hint(cx))
+                            })),
                     )
                     .child(
                         Button::new("puzzle-solution")
@@ -1387,7 +1117,9 @@ impl PuzzlesPage {
                             .icon(icon("eye"))
                             .label("Solution")
                             .disabled(!playing)
-                            .on_click(cx.listener(|this, _, _, cx| this.show_solution(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.puzzle.update(cx, |board, cx| board.show_solution(cx))
+                            })),
                     )
                     .child(
                         Button::new("puzzle-flip")
@@ -1396,8 +1128,7 @@ impl PuzzlesPage {
                             .tooltip("Flip board")
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.flipped = !this.flipped;
-                                this.redraw(cx);
+                                this.puzzle.update(cx, |board, cx| board.flip(cx))
                             })),
                     )
                     .child(
@@ -1569,65 +1300,12 @@ impl PuzzlesPage {
     ) -> AnyElement {
         let board_size = self.layout.board_size(window);
         let mode = Self::mode(cx);
-        let ready = self.on_board.is_some() && self.session.phase() == "ready";
-        let fen = self
-            .on_board
-            .as_ref()
-            .map(|board| board.fen().to_string())
-            .unwrap_or_default();
-        let set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
-        let orientation = self.orientation();
-        let entry = widgets::move_entry(&self.move_input, true, palette)
-            .h(px(36.))
-            .flex_1();
+        let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready";
         let board_column = if ready {
-            v_flex()
+            div()
                 .w(board_size)
                 .flex_none()
-                .gap(px(4.))
-                .child(h_flex().h(px(18.)).children(widgets::material(
-                    &fen,
-                    orientation == Color::Black,
-                    &set,
-                    palette,
-                )))
-                .child(
-                    div()
-                        .rounded(px(6.))
-                        .border_3()
-                        .border_color(if self.flash {
-                            tint(palette.loss, 55.)
-                        } else {
-                            gpui_kit::transparent_black()
-                        })
-                        .m(px(-3.))
-                        .child(self.board.clone()),
-                )
-                .child(
-                    h_flex()
-                        .h(px(36.))
-                        .gap(px(12.))
-                        .children(widgets::material(
-                            &fen,
-                            orientation == Color::White,
-                            &set,
-                            palette,
-                        ))
-                        .child(div().flex_1().pl(px(60.)).child(entry)),
-                )
-                .children(self.move_message.clone().map(|message| {
-                    div()
-                        .text_size(px(12.))
-                        .text_color(palette.text_muted)
-                        .child(message)
-                }))
+                .child(self.puzzle.clone())
                 .into_any_element()
         } else {
             v_flex()

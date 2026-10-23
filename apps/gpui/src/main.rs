@@ -14,6 +14,7 @@ mod played;
 mod power;
 mod prefs;
 mod profile;
+mod puzzle_board;
 mod replay;
 mod settings;
 mod shell;

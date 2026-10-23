@@ -6,10 +6,12 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_core::Level;
 use serde_json::{Value, json};
 
+use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
 use crate::theme::{Palette, tint};
@@ -255,6 +257,81 @@ pub fn hud(
                         .child(what),
                 ),
         )
+}
+
+/// A row of `TrainingList.vue`: an endgame drill or a lesson chapter.
+pub struct TrainingItem {
+    pub id: String,
+    pub title: String,
+    pub done: bool,
+    /// A short label at the end of the row (a level).
+    pub aside: Option<String>,
+}
+
+/// `TrainingList.vue`: grouped practice items with a tick for each finished one.
+pub fn training_list(
+    groups: Vec<(Option<&'static str>, Vec<TrainingItem>)>,
+    active: &str,
+    select: impl Fn(String, &mut Window, &mut App) + Clone + 'static,
+    palette: &Palette,
+) -> impl IntoElement {
+    v_flex()
+        .gap(px(10.))
+        .children(groups.into_iter().map(|(label, items)| {
+            v_flex()
+                .gap(px(4.))
+                .children(label.map(|label| {
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight(650.))
+                        .text_color(palette.highlighted)
+                        .child(label)
+                }))
+                .children(items.into_iter().map(|item| {
+                    let current = item.id == active;
+                    let select = select.clone();
+                    let id = item.id.clone();
+                    h_flex()
+                        .id(SharedString::from(format!("training-{}", item.id)))
+                        .gap(px(8.))
+                        .px(px(10.))
+                        .py(px(7.))
+                        .border_1()
+                        .rounded(px(8.))
+                        .text_size(px(13.))
+                        .cursor_pointer()
+                        .border_color(if current {
+                            palette.primary
+                        } else {
+                            gpui_kit::transparent_black()
+                        })
+                        .when(current, |row| row.bg(tint(palette.primary, 10.)))
+                        .when(!current, |row| row.hover(|row| row.bg(palette.accented)))
+                        .on_click(move |_, window, cx| select(id.clone(), window, cx))
+                        .child(
+                            if item.done {
+                                icon("circle-check")
+                            } else {
+                                icon("circle")
+                            }
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(if item.done {
+                                palette.success
+                            } else {
+                                palette.text_muted
+                            }),
+                        )
+                        .child(div().min_w_0().child(item.title))
+                        .children(item.aside.map(|aside| {
+                            div()
+                                .ml_auto()
+                                .text_size(px(12.))
+                                .text_color(palette.text_muted)
+                                .child(aside)
+                        }))
+                }))
+        }))
 }
 
 /// `ScoreSparkline.vue`: recent scores, oldest first, as a small area with headroom above the best.

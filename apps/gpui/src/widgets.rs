@@ -358,6 +358,24 @@ pub fn side_panel(palette: &Palette) -> Div {
         .bg(palette.elevated)
 }
 
+/// `.section-title`: a panel's or section's heading.
+pub fn heading(text: impl Into<SharedString>, palette: &Palette) -> Div {
+    div()
+        .text_size(px(15.))
+        .font_weight(FontWeight(650.))
+        .text_color(palette.highlighted)
+        .child(text.into())
+}
+
+/// `.section-hint`: a short muted line under a heading.
+pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
+    div()
+        .text_size(px(12.))
+        .line_height(relative(1.5))
+        .text_color(palette.text_muted)
+        .child(text.into())
+}
+
 /// `.section-title` with a muted count beside it.
 pub fn section_title(
     title: &'static str,

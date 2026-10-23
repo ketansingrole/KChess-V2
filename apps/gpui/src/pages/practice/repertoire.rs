@@ -1070,11 +1070,11 @@ impl Render for Repertoire {
                                 Kind::Wrong => Tone::Loss,
                                 Kind::Info => Tone::Plain,
                             },
-                            icon(match feedback.kind {
-                                Kind::Wrong => "x",
-                                Kind::Info => "info",
-                                Kind::Ok | Kind::Done => "check",
-                            }),
+                            match feedback.kind {
+                                Kind::Wrong => icon("x"),
+                                Kind::Info => icon("info"),
+                                Kind::Ok | Kind::Done => icon("check"),
+                            },
                             feedback.text.clone().into(),
                             feedback.detail.clone().map(SharedString::from),
                             None,
