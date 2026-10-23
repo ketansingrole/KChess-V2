@@ -15,6 +15,13 @@ pub const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ
 
 use serde_json::{Map, Value, json};
 
+/// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.
+pub fn random_unit() -> f64 {
+    let mut bytes = [0u8; 8];
+    let _ = getrandom::fill(&mut bytes);
+    (u64::from_le_bytes(bytes) >> 11) as f64 / (1u64 << 53) as f64
+}
+
 /// A count or index from the rules, which write JavaScript numbers: `2` and `2.0` alike.
 pub fn whole(value: &Value) -> u64 {
     value

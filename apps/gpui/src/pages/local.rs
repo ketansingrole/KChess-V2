@@ -156,43 +156,42 @@ impl LocalPage {
             )
         });
         let settings = cx.global::<SettingsHandle>().0.clone();
-        let mut subscriptions =
-            vec![
-                cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
-                    match event {
-                        BoardEvent::Move(uci) => this.play(uci, window, cx),
+        let mut subscriptions = vec![
+            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
+                if let BoardEvent::Move(uci) = event {
+                    this.play(uci, window, cx)
+                }
+            }),
+            cx.subscribe_in(
+                &move_input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.typed_move(window, cx);
                     }
-                }),
-                cx.subscribe_in(
-                    &move_input,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if let InputEvent::PressEnter { .. } = event {
-                            this.typed_move(window, cx);
-                        }
-                    },
-                ),
-                cx.subscribe_in(&settings, window, |this, _, _: &SettingsChanged, _, cx| {
-                    this.after_change(cx)
-                }),
-                cx.subscribe_in(
-                    &clock_layout,
-                    window,
-                    |_, state, _: &SelectEvent<Vec<SharedString>>, _, cx| {
-                        let row = state
-                            .read(cx)
-                            .selected_index(cx)
-                            .map_or(0, |index| index.row);
-                        let layout = if row == 1 {
-                            ClockLayout::Vertical
-                        } else {
-                            ClockLayout::Horizontal
-                        };
-                        crate::prefs::set(cx, "kchess:clock-layout", layout);
-                        cx.notify();
-                    },
-                ),
-            ];
+                },
+            ),
+            cx.subscribe_in(&settings, window, |this, _, _: &SettingsChanged, _, cx| {
+                this.after_change(cx)
+            }),
+            cx.subscribe_in(
+                &clock_layout,
+                window,
+                |_, state, _: &SelectEvent<Vec<SharedString>>, _, cx| {
+                    let row = state
+                        .read(cx)
+                        .selected_index(cx)
+                        .map_or(0, |index| index.row);
+                    let layout = if row == 1 {
+                        ClockLayout::Vertical
+                    } else {
+                        ClockLayout::Horizontal
+                    };
+                    crate::prefs::set(cx, "kchess:clock-layout", layout);
+                    cx.notify();
+                },
+            ),
+        ];
         for input in &clock_inputs {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {

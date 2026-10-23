@@ -198,8 +198,8 @@ impl AnalysisPage {
         let online = cx.global::<OnlineHandle>().0.clone();
         let events = cx.global::<AppCore>().events.clone();
         let subscriptions = vec![
-            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| match event {
-                BoardEvent::Move(uci) => {
+            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
+                if let BoardEvent::Move(uci) = event {
                     this.play(uci, cx);
                 }
             }),

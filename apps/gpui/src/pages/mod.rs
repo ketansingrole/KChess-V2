@@ -7,6 +7,7 @@ pub mod computer_options;
 pub mod history;
 pub mod home;
 pub mod local;
+pub mod practice;
 pub mod puzzles;
 pub mod settings;
 
@@ -128,6 +129,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::History => {
             let view = cx.new(history::HistoryPage::new);
+            focused(view, cx)
+        }
+        Page::Practice => {
+            let view = cx.new(practice::PracticePage::new);
             focused(view, cx)
         }
         Page::Puzzles => {

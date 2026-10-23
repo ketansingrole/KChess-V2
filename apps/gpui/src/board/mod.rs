@@ -49,6 +49,42 @@ pub struct BoardState {
     pub arrows: Vec<Arrow>,
     /// A puzzle hint: the piece to move, ringed under it.
     pub hint: Option<Square>,
+    /// Rings over squares (a drill's target, a right or wrong answer).
+    pub circles: Vec<Circle>,
+    /// Coordinates other than Settings' (the coordinate drills hide or show them themselves).
+    pub coordinates: Option<CoordinateMode>,
+    /// Every square's name on it (`coordinatesOnSquares`).
+    pub square_names: bool,
+}
+
+/// A ring over a square in a Chessground brush color (`yellow`, `green`, `red`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Circle {
+    pub square: Square,
+    pub color: u32,
+}
+
+impl Circle {
+    pub fn yellow(square: Square) -> Circle {
+        Circle {
+            square,
+            color: 0xe68f00,
+        }
+    }
+
+    pub fn green(square: Square) -> Circle {
+        Circle {
+            square,
+            color: 0x15781b,
+        }
+    }
+
+    pub fn red(square: Square) -> Circle {
+        Circle {
+            square,
+            color: 0x882020,
+        }
+    }
 }
 
 /// An arrow from one square to another: Chessground's brush color and opacity, and its line
@@ -127,6 +163,9 @@ impl BoardState {
             preview: false,
             arrows: Vec::new(),
             hint: None,
+            circles: Vec::new(),
+            coordinates: None,
+            square_names: false,
         }
     }
 }
@@ -135,6 +174,8 @@ impl BoardState {
 pub enum BoardEvent {
     /// A move the player made, in UCI (`e2e4`, `e7e8q`, castling as king to rook or two squares).
     Move(String),
+    /// A square was clicked (`select`): the coordinate drills' answers.
+    Select(Square),
 }
 
 struct Drag {
@@ -243,6 +284,7 @@ impl ChessBoard {
         let Some(square) = self.square_at(event.position) else {
             return;
         };
+        cx.emit(BoardEvent::Select(square));
         if let Some(from) = self.selected
             && from != square
             && self.reaches(from, square)
@@ -346,6 +388,35 @@ impl ChessBoard {
     fn cancel_promotion(&mut self, cx: &mut Context<Self>) {
         self.promotion = None;
         cx.notify();
+    }
+
+    /// `coords.squares`: each square's name in its top corner, in the other square color.
+    fn render_square_names(&self, look: &looks::BoardLook) -> Vec<AnyElement> {
+        Square::ALL
+            .into_iter()
+            .map(|square| {
+                let (column, row) = self.cell(square);
+                div()
+                    .absolute()
+                    .left(relative(column as f32 / 8.))
+                    .top(relative(row as f32 / 8.))
+                    .size(relative(0.125))
+                    .flex()
+                    .justify_end()
+                    .pt(relative(0.06 / 8.))
+                    .pr(relative(0.04 / 8.))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(if square.is_light() {
+                        looks::hex(&look.coord_black)
+                    } else {
+                        looks::hex(&look.coord_white)
+                    })
+                    .opacity(0.8)
+                    .child(square.to_string())
+                    .into_any_element()
+            })
+            .collect()
     }
 
     fn render_coordinates(
@@ -579,6 +650,9 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
     if !frame.state.blindfold {
         paint_pieces(&frame, side, &at, window, cx);
     }
+    for circle in &frame.state.circles {
+        paint_circle(circle, at(circle.square), window);
+    }
     for arrow in &frame.state.arrows {
         paint_arrow(
             arrow,
@@ -610,6 +684,28 @@ fn paint_pieces(
             let _ = window.paint_image(cell, cell, Corners::default(), image, 0, false);
         }
     }
+}
+
+/// Chessground's circle (`renderCircle`): a ring 4/64 of a square wide, 0.47 of a square from
+/// its centre.
+fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
+    let side = cell.size.width;
+    let width = side * (4. / 64.);
+    // The stroke is centred on the radius: the ring's outer edge is half a width further out.
+    let outer = side * (0.5 - 2. / 64.) + width / 2.;
+    let center = cell.center();
+    window.paint_quad(
+        gpui_kit::fill(
+            Bounds::new(
+                point(center.x - outer, center.y - outer),
+                size(outer * 2., outer * 2.),
+            ),
+            Hsla::transparent_black(),
+        )
+        .corner_radii(outer)
+        .border_widths(width)
+        .border_color(rgb(circle.color)),
+    );
 }
 
 /// The puzzle hint (`PuzzleBoard.vue`, `HINT_MARK`): a thick green ring on a soft white halo,
@@ -824,11 +920,18 @@ impl Render for ChessBoard {
             )
             .with_priority(1)
         });
-        let coordinates = if self.state.preview {
+        let mut coordinates = if self.state.preview {
             Vec::new()
         } else {
-            self.render_coordinates(frontend.coordinates, look, cx)
+            self.render_coordinates(
+                self.state.coordinates.unwrap_or(frontend.coordinates),
+                look,
+                cx,
+            )
         };
+        if self.state.square_names {
+            coordinates.extend(self.render_square_names(look));
+        }
         let promotion = self.render_promotion(&set, cx);
 
         div()

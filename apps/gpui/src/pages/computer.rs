@@ -106,53 +106,52 @@ impl ComputerPage {
         let level = cx.new(|cx| SelectState::new(labels, selected.map(IndexPath::new), window, cx));
         let move_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
-        let subscriptions =
-            vec![
-                cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
-                    match event {
-                        BoardEvent::Move(uci) => this.play(uci, window, cx),
+        let subscriptions = vec![
+            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
+                if let BoardEvent::Move(uci) = event {
+                    this.play(uci, window, cx)
+                }
+            }),
+            cx.subscribe_in(
+                &level,
+                window,
+                |this, state, event: &SelectEvent<Vec<SharedString>>, _, cx| {
+                    let SelectEvent::Confirm(Some(_)) = event else {
+                        return;
+                    };
+                    if let Some(row) = state.read(cx).selected_index(cx).map(|index| index.row)
+                        && let Some(id) = this.levels.get(row)
+                    {
+                        this.game.state["level"] = json!(id);
+                        this.changed(cx);
                     }
-                }),
-                cx.subscribe_in(
-                    &level,
-                    window,
-                    |this, state, event: &SelectEvent<Vec<SharedString>>, _, cx| {
-                        let SelectEvent::Confirm(Some(_)) = event else {
-                            return;
-                        };
-                        if let Some(row) = state.read(cx).selected_index(cx).map(|index| index.row)
-                            && let Some(id) = this.levels.get(row)
-                        {
-                            this.game.state["level"] = json!(id);
-                            this.changed(cx);
-                        }
-                    },
-                ),
-                cx.observe(
-                    &cx.global::<crate::online::OnlineHandle>().0.clone(),
-                    |this, online, cx| {
-                        let allowed = online.read(cx).assistance_allowed();
-                        if allowed != this.allowed {
-                            this.allowed = allowed;
-                            this.availability(cx);
-                        }
-                    },
-                ),
-                cx.subscribe_in(
-                    &cx.global::<SettingsHandle>().0.clone(),
-                    window,
-                    |this, _, _: &crate::settings::SettingsChanged, _, cx| this.after_change(cx),
-                ),
-                cx.subscribe_in(
-                    &move_input,
-                    window,
-                    |this, _, event: &InputEvent, window, cx| {
-                        if let InputEvent::PressEnter { .. } = event {
-                            this.typed_move(window, cx);
-                        }
-                    },
-                ),
-            ];
+                },
+            ),
+            cx.observe(
+                &cx.global::<crate::online::OnlineHandle>().0.clone(),
+                |this, online, cx| {
+                    let allowed = online.read(cx).assistance_allowed();
+                    if allowed != this.allowed {
+                        this.allowed = allowed;
+                        this.availability(cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &cx.global::<SettingsHandle>().0.clone(),
+                window,
+                |this, _, _: &crate::settings::SettingsChanged, _, cx| this.after_change(cx),
+            ),
+            cx.subscribe_in(
+                &move_input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.typed_move(window, cx);
+                    }
+                },
+            ),
+        ];
         let mut page = ComputerPage {
             game,
             board,

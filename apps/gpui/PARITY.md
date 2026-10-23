@@ -107,9 +107,16 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Theme groups in the picker, an opening's puzzles, Connect or Reconnect from the panel,
       choosing the rated account, voice input
 
+## Practice
+
+- [x] Coordinates (find and name, lengths, sides, some files and ranks, coordinates on every
+      square, pieces), Square colours and Knight paths, with their best scores and averages kept
+      by the core (`runSummary`, `saveRun`)
+- [ ] Endgames, Repertoire and Your mistakes trainers; voice answers
+
 ## Pages not started
 
-Practice, Openings, Studies, Board editor, Play on Lichess, Tournaments, Watch,
+Openings, Studies, Board editor, Play on Lichess, Tournaments, Watch,
 Lichess insights, Following, Players.
 
 ## Packaging

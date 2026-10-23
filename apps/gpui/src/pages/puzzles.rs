@@ -246,8 +246,10 @@ impl PuzzlesPage {
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
         let events = cx.global::<AppCore>().events.clone();
         let subscriptions = vec![
-            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| match event {
-                BoardEvent::Move(uci) => this.on_move(uci, cx),
+            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
+                if let BoardEvent::Move(uci) = event {
+                    this.on_move(uci, cx)
+                }
             }),
             cx.subscribe_in(
                 &move_input,
