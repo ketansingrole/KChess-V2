@@ -8,6 +8,7 @@ mod review;
 
 pub use review::classification_look;
 
+use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
@@ -178,6 +179,8 @@ pub struct AnalysisPage {
     save: Option<Task<()>>,
     wheel: f32,
     focus: FocusHandle,
+    /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
+    voice: VoiceMoves,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -314,6 +317,11 @@ impl AnalysisPage {
                     this.play(uci, cx);
                 }
             }),
+            cx.subscribe(
+                &crate::voice::handle(cx),
+                |this, _, event: &crate::voice::VoiceEvent, cx| this.voice_heard(event, cx),
+            ),
+            cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &move_input,
                 window,
@@ -415,6 +423,7 @@ impl AnalysisPage {
             save: None,
             wheel: 0.,
             focus: cx.focus_handle(),
+            voice: VoiceMoves::new("analysis", cx),
             _subscriptions: subscriptions,
         };
         page.redraw(cx);
@@ -1199,6 +1208,7 @@ impl AnalysisPage {
 
     /// The board shows the position, its last move and the engine's arrows.
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let node = self.node();
         let position = position_of(&node.fen).unwrap_or_default();
         let last_move = now_square(&node.uci, 0..2).zip(now_square(&node.uci, 2..4));
@@ -1288,6 +1298,91 @@ impl AnalysisPage {
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    /// The moves that led here, so that phrases said here learn which move was then played.
+    fn voice_line(&self) -> Vec<String> {
+        self.root
+            .nodes_along(&self.path)
+            .iter()
+            .skip(1)
+            .map(|node| node.san.clone())
+            .collect()
+    }
+
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let (context, line) = (self.path.clone(), self.voice_line());
+        self.voice.sync(
+            &context,
+            Some(line),
+            crate::voice::grammar("ANALYSIS_GRAMMAR"),
+            true,
+            cx,
+        );
+    }
+
+    fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let fen = self.node().fen.clone();
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &fen, true, cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let setup = json!({ "variant": "standard", "fen": fen });
+        let best = (Self::assistance_allowed(cx) && !self.hides_engine())
+            .then(|| self.lines(cx).first().cloned())
+            .flatten()
+            .and_then(|line| line["pv"][0].as_str().map(str::to_string));
+        let mut command: Option<String> = None;
+        let turn = Turn {
+            taking: true,
+            idle: None,
+            immediate: true,
+        };
+        let action = self.voice.hear(
+            &heard,
+            &setup,
+            turn,
+            |text| {
+                let said = crate::game::rules("spokenAnalysisCommand", &[json!(text)]).ok()?;
+                let said = said.as_str()?.to_string();
+                let feedback = if said == "best" && best.is_none() {
+                    "The engine has no move yet.".to_string()
+                } else {
+                    format!("“{text}”")
+                };
+                command = Some(said.clone());
+                Some(Reply {
+                    said,
+                    feedback,
+                    understood: true,
+                })
+            },
+            cx,
+        );
+        match (action, command.as_deref()) {
+            (Action::Play(uci), _) => {
+                self.play(&uci, cx);
+            }
+            (_, Some("back")) => self.back(cx),
+            (_, Some("forward")) => self.forward(cx),
+            (_, Some("start")) => self.go_to_start(cx),
+            (_, Some("end")) => self.go_to_end(cx),
+            (_, Some("best")) => {
+                if let Some(uci) = best {
+                    self.play(&uci, cx);
+                }
+            }
+            (_, Some("flip")) => self.flip(cx),
+            (_, Some("engine")) => self.toggle_engine(cx),
+            _ => {}
+        }
+        cx.notify();
     }
 
     fn toggle_engine(&mut self, cx: &mut Context<Self>) {
@@ -2651,6 +2746,24 @@ impl Render for AnalysisPage {
                     .pl(EVAL_BAR + EVAL_GAP)
                     .gap(px(4.))
                     .child(entry)
+                    .child(board_bar(
+                        &self.voice,
+                        cx.entity().downgrade(),
+                        Access {
+                            write: |this: &mut Self| &mut this.voice,
+                            play: |this: &mut Self, uci, _, cx| {
+                                this.play(uci, cx);
+                            },
+                        },
+                        BoardBar {
+                            id: "analysis-voice",
+                            hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”.",
+                            active: true,
+                            listening: true,
+                            grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
+                        },
+                        cx,
+                    ))
                     .children(self.move_message.clone().map(|message| {
                         div()
                             .text_size(px(12.))
