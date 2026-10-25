@@ -19,7 +19,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] View preferences (`viewPreferences`); earlier `localStorage` keys move over once
 - [x] Unfinished computer and over-the-board games (sessions `computer` and `local`) and
       their Game history entries; chess clock sessions in Game history
-- [ ] Interface zoom and window size and position
+- [x] Window size, position and mode remembered in the profile's `window-state.json` (shared with
+      Electron), back on a display that can show it
+- [ ] Interface zoom
 
 ## Shell
 
@@ -34,7 +36,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Sidebar item spacing (32px rows, 20px icons in Electron)
 - [x] Update button in the top bar
 - [ ] Startup screen, offline badge, "Working…" status
-- [ ] Reopening the window from the Dock on macOS (closing it quits for now)
+- [x] macOS keeps KChess running when the window closes; the Dock opens it again
+- [x] ⌘W, ⌘M, Zoom and full screen act on the window (they were lost while it was busy)
 - [ ] Two-finger swipe between pages, keyboard shortcuts (arrows, Z for zen)
 
 ## Play with Computer

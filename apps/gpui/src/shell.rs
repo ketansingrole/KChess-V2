@@ -485,6 +485,7 @@ impl Workspace {
                 window,
                 |_, _, _: &SettingsChanged, window, cx| crate::theme::apply(window, cx),
             ),
+            crate::window_state::track(crate::profile::data_dir().unwrap_or_default(), window, cx),
         ];
         Workspace {
             sidebar_open: true,

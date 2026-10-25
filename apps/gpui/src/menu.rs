@@ -21,6 +21,16 @@ gpui_kit::actions!(
     ]
 );
 
+/// Act on the window in front. A key reaches its action while that window is being updated, so
+/// the window is changed just after.
+fn on_window(cx: &mut App, change: fn(&mut Window)) {
+    cx.defer(move |cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, _| change(window));
+        }
+    });
+}
+
 /// ⌘K (`prefix` empty) or ⇧⌘P (`>`): the palette, open.
 fn show_palette(prefix: &'static str, cx: &mut App) {
     let Some(palette) = cx
@@ -66,29 +76,14 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &CloseWindow, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.remove_window());
-        }
-    });
-    cx.on_action(|_: &Minimize, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.minimize_window());
-        }
-    });
-    cx.on_action(|_: &Zoom, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.zoom_window());
-        }
-    });
-    cx.on_action(|_: &ToggleFullScreen, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.toggle_fullscreen());
-        }
-    });
-    // Closing the window ends the app, which then saves and closes the core.
+    cx.on_action(|_: &CloseWindow, cx| on_window(cx, |window| window.remove_window()));
+    cx.on_action(|_: &Minimize, cx| on_window(cx, |window| window.minimize_window()));
+    cx.on_action(|_: &Zoom, cx| on_window(cx, |window| window.zoom_window()));
+    cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window| window.toggle_fullscreen()));
+    // Closing the window ends the app, which then saves and closes the core; macOS keeps it
+    // running, as its apps do, and the Dock icon opens the window again.
     cx.on_window_closed(|cx, _| {
-        if cx.windows().is_empty() {
+        if cx.windows().is_empty() && !cfg!(target_os = "macos") {
             cx.quit();
         }
     })
