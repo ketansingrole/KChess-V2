@@ -17,7 +17,10 @@ gpui_kit::actions!(
         ToggleFullScreen,
         Search,
         Commands,
-        OpenSettings
+        OpenSettings,
+        ZoomIn,
+        ZoomOut,
+        ActualSize
     ]
 );
 
@@ -27,6 +30,17 @@ fn on_window(cx: &mut App, change: fn(&mut Window)) {
     cx.defer(move |cx| {
         if let Some(window) = cx.active_window() {
             let _ = window.update(cx, |_, window, _| change(window));
+        }
+    });
+}
+
+/// Interface size one step either way, or back to Auto; changed after the key's dispatch.
+fn zoom(direction: i8, cx: &mut App) {
+    cx.defer(move |cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, cx| {
+                crate::interface_zoom::step_window(direction, window, cx)
+            });
         }
     });
 }
@@ -60,7 +74,17 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-k", Search, None),
         KeyBinding::new("shift-cmd-p", Commands, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
+        // Interface size, as Electron takes them: with or without Shift, and the keypad's.
+        KeyBinding::new("secondary-=", ZoomIn, None),
+        KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary-shift-=", ZoomIn, None),
+        KeyBinding::new("secondary--", ZoomOut, None),
+        KeyBinding::new("secondary-shift--", ZoomOut, None),
+        KeyBinding::new("secondary-0", ActualSize, None),
     ]);
+    cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
+    cx.on_action(|_: &ZoomOut, cx| zoom(-1, cx));
+    cx.on_action(|_: &ActualSize, cx| zoom(0, cx));
     cx.on_action(|_: &Search, cx| show_palette("", cx));
     cx.on_action(|_: &Commands, cx| show_palette(">", cx));
     cx.on_action(|_: &OpenSettings, cx| {
@@ -113,6 +137,10 @@ pub fn init(cx: &mut App) {
         Menu::new("View").items([
             MenuItem::action("Search…", Search),
             MenuItem::action("Run a Command…", Commands),
+            MenuItem::separator(),
+            MenuItem::action("Actual Size", ActualSize),
+            MenuItem::action("Zoom In", ZoomIn),
+            MenuItem::action("Zoom Out", ZoomOut),
             MenuItem::separator(),
             MenuItem::action("Toggle Full Screen", ToggleFullScreen),
         ]),

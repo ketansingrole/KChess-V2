@@ -2711,7 +2711,10 @@ impl Render for AnalysisPage {
                 "½-½"
             }
         });
-        let board_size = self.layout.board_size_in(px(0.), STUDY_BAR, window);
+        // The column always keeps the eval bar's width beside the board.
+        let board_size = self
+            .layout
+            .board_size_in(EVAL_BAR + EVAL_GAP, STUDY_BAR, window);
         let entry = widgets::move_entry(&self.move_input, true, &palette)
             .h(px(36.))
             .flex_1();
@@ -2772,15 +2775,20 @@ impl Render for AnalysisPage {
                     })),
             );
         let tool_body: AnyElement = match tool {
+            // Never shorter than its list's minimum (`.moves-tool { min-height: auto }`).
             Tool::Moves => v_flex()
                 .flex_1()
-                .min_h_0()
                 .gap(px(8.))
                 .child(
                     div()
                         .id("analysis-moves")
                         .flex_1()
-                        .min_h(px(96.))
+                        // Under the board the list has a height of its own (`.moves-wrap`).
+                        .min_h(if self.layout.is_stacked() {
+                            px(240.)
+                        } else {
+                            px(96.)
+                        })
                         .overflow_y_scroll()
                         .track_scroll(&self.moves_scroll)
                         .p(px(8.))
@@ -2872,12 +2880,15 @@ impl Render for AnalysisPage {
         // A click in the panel gives the keys back to the board, before a text field in it
         // (a comment, the explorer's player) takes them for itself.
         let panel = widgets::side_panel(&palette)
+            // A short window scrolls the panel rather than let the move list cover the controls.
+            .id("analysis-panel")
+            .overflow_y_scroll()
             .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 if event.button == MouseButton::Left {
                     window.focus(&this.focus, cx);
                 }
             }))
-            .h(board_size + px(36.) + widgets::STACK_GAP)
+            .h(self.layout.fixed(board_size + px(36.) + widgets::STACK_GAP))
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

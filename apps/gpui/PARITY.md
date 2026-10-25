@@ -90,8 +90,10 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Game review; Offline downloads (the engine, the shared puzzle database card, saved games)
 - [x] My accounts: connect, sync, use for online play, disconnect, with what each keeps
 - [x] Notifications' "Try it" (a sample after 5 seconds, and the system's notification settings)
-- [ ] Interface size: GPUI scales only `rem` sizes (and the display's scale, settable in its tests
-      only), and these pages are laid out in pixels as Electron's CSS is
+- [x] Interface size: Auto (by display) and 50–300%, ⌘+ ⌘− ⌘0 and the View menu, shared with
+      Electron (`interface-zoom.json`); a window zoom patched into GPUI (`vendor/gpui-pre`,
+      `KCHESS-PATCH.md`) scales everything as Electron's page zoom does. Board pages stack the
+      panel under the board on narrow pages, as Electron's do
 - [x] Voice input (privacy settings, a microphone level test, confirm moves, hold to speak,
       keep history) and the voice history (weak words, heard → meant, recent phrases, export,
       clear); the offline voice model's card in Offline downloads

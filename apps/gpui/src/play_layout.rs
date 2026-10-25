@@ -1,10 +1,12 @@
 //! The playing surface every board page shares (`.play-layout` in `main.css`): the board as large
-//! as the window's height and the page's width allow, and a side panel beside it, centred.
+//! as the window's height and the page's width allow, and a side panel beside it, centred. A
+//! narrow page (620px or less, or a portrait window up to 900px, which a large interface size
+//! makes common) stacks the panel under the board instead.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::component::h_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::widgets;
@@ -43,10 +45,15 @@ impl Measured {
         let bounds = Rc::clone(&self.bounds);
         let entity = cx.entity().downgrade();
         canvas(
-            move |area, _, cx| {
+            move |area, window, _| {
                 if bounds.get() != area {
                     bounds.set(area);
-                    let _ = entity.update(cx, |_, cx| cx.notify());
+                    // A notify while drawing schedules no frame: one change of size (a zoom
+                    // step, unlike a resize) would otherwise leave the old layout up.
+                    let entity = entity.clone();
+                    window.on_next_frame(move |_, cx| {
+                        let _ = entity.update(cx, |_, cx| cx.notify());
+                    });
                 }
             },
             |_, _, _, _| {},
@@ -56,10 +63,21 @@ impl Measured {
     }
 }
 
+/// Below this page width the panel goes under the board (`@container page (max-width: 620px)`).
+const STACK_WIDTH: f32 = 620.;
+/// A portrait window stacks up to this width (`@media (max-width: 900px) and (orientation:
+/// portrait)`).
+const PORTRAIT_STACK_WIDTH: f32 = 900.;
+/// What a stacked board leaves of the window's height for the rest (`100dvh - 260px`).
+const STACKED_CHROME: f32 = 260.;
+const STACKED_BOARD_MAX: f32 = 760.;
+
 /// A page's measured area, so its board is sized for the space it has.
 #[derive(Default)]
 pub struct PlayLayout {
     area: Measured,
+    /// The board column's width while the panel is stacked under it, from the last sizing.
+    stacked: Cell<Option<Pixels>>,
 }
 
 impl PlayLayout {
@@ -97,21 +115,73 @@ impl PlayLayout {
         window: &Window,
     ) -> Pixels {
         let page = self.area.size();
-        let width = self.width(window) - extra_width;
+        let page_width = self.width(window);
+        let width = page_width - extra_width;
         let height = if page.height > px(0.) {
             page.height
         } else {
             window.viewport_size().height - crate::shell::TOPBAR_HEIGHT
         } - extra_height;
+        let viewport = window.viewport_size();
+        let portrait = viewport.height > viewport.width;
+        if page_width <= px(STACK_WIDTH) || (portrait && page_width <= px(PORTRAIT_STACK_WIDTH)) {
+            let floor = if portrait { px(260.) } else { px(0.) };
+            let size = (width - side_padding(window) * 2.)
+                .min((viewport.height - px(STACKED_CHROME)).max(floor))
+                .min(px(STACKED_BOARD_MAX))
+                .max(px(160.));
+            self.stacked.set(Some(size + extra_width));
+            return size;
+        }
+        self.stacked.set(None);
         let chrome = PAGE_TOP + PAGE_BOTTOM + widgets::PLAYER_LINE * 2. + widgets::STACK_GAP * 2.;
         let by_height = height - chrome;
         let by_width = width - side_padding(window) * 2. - px(344.);
         by_height.min(by_width).max(px(260.)).min(px(1200.))
     }
 
-    /// The panel's height: the board's column, player lines included.
-    pub fn panel_height(&self, board: Pixels) -> Pixels {
+    /// The panel goes under the board on this page now.
+    pub fn is_stacked(&self) -> bool {
+        self.stacked.get().is_some()
+    }
+
+    /// The panel's height: the board's column, player lines included; its own when stacked.
+    pub fn panel_height(&self, board: Pixels) -> Length {
+        self.fixed(self.panel_height_px(board))
+    }
+
+    /// `height` beside the board, or the panel's own height under it.
+    pub fn fixed(&self, height: Pixels) -> Length {
+        if self.is_stacked() {
+            Length::Auto
+        } else {
+            height.into()
+        }
+    }
+
+    /// The board's column height, for a page that lays out its own row (Watch).
+    pub fn panel_height_px(&self, board: Pixels) -> Pixels {
         board + widgets::PLAYER_LINE * 2. + widgets::STACK_GAP * 2.
+    }
+
+    /// The board's column and the panel, side by side or (stacked) the panel under the board at
+    /// the column's width.
+    fn row(&self, board_column: impl IntoElement, panel: impl IntoElement, window: &Window) -> Div {
+        match self.stacked.get() {
+            Some(column) => v_flex()
+                .items_center()
+                .gap(LAYOUT_GAP)
+                .px(side_padding(window))
+                .child(board_column)
+                .child(div().w(column).max_w_full().child(panel)),
+            None => h_flex()
+                .items_start()
+                .justify_center()
+                .gap(LAYOUT_GAP)
+                .px(side_padding(window))
+                .child(board_column)
+                .child(panel),
+        }
     }
 
     /// The page with a row above the board and panel (the analysis board's study bar).
@@ -131,16 +201,7 @@ impl PlayLayout {
             .overflow_y_scroll()
             .child(self.area.probe(cx))
             .child(div().pt(PAGE_TOP).px(side_padding(window)).child(header))
-            .child(
-                h_flex()
-                    .items_start()
-                    .justify_center()
-                    .gap(LAYOUT_GAP)
-                    .pb(PAGE_BOTTOM)
-                    .px(side_padding(window))
-                    .child(board_column)
-                    .child(panel),
-            )
+            .child(self.row(board_column, panel, window).pb(PAGE_BOTTOM))
     }
 
     /// The page: the board's column and the panel, measured so the next frame fits them.
@@ -160,15 +221,9 @@ impl PlayLayout {
             // Size the board for the new area on the next frame.
             .child(self.area.probe(cx))
             .child(
-                h_flex()
-                    .items_start()
-                    .justify_center()
-                    .gap(LAYOUT_GAP)
+                self.row(board_column, panel, window)
                     .pt(PAGE_TOP)
-                    .pb(PAGE_BOTTOM)
-                    .px(side_padding(window))
-                    .child(board_column)
-                    .child(panel),
+                    .pb(PAGE_BOTTOM),
             )
     }
 }

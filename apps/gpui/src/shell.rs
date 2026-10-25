@@ -500,6 +500,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Workspace {
         crate::theme::apply(window, cx);
+        crate::interface_zoom::apply(window, cx);
         cx.set_global(Navigator(cx.entity().downgrade()));
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
@@ -520,6 +521,13 @@ impl Workspace {
                 |_, _, _: &SettingsChanged, window, cx| crate::theme::apply(window, cx),
             ),
             crate::window_state::track(crate::profile::data_dir().unwrap_or_default(), window, cx),
+            // Auto follows the display: a move to another one may call for another size.
+            cx.observe_window_bounds(window, |_, window, cx| {
+                let wanted = f32::from(crate::interface_zoom::percent(window, cx)) / 100.;
+                if (wanted - window.zoom()).abs() > f32::EPSILON {
+                    crate::interface_zoom::apply(window, cx);
+                }
+            }),
         ];
         Workspace {
             sidebar_open: true,

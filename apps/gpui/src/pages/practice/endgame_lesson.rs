@@ -547,7 +547,7 @@ impl EndgameLesson {
 
     fn render_panel(
         &self,
-        height: Pixels,
+        height: Length,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {

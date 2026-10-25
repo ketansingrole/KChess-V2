@@ -648,7 +648,9 @@ impl Render for EditorPage {
                     .child(error)
             }));
         let panel = widgets::side_panel(&palette)
-            .h(self.layout.panel_height(board_size) + SPARE_ROWS)
+            .h(self
+                .layout
+                .fixed(self.layout.panel_height_px(board_size) + SPARE_ROWS))
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

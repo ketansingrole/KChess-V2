@@ -22,3 +22,5 @@ fuzz/seeds/
 fuzz/corpus/
 fuzz/artifacts/
 fuzz/target/
+# Vendored crates stay as published, apart from their marked patches.
+vendor/

@@ -118,6 +118,9 @@ pub struct SettingsPage {
     area: Measured,
     volume: Entity<SliderState>,
     poll: Entity<SelectState<Vec<SharedString>>>,
+    /// Interface size: Auto (its percent here) and the steps; refilled when either changes.
+    zoom: Entity<SelectState<Vec<SharedString>>>,
+    zoom_shown: Option<(crate::interface_zoom::Setting, u16)>,
     ladder: Vec<Rung>,
     default_levels: Vec<EngineLevel>,
     /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.
@@ -177,7 +180,25 @@ impl SettingsPage {
                 cx,
             )
         });
+        let zoom = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
         let subscriptions = vec![
+            cx.subscribe_in(
+                &zoom,
+                window,
+                |this, state, _: &SelectEvent<Vec<SharedString>>, window, cx| {
+                    use crate::interface_zoom::{PERCENTS, Setting, choose};
+                    let row = state.read(cx).selected_index(cx).map(|index| index.row);
+                    let setting = match row {
+                        Some(0) | None => Setting::Auto,
+                        Some(row) => PERCENTS
+                            .get(row - 1)
+                            .map_or(Setting::Auto, |p| Setting::Percent(*p)),
+                    };
+                    choose(setting, window, cx);
+                    this.zoom_shown = None;
+                    cx.notify();
+                },
+            ),
             // Back from System Settings: the microphone permission may have changed there.
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() && this.section == Section::Voice {
@@ -253,6 +274,8 @@ impl SettingsPage {
             area: Measured::default(),
             volume,
             poll,
+            zoom,
+            zoom_shown: None,
             ladder,
             default_levels,
             engine: None,
@@ -307,6 +330,34 @@ impl SettingsPage {
             db.update(cx, |db, cx| db.refresh(cx));
         }
         cx.notify();
+    }
+
+    /// The Interface size select shows the setting, and what Auto means on this display.
+    fn sync_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::interface_zoom::{PERCENTS, Setting, auto_for};
+        let shown = (
+            cx.global::<crate::interface_zoom::InterfaceZoom>().setting,
+            auto_for(window, cx),
+        );
+        if self.zoom_shown == Some(shown) {
+            return;
+        }
+        self.zoom_shown = Some(shown);
+        let (setting, auto) = shown;
+        let items: Vec<SharedString> = std::iter::once(format!("Auto ({auto}%)").into())
+            .chain(PERCENTS.iter().map(|percent| format!("{percent}%").into()))
+            .collect();
+        let row = match setting {
+            Setting::Auto => 0,
+            Setting::Percent(percent) => PERCENTS
+                .iter()
+                .position(|step| *step == percent)
+                .map_or(0, |index| index + 1),
+        };
+        self.zoom.update(cx, |select, cx| {
+            select.set_items(items, window, cx);
+            select.set_selected_index(Some(IndexPath::new(row)), window, cx);
+        });
     }
 
     /// The width inside a category's card, for the pickers' columns.
@@ -736,6 +787,19 @@ impl SettingsPage {
                     |s, value| s.frontend.appearance = value,
                     palette,
                 ),
+                palette,
+            )
+            .row(
+                "Interface size",
+                Some(
+                    if cfg!(target_os = "macos") {
+                        "⌘ + and ⌘ − adjust it anywhere."
+                    } else {
+                        "Ctrl + and Ctrl − adjust it anywhere."
+                    }
+                    .into(),
+                ),
+                Select::new(&self.zoom).accessibility_label("Interface size"),
                 palette,
             )
             .row(
@@ -1297,6 +1361,7 @@ impl Render for SettingsPage {
             Section::Voice => self.voice(&settings, cx, &palette),
             Section::Data => self.data(cx, &palette),
         };
+        self.sync_zoom(window, cx);
         div()
             .id("settings-page")
             .track_focus(&self.focus)

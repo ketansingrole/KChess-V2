@@ -980,6 +980,14 @@ impl WatchPage {
                             }),
                     ),
             );
+        if self.layout.is_stacked() {
+            return v_flex()
+                .items_center()
+                .gap(LAYOUT_GAP)
+                .child(board_column)
+                .child(div().w(board_size).max_w_full().child(panel))
+                .into_any_element();
+        }
         h_flex()
             .items_start()
             .justify_center()

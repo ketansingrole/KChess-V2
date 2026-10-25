@@ -10,6 +10,7 @@ mod explorer;
 mod export;
 mod game;
 mod game_image;
+mod interface_zoom;
 mod log;
 mod menu;
 mod microphone;
@@ -85,6 +86,7 @@ fn main() {
             return;
         }
         settings::init(cx);
+        interface_zoom::init(profile::data_dir().unwrap_or_default(), cx);
         prefs::init(cx);
         played::init(cx);
         studies::init(cx);

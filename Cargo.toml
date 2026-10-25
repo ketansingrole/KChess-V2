@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts", "crates/kchess-voice", "apps/gpui"]
-# cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml).
-exclude = ["fuzz"]
+# cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
+# their own manifests and lints.
+exclude = ["fuzz", "vendor/gpui-pre"]
 
 [workspace.package]
 version = "0.1.0"
@@ -61,3 +62,8 @@ panic = "abort"
 # The renderer never reads DWARF or the `name` section (a trap reaches the log as its message
 # only); development builds use `dev` and keep both.
 strip = "symbols"
+
+# GPUI with a window zoom (Settings → Interface size, as Electron's page zoom): see
+# vendor/gpui-pre/KCHESS-PATCH.md for what differs from the published 0.3.9.
+[patch.crates-io]
+gpui-pre = { path = "vendor/gpui-pre" }

@@ -794,11 +794,21 @@ impl WatchPage {
                             .on_click(cx.listener(|this, _, _, cx| this.stop(cx))),
                     ),
             );
+        if self.layout.is_stacked() {
+            let column = |child: AnyElement| div().w(board_size).max_w_full().child(child);
+            return v_flex()
+                .items_center()
+                .gap(LAYOUT_GAP)
+                .child(board_column)
+                .child(column(panel.into_any_element()))
+                .child(column(list.into_any_element()))
+                .into_any_element();
+        }
         h_flex()
             .items_start()
             .justify_center()
             .gap(LAYOUT_GAP)
-            .child(list.h(self.layout.panel_height(board_size)))
+            .child(list.h(self.layout.panel_height_px(board_size)))
             .child(board_column)
             .child(panel)
             .into_any_element()
