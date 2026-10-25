@@ -148,6 +148,12 @@ pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// A live Lichess game of the account's on Play on Lichess (`openOngoing`).
+pub fn open_online_game(id: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Online, window, cx);
+    let _ = id;
+}
+
 /// Challenge a player to a casual game on Lichess (`challengeFriend`).
 pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
     open(Page::Online, window, cx);

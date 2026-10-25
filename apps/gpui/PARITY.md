@@ -215,9 +215,20 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Broadcast cover images
 - [ ] Swipe back through a broadcast's game and tournament
 
+## Tournaments
+
+- [x] The arena schedule as a timeline (rows by series, coloured by kind, opened on now), Playable
+      here or All, Refresh
+- [x] A tournament: details, conditions, Join (with an entry code), You are in, rank, Pause or
+      Withdraw, standings by page with the podium, the top game and games in progress (watched),
+      totals; refreshed every 15 seconds while it runs
+- [x] Create arena, and Connect when no account is connected
+- [ ] Go to your game once Play on Lichess is drawn
+- [ ] A masked entry code field (the kit has no masked input)
+
 ## Pages not started
 
-Play on Lichess, Tournaments, Lichess insights.
+Play on Lichess, Lichess insights.
 
 ## Packaging
 

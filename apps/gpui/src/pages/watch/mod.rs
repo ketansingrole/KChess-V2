@@ -81,7 +81,7 @@ enum Pending {
 }
 
 /// `TvChannel`'s icon (`CHANNEL_ICONS`).
-fn channel_icon(key: &str) -> gpui_kit::component::Icon {
+pub fn channel_icon(key: &str) -> gpui_kit::component::Icon {
     match key {
         "best" => icon("crown"),
         "bullet" => icon("zap"),
