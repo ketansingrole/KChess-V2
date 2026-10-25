@@ -616,12 +616,13 @@ mod tests {
         assert_eq!((stats.phrases, stats.unclear, stats.noise), (5, 1, 1));
         // One success among four that either succeeded or missed; commands do not count.
         assert_eq!(stats.rate, 25);
+        // “e” averages 0.4 and “b” 0.425; “four” is heard well, and “back” only once.
         let weak = weak_words(&entries);
         assert_eq!(
             weak.iter()
                 .map(|(word, ..)| word.as_str())
                 .collect::<Vec<_>>(),
-            ["b", "e"]
+            ["e", "b"]
         );
         assert_eq!(mishearings(&entries), [("b four".into(), "e4".into(), 2)]);
     }
