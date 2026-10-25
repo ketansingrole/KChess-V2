@@ -39,6 +39,7 @@ struct Looks {
     piece_sets: Vec<PieceSet>,
     default_piece_set: String,
     default_board: String,
+    animation_ms: std::collections::HashMap<String, f64>,
 }
 
 static LOOKS: LazyLock<Looks> = LazyLock::new(|| match serde_json::from_str(LOOKS_JSON) {
@@ -46,6 +47,12 @@ static LOOKS: LazyLock<Looks> = LazyLock::new(|| match serde_json::from_str(LOOK
     // `looks.json` is checked in and read by this crate's tests.
     Err(cause) => panic!("looks.json does not decode: {cause}"),
 });
+
+/// How long a piece slides for the Settings choice (`animationMs`): `none`, `fast`, `normal`,
+/// `slow`.
+pub fn animation_ms(choice: &str) -> f64 {
+    LOOKS.animation_ms.get(choice).copied().unwrap_or(180.)
+}
 
 /// Every board look, in the order Settings shows them.
 pub fn boards() -> &'static [BoardLook] {

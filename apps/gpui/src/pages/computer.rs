@@ -596,6 +596,21 @@ impl ComputerPage {
             .frontend
             .blindfold
             && self.game.result(&self.host()).is_none();
+        // While Stockfish thinks, a move can be queued for the next turn (`premovable`).
+        let premove = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .premove;
+        if premove
+            && !self.interactive()
+            && self.game.result(&self.host()).is_none()
+            && self.ply() == self.moves().len()
+        {
+            state.premove = Some(self.user_color());
+        }
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         let host = self.host();

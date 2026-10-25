@@ -286,10 +286,20 @@ impl OnlinePage {
                 crate::game::view::position_at(&setup, &moves, moves.len()).as_ref(),
             );
             let movable = (can_play && turn == online.color()).then_some(online.color());
-            (
-                crate::game::view::board_state(&setup, &moves, ply, online.orientation(), movable),
-                online.id().to_string(),
-            )
+            let mut state =
+                crate::game::view::board_state(&setup, &moves, ply, online.orientation(), movable);
+            // On the opponent's turn a move can be queued (`premove && !correspondence`).
+            let premove = cx
+                .global::<crate::settings::SettingsHandle>()
+                .0
+                .read(cx)
+                .settings
+                .frontend
+                .premove;
+            if premove && can_play && movable.is_none() && !online.correspondence() {
+                state.premove = Some(online.color());
+            }
+            (state, online.id().to_string())
         };
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));

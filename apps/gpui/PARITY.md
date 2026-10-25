@@ -55,7 +55,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Saved session and Game history, flushed before quit
 - [x] Sounds (move, capture, low time) at the volume Settings chooses (rodio, Symphonia MP3)
 - [ ] Desktop notification when Stockfish moves in the background
-- [ ] Premoves and piece animation
+- [x] Premoves (Chessground's targets, queued in blue, played when legal on your turn, a queen
+      for a premove's promotion when Settings say so) and pieces sliding to their squares at the
+      Settings speed
 - [x] Review game: the game on the analysis board at the move shown, reviewed
 - [x] Export: animated GIF of the game, PNG of the position shown, PGN file
 - [ ] Voice input
@@ -256,7 +258,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Tournament, New game; Reconnect while the connection is down
 - [x] The chat dock: the opponent's room and spectators', Lichess's quick messages, unread count
 - [x] Desktop notifications with Electron's Settings rules (in-app while KChess is in front)
-- [ ] Premoves and blindfold play on this board
+- [x] Premoves on this board (not in correspondence)
+- [ ] Blindfold play on this board
 - [ ] The connection panel's ping graph (the line shows the latest round trip)
 
 ## Pages not started

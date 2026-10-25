@@ -24,6 +24,9 @@ const SELECTED: u32 = 0x14551e80; // rgba(20, 85, 30, 0.5)
 const DEST_DOT: u32 = 0x14551e80; // rgba(20, 85, 30, 0.5)
 const DEST_CORNER: u32 = 0x1455004d; // rgba(20, 85, 0, 0.3)
 const DEST_HOVER: u32 = 0x14551e4d; // rgba(20, 85, 30, 0.3)
+/// Chessground's queued premove and its targets (`current-premove`, `premove-dest`).
+const PREMOVE: u32 = 0x141e5580; // rgba(20, 30, 85, 0.5)
+const PREMOVE_DOT: u32 = 0x141e5580;
 /// `--board-radius`.
 const BOARD_RADIUS: Pixels = px(14.);
 /// A press moves this far before it is a drag rather than a click.
@@ -59,6 +62,8 @@ pub struct BoardState {
     pub edit: Option<EditTool>,
     /// A review's label on the move just played (`BoardMoveFeedback.vue`).
     pub badge: Option<Badge>,
+    /// The side that may queue a move for its next turn while the other side is to move.
+    pub premove: Option<Color>,
 }
 
 /// A move's label as a badge over its square's top-right corner.
@@ -211,6 +216,7 @@ impl BoardState {
             square_names: false,
             edit: None,
             badge: None,
+            premove: None,
         }
     }
 }
@@ -271,6 +277,100 @@ struct Drag {
     moved: bool,
 }
 
+/// Pieces sliding from one square to another.
+struct Animation {
+    moves: Vec<(Piece, Square, Square)>,
+    start: std::time::Instant,
+    duration: std::time::Duration,
+}
+
+impl Animation {
+    /// How far along, eased as Chessground eases (cubic in, then out).
+    fn progress(&self) -> f32 {
+        let t = (self.start.elapsed().as_secs_f32() / self.duration.as_secs_f32()).min(1.);
+        if t < 0.5 {
+            4. * t * t * t
+        } else {
+            (t - 1.) * (2. * t - 2.) * (2. * t - 2.) + 1.
+        }
+    }
+}
+
+/// The pieces that moved from `old` to `new`: each piece that left a square, paired with the
+/// nearest square a like piece arrived on. More than a few is a new position, not a move.
+fn slides(old: &Board, new: &Board) -> Vec<(Piece, Square, Square)> {
+    let left: Vec<(Square, Piece)> = old
+        .occupied()
+        .into_iter()
+        .filter_map(|square| {
+            let piece = old.piece_at(square)?;
+            (new.piece_at(square) != Some(piece)).then_some((square, piece))
+        })
+        .collect();
+    let mut arrived: Vec<(Square, Piece)> = new
+        .occupied()
+        .into_iter()
+        .filter_map(|square| {
+            let piece = new.piece_at(square)?;
+            (old.piece_at(square) != Some(piece)).then_some((square, piece))
+        })
+        .collect();
+    let mut moves = Vec::new();
+    for (from, piece) in left {
+        let nearest = arrived
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, p))| *p == piece)
+            .min_by_key(|(_, (to, _))| from.distance(*to))
+            .map(|(index, _)| index);
+        if let Some(index) = nearest {
+            let (to, _) = arrived.remove(index);
+            moves.push((piece, from, to));
+        }
+    }
+    if moves.len() > 4 { Vec::new() } else { moves }
+}
+
+/// Where a piece could go next turn, whatever stands in the way (Chessground's `premove`).
+fn premove_targets(pieces: &Board, from: Square) -> Vec<Square> {
+    let Some(piece) = pieces.piece_at(from) else {
+        return Vec::new();
+    };
+    let (x1, y1) = (i32::from(from.file()), i32::from(from.rank()));
+    let forward = if piece.color == Color::White { 1 } else { -1 };
+    let start_rank = if piece.color == Color::White { 1 } else { 6 };
+    let fits = |x2: i32, y2: i32| -> bool {
+        let (dx, dy) = ((x2 - x1).abs(), (y2 - y1).abs());
+        match piece.role {
+            Role::Pawn => {
+                (dx == 0 && y2 - y1 == forward)
+                    || (dx == 0 && y1 == start_rank && y2 - y1 == 2 * forward)
+                    || (dx == 1 && y2 - y1 == forward)
+            }
+            Role::Knight => (dx == 1 && dy == 2) || (dx == 2 && dy == 1),
+            Role::Bishop => dx == dy,
+            Role::Rook => dx == 0 || dy == 0,
+            Role::Queen => dx == dy || dx == 0 || dy == 0,
+            Role::King => {
+                let home = if piece.color == Color::White { 0 } else { 7 };
+                let castling = y1 == home && y2 == home && x1 == 4 && (x2 == 2 || x2 == 6) && {
+                    let rook = if x2 == 6 { 7 } else { 0 };
+                    pieces.piece_at(Square::from_coords(File::new(rook), Rank::new(home as u32)))
+                        == Some(Piece {
+                            color: piece.color,
+                            role: Role::Rook,
+                        })
+                };
+                (dx <= 1 && dy <= 1) || castling
+            }
+        }
+    };
+    Square::ALL
+        .into_iter()
+        .filter(|&to| to != from && fits(i32::from(to.file()), i32::from(to.rank())))
+        .collect()
+}
+
 /// A shape the player drew with the right button: an arrow, or a circle where `from == to`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Drawn {
@@ -309,6 +409,11 @@ pub struct ChessBoard {
     drawn: Vec<Drawn>,
     /// A drawing under way: where it started, its brush, and the square under the pointer.
     drawing: Option<(Square, &'static str, Option<Square>)>,
+    /// A move queued for the next turn (a premove).
+    queued: Option<(Square, Square)>,
+    /// Pieces sliding to where the new position put them.
+    animation: Option<Animation>,
+    _animating: Option<Task<()>>,
     selected: Option<Square>,
     drag: Option<Drag>,
     /// A pawn move waiting for its promotion piece.
@@ -324,6 +429,9 @@ impl ChessBoard {
             pieces: board_of(&state.fen),
             drawn: Vec::new(),
             drawing: None,
+            queued: None,
+            animation: None,
+            _animating: None,
             state,
             selected: None,
             drag: None,
@@ -338,7 +446,11 @@ impl ChessBoard {
             return;
         }
         if state.fen != self.state.fen {
-            self.pieces = board_of(&state.fen);
+            let next = board_of(&state.fen);
+            if !state.preview {
+                self.animate(&next, state.orientation, cx);
+            }
+            self.pieces = next;
             self.promotion = None;
         }
         // A selection survives only while its piece can still move.
@@ -349,7 +461,74 @@ impl ChessBoard {
             self.selected = None;
         }
         self.state = state;
+        self.play_queued(cx);
         cx.notify();
+    }
+
+    /// Slide the pieces from `self.pieces` to `next` (Chessground's `animate`): each piece that
+    /// left a square goes to the nearest square a like piece arrived on.
+    fn animate(&mut self, next: &Board, orientation: Color, cx: &mut Context<Self>) {
+        let choice = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .piece_animation;
+        let choice = serde_json::to_value(choice)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "normal".into());
+        let duration = looks::animation_ms(&choice);
+        let moves = slides(&self.pieces, next);
+        // Same side up: a flipped board is redrawn, not slid.
+        if duration <= 0. || moves.is_empty() || orientation != self.state.orientation {
+            self.animation = None;
+            return;
+        }
+        self.animation = Some(Animation {
+            moves,
+            start: std::time::Instant::now(),
+            duration: std::time::Duration::from_secs_f64(duration / 1000.),
+        });
+        self._animating = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(16))
+                    .await;
+                let going = this
+                    .update(cx, |this, cx| {
+                        cx.notify();
+                        let done = this.animation.as_ref().is_none_or(|animation| {
+                            animation.start.elapsed() >= animation.duration
+                        });
+                        if done {
+                            this.animation = None;
+                        }
+                        !done
+                    })
+                    .unwrap_or(false);
+                if !going {
+                    return;
+                }
+            }
+        }));
+    }
+
+    /// A queued premove plays once its side is to move and it is legal; otherwise it is dropped.
+    fn play_queued(&mut self, cx: &mut Context<Self>) {
+        let Some((from, to)) = self.queued else {
+            return;
+        };
+        let mine = self.pieces.piece_at(from).map(|piece| piece.color);
+        if self.state.movable.is_some() && self.state.movable == mine {
+            self.queued = None;
+            if self.reaches(from, to) {
+                self.play_move(from, to, true, cx);
+            }
+        } else if self.state.premove.is_none() || self.state.premove != mine {
+            self.queued = None;
+        }
     }
 
     fn square_size(&self) -> Pixels {
@@ -391,6 +570,16 @@ impl ChessBoard {
             .is_some_and(|targets| !targets.is_empty())
     }
 
+    /// A premove from `from` to `to` can be queued.
+    fn premoves_to(&self, from: Square, to: Square) -> bool {
+        self.state.movable.is_none()
+            && self
+                .pieces
+                .piece_at(from)
+                .is_some_and(|piece| Some(piece.color) == self.state.premove)
+            && premove_targets(&self.pieces, from).contains(&to)
+    }
+
     fn reaches(&self, from: Square, to: Square) -> bool {
         self.state
             .dests
@@ -414,6 +603,12 @@ impl ChessBoard {
             return self.edit_press(tool, square, event.position, cx);
         }
         cx.emit(BoardEvent::Select(square));
+        // A press while a premove waits takes it back (Chessground's `cancelPremove`).
+        if self.queued.take().is_some() {
+            self.selected = None;
+            cx.notify();
+            return;
+        }
         if let Some(from) = self.selected
             && from != square
             && self.reaches(from, square)
@@ -422,9 +617,20 @@ impl ChessBoard {
             self.play(from, square, cx);
             return;
         }
+        if let Some(from) = self.selected
+            && from != square
+            && self.premoves_to(from, square)
+        {
+            self.selected = None;
+            self.queued = Some((from, square));
+            cx.notify();
+            return;
+        }
         match self.pieces.piece_at(square) {
             Some(piece)
-                if Some(piece.color) == self.state.movable && self.can_move_from(square) =>
+                if (Some(piece.color) == self.state.movable && self.can_move_from(square))
+                    || (Some(piece.color) == self.state.premove
+                        && self.state.movable.is_none()) =>
             {
                 self.drag = Some(Drag {
                     from: square,
@@ -447,6 +653,10 @@ impl ChessBoard {
     fn start_drawing(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         if self.state.preview || self.state.edit.is_some() {
             return;
+        }
+        // The right button also takes back a queued premove, as on Lichess.
+        if self.queued.take().is_some() {
+            cx.notify();
         }
         if let Some(square) = self.square_at(event.position) {
             self.drawing = Some((square, drawing_brush(&event.modifiers), Some(square)));
@@ -570,6 +780,10 @@ impl ChessBoard {
                     self.selected = None;
                     self.play(drag.from, to, cx);
                 }
+                Some(to) if to != drag.from && self.premoves_to(drag.from, to) => {
+                    self.selected = None;
+                    self.queued = Some((drag.from, to));
+                }
                 // Dropped back on its square: still selected, as Chessground keeps it.
                 Some(to) if to == drag.from => {}
                 _ => self.selected = None,
@@ -585,6 +799,11 @@ impl ChessBoard {
 
     /// Play a move the player made; a pawn reaching the last rank asks which piece it becomes.
     fn play(&mut self, from: Square, to: Square, cx: &mut Context<Self>) {
+        self.play_move(from, to, false, cx);
+    }
+
+    /// Play a move; a premove's promotion becomes a queen when Settings say so for premoves.
+    fn play_move(&mut self, from: Square, to: Square, premove: bool, cx: &mut Context<Self>) {
         let promotes = self.pieces.piece_at(from).is_some_and(|piece| {
             piece.role == Role::Pawn && matches!(to.rank(), Rank::First | Rank::Eighth)
         });
@@ -596,7 +815,7 @@ impl ChessBoard {
                 .settings
                 .frontend
                 .promotion;
-            if mode == PromotionMode::Queen {
+            if mode == PromotionMode::Queen || (premove && mode == PromotionMode::Premove) {
                 cx.emit(BoardEvent::Move(format!("{from}{to}q")));
             } else {
                 self.promotion = Some((from, to));
@@ -827,6 +1046,11 @@ struct Frame {
     hovered: Option<Square>,
     show_dests: bool,
     set: String,
+    /// The queued premove's squares, and the targets of a piece picked for one.
+    queued: Option<(Square, Square)>,
+    premove_dests: Vec<Square>,
+    /// Squares whose pieces are sliding in, drawn on top as they move.
+    sliding: Vec<Square>,
 }
 
 fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
@@ -877,6 +1101,24 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
             }
         }
     }
+    if let Some((from, to)) = frame.queued {
+        fill(window, from, PREMOVE);
+        fill(window, to, PREMOVE);
+    }
+    if frame.show_dests {
+        for &to in &frame.premove_dests {
+            let cell = at(to);
+            let diameter = side * 0.311;
+            let dot = Bounds::new(
+                point(
+                    cell.center().x - diameter / 2.,
+                    cell.center().y - diameter / 2.,
+                ),
+                size(diameter, diameter),
+            );
+            window.paint_quad(gpui_kit::fill(dot, rgba(PREMOVE_DOT)).corner_radii(diameter / 2.));
+        }
+    }
     if let Some(square) = frame.state.hint {
         paint_hint(at(square), window);
     }
@@ -906,7 +1148,7 @@ fn paint_pieces(
 ) {
     let pixels = (side.as_f32() * window.scale_factor()).round() as u32;
     for square in frame.pieces.occupied() {
-        if Some(square) == frame.lifted {
+        if Some(square) == frame.lifted || frame.sliding.contains(&square) {
             continue;
         }
         let Some(piece) = frame.pieces.piece_at(square) else {
@@ -1090,16 +1332,34 @@ impl Render for ChessBoard {
             .filter(|drag| drag.moved)
             .and_then(|drag| self.square_at(drag.position));
         let mut shown = self.state.clone();
-        let preview = self.drawing.and_then(|(from, brush, to)| {
-            to.map(|to| Drawn { from, to, brush })
-        });
+        let preview = self
+            .drawing
+            .and_then(|(from, brush, to)| to.map(|to| Drawn { from, to, brush }));
         for shape in self.drawn.iter().chain(preview.iter()) {
             if shape.from == shape.to {
                 shown.circles.push(Circle::brush(shape.brush, shape.from));
             } else {
-                shown.arrows.push(Arrow::brush(shape.brush, shape.from, shape.to));
+                shown
+                    .arrows
+                    .push(Arrow::brush(shape.brush, shape.from, shape.to));
             }
         }
+        let premove_dests = self
+            .selected
+            .filter(|&square| {
+                self.state.movable.is_none()
+                    && self
+                        .pieces
+                        .piece_at(square)
+                        .is_some_and(|piece| Some(piece.color) == self.state.premove)
+            })
+            .map(|square| premove_targets(&self.pieces, square))
+            .unwrap_or_default();
+        let sliding: Vec<Square> = self
+            .animation
+            .as_ref()
+            .map(|animation| animation.moves.iter().map(|(_, _, to)| *to).collect())
+            .unwrap_or_default();
         let frame = Frame {
             state: shown,
             pieces: self.pieces.clone(),
@@ -1108,6 +1368,9 @@ impl Render for ChessBoard {
             hovered,
             show_dests: frontend.show_legal_moves,
             set: set.clone(),
+            queued: self.queued,
+            premove_dests,
+            sliding,
         };
         let bounds = Rc::clone(&self.bounds);
         let side = self.square_size();
@@ -1153,6 +1416,33 @@ impl Render for ChessBoard {
                     .opacity(0.3),
             )
         });
+        // Sliding pieces, between where they were and where they land.
+        let sliding: Vec<AnyElement> = if self.state.blindfold {
+            Vec::new()
+        } else {
+            self.animation
+                .as_ref()
+                .map(|animation| {
+                    let t = animation.progress();
+                    animation
+                        .moves
+                        .iter()
+                        .map(|(piece, from, to)| {
+                            let (c1, r1) = self.cell(*from);
+                            let (c2, r2) = self.cell(*to);
+                            let column = c1 as f32 + (c2 as f32 - c1 as f32) * t;
+                            let row = r1 as f32 + (r2 as f32 - r1 as f32) * t;
+                            img(SharedString::from(looks::piece_path(&set, *piece)))
+                                .absolute()
+                                .left(relative(column / 8.))
+                                .top(relative(row / 8.))
+                                .size(relative(0.125))
+                                .into_any_element()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         let held = self.drag.as_ref().filter(|drag| drag.moved).map(|drag| {
             deferred(
                 img(SharedString::from(looks::piece_path(&set, drag.piece)))
@@ -1261,6 +1551,7 @@ impl Render for ChessBoard {
                 .size_full(),
             )
             .children(ghost)
+            .children(sliding)
             .children(coordinates)
             .children(badge)
             .on_mouse_down(
@@ -1356,5 +1647,36 @@ mod drawing_tests {
         assert_eq!(shapes, [arrow("red")]);
         toggle_shape(&mut shapes, arrow("red"));
         assert!(shapes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod premove_tests {
+    use super::{board_of, premove_targets, slides};
+    use shakmaty::Square;
+
+    #[test]
+    fn premoves_ignore_what_stands_in_the_way() {
+        let start = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        let rook = premove_targets(&start, Square::A1);
+        assert!(rook.contains(&Square::A8) && rook.contains(&Square::H1));
+        let pawn = premove_targets(&start, Square::E2);
+        assert_eq!(pawn.len(), 4); // e3, e4, d3, f3
+        let king = premove_targets(&start, Square::E1);
+        assert!(king.contains(&Square::G1) && king.contains(&Square::C1));
+    }
+
+    #[test]
+    fn a_move_slides_its_piece_and_a_new_game_jumps() {
+        let before = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        let after = board_of("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+        let moves = slides(&before, &after);
+        assert_eq!(moves.len(), 1);
+        assert_eq!((moves[0].1, moves[0].2), (Square::E2, Square::E4));
+        let castled = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ1RK1 b kq - 0 1");
+        let castle = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQK2R w KQkq - 0 1");
+        assert_eq!(slides(&castle, &castled).len(), 2);
+        let empty = board_of("8/8/8/8/8/8/8/8 w - - 0 1");
+        assert!(slides(&empty, &before).is_empty());
     }
 }
