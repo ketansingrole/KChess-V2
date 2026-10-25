@@ -3676,6 +3676,7 @@ dependencies = [
  "kchess-contracts",
  "kchess-core",
  "kchess-domain",
+ "notify-rust",
  "reqwest",
  "resvg 0.46.0",
  "rodio",

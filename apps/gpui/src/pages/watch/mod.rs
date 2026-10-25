@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::{AppCore, CoreEvent};
-use crate::online::{OnlineHandle, Phase};
+use crate::online::OnlineHandle;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Look, Pill};
@@ -187,7 +187,7 @@ impl WatchPage {
     }
 
     fn playing_own_game(cx: &App) -> bool {
-        cx.global::<OnlineHandle>().0.read(cx).phase == Phase::Playing
+        cx.global::<OnlineHandle>().0.read(cx).busy_with_game()
     }
 
     /// The page was shown: channels, presence and broadcasts afresh, and the feed again.

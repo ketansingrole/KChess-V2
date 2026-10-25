@@ -329,7 +329,7 @@ impl Model {
         Some(Value::Object(out))
     }
 
-    #[cfg(test)]
+    /// A board with no game (`onlineGameState()`).
     pub fn idle() -> Model {
         Model {
             online_phase: "idle".into(),

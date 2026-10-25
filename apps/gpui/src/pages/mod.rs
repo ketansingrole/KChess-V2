@@ -10,6 +10,7 @@ pub mod history;
 pub mod home;
 pub mod insights;
 pub mod local;
+pub mod online;
 pub mod openings;
 pub mod players;
 pub mod practice;
@@ -22,7 +23,6 @@ pub mod watch;
 
 use std::collections::HashMap;
 
-use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -184,6 +184,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
             let view = cx.new(|cx| friends::FriendsPage::new(window, cx));
             focused(view, cx)
         }
+        Page::Online => {
+            let view = cx.new(|cx| online::OnlinePage::new(window, cx));
+            focused(view, cx)
+        }
         Page::Insights => {
             let view = cx.new(|cx| insights::InsightsPage::new(window, cx));
             focused(view, cx)
@@ -200,25 +204,5 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
             let view = cx.new(|cx| players::PlayersPage::new(window, cx));
             focused(view, cx)
         }
-        page => Shown {
-            view: cx.new(|_| Placeholder { page }).into(),
-            focus: None,
-        },
-    }
-}
-
-/// A page this app does not draw yet.
-struct Placeholder {
-    page: Page,
-}
-
-impl Render for Placeholder {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .text_color(cx.theme().muted_foreground)
-            .child(format!("{:?}", self.page))
     }
 }

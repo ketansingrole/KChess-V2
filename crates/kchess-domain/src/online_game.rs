@@ -17,6 +17,12 @@ pub use model::variant_from_lichess;
 
 type Out = Result<Value, String>;
 
+/// The state of a board with no game (`onlineGameState()` and the class's private fields), for
+/// hosts that keep the state as JSON.
+pub fn idle_state() -> Value {
+    serde_json::to_value(Model::idle()).unwrap_or(Value::Null)
+}
+
 static NULL: Value = Value::Null;
 
 /// This module's methods for `api::call`; None when the method is not one of them.

@@ -188,8 +188,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] The players followed: ratings, online or playing (presence every 20 seconds), the record
       against them, their synced games; Follow player, Import from Lichess, Sync all, and each
       player's Games, Sync, Clear data and Remove
-- [x] The player link and Watch
-- [ ] Challenge once Play on Lichess is drawn
+- [x] The player link, Watch and Challenge
 
 ## Players
 
@@ -200,8 +199,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Follow player, Message (with Reconnect when the login lacks the permission)
 - [ ] Rating history as one chart of every speed with toggles (one speed at a time here, as on
       Home)
-- [x] Watch
-- [ ] Challenge once Play on Lichess is drawn
+- [x] Watch and Challenge
 
 ## Watch
 
@@ -223,7 +221,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Withdraw, standings by page with the podium, the top game and games in progress (watched),
       totals; refreshed every 15 seconds while it runs
 - [x] Create arena, and Connect when no account is connected
-- [ ] Go to your game once Play on Lichess is drawn
+- [x] Go to your game
 - [ ] A masked entry code field (the kit has no masked input)
 
 ## Lichess insights
@@ -232,9 +230,28 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       rating, length, day, time of day and ending; openings with the best and weakest; filtered by
       account, speed, period and rated or casual; read again when shown
 
+## Play on Lichess
+
+- [x] The live game app-wide: the Rust rules' state machine (`onlineGame*`) driven as
+      `OnlineGame` drives it, its clock, sounds, the low-time alert, and a pairing taking you to
+      the board; resumed after a restart
+- [x] Find a game: account, real time or correspondence, variant, time control, increment, colour,
+      rated, a direct challenge (unlocking Blitz), what Lichess blocks, the summary and data used
+- [x] Seeking with Cancel; challenges in and out (accept, decline with a reason, withdraw) and the
+      lobby's status; games in progress with their boards, Play/Open, polled for "your move"
+- [x] The game: players with ratings, clocks and connections (ping, online, away), the moves and
+      reviewing them, first-move deadline, draw and takeback offers, the opponent leaving (claim the
+      win or a draw), berserk, takeback, offer draw, resign (asked first), abort, close a
+      correspondence game; after it: rematch (and the opponent's offer), Analyse, Export,
+      Tournament, New game; Reconnect while the connection is down
+- [x] The chat dock: the opponent's room and spectators', Lichess's quick messages, unread count
+- [x] Desktop notifications with Electron's Settings rules (in-app while KChess is in front)
+- [ ] Premoves and blindfold play on this board
+- [ ] The connection panel's ping graph (the line shows the latest round trip)
+
 ## Pages not started
 
-Play on Lichess.
+None.
 
 ## Packaging
 

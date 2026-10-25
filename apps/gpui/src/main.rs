@@ -13,6 +13,7 @@ mod game_image;
 mod log;
 mod menu;
 mod name_dialog;
+mod notifications;
 mod online;
 mod pages;
 mod play_layout;

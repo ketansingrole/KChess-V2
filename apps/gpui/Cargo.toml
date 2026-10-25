@@ -40,6 +40,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # release's SHA-256 sums; both already in Cargo.lock through the core.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
 sha2 = { version = "0.11", default-features = false }
+# Desktop notifications while KChess is in the background (already in Cargo.lock through GPUI).
+notify-rust = "4.18"
 
 [lints]
 workspace = true

@@ -201,6 +201,20 @@ impl TournamentsPage {
         cx.notify();
     }
 
+    /// A tournament known only by its id (a game's): Swiss if KChess knows it as one, else arena.
+    pub fn show_known_event(&mut self, id: &str, cx: &mut Context<Self>) {
+        let swiss = self
+            .joined
+            .iter()
+            .any(|entry| entry["id"] == json!(id) && entry["system"] == json!("swiss"))
+            || self.list.as_ref().is_some_and(|list| {
+                list["swiss"]
+                    .as_array()
+                    .is_some_and(|swiss| swiss.iter().any(|entry| entry["id"] == json!(id)))
+            });
+        self.show_event(if swiss { "swiss" } else { "arena" }, id, cx);
+    }
+
     fn close_event(&mut self, cx: &mut Context<Self>) {
         self.open = None;
         self.scrolled_to_now = false;

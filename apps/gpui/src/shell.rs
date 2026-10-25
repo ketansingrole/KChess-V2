@@ -108,6 +108,12 @@ struct Navigator(WeakEntity<Workspace>);
 
 impl Global for Navigator {}
 
+/// The page shown, once the window is open.
+pub fn current_page(cx: &App) -> Option<Page> {
+    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
+    Some(workspace.read(cx).pages.current())
+}
+
 /// Open `page` as the sidebar would.
 pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     let Some(workspace) = cx
@@ -150,14 +156,42 @@ pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
 
 /// A live Lichess game of the account's on Play on Lichess (`openOngoing`).
 pub fn open_online_game(id: &str, window: &mut Window, cx: &mut App) {
+    let online = crate::online::handle(cx);
+    let (shown, account) = {
+        let online = online.read(cx);
+        (
+            online.id() == id && online.phase == crate::online::Phase::Playing,
+            crate::accounts::handle(cx)
+                .read(cx)
+                .active(cx)
+                .unwrap_or_default(),
+        )
+    };
+    // The game already on the board needs no new stream.
+    if !shown {
+        let id = id.to_string();
+        online.update(cx, |online, cx| online.open(&account, &id, cx));
+    }
     open(Page::Online, window, cx);
-    let _ = id;
+}
+
+/// A tournament's page (`backToTournament`).
+pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Tournaments, window, cx);
+    if let Some(page) = view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments, cx)
+    {
+        let id = id.to_string();
+        page.update(cx, |page, cx| page.show_known_event(&id, cx));
+    }
 }
 
 /// Challenge a player to a casual game on Lichess (`challengeFriend`).
 pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
     open(Page::Online, window, cx);
-    let _ = username;
+    if let Some(page) = view_of::<crate::pages::online::OnlinePage>(Page::Online, cx) {
+        let username = username.to_string();
+        page.update(cx, |page, cx| page.challenge(&username, window, cx));
+    }
 }
 
 /// Game history's Lichess tab (`/history?source=lichess`).
@@ -428,6 +462,14 @@ impl Workspace {
             && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
         {
             analysis.update(cx, |analysis, cx| analysis.attach(cx));
+        }
+        if page == Page::Online
+            && current != Page::Online
+            && let Some(online) = self
+                .pages
+                .view_of::<crate::pages::online::OnlinePage>(Page::Online)
+        {
+            online.update(cx, |online, cx| online.shown(cx));
         }
         if page == Page::Insights
             && current != Page::Insights
