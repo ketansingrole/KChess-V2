@@ -101,6 +101,15 @@ impl Control {
         }
     }
 
+    /// A run asked to start waits for voice (`prepare`): true when it can start now. `waiting`
+    /// stays set while voice loads, so the page starts the run once it is ready, and clears
+    /// when voice is off or failed.
+    pub fn gate(&self, waiting: &mut bool, cx: &App) -> bool {
+        let ready = self.ready(cx);
+        *waiting = ready == Some(false);
+        ready == Some(true)
+    }
+
     /// The page's bar; `control` reaches this control in the page to switch it.
     pub fn bar<V: 'static>(
         &self,
@@ -135,5 +144,29 @@ impl Control {
             },
             cx,
         )
+    }
+}
+
+/// A drill's phrases (`logAnswer`): the question asked is known, so each says what was meant,
+/// and a phrase that tries the same question again after a miss points back to it.
+#[derive(Default)]
+pub struct DrillLog {
+    last_miss: Option<(String, super::Entry)>,
+}
+
+impl DrillLog {
+    /// `asked` names the question (the run and its number).
+    pub fn log(&mut self, attempt: &super::Attempt, asked: &str, cx: &App) {
+        let retry = self
+            .last_miss
+            .as_ref()
+            .filter(|(question, _)| question == asked)
+            .map(|(_, entry)| entry.clone());
+        let entry = super::log(attempt, retry, cx);
+        if !matches!(attempt.outcome, "correct" | "played")
+            && let Some(entry) = entry
+        {
+            self.last_miss = Some((asked.to_string(), entry));
+        }
     }
 }

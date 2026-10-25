@@ -569,9 +569,34 @@ pub fn pills(
     compact: bool,
     palette: &Palette,
 ) -> impl IntoElement {
+    pill_row(id, tabs, selected, choose, compact, false, palette)
+}
+
+/// Full-width pills that take another row when they do not fit on one, each row's pills
+/// filling it (the coordinates drill's modes).
+pub fn wrapping_pills(
+    id: &'static str,
+    tabs: Vec<Pill>,
+    selected: usize,
+    choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    palette: &Palette,
+) -> impl IntoElement {
+    pill_row(id, tabs, selected, choose, false, true, palette)
+}
+
+fn pill_row(
+    id: &'static str,
+    tabs: Vec<Pill>,
+    selected: usize,
+    choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    compact: bool,
+    wrap: bool,
+    palette: &Palette,
+) -> impl IntoElement {
     h_flex()
         .id(id)
         .when(!compact, |row| row.w_full())
+        .when(wrap, |row| row.flex_wrap())
         .p(px(2.))
         .gap(px(4.))
         .rounded(px(8.))
@@ -583,7 +608,8 @@ pub fn pills(
             let choose = choose.clone();
             h_flex()
                 .id((id, index))
-                .when(!compact, |tab| tab.flex_1())
+                .when(!compact && !wrap, |tab| tab.flex_1())
+                .when(wrap, |tab| tab.flex_grow(1.))
                 .justify_center()
                 .gap(px(if compact { 6. } else { 8. }))
                 .h(px(if compact { 20. } else { 26. }))

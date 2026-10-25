@@ -20,6 +20,8 @@ use crate::game::{STANDARD_FEN, random_unit, rules};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
+use crate::voice::control::{BarSpec, Control, DrillLog};
+use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Pill, Tone};
 
 const FILES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -40,7 +42,10 @@ const STORED_RANKS: &str = "kchess:coordinates-ranks";
 enum Mode {
     Find,
     Name,
+    Voice,
 }
+
+const MODES: [Mode; 3] = [Mode::Find, Mode::Name, Mode::Voice];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -143,6 +148,13 @@ pub struct Coordinates {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     timers: Vec<Task<()>>,
+    /// Say the square: the voice switch, its log, and a start waiting for voice to load.
+    voice: Control,
+    voice_log: DrillLog,
+    starting: bool,
+    /// The run and the question within it, which name what each phrase answered.
+    run_epoch: u32,
+    question: u32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -156,13 +168,25 @@ impl Coordinates {
                 None,
             ))
         });
-        let subscriptions = vec![cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
-            if let BoardEvent::Select(square) = event
-                && this.mode == Mode::Find
-            {
-                this.answer(&square.to_string(), cx);
-            }
-        })];
+        let voice = crate::voice::handle(cx);
+        let subscriptions = vec![
+            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
+                if let BoardEvent::Select(square) = event
+                    && this.mode == Mode::Find
+                {
+                    this.answer(&square.to_string(), cx);
+                }
+            }),
+            cx.subscribe(&voice, |this, _, event: &VoiceEvent, cx| {
+                this.voice_heard(event, cx)
+            }),
+            cx.observe(&voice, |this, _, cx| {
+                if this.starting && this.voice.gate(&mut this.starting, cx) {
+                    this.start(cx);
+                }
+                cx.notify();
+            }),
+        ];
         let mut drill = Coordinates {
             mode: Mode::Find,
             stage: Stage::Idle,
@@ -181,6 +205,11 @@ impl Coordinates {
             board,
             layout: PlayLayout::default(),
             timers: Vec::new(),
+            voice: Control::new(false, cx),
+            voice_log: DrillLog::default(),
+            starting: false,
+            run_epoch: 0,
+            question: 0,
             _subscriptions: subscriptions,
         };
         run::load_summary("coordinates", cx, |this, summary, cx| {
@@ -221,18 +250,24 @@ impl Coordinates {
     }
 
     fn record_variant(&self, cx: &App) -> String {
-        let base = if self.mode == Mode::Find {
-            "find"
-        } else {
-            "name"
+        let base = match self.mode {
+            Mode::Find => "find",
+            Mode::Name => "name",
+            Mode::Voice => "name-voice",
         };
         run::record_variant(base, Self::length(cx), DEFAULT_SECONDS)
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.stage == Stage::Running {
+        if self.stage == Stage::Running
+            || (self.mode == Mode::Voice && !self.voice.gate(&mut self.starting, cx))
+        {
+            cx.notify();
             return;
         }
+        self.run_epoch += 1;
+        self.question = 0;
+        self.voice.feedback = None;
         self.orientation = match self.side {
             "black" => Color::Black,
             "random" if random_unit() < 0.5 => Color::White,
@@ -278,6 +313,7 @@ impl Coordinates {
         }));
         if correct {
             self.score += 1;
+            self.question += 1;
             let allowed = Self::allowed(cx);
             self.target = std::mem::take(&mut self.upcoming);
             self.upcoming = random_square(Some(&self.target), allowed.as_deref());
@@ -288,6 +324,52 @@ impl Coordinates {
             crate::sound::play_at(crate::sound::Sound::LowTime, 0.5, cx);
         }
         self.redraw(cx);
+    }
+
+    fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) || self.stage != Stage::Running || self.mode != Mode::Voice {
+            return;
+        }
+        let asked = format!("{}:{}", self.run_epoch, self.question);
+        let target = self.target.clone();
+        let (heard, missed) = match event {
+            VoiceEvent::Heard { heard, .. } => (heard, false),
+            VoiceEvent::Missed { heard, .. } => (heard, true),
+        };
+        let square = (!missed)
+            .then(|| rules("spokenSquare", &[json!(heard.text)]).ok())
+            .flatten()
+            .and_then(|square| square.as_str().map(str::to_string));
+        let outcome = match &square {
+            _ if missed => "unclear",
+            None => "invalid",
+            Some(square) if *square == target => "correct",
+            Some(_) => "wrong",
+        };
+        let attempt = Attempt {
+            source: "coordinates",
+            heard,
+            outcome,
+            parsed: square.as_deref(),
+            expected: Some(&target),
+            fen: None,
+        };
+        self.voice_log.log(&attempt, &asked, cx);
+        if missed {
+            return;
+        }
+        let Some(square) = square else {
+            self.voice.feedback = Some("Say one square, such as “E four” or “Echo four”.".into());
+            cx.notify();
+            return;
+        };
+        let verdict = if square == target {
+            "correct"
+        } else {
+            "try again"
+        };
+        self.voice.feedback = Some(format!("{square} · {verdict}").into());
+        self.answer(&square, cx);
     }
 
     /// Name mode: a file then a rank, from the buttons or the keyboard.
@@ -354,6 +436,11 @@ impl Coordinates {
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let running = self.stage == Stage::Running;
+        self.voice.sync(
+            crate::voice::grammar("COORDINATE_GRAMMAR"),
+            running && self.mode == Mode::Voice,
+            cx,
+        );
         let show_pieces = crate::prefs::get(cx, PIECES, false);
         let fen = if running && !show_pieces {
             EMPTY_FEN
@@ -395,7 +482,7 @@ impl Coordinates {
         state.square_names = on_squares;
         state.blindfold = settings.blindfold;
         if running
-            && self.mode == Mode::Name
+            && self.mode != Mode::Find
             && let Ok(square) = self.target.parse::<Square>()
         {
             state.circles.push(Circle::yellow(square));
@@ -524,7 +611,7 @@ impl Render for Coordinates {
             .frontend
             .clone();
         let page = cx.entity().downgrade();
-        let modes = widgets::pills(
+        let modes = widgets::wrapping_pills(
             "coordinates-mode",
             vec![
                 Pill {
@@ -539,18 +626,31 @@ impl Render for Coordinates {
                     badge: None,
                     disabled: running,
                 },
+                Pill {
+                    icon: Some(icon("mic")),
+                    label: "Say the square".into(),
+                    badge: None,
+                    disabled: running,
+                },
             ],
-            usize::from(self.mode == Mode::Name),
+            MODES
+                .iter()
+                .position(|mode| *mode == self.mode)
+                .unwrap_or(0),
             {
                 let page = page.clone();
                 move |index, _, cx| {
                     let _ = page.update(cx, |this, cx| {
-                        this.mode = if index == 1 { Mode::Name } else { Mode::Find };
+                        this.mode = MODES[index];
+                        // Leaving Say the square turns voice off, as its control goes away.
+                        if this.mode != Mode::Voice && this.voice.enabled {
+                            this.voice.toggle(false, Vec::new(), false, cx);
+                        }
+                        this.starting = false;
                         this.redraw(cx);
                     });
                 }
             },
-            false,
             &palette,
         );
         let sides = ["white", "black", "random"];
@@ -662,6 +762,19 @@ impl Render for Coordinates {
                 running,
                 cx,
             ))
+            .when(self.mode == Mode::Voice, |panel| {
+                panel.child(self.voice.bar(
+                    page.clone(),
+                    |this: &mut Self| &mut this.voice,
+                    BarSpec {
+                        id: "coordinates-voice",
+                        hint: "Say “E four” or “Echo four”.",
+                        active: running,
+                        grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
+                    },
+                    cx,
+                ))
+            })
             .child(div().h(px(1.)).bg(palette.border));
         if running {
             panel = panel.child(run::hud(
@@ -760,10 +873,10 @@ impl Render for Coordinates {
                         .text_color(palette.text_muted)
                         .child(format!(
                             "Best ({}, {}): {}",
-                            if self.mode == Mode::Find {
-                                "find"
-                            } else {
-                                "name"
+                            match self.mode {
+                                Mode::Find => "find",
+                                Mode::Name => "name",
+                                Mode::Voice => "voice",
                             },
                             run::length_label(length),
                             best.map_or_else(|| "—".to_string(), |best| best.to_string())
@@ -781,6 +894,8 @@ impl Render for Coordinates {
                     } else {
                         "Start"
                     })
+                    .loading(self.starting)
+                    .disabled(self.mode == Mode::Voice && !self.voice.enabled)
                     .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
             );
         }

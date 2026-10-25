@@ -1,5 +1,5 @@
 //! Square colours (`SquareColorTrainer.vue`): is this square light or dark? Answer with the buttons
-//! or L and D, for thirty seconds; the best score stays on this computer.
+//! L and D, or by voice, for thirty seconds; the best score stays on this computer.
 
 use std::time::Duration;
 
@@ -15,9 +15,12 @@ use crate::assets::icon;
 use crate::game::rules;
 use crate::play_layout::{PAGE_BOTTOM, side_padding};
 use crate::theme::{Palette, tint};
+use crate::voice::control::{BarSpec, Control, DrillLog};
+use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets;
 
 const FLASH: Duration = Duration::from_millis(300);
+const COLOR_GRAMMAR: [&str; 3] = ["light", "dark", "[unk]"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -44,6 +47,17 @@ pub struct SquareColors {
     summary: Value,
     saved: Value,
     timers: Vec<Task<()>>,
+    voice: Control,
+    voice_log: DrillLog,
+    /// A start waiting for voice to load.
+    starting: bool,
+    /// Bumped for each square asked, which names what each phrase answered.
+    question: u32,
+    _subscriptions: Vec<Subscription>,
+}
+
+fn grammar() -> Vec<String> {
+    COLOR_GRAMMAR.map(String::from).to_vec()
 }
 
 impl SquareColors {
@@ -52,6 +66,18 @@ impl SquareColors {
             this.summary = summary;
             cx.notify();
         });
+        let voice = crate::voice::handle(cx);
+        let subscriptions = vec![
+            cx.subscribe(&voice, |this, _, event: &VoiceEvent, cx| {
+                this.voice_heard(event, cx)
+            }),
+            cx.observe(&voice, |this, _, cx| {
+                if this.starting && this.voice.gate(&mut this.starting, cx) {
+                    this.start(cx);
+                }
+                cx.notify();
+            }),
+        ];
         SquareColors {
             stage: Stage::Idle,
             square: "e4".into(),
@@ -62,19 +88,78 @@ impl SquareColors {
             summary: Value::Null,
             saved: Value::Null,
             timers: Vec::new(),
+            voice: Control::new(false, cx),
+            voice_log: DrillLog::default(),
+            starting: false,
+            question: 0,
+            _subscriptions: subscriptions,
         }
     }
 
-    fn start(&mut self, cx: &mut Context<Self>) {
-        if self.stage == Stage::Running {
+    /// The recognizer takes a fresh phrase for each square, during a run.
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let running = self.stage == Stage::Running;
+        self.voice.sync(grammar(), running, cx);
+    }
+
+    fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) || self.stage != Stage::Running {
             return;
         }
+        let (heard, missed) = match event {
+            VoiceEvent::Heard { heard, .. } => (heard, false),
+            VoiceEvent::Missed { heard, .. } => (heard, true),
+        };
+        let expected = square_color(&self.square);
+        let text = heard.text.to_lowercase();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let color = ["light", "dark"]
+            .into_iter()
+            .find(|color| !missed && words.contains(color));
+        let outcome = match color {
+            _ if missed => "unclear",
+            None => "invalid",
+            Some(color) if color == expected => "correct",
+            Some(_) => "wrong",
+        };
+        let attempt = Attempt {
+            source: "squareColor",
+            heard,
+            outcome,
+            parsed: color,
+            expected: Some(expected),
+            fen: None,
+        };
+        self.voice_log.log(&attempt, &self.question.to_string(), cx);
+        if missed {
+            return;
+        }
+        let Some(color) = color else {
+            self.voice.feedback = Some("Say “light” or “dark”.".into());
+            cx.notify();
+            return;
+        };
+        self.answer(color, cx);
+        self.voice.feedback = Some(format!("{color} · {outcome}").into());
+    }
+
+    fn start(&mut self, cx: &mut Context<Self>) {
+        // The microphone and model are ready before the clock starts, as in Coordinates.
+        if self.stage == Stage::Running
+            || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx))
+        {
+            cx.notify();
+            return;
+        }
+        self.voice.feedback = None;
+        self.question += 1;
         self.score = 0;
         self.mistakes = 0;
         self.saved = Value::Null;
         self.square = random_square(None, None);
         self.stage = Stage::Running;
         self.clock.start(30);
+        self.sync_voice(cx);
         self.timers = vec![run::ticker(cx, |this, cx| {
             if this.stage != Stage::Running {
                 return false;
@@ -108,7 +193,9 @@ impl SquareColors {
             self.mistakes += 1;
             crate::sound::play_at(crate::sound::Sound::LowTime, 0.5, cx);
         }
+        self.question += 1;
         self.square = random_square(Some(&self.square), None);
+        self.sync_voice(cx);
         cx.notify();
     }
 
@@ -138,6 +225,7 @@ impl SquareColors {
         }
         self.clock.stop();
         self.stage = Stage::Over;
+        self.sync_voice(cx);
         cx.notify();
         let run = json!({
             "kind": "squareColor",
@@ -267,6 +355,7 @@ impl Render for SquareColors {
                     } else {
                         "Start"
                     })
+                    .loading(self.starting)
                     .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
             )
         };
@@ -294,7 +383,18 @@ impl Render for SquareColors {
                     })
                     .children(stage),
             )
-            .child(answers);
+            .child(answers)
+            .child(div().mt(px(16.)).child(self.voice.bar(
+                cx.entity().downgrade(),
+                |this: &mut Self| &mut this.voice,
+                BarSpec {
+                    id: "square-colors-voice",
+                    hint: "Say “light” or “dark”.",
+                    active: self.stage == Stage::Running,
+                    grammar: grammar(),
+                },
+                cx,
+            )));
         div()
             .id("square-colors")
             .size_full()

@@ -19,6 +19,8 @@ use crate::game::{random_unit, rules};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
+use crate::voice::control::{BarSpec, Control, DrillLog};
+use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Tone};
 
 const DEFAULT_SECONDS: u32 = 60;
@@ -85,6 +87,13 @@ pub struct KnightPaths {
     layout: PlayLayout,
     ticker: Option<Task<()>>,
     advance: Option<Task<()>>,
+    /// The square to jump to, said aloud.
+    voice: Control,
+    voice_log: DrillLog,
+    /// A start waiting for voice to load.
+    starting: bool,
+    /// Bumped each round, which with the jumps names what each phrase answered.
+    round: u32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -117,6 +126,16 @@ impl KnightPaths {
                 {
                     this.jump(to, cx);
                 }
+            }),
+            cx.subscribe(
+                &crate::voice::handle(cx),
+                |this, _, event: &VoiceEvent, cx| this.voice_heard(event, cx),
+            ),
+            cx.observe(&crate::voice::handle(cx), |this, _, cx| {
+                if this.starting && this.voice.gate(&mut this.starting, cx) {
+                    this.start(cx);
+                }
+                cx.notify();
             }),
             cx.subscribe(
                 &level_select,
@@ -153,6 +172,10 @@ impl KnightPaths {
             layout: PlayLayout::default(),
             ticker: None,
             advance: None,
+            voice: Control::new(false, cx),
+            voice_log: DrillLog::default(),
+            starting: false,
+            round: 0,
             _subscriptions: subscriptions,
         };
         drill.redraw(cx);
@@ -169,6 +192,7 @@ impl KnightPaths {
 
     fn next_round(&mut self, cx: &mut Context<Self>) {
         self.advance = None;
+        self.round += 1;
         let (_, _, min, max) = LEVELS[self.level];
         let (from, to, best) = knight_challenge(min, max);
         self.knight = from;
@@ -179,9 +203,14 @@ impl KnightPaths {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.stage == Stage::Running {
+        // The microphone and model are ready before the clock starts, as in Coordinates.
+        if self.stage == Stage::Running
+            || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx))
+        {
+            cx.notify();
             return;
         }
+        self.voice.feedback = None;
         self.optimal = 0;
         self.reached = 0;
         self.missed = 0;
@@ -236,6 +265,56 @@ impl KnightPaths {
         self.redraw(cx);
     }
 
+    /// A spoken square is where the knight jumps to.
+    fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) || self.stage != Stage::Running {
+            return;
+        }
+        let (heard, missed) = match event {
+            VoiceEvent::Heard { heard, .. } => (heard, false),
+            VoiceEvent::Missed { heard, .. } => (heard, true),
+        };
+        let asked = format!("{}:{}", self.round, self.jumps);
+        let goal = self.goal.clone();
+        let log = |this: &mut Self, outcome: &str, parsed: Option<&str>, cx: &mut Context<Self>| {
+            let attempt = Attempt {
+                source: "knightPath",
+                heard,
+                outcome,
+                parsed,
+                expected: Some(&goal),
+                fen: None,
+            };
+            this.voice_log.log(&attempt, &asked, cx);
+        };
+        if missed {
+            return log(self, "unclear", None, cx);
+        }
+        if self.knight == self.goal {
+            return;
+        }
+        let square = rules("spokenSquare", &[json!(heard.text)])
+            .ok()
+            .and_then(|square| square.as_str().map(str::to_string));
+        let feedback = match square {
+            None => {
+                log(self, "invalid", None, cx);
+                "Say a square, such as “F three” or “Foxtrot three”.".to_string()
+            }
+            Some(square) if !knight_moves(&self.knight).contains(&square) => {
+                log(self, "invalid", Some(&square), cx);
+                format!("{square} · not a knight jump from {}", self.knight)
+            }
+            Some(square) => {
+                log(self, "played", Some(&square), cx);
+                self.jump(&square, cx);
+                square
+            }
+        };
+        self.voice.feedback = Some(feedback.into());
+        cx.notify();
+    }
+
     fn skip(&mut self, cx: &mut Context<Self>) {
         // The goal is already reached: only move on sooner.
         if self.knight != self.goal {
@@ -274,13 +353,15 @@ impl KnightPaths {
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        let running = self.stage == Stage::Running;
+        self.voice
+            .sync(crate::voice::grammar("COORDINATE_GRAMMAR"), running, cx);
         let fen = rules("knightFen", &[json!(self.knight)])
             .ok()
             .and_then(|fen| fen.as_str().map(str::to_string))
             .unwrap_or_default();
         let position = kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
             .unwrap_or_default();
-        let running = self.stage == Stage::Running;
         let movable = running && self.knight != self.goal;
         let mut state = BoardState::of(&position, Color::White, None, None);
         // A lone knight is no legal position: the board draws the FEN's pieces.
@@ -364,6 +445,17 @@ impl Render for KnightPaths {
                 running,
                 move |seconds, _, cx| crate::prefs::set(cx, LENGTH, seconds),
                 &palette,
+            ))
+            .child(self.voice.bar(
+                cx.entity().downgrade(),
+                |this: &mut Self| &mut this.voice,
+                BarSpec {
+                    id: "knight-voice",
+                    hint: "Say the square to jump to, such as “F three”.",
+                    active: running,
+                    grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
+                },
+                cx,
             ))
             .child(div().h(px(1.)).bg(palette.border));
         if running {
@@ -461,6 +553,7 @@ impl Render for KnightPaths {
                     } else {
                         "Start"
                     })
+                    .loading(self.starting)
                     .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
             );
         }
