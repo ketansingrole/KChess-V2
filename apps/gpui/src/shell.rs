@@ -535,6 +535,19 @@ impl Workspace {
         }
     }
 
+    /// Push to talk: Space held on the page speaks (`VoiceInput.vue`'s keys), while voice waits
+    /// for it.
+    fn talk_key(keystroke: &Keystroke, held: bool, cx: &mut Context<Self>) {
+        if keystroke.key != "space" || keystroke.modifiers.modified() {
+            return;
+        }
+        let voice = crate::voice::handle(cx);
+        if voice.read(cx).can_talk() {
+            voice.update(cx, |voice, cx| voice.talk(held, cx));
+            cx.stop_propagation();
+        }
+    }
+
     fn choose(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.pages.current();
         if !self.navigating {
@@ -546,6 +559,13 @@ impl Workspace {
         }
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
+        }
+        // The microphone test runs only while its section is shown.
+        if current == Page::Settings
+            && page != Page::Settings
+            && let Some(settings) = self.pages.settings()
+        {
+            settings.update(cx, |settings, cx| settings.stop_mic_test(cx));
         }
         // The analysis board's engine follows the board only while it is shown.
         if current == Page::Analysis
@@ -1155,6 +1175,14 @@ impl Render for Workspace {
                             .relative()
                             .overflow_hidden()
                             .on_scroll_wheel(cx.listener(Self::scrolled))
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                if !event.is_held && this.pages.page_focused(window) {
+                                    Self::talk_key(&event.keystroke, true, cx);
+                                }
+                            }))
+                            .on_key_up(cx.listener(|_, event: &KeyUpEvent, _, cx| {
+                                Self::talk_key(&event.keystroke, false, cx);
+                            }))
                             .child(
                                 div()
                                     .size_full()

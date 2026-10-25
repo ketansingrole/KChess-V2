@@ -92,6 +92,14 @@ impl Pages {
         }
     }
 
+    /// The page itself has the keys, not one of its text fields or menus.
+    pub fn page_focused(&self, window: &Window) -> bool {
+        self.views
+            .get(&self.current)
+            .and_then(|shown| shown.focus.as_ref())
+            .is_some_and(|focus| focus.is_focused(window))
+    }
+
     /// The Settings page, once it has been shown.
     pub fn settings(&self) -> Option<Entity<settings::SettingsPage>> {
         self.view_of(Page::Settings)

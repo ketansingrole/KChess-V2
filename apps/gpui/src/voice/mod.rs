@@ -140,6 +140,27 @@ fn model_cache() -> &'static VoiceModelCache {
     })
 }
 
+/// Whether the offline model is installed, or being prepared (`voiceModelStatus`).
+pub fn model_status(cx: &App) -> impl Future<Output = Option<model::Status>> + 'static + use<> {
+    let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
+    bridge.spawn(async move { model_cache().status().await })
+}
+
+/// Download and prepare the model ahead of use (`ensureVoiceModel`); `progress` hears how far.
+pub fn download_model(
+    progress: model::Listener,
+    cx: &App,
+) -> impl Future<Output = Option<Result<(), String>>> + 'static + use<> {
+    let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
+    bridge.spawn(async move {
+        model_cache()
+            .ensure(Some(progress))
+            .await
+            .map(|_| ())
+            .map_err(|cause| cause.message)
+    })
+}
+
 /// The real words' average confidence: noise markers would sink a clearly heard command, and a
 /// homophone in the grammar splits a word's confidence even when it was heard perfectly.
 pub fn heard_of(result: &Value) -> Option<Heard> {
@@ -274,7 +295,7 @@ impl Voice {
 
     /// Push to talk: speaking while held, the phrase finished on release.
     pub fn talk(&mut self, held: bool, cx: &mut Context<Self>) {
-        if !self.active || !self.push_to_talk || self.capture.is_none() || held == self.held {
+        if !self.can_talk() || held == self.held {
             return;
         }
         self.held = held;
@@ -288,6 +309,11 @@ impl Voice {
             self.state = State::Paused;
         }
         cx.notify();
+    }
+
+    /// Push to talk is what the owner is waiting for: Space and the hold button speak.
+    pub fn can_talk(&self) -> bool {
+        self.active && self.push_to_talk && self.capture.is_some()
     }
 
     fn listening(&self) -> bool {

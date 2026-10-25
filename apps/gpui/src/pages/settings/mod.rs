@@ -5,6 +5,8 @@ mod accounts;
 mod engine;
 mod offline;
 pub mod updates;
+mod voice;
+mod voice_history;
 
 use std::path::Path;
 use std::rc::Rc;
@@ -123,6 +125,15 @@ pub struct SettingsPage {
     /// What the notification test says, and whether it is counting down.
     test_note: Option<SharedString>,
     test_pending: bool,
+    /// The microphone test, and why it could not start.
+    mic_test: Option<voice::MicTest>,
+    mic_error: Option<SharedString>,
+    mic_denied: bool,
+    voice_history: Option<Entity<voice_history::VoiceHistory>>,
+    /// The offline speech model, and whether this page is downloading it.
+    voice_model: Option<kchess_core::voice::Status>,
+    voice_model_error: Option<SharedString>,
+    voice_downloading: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -236,6 +247,13 @@ impl SettingsPage {
             engine_busy: false,
             test_note: None,
             test_pending: false,
+            mic_test: None,
+            mic_error: None,
+            mic_denied: false,
+            voice_history: None,
+            voice_model: None,
+            voice_model_error: None,
+            voice_downloading: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -247,7 +265,18 @@ impl SettingsPage {
 
     /// Show one category, from the top (`jumpToSection`).
     pub fn show(&mut self, section: Section, cx: &mut Context<Self>) {
+        if section != Section::Voice {
+            self.stop_mic_test(cx);
+        }
         self.section = section;
+        if section == Section::Voice {
+            match &self.voice_history {
+                Some(history) => history.update(cx, |history, cx| history.load(cx)),
+                None => {
+                    self.voice_history = Some(cx.new(voice_history::VoiceHistory::new));
+                }
+            }
+        }
         if matches!(section, Section::Engine | Section::Offline) {
             self.refresh_engine(cx);
         }
@@ -255,6 +284,8 @@ impl SettingsPage {
             crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         }
         if section == Section::Offline {
+            self.voice_model_error = None;
+            self.refresh_voice_model(cx);
             let db = cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone();
             db.update(cx, |db, cx| db.refresh(cx));
         }
@@ -316,13 +347,17 @@ impl Rows {
 
     /// `.setting-row`: the title on the left (up to 420px), the control beside it (up to 520px).
     fn row(
-        mut self,
+        self,
         title: impl Into<SharedString>,
         hint: Option<SharedString>,
         control: impl IntoElement,
         palette: &Palette,
     ) -> Rows {
-        let info = info(title, hint, palette);
+        self.row_with(info(title, hint, palette), control)
+    }
+
+    /// A row whose title column says more than a title and a hint (a level meter).
+    fn row_with(mut self, info: Div, control: impl IntoElement) -> Rows {
         let control = div().w_full().max_w(px(520.)).child(control);
         let row = if self.narrow {
             v_flex()
@@ -1242,7 +1277,8 @@ impl Render for SettingsPage {
             Section::Offline => self.offline(cx, &palette),
             Section::Updates => self.updates(&settings, cx, &palette),
             Section::Accounts => self.accounts(cx, &palette),
-            Section::Voice | Section::Data => widgets::card(&palette)
+            Section::Voice => self.voice(&settings, cx, &palette),
+            Section::Data => widgets::card(&palette)
                 .items_center()
                 .py(px(40.))
                 .text_color(palette.text_muted)

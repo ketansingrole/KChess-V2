@@ -18,6 +18,8 @@ pub type Chunk = Vec<f32>;
 pub struct Capture {
     stop: Arc<AtomicBool>,
     pub sample_rate: f64,
+    /// The microphone's name, as the system gives it.
+    pub device: String,
 }
 
 impl Drop for Capture {
@@ -68,12 +70,13 @@ pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError
             Capture {
                 stop,
                 sample_rate: f64::from(rate),
+                device: "Test audio".into(),
             },
             receiver,
         ));
     }
     // The stream lives on its own thread: some platforms' streams cannot move between threads.
-    let (ready, opened) = std::sync::mpsc::channel::<Result<f64, CaptureError>>();
+    let (ready, opened) = std::sync::mpsc::channel::<Result<(f64, String), CaptureError>>();
     let flag = Arc::clone(&stop);
     std::thread::spawn(move || {
         let host = cpal::default_host();
@@ -148,16 +151,27 @@ pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError
             let _ = ready.send(Err(classify(&cause)));
             return;
         }
-        let _ = ready.send(Ok(f64::from(rate)));
+        let name = device
+            .description()
+            .map(|description| description.name().to_string())
+            .unwrap_or_default();
+        let _ = ready.send(Ok((f64::from(rate), name)));
         while !flag.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(50));
         }
         drop(stream);
     });
-    let sample_rate = opened
+    let (sample_rate, device) = opened
         .recv_timeout(Duration::from_secs(10))
         .map_err(|_| CaptureError::Busy("the microphone did not answer".into()))??;
-    Ok((Capture { stop, sample_rate }, receiver))
+    Ok((
+        Capture {
+            stop,
+            sample_rate,
+            device,
+        },
+        receiver,
+    ))
 }
 
 fn classify(cause: &cpal::Error) -> CaptureError {
