@@ -61,12 +61,9 @@ pub fn legacy_database(_data_dir: &std::path::Path) -> Option<PathBuf> {
     (cfg!(target_os = "macos") && !isolated()).then(|| home().join(".kchess/kchess.db"))
 }
 
-/// The Stockfish this app ships: a native executable beside the app's own (`Contents/MacOS` in the
-/// macOS bundle), started without a runtime. `KCHESS_ENGINE_PATH` names another one (development
-/// builds, which ship none).
 /// The `kchess-voice` speech helper, libvosk beside it: `KCHESS_VOICE_HELPER`, else the package's
-/// `voice` folder beside the app, else (a build in this repository) the helper `build:native`
-/// stages in `crates/kchess-node/voice`.
+/// `voice` folder beside the app (in `Contents/Resources` in the macOS bundle), else (a build in
+/// this repository) the helper `build:native` stages in `crates/kchess-node/voice`.
 pub fn voice_helper() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("KCHESS_VOICE_HELPER").filter(|path| !path.is_empty()) {
         return Some(PathBuf::from(path));
@@ -77,9 +74,15 @@ pub fn voice_helper() -> Option<PathBuf> {
         "kchess-voice"
     };
     let exe = std::env::current_exe().ok()?;
-    let packaged = exe.parent()?.join("voice").join(name);
-    if packaged.exists() {
-        return Some(packaged);
+    let dir = exe.parent()?;
+    // Beside the executable; in a Mac bundle, in Contents/Resources.
+    for packaged in [
+        dir.join("voice").join(name),
+        dir.join("../Resources/voice").join(name),
+    ] {
+        if packaged.exists() {
+            return Some(packaged);
+        }
     }
     let staged = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/kchess-node/voice")
@@ -87,6 +90,9 @@ pub fn voice_helper() -> Option<PathBuf> {
     staged.exists().then_some(staged)
 }
 
+/// The Stockfish this app ships: a native executable beside the app's own (`Contents/MacOS` in the
+/// macOS bundle), started without a runtime. `KCHESS_ENGINE_PATH` names another one (development
+/// builds, which ship none).
 pub fn bundled_engine() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("KCHESS_ENGINE_PATH").filter(|path| !path.is_empty()) {
         return Some(PathBuf::from(path));

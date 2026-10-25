@@ -60,7 +60,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Settings speed
 - [x] Review game: the game on the analysis board at the move shown, reviewed
 - [x] Export: animated GIF of the game, PNG of the position shown, PGN file
-- [ ] Voice input
+- [x] Voice input: moves, “take back”, “new game”, “resign”, “switch sides” (asked to confirm),
+      choices to pick when unsure, hold to speak, and each phrase in the voice history with the
+      move it meant
 - [x] Right-click arrows and circles on every board (Shift/Ctrl red, Alt/⌘ blue, both yellow),
       drawn again to take off, cleared by a left click
 
@@ -74,7 +76,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Rotating each clock face a quarter turn at a time (`kchess:clock-rotation`); a turned face
       is drawn as a picture of its text, since GPUI cannot rotate text
 - [x] Export (GIF, PNG, PGN) and Analyse
-- [ ] Voice input
+- [x] Voice input for either player
 - [ ] Electron's chess clock (`stores/clock.ts`) still keeps its own copy of the rules now in
       `kchess-domain/src/games/otb_clock.rs`
 
@@ -90,8 +92,12 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Notifications' "Try it" (a sample after 5 seconds, and the system's notification settings)
 - [ ] Interface size: GPUI scales only `rem` sizes (and the display's scale, settable in its tests
       only), and these pages are laid out in pixels as Electron's CSS is
-- [ ] Voice input, Offline voice model
-      downloads, Data & storage, Updates
+- [x] Voice input (privacy settings, a microphone level test, confirm moves, hold to speak,
+      keep history) and the voice history (weak words, heard → meant, recent phrases, export,
+      clear); the offline voice model's card in Offline downloads
+- [ ] Microphone access status (granted, denied, not asked): reading it needs AVFoundation, which
+      the app cannot call without `unsafe`; denial shows when voice input starts instead
+- [ ] Data & storage
 
 ## Game history
 
@@ -133,7 +139,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       on the board
 - [x] Explorer tool: Lichess, Masters, Player and Tablebase lookups with their filters, Follow
       moves, saved lookups, playing a move and opening a listed game
-- [ ] Voice input
+- [x] Voice input: moves played at once, “back”, “next”, “start”, “end”, “best move”, “flip
+      board”, “engine”
 - [x] Edit this position, Play Stockfish or a friend from here
 
 ## Puzzles
@@ -154,8 +161,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       theme over a period (Train a theme from it), the puzzle rating history
 - [ ] Labels on a studied puzzle's tried moves once the engine has judged them
 - [x] An opening's puzzles, chosen on Openings
+- [x] Voice input on every puzzle board (Train, Daily, runs, mistakes)
 - [ ] Theme groups in the picker, Connect or Reconnect from the panel, choosing the rated
-      account, voice input
+      account
 
 ## Practice
 
@@ -172,7 +180,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Your mistakes: due, learning and learned counts, the positions on the shared puzzle board
       (hint, solution), rescheduled by the core (`answerMistake`), and the games they come from
 - [x] A game's Practice button: its positions practised on the analysis board
-- [ ] Voice answers
+- [x] Voice answers: Say the square, light or dark, the knight's next square (a run waits for
+      the model and microphone before its clock starts)
 
 ## Openings
 
@@ -197,7 +206,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Drag pieces anywhere (off the board removes them), drag spare pieces in, or paint with a
       spare piece or the bin; side to move, castling the pieces allow, en passant, a FEN typed or
       copied; Starting position, Clear, Flip; Analyse, Play Stockfish, Play a friend
-- [ ] Voice input
+- [x] Voice input: “white knight F three”, “remove E four”, “clear board”, “black to move”,
+      “flip”, “analyse”
 
 ## Following
 
@@ -273,7 +283,7 @@ None.
 ## Packaging
 
 - [x] Packages for macOS (.dmg, .zip), Windows (.zip) and Linux (.tar.gz) with the official
-      native Stockfish beside the app (`tooling/gpui-package.mjs`; the preview installs beside
+      native Stockfish and the voice runtime (helper, libvosk, notices) beside the app (`tooling/gpui-package.mjs`; the preview installs beside
       Electron as "KChess Preview", `--final` takes Electron's identity)
 - [x] Rust updater on the same GitHub release feed: check, background download checked against
       `SHA256SUMS.txt`, restart to install or install on quit, the top bar's button and Settings

@@ -1,4 +1,5 @@
-// Packages the GPUI app (apps/gpui) for this machine, with its own native Stockfish beside it:
+// Packages the GPUI app (apps/gpui) for this machine, with its own native Stockfish and the voice
+// runtime (the recognition helper, libvosk and their notices, tooling/voice-runtime.mjs) beside it:
 // macOS: KChess.app as a .dmg and a .zip (Apple Silicon); Windows: a .zip; Linux: a .tar.gz with a
 // desktop entry. Every file gets a line in SHA256SUMS.txt. Output: apps/gpui/dist/.
 //
@@ -19,6 +20,7 @@ import { createHash } from 'node:crypto'
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -29,6 +31,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stageVoiceRuntime } from './voice-runtime.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const args = new Set(process.argv.slice(2))
@@ -56,7 +59,16 @@ if (!args.has('--skip-build')) {
   run('cargo', ['build', '--release', '--locked', '-p', 'kchess-gpui'], {
     env: { ...process.env, KCHESS_PACKAGE_PREFIX: name.replace(/ /g, '-') },
   })
+  say('Building the voice helper (release)…')
+  run('cargo', ['build', '--release', '--locked', '-p', 'kchess-voice'])
+  await stageVoiceRuntime('release')
 }
+// The app runs voice/kchess-voice beside its own executable, or in the Mac bundle's Resources
+// (apps/gpui/src/profile.rs).
+const voice = join(root, 'crates/kchess-node/voice')
+const voiceFiles = existsSync(voice) ? readdirSync(voice) : []
+if (!voiceFiles.some((file) => file.startsWith('kchess-voice')))
+  throw new Error('[gpui-package] The voice runtime is not staged: run without --skip-build.')
 say('Fetching Stockfish…')
 const stockfish = execFileSync(
   'cargo',
@@ -81,6 +93,21 @@ rmSync(out, { recursive: true, force: true })
 mkdirSync(stage, { recursive: true })
 mkdirSync(out, { recursive: true })
 const base = `${name.replace(/ /g, '-')}-${version}-${platform}-${arch}`
+
+/** Copy the voice runtime into `dir`/voice; the paths of its programs and libraries. */
+function copyVoice(dir) {
+  const target = join(dir, 'voice')
+  mkdirSync(target, { recursive: true })
+  const code = []
+  for (const file of voiceFiles) {
+    copyFileSync(join(voice, file), join(target, file))
+    if (!file.endsWith('.txt')) {
+      if (process.platform !== 'win32') chmodSync(join(target, file), 0o755)
+      code.push(join(target, file))
+    }
+  }
+  return code
+}
 
 if (platform === 'mac') packageMac()
 else if (platform === 'win') packageWindows()
@@ -108,9 +135,11 @@ function packageMac() {
   copyFileSync(binary, join(contents, 'MacOS/kchess'))
   copyFileSync(stockfish, join(contents, 'MacOS/stockfish'))
   chmodSync(join(contents, 'MacOS/stockfish'), 0o755)
+  // Resources, not MacOS: the notices beside the helper are not code, which codesign rejects there.
+  const voiceCode = copyVoice(join(contents, 'Resources'))
   copyFileSync(join(root, 'apps/desktop', desktop.mac.icon), join(contents, 'Resources/icon.icns'))
   writeFileSync(join(contents, 'Info.plist'), infoPlist())
-  sign(app)
+  sign(app, voiceCode)
   say('Making the zip and the disk image…')
   run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, join(out, `${base}.zip`)])
   symlinkSync('/Applications', join(stage, 'Applications'))
@@ -162,12 +191,14 @@ ${body}
 `
 }
 
-function sign(app) {
+/** Sign the nested programs (`nested`, then Stockfish) before the app that seals them. */
+function sign(app, nested) {
   const identity = process.env.KCHESS_SIGN_IDENTITY
   const engine = join(app, 'Contents/MacOS/stockfish')
+  const inner = [...nested, engine]
   if (!identity) {
     say('Signing ad hoc (no KCHESS_SIGN_IDENTITY)…')
-    run('codesign', ['--force', '--sign', '-', engine])
+    for (const path of inner) run('codesign', ['--force', '--sign', '-', path])
     run('codesign', ['--force', '--sign', '-', app])
     return
   }
@@ -187,7 +218,7 @@ function sign(app) {
 `,
   )
   const flags = ['--force', '--timestamp', '--options', 'runtime', '--sign', identity]
-  run('codesign', [...flags, engine])
+  for (const path of inner) run('codesign', [...flags, path])
   run('codesign', [...flags, '--entitlements', entitlements, app])
   rmSync(entitlements)
   const { APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env
@@ -220,6 +251,7 @@ function packageWindows() {
   mkdirSync(folder, { recursive: true })
   copyFileSync(binary, join(folder, `${desktop.productName}.exe`))
   copyFileSync(stockfish, join(folder, 'stockfish.exe'))
+  copyVoice(folder)
   say('Making the zip…')
   run('powershell', [
     '-NoProfile',
@@ -235,6 +267,7 @@ function packageLinux() {
   copyFileSync(stockfish, join(folder, 'stockfish'))
   chmodSync(join(folder, 'kchess'), 0o755)
   chmodSync(join(folder, 'stockfish'), 0o755)
+  copyVoice(folder)
   copyFileSync(join(root, 'apps/desktop/build/icon.png'), join(folder, 'kchess.png'))
   writeFileSync(
     join(folder, 'kchess.desktop'),
