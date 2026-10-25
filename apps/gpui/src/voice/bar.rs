@@ -56,7 +56,7 @@ pub fn voice_bar(
             format!("Heard “{}”", bar.heard.clone().unwrap_or_default()).into()
         }
         State::Loading => voice.preparing.clone().into(),
-        _ if !bar.active => "Ready for your next turn".into(),
+        _ if !bar.active => "Ready for your next turn or run".into(),
         _ if push => "Hold Space to speak".into(),
         _ => format!("Listening · {}", bar.hint).into(),
     };

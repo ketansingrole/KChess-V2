@@ -22,11 +22,14 @@ use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, tint};
+use crate::voice::control::{BarSpec, Control};
+use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Pill, Tone};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
-/// The spare rows above and below the board take this much of its height.
+/// The spare rows above and below the board, and the voice bar, take this much of its height.
 const SPARE_ROWS: Pixels = px(56.);
+const VOICE_BAR: Pixels = px(36.);
 const ROLES: [Role; 6] = [
     Role::King,
     Role::Queen,
@@ -96,6 +99,10 @@ pub struct EditorPage {
     /// The FEN box and the select are refilled on the next frame, where there is a window.
     stale_fields: bool,
     focus: FocusHandle,
+    /// “white knight F three”, “remove E four”, “clear board”, “black to move”.
+    voice: Control,
+    /// A piece said without a colour takes the colour said last.
+    last_color: &'static str,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -149,6 +156,12 @@ impl EditorPage {
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
             }),
+            cx.subscribe_in(
+                &crate::voice::handle(cx),
+                window,
+                |this, _, event: &VoiceEvent, window, cx| this.voice_heard(event, window, cx),
+            ),
+            cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
         ];
         let mut page = EditorPage {
             setup: start_setup(),
@@ -162,6 +175,8 @@ impl EditorPage {
             layout: PlayLayout::default(),
             stale_fields: true,
             focus: cx.focus_handle(),
+            voice: Control::new(true, cx),
+            last_color: "white",
             _subscriptions: subscriptions,
         };
         page.redraw(cx);
@@ -302,6 +317,108 @@ impl EditorPage {
             analysis.analyse_setup(&fen, orientation, cx);
             true
         });
+    }
+
+    fn voice_heard(&mut self, event: &VoiceEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) || !self.voice.enabled {
+            return;
+        }
+        let heard = match event {
+            VoiceEvent::Missed { heard, .. } => {
+                let attempt = Attempt {
+                    source: "editor",
+                    heard,
+                    outcome: "unclear",
+                    parsed: None,
+                    expected: None,
+                    fen: None,
+                };
+                crate::voice::log(&attempt, None, cx);
+                return;
+            }
+            VoiceEvent::Heard { heard, .. } => heard,
+        };
+        let action = rules("spokenEdit", &[json!(heard.text), json!(self.last_color)])
+            .unwrap_or(Value::Null);
+        let fen = self.problem().is_none().then(|| self.fen());
+        let parsed = action.is_object().then(|| action.to_string());
+        let attempt = Attempt {
+            source: "editor",
+            heard,
+            outcome: if action.is_object() {
+                "command"
+            } else if heard.unclear {
+                "unclear"
+            } else {
+                "invalid"
+            },
+            parsed: parsed.as_deref(),
+            expected: None,
+            fen: fen.as_deref(),
+        };
+        crate::voice::log(&attempt, None, cx);
+        let text = |key: &str| action[key].as_str().unwrap_or_default().to_string();
+        let side = |color: &str| if color == "white" { "White" } else { "Black" };
+        let feedback = match action["kind"].as_str() {
+            Some("place") => {
+                let (square, color, role) = (text("square"), text("color"), text("role"));
+                self.last_color = if color == "white" { "white" } else { "black" };
+                let piece = json!({ "color": color, "role": role });
+                let board = self.setup["board"].clone();
+                if let Ok(board) = rules("withPiece", &[board, json!(square), piece]) {
+                    self.setup["board"] = board;
+                    self.changed(cx);
+                }
+                format!("{} {role} on {}.", side(&color), square.to_uppercase())
+            }
+            Some("remove") => {
+                let square = text("square");
+                let board = self.setup["board"].clone();
+                if let Ok(board) = rules("withPiece", &[board, json!(square), Value::Null]) {
+                    self.setup["board"] = board;
+                    self.changed(cx);
+                }
+                format!("Cleared {}.", square.to_uppercase())
+            }
+            Some("clear") => {
+                self.clear_board(cx);
+                "Board cleared.".into()
+            }
+            Some("start") => {
+                self.start_position(cx);
+                "Starting position.".into()
+            }
+            Some("turn") => {
+                let color = text("color");
+                self.set_turn(
+                    if color == "white" {
+                        Color::White
+                    } else {
+                        Color::Black
+                    },
+                    cx,
+                );
+                format!("{} to move.", side(&color))
+            }
+            Some("flip") => {
+                self.flip(cx);
+                "Board flipped.".into()
+            }
+            Some("analyze") => match self.problem() {
+                Some(problem) => format!("Can’t analyse yet: {problem}"),
+                None => {
+                    self.analyse(window, cx);
+                    String::new()
+                }
+            },
+            _ if heard.unclear => "Didn’t catch that. Try “white knight F three”.".into(),
+            _ => format!(
+                "Heard “{}”. Try “white knight F three”, “remove E four” or “clear board”.",
+                heard.text
+            ),
+        };
+        self.voice.feedback = (!feedback.is_empty()).then(|| feedback.into());
+        cx.notify();
     }
 
     /// A spare row: the move tool, the six pieces of one side, and the bin.
@@ -448,7 +565,9 @@ impl Render for EditorPage {
         let turn = self.turn();
         let available: Value =
             rules("castlingAvailable", &[self.setup["board"].clone()]).unwrap_or(Value::Null);
-        let board_size = self.layout.board_size_in(px(0.), SPARE_ROWS, window);
+        let board_size = self
+            .layout
+            .board_size_in(px(0.), SPARE_ROWS + VOICE_BAR, window);
         let (top, bottom) = if self.orientation == Color::White {
             (Color::Black, Color::White)
         } else {
@@ -460,7 +579,18 @@ impl Render for EditorPage {
             .gap(px(8.))
             .child(self.render_spares(top, &set, cx, &palette))
             .child(self.board.clone())
-            .child(self.render_spares(bottom, &set, cx, &palette));
+            .child(self.render_spares(bottom, &set, cx, &palette))
+            .child(self.voice.bar(
+                cx.entity().downgrade(),
+                |this: &mut Self| &mut this.voice,
+                BarSpec {
+                    id: "editor-voice",
+                    hint: "Say “white knight F three”, “remove E four” or “clear board”.",
+                    active: true,
+                    grammar: crate::voice::grammar("EDITOR_GRAMMAR"),
+                },
+                cx,
+            ));
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))

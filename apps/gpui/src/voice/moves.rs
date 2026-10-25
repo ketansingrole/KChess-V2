@@ -4,16 +4,14 @@
 //! voice history with what came of it, and once a move is made where it was said, the move that was
 //! meant: that pairing of “heard” and “meant” shows where recognition goes wrong.
 
-use futures::FutureExt as _;
-use futures::future::Shared;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use super::{Heard, VoiceEvent};
+use super::control::Control;
+use super::{Entry, Heard, VoiceEvent};
 use crate::assets::icon;
-use crate::core::AppCore;
 
 /// What a page made of a phrase it took as a command.
 pub struct Reply {
@@ -49,17 +47,12 @@ pub enum Action {
 /// Where the choices' element ids start in the bar (`voice_bar` numbers its own from 0).
 const CHOICE_IDS: usize = 10;
 
-/// A phrase's place in the voice history, once saved (none when Settings keep no history).
-type Entry = Shared<Task<Option<i64>>>;
-
 /// A board's voice input: on or off, the choice waiting, and what was last said.
 pub struct VoiceMoves {
     pub source: &'static str,
-    pub owner: u64,
-    pub enabled: bool,
+    /// On or off, and the answer to the last phrase.
+    pub control: Control,
     pub choices: Vec<Choice>,
-    pub feedback: Option<SharedString>,
-    pub heard: Option<SharedString>,
     /// The position the choices belong to.
     context: String,
     /// The moves (SAN) that led to the position, when the page tells them.
@@ -87,14 +80,10 @@ fn meant<'a>(before: &[String], line: &'a [String]) -> Option<&'a str> {
 
 impl VoiceMoves {
     pub fn new(source: &'static str, cx: &mut App) -> VoiceMoves {
-        let owner = super::handle(cx).update(cx, |voice, _| voice.new_owner());
         VoiceMoves {
             source,
-            owner,
-            enabled: false,
+            control: Control::new(true, cx),
             choices: Vec::new(),
-            feedback: None,
-            heard: None,
             context: String::new(),
             line: None,
             pending: None,
@@ -106,37 +95,14 @@ impl VoiceMoves {
 
     /// Whether `event` is this board's.
     pub fn owns(&self, event: &VoiceEvent) -> bool {
-        match event {
-            VoiceEvent::Heard { owner, .. } | VoiceEvent::Missed { owner, .. } => {
-                *owner == self.owner
-            }
-        }
-    }
-
-    fn push_to_talk(cx: &App) -> bool {
-        cx.global::<crate::settings::SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .voice_push_to_talk
+        self.control.owns(event)
     }
 
     /// Voice on or off for this board.
     pub fn toggle(&mut self, on: bool, grammar: Vec<String>, active: bool, cx: &mut App) {
-        self.enabled = on;
         self.settle("abandoned", None, cx);
         self.choices.clear();
-        self.feedback = None;
-        self.heard = None;
-        let (owner, push) = (self.owner, Self::push_to_talk(cx));
-        super::handle(cx).update(cx, |voice, cx| {
-            if on {
-                voice.enable(owner, grammar, active, push, cx)
-            } else {
-                voice.disable(owner, cx)
-            }
-        });
+        self.control.toggle(on, grammar, active, cx);
     }
 
     /// The board changed (a move, the turn, the position shown): a choice waiting is dropped,
@@ -155,23 +121,17 @@ impl VoiceMoves {
             if !self.choices.is_empty() {
                 self.settle("abandoned", None, cx);
                 self.choices.clear();
-                self.feedback = None;
+                self.control.feedback = None;
             }
             self.learn(line.as_deref(), cx);
         }
         self.line = line;
-        if !self.enabled {
-            return;
-        }
-        let (owner, push) = (self.owner, Self::push_to_talk(cx));
-        super::handle(cx).update(cx, |voice, cx| {
-            voice.update(owner, grammar, active, push, cx)
-        });
+        self.control.sync(grammar, active, cx);
     }
 
     /// Voice is on here: switched on, and still this board's (leaving the page turns it off).
     pub fn is_on(&self, cx: &App) -> bool {
-        self.enabled && super::handle(cx).read(cx).owner() == Some(self.owner)
+        self.control.is_on(cx)
     }
 
     /// Record a phrase in the voice history, when Settings keep one (`logVoice`). `track`: the
@@ -185,60 +145,18 @@ impl VoiceMoves {
         track: bool,
         cx: &mut App,
     ) -> Option<Entry> {
-        let keep = cx
-            .global::<crate::settings::SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .core
-            .voice_history;
-        if !keep {
-            return None;
-        }
-        let mut attempt = json!({
-            "source": self.source,
-            "heard": heard.raw.chars().take(200).collect::<String>(),
-            "confidence": (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
-            "words": heard.words.iter().take(40).map(|word| json!({
-                "word": word.word.chars().take(40).collect::<String>(),
-                "conf": word.conf.clamp(0., 1.),
-            })).collect::<Vec<_>>(),
-            "outcome": outcome,
-        });
-        if let Some(parsed) = parsed {
-            attempt["parsed"] = json!(parsed.chars().take(120).collect::<String>());
-        }
-        if !fen.is_empty() {
-            attempt["fen"] = json!(fen);
-        }
-        let retry = self.last_miss.clone();
-        let core = cx.global::<AppCore>().clone();
-        let entry = cx
-            .foreground_executor()
-            .spawn(async move {
-                if let Some(retry) = retry
-                    && let Some(id) = retry.await
-                {
-                    attempt["retryOf"] = json!(id);
-                }
-                // The history is a study aid; a lost entry never disturbs play.
-                match core.call("saveVoiceAttempt", vec![attempt]).await {
-                    Ok(id) => id.as_i64(),
-                    Err(cause) => {
-                        crate::log::write(
-                            kchess_core::Level::Warn,
-                            "voice-log",
-                            &format!("saving a voice attempt failed: {}", cause.message),
-                        );
-                        None
-                    }
-                }
-            })
-            .shared();
-        // Saved even when nothing waits for its place.
-        cx.foreground_executor()
-            .spawn(entry.clone().map(|_| ()))
-            .detach();
+        let entry = super::log(
+            &super::Attempt {
+                source: self.source,
+                heard,
+                outcome,
+                parsed,
+                expected: None,
+                fen: Some(fen),
+            },
+            self.last_miss.clone(),
+            cx,
+        )?;
         if track {
             if self.position_entries.is_empty() {
                 self.position_line = self.line.clone().unwrap_or_default();
@@ -249,26 +167,6 @@ impl VoiceMoves {
             self.last_miss = Some(entry.clone());
         }
         Some(entry)
-    }
-
-    /// A saved phrase's new outcome or meant move (`updateVoice`).
-    fn amend(entry: Entry, update: Value, cx: &App) {
-        let core = cx.global::<AppCore>().clone();
-        cx.foreground_executor()
-            .spawn(async move {
-                let Some(id) = entry.await else { return };
-                if let Err(cause) = core
-                    .call("updateVoiceAttempt", vec![json!(id), update])
-                    .await
-                {
-                    crate::log::write(
-                        kchess_core::Level::Warn,
-                        "voice-log",
-                        &format!("updating a voice attempt failed: {}", cause.message),
-                    );
-                }
-            })
-            .detach();
     }
 
     /// Close the choice waiting with how it ended.
@@ -283,7 +181,7 @@ impl VoiceMoves {
         if let Some(expected) = expected {
             update["expected"] = json!(expected);
         }
-        Self::amend(attempt, update, cx);
+        super::amend(attempt, update, cx);
     }
 
     /// The position moved on: its phrases learn which move was played there, when the line
@@ -296,13 +194,13 @@ impl VoiceMoves {
             return;
         };
         for entry in entries {
-            Self::amend(entry, json!({ "expected": san }), cx);
+            super::amend(entry, json!({ "expected": san }), cx);
         }
     }
 
     /// Heard but too unsure (or only noise) to act on; `taking` as for `hear`.
     pub fn missed(&mut self, heard: &Heard, fen: &str, taking: bool, cx: &mut App) {
-        if self.enabled {
+        if self.control.enabled {
             self.record(heard, "unclear", None, fen, taking, cx);
         }
     }
@@ -322,11 +220,11 @@ impl VoiceMoves {
             idle,
             immediate,
         } = turn;
-        if !self.enabled {
+        if !self.control.enabled {
             return Action::Nothing;
         }
         let fen = setup["fen"].as_str().unwrap_or_default().to_string();
-        self.heard = Some(heard.text.clone().into());
+        self.control.heard = Some(heard.text.clone().into());
         if let Some(reply) = command(&heard.text) {
             let outcome = if reply.understood {
                 "command"
@@ -339,12 +237,12 @@ impl VoiceMoves {
                 self.settle("abandoned", None, cx);
             }
             self.choices.clear();
-            self.feedback = Some(reply.feedback.into());
+            self.control.feedback = Some(reply.feedback.into());
             return Action::Nothing;
         }
         if !taking {
             self.record(heard, "invalid", Some("not your move"), &fen, false, cx);
-            self.feedback = idle.map(|idle| SharedString::from(idle.to_string()));
+            self.control.feedback = idle.map(|idle| SharedString::from(idle.to_string()));
             return Action::Nothing;
         }
         let number = crate::game::rules("spokenChoice", &[json!(heard.text)])
@@ -369,7 +267,7 @@ impl VoiceMoves {
             {
                 Some(choice) => self.choose(choice, "confirmed", cx),
                 None => {
-                    self.feedback = Some("Choose one of the numbered moves.".into());
+                    self.control.feedback = Some("Choose one of the numbered moves.".into());
                     Action::Nothing
                 }
             };
@@ -389,7 +287,7 @@ impl VoiceMoves {
                         self.choose(only, "confirmed", cx)
                     }
                     _ => {
-                        self.feedback = Some("Say a move, or choose its number.".into());
+                        self.control.feedback = Some("Say a move, or choose its number.".into());
                         Action::Nothing
                     }
                 }
@@ -417,7 +315,7 @@ impl VoiceMoves {
                     true,
                     cx,
                 );
-                self.feedback = Some(
+                self.control.feedback = Some(
                     if heard.unclear {
                         "Didn’t catch that. Repeat, or try “Echo four” for E4.".to_string()
                     } else {
@@ -476,7 +374,7 @@ impl VoiceMoves {
             return self.choose(only, "played", cx);
         }
         self.pending = self.record(heard, "pending", Some(&sans), fen, true, cx);
-        self.feedback = Some(
+        self.control.feedback = Some(
             match offered.as_slice() {
                 [only] if heard.unclear => {
                     format!(
@@ -497,7 +395,7 @@ impl VoiceMoves {
         // Settled before the move: the board's change abandons any choice still waiting.
         self.settle(outcome, Some(&choice.san), cx);
         self.choices.clear();
-        self.feedback = Some(format!("Played {}.", choice.san).into());
+        self.control.feedback = Some(format!("Played {}.", choice.san).into());
         Action::Play(choice.uci)
     }
 
@@ -554,7 +452,7 @@ impl VoiceMoves {
     pub fn cancel(&mut self, cx: &App) {
         self.settle("cancelled", None, cx);
         self.choices.clear();
-        self.feedback = Some("Move cancelled.".into());
+        self.control.feedback = Some("Move cancelled.".into());
     }
 }
 
@@ -594,8 +492,8 @@ pub fn board_bar<V: 'static>(
     bar: BoardBar,
     cx: &App,
 ) -> AnyElement {
-    let (owner, on) = (state.owner, state.is_on(cx));
-    let (feedback, heard) = (state.feedback.clone(), state.heard.clone());
+    let (owner, on) = (state.control.owner, state.is_on(cx));
+    let (feedback, heard) = (state.control.feedback.clone(), state.control.heard.clone());
     let (pick, cancel, toggle) = (page.clone(), page.clone(), page);
     let extra = state.choice_buttons(
         bar.id,

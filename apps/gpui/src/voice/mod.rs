@@ -6,7 +6,8 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use futures::StreamExt as _;
+use futures::future::Shared;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::*;
 use kchess_core::voice::{self as model, VoiceModelCache};
 use serde_json::{Value, json};
@@ -15,6 +16,7 @@ use crate::core::AppCore;
 
 pub mod bar;
 pub mod capture;
+pub mod control;
 pub mod moves;
 
 pub use bar::voice_bar;
@@ -555,6 +557,103 @@ pub fn init(cx: &mut App) {
 }
 
 /// A rules grammar (`MOVE_GRAMMAR`, `GAME_GRAMMAR`, …).
+/// A phrase's place in the voice history, once saved (none when Settings keep no history).
+pub type Entry = Shared<Task<Option<i64>>>;
+
+/// A phrase for the voice history (`VoiceAttemptInput`).
+pub struct Attempt<'a> {
+    pub source: &'a str,
+    pub heard: &'a Heard,
+    pub outcome: &'a str,
+    pub parsed: Option<&'a str>,
+    /// What was meant, when the page knows (a drill's question).
+    pub expected: Option<&'a str>,
+    pub fen: Option<&'a str>,
+}
+
+/// Save a phrase to the voice history, when Settings keep one (`logVoice`); `retry` is the
+/// phrase it tries again.
+pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
+    let keep = cx
+        .global::<crate::settings::SettingsHandle>()
+        .0
+        .read(cx)
+        .settings
+        .core
+        .voice_history;
+    if !keep {
+        return None;
+    }
+    let heard = attempt.heard;
+    let mut record = json!({
+        "source": attempt.source,
+        "heard": heard.raw.chars().take(200).collect::<String>(),
+        "confidence": (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
+        "words": heard.words.iter().take(40).map(|word| json!({
+            "word": word.word.chars().take(40).collect::<String>(),
+            "conf": word.conf.clamp(0., 1.),
+        })).collect::<Vec<_>>(),
+        "outcome": attempt.outcome,
+    });
+    if let Some(parsed) = attempt.parsed {
+        record["parsed"] = json!(parsed.chars().take(120).collect::<String>());
+    }
+    if let Some(expected) = attempt.expected {
+        record["expected"] = json!(expected);
+    }
+    if let Some(fen) = attempt.fen.filter(|fen| !fen.is_empty()) {
+        record["fen"] = json!(fen);
+    }
+    let core = cx.global::<AppCore>().clone();
+    let entry = cx
+        .foreground_executor()
+        .spawn(async move {
+            if let Some(retry) = retry
+                && let Some(id) = retry.await
+            {
+                record["retryOf"] = json!(id);
+            }
+            // The history is a study aid; a lost entry never disturbs play.
+            match core.call("saveVoiceAttempt", vec![record]).await {
+                Ok(id) => id.as_i64(),
+                Err(cause) => {
+                    crate::log::write(
+                        kchess_core::Level::Warn,
+                        "voice-log",
+                        &format!("saving a voice attempt failed: {}", cause.message),
+                    );
+                    None
+                }
+            }
+        })
+        .shared();
+    // Saved even when nothing waits for its place.
+    cx.foreground_executor()
+        .spawn(entry.clone().map(|_| ()))
+        .detach();
+    Some(entry)
+}
+
+/// A saved phrase's new outcome or meant move (`updateVoice`).
+pub fn amend(entry: Entry, update: Value, cx: &App) {
+    let core = cx.global::<AppCore>().clone();
+    cx.foreground_executor()
+        .spawn(async move {
+            let Some(id) = entry.await else { return };
+            if let Err(cause) = core
+                .call("updateVoiceAttempt", vec![json!(id), update])
+                .await
+            {
+                crate::log::write(
+                    kchess_core::Level::Warn,
+                    "voice-log",
+                    &format!("updating a voice attempt failed: {}", cause.message),
+                );
+            }
+        })
+        .detach();
+}
+
 pub fn grammar(name: &str) -> Vec<String> {
     crate::game::rules(name, &[])
         .ok()
