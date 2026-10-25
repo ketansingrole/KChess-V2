@@ -271,9 +271,44 @@ struct Drag {
     moved: bool,
 }
 
+/// A shape the player drew with the right button: an arrow, or a circle where `from == to`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Drawn {
+    from: Square,
+    to: Square,
+    brush: &'static str,
+}
+
+/// Chessground's brush for a right-button drawing (`eventBrush`): Shift or Ctrl red, Alt or ⌘
+/// blue, both yellow, else green.
+fn drawing_brush(modifiers: &Modifiers) -> &'static str {
+    let a = modifiers.shift || modifiers.control;
+    let b = modifiers.alt || modifiers.platform;
+    ["green", "red", "blue", "yellow"][usize::from(a) + 2 * usize::from(b)]
+}
+
+/// Draw `shape`: the same shape again takes it off, the same squares in another brush recolour
+/// it (Chessground's `addShape`).
+fn toggle_shape(shapes: &mut Vec<Drawn>, shape: Drawn) {
+    match shapes
+        .iter()
+        .position(|s| s.from == shape.from && s.to == shape.to)
+    {
+        Some(index) if shapes[index].brush == shape.brush => {
+            shapes.remove(index);
+        }
+        Some(index) => shapes[index] = shape,
+        None => shapes.push(shape),
+    }
+}
+
 pub struct ChessBoard {
     state: BoardState,
     pieces: Board,
+    /// The player's right-button drawings, until a left click clears them.
+    drawn: Vec<Drawn>,
+    /// A drawing under way: where it started, its brush, and the square under the pointer.
+    drawing: Option<(Square, &'static str, Option<Square>)>,
     selected: Option<Square>,
     drag: Option<Drag>,
     /// A pawn move waiting for its promotion piece.
@@ -287,6 +322,8 @@ impl ChessBoard {
     pub fn new(state: BoardState) -> ChessBoard {
         ChessBoard {
             pieces: board_of(&state.fen),
+            drawn: Vec::new(),
+            drawing: None,
             state,
             selected: None,
             drag: None,
@@ -365,6 +402,11 @@ impl ChessBoard {
         if self.promotion.is_some() || self.state.preview {
             return;
         }
+        // A left click clears the drawings (`eraseOnClick`); Shift keeps them.
+        if !event.modifiers.shift && !self.drawn.is_empty() {
+            self.drawn.clear();
+            cx.notify();
+        }
         let Some(square) = self.square_at(event.position) else {
             return;
         };
@@ -397,6 +439,38 @@ impl ChessBoard {
                 }
             }
             _ => self.selected = None,
+        }
+        cx.notify();
+    }
+
+    /// The right button starts a drawing on a square.
+    fn start_drawing(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        if self.state.preview || self.state.edit.is_some() {
+            return;
+        }
+        if let Some(square) = self.square_at(event.position) {
+            self.drawing = Some((square, drawing_brush(&event.modifiers), Some(square)));
+            cx.notify();
+        }
+    }
+
+    fn draw_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let square = self.square_at(position);
+        if let Some((_, _, current)) = &mut self.drawing
+            && *current != square
+        {
+            *current = square;
+            cx.notify();
+        }
+    }
+
+    /// Letting go draws the arrow (or the circle, on the same square), or takes it off.
+    fn finish_drawing(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some((from, brush, _)) = self.drawing.take() else {
+            return;
+        };
+        if let Some(to) = self.square_at(position) {
+            toggle_shape(&mut self.drawn, Drawn { from, to, brush });
         }
         cx.notify();
     }
@@ -1015,8 +1089,19 @@ impl Render for ChessBoard {
             .as_ref()
             .filter(|drag| drag.moved)
             .and_then(|drag| self.square_at(drag.position));
+        let mut shown = self.state.clone();
+        let preview = self.drawing.and_then(|(from, brush, to)| {
+            to.map(|to| Drawn { from, to, brush })
+        });
+        for shape in self.drawn.iter().chain(preview.iter()) {
+            if shape.from == shape.to {
+                shown.circles.push(Circle::brush(shape.brush, shape.from));
+            } else {
+                shown.arrows.push(Arrow::brush(shape.brush, shape.from, shape.to));
+            }
+        }
         let frame = Frame {
-            state: self.state.clone(),
+            state: shown,
             pieces: self.pieces.clone(),
             selected: self.selected,
             lifted,
@@ -1182,6 +1267,30 @@ impl Render for ChessBoard {
                 MouseButton::Left,
                 cx.listener(|this, event, _, cx| this.press(event, cx)),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event, _, cx| {
+                    cx.stop_propagation();
+                    this.start_drawing(event, cx)
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if this.drawing.is_some() {
+                    this.draw_to(event.position, cx)
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.finish_drawing(event.position, cx)
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.finish_drawing(event.position, cx)
+                }),
+            )
             // The press's own frame has no window-wide listeners yet: a quick release lands here.
             .on_mouse_up(
                 MouseButton::Left,
@@ -1202,5 +1311,50 @@ impl Render for ChessBoard {
                 None if self.state.movable.is_some() => CursorStyle::PointingHand,
                 None => CursorStyle::Arrow,
             })
+    }
+}
+
+#[cfg(test)]
+mod drawing_tests {
+    use super::{Drawn, drawing_brush, toggle_shape};
+    use gpui_kit::Modifiers;
+    use shakmaty::Square;
+
+    #[test]
+    fn modifiers_pick_chessgrounds_brushes() {
+        let none = Modifiers::default();
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        };
+        let both = Modifiers {
+            shift: true,
+            alt: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(drawing_brush(&none), "green");
+        assert_eq!(drawing_brush(&shift), "red");
+        assert_eq!(drawing_brush(&alt), "blue");
+        assert_eq!(drawing_brush(&both), "yellow");
+    }
+
+    #[test]
+    fn drawing_again_takes_off_or_recolours() {
+        let arrow = |brush| Drawn {
+            from: Square::E2,
+            to: Square::E4,
+            brush,
+        };
+        let mut shapes = Vec::new();
+        toggle_shape(&mut shapes, arrow("green"));
+        assert_eq!(shapes, [arrow("green")]);
+        toggle_shape(&mut shapes, arrow("red"));
+        assert_eq!(shapes, [arrow("red")]);
+        toggle_shape(&mut shapes, arrow("red"));
+        assert!(shapes.is_empty());
     }
 }

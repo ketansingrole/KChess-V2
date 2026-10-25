@@ -59,7 +59,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Review game: the game on the analysis board at the move shown, reviewed
 - [x] Export: animated GIF of the game, PNG of the position shown, PGN file
 - [ ] Voice input
-- [ ] Right-click arrows and circles on the board
+- [x] Right-click arrows and circles on every board (Shift/Ctrl red, Alt/⌘ blue, both yellow),
+      drawn again to take off, cleared by a left click
 
 ## Over the board
 
