@@ -959,6 +959,7 @@ impl ComputerPage {
         let listening = self.voice_listening();
         self.voice.sync(
             &context,
+            Some(self.sans()),
             crate::voice::grammar("GAME_GRAMMAR"),
             listening,
             cx,
@@ -997,7 +998,7 @@ impl ComputerPage {
         let fen = setup["fen"].as_str().unwrap_or_default().to_string();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, cx);
+                self.voice.missed(heard, &fen, self.voice_taking(), cx);
                 return;
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
@@ -1477,9 +1478,9 @@ impl Render for ComputerPage {
             .child(self.board.clone())
             .child(you_line)
             .child(crate::voice::moves::board_bar(
-                &cx.entity(),
+                &self.voice,
+                cx.entity().downgrade(),
                 crate::voice::moves::Access {
-                    read: |this: &Self| &this.voice,
                     write: |this: &mut Self| &mut this.voice,
                     play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
                 },

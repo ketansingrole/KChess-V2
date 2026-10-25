@@ -15,6 +15,7 @@ use crate::game::puzzle::OnBoard;
 use crate::game::{STANDARD_FEN, view};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, tint};
+use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
 use crate::widgets;
 
 /// Before the opponent replies, and the solution's pace when it plays itself.
@@ -68,6 +69,9 @@ pub struct PuzzleBoard {
     /// No moves for now (a run between puzzles, or over).
     frozen: bool,
     reply_delay: Duration,
+    /// Spoken moves (`PuzzleVoice.vue`): kept with the board, which outlives each puzzle, so
+    /// the speech model is not reloaded for every one.
+    voice: VoiceMoves,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
     generation: u64,
     timers: Vec<Task<()>>,
@@ -88,7 +92,12 @@ impl PuzzleBoard {
         });
         let move_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let voice = crate::voice::handle(cx);
         let subscriptions = vec![
+            cx.subscribe(&voice, |this, _, event: &crate::voice::VoiceEvent, cx| {
+                this.voice_heard(event, cx)
+            }),
+            cx.observe(&voice, |_, _, cx| cx.notify()),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.on_move(uci, cx)
@@ -122,6 +131,7 @@ impl PuzzleBoard {
             retry: true,
             frozen: false,
             reply_delay: REPLY_DELAY,
+            voice: VoiceMoves::new("puzzles", cx),
             generation: 0,
             timers: Vec::new(),
             _subscriptions: subscriptions,
@@ -220,6 +230,7 @@ impl PuzzleBoard {
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let Some(on_board) = &self.on_board else {
             cx.notify();
             return;
@@ -408,6 +419,48 @@ impl PuzzleBoard {
         }));
     }
 
+    /// A spoken move belongs to this puzzle at this point of it; another drops a choice waiting.
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let index = self.on_board.as_ref().map_or(0, OnBoard::index);
+        let context = format!("{}:{index}", self.generation);
+        let playing = self.playing();
+        self.voice.sync(
+            &context,
+            None,
+            crate::voice::grammar("MOVE_GRAMMAR"),
+            playing,
+            cx,
+        );
+    }
+
+    fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let fen = self
+            .on_board
+            .as_ref()
+            .map(|board| board.fen().to_string())
+            .unwrap_or_default();
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &fen, self.playing(), cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let setup = json!({ "variant": "standard", "fen": fen });
+        let turn = Turn {
+            taking: self.playing(),
+            idle: None,
+            immediate: false,
+        };
+        if let Action::Play(uci) = self.voice.hear(&heard, &setup, turn, |_| None, cx) {
+            self.on_move(&uci, cx);
+        }
+        cx.notify();
+    }
+
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.move_input.read(cx).value().trim().to_string();
         let Some(board) = &self.on_board else { return };
@@ -485,8 +538,25 @@ impl Render for PuzzleBoard {
                 .child(board)
                 .child(h_flex().child(entry))
         };
+        let playing = self.playing();
         column
             .w_full()
+            .child(board_bar(
+                &self.voice,
+                cx.entity().downgrade(),
+                Access {
+                    write: |this: &mut Self| &mut this.voice,
+                    play: |this: &mut Self, uci, _, cx| this.on_move(uci, cx),
+                },
+                BoardBar {
+                    id: "puzzle-voice",
+                    hint: "Say “E four” or “Knight F three”.",
+                    active: playing,
+                    listening: playing,
+                    grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+                },
+                cx,
+            ))
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))

@@ -355,8 +355,14 @@ impl LocalPage {
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let context = format!("{}:{}", self.moves().len(), self.shown_ply());
         let taking = self.voice_taking();
-        self.voice
-            .sync(&context, crate::voice::grammar("MOVE_GRAMMAR"), taking, cx);
+        let line = view::sans(self.setup(), &self.moves());
+        self.voice.sync(
+            &context,
+            Some(line),
+            crate::voice::grammar("MOVE_GRAMMAR"),
+            taking,
+            cx,
+        );
     }
 
     fn voice_heard(
@@ -372,7 +378,7 @@ impl LocalPage {
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
                 let fen = setup["fen"].as_str().unwrap_or_default().to_string();
-                self.voice.missed(heard, &fen, cx);
+                self.voice.missed(heard, &fen, self.voice_taking(), cx);
                 return;
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
@@ -1259,9 +1265,9 @@ impl Render for LocalPage {
                 Some(h_flex().pl(px(120.)).child(entry).into_any_element()),
             ))
             .child(crate::voice::moves::board_bar(
-                &cx.entity(),
+                &self.voice,
+                cx.entity().downgrade(),
                 crate::voice::moves::Access {
-                    read: |this: &Self| &this.voice,
                     write: |this: &mut Self| &mut this.voice,
                     play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
                 },
