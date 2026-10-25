@@ -214,6 +214,65 @@ fn rgba(frame: Pixmap) -> Result<RgbaImage, String> {
         .ok_or_else(|| "The image could not be made.".into())
 }
 
+/// One line of rotated text: what it says, its size and weight, and how strongly it shows.
+pub struct TextLine {
+    pub text: String,
+    pub size: f32,
+    pub bold: bool,
+    pub opacity: f32,
+}
+
+/// Lines of text, centred and turned `rotation` degrees (a multiple of 90), as a PNG `scale` times
+/// its size: GPUI cannot rotate text, so a turned clock face is shown as a picture of it.
+pub fn rotated_text_png(
+    lines: &[TextLine],
+    color: &str,
+    rotation: u16,
+    scale: f32,
+) -> Result<Vec<u8>, String> {
+    const GAP: f32 = 12.;
+    const WIDTH: f32 = 560.;
+    let height: f32 = lines.iter().map(|line| line.size).sum::<f32>()
+        + GAP * lines.len().saturating_sub(1) as f32;
+    let sideways = rotation % 180 == 90;
+    let (outer_w, outer_h) = if sideways {
+        (height, WIDTH)
+    } else {
+        (WIDTH, height)
+    };
+    let mut y = 0.;
+    let mut body = String::new();
+    for line in lines {
+        y += line.size;
+        body.push_str(&format!(
+            "<text x='{x}' y='{y}' font-size='{size}' font-weight='{weight}' opacity='{opacity}' text-anchor='middle'>{text}</text>",
+            x = WIDTH / 2.,
+            y = y - line.size * 0.18,
+            size = line.size,
+            weight = if line.bold { 700 } else { 500 },
+            opacity = line.opacity,
+            text = escape(&line.text),
+        ));
+        y += GAP;
+    }
+    // Turned about the block's centre, then moved to the middle of the (maybe swapped) canvas.
+    let svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='{outer_w}' height='{outer_h}'>\
+         <g font-family='-apple-system, Segoe UI, Helvetica, Arial, sans-serif' fill='{color}' \
+         transform='translate({cx} {cy}) rotate({rotation}) translate({bx} {by})'>{body}</g></svg>",
+        cx = outer_w / 2.,
+        cy = outer_h / 2.,
+        bx = -WIDTH / 2.,
+        by = -height / 2.,
+    );
+    let pixmap = rasterize(
+        svg.as_bytes(),
+        (outer_w * scale).round() as u32,
+        (outer_h * scale).round() as u32,
+    )?;
+    pixmap.encode_png().map_err(|cause| cause.to_string())
+}
+
 /// A PNG of the position after `ply` moves.
 pub fn position_png(options: &ImageOptions, ply: usize) -> Result<Vec<u8>, String> {
     let paint = painter(options)?;
@@ -281,8 +340,25 @@ pub fn game_gif(
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageOptions, game_gif, position_png};
+    use super::{ImageOptions, TextLine, game_gif, position_png, rotated_text_png};
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn a_turned_face_is_drawn_sideways_or_upside_down() {
+        let lines = [TextLine {
+            text: "5:00".into(),
+            size: 120.,
+            bold: true,
+            opacity: 1.,
+        }];
+        let size = |rotation| {
+            let png = rotated_text_png(&lines, "#000000", rotation, 1.).unwrap();
+            let image = image::load_from_memory(&png).unwrap();
+            (image.width(), image.height())
+        };
+        assert_eq!(size(180), (560, 120));
+        assert_eq!(size(90), (120, 560));
+    }
 
     fn game() -> ImageOptions {
         ImageOptions {

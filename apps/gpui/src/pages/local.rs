@@ -77,6 +77,8 @@ fn variants() -> Vec<VariantText> {
 }
 
 pub struct LocalPage {
+    /// Turned clock faces as pictures, by side, with what they show.
+    turned: std::collections::HashMap<usize, (String, std::sync::Arc<Image>)>,
     game: LocalGame,
     board: Entity<ChessBoard>,
     exporter: Entity<Exporter>,
@@ -213,6 +215,7 @@ impl LocalPage {
             clock,
             clock_history: None,
             clock_inputs,
+            turned: std::collections::HashMap::new(),
             clock_layout,
             save: None,
             ticker: None,
@@ -797,6 +800,30 @@ impl LocalPage {
         cx.stop_propagation();
     }
 
+    /// How far a clock face is turned (`kchess:clock-rotation`), so a player across the table
+    /// reads it the right way up.
+    fn rotation(side: Side, cx: &App) -> u16 {
+        let turned: serde_json::Value = crate::prefs::get(
+            cx,
+            "kchess:clock-rotation",
+            json!({ "top": 0, "bottom": 0 }),
+        );
+        let key = if side == Side::Top { "top" } else { "bottom" };
+        (turned[key].as_f64().unwrap_or_default() as u16 / 90 * 90) % 360
+    }
+
+    /// A quarter turn clockwise (`rotateClock`).
+    fn rotate(side: Side, cx: &mut App) {
+        let mut turned: serde_json::Value = crate::prefs::get(
+            cx,
+            "kchess:clock-rotation",
+            json!({ "top": 0, "bottom": 0 }),
+        );
+        let key = if side == Side::Top { "top" } else { "bottom" };
+        turned[key] = json!((Self::rotation(side, cx) + 90) % 360);
+        crate::prefs::set(cx, "kchess:clock-rotation", turned);
+    }
+
     fn render_clock(
         &mut self,
         palette: &Palette,
@@ -806,7 +833,7 @@ impl LocalPage {
         let now = self.now();
         let stacked = crate::prefs::get(cx, "kchess:clock-layout", ClockLayout::Horizontal)
             == ClockLayout::Vertical;
-        let face = |side: Side, index: usize, cx: &mut Context<Self>| {
+        let mut face = |side: Side, index: usize, cx: &mut Context<Self>| {
             let running = self.clock.running == Some(side);
             let flagged = self.clock.flagged == Some(side);
             let time = rules("formatClock", &[json!(self.clock.left(side, now))])
@@ -830,6 +857,49 @@ impl LocalPage {
                 (palette.elevated, palette.text)
             };
             let moves = self.clock.moves.get(side);
+            let rotation = Self::rotation(side, cx);
+            let turned = (rotation != 0).then(|| {
+                let lines = [
+                    (format!("Player {index}"), 14., true, 0.75),
+                    (time.clone(), 120., true, 1.),
+                    (format!("{moves} moves"), 14., false, 0.75),
+                    (state.to_string(), 12., true, 1.),
+                ];
+                let rgb = Rgba::from(foreground);
+                let color = format!(
+                    "#{:02x}{:02x}{:02x}",
+                    (rgb.r * 255.).round() as u8,
+                    (rgb.g * 255.).round() as u8,
+                    (rgb.b * 255.).round() as u8
+                );
+                let key = format!("{lines:?}{color}{rotation}");
+                let image = match self.turned.get(&index) {
+                    Some((shown, image)) if *shown == key => Some(image.clone()),
+                    _ => crate::game_image::rotated_text_png(
+                        &lines.map(|(text, size, bold, opacity)| crate::game_image::TextLine {
+                            text,
+                            size,
+                            bold,
+                            opacity,
+                        }),
+                        &color,
+                        rotation,
+                        window.scale_factor(),
+                    )
+                    .ok()
+                    .map(|png| {
+                        let image = std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png));
+                        self.turned.insert(index, (key, image.clone()));
+                        image
+                    }),
+                };
+                image.map(|image| {
+                    img(image)
+                        .size_full()
+                        .p(px(16.))
+                        .object_fit(ObjectFit::Contain)
+                })
+            });
             let content = v_flex()
                 .items_center()
                 .gap(px(12.))
@@ -845,7 +915,7 @@ impl LocalPage {
                         .text_size(px(120.))
                         .font_weight(FontWeight::BOLD)
                         .line_height(px(120.))
-                        .child(time),
+                        .child(time.clone()),
                 )
                 .child(
                     div()
@@ -875,7 +945,13 @@ impl LocalPage {
                 .text_color(foreground)
                 .cursor_pointer()
                 .on_click(cx.listener(move |this, _, _, cx| this.press(side, cx)))
-                .child(content)
+                .aria_label(format!(
+                    "Player {index} clock, {time}. Press after your move."
+                ))
+                .map(|face| match turned.flatten() {
+                    Some(image) => face.child(image),
+                    None => face.child(content),
+                })
         };
         let faces = if stacked {
             v_flex().flex_1().gap(px(16.)).min_h(px(480.))
@@ -919,6 +995,24 @@ impl LocalPage {
                                 .small()
                                 .accessibility_label("Clock layout"),
                         ),
+                    )
+                    .child(div().flex_1())
+                    .children(
+                        [(Side::Top, 1usize), (Side::Bottom, 2)].map(|(side, index)| {
+                            let degrees = Self::rotation(side, cx);
+                            Button::new(("clock-rotate", index))
+                                .small()
+                                .outline()
+                                .icon(icon("rotate-cw"))
+                                .label(format!("Player {index} · {degrees}°"))
+                                .accessibility_label(format!(
+                                    "Rotate Player {index} clock, currently {degrees} degrees"
+                                ))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    Self::rotate(side, cx);
+                                    cx.notify();
+                                }))
+                        }),
                     ),
             )
             .child(faces)

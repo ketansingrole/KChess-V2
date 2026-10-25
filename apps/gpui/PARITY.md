@@ -71,7 +71,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Clocks start on the first move; pause and resume, take back, draw, resign, Copy PGN
 - [x] Chess clock: two faces, side by side or stacked, Start/Pause/Reset, minutes and
       increment, Space presses the running face, P pauses
-- [ ] Rotating each clock face (GPUI cannot rotate text yet)
+- [x] Rotating each clock face a quarter turn at a time (`kchess:clock-rotation`); a turned face
+      is drawn as a picture of its text, since GPUI cannot rotate text
 - [x] Export (GIF, PNG, PGN) and Analyse
 - [ ] Voice input
 - [ ] Electron's chess clock (`stores/clock.ts`) still keeps its own copy of the rules now in
