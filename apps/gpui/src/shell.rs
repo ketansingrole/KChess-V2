@@ -540,6 +540,10 @@ impl Workspace {
         if !self.navigating {
             self.history.visit(current, page);
         }
+        // Voice belongs to the page it was turned on in; another page releases the microphone.
+        if page != current {
+            crate::voice::handle(cx).update(cx, |voice, cx| voice.release(cx));
+        }
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
         }

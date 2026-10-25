@@ -42,6 +42,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 sha2 = { version = "0.11", default-features = false }
 # Desktop notifications while KChess is in the background (already in Cargo.lock through GPUI).
 notify-rust = "4.18"
+# Voice input: the microphone (cpal, already in Cargo.lock through rodio) and the PCM the core's
+# recognizer takes, as base64 (already in Cargo.lock through the core).
+cpal = "0.18"
+base64 = "0.22"
 
 [lints]
 workspace = true

@@ -44,6 +44,9 @@ enum Engine {
     Missing,
 }
 
+/// Work a spoken command leaves for after the phrase is read.
+type Deferred = Box<dyn FnOnce(&mut ComputerPage, &mut Window, &mut Context<ComputerPage>)>;
+
 /// A question the page asks before it throws a game away.
 #[derive(Clone, Copy, PartialEq)]
 enum Question {
@@ -77,6 +80,9 @@ pub struct ComputerPage {
     pending: Option<Chosen>,
     /// The game's place in Game history (`useGameArchive`), once the library has loaded.
     history: Option<HistoryPlace>,
+    /// Spoken moves and commands, and the question voice can answer (`dialogOpen`).
+    voice: crate::voice::moves::VoiceMoves,
+    asked: Option<Question>,
     layout: PlayLayout,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -108,12 +114,21 @@ impl ComputerPage {
         let level = cx.new(|cx| SelectState::new(labels, selected.map(IndexPath::new), window, cx));
         let move_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let voice = crate::voice::handle(cx);
         let subscriptions = vec![
             cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.play(uci, window, cx)
                 }
             }),
+            cx.subscribe_in(
+                &voice,
+                window,
+                |this, _, event: &crate::voice::VoiceEvent, window, cx| {
+                    this.voice_heard(event, window, cx)
+                },
+            ),
+            cx.observe(&voice, |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &level,
                 window,
@@ -175,6 +190,8 @@ impl ComputerPage {
             error: None,
             pending: None,
             history: None,
+            voice: crate::voice::moves::VoiceMoves::new("computer", cx),
+            asked: None,
             layout: PlayLayout::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
@@ -624,6 +641,7 @@ impl ComputerPage {
         }
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
+        self.sync_voice(cx);
         let host = self.host();
         let running = !self.game.state["times"].is_null() && !self.game.over(&host);
         if running && self.ticker.is_none() {
@@ -900,11 +918,187 @@ impl ComputerPage {
                 .ok_text(label.clone())
                 .cancel_text("Cancel")
                 .show_cancel(true)
-                .on_ok(move |_, window, cx| {
-                    let _ = page.update(cx, |page, cx| page.answer(question, window, cx));
+                .on_ok({
+                    let page = page.clone();
+                    move |_, window, cx| {
+                        let _ = page.update(cx, |page, cx| {
+                            page.asked = None;
+                            page.answer(question, window, cx)
+                        });
+                        true
+                    }
+                })
+                .on_cancel(move |_, _, cx| {
+                    let _ = page.update(cx, |page, cx| {
+                        page.asked = None;
+                        cx.notify();
+                    });
                     true
                 })
         });
+        self.asked = Some(question);
+        self.sync_voice(cx);
+    }
+
+    /// Spoken moves are taken on your turn; commands whenever Stockfish is there to play.
+    fn voice_taking(&self) -> bool {
+        self.interactive() && !self.thinking() && self.asked.is_none()
+    }
+
+    fn voice_listening(&self) -> bool {
+        self.voice_taking() || self.engine == Engine::Ready
+    }
+
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let context = format!(
+            "{}:{}:{}",
+            self.user_color() == Color::White,
+            self.moves().join(" "),
+            self.asked.is_some()
+        );
+        let listening = self.voice_listening();
+        self.voice.sync(
+            &context,
+            crate::voice::grammar("GAME_GRAMMAR"),
+            listening,
+            cx,
+        );
+    }
+
+    fn toggle_voice(&mut self, on: bool, cx: &mut Context<Self>) {
+        let listening = self.voice_listening();
+        self.voice
+            .toggle(on, crate::voice::grammar("GAME_GRAMMAR"), listening, cx);
+        cx.notify();
+    }
+
+    /// What voice input says while no move is taken (`voiceIdle`).
+    fn voice_idle(&self) -> &'static str {
+        if self.game.result(&self.host()).is_some() {
+            "The game is over. Say “new game” to play again."
+        } else if self.ply() != self.moves().len() {
+            "Go to the last move to keep playing."
+        } else {
+            "Wait for Stockfish, then say your move."
+        }
+    }
+
+    fn voice_heard(
+        &mut self,
+        event: &crate::voice::VoiceEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let setup = self
+            .position_at(self.moves().len())
+            .map(|position| {
+                json!({
+                    "variant": self.game.state["setup"]["variant"],
+                    "fen": kchess_domain::rules::make_fen(&position),
+                })
+            })
+            .unwrap_or(Value::Null);
+        let fen = setup["fen"].as_str().unwrap_or_default().to_string();
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &fen, cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let taking = self.voice_taking();
+        let idle = self.voice_idle();
+        let asked = self.asked;
+        let mut run: Option<Deferred> = None;
+        let action = {
+            let command = |text: &str| -> Option<crate::voice::moves::Reply> {
+                let reply = |said: &str, feedback: &str| crate::voice::moves::Reply {
+                    said: said.into(),
+                    feedback: feedback.into(),
+                    understood: true,
+                };
+                if let Some(question) = asked {
+                    let answer = crate::voice::moves::spoken_move(text, &setup);
+                    return Some(match answer["kind"].as_str() {
+                        Some("confirm") => {
+                            run = Some(Box::new(move |this, window, cx| {
+                                this.asked = None;
+                                window.close_dialog(cx);
+                                this.answer(question, window, cx);
+                            }));
+                            reply("confirm", "Done.")
+                        }
+                        Some("cancel") => {
+                            run = Some(Box::new(|this, window, cx| {
+                                this.asked = None;
+                                window.close_dialog(cx);
+                                cx.notify();
+                            }));
+                            reply("cancel", "Cancelled.")
+                        }
+                        _ => crate::voice::moves::Reply {
+                            said: "expected confirm or cancel".into(),
+                            feedback: "Say “confirm” or “cancel”.".into(),
+                            understood: false,
+                        },
+                    });
+                }
+                let command = crate::game::rules("spokenCommand", &[json!(text)]).ok()?;
+                let (said, question, feedback) = match command.as_str()? {
+                    "takeback" => {
+                        run = Some(Box::new(|this, _, cx| {
+                            if this.can_takeback() {
+                                this.takeback(cx);
+                            }
+                        }));
+                        ("take back", None, "Took back your last move.")
+                    }
+                    "newGame" => (
+                        "new game",
+                        Some(Question::NewGame),
+                        "Start a new game? Say “confirm” or “cancel”.",
+                    ),
+                    "resign" => (
+                        "resign",
+                        Some(Question::Resign),
+                        "Resign this game? Say “confirm” or “cancel”.",
+                    ),
+                    "flip" => (
+                        "switch sides",
+                        Some(Question::SwitchSides),
+                        "Switch sides and restart? Say “confirm” or “cancel”.",
+                    ),
+                    _ => return None,
+                };
+                if let Some(question) = question {
+                    run = Some(Box::new(move |this, window, cx| {
+                        this.ask(question, window, cx)
+                    }));
+                }
+                Some(reply(said, feedback))
+            };
+            self.voice.hear(
+                &heard,
+                &setup,
+                crate::voice::moves::Turn {
+                    taking,
+                    idle: Some(idle),
+                    immediate: false,
+                },
+                command,
+                cx,
+            )
+        };
+        if let Some(run) = run {
+            run(self, window, cx);
+        }
+        if let crate::voice::moves::Action::Play(uci) = action {
+            self.play(&uci, window, cx);
+        }
+        cx.notify();
     }
 
     fn answer(&mut self, question: Question, window: &mut Window, cx: &mut Context<Self>) {
@@ -1289,6 +1483,44 @@ impl Render for ComputerPage {
             .child(computer_line)
             .child(self.board.clone())
             .child(you_line)
+            .child({
+                let page = cx.entity().downgrade();
+                let pick_page = page.clone();
+                let cancel_page = page.clone();
+                let extra = self.voice.choice_buttons(
+                    "computer-voice-choice",
+                    move |uci, window, cx| {
+                        let _ = pick_page.update(cx, |this, cx| {
+                            if let crate::voice::moves::Action::Play(uci) = this.voice.picked(&uci)
+                            {
+                                this.play(&uci, window, cx);
+                            }
+                        });
+                    },
+                    move |_, cx| {
+                        let _ = cancel_page.update(cx, |this, cx| {
+                            this.voice.cancel();
+                            cx.notify();
+                        });
+                    },
+                );
+                crate::voice::voice_bar(
+                    crate::voice::bar::Bar {
+                        id: "computer-voice",
+                        owner: self.voice.owner,
+                        enabled: self.voice.is_on(cx),
+                        active: self.voice_taking(),
+                        hint: "Say “E four”, “Knight F three”, or “take back”.".into(),
+                        feedback: self.voice.feedback.clone(),
+                        heard: self.voice.heard.clone(),
+                        extra,
+                    },
+                    move |on, _, cx| {
+                        let _ = page.update(cx, |this, cx| this.toggle_voice(on, cx));
+                    },
+                    cx,
+                )
+            })
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))

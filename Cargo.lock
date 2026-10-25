@@ -3667,7 +3667,9 @@ dependencies = [
 name = "kchess-gpui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "cpal",
  "dirs 6.0.0",
  "futures",
  "getrandom 0.4.3",

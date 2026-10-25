@@ -87,6 +87,15 @@ impl CoreBridge {
         }
     }
 
+    /// Run other work on the core's runtime (the voice model's download uses its HTTP client).
+    pub fn spawn<T: Send + 'static, W: Future<Output = T> + Send + 'static>(
+        &self,
+        work: W,
+    ) -> impl Future<Output = Option<T>> + 'static + use<T, W> {
+        let task = self.runtime.spawn(work);
+        async move { task.await.ok() }
+    }
+
     /// Run a core method and wait for it: only before the window opens, as the Electron renderer
     /// waits for its library and preferences before it mounts.
     pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
@@ -162,6 +171,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
         managed_engine_dir: Some(crate::profile::managed_engine_dir()),
         // A native executable, so no runtime runs it (`runtime_path: None`).
         bundled_engine_path: crate::profile::bundled_engine(),
+        voice_helper_path: crate::profile::voice_helper(),
         system_credentials: true,
         ..Config::new(data_dir.clone())
     };

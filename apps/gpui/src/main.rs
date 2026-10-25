@@ -36,6 +36,7 @@ mod studies;
 mod swipe;
 mod theme;
 mod updates;
+mod voice;
 mod widgets;
 mod window_state;
 
@@ -81,6 +82,7 @@ fn main() {
         sound::init(cx);
         online::init(cx);
         network::init(cx);
+        voice::init(cx);
         cx.on_app_quit(core::quit).detach();
         open_main_window(cx);
         cx.activate(true);
