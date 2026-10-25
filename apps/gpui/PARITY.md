@@ -21,7 +21,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       their Game history entries; chess clock sessions in Game history
 - [x] Window size, position and mode remembered in the profile's `window-state.json` (shared with
       Electron), back on a display that can show it
-- [ ] Interface zoom
+- [ ] Interface zoom (see Settings)
 
 ## Shell
 
@@ -87,7 +87,10 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Chess engine (bundled, downloaded or your own Stockfish; download, update, delete) and
       Game review; Offline downloads (the engine, the shared puzzle database card, saved games)
 - [x] My accounts: connect, sync, use for online play, disconnect, with what each keeps
-- [ ] Interface size; Notifications' "Try it"; Voice input, Offline voice model
+- [x] Notifications' "Try it" (a sample after 5 seconds, and the system's notification settings)
+- [ ] Interface size: GPUI scales only `rem` sizes (and the display's scale, settable in its tests
+      only), and these pages are laid out in pixels as Electron's CSS is
+- [ ] Voice input, Offline voice model
       downloads, Data & storage, Updates
 
 ## Game history

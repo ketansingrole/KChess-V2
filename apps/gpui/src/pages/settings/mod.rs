@@ -120,6 +120,9 @@ pub struct SettingsPage {
     /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.
     engine: Option<EngineStatus>,
     engine_busy: bool,
+    /// What the notification test says, and whether it is counting down.
+    test_note: Option<SharedString>,
+    test_pending: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -231,6 +234,8 @@ impl SettingsPage {
             default_levels,
             engine: None,
             engine_busy: false,
+            test_note: None,
+            test_pending: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -1051,7 +1056,46 @@ impl SettingsPage {
             .card(palette)
     }
 
-    fn notifications(&self, settings: &Settings, palette: &Palette) -> Div {
+    /// Delayed so there is time to switch to another app: macOS shows no banners for the app in
+    /// front (`sendTest`).
+    fn send_test(&mut self, cx: &mut Context<Self>) {
+        const DELAY: u64 = 5;
+        self.test_pending = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            for left in (1..=DELAY).rev() {
+                let _ = this.update(cx, |this, cx| {
+                    this.test_note = Some(format!("Switch to another app now… sending in {left}s").into());
+                    cx.notify();
+                });
+                cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+            }
+            let _ = this.update(cx, |this, cx| {
+                let outcome = crate::notifications::desktop(
+                    "test",
+                    "KChess notifications",
+                    "This is how game alerts will look. Click it to return to KChess.",
+                    cx,
+                );
+                use crate::notifications::Outcome;
+                this.test_note = Some(
+                    match outcome {
+                        Outcome::InApp => "Shown inside KChess. Switch to another app before it sends to try the system notification.",
+                        Outcome::System => "Sent. If nothing appeared, check KChess in your system notification settings and that Focus is off.",
+                        Outcome::Disabled => "Notifications are turned off.",
+                        Outcome::CategoryOff => "That kind of notification is turned off.",
+                        Outcome::WindowState | Outcome::Redundant => "Alerts are off for the current window state.",
+                    }
+                    .into(),
+                );
+                this.test_pending = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn notifications(&self, settings: &Settings, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let frontend = &settings.frontend;
         let enabled = frontend.notifications_enabled;
         let mut rows = Rows::new(self.narrow()).switch(
@@ -1124,7 +1168,51 @@ impl SettingsPage {
         for (id, title, hint, on, set) in switches {
             rows = rows.switch(id, title, hint, on, enabled, set, palette);
         }
-        rows.card(palette)
+        rows.row(
+            "Try it",
+            Some(
+                self.test_note
+                    .clone()
+                    .unwrap_or_else(|| "Sends a sample in 5 seconds.".into()),
+            ),
+            h_flex()
+                .gap(px(8.))
+                .child(
+                    Button::new("notify-system")
+                        .ghost()
+                        .icon(icon("settings-2"))
+                        .label("System settings")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            // Fixed addresses only.
+                            let url = if cfg!(target_os = "macos") {
+                                Some("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+                            } else if cfg!(target_os = "windows") {
+                                Some("ms-settings:notifications")
+                            } else {
+                                None
+                            };
+                            match url {
+                                Some(url) => cx.open_url(url),
+                                None => {
+                                    this.test_note = Some(
+                                        "Open your system notification settings and allow KChess there.".into(),
+                                    );
+                                    cx.notify();
+                                }
+                            }
+                        })),
+                )
+                .child(
+                    Button::new("notify-test")
+                        .outline()
+                        .icon(icon("bell-ring"))
+                        .label("Send test")
+                        .disabled(self.test_pending)
+                        .on_click(cx.listener(|this, _, _, cx| this.send_test(cx))),
+                ),
+            palette,
+        )
+        .card(palette)
     }
 }
 
@@ -1149,7 +1237,7 @@ impl Render for SettingsPage {
             Section::Online => self.online(&settings, &palette),
             Section::Analysis => self.analysis(&settings, &palette),
             Section::Sound => self.sound(&settings, &palette),
-            Section::Notifications => self.notifications(&settings, &palette),
+            Section::Notifications => self.notifications(&settings, &palette, cx),
             Section::Engine => self.engine(&settings, cx, &palette),
             Section::Offline => self.offline(cx, &palette),
             Section::Updates => self.updates(&settings, cx, &palette),
