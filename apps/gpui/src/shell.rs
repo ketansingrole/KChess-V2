@@ -108,6 +108,18 @@ struct Navigator(WeakEntity<Workspace>);
 
 impl Global for Navigator {}
 
+/// Z on a game page turns zen mode on or off (`toggleSetting('zenMode')`); the page calls it when
+/// it has the keys itself, so typing a move never does.
+pub fn zen_key(key: &str, cx: &mut App) -> bool {
+    if key != "z" {
+        return false;
+    }
+    crate::settings::change(cx, |settings| {
+        settings.frontend.zen_mode = !settings.frontend.zen_mode
+    });
+    true
+}
+
 /// The page shown, once the window is open.
 pub fn current_page(cx: &App) -> Option<Page> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
@@ -460,8 +472,24 @@ pub fn open_opening_puzzles(name: &str, window: &mut Window, cx: &mut App) {
     open(Page::Puzzles, window, cx);
 }
 
+/// The edge arrow while swiping: which way, how far, and whether letting go would go there.
+#[derive(Clone, Copy)]
+struct SwipeFeedback {
+    direction: crate::swipe::Direction,
+    progress: f32,
+    ready: bool,
+    blocked: bool,
+}
+
 pub struct Workspace {
     sidebar_open: bool,
+    history: crate::swipe::History<Page>,
+    swipe: crate::swipe::Swipe,
+    swipe_feedback: Option<SwipeFeedback>,
+    /// How far the page follows the fingers.
+    swipe_shift: f32,
+    /// Going back or forward, which the history must not record as a visit.
+    navigating: bool,
     palette: Entity<crate::palette::CommandPalette>,
     pages: Pages,
     /// Where Settings' Back returns to: the page open before it.
@@ -481,9 +509,10 @@ impl Workspace {
             ),
             cx.observe(&crate::online::handle(cx), |_, _, cx| cx.notify()),
             cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
-            cx.observe(&cx.global::<crate::network::NetworkHandle>().0.clone(), |_, _, cx| {
-                cx.notify()
-            }),
+            cx.observe(
+                &cx.global::<crate::network::NetworkHandle>().0.clone(),
+                |_, _, cx| cx.notify(),
+            ),
             cx.observe_window_appearance(window, |_, window, cx| crate::theme::apply(window, cx)),
             cx.subscribe_in(
                 &settings,
@@ -494,6 +523,11 @@ impl Workspace {
         ];
         Workspace {
             sidebar_open: true,
+            history: crate::swipe::History::default(),
+            swipe: crate::swipe::Swipe::default(),
+            swipe_feedback: None,
+            swipe_shift: 0.,
+            navigating: false,
             palette: crate::palette::init(window, cx),
             pages: Pages::new(window, cx),
             back: Page::Dashboard,
@@ -503,6 +537,9 @@ impl Workspace {
 
     fn choose(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.pages.current();
+        if !self.navigating {
+            self.history.visit(current, page);
+        }
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
         }
@@ -582,6 +619,112 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Back (-1) or forward (1) through the pages visited.
+    fn go(
+        &mut self,
+        direction: crate::swipe::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.pages.current();
+        if let Some(page) = self.history.go(direction, current) {
+            self.navigating = true;
+            self.choose(page, window, cx);
+            self.navigating = false;
+        }
+    }
+
+    /// A trackpad scroll: a horizontal two-finger swipe goes back or forward.
+    fn scrolled(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
+        let (enabled, feedback) = (settings.swipe_navigation, settings.swipe_indicator);
+        // A mouse wheel scrolls in lines; only the trackpad's pixels can swipe.
+        if !enabled || !event.delta.precise() {
+            return;
+        }
+        let delta = event.delta.pixel_delta(px(16.));
+        let history = &self.history;
+        let outcome = self.swipe.event(
+            event.touch_phase,
+            delta.x.as_f32(),
+            delta.y.as_f32(),
+            |direction| history.can_go(direction),
+        );
+        match outcome {
+            crate::swipe::Outcome::Nothing => return,
+            crate::swipe::Outcome::Feedback {
+                direction,
+                progress,
+                ready,
+                blocked,
+                shift,
+            } => {
+                if feedback {
+                    self.swipe_feedback = Some(SwipeFeedback {
+                        direction,
+                        progress,
+                        ready,
+                        blocked,
+                    });
+                    self.swipe_shift = shift;
+                }
+            }
+            crate::swipe::Outcome::Clear => {
+                self.swipe_feedback = None;
+                self.swipe_shift = 0.;
+            }
+            crate::swipe::Outcome::Go(direction) => {
+                self.swipe_feedback = None;
+                self.swipe_shift = 0.;
+                self.go(direction, window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The arrow at the edge the swipe goes toward, sliding in as it nears the distance.
+    fn swipe_edge(&self, cx: &App) -> Option<AnyElement> {
+        let feedback = self.swipe_feedback?;
+        let theme = cx.theme();
+        let back = feedback.direction < 0;
+        let size = 44.;
+        let offset = -size + (size + 16.) * feedback.progress;
+        Some(
+            div()
+                .absolute()
+                .top(relative(0.5))
+                .mt(px(-size / 2.))
+                .when(back, |edge| edge.left(px(offset)))
+                .when(!back, |edge| edge.right(px(offset)))
+                .size(px(size))
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(if feedback.ready {
+                    theme.primary
+                } else {
+                    theme.secondary
+                })
+                .text_color(if feedback.ready {
+                    theme.primary_foreground
+                } else {
+                    theme.muted_foreground
+                })
+                .opacity(if feedback.blocked { 0.4 } else { 1. })
+                .shadow_md()
+                .child(
+                    if back {
+                        icon("chevron-left")
+                    } else {
+                        icon("chevron-right")
+                    }
+                    .size(px(24.)),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn choose_section(&mut self, section: Section, cx: &mut Context<Self>) {
         if let Some(settings) = self.pages.settings() {
             settings.update(cx, |page, cx| page.show(section, cx));
@@ -594,41 +737,44 @@ impl Workspace {
         let current = self.pages.current();
         if current != Page::Settings {
             // Electron's rows: 32px tall, 4px apart, 20px icons (the kit's are 28px, 8px apart).
-            return vec![NavBlock::Menu(Box::new(SidebarMenu::new().gap(px(4.)).children(
-                nav().into_iter().map(|(page, label, glyph)| {
-                    let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                    SidebarMenuItem::new(label)
-                        .icon(glyph.size(px(20.)))
-                        .min_h(px(32.))
-                        .active(current == page)
-                        .when_some(marked, |item, mark| {
-                            item.suffix(move |_, cx| {
-                                let theme = cx.theme();
-                                let color = if mark == GameMark::Turn {
-                                    theme.primary
-                                } else {
-                                    theme.muted_foreground
-                                };
-                                div()
-                                    .size(px(8.))
-                                    .rounded_full()
-                                    .bg(color)
-                                    .when(mark == GameMark::Turn, |dot| {
-                                        dot.shadow(vec![BoxShadow {
-                                            color: color.opacity(0.25),
-                                            offset: point(px(0.), px(0.)),
-                                            blur_radius: px(0.),
-                                            spread_radius: px(3.),
-                                            inset: false,
-                                        }])
-                                    })
+            return vec![NavBlock::Menu(Box::new(
+                SidebarMenu::new()
+                    .gap(px(4.))
+                    .children(nav().into_iter().map(|(page, label, glyph)| {
+                        let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
+                        SidebarMenuItem::new(label)
+                            .icon(glyph.size(px(20.)))
+                            .min_h(px(32.))
+                            .active(current == page)
+                            .when_some(marked, |item, mark| {
+                                item.suffix(move |_, cx| {
+                                    let theme = cx.theme();
+                                    let color = if mark == GameMark::Turn {
+                                        theme.primary
+                                    } else {
+                                        theme.muted_foreground
+                                    };
+                                    div().size(px(8.)).rounded_full().bg(color).when(
+                                        mark == GameMark::Turn,
+                                        |dot| {
+                                            dot.shadow(vec![BoxShadow {
+                                                color: color.opacity(0.25),
+                                                offset: point(px(0.), px(0.)),
+                                                blur_radius: px(0.),
+                                                spread_radius: px(3.),
+                                                inset: false,
+                                            }])
+                                        },
+                                    )
+                                })
                             })
-                        })
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.choose(page, window, cx)),
-                        )
-                }),
-            )))];
+                            .on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.choose(page, window, cx)
+                                }),
+                            )
+                    })),
+            ))];
         }
         let shown = self
             .pages
@@ -788,10 +934,10 @@ fn game_mark(cx: &App) -> Option<GameMark> {
             crate::game::view::position_at(&setup, &moves, moves.len()).as_ref(),
         ) == online.color()
     };
-    let correspondence_turn = online
-        .ongoing
-        .iter()
-        .any(|game| game["speed"] == serde_json::json!("correspondence") && game["isMyTurn"] == serde_json::json!(true));
+    let correspondence_turn = online.ongoing.iter().any(|game| {
+        game["speed"] == serde_json::json!("correspondence")
+            && game["isMyTurn"] == serde_json::json!(true)
+    });
     if my_turn || correspondence_turn {
         Some(GameMark::Turn)
     } else if live {
@@ -997,7 +1143,23 @@ impl Render for Workspace {
                     .min_w_0()
                     .h_full()
                     .child(self.render_topbar(cx))
-                    .child(div().flex_1().min_h_0().child(self.pages.view())),
+                    .child(
+                        div()
+                            .id("page-area")
+                            .flex_1()
+                            .min_h_0()
+                            .relative()
+                            .overflow_hidden()
+                            .on_scroll_wheel(cx.listener(Self::scrolled))
+                            .child(
+                                div()
+                                    .size_full()
+                                    .relative()
+                                    .left(px(self.swipe_shift))
+                                    .child(self.pages.view()),
+                            )
+                            .children(self.swipe_edge(cx)),
+                    ),
             )
     }
 }

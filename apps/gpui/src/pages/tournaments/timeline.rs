@@ -434,6 +434,13 @@ impl TournamentsPage {
                     .id("arena-schedule")
                     .track_scroll(&self.schedule)
                     .overflow_x_scroll()
+                    // A sideways scroll here moves the schedule, not between pages.
+                    .on_scroll_wheel(|event, _, cx| {
+                        let delta = event.delta.pixel_delta(px(16.));
+                        if delta.x.abs() > delta.y.abs() {
+                            cx.stop_propagation();
+                        }
+                    })
                     .rounded(px(10.))
                     .border_1()
                     .border_color(palette.border)

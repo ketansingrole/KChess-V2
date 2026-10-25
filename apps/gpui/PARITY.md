@@ -40,7 +40,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Startup screen (the GPUI app reads the profile before its window opens)
 - [x] macOS keeps KChess running when the window closes; the Dock opens it again
 - [x] ⌘W, ⌘M, Zoom and full screen act on the window (they were lost while it was busy)
-- [ ] Two-finger swipe between pages, keyboard shortcuts (arrows, Z for zen)
+- [x] Two-finger swipe back and forward through the pages visited, with the edge arrow and the
+      page following the fingers (Settings' swipe switches); the schedule keeps its sideways scroll
+- [x] Z turns zen mode on and off on the game pages; the arrows step through moves
 
 ## Play with Computer
 

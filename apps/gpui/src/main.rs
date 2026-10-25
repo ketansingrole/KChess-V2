@@ -33,6 +33,7 @@ mod settings;
 mod shell;
 mod sound;
 mod studies;
+mod swipe;
 mod theme;
 mod updates;
 mod widgets;

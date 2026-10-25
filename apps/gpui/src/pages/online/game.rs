@@ -222,6 +222,10 @@ impl OnlinePage {
                 if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
                     return;
                 }
+                if crate::shell::zen_key(&event.keystroke.key, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 let online = crate::online::handle(cx);
                 let (ply, count) = {
                     let online = online.read(cx);

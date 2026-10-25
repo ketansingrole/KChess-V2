@@ -771,6 +771,10 @@ impl LocalPage {
             return;
         }
         let key = event.keystroke.key.as_str();
+        if self.mode(cx) != Mode::Clock && crate::shell::zen_key(key, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if self.mode(cx) == Mode::Clock {
             match key {
                 "space" => {

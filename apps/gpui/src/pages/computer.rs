@@ -1442,6 +1442,10 @@ impl Render for ComputerPage {
                 if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
                     return;
                 }
+                if crate::shell::zen_key(&event.keystroke.key, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 let moves = this.moves().len();
                 if let Some(ply) =
                     crate::game::view::navigate(event.keystroke.key.as_str(), this.ply(), moves)
