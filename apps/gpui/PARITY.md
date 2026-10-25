@@ -226,9 +226,15 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [ ] Go to your game once Play on Lichess is drawn
 - [ ] A masked entry code field (the kit has no masked input)
 
+## Lichess insights
+
+- [x] An account's synced games: games, score, streaks and accuracy; by colour, speed, opponent
+      rating, length, day, time of day and ending; openings with the best and weakest; filtered by
+      account, speed, period and rated or casual; read again when shown
+
 ## Pages not started
 
-Play on Lichess, Lichess insights.
+Play on Lichess.
 
 ## Packaging
 

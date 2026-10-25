@@ -795,6 +795,7 @@ impl PlayersPage {
         card = card
             .child(widgets::result_row(
                 "Results",
+                None,
                 (count("win"), count("draw"), count("loss")),
                 palette,
             ))

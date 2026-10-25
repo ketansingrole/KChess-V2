@@ -8,6 +8,7 @@ pub mod editor;
 pub mod friends;
 pub mod history;
 pub mod home;
+pub mod insights;
 pub mod local;
 pub mod openings;
 pub mod players;
@@ -181,6 +182,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Friends => {
             let view = cx.new(|cx| friends::FriendsPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Insights => {
+            let view = cx.new(|cx| insights::InsightsPage::new(window, cx));
             focused(view, cx)
         }
         Page::Tournaments => {

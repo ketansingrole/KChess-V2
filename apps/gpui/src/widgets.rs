@@ -916,6 +916,7 @@ pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> D
 /// drawn and lost.
 pub fn result_row(
     label: impl Into<SharedString>,
+    hint: Option<String>,
     (win, draw, loss): (f64, f64, f64),
     palette: &Palette,
 ) -> impl IntoElement {
@@ -946,7 +947,18 @@ pub fn result_row(
         .child(
             h_flex()
                 .gap(px(12.))
-                .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().truncate().child(label.clone()))
+                        .children(hint.map(|hint| {
+                            div()
+                                .flex_none()
+                                .text_color(palette.text_muted)
+                                .child(format!(" · {hint}"))
+                        })),
+                )
                 .child(
                     h_flex()
                         .gap(px(3.))

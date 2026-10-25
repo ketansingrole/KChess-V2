@@ -429,6 +429,14 @@ impl Workspace {
         {
             analysis.update(cx, |analysis, cx| analysis.attach(cx));
         }
+        if page == Page::Insights
+            && current != Page::Insights
+            && let Some(insights) = self
+                .pages
+                .view_of::<crate::pages::insights::InsightsPage>(Page::Insights)
+        {
+            insights.update(cx, |insights, cx| insights.shown(cx));
+        }
         if page == Page::Puzzles
             && let Some(puzzles) = self.pages.view_of::<PuzzlesPage>(Page::Puzzles)
         {
