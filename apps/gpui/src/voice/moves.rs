@@ -411,6 +411,86 @@ impl VoiceMoves {
     }
 }
 
+/// What a board page passes to its voice bar.
+pub struct BoardBar {
+    pub id: &'static str,
+    pub hint: &'static str,
+    /// The page takes moves now.
+    pub active: bool,
+    /// The recognizer listens now (moves, or the page's commands).
+    pub listening: bool,
+    pub grammar: Vec<String>,
+}
+
+/// How a page reaches its voice state, to read and to change it.
+pub struct Access<V> {
+    pub read: fn(&V) -> &VoiceMoves,
+    pub write: fn(&mut V) -> &mut VoiceMoves,
+    /// Plays a move the player chose.
+    pub play: fn(&mut V, &str, &mut Window, &mut Context<V>),
+}
+
+impl<V> Clone for Access<V> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<V> Copy for Access<V> {}
+
+/// A board page's voice bar: its toggle, the numbered choices and Cancel (`VoiceMoveInput.vue`'s
+/// template).
+pub fn board_bar<V: 'static>(
+    page: &Entity<V>,
+    access: Access<V>,
+    bar: BoardBar,
+    cx: &App,
+) -> AnyElement {
+    let state = (access.read)(page.read(cx));
+    let (owner, on) = (state.owner, state.is_on(cx));
+    let (feedback, heard) = (state.feedback.clone(), state.heard.clone());
+    let weak = page.downgrade();
+    let (pick, cancel, toggle) = (weak.clone(), weak.clone(), weak);
+    let extra = state.choice_buttons(
+        bar.id,
+        move |uci, window, cx| {
+            let _ = pick.update(cx, |this, cx| {
+                if let Action::Play(uci) = (access.write)(this).picked(&uci) {
+                    (access.play)(this, &uci, window, cx);
+                }
+                cx.notify();
+            });
+        },
+        move |_, cx| {
+            let _ = cancel.update(cx, |this, cx| {
+                (access.write)(this).cancel();
+                cx.notify();
+            });
+        },
+    );
+    let (grammar, listening) = (bar.grammar, bar.listening);
+    super::voice_bar(
+        super::bar::Bar {
+            id: bar.id,
+            owner,
+            enabled: on,
+            active: bar.active,
+            hint: bar.hint.into(),
+            feedback,
+            heard,
+            extra,
+        },
+        move |on, _, cx| {
+            let grammar = grammar.clone();
+            let _ = toggle.update(cx, |this, cx| {
+                (access.write)(this).toggle(on, grammar, listening, cx);
+                cx.notify();
+            });
+        },
+        cx,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::spoken_move;

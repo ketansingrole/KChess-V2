@@ -77,6 +77,8 @@ fn variants() -> Vec<VariantText> {
 }
 
 pub struct LocalPage {
+    /// Either player's spoken moves.
+    voice: crate::voice::moves::VoiceMoves,
     /// Turned clock faces as pictures, by side, with what they show.
     turned: std::collections::HashMap<usize, (String, std::sync::Arc<Image>)>,
     game: LocalGame,
@@ -160,12 +162,21 @@ impl LocalPage {
             )
         });
         let settings = cx.global::<SettingsHandle>().0.clone();
+        let voice = crate::voice::handle(cx);
         let mut subscriptions = vec![
             cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.play(uci, window, cx)
                 }
             }),
+            cx.subscribe_in(
+                &voice,
+                window,
+                |this, _, event: &crate::voice::VoiceEvent, window, cx| {
+                    this.voice_heard(event, window, cx)
+                },
+            ),
+            cx.observe(&voice, |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &move_input,
                 window,
@@ -216,6 +227,7 @@ impl LocalPage {
             clock_history: None,
             clock_inputs,
             turned: std::collections::HashMap::new(),
+            voice: crate::voice::moves::VoiceMoves::new("local", cx),
             clock_layout,
             save: None,
             ticker: None,
@@ -324,6 +336,60 @@ impl LocalPage {
         self.changed(cx);
     }
 
+    /// Spoken moves are taken while the game is on, at its last move.
+    fn voice_taking(&self) -> bool {
+        !self.game.over(self.now()) && self.at_live()
+    }
+
+    /// The live position as the rules read a spoken move in it.
+    fn voice_setup(&self) -> Value {
+        let moves = self.moves();
+        view::position_at(self.setup(), &moves, moves.len()).map_or(Value::Null, |position| {
+            json!({
+                "variant": self.setup()["variant"],
+                "fen": kchess_domain::rules::make_fen(&position),
+            })
+        })
+    }
+
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let context = format!("{}:{}", self.moves().len(), self.shown_ply());
+        let taking = self.voice_taking();
+        self.voice
+            .sync(&context, crate::voice::grammar("MOVE_GRAMMAR"), taking, cx);
+    }
+
+    fn voice_heard(
+        &mut self,
+        event: &crate::voice::VoiceEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let setup = self.voice_setup();
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                let fen = setup["fen"].as_str().unwrap_or_default().to_string();
+                self.voice.missed(heard, &fen, cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let turn = crate::voice::moves::Turn {
+            taking: self.voice_taking(),
+            idle: None,
+            immediate: false,
+        };
+        if let crate::voice::moves::Action::Play(uci) =
+            self.voice.hear(&heard, &setup, turn, |_| None, cx)
+        {
+            self.play(&uci, window, cx);
+        }
+        cx.notify();
+    }
+
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.move_input.read(cx).value().trim().to_string();
         if text.is_empty() || self.game.over(self.now()) || !self.at_live() {
@@ -394,6 +460,7 @@ impl LocalPage {
     }
 
     fn after_change(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let now = self.now();
         let over = self.game.over(now);
         let moves = self.moves();
@@ -1190,6 +1257,22 @@ impl Render for LocalPage {
             .child(line(
                 orientation,
                 Some(h_flex().pl(px(120.)).child(entry).into_any_element()),
+            ))
+            .child(crate::voice::moves::board_bar(
+                &cx.entity(),
+                crate::voice::moves::Access {
+                    read: |this: &Self| &this.voice,
+                    write: |this: &mut Self| &mut this.voice,
+                    play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
+                },
+                crate::voice::moves::BoardBar {
+                    id: "local-voice",
+                    hint: "Either player can say “E four” or “Knight F three”.",
+                    active: self.voice_taking(),
+                    listening: self.voice_taking(),
+                    grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+                },
+                cx,
             ))
             .children(self.move_message.clone().map(|message| {
                 div()

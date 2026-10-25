@@ -965,13 +965,6 @@ impl ComputerPage {
         );
     }
 
-    fn toggle_voice(&mut self, on: bool, cx: &mut Context<Self>) {
-        let listening = self.voice_listening();
-        self.voice
-            .toggle(on, crate::voice::grammar("GAME_GRAMMAR"), listening, cx);
-        cx.notify();
-    }
-
     /// What voice input says while no move is taken (`voiceIdle`).
     fn voice_idle(&self) -> &'static str {
         if self.game.result(&self.host()).is_some() {
@@ -1483,44 +1476,22 @@ impl Render for ComputerPage {
             .child(computer_line)
             .child(self.board.clone())
             .child(you_line)
-            .child({
-                let page = cx.entity().downgrade();
-                let pick_page = page.clone();
-                let cancel_page = page.clone();
-                let extra = self.voice.choice_buttons(
-                    "computer-voice-choice",
-                    move |uci, window, cx| {
-                        let _ = pick_page.update(cx, |this, cx| {
-                            if let crate::voice::moves::Action::Play(uci) = this.voice.picked(&uci)
-                            {
-                                this.play(&uci, window, cx);
-                            }
-                        });
-                    },
-                    move |_, cx| {
-                        let _ = cancel_page.update(cx, |this, cx| {
-                            this.voice.cancel();
-                            cx.notify();
-                        });
-                    },
-                );
-                crate::voice::voice_bar(
-                    crate::voice::bar::Bar {
-                        id: "computer-voice",
-                        owner: self.voice.owner,
-                        enabled: self.voice.is_on(cx),
-                        active: self.voice_taking(),
-                        hint: "Say “E four”, “Knight F three”, or “take back”.".into(),
-                        feedback: self.voice.feedback.clone(),
-                        heard: self.voice.heard.clone(),
-                        extra,
-                    },
-                    move |on, _, cx| {
-                        let _ = page.update(cx, |this, cx| this.toggle_voice(on, cx));
-                    },
-                    cx,
-                )
-            })
+            .child(crate::voice::moves::board_bar(
+                &cx.entity(),
+                crate::voice::moves::Access {
+                    read: |this: &Self| &this.voice,
+                    write: |this: &mut Self| &mut this.voice,
+                    play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
+                },
+                crate::voice::moves::BoardBar {
+                    id: "computer-voice",
+                    hint: "Say “E four”, “Knight F three”, or “take back”.",
+                    active: self.voice_taking(),
+                    listening: self.voice_listening(),
+                    grammar: crate::voice::grammar("GAME_GRAMMAR"),
+                },
+                cx,
+            ))
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))
