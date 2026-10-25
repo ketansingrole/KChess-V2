@@ -309,7 +309,18 @@ impl ComputerPage {
                         .detach();
                 }
                 Effect::ComputerTurn => self.computer_turn(cx),
-                Effect::Moved { san, .. } => crate::sound::move_sound(&san, cx),
+                Effect::Moved { san, computer } => {
+                    crate::sound::move_sound(&san, cx);
+                    // Settings decide whether this reaches the player, and how.
+                    if computer {
+                        crate::notifications::desktop(
+                            "computerMove",
+                            "Stockfish moved",
+                            &format!("{san}. Your move."),
+                            cx,
+                        );
+                    }
+                }
                 Effect::Flagged => crate::sound::play(crate::sound::Sound::LowTime, cx),
                 Effect::Failed => {
                     self.check_engine(cx);

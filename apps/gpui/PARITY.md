@@ -54,7 +54,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Opening name, status banner, material difference, blindfold and zen toggles
 - [x] Saved session and Game history, flushed before quit
 - [x] Sounds (move, capture, low time) at the volume Settings chooses (rodio, Symphonia MP3)
-- [ ] Desktop notification when Stockfish moves in the background
+- [x] Desktop notification when Stockfish moves, under the Notifications settings
 - [x] Premoves (Chessground's targets, queued in blue, played when legal on your turn, a queen
       for a premove's promotion when Settings say so) and pieces sliding to their squares at the
       Settings speed
