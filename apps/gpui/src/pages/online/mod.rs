@@ -215,8 +215,19 @@ impl OnlinePage {
         crate::online::handle(cx).update(cx, |online, cx| online.refresh_ongoing(cx));
     }
 
-    /// Set the challenge's player and switch to the form (`challengeFriend`).
+    /// Challenge a player casually (`challengeFriend`).
     pub fn challenge(&mut self, username: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::online::handle(cx).update(cx, |online, _| online.form.rated = false);
+        self.challenge_keeping_rated(username, window, cx);
+    }
+
+    /// Send the form's game, rated or not as it is set, to `username` (`challengeFriend`).
+    pub fn challenge_keeping_rated(
+        &mut self,
+        username: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let online = crate::online::handle(cx);
         if online.read(cx).busy_with_game() {
             crate::online::notice(cx, "Finish or cancel your game before starting another.");
@@ -233,7 +244,6 @@ impl OnlinePage {
             }
             form.correspondence = false;
             form.color = "random".into();
-            form.rated = false;
             form.target = username.clone();
             cx.notify();
         });

@@ -725,6 +725,33 @@ impl ComputerPage {
         self.start_chosen(chosen, window, cx);
     }
 
+    /// Play Stockfish at `level` as `color` (`white`, `black` or `random`) from the start, with the
+    /// clock chosen last (the palette's `startComputerGame`).
+    pub fn play_level(
+        &mut self,
+        level: &str,
+        color: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let color = match color {
+            "random" if crate::game::random_unit() < 0.5 => "white",
+            "random" => "black",
+            "black" => "black",
+            _ => "white",
+        };
+        let chosen = Chosen {
+            setup: json!({
+                "variant": "standard",
+                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            }),
+            clock: self.game.state["clock"].clone(),
+            color,
+            level: level.to_string(),
+        };
+        self.start_chosen(chosen, window, cx);
+    }
+
     /// Like the page's own New game, a game in progress is only thrown away when confirmed.
     fn start_chosen(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         if self.in_progress() {

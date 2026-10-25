@@ -185,6 +185,71 @@ pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Play Stockfish at a level and side, from the palette (`startComputerGame`).
+pub fn play_computer(level: &str, color: &'static str, window: &mut Window, cx: &mut App) {
+    open(Page::Computer, window, cx);
+    if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
+        let level = level.to_string();
+        page.update(cx, |page, cx| page.play_level(&level, color, window, cx));
+    }
+}
+
+/// Look for a real-time game on Lichess, from the palette (`startOnlineGame`).
+pub fn play_online(minutes: f64, increment: f64, rated: bool, window: &mut Window, cx: &mut App) {
+    open(Page::Online, window, cx);
+    let online = crate::online::handle(cx);
+    if online.read(cx).busy_with_game() {
+        crate::online::notice(cx, "Finish or cancel your game before starting another.");
+        return;
+    }
+    online.update(cx, |online, cx| {
+        let form = &mut online.form;
+        form.minutes = minutes;
+        form.increment = increment;
+        form.rated = rated;
+        form.color = "random".into();
+        form.target.clear();
+        form.correspondence = false;
+        online.start(None, cx);
+    });
+}
+
+/// An empty analysis board.
+pub fn new_analysis(window: &mut Window, cx: &mut App) {
+    replace_analysis(window, cx, |analysis, _, cx| {
+        analysis.load(None, cx);
+        true
+    });
+}
+
+/// Whether the sidebar is shown.
+pub fn sidebar_open(cx: &App) -> bool {
+    cx.try_global::<Navigator>()
+        .and_then(|navigator| navigator.0.upgrade())
+        .is_none_or(|workspace| workspace.read(cx).sidebar_open)
+}
+
+pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
+    if let Some(workspace) = cx.try_global::<Navigator>().and_then(|n| n.0.upgrade()) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.sidebar_open = !workspace.sidebar_open;
+            cx.notify();
+        });
+    }
+}
+
+/// Challenge a player, rated or casual (`challengeFriend(username, rated)`).
+pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mut App) {
+    crate::online::handle(cx).update(cx, |online, _| online.form.rated = rated);
+    open(Page::Online, window, cx);
+    if let Some(page) = view_of::<crate::pages::online::OnlinePage>(Page::Online, cx) {
+        let username = username.to_string();
+        page.update(cx, |page, cx| {
+            page.challenge_keeping_rated(&username, window, cx)
+        });
+    }
+}
+
 /// Challenge a player to a casual game on Lichess (`challengeFriend`).
 pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
     open(Page::Online, window, cx);
@@ -397,6 +462,7 @@ pub fn open_opening_puzzles(name: &str, window: &mut Window, cx: &mut App) {
 
 pub struct Workspace {
     sidebar_open: bool,
+    palette: Entity<crate::palette::CommandPalette>,
     pages: Pages,
     /// Where Settings' Back returns to: the page open before it.
     back: Page,
@@ -422,6 +488,7 @@ impl Workspace {
         ];
         Workspace {
             sidebar_open: true,
+            palette: crate::palette::init(window, cx),
             pages: Pages::new(window, cx),
             back: Page::Dashboard,
             _subscriptions: subscriptions,
@@ -631,6 +698,8 @@ impl Workspace {
                     window.start_window_move();
                 }
             })
+            .child(div().flex_1())
+            .child(self.palette.clone())
             .child(div().flex_1())
             .children(update_button(cx))
     }

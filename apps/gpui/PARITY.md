@@ -26,7 +26,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Sidebar with the same pages, icons and order; collapses to icons
 - [x] Theme colors, light and dark, following Settings or the system
 - [x] Menus: KChess (Services, Hide, Quit), File, Edit, View, Window
-- [ ] Search box and command palette in the top bar (⌘K)
+- [x] Search box and command palette in the top bar: ⌘K (View → Search…), ⇧⌘P for commands,
+      `@` players, `#` settings, `?` help; ranked fuzzy matches highlighted, recent entries, the
+      game to return to; ⌘, opens Settings
 - [x] Connect Lichess and the account menu in the sidebar footer (play as, connect another,
       Settings, log out); signing out starts the pages afresh
 - [ ] Sidebar item spacing (32px rows, 20px icons in Electron)
