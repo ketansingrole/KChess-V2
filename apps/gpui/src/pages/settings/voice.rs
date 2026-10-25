@@ -9,8 +9,10 @@ use gpui_kit::*;
 
 use super::{Rows, SettingsPage};
 use crate::assets::icon;
+use crate::microphone::Access;
 use crate::theme::Palette;
 use crate::voice::capture::{self, Capture, CaptureError};
+use crate::widgets::{self, Look};
 use kchess_contracts::types::Settings;
 
 /// The system's microphone privacy settings, where there are any to open.
@@ -64,10 +66,41 @@ impl SettingsPage {
                 });
             }
             Err(cause) => {
-                self.mic_denied = cause == CaptureError::Denied;
+                if cause == CaptureError::Denied {
+                    self.mic_access = crate::microphone::status();
+                }
                 self.mic_error = Some(cause.message().into());
             }
         }
+        cx.notify();
+    }
+
+    /// Read the system's microphone permission again (on showing the section, and on coming back
+    /// to the window from System Settings).
+    pub(super) fn refresh_microphone(&mut self, cx: &mut Context<Self>) {
+        let access = crate::microphone::status();
+        if access != self.mic_access {
+            self.mic_access = access;
+            cx.notify();
+        }
+    }
+
+    /// The system's own request for access (`askForMediaAccess`).
+    fn ask_microphone(&mut self, cx: &mut Context<Self>) {
+        self.mic_asking = true;
+        let (sender, answer) = futures::channel::oneshot::channel();
+        crate::microphone::request(move |access| {
+            let _ = sender.send(access);
+        });
+        cx.spawn(async move |this, cx| {
+            let access = answer.await.unwrap_or(Access::Unknown);
+            let _ = this.update(cx, |this, cx| {
+                this.mic_asking = false;
+                this.mic_access = access;
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -110,86 +143,131 @@ impl SettingsPage {
                         .w(relative(test.level.max(0.02))),
                 )
         });
-        let mut rows = Rows::new(self.narrow());
-        if let Some(url) = privacy_settings_url() {
-            rows = rows.row(
-                "Microphone access",
-                self.mic_denied.then(|| {
-                    "Access was turned off. Allow KChess in your system privacy settings.".into()
-                }),
-                h_flex().child(
-                    Button::new("voice-privacy")
-                        .ghost()
-                        .icon(icon("settings-2"))
-                        .label("Privacy settings")
-                        .on_click(move |_, _, cx| cx.open_url(url)),
-                ),
-                palette,
-            );
-        }
-        rows.row_with(
-            v_flex()
-                .gap(px(3.))
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(palette.highlighted)
-                        .child("Test your microphone"),
+        let access = self.mic_access;
+        let (label, look) = match access {
+            Access::Granted => ("Allowed", Look::Success),
+            Access::Denied => ("Blocked", Look::Error),
+            Access::Restricted => ("Restricted", Look::Error),
+            Access::NotDetermined => ("Not asked yet", Look::NeutralSoft),
+            Access::Unknown => ("Unknown", Look::NeutralSoft),
+        };
+        let hint = match access {
+            Access::Granted => None,
+            Access::Denied => {
+                Some("Access was turned off. Allow KChess in your system privacy settings.")
+            }
+            Access::Restricted => Some("A device policy blocks the microphone for this app."),
+            Access::NotDetermined => {
+                Some("Your system will ask the first time voice input starts.")
+            }
+            Access::Unknown => Some("Voice input asks for access when you turn it on."),
+        };
+        let launcher = access != Access::Granted && crate::microphone::launched_from_terminal();
+        let access_info = v_flex()
+            .gap(px(3.))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.highlighted)
+                            .child("Microphone access"),
+                    )
+                    .child(widgets::badge(label, look, palette)),
+            )
+            .children(hint.map(|hint| widgets::hint(hint, palette)))
+            .when(launcher, |info| {
+                info.child(widgets::hint(
+                    "Development build: macOS asks on behalf of the app that started KChess (your terminal or editor). Allow that app under Privacy & Security › Microphone.",
+                    palette,
+                ))
+            });
+        let access_actions = h_flex()
+            .gap(px(6.))
+            .when(access == Access::NotDetermined, |row| {
+                row.child(
+                    Button::new("voice-allow")
+                        .primary()
+                        .icon(icon("mic"))
+                        .label("Allow microphone")
+                        .loading(self.mic_asking)
+                        .on_click(cx.listener(|this, _, _, cx| this.ask_microphone(cx))),
                 )
-                .children(status.map(|status| {
-                    div()
-                        .text_size(px(12.))
-                        .text_color(if self.mic_error.is_some() {
-                            palette.error
+            })
+            .children(privacy_settings_url().map(|url| {
+                Button::new("voice-privacy")
+                    .ghost()
+                    .icon(icon("settings-2"))
+                    .label("Privacy settings")
+                    .on_click(move |_, _, cx| cx.open_url(url))
+            }));
+        Rows::new(self.narrow())
+            .row_with(access_info, access_actions)
+            .row_with(
+                v_flex()
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.highlighted)
+                            .child("Test your microphone"),
+                    )
+                    .children(status.map(|status| {
+                        div()
+                            .text_size(px(12.))
+                            .text_color(if self.mic_error.is_some() {
+                                palette.error
+                            } else {
+                                palette.text_muted
+                            })
+                            .child(status)
+                    }))
+                    .children(meter),
+                h_flex().child(
+                    Button::new("voice-mic-test")
+                        .outline()
+                        .icon(if test.is_some() {
+                            icon("square")
                         } else {
-                            palette.text_muted
+                            icon("audio-lines")
                         })
-                        .child(status)
-                }))
-                .children(meter),
-            h_flex().child(
-                Button::new("voice-mic-test")
-                    .outline()
-                    .icon(if test.is_some() {
-                        icon("square")
-                    } else {
-                        icon("audio-lines")
-                    })
-                    .label(if test.is_some() { "Stop" } else { "Start test" })
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_mic_test(cx))),
-            ),
-        )
-        .switch(
-            "voice-confirm",
-            "Confirm spoken moves",
-            Some("Say “confirm” before playing the move."),
-            frontend.voice_confirm_moves,
-            true,
-            |s, on| s.frontend.voice_confirm_moves = on,
-            palette,
-        )
-        .switch(
-            "voice-push-to-talk",
-            "Hold to speak",
-            Some("Hold Space or the on-screen button."),
-            frontend.voice_push_to_talk,
-            true,
-            |s, on| s.frontend.voice_push_to_talk = on,
-            palette,
-        )
-        .switch(
-            "voice-history",
-            "Keep voice history",
-            Some("Saves recognized text on this device; no audio."),
-            core.voice_history,
-            true,
-            |s, on| s.core.voice_history = on,
-            palette,
-        )
-        .card(palette)
-        .when_some(self.voice_history.clone(), |column, history| {
-            v_flex().gap(px(16.)).child(column).child(history)
-        })
+                        .label(if test.is_some() { "Stop" } else { "Start test" })
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_mic_test(cx))),
+                ),
+            )
+            .switch(
+                "voice-confirm",
+                "Confirm spoken moves",
+                Some("Say “confirm” before playing the move."),
+                frontend.voice_confirm_moves,
+                true,
+                |s, on| s.frontend.voice_confirm_moves = on,
+                palette,
+            )
+            .switch(
+                "voice-push-to-talk",
+                "Hold to speak",
+                Some("Hold Space or the on-screen button."),
+                frontend.voice_push_to_talk,
+                true,
+                |s, on| s.frontend.voice_push_to_talk = on,
+                palette,
+            )
+            .switch(
+                "voice-history",
+                "Keep voice history",
+                Some("Saves recognized text on this device; no audio."),
+                core.voice_history,
+                true,
+                |s, on| s.core.voice_history = on,
+                palette,
+            )
+            .card(palette)
+            .when_some(self.voice_history.clone(), |column, history| {
+                v_flex().gap(px(16.)).child(column).child(history)
+            })
     }
 }

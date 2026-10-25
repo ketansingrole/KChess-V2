@@ -128,7 +128,8 @@ pub struct SettingsPage {
     /// The microphone test, and why it could not start.
     mic_test: Option<voice::MicTest>,
     mic_error: Option<SharedString>,
-    mic_denied: bool,
+    mic_access: crate::microphone::Access,
+    mic_asking: bool,
     voice_history: Option<Entity<voice_history::VoiceHistory>>,
     /// The offline speech model, and whether this page is downloading it.
     voice_model: Option<kchess_core::voice::Status>,
@@ -172,6 +173,12 @@ impl SettingsPage {
             )
         });
         let subscriptions = vec![
+            // Back from System Settings: the microphone permission may have changed there.
+            cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() && this.section == Section::Voice {
+                    this.refresh_microphone(cx);
+                }
+            }),
             cx.subscribe(&volume, |_, _, event: &SliderEvent, cx| {
                 let (SliderEvent::Change(value) | SliderEvent::Release(value)) = event;
                 // The slider's steps are f32: keep the hundredths the Electron slider stores.
@@ -249,7 +256,8 @@ impl SettingsPage {
             test_pending: false,
             mic_test: None,
             mic_error: None,
-            mic_denied: false,
+            mic_access: crate::microphone::status(),
+            mic_asking: false,
             voice_history: None,
             voice_model: None,
             voice_model_error: None,
@@ -270,6 +278,7 @@ impl SettingsPage {
         }
         self.section = section;
         if section == Section::Voice {
+            self.refresh_microphone(cx);
             match &self.voice_history {
                 Some(history) => history.update(cx, |history, cx| history.load(cx)),
                 None => {

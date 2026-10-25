@@ -95,8 +95,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Voice input (privacy settings, a microphone level test, confirm moves, hold to speak,
       keep history) and the voice history (weak words, heard → meant, recent phrases, export,
       clear); the offline voice model's card in Offline downloads
-- [ ] Microphone access status (granted, denied, not asked): reading it needs AVFoundation, which
-      the app cannot call without `unsafe`; denial shows when voice input starts instead
+- [x] Microphone access status and Allow microphone (AVFoundation on macOS, the app's one
+      `unsafe` exception, in `src/microphone.rs`), read again on coming back from System Settings
 - [ ] Data & storage
 
 ## Game history

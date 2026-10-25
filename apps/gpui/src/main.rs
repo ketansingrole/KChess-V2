@@ -12,6 +12,7 @@ mod game;
 mod game_image;
 mod log;
 mod menu;
+mod microphone;
 mod name_dialog;
 mod network;
 mod notifications;

@@ -55,6 +55,7 @@ above:
 | [`chrono`](https://github.com/chronotope/chrono), [`dirs`](https://github.com/soc/dirs-rs), [`futures`](https://github.com/rust-lang/futures-rs)                  | MIT OR Apache-2.0                      | Local dates, the Downloads folder, channels from the core                    |
 | [`rust-embed`](https://pyrossh.dev/repos/rust-embed)                                                                                                              | MIT                                    | The boards, pieces, sounds and icons inside the app                          |
 | [`notify-rust`](https://github.com/hoodie/notify-rust) (`mac-notification-sys`, `tauri-winrt-notification`)                                                       | MIT OR Apache-2.0                      | Desktop notifications while KChess is in the background                      |
+| [`objc2`](https://github.com/madsmtm/objc2) (`objc2-foundation`, `objc2-av-foundation`, `block2`)                                                                 | MIT                                    | Reading and asking for microphone access on macOS                            |
 
 ## Game review method
 
