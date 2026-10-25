@@ -13,6 +13,7 @@ mod game_image;
 mod log;
 mod menu;
 mod name_dialog;
+mod network;
 mod notifications;
 mod online;
 mod pages;
@@ -78,6 +79,7 @@ fn main() {
         updates::init(cx);
         sound::init(cx);
         online::init(cx);
+        network::init(cx);
         cx.on_app_quit(core::quit).detach();
         open_main_window(cx);
         cx.activate(true);

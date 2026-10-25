@@ -479,6 +479,11 @@ impl Workspace {
                 &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
             ),
+            cx.observe(&crate::online::handle(cx), |_, _, cx| cx.notify()),
+            cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+            cx.observe(&cx.global::<crate::network::NetworkHandle>().0.clone(), |_, _, cx| {
+                cx.notify()
+            }),
             cx.observe_window_appearance(window, |_, window, cx| crate::theme::apply(window, cx)),
             cx.subscribe_in(
                 &settings,
@@ -591,10 +596,34 @@ impl Workspace {
             // Electron's rows: 32px tall, 4px apart, 20px icons (the kit's are 28px, 8px apart).
             return vec![NavBlock::Menu(Box::new(SidebarMenu::new().gap(px(4.)).children(
                 nav().into_iter().map(|(page, label, glyph)| {
+                    let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
                     SidebarMenuItem::new(label)
                         .icon(glyph.size(px(20.)))
                         .min_h(px(32.))
                         .active(current == page)
+                        .when_some(marked, |item, mark| {
+                            item.suffix(move |_, cx| {
+                                let theme = cx.theme();
+                                let color = if mark == GameMark::Turn {
+                                    theme.primary
+                                } else {
+                                    theme.muted_foreground
+                                };
+                                div()
+                                    .size(px(8.))
+                                    .rounded_full()
+                                    .bg(color)
+                                    .when(mark == GameMark::Turn, |dot| {
+                                        dot.shadow(vec![BoxShadow {
+                                            color: color.opacity(0.25),
+                                            offset: point(px(0.), px(0.)),
+                                            blur_radius: px(0.),
+                                            spread_radius: px(3.),
+                                            inset: false,
+                                        }])
+                                    })
+                            })
+                        })
                         .on_click(
                             cx.listener(move |this, _, window, cx| this.choose(page, window, cx)),
                         )
@@ -705,7 +734,70 @@ impl Workspace {
             .child(div().flex_1())
             .child(self.palette.clone())
             .child(div().flex_1())
+            .when(!crate::network::online(cx), |bar| {
+                bar.child(
+                    h_flex()
+                        .id("offline")
+                        .gap(px(4.))
+                        .text_size(px(14.))
+                        .text_color(cx.theme().muted_foreground)
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(
+                                "Local play, analysis and downloaded content are available.",
+                            )
+                            .build(window, cx)
+                        })
+                        .child(icon("wifi-off").size(px(16.)))
+                        .child("Offline"),
+                )
+            })
             .children(update_button(cx))
+            .when(working(cx), |bar| {
+                bar.child(
+                    h_flex()
+                        .gap(px(6.))
+                        .text_size(px(14.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(icon("loader-circle").size(px(16.)))
+                        .child("Working…"),
+                )
+            })
+    }
+}
+
+/// Something is waiting on Lichess (`busy`): signing in, syncing, starting a game.
+fn working(cx: &App) -> bool {
+    crate::accounts::handle(cx).read(cx).busy || crate::online::handle(cx).read(cx).busy
+}
+
+/// The Lichess game the sidebar marks (`lichessGame`): your move (in a live game, or in a
+/// correspondence one), or a game going on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GameMark {
+    Turn,
+    Live,
+}
+
+fn game_mark(cx: &App) -> Option<GameMark> {
+    let online = crate::online::handle(cx).read(cx);
+    let live = online.phase == crate::online::Phase::Playing;
+    let my_turn = live && {
+        let moves = online.moves();
+        let setup = online.setup();
+        crate::game::view::turn(
+            crate::game::view::position_at(&setup, &moves, moves.len()).as_ref(),
+        ) == online.color()
+    };
+    let correspondence_turn = online
+        .ongoing
+        .iter()
+        .any(|game| game["speed"] == serde_json::json!("correspondence") && game["isMyTurn"] == serde_json::json!(true));
+    if my_turn || correspondence_turn {
+        Some(GameMark::Turn)
+    } else if live {
+        Some(GameMark::Live)
+    } else {
+        None
     }
 }
 

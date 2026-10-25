@@ -35,7 +35,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       Settings, log out); signing out starts the pages afresh
 - [x] Sidebar item spacing (32px rows, 20px icons, as Electron)
 - [x] Update button in the top bar
-- [ ] Startup screen, offline badge, "Working…" status
+- [x] Offline badge (a route out, as `navigator.onLine`), "Working…" while Lichess is waited on,
+      and the sidebar's dot for a Lichess game (your move, or going on)
+- [ ] Startup screen (the GPUI app reads the profile before its window opens)
 - [x] macOS keeps KChess running when the window closes; the Dock opens it again
 - [x] ⌘W, ⌘M, Zoom and full screen act on the window (they were lost while it was busy)
 - [ ] Two-finger swipe between pages, keyboard shortcuts (arrows, Z for zen)
