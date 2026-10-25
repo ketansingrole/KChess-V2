@@ -97,7 +97,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       clear); the offline voice model's card in Offline downloads
 - [x] Microphone access status and Allow microphone (AVFoundation on macOS, the app's one
       `unsafe` exception, in `src/microphone.rs`), read again on coming back from System Settings
-- [ ] Data & storage
+- [x] Data & storage: downloads and storage per account (reset counters), Clear local scores,
+      Export diagnostics (the redacted, bounded `logs/kchess.log` both apps write)
 
 ## Game history
 

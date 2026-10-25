@@ -98,7 +98,7 @@ pub fn parse_version(text: &str) -> Option<[u64; 3]> {
     parts.next().is_none().then_some(out)
 }
 
-fn current_version() -> String {
+pub fn current_version() -> String {
     serde_json::from_str::<serde_json::Value>(PACKAGE_JSON)
         .ok()
         .and_then(|package| package["version"].as_str().map(str::to_string))

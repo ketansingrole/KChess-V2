@@ -2,6 +2,7 @@
 //! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
 
 mod accounts;
+mod data;
 mod engine;
 mod offline;
 pub mod updates;
@@ -130,6 +131,10 @@ pub struct SettingsPage {
     mic_error: Option<SharedString>,
     mic_access: crate::microphone::Access,
     mic_asking: bool,
+    /// Data & storage: what clearing the scores and exporting diagnostics said.
+    runs_note: Option<SharedString>,
+    diagnostics_note: Option<SharedString>,
+    exporting: bool,
     voice_history: Option<Entity<voice_history::VoiceHistory>>,
     /// The offline speech model, and whether this page is downloading it.
     voice_model: Option<kchess_core::voice::Status>,
@@ -258,6 +263,9 @@ impl SettingsPage {
             mic_error: None,
             mic_access: crate::microphone::status(),
             mic_asking: false,
+            runs_note: None,
+            diagnostics_note: None,
+            exporting: false,
             voice_history: None,
             voice_model: None,
             voice_model_error: None,
@@ -289,7 +297,7 @@ impl SettingsPage {
         if matches!(section, Section::Engine | Section::Offline) {
             self.refresh_engine(cx);
         }
-        if section == Section::Accounts {
+        if matches!(section, Section::Accounts | Section::Data) {
             crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         }
         if section == Section::Offline {
@@ -1287,11 +1295,7 @@ impl Render for SettingsPage {
             Section::Updates => self.updates(&settings, cx, &palette),
             Section::Accounts => self.accounts(cx, &palette),
             Section::Voice => self.voice(&settings, cx, &palette),
-            Section::Data => widgets::card(&palette)
-                .items_center()
-                .py(px(40.))
-                .text_color(palette.text_muted)
-                .child("Use the Electron app for this section for now."),
+            Section::Data => self.data(cx, &palette),
         };
         div()
             .id("settings-page")

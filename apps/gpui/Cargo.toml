@@ -46,6 +46,8 @@ notify-rust = "4.18"
 # recognizer takes, as base64 (already in Cargo.lock through the core).
 cpal = "0.18"
 base64 = "0.22"
+# Redacting the diagnostic log (already in Cargo.lock through the core's dependencies).
+regex = "1"
 
 [lints]
 workspace = true

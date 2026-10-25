@@ -56,6 +56,18 @@ fn main() {
             std::process::exit(1);
         }
     };
+    log::init(&data_dir);
+    log::write(
+        Level::Info,
+        "diagnostics",
+        &format!(
+            "KChess started (GPUI) {{ sessionId: {}, version: {}, platform: {}, arch: {} }}",
+            log::session_id(),
+            updates::current_version(),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+    );
     let app = gpui_kit::application().with_assets(assets::Assets);
     // macOS keeps KChess running with no window; the Dock icon brings one back.
     app.on_reopen(|cx| {
