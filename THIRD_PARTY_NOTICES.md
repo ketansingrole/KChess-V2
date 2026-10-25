@@ -54,6 +54,7 @@ above:
 | [`image`](https://github.com/image-rs/image) (`png`, `gif`, `zune-jpeg`)                                                                                          | MIT OR Apache-2.0                      | Reading board images and encoding exported PNGs and GIFs                     |
 | [`chrono`](https://github.com/chronotope/chrono), [`dirs`](https://github.com/soc/dirs-rs), [`futures`](https://github.com/rust-lang/futures-rs)                  | MIT OR Apache-2.0                      | Local dates, the Downloads folder, channels from the core                    |
 | [`rust-embed`](https://pyrossh.dev/repos/rust-embed)                                                                                                              | MIT                                    | The boards, pieces, sounds and icons inside the app                          |
+| [`notify-rust`](https://github.com/hoodie/notify-rust) (`mac-notification-sys`, `tauri-winrt-notification`)                                                       | MIT OR Apache-2.0                      | Desktop notifications while KChess is in the background                      |
 
 ## Game review method
 
