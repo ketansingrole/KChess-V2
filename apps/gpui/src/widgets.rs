@@ -3,6 +3,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -909,4 +910,85 @@ pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> D
         .font_weight(FontWeight::MEDIUM)
         .when_some(ring, |badge, ring| badge.border_1().border_color(ring))
         .child(label.into())
+}
+
+/// `ResultBar.vue`: a label, the score (wins plus half the draws), the games, and a bar of won,
+/// drawn and lost.
+pub fn result_row(
+    label: impl Into<SharedString>,
+    (win, draw, loss): (f64, f64, f64),
+    palette: &Palette,
+) -> impl IntoElement {
+    let label = label.into();
+    let total = win + draw + loss;
+    let score = if total > 0. {
+        (100. * (win + draw / 2.) / total).round()
+    } else {
+        0.
+    };
+    let games = format!(
+        "{} game{}",
+        format_count(total),
+        if total == 1. { "" } else { "s" }
+    );
+    let title = SharedString::from(format!(
+        "{label}: {games} · {win} won, {draw} drawn, {loss} lost · score {score}%"
+    ));
+    let parts = [
+        (win, palette.win),
+        (draw, palette.border_accented),
+        (loss, palette.loss),
+    ];
+    v_flex()
+        .gap(px(4.))
+        .py(px(3.))
+        .text_size(px(13.))
+        .child(
+            h_flex()
+                .gap(px(12.))
+                .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                .child(
+                    h_flex()
+                        .gap(px(3.))
+                        .items_baseline()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(if total > 0. {
+                            format!("{score}%")
+                        } else {
+                            "–".into()
+                        })
+                        .when(total > 0., |value| {
+                            value.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::NORMAL)
+                                    .text_color(palette.text_muted)
+                                    .child("score"),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .w(px(88.))
+                        .text_right()
+                        .text_color(palette.text_muted)
+                        .child(games),
+                ),
+        )
+        .child(
+            h_flex()
+                .id(SharedString::from(format!("result-row-{label}")))
+                .h(px(8.))
+                .rounded(px(4.))
+                .overflow_hidden()
+                .bg(palette.elevated)
+                .when(total > 0., |bar| {
+                    bar.tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
+                })
+                .children(parts.into_iter().filter(|(part, _)| *part > 0.).map(
+                    move |(part, color)| {
+                        div().h_full().w(relative((part / total) as f32)).bg(color)
+                    },
+                )),
+        )
 }

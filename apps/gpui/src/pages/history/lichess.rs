@@ -609,7 +609,7 @@ impl HistoryPage {
                         ("lichess-game", index),
                         game,
                         self.side_of(game),
-                        true,
+                        RowDetail::Full,
                         move |window, cx| {
                             let _ = page.update(cx, |this, cx| {
                                 this.open_lichess(chosen.clone(), window, cx)
@@ -704,16 +704,28 @@ impl HistoryPage {
     }
 }
 
-/// `GameRow.vue`: result, opponent, mode and date; `detailed` adds the opening and rating, the
-/// rating change and the review's accuracy and worst mistakes (`side`).
+/// How much a game row says (`GameRow.vue`'s `detailed` and `hide-accuracy`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RowDetail {
+    /// Result, opponent, mode and date.
+    Brief,
+    /// Also the opening and rating, the rating change, and the review's accuracy and worst
+    /// mistakes (`side`).
+    Full,
+    /// `Full` without the review.
+    NoReview,
+}
+
+/// `GameRow.vue`: a game from its account's side, in as much detail as asked for.
 pub fn game_row(
     id: impl Into<ElementId>,
     game: &Value,
     side: Option<Value>,
-    detailed: bool,
+    detail: RowDetail,
     select: impl Fn(&mut Window, &mut App) + 'static,
     palette: &Palette,
 ) -> AnyElement {
+    let detailed = detail != RowDetail::Brief;
     let outcome = result_of(game);
     let opponent = game["opponent"].as_str().unwrap_or("?").to_string();
     let mut sub = game["opening"]
@@ -800,7 +812,7 @@ pub fn game_row(
                     }),
             )
         })
-        .when(detailed, |row| {
+        .when(detail == RowDetail::Full, |row| {
             row.child(
                 v_flex()
                     .w(px(110.))

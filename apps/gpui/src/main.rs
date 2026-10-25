@@ -22,6 +22,7 @@ mod prefs;
 mod profile;
 mod puzzle_board;
 mod puzzle_db;
+mod rating_history;
 mod replay;
 mod reviews;
 mod settings;

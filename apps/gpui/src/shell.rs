@@ -133,7 +133,10 @@ pub fn open_history_account(account: &str, window: &mut Window, cx: &mut App) {
 /// A player's profile on Players (`PlayerLink`).
 pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
     open(Page::Players, window, cx);
-    let _ = username;
+    if let Some(players) = view_of::<crate::pages::players::PlayersPage>(Page::Players, cx) {
+        let username = username.to_string();
+        players.update(cx, |players, cx| players.show_player(&username, window, cx));
+    }
 }
 
 /// Watch a game being played on Lichess (`watchGame`).

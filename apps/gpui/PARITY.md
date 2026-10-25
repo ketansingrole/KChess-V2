@@ -188,11 +188,23 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] The players followed: ratings, online or playing (presence every 20 seconds), the record
       against them, their synced games; Follow player, Import from Lichess, Sync all, and each
       player's Games, Sync, Clear data and Remove
-- [ ] Watch, Challenge and the player link once Watch, Play on Lichess and Players are drawn
+- [x] The player link
+- [ ] Watch and Challenge once Watch and Play on Lichess are drawn
+
+## Players
+
+- [x] Look up a player (recent lookups and followed players offered); profile, online or
+      playing, your record against them, rating history (rebuilt from rated games when Lichess
+      sends none, with Retry), their record in each speed they play (results, streaks, best wins
+      and worst losses, each a player link), recent games opened on the analysis board
+- [x] Follow player, Message (with Reconnect when the login lacks the permission)
+- [ ] Rating history as one chart of every speed with toggles (one speed at a time here, as on
+      Home)
+- [ ] Watch and Challenge once Watch and Play on Lichess are drawn
 
 ## Pages not started
 
-Play on Lichess, Tournaments, Watch, Lichess insights, Players.
+Play on Lichess, Tournaments, Watch, Lichess insights.
 
 ## Packaging
 

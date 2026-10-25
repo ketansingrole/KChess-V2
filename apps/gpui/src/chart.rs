@@ -219,19 +219,21 @@ impl Render for LineChart {
                 canvas(
                     move |bounds, window, cx| {
                         let resized = entity
-                            .update(cx, |this, cx| {
+                            .update(cx, |this, _| {
                                 let resized = this.bounds != bounds;
-                                if resized {
-                                    this.bounds = bounds;
-                                    cx.notify();
-                                }
+                                this.bounds = bounds;
                                 resized
                             })
                             .unwrap_or(false);
                         // The points are placed for the measured width: draw again with it,
-                        // whether or not anything else asks for a frame.
+                        // whether or not anything else asks for a frame. A notice given while
+                        // this frame is drawn is lost, so it waits for the next one.
                         if resized {
-                            window.refresh();
+                            let entity = entity.clone();
+                            window.on_next_frame(move |window, cx| {
+                                let _ = entity.update(cx, |_, cx| cx.notify());
+                                window.refresh();
+                            });
                         }
                     },
                     move |bounds, (), window, _| {
