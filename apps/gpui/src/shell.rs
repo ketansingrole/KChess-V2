@@ -588,10 +588,12 @@ impl Workspace {
     fn nav_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let current = self.pages.current();
         if current != Page::Settings {
-            return vec![NavBlock::Menu(Box::new(SidebarMenu::new().children(
+            // Electron's rows: 32px tall, 4px apart, 20px icons (the kit's are 28px, 8px apart).
+            return vec![NavBlock::Menu(Box::new(SidebarMenu::new().gap(px(4.)).children(
                 nav().into_iter().map(|(page, label, glyph)| {
                     SidebarMenuItem::new(label)
-                        .icon(glyph)
+                        .icon(glyph.size(px(20.)))
+                        .min_h(px(32.))
                         .active(current == page)
                         .on_click(
                             cx.listener(move |this, _, window, cx| this.choose(page, window, cx)),
@@ -615,10 +617,11 @@ impl Workspace {
                 ),
             )),
             NavBlock::Heading("Settings", false),
-            NavBlock::Menu(Box::new(SidebarMenu::new().children(
+            NavBlock::Menu(Box::new(SidebarMenu::new().gap(px(4.)).children(
                 sections().into_iter().map(|(section, label, glyph)| {
                     SidebarMenuItem::new(label)
-                        .icon(glyph)
+                        .icon(glyph.size(px(20.)))
+                        .min_h(px(32.))
                         .active(shown == section)
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),

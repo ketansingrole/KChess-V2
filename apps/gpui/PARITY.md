@@ -33,7 +33,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       game to return to; ⌘, opens Settings
 - [x] Connect Lichess and the account menu in the sidebar footer (play as, connect another,
       Settings, log out); signing out starts the pages afresh
-- [ ] Sidebar item spacing (32px rows, 20px icons in Electron)
+- [x] Sidebar item spacing (32px rows, 20px icons, as Electron)
 - [x] Update button in the top bar
 - [ ] Startup screen, offline badge, "Working…" status
 - [x] macOS keeps KChess running when the window closes; the Dock opens it again
