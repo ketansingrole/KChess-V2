@@ -188,8 +188,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] The players followed: ratings, online or playing (presence every 20 seconds), the record
       against them, their synced games; Follow player, Import from Lichess, Sync all, and each
       player's Games, Sync, Clear data and Remove
-- [x] The player link
-- [ ] Watch and Challenge once Watch and Play on Lichess are drawn
+- [x] The player link and Watch
+- [ ] Challenge once Play on Lichess is drawn
 
 ## Players
 
@@ -200,11 +200,24 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Follow player, Message (with Reconnect when the login lacks the permission)
 - [ ] Rating history as one chart of every speed with toggles (one speed at a time here, as on
       Home)
-- [ ] Watch and Challenge once Watch and Play on Lichess are drawn
+- [x] Watch
+- [ ] Challenge once Play on Lichess is drawn
+
+## Watch
+
+- [x] TV: channels (the last one reopened), the live board with ticking clocks, the moves once
+      Lichess's export lines up (browse them, Back to live), head-to-head, the channel's earlier
+      games opened on the analysis board, Analyse and Stop; the stream stops when the page is left
+- [x] Following: followed players playing now, and Watch (also from Players and Following)
+- [x] Broadcasts: live, coming up and finished tournaments, search, a tournament's rounds and
+      boards with clocks, one board followed move by move (←/→, F), All boards and Analyse
+- [ ] Broadcast engine analysis (the board's engine panel and the grid's evaluation bars)
+- [ ] Broadcast cover images
+- [ ] Swipe back through a broadcast's game and tournament
 
 ## Pages not started
 
-Play on Lichess, Tournaments, Watch, Lichess insights.
+Play on Lichess, Tournaments, Lichess insights.
 
 ## Packaging
 

@@ -215,6 +215,43 @@ impl BoardState {
     }
 }
 
+impl BoardState {
+    /// A position only looked at (a live game, a broadcast board): its FEN, which may be just the
+    /// placement and the side to move, and the last move in UCI.
+    pub fn shown(fen: &str, variant: &str, orientation: Color, last: Option<&str>) -> BoardState {
+        let fields = fen.split_whitespace().count();
+        let full = if fields >= 4 {
+            fen.to_string()
+        } else {
+            format!(
+                "{} - - 0 1",
+                fen.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+            )
+        };
+        let last = last.and_then(|uci| {
+            uci.get(0..2)
+                .and_then(|from| from.parse().ok())
+                .zip(uci.get(2..4).and_then(|to| to.parse().ok()))
+        });
+        match kchess_domain::rules::setup_start(variant, &full)
+            .or_else(|| kchess_domain::rules::setup_start("standard", &full))
+        {
+            Some(position) => BoardState::of(&position, orientation, None, last),
+            None => {
+                let mut state = BoardState::of(
+                    &VariantPosition::Chess(shakmaty::Chess::default()),
+                    orientation,
+                    None,
+                    last,
+                );
+                state.fen = fen.to_string();
+                state.check = None;
+                state
+            }
+        }
+    }
+}
+
 /// What the board tells its page.
 pub enum BoardEvent {
     /// A move the player made, in UCI (`e2e4`, `e7e8q`, castling as king to rook or two squares).

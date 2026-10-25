@@ -16,6 +16,7 @@ pub mod puzzles;
 pub mod settings;
 pub mod studies;
 pub mod study_bar;
+pub mod watch;
 
 use std::collections::HashMap;
 
@@ -179,6 +180,10 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
         }
         Page::Friends => {
             let view = cx.new(|cx| friends::FriendsPage::new(window, cx));
+            focused(view, cx)
+        }
+        Page::Watch => {
+            let view = cx.new(|cx| watch::WatchPage::new(window, cx));
             focused(view, cx)
         }
         Page::Players => {

@@ -142,7 +142,10 @@ pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
 /// Watch a game being played on Lichess (`watchGame`).
 pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::Watch, window, cx);
-    let _ = id;
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        let id = id.to_string();
+        watch.update(cx, |watch, cx| watch.watch_game(&id, cx));
+    }
 }
 
 /// Challenge a player to a casual game on Lichess (`challengeFriend`).
@@ -397,7 +400,24 @@ impl Workspace {
         {
             analysis.update(cx, |analysis, cx| analysis.detach(cx));
         }
+        // Watching streams only while Watch is shown.
+        if current == Page::Watch
+            && page != Page::Watch
+            && let Some(watch) = self
+                .pages
+                .view_of::<crate::pages::watch::WatchPage>(Page::Watch)
+        {
+            watch.update(cx, |watch, cx| watch.hidden(cx));
+        }
         self.pages.show(page, window, cx);
+        if page == Page::Watch
+            && current != Page::Watch
+            && let Some(watch) = self
+                .pages
+                .view_of::<crate::pages::watch::WatchPage>(Page::Watch)
+        {
+            watch.update(cx, |watch, cx| watch.shown(window, cx));
+        }
         if page == Page::Analysis
             && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
         {

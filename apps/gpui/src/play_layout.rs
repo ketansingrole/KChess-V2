@@ -69,6 +69,11 @@ impl PlayLayout {
         self.board_size_beside(px(0.), window)
     }
 
+    /// Put in a page laid out by hand, so the board is sized for the area it has.
+    pub fn probe<V: 'static>(&self, cx: &mut Context<V>) -> impl IntoElement + use<V> {
+        self.area.probe(cx)
+    }
+
     /// The page's width at the last layout, or the window's before it.
     pub fn width(&self, window: &Window) -> Pixels {
         let page = self.area.size();

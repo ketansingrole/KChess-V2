@@ -397,10 +397,7 @@ impl PlayersPage {
     }
 
     /// Rated games on the profile but nothing to chart: Lichess withheld the data.
-    fn withheld(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<(SharedString, Retry)> {
+    fn withheld(&self, cx: &mut Context<Self>) -> Option<(SharedString, Retry)> {
         let played = self
             .profile
             .as_ref()
@@ -425,46 +422,26 @@ impl PlayersPage {
 
     /// Open one of their games on the analysis board, from their side.
     fn open_game(game: Value, window: &mut Window, cx: &mut App) {
-        let export = cx
-            .global::<AppCore>()
-            .call("exportGame", vec![game["id"].clone()]);
-        window
-            .spawn(cx, async move |cx| {
-                let pgn = export.await;
-                let _ = cx.update(|window, cx| match pgn {
-                    Ok(Value::String(pgn)) => {
-                        let white = game["color"] != json!("black");
-                        let (account, opponent) =
-                            (game["account"].clone(), game["opponent"].clone());
-                        let origin = json!({
-                            "white": if white { &account } else { &opponent },
-                            "black": if white { &opponent } else { &account },
-                            "gameId": game["id"],
-                        });
-                        let color = if white {
-                            shakmaty::Color::White
-                        } else {
-                            shakmaty::Color::Black
-                        };
-                        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-                            analysis.open_game(
-                                &pgn,
-                                0,
-                                Some(color),
-                                Some(origin.clone()),
-                                false,
-                                cx,
-                            )
-                        });
-                    }
-                    Ok(_) => window.push_notification("That game could not be read.", cx),
-                    Err(cause) => window.push_notification(
-                        format!("Could not open the game: {}", cause.message),
-                        cx,
-                    ),
-                });
-            })
-            .detach();
+        let white = game["color"] != json!("black");
+        let (account, opponent) = (game["account"].clone(), game["opponent"].clone());
+        let (white_name, black_name) = if white {
+            (account, opponent)
+        } else {
+            (opponent, account)
+        };
+        let color = if white {
+            shakmaty::Color::White
+        } else {
+            shakmaty::Color::Black
+        };
+        open_exported(
+            game["id"].as_str().unwrap_or_default(),
+            white_name,
+            black_name,
+            color,
+            window,
+            cx,
+        );
     }
 
     fn open_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -917,6 +894,42 @@ impl PlayersPage {
             })),
         }
     }
+}
+
+/// A finished Lichess game, fetched as PGN (`exportGame`), on the analysis board facing
+/// `orientation`; asks first when that replaces unsaved analysis.
+pub fn open_exported(
+    id: &str,
+    white: Value,
+    black: Value,
+    orientation: shakmaty::Color,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let export = cx.global::<AppCore>().call("exportGame", vec![json!(id)]);
+    let origin = json!({ "white": white, "black": black, "gameId": id });
+    window
+        .spawn(cx, async move |cx| {
+            let pgn = export.await;
+            let _ = cx.update(|window, cx| match pgn {
+                Ok(Value::String(pgn)) => {
+                    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                        analysis.open_game(
+                            &pgn,
+                            0,
+                            Some(orientation),
+                            Some(origin.clone()),
+                            false,
+                            cx,
+                        )
+                    });
+                }
+                Ok(_) => window.push_notification("That game could not be read.", cx),
+                Err(cause) => window
+                    .push_notification(format!("Could not open the game: {}", cause.message), cx),
+            });
+        })
+        .detach();
 }
 
 /// `PlayerLink.vue`: a name that opens the player's profile.
