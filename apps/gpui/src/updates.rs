@@ -597,10 +597,7 @@ mod tests {
                 package_root(&exe).as_deref(),
                 Some(scratch.join("KChess.app").as_path())
             );
-            assert_eq!(
-                package_root(Path::new("/repo/target/debug/kchess-gpui")),
-                None
-            );
+            assert_eq!(package_root(Path::new("/repo/target/debug/KChess")), None);
         } else {
             let folder = scratch.join("KChess");
             std::fs::create_dir_all(&folder).unwrap();
@@ -619,7 +616,7 @@ mod tests {
                 "",
             )
             .unwrap();
-            assert_eq!(package_root(&built.join("kchess-gpui")), None);
+            assert_eq!(package_root(&built.join("KChess")), None);
         }
         let _ = std::fs::remove_dir_all(&scratch);
     }

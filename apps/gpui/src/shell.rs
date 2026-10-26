@@ -1,18 +1,20 @@
 //! The window's frame, as the Electron app draws it (`AppWorkspace.vue`): a sidebar that collapses
 //! to icons, a top bar, and the current page.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
+use gpui_kit::component::button::{
+    Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _,
+};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::sidebar::{
-    Sidebar, SidebarFooter, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
-};
+use gpui_kit::component::sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible, Disableable as _, Icon, Selectable as _, Sizable as _,
-    WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Collapsible, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::time::Duration;
 
 use crate::assets::icon;
 
@@ -33,6 +35,41 @@ use crate::theme::Palette;
 
 /// The window's height above the page; matches `--topbar-height`.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
+
+/// Whether the sidebar is open, kept for both apps (`kchess:sidebar-open`).
+const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
+
+/// `USidebar`'s `--sidebar-width`, and `--sidebar-width-icon` collapsed to icons.
+const SIDEBAR_WIDTH: Pixels = px(256.);
+const SIDEBAR_RAIL: Pixels = px(64.);
+
+fn sidebar_width(open: bool) -> Pixels {
+    if open { SIDEBAR_WIDTH } else { SIDEBAR_RAIL }
+}
+
+/// The sidebar toggle's left edge: 84px on macOS at any interface size, clear of the traffic
+/// lights, else 12px.
+fn toggle_left(window: &Window) -> Pixels {
+    if cfg!(target_os = "macos") {
+        px(84. / window.zoom())
+    } else {
+        px(12.)
+    }
+}
+
+/// Part of the window's title bar: dragging moves the window, a double click zooms it.
+fn title_bar(id: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |event, window, _| {
+            if event.click_count == 2 {
+                window.titlebar_double_click();
+            } else {
+                window.start_window_move();
+            }
+        })
+}
 
 /// The sidebar's pages, in the Electron app's order (`stores/kchess.ts`, `nav`).
 fn nav() -> [(Page, &'static str, Icon); 16] {
@@ -55,6 +92,16 @@ fn nav() -> [(Page, &'static str, Icon); 16] {
         (Page::Players, "Players", icon("user-search")),
     ]
 }
+/// A row of the sidebar's navigation (`UNavigationMenu`'s link, `p-1.5`): 32px tall, a 20px icon
+/// 6px from its label.
+fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
+    SidebarMenuItem::new(label)
+        .icon(glyph.size(px(20.)))
+        .min_h(px(32.))
+        .p(px(6.))
+        .gap_x(px(6.))
+}
+
 /// What the sidebar lists: menus, with a heading between them while Settings is open.
 #[derive(Clone)]
 enum NavBlock {
@@ -243,10 +290,7 @@ pub fn sidebar_open(cx: &App) -> bool {
 
 pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
     if let Some(workspace) = cx.try_global::<Navigator>().and_then(|n| n.0.upgrade()) {
-        workspace.update(cx, |workspace, cx| {
-            workspace.sidebar_open = !workspace.sidebar_open;
-            cx.notify();
-        });
+        workspace.update(cx, |workspace, cx| workspace.toggle_sidebar(cx));
     }
 }
 
@@ -483,6 +527,8 @@ struct SwipeFeedback {
 
 pub struct Workspace {
     sidebar_open: bool,
+    /// The width the sidebar's last open or close started from.
+    sidebar_width_from: Pixels,
     history: crate::swipe::History<Page>,
     swipe: crate::swipe::Swipe,
     swipe_feedback: Option<SwipeFeedback>,
@@ -514,7 +560,10 @@ impl Workspace {
                 &cx.global::<crate::network::NetworkHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
             ),
-            cx.observe_window_appearance(window, |_, window, cx| crate::theme::apply(window, cx)),
+            cx.observe_window_appearance(window, |_, window, cx| {
+                crate::theme::apply(window, cx);
+                crate::dock_icon::apply(cx);
+            }),
             cx.subscribe_in(
                 &settings,
                 window,
@@ -529,8 +578,10 @@ impl Workspace {
                 }
             }),
         ];
+        let sidebar_open = crate::prefs::get(cx, SIDEBAR_OPEN, true);
         Workspace {
-            sidebar_open: true,
+            sidebar_open,
+            sidebar_width_from: sidebar_width(sidebar_open),
             history: crate::swipe::History::default(),
             swipe: crate::swipe::Swipe::default(),
             swipe_feedback: None,
@@ -768,15 +819,12 @@ impl Workspace {
     fn nav_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let current = self.pages.current();
         if current != Page::Settings {
-            // Electron's rows: 32px tall, 4px apart, 20px icons (the kit's are 28px, 8px apart).
+            // Electron's rows (`p-1.5`): 32px tall and touching, 20px icons 6px from the label.
             return vec![NavBlock::Menu(Box::new(
-                SidebarMenu::new()
-                    .gap(px(4.))
-                    .children(nav().into_iter().map(|(page, label, glyph)| {
+                SidebarMenu::new().gap_0().children(nav().into_iter().map(
+                    |(page, label, glyph)| {
                         let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                        SidebarMenuItem::new(label)
-                            .icon(glyph.size(px(20.)))
-                            .min_h(px(32.))
+                        nav_item(label, glyph)
                             .active(current == page)
                             .when_some(marked, |item, mark| {
                                 item.suffix(move |_, cx| {
@@ -805,7 +853,8 @@ impl Workspace {
                                     this.choose(page, window, cx)
                                 }),
                             )
-                    })),
+                    },
+                )),
             ))];
         }
         let shown = self
@@ -814,100 +863,163 @@ impl Workspace {
             .map_or(Section::Appearance, |page| page.read(cx).section());
         let back = self.back;
         vec![
-            NavBlock::Menu(Box::new(
-                SidebarMenu::new().child(
-                    SidebarMenuItem::new("Back")
-                        .icon(icon("arrow-left"))
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
-                        ),
+            NavBlock::Menu(Box::new(SidebarMenu::new().child(
+                nav_item("Back", icon("arrow-left")).on_click(
+                    cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
                 ),
-            )),
+            ))),
             NavBlock::Heading("Settings", false),
-            NavBlock::Menu(Box::new(SidebarMenu::new().gap(px(4.)).children(
+            NavBlock::Menu(Box::new(SidebarMenu::new().gap_0().children(
                 sections().into_iter().map(|(section, label, glyph)| {
-                    SidebarMenuItem::new(label)
-                        .icon(glyph.size(px(20.)))
-                        .min_h(px(32.))
-                        .active(shown == section)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
-                        )
+                    nav_item(label, glyph).active(shown == section).on_click(
+                        cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
+                    )
                 }),
             ))),
         ]
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current = self.pages.current();
+    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_width_from = sidebar_width(self.sidebar_open);
+        self.sidebar_open = !self.sidebar_open;
+        crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
+        cx.notify();
+    }
+
+    /// `USidebar` with `collapsible="icon"`: the header row the toggle floats over, the pages,
+    /// and the footer, divided by lines (`divide-y`); 256px open, a 64px rail of icons collapsed,
+    /// its width easing between the two in 200ms.
+    fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self.sidebar_open;
-        Sidebar::new("sidebar")
-            .collapsed(!open)
-            .header(
-                SidebarHeader::new().h(TOPBAR_HEIGHT).child(
-                    // Clear of the macOS traffic lights, as the Electron toggle sits at x84.
-                    h_flex()
-                        .w_full()
-                        .when(cfg!(target_os = "macos"), |row| row.pl(px(72.)))
-                        .child(
-                            Button::new("sidebar-toggle")
-                                .ghost()
-                                .small()
-                                .icon(icon("panel-left"))
-                                .tooltip(if open { "Hide sidebar" } else { "Show sidebar" })
-                                .accessibility_label(if open {
-                                    "Hide sidebar"
-                                } else {
-                                    "Show sidebar"
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sidebar_open = !this.sidebar_open;
-                                    cx.notify();
-                                })),
-                        ),
-                ),
+        let width = sidebar_width(open);
+        let border = cx.theme().sidebar_border;
+        // macOS keeps the rail's edge out of the header row, where it would cut through the
+        // traffic lights (`.is-mac .kchess-sidebar-container::after`).
+        let mac = cfg!(target_os = "macos");
+        let blocks: Vec<AnyElement> = self
+            .nav_blocks(cx)
+            .into_iter()
+            .enumerate()
+            .map(|(ix, block)| {
+                block
+                    .collapsed(!open)
+                    .render(ix, window, cx)
+                    .into_any_element()
+            })
+            .collect();
+        let sidebar = v_flex()
+            .w(width)
+            .h_full()
+            .bg(cx.theme().tokens.sidebar)
+            .text_color(cx.theme().sidebar_foreground)
+            .border_color(border)
+            .when(!mac, |sidebar| sidebar.border_r_1())
+            .child(
+                title_bar("sidebar-header")
+                    .h(TOPBAR_HEIGHT)
+                    .flex_none()
+                    .border_b_1()
+                    .border_color(border),
             )
-            .children(self.nav_blocks(cx))
-            .footer(
-                SidebarFooter::new().child(
-                    v_flex()
-                        .w_full()
-                        .gap(px(4.))
-                        .child(
-                            Button::new("settings")
-                                .ghost()
-                                .w_full()
-                                .justify_start()
-                                .icon(icon("settings-2"))
-                                .when(open, |button| button.label("Settings"))
-                                .when(!open, |button| button.tooltip("Settings"))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .border_color(border)
+                    .when(mac, |rest| rest.border_r_1())
+                    .child(
+                        v_flex()
+                            .id("sidebar-body")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_4()
+                            .children(blocks),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_none()
+                            .p_4()
+                            .gap_1()
+                            .border_t_1()
+                            .border_color(border)
+                            .child(
+                                footer_button(
+                                    "settings",
+                                    icon("settings-2"),
+                                    "Settings".into(),
+                                    open,
+                                    cx,
+                                )
                                 .accessibility_label("Settings")
-                                .selected(current == Page::Settings)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.choose(Page::Settings, window, cx)
-                                })),
-                        )
-                        .child(account_button(open, cx)),
-                ),
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| this.choose(Page::Settings, window, cx),
+                                )),
+                            )
+                            .child(account_button(open, cx)),
+                    ),
+            );
+        let frame = div()
+            .id("sidebar")
+            .h_full()
+            .flex_none()
+            .overflow_hidden()
+            .child(sidebar);
+        let from = self.sidebar_width_from;
+        if from == width {
+            return frame.w(width).into_any_element();
+        }
+        EffectTransition::new(Duration::from_millis(200))
+            .ease(ease_out_cubic)
+            .width(from, width)
+            .apply(
+                frame,
+                SharedString::from(format!("sidebar-{}-{}", f32::from(from), f32::from(width))),
+            )
+            .into_any_element()
+    }
+
+    /// The sidebar toggle (`.sidebar-toggle-wrap`): one button at the same place in the window
+    /// whether the sidebar is open or a rail, beside the macOS traffic lights (which ignore the
+    /// interface size, so its offset does too), else at the window's edge.
+    fn render_sidebar_toggle(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.sidebar_open {
+            "Hide sidebar"
+        } else {
+            "Show sidebar"
+        };
+        h_flex()
+            .id("sidebar-toggle-wrap")
+            .absolute()
+            .top_0()
+            .left(toggle_left(window))
+            .h(TOPBAR_HEIGHT)
+            .child(
+                Button::new("sidebar-toggle")
+                    .custom(ghost_neutral(cx))
+                    .icon(icon("panel-left"))
+                    .size(px(28.))
+                    .tooltip(label)
+                    .accessibility_label(label)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             )
     }
 
-    fn render_topbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .id("topbar")
+    fn render_topbar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Room for the toggle floating over the topbar beside the macOS rail
+        // (`.mac-toggle-spacer`): its 28px and 8px clear of it, less the rail and the padding.
+        let spacer = (toggle_left(window) + px(36.) - SIDEBAR_RAIL - px(20.)).max(px(0.));
+        title_bar("topbar")
+            .flex()
+            .items_center()
             .h(TOPBAR_HEIGHT)
             .flex_none()
             .px_5()
             .gap(px(8.))
             .border_b_1()
             .border_color(cx.theme().border)
-            .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(MouseButton::Left, |event, window, _| {
-                if event.click_count == 2 {
-                    window.titlebar_double_click();
-                } else {
-                    window.start_window_move();
-                }
+            .when(cfg!(target_os = "macos") && !self.sidebar_open, |bar| {
+                bar.child(div().flex_none().w(spacer))
             })
             .child(div().flex_1())
             .child(self.palette.clone())
@@ -979,6 +1091,40 @@ fn game_mark(cx: &App) -> Option<GameMark> {
     }
 }
 
+/// The Electron app's neutral ghost button (`app.config.ts`): the text color, the accented
+/// background on hover and while pressed.
+fn ghost_neutral(cx: &App) -> ButtonCustomVariant {
+    let palette = cx.global::<Palette>();
+    ButtonCustomVariant::new(cx)
+        .foreground(palette.text)
+        .hover(palette.accented)
+        .active(palette.accented)
+}
+
+/// A footer button as Electron draws it (`UButton` ghost, `block`, `justify-start`): 32px tall,
+/// a 20px icon with the label beside it while the sidebar is open. On the rail the icon stands
+/// alone, 6px in (`square`), with the label as its tooltip.
+fn footer_button(
+    id: &'static str,
+    glyph: Icon,
+    label: SharedString,
+    open: bool,
+    cx: &App,
+) -> Button {
+    Button::new(id)
+        .custom(ghost_neutral(cx))
+        .w_full()
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(px(6.))
+                .child(glyph.size(px(20.)).flex_none())
+                .when(open, |row| row.child(label.clone())),
+        )
+        .when(!open, |button| button.px(px(6.)).tooltip(label))
+}
+
 /// The sidebar's account button: Connect Lichess while no account plays online, else the account
 /// menu (`userMenuItems`): which account plays, connecting another, Settings and logging out.
 fn account_button(expanded: bool, cx: &App) -> AnyElement {
@@ -986,37 +1132,59 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
     let accounts = handle.read(cx);
     let Some(active) = accounts.active(cx) else {
         let target = handle.downgrade();
-        return Button::new("connect-lichess")
-            .ghost()
-            .w_full()
-            .justify_start()
-            .icon(icon("log-in"))
-            .when(expanded, |button| button.label("Connect Lichess"))
-            .when(!expanded, |button| button.tooltip("Connect Lichess"))
-            .accessibility_label("Connect Lichess")
-            .loading(accounts.busy)
-            .disabled(accounts.busy)
-            .on_click(move |_, window, cx| {
-                let _ = target.update(cx, |accounts, cx| accounts.connect(window, cx));
-            })
-            .into_any_element();
+        return footer_button(
+            "connect-lichess",
+            icon("log-in"),
+            "Connect Lichess".into(),
+            expanded,
+            cx,
+        )
+        .accessibility_label("Connect Lichess")
+        .disabled(!crate::network::online(cx) || accounts.busy)
+        .on_click(move |_, window, cx| {
+            let _ = target.update(cx, |accounts, cx| accounts.connect(window, cx));
+        })
+        .into_any_element();
     };
     let connected = accounts.connected();
     let label = format!("@{active}");
     let target = handle.downgrade();
+    // `square`: 6px all round, the label between the icon and a dimmed up-down chevron; elevated
+    // while its menu is open.
+    let palette = cx.global::<Palette>();
+    let dimmed = palette.dimmed;
     Button::new("account-menu")
-        .ghost()
+        .custom(ghost_neutral(cx).active(palette.elevated))
         .w_full()
-        .justify_start()
-        .icon(icon("user"))
-        .when(expanded, |button| button.label(label.clone()))
-        .when(!expanded, |button| button.tooltip(label.clone()))
+        .px(px(6.))
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(px(6.))
+                .child(icon("user").size(px(20.)).flex_none())
+                .when(expanded, |row| {
+                    row.child(div().flex_1().min_w_0().child(label.clone()))
+                        .child(
+                            icon("chevrons-up-down")
+                                .size(px(20.))
+                                .flex_none()
+                                .text_color(dimmed),
+                        )
+                }),
+        )
         .accessibility_label(if expanded {
             format!("{label} account menu")
         } else {
             "Account menu".into()
         })
-        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+        // Above the button, centred on it and as wide (at least 192px), 8px clear.
+        .dropdown_menu_with_anchor(Anchor::BottomCenter, move |menu, _, _| {
+            let menu = menu.min_w(if expanded {
+                SIDEBAR_WIDTH - px(33.)
+            } else {
+                px(192.)
+            });
             let act = |run: fn(
                 &mut crate::accounts::Accounts,
                 &mut Window,
@@ -1154,7 +1322,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
         let zen = cx
             .global::<SettingsHandle>()
@@ -1166,15 +1334,16 @@ impl Render for Workspace {
             && self.pages.current().zen_surface();
         h_flex()
             .size_full()
+            .relative()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .when(!zen, |shell| shell.child(self.render_sidebar(cx)))
+            .when(!zen, |shell| shell.child(self.render_sidebar(window, cx)))
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.render_topbar(cx))
+                    .child(self.render_topbar(window, cx))
                     .child(
                         div()
                             .id("page-area")
@@ -1201,6 +1370,9 @@ impl Render for Workspace {
                             .children(self.swipe_edge(cx)),
                     ),
             )
+            .when(!zen, |shell| {
+                shell.child(self.render_sidebar_toggle(window, cx))
+            })
     }
 }
 

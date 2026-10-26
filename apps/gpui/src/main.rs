@@ -6,6 +6,7 @@ mod assets;
 mod board;
 mod chart;
 mod core;
+mod dock_icon;
 mod explorer;
 mod export;
 mod game;
@@ -99,6 +100,7 @@ fn main() {
         network::init(cx);
         voice::init(cx);
         cx.on_app_quit(core::quit).detach();
+        dock_icon::apply(cx);
         open_main_window(cx);
         cx.activate(true);
     });
@@ -112,8 +114,9 @@ fn open_main_window(cx: &mut App) {
         titlebar: Some(TitlebarOptions {
             title: Some(profile::APP_NAME.into()),
             appears_transparent: true,
-            // Centred in the sidebar header, as Electron's hiddenInset lights sit.
-            traffic_light_position: Some(point(px(16.), px(18.))),
+            // As Electron's, beside the sidebar toggle; `interface_zoom::apply` keeps them on the
+            // top bar's middle at every interface size.
+            traffic_light_position: Some(point(px(12.), px(21.))),
         }),
         window_bounds,
         window_min_size: Some(size(

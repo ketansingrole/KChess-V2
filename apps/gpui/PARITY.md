@@ -25,7 +25,18 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 
 ## Shell
 
+- [x] Named KChess in the menu bar, Dock and app switcher (the executable is `KChess`, so a
+      `cargo run` build is too; the preview package is "KChess Preview" on purpose)
+- [x] Dock, app switcher and Mission Control icon: the light or dark tile by the system
+      appearance, set at runtime as Electron does (`src/dock_icon.rs`), so a development build
+      has it too
+- [x] Traffic lights where Electron puts them (12pt in, beside the toggle) at every interface size
 - [x] Sidebar with the same pages, icons and order; collapses to icons
+- [x] Sidebar frame as `USidebar`: 256px, a 64px rail collapsed, easing between them in 200ms;
+      lines under the header row and over the footer; the edge below the header row on macOS
+- [x] Sidebar toggle fixed at x84 beside the traffic lights (x12 elsewhere) open or collapsed,
+      28px with a 16px icon, Hide/Show sidebar as tooltip and name, the top bar making room for
+      it beside the rail; open or collapsed is kept for both apps (`kchess:sidebar-open`)
 - [x] Theme colors, light and dark, following Settings or the system
 - [x] Menus: KChess (Services, Hide, Quit), File, Edit, View, Window
 - [x] Search box and command palette in the top bar: ⌘K (View → Search…), ⇧⌘P for commands,
@@ -33,7 +44,11 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       game to return to; ⌘, opens Settings
 - [x] Connect Lichess and the account menu in the sidebar footer (play as, connect another,
       Settings, log out); signing out starts the pages afresh
-- [x] Sidebar item spacing (32px rows, 20px icons, as Electron)
+- [x] Sidebar footer as Electron's: Settings, then Connect Lichess (off while offline or busy) or
+      the account button with its up-down chevron, 32px rows 4px apart, left-aligned, icons alone
+      with tooltips on the rail; the account menu above the button and as wide; hover and press
+      colors of Electron's neutral ghost buttons
+- [x] Sidebar item spacing (32px rows touching, 20px icons 6px from the label, as Electron)
 - [x] Update button in the top bar
 - [x] Offline badge (a route out, as `navigator.onLine`), "Working…" while Lichess is waited on,
       and the sidebar's dot for a Lichess game (your move, or going on)
@@ -97,8 +112,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Voice input (privacy settings, a microphone level test, confirm moves, hold to speak,
       keep history) and the voice history (weak words, heard → meant, recent phrases, export,
       clear); the offline voice model's card in Offline downloads
-- [x] Microphone access status and Allow microphone (AVFoundation on macOS, the app's one
-      `unsafe` exception, in `src/microphone.rs`), read again on coming back from System Settings
+- [x] Microphone access status and Allow microphone (AVFoundation on macOS, one of the app's
+      two `unsafe` exceptions, in `src/microphone.rs`; the Dock icon is the other), read again on coming back from System Settings
 - [x] Data & storage: downloads and storage per account (reset counters), Clear local scores,
       Export diagnostics (the redacted, bounded `logs/kchess.log` both apps write)
 

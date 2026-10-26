@@ -86,7 +86,7 @@ const stockfish = execFileSync(
   ],
   { cwd: root, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' },
 ).trim()
-const binary = join(root, `target/release/kchess-gpui${exe}`)
+const binary = join(root, `target/release/KChess${exe}`)
 
 rmSync(stage, { recursive: true, force: true })
 rmSync(out, { recursive: true, force: true })

@@ -105,3 +105,13 @@ pub fn bundled_engine() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     Some(exe.parent()?.join(name))
 }
+
+#[cfg(test)]
+mod tests {
+    /// macOS names a development build after its executable: it read "kchess-gpui" in the menu
+    /// bar and Dock until the executable was named as the app.
+    #[test]
+    fn the_executable_is_named_as_the_app() {
+        assert_eq!(env!("CARGO_BIN_NAME"), super::APP_NAME);
+    }
+}

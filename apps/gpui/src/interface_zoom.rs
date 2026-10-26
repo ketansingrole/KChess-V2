@@ -17,10 +17,12 @@ const DESIGN_SHORT_SIDE: f32 = 1360.;
 /// The top bar's height at 100%, which the macOS traffic lights centre on (`TOPBAR_HEIGHT`).
 #[cfg(target_os = "macos")]
 const TOPBAR: f32 = 52.;
+/// Where Electron's traffic lights sit (`trafficLightPosition: { x: 12, y: 20 }`, which
+/// hiddenInset draws a point lower): 12pt in, their frame 5pt above the top bar's middle.
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHT_X: f32 = 16.;
+const TRAFFIC_LIGHT_X: f32 = 12.;
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHT_SIZE: f32 = 16.;
+const TRAFFIC_LIGHT_ABOVE_MIDDLE: f32 = 5.;
 
 /// `auto`, or one of `PERCENTS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,12 +148,16 @@ pub fn apply(window: &mut Window, cx: &App) {
     let factor = f32::from(percent(window, cx)) / 100.;
     window.set_zoom(factor);
     #[cfg(target_os = "macos")]
-    {
-        let y = ((TOPBAR * factor - TRAFFIC_LIGHT_SIZE) / 2.)
-            .round()
-            .max(4.);
-        window.set_traffic_light_position(point(px(TRAFFIC_LIGHT_X), px(y)));
-    }
+    window.set_traffic_light_position(traffic_lights(factor));
+}
+
+/// Where the traffic lights go in a window zoomed by `factor`: on the top bar's middle.
+#[cfg(target_os = "macos")]
+fn traffic_lights(factor: f32) -> Point<Pixels> {
+    let y = (TOPBAR * factor / 2. - TRAFFIC_LIGHT_ABOVE_MIDDLE)
+        .round()
+        .max(4.);
+    point(px(TRAFFIC_LIGHT_X), px(y))
 }
 
 /// Choose a setting, save it, and zoom `window` (the app's one window) to it.
@@ -191,6 +197,16 @@ mod tests {
         assert_eq!(auto_percent(5120., 2850.), 200);
         assert_eq!(auto_percent(7680., 4280.), 300);
         assert_eq!(auto_percent(2560., 1410.), 100);
+    }
+
+    /// They sat 4pt right of and 3pt above Electron's (x12, y21 on screen at 100%).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn traffic_lights_sit_where_electrons_do() {
+        use gpui_kit::{point, px};
+        assert_eq!(super::traffic_lights(1.), point(px(12.), px(21.)));
+        assert_eq!(super::traffic_lights(2.), point(px(12.), px(47.)));
+        assert_eq!(super::traffic_lights(0.5), point(px(12.), px(8.)));
     }
 
     #[test]
