@@ -207,7 +207,10 @@ impl SettingsPage {
                                     .text_size(px(18.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(palette.highlighted)
-                                    .child(format!("KChess {}", updates.current)),
+                                    .child(format!(
+                                        "KChess {}",
+                                        crate::updates::client_version(&updates.current)
+                                    )),
                             )
                             .children(badge(phase).map(|(label, look, glyph)| {
                                 widgets::badge(label, look, palette)

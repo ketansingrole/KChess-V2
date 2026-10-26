@@ -1262,7 +1262,7 @@ test('shows update capabilities and persists update preferences @packaged', asyn
   await navigate(page, 'Updates')
   await expect(page.getByRole('heading', { name: 'Updates', level: 1 })).toBeVisible()
   await expect(
-    page.getByRole('heading', { name: `KChess ${status.currentVersion}`, level: 2 }),
+    page.getByRole('heading', { name: `KChess ${status.currentVersion} · Electron`, level: 2 }),
   ).toBeVisible()
   const check = page.getByRole('button', { name: 'Check for updates', exact: true })
   const download = page.getByRole('switch', {
@@ -1336,6 +1336,7 @@ test('exports redacted diagnostics through Settings', async ({
     'generatedAt',
     'sessionId',
     'version',
+    'client',
     'platform',
     'arch',
     'versions',

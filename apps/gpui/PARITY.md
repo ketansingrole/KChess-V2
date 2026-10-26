@@ -41,7 +41,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Menus: KChess (Services, Hide, Quit), File, Edit, View, Window
 - [x] Search box and command palette in the top bar: ⌘K (View → Search…), ⇧⌘P for commands,
       `@` players, `#` settings, `?` help; ranked fuzzy matches highlighted, recent entries, the
-      game to return to; ⌘, opens Settings
+      game to return to; ⌘, opens Settings. Drawn as Electron's: one bordered box up to 600px
+      wide and 32px tall, centred in the top bar, that grows down into the results and a footer
+      of key chips; ⌘K chips hidden below 560px
 - [x] Connect Lichess and the account menu in the sidebar footer (play as, connect another,
       Settings, log out); signing out starts the pages afresh
 - [x] Sidebar footer as Electron's: Settings, then Connect Lichess (off while offline or busy) or

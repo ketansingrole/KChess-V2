@@ -98,6 +98,14 @@ pub fn parse_version(text: &str) -> Option<[u64; 3]> {
     parts.next().is_none().then_some(out)
 }
 
+/// This app's name in version labels, so a report says which KChess app it came from.
+pub const CLIENT: &str = "GPUI";
+
+/// `2026.10.3 · GPUI`: the running version as the Updates heading and palette show it.
+pub fn client_version(version: &str) -> String {
+    format!("{version} · {CLIENT}")
+}
+
 pub fn current_version() -> String {
     serde_json::from_str::<serde_json::Value>(PACKAGE_JSON)
         .ok()

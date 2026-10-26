@@ -198,6 +198,7 @@ impl SettingsPage {
             "generatedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "sessionId": crate::log::session_id(),
             "version": crate::updates::current_version(),
+            "client": "gpui",
             "platform": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
             "versions": { "app": "gpui" },

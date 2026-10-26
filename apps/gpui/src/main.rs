@@ -63,7 +63,7 @@ fn main() {
         Level::Info,
         "diagnostics",
         &format!(
-            "KChess started (GPUI) {{ sessionId: {}, version: {}, platform: {}, arch: {} }}",
+            "KChess started (GPUI) {{ sessionId: {}, version: {}, client: gpui, platform: {}, arch: {} }}",
             log::session_id(),
             updates::current_version(),
             std::env::consts::OS,

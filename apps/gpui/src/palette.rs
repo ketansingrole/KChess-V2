@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::{Appearance, CoordinateMode, Settings};
@@ -455,6 +455,10 @@ fn settings_commands(cx: &App) -> Vec<Command> {
                 move |window, cx| crate::shell::open_settings(section, window, cx),
             )
             .detail("Settings")
+            .hint(
+                (section == Section::Updates)
+                    .then(|| crate::updates::client_version(&crate::updates::current_version())),
+            )
             .keywords(if section == Section::Updates {
                 "version about upgrade"
             } else {
@@ -1007,22 +1011,20 @@ impl CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
+        let open = self.open;
         let query = self.input.read(cx).value().to_string();
-        let groups = if self.open {
-            groups(&query, cx)
-        } else {
-            Vec::new()
-        };
+        let groups = if open { groups(&query, cx) } else { Vec::new() };
         let count: usize = groups.iter().map(|g| g.items.len()).sum();
         let selected = self.selected.min(count.saturating_sub(1));
         let (_, text) = quick_pick::parse(&query);
         let mut index = 0usize;
-        let results = self.open.then(|| {
-            let rows: Vec<AnyElement> = groups
+        let results = open.then(|| {
+            let sections: Vec<AnyElement> = groups
                 .into_iter()
-                .flat_map(|group| {
+                .enumerate()
+                .map(|(at_group, group)| {
                     let heading = group.label.map(|label| {
                         div()
                             .px(px(10.))
@@ -1032,7 +1034,6 @@ impl Render for CommandPalette {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text_muted)
                             .child(label)
-                            .into_any_element()
                     });
                     let items: Vec<AnyElement> = group
                         .items
@@ -1108,25 +1109,27 @@ impl Render for CommandPalette {
                                 .into_any_element()
                         })
                         .collect();
-                    heading.into_iter().chain(items)
+                    // `.kchess-quickpick-group`: a rule between groups.
+                    v_flex()
+                        .py(px(4.))
+                        .when(at_group > 0, |group| {
+                            group.border_t_1().border_color(palette.border)
+                        })
+                        .children(heading)
+                        .children(items)
+                        .into_any_element()
                 })
                 .collect();
-            v_flex()
+            let empty = sections.is_empty();
+            let list = v_flex()
                 .id("palette-results")
-                .absolute()
-                .top(px(38.))
-                .left_0()
-                .right_0()
-                .max_h(px(420.))
+                .min_h_0()
+                .flex_shrink_1()
                 .overflow_y_scroll()
-                .p(px(4.))
-                .rounded(px(10.))
-                .border_1()
+                .px(px(4.))
+                .border_t_1()
                 .border_color(palette.border)
-                .bg(palette.elevated)
-                .shadow_lg()
-                .occlude()
-                .when(rows.is_empty(), |list| {
+                .when(empty, |list| {
                     list.child(
                         div()
                             .py(px(24.))
@@ -1136,53 +1139,141 @@ impl Render for CommandPalette {
                             .child(format!("No results for “{text}”")),
                     )
                 })
-                .children(rows)
+                .children(sections);
+            let hint = |keys: &'static str, label: &'static str| {
+                h_flex().gap(px(3.)).child(kbd(keys, &palette)).child(label)
+            };
+            let footer = h_flex()
+                .flex_none()
+                .flex_wrap()
+                .gap_x(px(14.))
+                .gap_y(px(4.))
+                .px(px(10.))
+                .py(px(6.))
+                .border_t_1()
+                .border_color(palette.border)
+                .text_size(px(11.))
+                .text_color(palette.text_muted)
+                .child(hint("↑ ↓", "navigate"))
+                .child(hint("↵", "open"))
+                .child(hint("esc", "close"))
                 .child(
                     h_flex()
-                        .flex_wrap()
-                        .gap(px(14.))
-                        .mt(px(4.))
-                        .px(px(10.))
-                        .py(px(6.))
-                        .border_t_1()
-                        .border_color(palette.border)
-                        .text_size(px(11.))
-                        .text_color(palette.text_muted)
-                        .child("↑ ↓ navigate")
-                        .child("↵ open")
-                        .child("esc close")
-                        .child(div().flex_1())
-                        .child("> commands  @ players  # settings"),
-                )
+                        .ml_auto()
+                        .gap(px(3.))
+                        .child(kbd(">", &palette))
+                        .child("commands")
+                        .child(kbd("@", &palette))
+                        .child("players")
+                        .child(kbd("#", &palette))
+                        .child("settings"),
+                );
+            (list, footer)
         });
-        div()
-            .relative()
-            .w(px(460.))
-            .capture_key_down(cx.listener(Self::key))
+        // `.quickpick-keys` hides below 560px.
+        let shortcut = !open && window.viewport_size().width >= px(560.);
+        let input = self.input.clone();
+        let field = h_flex()
+            .flex_none()
+            .h(px(30.))
+            .px(px(10.))
+            .gap(px(6.))
+            .when(!open, |field| field.cursor_pointer())
+            // A press anywhere on the closed box opens it, the icon and shortcut included.
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if !open {
+                    input.update(cx, |input, cx| input.focus(window, cx));
+                }
+            })
+            .child(
+                icon("search")
+                    .size(px(16.))
+                    .flex_none()
+                    .text_color(palette.dimmed),
+            )
             .child(
                 Input::new(&self.input)
-                    .small()
-                    .prefix(icon("search").size(px(14.)))
-                    .when(!self.open, |input| input.suffix(kbd("⌘ K", &palette)))
+                    .appearance(false)
+                    .flex_1()
+                    .h(px(30.))
+                    .px_0()
+                    .text_size(px(13.))
                     .aria_label("Search pages and commands"),
             )
-            // Drawn after the page, so the results lie over it.
-            .children(results.map(|results| deferred(results).with_priority(1)))
+            .when(shortcut, |field| {
+                field.child(kbd(
+                    if cfg!(target_os = "macos") {
+                        "⌘ K"
+                    } else {
+                        "Ctrl K"
+                    },
+                    &palette,
+                ))
+            });
+        // `.quickpick-panel`: one bordered box, the input on top; open, it grows down over the
+        // page with the results and keys beneath, up to 560px.
+        let tall = (window.viewport_size().height - px(16.)).min(px(560.));
+        let panel = v_flex()
+            .id("palette-panel")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(palette.border_accented)
+            .bg(if open && palette.dark {
+                palette.elevated
+            } else {
+                palette.bg
+            })
+            .overflow_hidden()
+            .when(!open, |panel| {
+                panel.hover(|style| style.bg(palette.elevated))
+            })
+            .when(open, |panel| {
+                panel.max_h(tall).occlude().shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.35),
+                    offset: point(px(0.), px(18.)),
+                    blur_radius: px(40.),
+                    spread_radius: px(-12.),
+                    inset: false,
+                }])
+            })
+            .child(field)
+            .when_some(results, |panel, (list, footer)| {
+                panel.child(list).child(footer)
+            });
+        div()
+            .relative()
+            .w_full()
+            .h(px(32.))
+            .capture_key_down(cx.listener(Self::key))
+            // Drawn after the page, so the open results lie over it.
+            .child(deferred(panel).with_priority(1))
     }
 }
 
-/// A shortcut's keys, as small caps.
+/// A shortcut's keys as `UKbd` chips (size sm).
 fn kbd(keys: &'static str, palette: &Palette) -> impl IntoElement {
-    h_flex().gap(px(2.)).children(keys.split(' ').map(|key| {
-        div()
-            .px(px(4.))
-            .rounded(px(4.))
-            .border_1()
-            .border_color(palette.border)
-            .text_size(px(11.))
-            .text_color(palette.text_muted)
-            .child(key)
-    }))
+    h_flex()
+        .flex_none()
+        .gap(px(2.))
+        .children(keys.split(' ').map(|key| {
+            h_flex()
+                .h(px(20.))
+                .min_w(px(20.))
+                .px(px(4.))
+                .justify_center()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(palette.border_accented)
+                .bg(palette.bg)
+                .text_size(px(11.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.highlighted)
+                .child(key.to_uppercase())
+        }))
 }
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<CommandPalette> {

@@ -11,6 +11,7 @@ import { useLocalGameStore } from '../stores/local'
 import { useAnalysisStore } from '../stores/analysis'
 import { useAppUpdatesStore } from '../stores/appUpdates'
 import { PRACTICE_TAB_KEY } from '../utils/storageKeys'
+import { clientVersion } from '../utils/appUpdate'
 import {
   labelSegments,
   parseQuickPick,
@@ -239,7 +240,10 @@ export function useQuickPick(query: Ref<string>) {
         icon: section.icon,
         detail: 'Settings',
         ...(section.id === 'updates'
-          ? { hint: updates.status?.currentVersion, keywords: 'version about upgrade' }
+          ? {
+              hint: clientVersion(updates.status?.currentVersion),
+              keywords: 'version about upgrade',
+            }
           : {}),
         run: () => {
           go('settings')
