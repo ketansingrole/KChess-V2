@@ -14,12 +14,20 @@ const forbidden =
 const VOICE_RUNTIME =
   /^node_modules\/@kchess\/native\/voice\/(?:kchess-voice(?:\.exe)?|libvosk\.(?:dylib|so|dll)|lib(?:stdc\+\+-6|gcc_s_seh-1|winpthread-1)\.dll|NOTICE\.txt|APACHE-2\.0\.txt)$/
 
+/** The shared core service (docs/shared-core.md), unpacked so the OS can run it. */
+const CORE_SERVICE = /^node_modules\/@kchess\/native\/service\/kchess-service(?:\.exe)?$/
+
 export function verifyEntries(entries, label = 'package') {
   let total = 0
   let voice = 0
+  let service = 0
   for (const { path, size } of entries) {
     if (VOICE_RUNTIME.test(path)) {
       voice += size
+      continue
+    }
+    if (CORE_SERVICE.test(path)) {
+      service += size
       continue
     }
     if (forbidden.test(path) || /(?:^|\/)voice\/model\.tar\.gz/.test(path))
@@ -52,6 +60,10 @@ export function verifyEntries(entries, label = 'package') {
   if (voice > PERFORMANCE_BUDGETS.voiceRuntimeBytes)
     throw new Error(
       `${label} voice runtime exceeds the ${PERFORMANCE_BUDGETS.voiceRuntimeBytes / MiB} MiB budget.`,
+    )
+  if (service > PERFORMANCE_BUDGETS.coreServiceBytes)
+    throw new Error(
+      `${label} core service exceeds the ${PERFORMANCE_BUDGETS.coreServiceBytes / MiB} MiB budget.`,
     )
   return total
 }
@@ -148,6 +160,12 @@ export async function verifyPackage(appOutDir, platform = process.platform) {
     if (!(await stat(join(resources, 'app.asar.unpacked', path))).size)
       throw new Error(`Voice runtime is empty: ${path}`)
   }
+  // The shared core service, which the app starts beside its window.
+  const service = `node_modules/@kchess/native/service/${platform === 'win32' ? 'kchess-service.exe' : 'kchess-service'}`
+  if (!entries.some((entry) => entry.path === service))
+    throw new Error(`Missing core service: ${service}`)
+  if (!(await stat(join(resources, 'app.asar.unpacked', service))).size)
+    throw new Error(`Core service is empty: ${service}`)
   await verifyLegalFiles(resources)
   if ((await stat(archive)).size > PERFORMANCE_BUDGETS.packageBytes)
     throw new Error(`app.asar exceeds the ${PERFORMANCE_BUDGETS.packageBytes / MiB} MiB budget.`)

@@ -10,6 +10,7 @@ import type {
   DesktopApi,
   OnlineEvent,
   OnlineConnection,
+  ProfileChange,
   PuzzleDbProgress,
   ReviewStatus,
   ReviewUpdate,
@@ -175,6 +176,11 @@ const api: DesktopApi = {
     const listener = (_: unknown, update: BroadcastUpdate): void => callback(update)
     ipcRenderer.on(IPC_EVENTS.broadcast, listener)
     return () => ipcRenderer.removeListener(IPC_EVENTS.broadcast, listener)
+  },
+  onProfileChanged: (callback) => {
+    const listener = (_: unknown, change: ProfileChange): void => callback(change)
+    ipcRenderer.on(IPC_EVENTS.profileChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.profileChanged, listener)
   },
   onLobbyState: (callback) => {
     const listener = (_: unknown, state: LobbyState): void => callback(state)

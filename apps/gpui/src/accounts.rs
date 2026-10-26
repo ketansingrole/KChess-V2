@@ -35,6 +35,13 @@ pub fn init(cx: &mut App) {
     });
     cx.set_global(AccountsHandle(accounts.clone()));
     accounts.update(cx, |accounts, cx| accounts.refresh(cx));
+    // Another window signed in, synced or removed an account.
+    crate::core::on_profile_change(cx, &["accounts", "usage"], {
+        let accounts = accounts.downgrade();
+        move |cx| {
+            let _ = accounts.update(cx, |accounts, cx| accounts.refresh(cx));
+        }
+    });
 }
 
 /// The accounts, from anywhere.

@@ -3,11 +3,10 @@ import type { AppUpdateStatus, DesktopApi, VoiceModelProgress } from './types'
 import type { InterfaceZoomState } from './interfaceZoom'
 
 /**
- * Core events the shell handles itself instead of forwarding. `profile:changed` and
- * `alerts:owner` matter once several windows share one core (`docs/shared-core.md`).
+ * Core events the shell handles itself instead of forwarding. The shell decides alerts for the
+ * window (`alerts:owner`, `docs/shared-core.md`).
  */
-type ShellHandledCoreEvent =
-  'challenge:received' | 'settings:saved' | 'profile:changed' | 'alerts:owner'
+type ShellHandledCoreEvent = 'challenge:received' | 'settings:saved' | 'alerts:owner'
 export type ForwardedCoreEvent = Exclude<keyof CoreEvents, ShellHandledCoreEvent>
 
 export interface IpcEvents extends Pick<CoreEvents, ForwardedCoreEvent> {
@@ -33,6 +32,7 @@ const forwarded: Record<ForwardedCoreEvent, true> = {
   'watch:state': true,
   'watch:frame': true,
   'watch:broadcast': true,
+  'profile:changed': true,
 }
 /** Core events the shell relays to the renderer unchanged. */
 export const FORWARDED_CORE_EVENTS = Object.keys(forwarded) as ForwardedCoreEvent[]
@@ -57,6 +57,7 @@ export const IPC_EVENTS = {
   watchState: 'watch:state',
   watch: 'watch:frame',
   broadcast: 'watch:broadcast',
+  profileChanged: 'profile:changed',
 } as const satisfies Record<string, keyof IpcEvents>
 
 type Subscription =
@@ -79,6 +80,7 @@ type Subscription =
   | 'onWatchState'
   | 'onWatch'
   | 'onBroadcast'
+  | 'onProfileChanged'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */

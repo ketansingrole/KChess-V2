@@ -344,6 +344,11 @@ export class ServiceCore implements NativeCoreHandle {
     throw new Error('Synchronous core calls are unavailable with the shared core.')
   }
 
+  /** This client's connection id on the core; 0 until connected. */
+  get connection(): number {
+    return this.current?.connection ?? 0
+  }
+
   /** Tells the core whether this app's window is focused. */
   focus(focused: boolean): void {
     if (this.current) send(this.current.socket, { type: 'focus', focused })

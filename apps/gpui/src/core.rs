@@ -219,6 +219,16 @@ impl CoreBridge {
         ))
     }
 
+    /// This app's connection on the core: `origin` of its own writes in `profile:changed`.
+    pub fn connection(&self) -> u64 {
+        match &self.backend {
+            Backend::Embedded(_) => kchess_core::connection::APP,
+            Backend::Service(client) => client
+                .lock()
+                .map_or(kchess_core::connection::APP, |client| client.connection()),
+        }
+    }
+
     /// Tells the shared core whether this app's window is focused: the window focused last
     /// raises system notifications.
     pub fn focus(&self, focused: bool) {
@@ -318,6 +328,48 @@ pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
     }
 }
 
+/// Runs `reload` when another window changes one of `areas` of the profile (`profile:changed`,
+/// `docs/shared-core.md`); this app's own writes are ignored.
+pub fn on_profile_change(
+    cx: &mut App,
+    areas: &'static [&'static str],
+    reload: impl Fn(&mut App) + 'static,
+) {
+    let events = cx.global::<AppCore>().events.clone();
+    cx.subscribe(&events, move |_, event: &CoreEvent, cx| {
+        if event.name != "profile:changed" {
+            return;
+        }
+        let own = cx.global::<AppCore>().bridge.connection();
+        if event.payload["origin"].as_u64() == Some(own) {
+            return;
+        }
+        let changed = event.payload["areas"].as_array().is_some_and(|changed| {
+            changed
+                .iter()
+                .any(|area| area.as_str().is_some_and(|area| areas.contains(&area)))
+        });
+        if changed {
+            reload(cx);
+        }
+    })
+    .detach();
+}
+
+/// Which connection raises system notifications now (`alerts:owner`); `None` until the core says.
+#[derive(Default)]
+pub struct AlertOwner(pub Option<u64>);
+
+impl Global for AlertOwner {}
+
+/// Whether this app may raise a system notification: it is the alert owner, or nobody is.
+pub fn alerts_here(cx: &App) -> bool {
+    let own = cx.global::<AppCore>().bridge.connection();
+    cx.try_global::<AlertOwner>()
+        .and_then(|owner| owner.0)
+        .is_none_or(|owner| owner == own)
+}
+
 /// The app's core, reachable from any view: `cx.global::<AppCore>()`.
 #[derive(Clone)]
 pub struct AppCore {
@@ -363,6 +415,10 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
             if event.name == "host:request" {
                 cx.update(|cx| answer_host(&event.payload, cx));
                 continue;
+            }
+            if event.name == "alerts:owner" {
+                let owner = event.payload["connection"].as_u64();
+                cx.update(|cx| cx.set_global(AlertOwner(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));
         }

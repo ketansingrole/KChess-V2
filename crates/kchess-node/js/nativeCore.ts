@@ -145,6 +145,11 @@ export async function nativeReady(): Promise<void> {
   await state.service?.ready
 }
 
+/** This scope's connection on the core: the shared core's id for it, else the embedding app's 0. */
+export function nativeConnection(): number {
+  return state.service?.connection ?? 0
+}
+
 /** Tells the shared core whether this app's window is focused; the window focused last alerts. */
 export function nativeFocus(focused: boolean): void {
   state.service?.focus(focused)

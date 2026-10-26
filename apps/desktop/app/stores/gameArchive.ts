@@ -2,7 +2,7 @@ import { GameArchive, archiveState } from '@kchess/rules/gameArchive'
 import { defineStore } from 'pinia'
 import { onScopeDispose, reactive, ref, shallowRef, watch, toRef, type Ref } from 'vue'
 import { initialLibrary, persistSession, registerPersistenceFlush } from '../utils/library'
-import type { ArchivedGame, GameSnapshot } from '@kchess/rules/library'
+import type { ArchivedGame, GameSnapshot, LibrarySnapshot } from '@kchess/rules/library'
 
 export type { ArchivedGame, GameSnapshot }
 
@@ -133,7 +133,14 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
     unregister()
     window.removeEventListener('beforeunload', flushNow)
   })
-  return { games, error, save, remove, flush }
+  /** Another KChess window saved or removed a game: show the library's, once this window's are saved. */
+  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+    if (writing || pending.size || failed.size) return
+    games.value = snapshot.games
+    saved.clear()
+    for (const game of snapshot.games) saved.set(game.id, game)
+  }
+  return { games, error, save, remove, flush, replaceFromLibrary }
 })
 
 /** One stable identity per session: reloads and takebacks update the same history entry. */

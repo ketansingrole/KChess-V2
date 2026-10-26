@@ -10,6 +10,7 @@ import type {
   MicrophoneAccess,
   NotificationRequest,
   NotificationResult,
+  ProfileChange,
   OAuthPageLook,
   OnlineConnection,
   OnlineEvent,
@@ -79,6 +80,11 @@ export interface DesktopApi extends CoreApi {
   onWatchState(callback: (state: WatchState) => void): () => void
   onWatch(callback: (frame: WatchFrame) => void): () => void
   onBroadcast(callback: (update: BroadcastUpdate) => void): () => void
+  /**
+   * Another KChess window changed part of the profile (`docs/shared-core.md`): refetch what is
+   * shown. This window's own writes are not reported.
+   */
+  onProfileChanged(callback: (change: ProfileChange) => void): () => void
   /** A game started or ended that the board does not show (refresh `ongoingGames`). */
   onOngoingChanged(callback: () => void): () => void
   /** Show a desktop notification if Settings allow it for this kind and the window's state. */

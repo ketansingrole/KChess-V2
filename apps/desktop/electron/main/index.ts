@@ -52,7 +52,7 @@ import {
 import { assertExport, assertNotification } from '@kchess/rules/validate'
 import { InterfaceZoomController } from './interfaceZoom'
 import { isInterfaceZoom } from '../../contracts/interfaceZoom'
-import type { ChallengeInfo } from '../../contracts/types'
+import type { ChallengeInfo, ProfileChange } from '../../contracts/types'
 
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
@@ -123,6 +123,13 @@ function bringToFront(): void {
   window.focus()
 }
 
+/** The connection whose window raises system alerts (`alerts:owner`); null when none. */
+let alertOwner: number | null = null
+/** This app may alert: it is the alert owner, or no window is. */
+function alertsHere(): boolean {
+  return alertOwner === null || alertOwner === core?.connection()
+}
+
 function challengeAlert(service: KChessCore, challenge: ChallengeInfo): void {
   const control =
     challenge.timeControl.type === 'clock'
@@ -141,6 +148,7 @@ function challengeAlert(service: KChessCore, challenge: ChallengeInfo): void {
     },
     (alert) => send(IPC_EVENTS.notification, alert),
     service.desktopSettings,
+    alertsHere,
   ).catch((cause: unknown) => {
     logDebug('notify', 'Challenge notification failed:', cause)
     return undefined
@@ -169,8 +177,16 @@ function forwardCore(service: KChessCore): void {
     })
   }
   for (const event of FORWARDED_CORE_EVENTS)
-    service.on(event, (payload) => send(event, payload as never))
+    service.on(event, (payload) => {
+      // This window's own writes need no refresh (docs/shared-core.md).
+      if (event === 'profile:changed' && (payload as ProfileChange).origin === service.connection())
+        return
+      send(event, payload as never)
+    })
   service.on('challenge:received', (challenge) => challengeAlert(service, challenge))
+  service.on('alerts:owner', ({ connection }) => {
+    alertOwner = connection ?? null
+  })
   service.on('settings:saved', () => {
     void service
       .desktopSettings()
@@ -590,6 +606,7 @@ void app
         assertNotification(request),
         (alert) => send(IPC_EVENTS.notification, alert),
         service.desktopSettings,
+        alertsHere,
       ),
     )
     handle('openThemesFolder', async () => {

@@ -95,6 +95,10 @@ pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     };
     let away = cx.active_window().is_none();
     let page = crate::shell::current_page(cx).unwrap_or(Page::Dashboard);
+    // Another KChess window on this profile raises the alert (`docs/shared-core.md`).
+    if !crate::core::alerts_here(cx) {
+        return Outcome::WindowState;
+    }
     let outcome = decide(&settings, kind, away, page);
     match outcome {
         Outcome::InApp => crate::online::notice(cx, format!("{title}\n{body}")),

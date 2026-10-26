@@ -8,6 +8,7 @@ import {
   type StudyChapter,
   type StudyCommand,
   type StudyCommandResult,
+  type LibrarySnapshot,
 } from '@kchess/rules/library'
 import type { LichessStudyChapter } from '@kchess/contracts/types'
 
@@ -234,9 +235,19 @@ export const useStudyStore = defineStore('studies', () => {
       if (!taken.has(name)) return name
     }
   }
+  /**
+   * Another KChess window changed the library (`docs/shared-core.md`): show its studies, unless
+   * this window still has edits to save, which are saved first and then shown.
+   */
+  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+    if (failed.length) return
+    items.value = snapshot.studies
+    misses.value = snapshot.repertoireMisses
+  }
   return {
     items,
     flush,
+    replaceFromLibrary,
     error,
     save,
     saveChapter,

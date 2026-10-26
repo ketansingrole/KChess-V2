@@ -11,6 +11,9 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   // 25.2 MiB plus its MinGW runtime (libstdc++ 25.4 MiB, libgcc 0.6 MiB, winpthread 0.4 MiB);
   // the helper about 1 MiB.
   voiceRuntimeBytes: 56 * 1024 * 1024,
+  // The shared core service (docs/shared-core.md), unpacked beside the native module: the same
+  // Rust core as an executable. Measured 2026-10-26: macOS arm64 14.4 MiB.
+  coreServiceBytes: 20 * 1024 * 1024,
   libraryPageRows: 100,
   // Representative short-game fixture; full PGNs must never be included in list rows.
   libraryFixturePageBytes: 64 * 1024,

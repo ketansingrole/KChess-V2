@@ -183,18 +183,20 @@ The core today assumes one caller. Three kinds of method need different treatmen
 Library documents, settings, accounts, puzzle progress and view preferences belong to the
 profile. Every window sees the same data, so a write in one window must reach the others.
 
-- New events after each committed write:
-  - `library:changed { kind, ids, revision }` (studies, played games, mistake drills, unfinished
-    sessions, joined tournaments, repertoire notes);
-  - `accounts:changed`;
-  - `puzzles:changed`.
-    `settings:saved` already exists.
-- Windows refetch what they show when the event concerns it. Events carry ids, not documents, so
-  the core stays the source of truth.
-- Concurrent edits: library documents gain a per-document `revision`, incremented on every write.
-  A write that names the revision it started from is refused if the document has moved on; that
-  window reloads the document and tells the person their copy was updated elsewhere. Today's
-  document `version` field is the schema version and stays as it is.
+- After each successful write the core broadcasts `profile:changed { areas, origin }`: the parts
+  of the profile it changed (`ProfileArea` in `kchess-contracts`: studies, played games, drills,
+  sessions, tournaments, repertoire, Lichess games, accounts, desktop settings, puzzles, voice
+  history, usage, engine) and the connection that wrote. `settings:saved` already reported
+  settings, and still does.
+- A window ignores its own writes (`origin`) and refetches what it shows: the Electron renderer
+  reloads the library's stores and the accounts (`plugins/profileSync.client.ts`), GPUI its
+  studies, played games and accounts (`core::on_profile_change`). Events name areas, not
+  documents, so the core stays the source of truth. A window with its own edits still to save
+  keeps them and shows the library once they are saved.
+- Concurrent edits: `studyCommand` takes an optional `basedOn`, the study's `updatedAt` as the
+  window read it. A save based on an older study is refused ("This study was changed in another
+  KChess window. Reload it to see the latest version.") instead of overwriting the other
+  window's. The documents' `version` field is the schema version and stays as it is.
 - View preferences (tabs, sort order, layout) are per-profile and last-write-wins. They are read
   when a page opens and are deliberately not broadcast, so one window's tab change never moves
   another window's tabs.
@@ -238,9 +240,10 @@ Lichess stream. These are shared:
 `challenge:received` and similar events tell frontends to alert. With several windows, each would
 show its own system notification.
 
-- The service marks one connection as the alert owner: the most recently focused window (clients
-  report focus changes), else the most recently connected app. Alert events carry `alert: true` for
-  that connection only; the others update silently.
+- The core names one connection the alert owner and broadcasts it (`alerts:owner`): the window
+  focused last (clients report focus changes), else the window that connected last. Clients
+  without windows never own alerts. A window raises system notifications only while it is the
+  owner (or no owner is known); the others update silently.
 
 ### Routing host requests
 

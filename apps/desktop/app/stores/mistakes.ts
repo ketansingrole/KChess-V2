@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Puzzle, StoredReview } from '@kchess/contracts/types'
-import type { MistakeExercise, MistakeGame } from '@kchess/rules/library'
+import type { LibrarySnapshot, MistakeExercise, MistakeGame } from '@kchess/rules/library'
 import { initialLibrary } from '../utils/library'
 
 /**
@@ -49,5 +49,9 @@ export const useMistakeStore = defineStore('mistakes', () => {
       games.value = value
     })
   }
-  return { items, error, games, add, puzzle, answered, loadGames }
+  /** Another KChess window answered or added drills. */
+  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+    items.value = snapshot.mistakes
+  }
+  return { items, error, games, add, puzzle, answered, loadGames, replaceFromLibrary }
 })

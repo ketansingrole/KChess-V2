@@ -52,12 +52,16 @@ export async function notify(
   request: NotificationRequest,
   alert: (payload: { title: string; body: string }) => void,
   readSettings: () => Promise<Settings>,
+  /** This window raises alerts: no other KChess window on the profile was focused since. */
+  alertsHere: () => boolean = () => true,
 ): Promise<NotificationResult> {
   const settings = await readSettings()
   const away = isAway(window)
   // The master switch covers the test too; the test skips only the per-kind and window rules.
   if (!settings.notificationsEnabled) return { shown: false, skipped: 'disabled' }
   if (request.kind !== 'test') {
+    // Another KChess window on this profile alerts the person (docs/shared-core.md).
+    if (!alertsHere()) return { shown: false, skipped: 'window-state' }
     if (!settings[CATEGORY[request.kind]]) return { shown: false, skipped: 'category-off' }
     if (!(away ? settings.notifyBackground : settings.notifyActive))
       return { shown: false, skipped: 'window-state' }

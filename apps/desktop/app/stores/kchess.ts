@@ -779,6 +779,14 @@ export const useKChessStore = defineStore('kchess', () => {
       }
     }
   }
+  /** Another KChess window signed in, synced or removed an account (`docs/shared-core.md`). */
+  async function reloadData(): Promise<void> {
+    try {
+      data.value = await window.kchess.loadData()
+    } catch (cause) {
+      console.warn('[kchess] reloading accounts failed:', cause)
+    }
+  }
   async function init(): Promise<void> {
     if (initialized || initializing.value) return
     initializing.value = true
@@ -991,6 +999,7 @@ export const useKChessStore = defineStore('kchess', () => {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- ready-guarded facade
     settings: computed(() => settings.value!),
     init,
+    reloadData,
     dispose,
   }
 })

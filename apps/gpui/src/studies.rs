@@ -57,6 +57,13 @@ pub fn init(cx: &mut App) {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
     });
+    // Another window saved a study: show the profile's.
+    crate::core::on_profile_change(cx, &["studies"], {
+        let entity = entity.downgrade();
+        move |cx| {
+            let _ = entity.update(cx, |library, cx| library.reload(cx));
+        }
+    });
     cx.set_global(StudyHandle(entity));
 }
 

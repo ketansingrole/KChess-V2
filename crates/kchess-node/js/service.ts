@@ -3,6 +3,7 @@ import type { CoreApi, CoreSettings, Settings } from '@kchess/contracts/types'
 import {
   closeNativeCore,
   nativeCall,
+  nativeConnection,
   nativeFocus,
   nativeReady,
   onNativeEvents,
@@ -40,6 +41,8 @@ export interface KChessCore extends CoreApi {
   ready(): Promise<void>
   /** This app's window gained or lost focus: the window focused last raises system alerts. */
   focus(focused: boolean): void
+  /** This app's connection on the core: `origin` of its own writes in `profile:changed`. */
+  connection(): number
   /** Stop live work nothing can answer without a frontend; services stay usable. */
   suspend(): void
   /** Stop everything and close the databases. */
@@ -101,6 +104,7 @@ function createCore(): KChessCore {
     voiceHistoryDocument: () => inScope(() => nativeCall<string>('voiceHistoryDocument')),
     ready: () => inScope(() => nativeReady()),
     focus: (focused: boolean) => inScope(() => nativeFocus(focused)),
+    connection: () => inScope(() => nativeConnection()),
     suspend() {
       void inScope(() => nativeCall<unknown>('suspend')).catch((cause: unknown) =>
         logWarn('core', 'Core suspend failed:', cause),
