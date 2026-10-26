@@ -156,7 +156,8 @@ mod tests {
     /// coordinate colors for every board.
     #[test]
     fn every_board_matches_the_electron_stylesheet() {
-        let css = include_str!("../../../desktop/app/assets/css/main.css");
+        // A Windows checkout may end its lines with CRLF.
+        let css = include_str!("../../../desktop/app/assets/css/main.css").replace("\r\n", "\n");
         for board in &LOOKS.boards {
             let rule = format!(
                 ".board-theme-{} {{\n  --board-coord-white: {};\n  --board-coord-black: {};\n}}",
