@@ -55,7 +55,7 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   log file in the profile.
 - Shipped inside every app package, next to the bundled Stockfish and `kchess-voice`: in Electron's
   `Resources`, and beside the GPUI executable. Both apps carry the same binary from the same
-  release.
+  release. It never runs from there: see [Install, update and uninstall](#install-update-and-uninstall).
 - Signed with the app's identity, so the keychain sees the service as part of KChess. Development
   builds are signed by `tooling/macos-dev-runner.sh` the same way as the GPUI app, so
   "Always Allow" survives rebuilds.
@@ -237,18 +237,25 @@ window can do.
 
 ## Version check
 
+KChess apps from different releases do not share a core. A person running two apps updates the
+older one; nothing tries to make two versions work together.
+
 - Every build computes a **protocol hash**: a hash of `methods()` and `CoreEvents` in
-  `kchess-contracts`, plus the framing version. Two builds that agree on it can share a service.
-  Electron and GPUI built from the same commit always agree.
-- `hello` carries the client's release and protocol hash.
+  `kchess-contracts`, plus the framing version. Electron and GPUI built from the same release
+  always agree.
+- `hello` carries the client's app, release and protocol hash.
   - Same hash: `welcome`.
-  - Different hash, and the client is the only connection: the service closes, and the client
-    starts its own (newer or older) service. Database migrations run as today, when a newer core
-    opens the profile.
-  - Different hash while other clients are connected: `refuse`, naming the other clients' kind and
-    release. The window says which KChess app already has the profile open, and in what version,
-    instead of today's generic lock message.
-- A service never opens a profile migrated by a newer release (as today). The client reports it.
+  - Different hash, and the client is the only connection: the service closes and the client
+    starts its own release's service. Database migrations run as today when a newer core opens the
+    profile.
+  - Different hash while other clients are connected: `refuse`, with the connected apps and their
+    releases. The window that cannot connect tells the person which app to update:
+    - this app is older: "KChess 2026.11.0 (GPUI) is open on this profile. Update this app to
+      2026.11.0 to use them together.", with the app's own Update button (Settings → Updates);
+    - this app is newer: "KChess 2026.10.12 (Electron) is open on this profile. Update it to
+      2026.11.0, or quit it, to open this app."
+- A profile migrated by a newer release cannot be opened by an older core, even alone (as today).
+  The older app says "This profile was used by KChess 2026.11.0. Update to 2026.11.0 to open it."
 
 ## Clients
 
@@ -266,6 +273,72 @@ window can do.
   migration and for unit tests that need no second process. After stage 3 the apps always use the
   service.
 
+## Install, update and uninstall
+
+Nothing changes for the person installing KChess: no extra installer, no administrator rights, no
+system service, no background process when no app is open. The core is part of each app's
+download, as it is today.
+
+### Size
+
+- Electron already carries the core (`kchess-native.<platform>.node`, about 15 MB on macOS) and the
+  GPUI executable links it in. The core moves into the service binary, and the apps keep only what
+  they still call directly (rules, the socket client), so each download stays about the same size.
+- Two installed apps hold two copies of the service binary on disk, one inside each app. Only one
+  ever runs per profile.
+
+### Where the service runs from
+
+The service never runs from inside an app's folder. A core still serving GPUI must not keep
+Electron's folder in use, because:
+
+- Windows cannot replace or rename a running executable, so Electron's NSIS installer and the GPUI
+  updater (`replace` in `apps/gpui/src/updates.rs`, which renames the app folder aside) would fail
+  while the other app is open;
+- an AppImage's files live on a mount that disappears when the Electron app that started the core
+  quits;
+- deleting an app (dragging it to the Bin, uninstalling) would pull the core out from under the
+  other app.
+
+So before starting the service, a client copies its bundled binary to a per-version folder in the
+user's application data, outside any profile, and starts it from there:
+
+| Platform | Folder                                                         |
+| -------- | -------------------------------------------------------------- |
+| macOS    | `~/Library/Application Support/KChess Runtime/core/<release>/` |
+| Windows  | `%LOCALAPPDATA%\KChess Runtime\core\<release>\`                |
+| Linux    | `~/.local/share/kchess-runtime/core/<release>/`                |
+
+The default profile on macOS is `~/Library/Application Support/KChess`, so the runtime folder is a
+sibling of it, never inside it: a profile can be copied, backed up or pointed at with
+`KCHESS_USER_DATA_DIR` without carrying executables.
+
+- The copy is written to a temporary name, checked against the hash the app was built with, and
+  renamed into place, so two apps copying at once cannot leave a broken file. An app whose release
+  is already there checks the hash and uses it.
+- The copy keeps its code signature, so on macOS the keychain sees the same KChess identity before
+  and after an update, and "Always Allow" lasts across releases. Files an app writes are not
+  quarantined, so Gatekeeper does not question it.
+- On start, the service removes other releases' folders that no running service uses. At most two
+  releases stay on disk, briefly, during an update.
+
+### Updates
+
+- An app updates as today, with its own updater or installer. Its folder is free because the core
+  runs from the copy.
+- After the update, the app's next start finds the older core still running for another app and
+  shows the version message above. The person updates the other app too; until then, one app at a
+  time.
+- A core running alone for an app that updated restarts into the new release when that app
+  reconnects (the sole-client rule above).
+
+### Uninstall
+
+- Uninstalling an app leaves the profile and the copied core as today's uninstall leaves the
+  profile. The other app keeps working with its own release's copy.
+- Uninstalling the last app leaves the runtime folder behind with the profile; removing KChess's
+  data removes both.
+
 ## Testing
 
 - Two clients on one profile: a change in one reaches the other (`library:changed`), sessions stay
@@ -273,7 +346,10 @@ window can do.
 - Two clients starting at the same moment end with one service.
 - The service killed mid-call: reads retry, mutations report the failure, clients reconnect.
 - Version mismatch: a sole client replaces the service, and with others connected it is refused,
-  with the other app named.
+  naming the other app and the release to update to.
+- Install and update: the copy is made once per release and survives a concurrent copy; Electron's
+  NSIS installer and the GPUI updater succeed while the other app keeps using the core; an
+  AppImage that started the core can quit without stopping it; old releases' copies are removed.
 - Security: another user's process, a missing token and a stale token are refused.
 - Fair play: with a live game in one window, analysis from another connection is refused.
 - Performance budgets (`pnpm run check:report`): a socket round trip under 1 ms at the 95th
@@ -291,15 +367,15 @@ Each stage ships on its own and keeps both apps working.
    to `Core`, with a connection id on every call. One embedded app has a single connection, so
    behaviour is unchanged. Tests open two in-process connections.
 2. **The service and the socket.** `kchess-core serve`, framing, `hello`/token/peer checks,
-   `core.json`, on-demand start, idle stop, crash handling and the version check. A test client
-   drives it end to end.
+   `core.json`, the per-release copy, on-demand start, idle stop, crash handling and the version
+   check. A test client drives it end to end.
 3. **GPUI as a client**, behind `KCHESS_CORE_MODE=service`, then by default. Package the service
    in `tooling/gpui-package.mjs`.
 4. **Electron as a client.** Replace the N-API core in the main process, package the service with
    electron-builder (signing, notarisation, the Linux packages), and run the packaged tests. From
    here Electron and GPUI share a profile.
-5. **Windows in sync.** Each app reacts to the change events (refetching open studies, history and
-   settings) and shows the reconnecting and other-version states. Remove the embedded mode from the
+5. **Keep windows in sync.** Each app reacts to the change events (refetching open studies, history and
+   settings) and shows the reconnecting state and the update messages. Remove the embedded mode from the
    apps.
 6. **Later: CLI and MCP.** Socket clients with no window capabilities. A public extension API, if
    ever wanted, is a chosen subset of `CORE_METHODS` with its own version.
