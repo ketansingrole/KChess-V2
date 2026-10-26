@@ -33,13 +33,13 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
 
 ```
  Electron main ─┐   local socket (per profile, per user)   ┌──────────────────────────────┐
- GPUI app ──────┤                                          │ kchess-core serve            │
+ GPUI app ──────┤                                          │ kchess-service serve            │
  CLI (later) ───┼─────────────────────────────────────────▶│   ProfileClaim, profile.lock │
  MCP (later) ───┘   framed JSON: calls, results, events,   │   Core (kchess-core)         │
                     cancellation                           └──────────────────────────────┘
 ```
 
-- `kchess-core serve --profile <dir>` is a new small binary around today's `Core`. It holds the
+- `kchess-service serve --profile <dir>` is a new small binary around today's `Core`. It holds the
   profile claim and lock exactly as an embedded core does now.
 - Clients never open the profile's files. They speak to the service.
 - Pure rules stay in-process. `rules()` (`crates/kchess-wasm/js/engine.ts`) and the domain crate
@@ -135,7 +135,7 @@ An app always reuses what is already there. It copies or starts something only w
 3. **No core is running and there is no copy of this release:** the app copies its bundled binary
    (first launch after installing or updating), then starts it.
 
-Starting means `kchess-core serve --profile <dir>`, detached from the app (its own process group or
+Starting means `kchess-service serve --profile <dir>`, detached from the app (its own process group or
 session, so closing the window that started it does not end it); the app then connects, retrying
 with backoff for up to 5 seconds.
 
@@ -386,7 +386,7 @@ Each stage ships on its own and keeps both apps working.
    puzzle runs), the change events, document revisions, alert ownership and host-request routing
    to `Core`, with a connection id on every call. One embedded app has a single connection, so
    behaviour is unchanged. Tests open two in-process connections.
-2. **The service and the socket.** `kchess-core serve`, framing, `hello`/token/peer checks,
+2. **The service and the socket.** `kchess-service serve`, framing, `hello`/token/peer checks,
    `core.json`, the per-release copy, on-demand start, idle stop, crash handling and the version
    check. A test client drives it end to end.
 3. **GPUI as a client**, behind `KCHESS_CORE_MODE=service`, then by default. Package the service

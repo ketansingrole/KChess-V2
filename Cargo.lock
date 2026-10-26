@@ -3708,6 +3708,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-service"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "kchess-core",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "kchess-voice"
 version = "0.1.0"
 dependencies = [
