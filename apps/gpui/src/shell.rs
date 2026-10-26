@@ -943,6 +943,7 @@ impl Workspace {
                             .gap_1()
                             .border_t_1()
                             .border_color(border)
+                            .children(dev_build_badge(open, cx))
                             .child(
                                 footer_button(
                                     "settings",
@@ -1123,6 +1124,46 @@ fn footer_button(
                 .when(open, |row| row.child(label.clone())),
         )
         .when(!open, |button| button.px(px(6.)).tooltip(label))
+}
+
+/// Marks a debug build (`cargo run -p kchess-gpui`) above Settings, as `DevBuildBadge.vue` does in
+/// Electron's `pnpm run dev`. Release builds compile none of it; packaging checks the binary for
+/// its id.
+#[cfg(debug_assertions)]
+fn dev_build_badge(open: bool, cx: &App) -> Option<AnyElement> {
+    const LABEL: &str = "Development build · GPUI";
+    let warning = cx.global::<Palette>().warning;
+    Some(
+        h_flex()
+            .id("kchess-dev-build-badge")
+            .h(px(28.))
+            .gap(px(6.))
+            .rounded(px(6.))
+            .overflow_hidden()
+            .border_1()
+            .border_color(warning.opacity(0.3))
+            .bg(warning.opacity(0.12))
+            .text_color(warning)
+            .text_size(px(12.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .map(|badge| {
+                if open {
+                    badge.px(px(8.))
+                } else {
+                    badge.justify_center().tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(LABEL).build(window, cx)
+                    })
+                }
+            })
+            .child(icon("moon").size(px(16.)).flex_none())
+            .when(open, |badge| badge.child("Dev · GPUI"))
+            .into_any_element(),
+    )
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_build_badge(_open: bool, _cx: &App) -> Option<AnyElement> {
+    None
 }
 
 /// The sidebar's account button: Connect Lichess while no account plays online, else the account

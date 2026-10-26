@@ -1,4 +1,4 @@
-import { lstat, readdir, stat } from 'node:fs/promises'
+import { lstat, readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getRawHeader } from '@electron/asar'
@@ -62,6 +62,23 @@ export function verifyRendererEntries(entries) {
   return bytes
 }
 
+/**
+ * Names only the development builds' sidebar badge carries: the Electron renderer's
+ * (`DevBuildBadge.vue`) and the GPUI app's (`shell.rs`). A release that contains one shows it.
+ */
+const DEV_BUILD_MARKERS = ['data-dev-build', 'kchess-dev-build-badge']
+
+/** The development marker `bytes` (a renderer file or a release binary) contains, if any. */
+export function devBuildMarker(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  return DEV_BUILD_MARKERS.find((marker) => buffer.includes(marker)) ?? null
+}
+
+export async function verifyNoDevBuild(path, label) {
+  const marker = devBuildMarker(await readFile(path))
+  if (marker) throw new Error(`${label} contains the development build badge (${marker}): ${path}`)
+}
+
 export async function verifyRenderer(root) {
   const entries = []
   async function walk(directory, prefix = '') {
@@ -70,7 +87,11 @@ export async function verifyRenderer(root) {
       const info = await lstat(join(directory, name))
       if (info.isSymbolicLink()) throw new Error(`Renderer contains a symlink: ${path}`)
       if (info.isDirectory()) await walk(join(directory, name), `${path}/`)
-      else entries.push({ path, size: info.size })
+      else {
+        entries.push({ path, size: info.size })
+        if (/\.(?:js|mjs|html|css|json)$/.test(name))
+          await verifyNoDevBuild(join(directory, name), 'Renderer')
+      }
     }
   }
   await walk(root)

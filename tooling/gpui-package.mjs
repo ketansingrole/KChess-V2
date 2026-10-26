@@ -32,6 +32,7 @@ import {
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stageVoiceRuntime } from './voice-runtime.mjs'
+import { verifyNoDevBuild } from './verify-package.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const args = new Set(process.argv.slice(2))
@@ -87,6 +88,8 @@ const stockfish = execFileSync(
   { cwd: root, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' },
 ).trim()
 const binary = join(root, `target/release/KChess${exe}`)
+// Debug builds draw a development badge in the sidebar; a release binary must not contain it.
+await verifyNoDevBuild(binary, 'GPUI release')
 
 rmSync(stage, { recursive: true, force: true })
 rmSync(out, { recursive: true, force: true })

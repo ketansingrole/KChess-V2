@@ -34,6 +34,30 @@ pnpm install --frozen-lockfile
 `pnpm install` also downloads Electron and installs the Git pre-push hook (see
 [GUARDRAILS.md](GUARDRAILS.md)).
 
+### Development mode
+
+Development sessions mark themselves with a moon badge above Settings in the sidebar, so a
+development window never looks like a release:
+
+| App      | Development (badge shown)  | Badge              |
+| -------- | -------------------------- | ------------------ |
+| Electron | `pnpm run dev`             | **Dev · Electron** |
+| GPUI     | `cargo run -p kchess-gpui` | **Dev · GPUI**     |
+
+```bash
+pnpm run dev
+```
+
+```bash
+KCHESS_USER_DATA_DIR=.data/gpui-profile cargo run -p kchess-gpui
+```
+
+Builds made for users never show it: `pnpm run build`, `pnpm start`, `pnpm run app`, every
+`pnpm run pack`/release package, `cargo run --release` and `node tooling/gpui-package.mjs`. The
+badge is compiled out of them (Electron imports it only under `import.meta.dev`, GPUI only with
+`debug_assertions`), and the build fails if a production renderer or GPUI release binary contains
+it. See the sections below for each app's full setup.
+
 ### Electron desktop app
 
 Development (Nuxt on `http://127.0.0.1:3000` plus Electron, with reload):
@@ -69,7 +93,8 @@ KCHESS_USER_DATA_DIR=.data/gpui-profile cargo run -p kchess-gpui
 ```
 
 `fetch_stockfish` downloads and verifies the latest official Stockfish into the folder once and
-prints its path. Add `--release` to `cargo run` for a fast build. What the GPUI app does and does
+prints its path. Add `--release` to `cargo run` for a fast build; a release build is a final build
+and shows no development badge. What the GPUI app does and does
 not match yet is tracked in [apps/gpui/PARITY.md](apps/gpui/PARITY.md).
 
 `KCHESS_USER_DATA_DIR` selects an isolated profile for the Electron app too.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   LEGAL_FILES,
+  devBuildMarker,
   verifyEntries,
   verifyLegalFiles,
   verifyRendererEntries,
@@ -54,6 +55,12 @@ describe('release payload checks', () => {
     'node_modules/stockfish/bin/stockfish-19.wasm',
   ])('rejects unwanted payload %s', (path) => {
     expect(() => verifyEntries([{ path, size: 1 }])).toThrow()
+  })
+
+  it('finds the development badge of either app in a release file', () => {
+    expect(devBuildMarker('<div data-dev-build class="dev-build">')).toBe('data-dev-build')
+    expect(devBuildMarker(Buffer.from('\0kchess-dev-build-badge\0'))).toBe('kchess-dev-build-badge')
+    expect(devBuildMarker('const DevBuildBadge = null')).toBeNull()
   })
 
   it('fails oversized individual files and aggregate payloads', () => {

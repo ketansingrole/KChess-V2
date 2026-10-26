@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useOnline } from '@vueuse/core'
 import { useKChessStore } from '../stores/kchess'
@@ -11,6 +11,11 @@ import { usePageSwipeNavigation } from '../composables/usePageSwipeNavigation'
 import { useWindowChrome } from '../composables/useWindowChrome'
 
 usePageSwipeNavigation()
+
+// The development marker exists only in `pnpm run dev`: production builds drop this import.
+const DevBuildBadge = import.meta.dev
+  ? defineAsyncComponent(() => import('./DevBuildBadge.vue'))
+  : null
 
 useHead({
   title: 'KChess',
@@ -201,6 +206,11 @@ function toggleMaximize(event?: MouseEvent): void {
         </template>
         <template #footer="{ state }">
           <div class="flex w-full min-w-0 flex-col gap-1">
+            <component
+              :is="DevBuildBadge"
+              v-if="DevBuildBadge"
+              :collapsed="state === 'collapsed'"
+            />
             <UTooltip text="Settings" :disabled="state === 'expanded'">
               <UButton
                 icon="i-lucide-settings-2"
