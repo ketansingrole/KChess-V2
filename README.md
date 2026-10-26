@@ -1,17 +1,80 @@
 # KChess
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the core, Node host, desktop and CLI workspace layout.
-
 [![CI](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml/badge.svg)](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
 KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules run in Rust (`crates/kchess-domain`, on [`shakmaty`](https://github.com/niklasf/shakmaty), with the semantics of [`chessops`](https://github.com/niklasf/chessops)), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay on the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. IPC input is validated by the same Rust rules. A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
 
-## Core and frontends
+## Apps
 
-Desktop and CLI share `crates/kchess-node/js` services and framework-independent game controllers in
-`crates/kchess-wasm/js`. Electron is one host adapter; the Node host runs each profile in an isolated
-worker, allowing several independent clients in the same process.
+| App                             | Where          | Run in development         | Package                         |
+| ------------------------------- | -------------- | -------------------------- | ------------------------------- |
+| Electron desktop app (released) | `apps/desktop` | `pnpm run dev`             | `pnpm run pack` / `pack:mac`    |
+| GPUI app (native Rust, preview) | `apps/gpui`    | `cargo run -p kchess-gpui` | `node tooling/gpui-package.mjs` |
+| CLI                             | `apps/cli`     | `pnpm run cli -- --help`   | `pnpm run build:packages`       |
+
+All three use the same core (`crates/`). See [ARCHITECTURE.md](ARCHITECTURE.md) for the workspace
+layout and [CORE_FRONTENDS.md](CORE_FRONTENDS.md) for host contracts.
+
+## Run
+
+### Prerequisites
+
+- Node.js **24.21.0**, pinned in `.nvmrc` and `.node-version` (`nvm install && nvm use`).
+- pnpm **11.19.0**.
+- [Rust](https://rustup.rs) through rustup. `rust-toolchain.toml` pins the toolchain (1.98.0 with
+  the `wasm32-unknown-unknown` target), which rustup installs on first use.
+- macOS: Xcode Command Line Tools (`xcode-select --install`).
+
+```bash
+npm install --global pnpm@11.19.0
+pnpm install --frozen-lockfile
+```
+
+`pnpm install` also downloads Electron and installs the Git pre-push hook (see
+[GUARDRAILS.md](GUARDRAILS.md)).
+
+### Electron desktop app
+
+Development (Nuxt on `http://127.0.0.1:3000` plus Electron, with reload):
+
+```bash
+pnpm run dev
+```
+
+`pnpm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error. Run only one dev session at a time.
+
+Production build:
+
+```bash
+pnpm run build   # type-check, generate the renderer, build main and preload
+pnpm start       # open the latest build
+pnpm run app     # build, then open
+```
+
+`pnpm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. Renderer assets and every packaged app are checked for nested apps/installers, redundant renderer dependencies, unused engine builds, and a 32 MiB app-payload budget (excluding Electron). `pnpm start` without a fresh build shows a stale UI.
+
+Always launch Electron through these scripts, never the stock `electron` binary. On macOS, dev and local runs launch through `tooling/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `apps/desktop/build/icon.icns` changes; quit any running dev session first.
+
+### GPUI app
+
+The GPUI app opens the Electron app's profile by default, so it sees your real games, settings and
+accounts. For development, point it at a separate profile and at a native Stockfish (development
+builds ship none):
+
+```bash
+KCHESS_ENGINE_PATH="$(cargo run -q --release -p kchess-core --example fetch_stockfish -- .data/stockfish)"
+export KCHESS_ENGINE_PATH
+KCHESS_USER_DATA_DIR=.data/gpui-profile cargo run -p kchess-gpui
+```
+
+`fetch_stockfish` downloads and verifies the latest official Stockfish into the folder once and
+prints its path. Add `--release` to `cargo run` for a fast build. What the GPUI app does and does
+not match yet is tracked in [apps/gpui/PARITY.md](apps/gpui/PARITY.md).
+
+`KCHESS_USER_DATA_DIR` selects an isolated profile for the Electron app too.
+
+### CLI
 
 ```bash
 pnpm run cli -- --help
@@ -21,39 +84,59 @@ pnpm run cli -- local
 pnpm run cli -- call studyCommand '[{"op":"save","name":"Opening","pgn":"1. e4 e5 *"}]'
 ```
 
+`pnpm run cli` builds the native module and the Node packages, then runs `apps/cli/dist/cli.js`.
 The CLI uses a separate profile at `~/.kchess/node`. Select another with `--data-dir`.
 `login` opens Lichess OAuth; `--browser print` prints the URL for a headless host.
 Credentials use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows DPAPI.
 `--no-credentials` disables credential storage. Desktop and Node ciphertext formats differ,
 so use separate profiles rather than pointing the CLI at Electron's profile.
+The Node host runs each profile in an isolated worker, allowing several independent clients in the
+same process.
 
-`pnpm run build:packages` builds the Node host and CLI under their `dist/` folders.
-`pnpm run test:core` verifies the direct core, concurrent Node hosts and CLI in temporary
-profiles without accessing your accounts or keychain. See
-[core/frontend architecture](CORE_FRONTENDS.md) for host contracts,
-shutdown ownership and examples.
-
-## Run
-
-Requires Node.js **24.21.0** (Node 24 LTS), pnpm 11.19.0 and [Rust](https://rustup.rs) via rustup. The runtime is pinned in `.nvmrc` and `.node-version`; use `nvm install && nvm use` if you use nvm. `rust-toolchain.toml` pins the Rust toolchain, which rustup installs on first use.
+### Packaging
 
 ```bash
-npm install --global pnpm@11.19.0
-pnpm install --frozen-lockfile
-pnpm run dev
+pnpm run pack                   # Electron, unpacked, for this platform (dist/)
+pnpm run pack:mac               # Electron, unsigned Apple Silicon .app in dist/mac-arm64/
+node tooling/gpui-package.mjs   # GPUI, with its Stockfish and voice runtime (apps/gpui/dist/)
+pnpm run build:packages         # Node host and CLI under their dist/ folders
 ```
 
-`pnpm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error.
+`gpui-package.mjs` builds a "KChess Preview" that installs beside the Electron app; `--final` uses
+the Electron app's identity and `--skip-build` reuses the release binary already built. Release
+installers come from CI; see [Releasing](#releasing).
 
-`pnpm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. Renderer assets and every packaged app are checked for nested apps/installers, redundant renderer dependencies, unused engine builds, and a 32 MiB app-payload budget (excluding Electron). `pnpm start` opens the latest build; `pnpm run app` builds first.
+### Tests and checks
 
-Voice input downloads the 40 MB Apache-2.0 English Vosk model from `alphacephei.com`
-on first use, verifies its pinned SHA-256 digest, and caches it in the app's user-data
-folder. Subsequent use works offline. Download progress and retry errors appear in the
-voice control. Dev/build no longer downloads or bundles the model.
-`pnpm run prepare:voice` prepares a verified test fixture in `.data/voice/cache/`;
-voice e2e tests copy this fixture into their isolated profile to run offline.
-These generated files are ignored by Git.
+| Command                                            | Purpose                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `pnpm run check:fast`                              | Changed-file formatting, lint and related unit tests, while editing                  |
+| `pnpm run check`                                   | Formatting, ESLint, all type checks, smoke and unit tests (runs before every push)   |
+| `pnpm run check:rust`                              | `cargo fmt`, Clippy and `cargo test` for the Rust workspace                          |
+| `pnpm test`                                        | Chess, puzzle/database and main-process smoke tests, plus Vitest                     |
+| `pnpm run test:unit`                               | Mounted Vue components, real Pinia stores, lifecycle and diagnostic regression tests |
+| `pnpm run test:watch`                              | Vitest watch mode                                                                    |
+| `pnpm run test:core`                               | Direct core, concurrent Node hosts and CLI in temporary profiles                     |
+| `pnpm run lint:fix` / `pnpm run format`            | Apply lint fixes / formatting                                                        |
+| `pnpm run build && pnpm run test:e2e`              | Playwright against the built Electron app (`--grep <tag>` for a subset)              |
+| `pnpm run pack && pnpm run test:packaged`          | Package for this platform and verify the packaged app                                |
+| `pnpm run check:linux` / `pnpm run test:e2e:linux` | CI's Linux jobs in Docker (see [CONTRIBUTING.md](CONTRIBUTING.md))                   |
+
+[GUARDRAILS.md](GUARDRAILS.md) describes the verification ladder; `pnpm run check:report` shows
+timing and flake reports.
+
+UI tests launch through the branded wrapper, use a separate `.dev/automation` copy on macOS and a temporary profile, and never import legacy accounts or use your saved tokens. They cover SQLite and preload startup, bundled Stockfish, board moves, navigation, puzzle remounting, promotion and settings persistence. On headless Linux, run Electron checks through `xvfb-run --auto-servernum`. Failure traces and screenshots are written to `test-results/`.
+
+CI runs `pnpm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
+
+### Benchmarks
+
+- [perf/README.md](perf/README.md): core, rules, renderer, network and library harnesses
+  (`node perf/bench-rules.mjs --label=<name>`); `pnpm run benchmark:library` and
+  `pnpm run check:performance` for the library budget.
+- `tooling/benchmarks/gpui-electron/`: packaged Electron versus GPUI launch and engine timings
+  (macOS); commands and results in
+  [docs/benchmarks/2026-10-26-gpui-vs-electron.md](docs/benchmarks/2026-10-26-gpui-vs-electron.md).
 
 ### Voice input
 
@@ -92,25 +175,17 @@ it. In a dev build started from a terminal (`pnpm run dev`), macOS attributes th
 app that launched KChess (your terminal or editor), so allow _that_ app under
 Privacy & Security → Microphone.
 
-| Command                                   | Purpose                                                                              |
-| ----------------------------------------- | ------------------------------------------------------------------------------------ |
-| `pnpm run check`                          | Formatting, ESLint, all type checks, smoke and unit tests                            |
-| `pnpm test`                               | Chess, puzzle/database and main-process smoke tests, plus Vitest                     |
-| `pnpm run test:unit`                      | Mounted Vue components, real Pinia stores, lifecycle and diagnostic regression tests |
-| `pnpm run test:watch`                     | Vitest watch mode                                                                    |
-| `pnpm run lint:fix` / `pnpm run format`   | Apply lint fixes / formatting                                                        |
-| `pnpm run build && pnpm run test:e2e`     | Playwright against the built Electron app                                            |
-| `pnpm run pack && pnpm run test:packaged` | Package for this platform and verify the packaged app                                |
+Voice input downloads the 40 MB Apache-2.0 English Vosk model from `alphacephei.com`
+on first use, verifies its pinned SHA-256 digest, and caches it in the app's user-data
+folder. Subsequent use works offline. Download progress and retry errors appear in the
+voice control. Dev/build no longer downloads or bundles the model.
+`pnpm run prepare:voice` prepares a verified test fixture in `.data/voice/cache/`;
+voice e2e tests copy this fixture into their isolated profile to run offline.
+These generated files are ignored by Git.
 
-UI tests launch through the branded wrapper, use a separate `.dev/automation` copy on macOS and a temporary profile, and never import legacy accounts or use your saved tokens. They cover SQLite and preload startup, bundled Stockfish, board moves, navigation, puzzle remounting, promotion and settings persistence. On headless Linux, run Electron checks through `xvfb-run --auto-servernum`. Failure traces and screenshots are written to `test-results/`.
-
-CI runs `pnpm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
+### Diagnostics
 
 Settings → Data & storage → **Export diagnostics** saves a JSON report containing apps/desktop/app/runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
-
-On macOS, dev and local runs launch through `tooling/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `apps/desktop/build/icon.icns` changes; quit any running dev session first.
-
-On macOS, `pnpm run pack:mac` creates an unsigned local Apple Silicon `.app` in `dist/mac-arm64/`.
 
 ### Releasing
 
