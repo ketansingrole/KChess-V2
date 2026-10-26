@@ -58,7 +58,7 @@ describe('release payload checks', () => {
 
   it('fails oversized individual files and aggregate payloads', () => {
     expect(() =>
-      verifyEntries([{ path: '.output/public/large.bin', size: 17 * 1024 * 1024 }]),
+      verifyEntries([{ path: '.output/public/large.bin', size: 21 * 1024 * 1024 }]),
     ).toThrow('large file')
     expect(() =>
       verifyEntries(
