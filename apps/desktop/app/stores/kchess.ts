@@ -10,6 +10,7 @@ import type { DropdownMenuItem, NavigationMenuItem } from '@nuxt/ui'
 import { pickConnectedAccount } from '@kchess/rules/accounts'
 import { nearestEngineLevel } from '@kchess/rules/engineLevels'
 import { canPlayOnline } from '@kchess/rules/timeControl'
+import { RequestScope } from '@kchess/rules/requestScope'
 import { allThemes, applyTheme, findTheme, oauthPageLook } from '../utils/themes'
 import { fen, navigatePly } from '@kchess/rules/chess'
 import { configure } from '../utils/sound'
@@ -779,12 +780,20 @@ export const useKChessStore = defineStore('kchess', () => {
       }
     }
   }
-  /** Another KChess window signed in, synced or removed an account (`docs/shared-core.md`). */
+  /**
+   * Another KChess window changed accounts or settings (`docs/shared-core.md`). The newest read
+   * wins; settings this window is still editing stay as they are.
+   */
+  const reloads = new RequestScope()
   async function reloadData(): Promise<void> {
+    const request = reloads.next()
     try {
-      data.value = await window.kchess.loadData()
+      const next = await window.kchess.loadData()
+      if (!request.current()) return
+      persistence.adoptStored(next.settings)
+      data.value = next
     } catch (cause) {
-      console.warn('[kchess] reloading accounts failed:', cause)
+      if (request.current()) console.warn('[kchess] reloading accounts failed:', cause)
     }
   }
   async function init(): Promise<void> {

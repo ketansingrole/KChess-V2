@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -92,6 +93,10 @@ pub struct Core {
     pub(crate) connections: Arc<Connections>,
     /// The alert owner last reported (`alerts:owner`); `u64::MAX` none, `APP` at first.
     alert_owner: AtomicU64,
+    /// Held while the alert owner is reported, so a joining client's snapshot is not stale.
+    alert_reports: Mutex<()>,
+    /// Held while settings are read, merged and written, so two windows' saves never interleave.
+    pub(crate) settings_writes: AsyncMutex<()>,
 }
 
 fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -238,6 +243,8 @@ impl Core {
             data_dir,
             connections,
             alert_owner: AtomicU64::new(APP),
+            alert_reports: Mutex::new(()),
+            settings_writes: AsyncMutex::new(()),
             puzzles: PuzzleService::new(config, services_host),
             voice,
             voice_owner: Mutex::new(None),
@@ -314,12 +321,20 @@ impl Core {
 
     /// Tells every client which window alerts now (`alerts:owner`), when that changed.
     fn report_alert_owner(&self) {
+        let _reporting = self.alert_reports.lock();
         let owner = self.connections.alert_owner();
         let encoded = owner.unwrap_or(u64::MAX);
         if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
             self.host
                 .emit("alerts:owner", json!({ "connection": owner }));
         }
+    }
+
+    /// Runs `join` with the current `alerts:owner` payload while no change of owner is reported:
+    /// a client that joins queues it before it receives any event, so it misses no change.
+    pub fn with_alert_owner<T>(&self, join: impl FnOnce(Value) -> T) -> T {
+        let _reporting = self.alert_reports.lock();
+        join(json!({ "connection": self.connections.alert_owner() }))
     }
 
     /// The clients connected now.
@@ -329,6 +344,7 @@ impl Core {
 
     /// Stops what `connection` started: its analysis, its watch, its voice input.
     fn end_connection(&self, connection: u64) {
+        self.search.stop_connection(connection);
         self.analysis.forget(connection);
         self.services.spectator().forget(connection);
         self.release_voice(connection);

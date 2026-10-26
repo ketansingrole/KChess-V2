@@ -70,7 +70,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "store.library.importLibrary" => import_library(host, db, args.first()),
         "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
             let command = args.first().unwrap_or(&Value::Null);
-            if let Some(based_on) = args.get(3).and_then(Value::as_f64) {
+            if let Some(based_on) = args.get(3).and_then(Value::as_str) {
                 check_based_on(db, command, based_on)?;
             }
             study_command(db, command, now, args.get(2) == Some(&Value::Bool(true)))
@@ -924,20 +924,34 @@ mod tests {
         assert_eq!(read_studies(&db).expect("repeat"), studies);
     }
 
-    /// Two windows edit one study (`docs/shared-core.md`): the second save, based on the study as
-    /// it was before the first, is refused instead of overwriting it.
+    /// Two windows edit one study (`docs/shared-core.md`): the second save, based on the chapter
+    /// as it was before the first, is refused instead of overwriting it. Saved in the same
+    /// millisecond or after a rename, the comparison still holds: it is of the chapter's moves.
     #[test]
-    fn a_save_based_on_an_older_study_is_refused() {
+    fn a_save_based_on_an_older_chapter_is_refused() {
         let db = study_db();
         let save = |pgn: &str| json!({"op":"save", "id":"a", "name":"A", "pgn":pgn});
         study_command(&db, &save("1. e4 *"), 1.0, true).expect("create");
         // A brand-new study has nothing to compare.
-        check_based_on(&db, &json!({"op":"save", "id":"new", "name":"N"}), 1.0).expect("new");
-        check_based_on(&db, &save("1. d4 *"), 1.0).expect("based on the current study");
-        study_command(&db, &save("1. d4 *"), 2.0, true).expect("first window saves");
-        let stale = check_based_on(&db, &save("1. c4 *"), 1.0).expect_err("second window");
+        check_based_on(
+            &db,
+            &json!({"op":"save", "id":"new", "name":"N"}),
+            "1. e4 *",
+        )
+        .expect("new");
+        check_based_on(&db, &save("1. d4 *"), "1. e4 *").expect("based on the current chapter");
+        study_command(&db, &save("1. d4 *"), 1.0, true).expect("first window saves");
+        let stale = check_based_on(&db, &save("1. e4 e5 *"), "1. e4 *").expect_err("second window");
         assert_eq!(stale.message, super::super::studies::STALE_STUDY);
-        check_based_on(&db, &save("1. c4 *"), 2.0).expect("after reloading");
+        check_based_on(&db, &save("1. c4 *"), "1. d4 *").expect("after reloading");
+        study_command(
+            &db,
+            &json!({"op":"rename", "id":"a", "name":"B"}),
+            2.0,
+            true,
+        )
+        .expect("rename");
+        check_based_on(&db, &save("1. c4 *"), "1. d4 *").expect("a rename changes no moves");
     }
 
     #[test]

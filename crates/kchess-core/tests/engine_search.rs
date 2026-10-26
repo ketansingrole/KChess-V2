@@ -194,6 +194,59 @@ async fn a_new_search_supersedes_the_running_one_and_stops_its_engine() {
     );
 }
 
+/// Two windows on the shared core (`docs/shared-core.md`) each play the computer: one window's
+/// move waits its turn instead of superseding the other's, and a stop reaches only its own.
+#[tokio::test]
+async fn windows_play_their_own_computer_games_side_by_side() {
+    let log = log_path("windows");
+    let (search, _) = search_with("search", false, &log);
+    let in_window = |connection: u64, movetime: u64| {
+        let search = search.clone();
+        tokio::spawn(kchess_core::connection::scope(connection, async move {
+            search
+                .best_move(
+                    json!(["e2e4"]),
+                    "max",
+                    &fake_path(),
+                    json!({ "movetime": movetime }),
+                )
+                .await
+        }))
+    };
+    let first = in_window(2, 400);
+    wait_until(
+        Duration::from_secs(10),
+        "the first window's search to reach the engine",
+        || {
+            received(&log)
+                .iter()
+                .any(|line| line == "go movetime 400")
+                .then_some(())
+        },
+    )
+    .await;
+    let second = in_window(3, 50);
+    // The second window takes its move back: only its own search stops.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    search.stop_connection(3);
+    assert_eq!(
+        first
+            .await
+            .expect("joined")
+            .expect("the first window's move"),
+        "e2e4"
+    );
+    let stopped = second.await.expect("joined").expect_err("stopped");
+    assert_eq!(stopped.message, SUPERSEDED);
+    assert_eq!(
+        in_window(3, 50)
+            .await
+            .expect("joined")
+            .expect("the second window's next move"),
+        "e2e4"
+    );
+}
+
 #[tokio::test]
 async fn consecutive_moves_reuse_the_warm_engine_and_send_only_changed_options() {
     let log = log_path("warm");

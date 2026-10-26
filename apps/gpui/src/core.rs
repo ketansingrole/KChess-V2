@@ -55,7 +55,14 @@ enum Backend {
 pub struct CoreBridge {
     runtime: tokio::runtime::Runtime,
     backend: Backend,
+    /// The window's focus as last reported (0 unknown, 1 blurred, 2 focused), sent again on each
+    /// new connection to the shared core.
+    focused: Arc<std::sync::atomic::AtomicU8>,
 }
+
+/// What the app hears when it reached the shared core again (`core:reconnected`): what it had
+/// started there ended with the old connection, and its owners start it again.
+pub const RECONNECTED: &str = "core:reconnected";
 
 /// How the app reaches its core: `KCHESS_CORE_MODE=service` or `embedded`; otherwise the shared
 /// service when its binary ships beside the app.
@@ -145,6 +152,7 @@ impl CoreBridge {
             CoreBridge {
                 runtime,
                 backend: Backend::Embedded(Arc::new(core)),
+                focused: Arc::default(),
             },
             receiver,
         ))
@@ -172,9 +180,11 @@ impl CoreBridge {
             .block_on(kchess_service::connect_or_start(&profile, &hello(), &start))
             .map_err(|error| refusal(&error))?;
         let shared = Arc::new(std::sync::Mutex::new(client));
+        let focused: Arc<std::sync::atomic::AtomicU8> = Arc::default();
         let (events, receiver) = mpsc::unbounded();
         {
             let shared = Arc::clone(&shared);
+            let focused = Arc::clone(&focused);
             runtime.spawn(async move {
                 loop {
                     while let Some(event) = received.recv().await {
@@ -189,11 +199,19 @@ impl CoreBridge {
                     let mut delay = std::time::Duration::from_millis(200);
                     loop {
                         match kchess_service::connect_or_start(&profile, &hello(), &start).await {
-                            Ok((client, events)) => {
+                            Ok((client, reconnected)) => {
+                                match focused.load(std::sync::atomic::Ordering::SeqCst) {
+                                    0 => {}
+                                    known => client.focus(known == 2),
+                                }
                                 if let Ok(mut current) = shared.lock() {
                                     *current = client;
                                 }
-                                received = events;
+                                received = reconnected;
+                                let _ = events.unbounded_send(CoreEvent {
+                                    name: RECONNECTED.into(),
+                                    payload: Value::Null,
+                                });
                                 break;
                             }
                             Err(error) => {
@@ -214,6 +232,7 @@ impl CoreBridge {
             CoreBridge {
                 runtime,
                 backend: Backend::Service(shared),
+                focused,
             },
             receiver,
         ))
@@ -232,6 +251,10 @@ impl CoreBridge {
     /// Tells the shared core whether this app's window is focused: the window focused last
     /// raises system notifications.
     pub fn focus(&self, focused: bool) {
+        self.focused.store(
+            if focused { 2 } else { 1 },
+            std::sync::atomic::Ordering::SeqCst,
+        );
         if let Backend::Service(client) = &self.backend
             && let Ok(client) = client.lock()
         {

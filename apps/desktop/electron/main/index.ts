@@ -164,6 +164,7 @@ function forwardCore(service: KChessCore): void {
       if (method === 'saveSettings')
         return (await service.saveDesktopSettings(
           args[0] as import('../../contracts/types').Settings,
+          args[1] as import('../../contracts/types').Settings | undefined,
         )) as never
       const result = await call(...(args as IpcArguments<CoreMethod>))
       if (result && typeof result === 'object' && 'settings' in result && 'accounts' in result)

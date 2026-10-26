@@ -16,7 +16,13 @@ export type CoreEvents = { "online:state": OnlineConnection, "online:event": Onl
 /**
  * Which window raises system notifications now; the others stay quiet.
  */
-"alerts:owner": AlertOwner, };
+"alerts:owner": AlertOwner, 
+/**
+ * The client connected to the shared core again after it stopped (`docs/shared-core.md`):
+ * what this window had started there (an analysis, a watch, voice input) ended with the
+ * old connection, and its owners start it again. Sent by the client, not the core.
+ */
+"core:reconnected": null, };
 
 export interface CoreApi {
   positionLookup(kind: PositionLookupKind, fen: string, options?: LookupOptions): Promise<PositionLookup>
@@ -297,7 +303,7 @@ export interface CoreApi {
    * Take over the documents an earlier release kept in the renderer; runs once.
    */
   importLibrary(documents: LegacyDocuments): Promise<LibrarySnapshot>
-  studyCommand(command: StudyCommand, incremental?: boolean, basedOn?: number): Promise<StudyCommandResult>
+  studyCommand(command: StudyCommand, incremental?: boolean, basedOn?: string): Promise<StudyCommandResult>
   /**
    * Add or replace a played game; it becomes the most recent.
    */

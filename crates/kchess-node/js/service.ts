@@ -29,7 +29,11 @@ export interface KChessCore extends CoreApi {
   settings(): Promise<CoreSettings>
   /** Desktop adapter compatibility; headless clients never receive these preferences. */
   desktopSettings(): Promise<Settings>
-  saveDesktopSettings(settings: Settings): Promise<Settings>
+  /**
+   * With `base`, the settings the edits started from, only what changed from it is written;
+   * another window's changes to other settings stay.
+   */
+  saveDesktopSettings(settings: Settings, base?: Settings): Promise<Settings>
   /** Allow an engine executable the user picked themselves to be saved in settings. */
   trustEnginePath(path: string): Promise<void>
   /** The voice log as a JSON document, for the frontend to save. */

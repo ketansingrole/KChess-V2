@@ -33,6 +33,7 @@ const forwarded: Record<ForwardedCoreEvent, true> = {
   'watch:frame': true,
   'watch:broadcast': true,
   'profile:changed': true,
+  'core:reconnected': true,
 }
 /** Core events the shell relays to the renderer unchanged. */
 export const FORWARDED_CORE_EVENTS = Object.keys(forwarded) as ForwardedCoreEvent[]
@@ -58,6 +59,7 @@ export const IPC_EVENTS = {
   watch: 'watch:frame',
   broadcast: 'watch:broadcast',
   profileChanged: 'profile:changed',
+  coreReconnected: 'core:reconnected',
 } as const satisfies Record<string, keyof IpcEvents>
 
 type Subscription =
@@ -81,6 +83,7 @@ type Subscription =
   | 'onWatch'
   | 'onBroadcast'
   | 'onProfileChanged'
+  | 'onCoreReconnected'
 export type InvokeMethod = Exclude<keyof DesktopApi, Subscription>
 
 /** A single channel map shared by main and preload; every request has a DesktopApi signature. */

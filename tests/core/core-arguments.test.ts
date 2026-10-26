@@ -19,20 +19,18 @@ describe('core argument contracts', () => {
     expect(() => validateCoreArguments('studyCommand', [command, false])).not.toThrow()
     expect(() => validateCoreArguments('studyCommand', [command, 'yes' as never])).toThrow()
     expect(() => validateCoreArguments('studyCommand', [])).toThrow('argument count')
-    expect(() => validateCoreArguments('studyCommand', [command, true, 'extra'])).toThrow()
-    expect(() => validateCoreArguments('studyCommand', [command, true, 1, 'extra'])).toThrow(
-      'argument count',
-    )
+    expect(() => validateCoreArguments('studyCommand', [command, true, 1])).toThrow()
+    expect(() =>
+      validateCoreArguments('studyCommand', [command, true, '1. e4 *', 'extra']),
+    ).toThrow('argument count')
   })
 
-  it('pins the studyCommand basedOn revision (docs/shared-core.md)', () => {
-    const command = { op: 'save', id: 'a', name: 'Study', pgn: '1. e4 *' }
-    // The study's updatedAt as the window read it.
-    expect(() =>
-      validateCoreArguments('studyCommand', [command, true, 1761464000000]),
-    ).not.toThrow()
-    expect(() => validateCoreArguments('studyCommand', [command, true, -1])).toThrow()
-    expect(() => validateCoreArguments('studyCommand', [command, true, Number.NaN])).toThrow()
+  it('pins the studyCommand basedOn chapter (docs/shared-core.md)', () => {
+    const command = { op: 'save', id: 'a', name: 'Study', pgn: '1. e4 e5 *' }
+    // The chapter's moves as the window last read or wrote them.
+    expect(() => validateCoreArguments('studyCommand', [command, true, '1. e4 *'])).not.toThrow()
+    expect(() => validateCoreArguments('studyCommand', [command, true, ''])).toThrow()
+    expect(() => validateCoreArguments('studyCommand', [command, true, 1761464000000])).toThrow()
   })
 
   it('pins engine teardown and empty-sync arities', () => {

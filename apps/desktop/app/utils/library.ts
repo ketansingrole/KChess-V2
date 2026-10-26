@@ -33,6 +33,19 @@ export function setInitialLibrary(snapshot: Partial<LibrarySnapshot> = {}): void
   libraryError.value = ''
 }
 
+/** Reads the library again into its stores (`plugins/profileSync.client.ts`). */
+let refresher: (() => void) | undefined
+export function setLibraryRefresher(refresh: (() => void) | undefined): void {
+  refresher = refresh
+}
+/**
+ * A store that kept its own unsaved edits over a refresh asks for the library again once they
+ * are saved, so another window's changes made meanwhile still show.
+ */
+export function refreshLibraryLater(): void {
+  refresher?.()
+}
+
 const persistence = new Set<() => Promise<void>>()
 export function registerPersistenceFlush(flush: () => Promise<void>): () => void {
   persistence.add(flush)

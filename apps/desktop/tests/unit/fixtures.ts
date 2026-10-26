@@ -90,6 +90,7 @@ export function desktop(overrides: Partial<DesktopApi> = {}) {
     onOnlineState: () => vi.fn(),
     onOnlineError: () => vi.fn(),
     onNotification: () => vi.fn(),
+    onCoreReconnected: () => vi.fn(),
     resumeOnline: async () => null,
     cachedProfile: async () => ({ profile: null, ratingHistory: null }),
     profile: async () => ({}),

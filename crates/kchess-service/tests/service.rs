@@ -118,14 +118,15 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
         "the other window reads it: {names:?}"
     );
 
-    // A save based on the study before another window changed it is refused.
-    let updated_at = library["studies"]
+    // A save based on the chapter before another window changed it is refused.
+    let read = library["studies"]
         .as_array()
         .expect("studies")
         .iter()
         .find(|study| study["id"] == json!(id))
-        .and_then(|study| study["updatedAt"].as_f64())
-        .expect("updatedAt");
+        .and_then(|study| study["chapters"][0]["pgn"].as_str())
+        .expect("the chapter's moves")
+        .to_string();
     gpui.call(
         "studyCommand",
         vec![json!({ "op": "save", "id": id, "name": "Shared", "pgn": "1. d4 *" })],
@@ -137,8 +138,8 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
             "studyCommand",
             vec![
                 json!({ "op": "save", "id": id, "name": "Shared", "pgn": "1. c4 *" }),
-                json!(false),
-                json!(updated_at),
+                json!(true),
+                json!(read),
             ],
         )
         .await
@@ -282,6 +283,146 @@ async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_that_joins_learns_which_window_alerts() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _gpui_events) = connect(profile.path(), "gpui").await;
+    gpui.focus(true);
+    // The focus frame is read before the call that follows it.
+    gpui.call("library", vec![]).await.expect("library");
+
+    // The owner does not change when the second window joins; it still learns it, first.
+    let (electron, mut events) = connect(profile.path(), "electron").await;
+    let first = tokio::time::timeout(WAIT, events.recv())
+        .await
+        .expect("an event")
+        .expect("open");
+    assert_eq!(
+        first,
+        ClientEvent::Event {
+            name: "alerts:owner".into(),
+            payload: json!({ "connection": gpui.connection() }),
+        }
+    );
+    drop((gpui, electron));
+    service.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_that_stops_reading_is_cut_off_and_cleaned_up() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    let (gpui, _gpui_events) = connect(profile.path(), "gpui").await;
+
+    // A window that says hello and then never reads; it joined last, so it alerts unless the
+    // GPUI window is focused.
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    let stream = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let (_reader, mut writer) = tokio::io::split(stream);
+    write_frame(
+        &mut writer,
+        &Frame::Hello {
+            token: discovery::read_token(profile.path()).expect("token"),
+            kind: "stalled".into(),
+            release: protocol::release(),
+            protocol: protocol::protocol(),
+            capabilities: vec![Capability::Focus],
+        },
+    )
+    .await
+    .expect("hello");
+    gpui.call("library", vec![]).await.expect("joined");
+
+    // Every focus change moves the alerts and queues an event for the stalled window.
+    for round in 0..40_000 {
+        gpui.focus(round % 2 == 0);
+        if round % 128 == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+    gpui.call("library", vec![]).await.expect("still served");
+    drop(gpui);
+    // The stalled window keeps its socket open, yet the service is idle and stops.
+    tokio::time::timeout(WAIT, service)
+        .await
+        .expect("the stalled window was disconnected")
+        .expect("joined")
+        .expect("closed cleanly");
+    drop(writer);
+}
+
+/// A stand-in core for `profile` that runs `peer` on its first connection.
+#[cfg(unix)]
+async fn fake_core<F: Future<Output = ()> + Send + 'static>(
+    profile: &Path,
+    peer: impl FnOnce(tokio::net::UnixStream) -> F + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    let socket = profile.join("fake.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).expect("bind");
+    let info = discovery::CoreInfo {
+        pid: std::process::id(),
+        socket: socket.to_string_lossy().into(),
+        release: protocol::release(),
+        protocol: protocol::protocol(),
+        started_at: 0,
+    };
+    discovery::write_private(
+        &profile.join(discovery::INFO_FILE),
+        &serde_json::to_vec(&info).expect("info"),
+    )
+    .expect("core.json");
+    discovery::write_private(&profile.join(discovery::TOKEN_FILE), b"test-token").expect("token");
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        peer(stream).await;
+    })
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_call_after_the_core_closed_fails_at_once() {
+    let profile = tempfile::tempdir().expect("profile");
+    let core = fake_core(profile.path(), |mut stream| async move {
+        read_frame(&mut stream).await.expect("hello");
+        let welcome = Frame::Welcome {
+            connection: 1,
+            release: protocol::release(),
+            protocol: protocol::protocol(),
+        };
+        write_frame(&mut stream, &welcome).await.expect("welcome");
+    })
+    .await;
+    let (client, mut events) = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .expect("connected");
+    core.await.expect("the core closed");
+    assert_eq!(events.recv().await, Some(ClientEvent::Closed));
+    let answer = tokio::time::timeout(WAIT, client.call("library", vec![]))
+        .await
+        .expect("answered");
+    assert_eq!(answer, Err("The KChess core stopped.".into()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_core_that_never_answers_hello_fails_the_connection() {
+    let profile = tempfile::tempdir().expect("profile");
+    let _core = fake_core(profile.path(), |mut stream| async move {
+        read_frame(&mut stream).await.expect("hello");
+        std::future::pending::<()>().await;
+    })
+    .await;
+    let connected = Client::connect(profile.path(), &window("gpui")).await;
+    assert!(
+        matches!(connected, Err(ConnectError::Failed(ref message)) if message.contains("did not answer")),
+        "{:?}",
+        connected.err()
+    );
 }
 
 /// Points the runtime folder at a test folder. `set_var` is unsafe in edition 2024 because other

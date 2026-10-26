@@ -23,8 +23,11 @@ use crate::transport::{self, Listener, Stream};
 const HELLO_DEADLINE: Duration = Duration::from_secs(5);
 /// Frames waiting for a client that reads slowly.
 const QUEUE: usize = 1024;
-/// Events a slow client may miss: the next one carries the whole state.
+/// Progress events a slow client may miss: the next one carries the whole state. Their last,
+/// terminal update (`terminal`) is never dropped.
 const COALESCED: [&str; 3] = ["engine:analysis", "watch:frame", "puzzledb:progress"];
+/// How long a leaving client's queued frames may take to flush.
+const FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 /// The service log is started afresh beyond this size.
 const LOG_LIMIT: u64 = 5 * 1024 * 1024;
 
@@ -91,15 +94,16 @@ impl ServiceHost {
         }
     }
 
-    /// Queues an event for one client. A full queue drops a coalesced event; for any other event
-    /// the client is cut off, and reconnects to read the state afresh.
+    /// Queues an event for one client. A full queue drops a progress event; for any other event,
+    /// a terminal update included, the client is cut off, and reconnects to read the state afresh.
     fn send(&self, connection: u64, sender: &mpsc::Sender<Frame>, event: &str, payload: Value) {
+        let droppable = COALESCED.contains(&event) && !terminal(event, &payload);
         let frame = Frame::Event {
             name: event.to_string(),
             payload,
         };
         if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(frame)
-            && !COALESCED.contains(&event)
+            && !droppable
         {
             self.log(
                 Level::Warn,
@@ -108,6 +112,18 @@ impl ServiceHost {
             );
             self.cut_off(connection);
         }
+    }
+}
+
+/// The last update of a progress event: no later one follows to carry the state.
+fn terminal(event: &str, payload: &Value) -> bool {
+    match event {
+        "engine:analysis" => payload["done"].as_bool().unwrap_or(false),
+        "puzzledb:progress" => matches!(
+            payload["phase"].as_str(),
+            Some("done" | "cancelled" | "failed")
+        ),
+        _ => false,
     }
 }
 
@@ -361,54 +377,73 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     });
     let (sender, mut queue) = mpsc::channel::<Frame>(QUEUE);
     let cut = Arc::new(Notify::new());
-    state.host.add(connection, sender.clone(), Arc::clone(&cut));
+    // `welcome` comes first, then which window alerts now, then every event: a client that joins
+    // while another window keeps focus learns the owner although it does not change.
+    let _ = sender.try_send(Frame::Welcome {
+        connection,
+        release: state.release.clone(),
+        protocol: state.protocol.clone(),
+    });
+    state.core.with_alert_owner(|owner| {
+        let _ = sender.try_send(Frame::Event {
+            name: "alerts:owner".into(),
+            payload: owner,
+        });
+        state.host.add(connection, sender.clone(), Arc::clone(&cut));
+    });
     state.active.fetch_add(1, Ordering::SeqCst);
     state.changed.notify_one();
-    let writing = tokio::spawn(async move {
+    let mut writing = tokio::spawn(async move {
         while let Some(frame) = queue.recv().await {
             if write_frame(&mut writer, &frame).await.is_err() {
                 break;
             }
         }
     });
-    let _ = sender
-        .send(Frame::Welcome {
-            connection,
-            release: state.release.clone(),
-            protocol: state.protocol.clone(),
-        })
-        .await;
 
+    // The connection's own answers; a client too far behind to take one is cut off.
+    let reply = |id: u64| {
+        sender
+            .try_send(Frame::Result {
+                id,
+                value: Some(Value::Null),
+                error: None,
+            })
+            .is_ok()
+    };
     let calls: Arc<Mutex<HashMap<u64, AbortHandle>>> = Arc::default();
+    // Why the loop ended: a cut-off client's queue is not flushed, and a writer that failed is done.
+    let (mut behind, mut written) = (false, false);
     loop {
         let frame = tokio::select! {
             read = read_frame(&mut reader) => match read {
                 Ok(Some(frame)) => frame,
                 _ => break,
             },
-            () = cut.notified() => break,
+            () = cut.notified() => {
+                behind = true;
+                break;
+            }
+            _ = &mut writing => {
+                written = true;
+                break;
+            }
         };
         match frame {
             // A client without a window stops only its own work, not the other clients'.
             Frame::Call { id, method, .. } if method == "suspend" => {
                 state.core.suspend_connection(connection);
-                let _ = sender
-                    .send(Frame::Result {
-                        id,
-                        value: Some(Value::Null),
-                        error: None,
-                    })
-                    .await;
+                if !reply(id) {
+                    behind = true;
+                    break;
+                }
             }
             // The shared core closes on its own once idle: no client closes it for everyone.
             Frame::Call { id, method, .. } if method == "close" => {
-                let _ = sender
-                    .send(Frame::Result {
-                        id,
-                        value: Some(Value::Null),
-                        error: None,
-                    })
-                    .await;
+                if !reply(id) {
+                    behind = true;
+                    break;
+                }
             }
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
@@ -443,13 +478,15 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     .and_then(|mut running| running.remove(&id));
                 if let Some(task) = task {
                     task.abort();
-                    let _ = sender
-                        .send(Frame::Result {
-                            id,
-                            value: None,
-                            error: Some("The call was cancelled.".into()),
-                        })
-                        .await;
+                    let cancelled = sender.try_send(Frame::Result {
+                        id,
+                        value: None,
+                        error: Some("The call was cancelled.".into()),
+                    });
+                    if cancelled.is_err() {
+                        behind = true;
+                        break;
+                    }
                 }
             }
             Frame::Focus { focused } => state.core.focus(connection, focused),
@@ -464,8 +501,37 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     }
     state.host.remove(connection);
     drop(sender);
-    let _ = writing.await;
+    // A client that stopped reading can hold a write open forever: what it started still ends.
+    if !written
+        && (behind
+            || tokio::time::timeout(FLUSH_DEADLINE, &mut writing)
+                .await
+                .is_err())
+    {
+        writing.abort();
+    }
     state.core.disconnect(connection);
     state.active.fetch_sub(1, Ordering::SeqCst);
     state.changed.notify_one();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terminal;
+    use serde_json::json;
+
+    #[test]
+    fn a_progress_events_last_update_is_terminal() {
+        assert!(!terminal("engine:analysis", &json!({ "done": false })));
+        assert!(terminal(
+            "engine:analysis",
+            &json!({ "done": true, "state": "interrupted" })
+        ));
+        assert!(!terminal(
+            "puzzledb:progress",
+            &json!({ "phase": "importing" })
+        ));
+        assert!(terminal("puzzledb:progress", &json!({ "phase": "failed" })));
+        assert!(!terminal("watch:frame", &json!({})));
+    }
 }

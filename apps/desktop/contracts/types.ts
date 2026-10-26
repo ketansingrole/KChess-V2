@@ -30,7 +30,11 @@ export * from '@kchess/contracts/types'
 /** The desktop frontend: the core plus window, OS integration and event subscriptions. */
 export interface DesktopApi extends CoreApi {
   loadData(): Promise<AppData>
-  saveSettings(settings: Settings): Promise<Settings>
+  /**
+   * Save settings. With `base`, the settings the edits started from, only what changed from it
+   * is written: another window's changes to other settings stay.
+   */
+  saveSettings(settings: Settings, base?: Settings): Promise<Settings>
   addAccount(username: string): Promise<AppData>
   logout(username: string): Promise<AppData>
   logoutAll(): Promise<AppData>
@@ -85,6 +89,11 @@ export interface DesktopApi extends CoreApi {
    * shown. This window's own writes are not reported.
    */
   onProfileChanged(callback: (change: ProfileChange) => void): () => void
+  /**
+   * The app reached the shared core again after it stopped: an analysis, watch or voice input
+   * this window had started there ended, and its owner starts it again.
+   */
+  onCoreReconnected(callback: () => void): () => void
   /** A game started or ended that the board does not show (refresh `ongoingGames`). */
   onOngoingChanged(callback: () => void): () => void
   /** Show a desktop notification if Settings allow it for this kind and the window's state. */

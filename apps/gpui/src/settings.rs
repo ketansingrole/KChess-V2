@@ -19,6 +19,8 @@ const SAVE_DELAY: Duration = Duration::from_millis(400);
 /// The settings and the user's own themes, as last read from the core.
 pub struct AppSettings {
     pub settings: Settings,
+    /// The settings as the core last stored them: what this window's edits started from.
+    stored: Settings,
     pub custom_themes: Vec<AppTheme>,
     /// The folder the user's themes are read from, and the files that could not be used.
     pub themes_dir: String,
@@ -30,7 +32,8 @@ pub struct AppSettings {
 }
 
 enum Write {
-    Save(Settings),
+    /// The settings shown, and those they were edited from: only what changed is written.
+    Save(Box<(Settings, Settings)>),
     Flushed(oneshot::Sender<()>),
 }
 
@@ -74,6 +77,7 @@ pub fn init(cx: &mut App) {
         });
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| AppSettings {
+        stored: settings.clone(),
         settings,
         custom_themes: report.themes,
         themes_dir: report.dir,
@@ -111,9 +115,15 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
         let themes = themes.await;
         let _ = entity.update(cx, |this, cx| {
             match settings.map(serde_json::from_value::<Settings>) {
-                // Edits not yet stored stay; their own save brings the rest.
-                Ok(Ok(_)) if this.dirty => {}
-                Ok(Ok(settings)) => this.settings = settings,
+                // Edits not yet stored stay; every other setting shows what is stored.
+                Ok(Ok(settings)) => {
+                    this.settings = if this.dirty {
+                        adopt(&this.settings, &this.stored, &settings)
+                    } else {
+                        settings.clone()
+                    };
+                    this.stored = settings;
+                }
                 Ok(Err(cause)) => crate::log::write(
                     Level::Warn,
                     "settings",
@@ -163,9 +173,13 @@ fn write_in_order(
         .spawn(async move {
             while let Some(write) = queue.next().await {
                 match write {
-                    Write::Save(sent) => {
+                    Write::Save(save) => {
+                        let (sent, base) = *save;
                         let saved = core
-                            .call("saveDesktopSettings", vec![serde_json::json!(sent)])
+                            .call(
+                                "saveDesktopSettings",
+                                vec![serde_json::json!(sent), serde_json::json!(base)],
+                            )
                             .await;
                         let _ = stored.unbounded_send((sent, saved));
                     }
@@ -184,8 +198,9 @@ fn write_in_order(
                     Ok(Ok(stored)) => {
                         if unchanged {
                             this.dirty = this.save_soon.is_some();
-                            this.settings = stored;
+                            this.settings = stored.clone();
                         }
+                        this.stored = stored;
                     }
                     Ok(Err(cause)) => crate::log::write(
                         Level::Warn,
@@ -232,9 +247,10 @@ impl AppSettings {
     /// Send the edits to be saved now.
     fn save_now(&mut self) {
         self.save_soon = None;
-        let _ = self
-            .writes
-            .unbounded_send(Write::Save(self.settings.clone()));
+        let _ = self.writes.unbounded_send(Write::Save(Box::new((
+            self.settings.clone(),
+            self.stored.clone(),
+        ))));
     }
 
     /// Save waiting edits now and wait for every save so far (before the app quits).
@@ -250,6 +266,27 @@ impl AppSettings {
     }
 }
 
+/// `shown`, with every setting it has not changed from `stored` taken from `next` (another
+/// window's save): this window's own edits stay, still to be saved.
+fn adopt(shown: &Settings, stored: &Settings, next: &Settings) -> Settings {
+    let values = (
+        serde_json::to_value(shown),
+        serde_json::to_value(stored),
+        serde_json::to_value(next),
+    );
+    let (Ok(Value::Object(mut merged)), Ok(Value::Object(stored)), Ok(Value::Object(next))) =
+        values
+    else {
+        return shown.clone();
+    };
+    for (key, value) in next {
+        if merged.get(&key) == stored.get(&key) {
+            merged.insert(key, value);
+        }
+    }
+    serde_json::from_value(Value::Object(merged)).unwrap_or_else(|_| shown.clone())
+}
+
 /// Change settings from a view (`toggleSetting`, the Settings page); they save themselves.
 pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     let handle = cx.global::<SettingsHandle>().0.clone();
@@ -260,4 +297,28 @@ pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
 pub fn flush(cx: &mut App) -> BoxedSave {
     let handle = cx.global::<SettingsHandle>().0.clone();
     handle.update(cx, |settings, _| settings.flushed())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{adopt, defaults};
+
+    #[test]
+    fn another_windows_settings_show_beside_this_windows_edits() {
+        let stored = defaults();
+        let mut shown = stored.clone();
+        shown.frontend.zen_mode = !stored.frontend.zen_mode;
+        let mut next = stored.clone();
+        next.frontend.sound_enabled = !stored.frontend.sound_enabled;
+        next.frontend.zen_mode = stored.frontend.zen_mode;
+        let merged = adopt(&shown, &stored, &next);
+        assert_eq!(
+            merged.frontend.zen_mode, shown.frontend.zen_mode,
+            "this window's edit stays"
+        );
+        assert_eq!(
+            merged.frontend.sound_enabled, next.frontend.sound_enabled,
+            "the other window's shows"
+        );
+    }
 }

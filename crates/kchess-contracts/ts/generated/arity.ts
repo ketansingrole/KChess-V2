@@ -224,7 +224,7 @@ export const IPC_ARITY = {
   "saveExport": [1, 1],
   "saveRun": [1, 1],
   "saveSession": [2, 2],
-  "saveSettings": [1, 1],
+  "saveSettings": [1, 2],
   "saveVoiceAttempt": [1, 1],
   "sendChat": [3, 3],
   "sendMessage": [3, 3],

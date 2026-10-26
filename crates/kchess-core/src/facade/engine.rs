@@ -38,8 +38,10 @@ impl Core {
                 self.inner("managedEngine.delete", vec![json!(id), Value::Null])
                     .await
             }
+            // A window stops its own computer search, not another window's game.
             "stopEngine" => {
-                self.search.stop_engine(false);
+                self.search
+                    .stop_connection(crate::connection::current_or_app());
                 Ok(Value::Null)
             }
             "bestMove" => {

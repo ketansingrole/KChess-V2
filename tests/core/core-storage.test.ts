@@ -27,6 +27,16 @@ describe('settings and accounts', () => {
     await expect(core.saveSettings({ promotion: 7 } as never)).rejects.toThrow()
   })
 
+  it('keeps another window’s settings when a window saves what it changed', async () => {
+    const base = await core.desktopSettings()
+    // The other window turns sound off; this one, still showing the old settings, turns on zen.
+    await core.saveDesktopSettings({ ...base, soundEnabled: !base.soundEnabled }, base)
+    await core.saveDesktopSettings({ ...base, zenMode: !base.zenMode }, base)
+    const saved = await core.desktopSettings()
+    expect(saved.soundEnabled).toBe(!base.soundEnabled)
+    expect(saved.zenMode).toBe(!base.zenMode)
+  })
+
   it('refuses an engine executable the user did not pick', async () => {
     const settings = await core.desktopSettings()
     await expect(

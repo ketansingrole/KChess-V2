@@ -14,6 +14,11 @@ let saved: Record<string, unknown> = {}
 const values = new Map<string, Ref<unknown>>()
 /** Each name's latest save, so a fast run of changes reaches the core in order. */
 const pending = new Map<string, Promise<void>>()
+/**
+ * Earlier releases' `localStorage` text, by name, until the core has saved the preference: a save
+ * that fails leaves it to be moved again at the next start.
+ */
+const legacy = new Map<string, string>()
 // The watchers outlive whichever component first asked for a preference.
 let scope = effectScope(true)
 
@@ -34,6 +39,7 @@ export function resetViewPreferences(): void {
   saved = {}
   values.clear()
   pending.clear()
+  legacy.clear()
 }
 
 /** How an earlier release's `localStorage` text is read; `useLocalStorage` chose by the default. */
@@ -49,6 +55,18 @@ export interface ViewPreferenceOptions<T> {
 /** `StorageSerializers.object`'s reading: JSON text. */
 export const readJson = <T>(text: string): T => JSON.parse(text) as T
 
+/** Removes an earlier release's copy once the core holds the preference, unless it changed. */
+function forgetLegacy(key: string): void {
+  const text = legacy.get(key)
+  if (text === undefined) return
+  legacy.delete(key)
+  try {
+    if (localStorage.getItem(key) === text) localStorage.removeItem(key)
+  } catch (cause) {
+    console.warn('[view-preferences] An earlier view preference could not be removed:', key, cause)
+  }
+}
+
 function legacyValue<T>(key: string, fallback: T, read?: LegacyRead<T>): T | undefined {
   let text: string | null
   try {
@@ -58,7 +76,8 @@ function legacyValue<T>(key: string, fallback: T, read?: LegacyRead<T>): T | und
     return undefined
   }
   if (text === null) return undefined
-  localStorage.removeItem(key)
+  // Kept until the core saves it; an unreadable one goes now.
+  legacy.set(key, text)
   try {
     if (read) return read(text)
     if (typeof fallback === 'string' || fallback === null || fallback === undefined)
@@ -68,6 +87,7 @@ function legacyValue<T>(key: string, fallback: T, read?: LegacyRead<T>): T | und
     return JSON.parse(text) as T
   } catch (cause) {
     console.warn('[view-preferences] An earlier view preference could not be read:', key, cause)
+    forgetLegacy(key)
     return undefined
   }
 }
@@ -81,6 +101,7 @@ function save(key: string, value: unknown): void {
   const previous = pending.get(key) ?? Promise.resolve()
   const next = previous
     .then(() => window.kchess.setViewPreference?.(key, body))
+    .then(() => forgetLegacy(key))
     .catch((cause: unknown) => {
       console.warn('[view-preferences] Saving a view preference failed:', key, cause)
     })
@@ -107,9 +128,9 @@ export function useViewPreference<T>(
   let imported = false
   if (key in saved) initial = saved[key] as T
   else {
-    const legacy = legacyValue(key, fallback, options.legacy)
-    imported = legacy !== undefined
-    initial = imported ? (legacy as T) : (plain(fallback) as T)
+    const earlier = legacyValue(key, fallback, options.legacy)
+    imported = earlier !== undefined
+    initial = imported ? (earlier as T) : (plain(fallback) as T)
   }
   if (
     options.mergeDefaults &&

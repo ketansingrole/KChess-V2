@@ -579,6 +579,18 @@ pub fn init(cx: &mut App) {
         _pump: None,
         _worker: None,
     });
+    // The recognizer session on a lost connection ended with it: a listening control starts a
+    // fresh one.
+    let events = cx.global::<AppCore>().events.clone();
+    cx.subscribe(&events, {
+        let voice = voice.downgrade();
+        move |_, event: &crate::core::CoreEvent, cx| {
+            if event.name == crate::core::RECONNECTED {
+                let _ = voice.update(cx, |voice, cx| voice.reset(cx));
+            }
+        }
+    })
+    .detach();
     cx.set_global(VoiceHandle(voice));
 }
 

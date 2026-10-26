@@ -1892,13 +1892,6 @@ struct StudyRef {
 /// `studyCommandShape`: one study command, chosen by its `op`, with the fields that command
 /// takes (others are dropped). A study to restore is passed on as it is; the core checks it.
 /// A document's revision as the client read it: its `updatedAt`, milliseconds since the epoch.
-fn assert_revision(value: J) -> Checked<f64> {
-    let at: f64 = decode(value, plain)?;
-    finite(at, None, "")?;
-    within(at, 0.0, 9_007_199_254_740_991.0, None, "")?;
-    Ok(at)
-}
-
 fn assert_study_command_shape(value: J) -> Checked<Value> {
     if !value.is_object() {
         let error = decode::<SaveStudy>(value, plain).err();
@@ -2176,7 +2169,6 @@ validators! {
     "assertSessionObject" => assert_session_object,
     "assertStudyId" => assert_study_id,
     "assertStudyCommandShape" => assert_study_command_shape,
-    "assertRevision" => assert_revision,
     "assertLibraryId" => assert_library_id,
     "assertRepertoireKey" => assert_repertoire_key,
     "assertViewPreferenceKey" => assert_view_preference_key,

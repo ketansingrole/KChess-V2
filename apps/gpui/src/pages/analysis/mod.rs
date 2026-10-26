@@ -51,6 +51,8 @@ use crate::studies::StudyHandle;
 use crate::theme::{Palette, tint};
 use crate::widgets;
 
+/// Why the board left its study: another window changed the chapter it was saving to.
+const STALE_COPY: &str = "This study was changed in another KChess window. Your board is kept as an unsaved copy; save it under a new name or reopen the study.";
 const CONFLICT: &str = "Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.";
 
 /// A study write's answer, which the quit and the page's own handling both wait on.
@@ -252,6 +254,9 @@ impl AnalysisPage {
         } else {
             linked_pgn.unwrap_or_default()
         };
+        if !study.is_empty() {
+            library.read(cx).track(&study, &chapter);
+        }
         let study_error = conflict.then(|| CONFLICT.to_string());
         let page = cx.weak_entity();
         let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
@@ -370,6 +375,10 @@ impl AnalysisPage {
             cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
                 if event.name == "engine:analysis" {
                     this.receive(event.payload.clone(), cx);
+                }
+                // A search on a lost connection ended with it: the board's is started again.
+                if event.name == crate::core::RECONNECTED {
+                    this.analyse(cx);
                 }
             }),
         ];
@@ -624,6 +633,7 @@ impl AnalysisPage {
         }
         // Counted as saved while the core writes it; a failure makes it unsaved again.
         let previous = std::mem::replace(&mut self.study_pgn, text.clone());
+        let study = self.study.clone();
         let command = library.read(cx).command(json!({
             "op": "save",
             "name": name,
@@ -634,10 +644,20 @@ impl AnalysisPage {
         let answer = (Box::pin(command) as std::pin::Pin<Box<dyn Future<Output = _>>>).shared();
         let outcome = answer.clone();
         cx.spawn(async move |this, cx| {
-            let result = outcome.await;
+            let result: Result<Value, String> = outcome.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(_) => this.study_error = None,
+                    // Another window changed the chapter: the board keeps its moves as an unsaved
+                    // copy rather than overwriting that window's, or blocking every later save.
+                    Err(cause)
+                        if crate::studies::is_stale(cause.as_str()) && this.study == study =>
+                    {
+                        this.study.clear();
+                        this.chapter.clear();
+                        this.study_pgn.clear();
+                        this.study_error = Some(STALE_COPY.to_string());
+                    }
                     Err(cause) => {
                         if this.study_pgn == text {
                             this.study_pgn = previous;
@@ -694,6 +714,7 @@ impl AnalysisPage {
         self.take_board(tree, cx);
         self.study = id.to_string();
         self.chapter = opened["id"].as_str().unwrap_or_default().to_string();
+        library.read(cx).track(&self.study, &self.chapter);
         self.study_pgn = self.root.to_pgn();
         self.study_error = None;
         self.changed(cx);
@@ -776,6 +797,7 @@ impl AnalysisPage {
     /// Link the board to a study again (a deleted one restored), while the board still holds it.
     pub fn relink(&mut self, id: String, chapter: String, navigation: u64, cx: &mut Context<Self>) {
         if self.navigation == navigation && self.study.is_empty() {
+            cx.global::<StudyHandle>().0.read(cx).track(&id, &chapter);
             self.study = id;
             self.chapter = chapter;
             self.schedule_save(cx);

@@ -3,6 +3,9 @@
 //! them while it quits. Each command's answer comes back to its caller; the library shows the
 //! studies the answers name. A command the core refuses shows its error and what the profile keeps.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
@@ -24,11 +27,22 @@ enum Write {
     Flushed(oneshot::Sender<()>),
 }
 
+/// The moves each chapter held when this window last opened or saved it, by study and chapter
+/// (`bases` in `stores/studies.ts`). Chapter saves are based on them (`basedOn`), so they never
+/// overwrite another window's newer moves; a library refresh leaves them.
+type Bases = Arc<Mutex<HashMap<(String, String), String>>>;
+
+/// The core refused a chapter save: another window changed the chapter since this one read it.
+pub fn is_stale(cause: &str) -> bool {
+    cause.contains("This study was changed in another KChess window.")
+}
+
 pub struct StudyLibrary {
     items: Vec<Value>,
     /// Why the last command failed, until one succeeds; or why the stored studies could not be read.
     pub error: Option<String>,
     writes: mpsc::UnboundedSender<Write>,
+    bases: Bases,
 }
 
 /// How views reach the library: `cx.global::<StudyHandle>().0`.
@@ -47,12 +61,14 @@ pub fn init(cx: &mut App) {
     let items = library["studies"].as_array().cloned().unwrap_or_default();
     let error = library["studyError"].as_str().map(str::to_string);
     let (writes, queue) = mpsc::unbounded();
+    let bases = Bases::default();
     let entity = cx.new(|_| StudyLibrary {
         items,
         error,
         writes,
+        bases: Arc::clone(&bases),
     });
-    write_in_order(entity.downgrade(), queue, cx);
+    write_in_order(entity.downgrade(), queue, bases, cx);
     crate::core::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
@@ -67,9 +83,36 @@ pub fn init(cx: &mut App) {
     cx.set_global(StudyHandle(entity));
 }
 
+/// The chapter a content save writes to an existing study.
+fn saved_chapter(command: &Value) -> Option<(String, String)> {
+    let text = |key: &str| command[key].as_str().filter(|text| !text.is_empty());
+    (command["op"] == "save").then_some(())?;
+    Some((text("id")?.to_string(), text("chapterId")?.to_string()))
+}
+
+/// After a content save: the chapter it wrote, whose moves are now the base.
+fn written_chapter(command: &Value, result: &Value) -> Option<(String, String)> {
+    if command["op"] != "save" {
+        return None;
+    }
+    let id = result["id"].as_str().or(command["id"].as_str())?;
+    let chapter = command["chapterId"]
+        .as_str()
+        .filter(|chapter| !chapter.is_empty())
+        .or_else(|| {
+            result["studies"]
+                .as_array()?
+                .iter()
+                .find(|study| study["id"] == json!(id))?["chapters"][0]["id"]
+                .as_str()
+        })?;
+    Some((id.to_string(), chapter.to_string()))
+}
+
 fn write_in_order(
     entity: WeakEntity<StudyLibrary>,
     mut queue: mpsc::UnboundedReceiver<Write>,
+    bases: Bases,
     cx: &mut App,
 ) {
     let core = cx.global::<AppCore>().clone();
@@ -86,17 +129,25 @@ fn write_in_order(
                     }
                 };
                 let op = command["op"].as_str().unwrap_or_default().to_string();
-                let result = core
-                    .call("studyCommand", vec![command, json!(true)])
-                    .await
-                    .map_err(|cause| {
-                        crate::log::write(
-                            Level::Warn,
-                            "studies",
-                            &format!("saving the study library failed: {op} {}", cause.message),
-                        );
-                        cause.message
-                    });
+                let based_on =
+                    saved_chapter(&command).and_then(|key| bases.lock().ok()?.get(&key).cloned());
+                let mut args = vec![command.clone(), json!(true)];
+                args.extend(based_on.map(Value::String));
+                let result = core.call("studyCommand", args).await.map_err(|cause| {
+                    crate::log::write(
+                        Level::Warn,
+                        "studies",
+                        &format!("saving the study library failed: {op} {}", cause.message),
+                    );
+                    cause.message
+                });
+                if let Ok(result) = &result
+                    && let Some(key) = written_chapter(&command, result)
+                    && let Some(pgn) = command["pgn"].as_str()
+                    && let Ok(mut bases) = bases.lock()
+                {
+                    bases.insert(key, pgn.to_string());
+                }
                 // The caller hears first, from here: the UI thread may not run while the app quits.
                 if let Some(reply) = reply {
                     let _ = reply.send(result.clone());
@@ -199,6 +250,23 @@ impl StudyLibrary {
         self.items.iter().find(|study| study["id"] == json!(id))
     }
 
+    /// The board shows this chapter as the library has it: its saves are based on that.
+    pub fn track(&self, study: &str, chapter: &str) {
+        let pgn = self
+            .study(study)
+            .and_then(|study| study["chapters"].as_array())
+            .and_then(|chapters| chapters.iter().find(|c| c["id"] == json!(chapter)))
+            .and_then(|chapter| chapter["pgn"].as_str())
+            .map(str::to_string);
+        if let Ok(mut bases) = self.bases.lock() {
+            let key = (study.to_string(), chapter.to_string());
+            match pgn {
+                Some(pgn) => bases.insert(key, pgn),
+                None => bases.remove(&key),
+            };
+        }
+    }
+
     /// A name no study has yet (`freshName`).
     pub fn fresh_name(&self, base: &str) -> String {
         (1..)
@@ -283,7 +351,7 @@ impl StudyLibrary {
 
 #[cfg(test)]
 mod tests {
-    use super::{StudyLibrary, chapter_items, time_ago};
+    use super::{StudyLibrary, chapter_items, saved_chapter, time_ago, written_chapter};
     use futures::channel::mpsc;
     use serde_json::json;
 
@@ -297,6 +365,7 @@ mod tests {
             ],
             error: None,
             writes,
+            bases: Default::default(),
         };
         // An incremental answer: the changed study, and every id in order.
         library.apply(&json!({
@@ -341,6 +410,27 @@ mod tests {
                 ("a".to_string(), "1. Main".to_string()),
                 ("b".to_string(), "2. Side".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn chapter_saves_are_based_on_the_chapter_they_write() {
+        let save =
+            json!({ "op": "save", "id": "a", "chapterId": "c", "name": "A", "pgn": "1. e4 *" });
+        let key = Some(("a".to_string(), "c".to_string()));
+        assert_eq!(saved_chapter(&save), key);
+        assert_eq!(written_chapter(&save, &json!({ "id": "a" })), key);
+        assert_eq!(
+            saved_chapter(&json!({ "op": "rename", "id": "a", "name": "B" })),
+            None
+        );
+        // A new study: its first chapter, once the core made it.
+        let new = json!({ "op": "save", "name": "N", "pgn": "1. d4 *" });
+        assert_eq!(saved_chapter(&new), None);
+        let made = json!({ "id": "n", "studies": [{ "id": "n", "chapters": [{ "id": "n1" }] }] });
+        assert_eq!(
+            written_chapter(&new, &made),
+            Some(("n".to_string(), "n1".to_string()))
         );
     }
 }

@@ -154,9 +154,12 @@ impl WatchPage {
         let online = cx.global::<OnlineHandle>().0.clone();
         let accounts = crate::accounts::handle(cx);
         let subscriptions = vec![
-            cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
+            cx.subscribe_in(&events, window, |this, _, event: &CoreEvent, window, cx| {
                 if event.name.starts_with("watch:") {
                     this.receive(event.clone(), cx);
+                }
+                if event.name == crate::core::RECONNECTED {
+                    this.reconnected(window, cx);
                 }
             }),
             cx.observe(&online, |_, _, cx| cx.notify()),
@@ -223,6 +226,18 @@ impl WatchPage {
                 }
             }
         }));
+    }
+
+    /// The stream on a lost connection ended with it: what is watched streams again.
+    fn reconnected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let (Some(target), Some(_)) = (self.target.clone(), self.session) {
+            self.watch(target, cx);
+        } else if self.round_session.is_some()
+            && let Some(round) = self.broadcasts.resumable()
+        {
+            let game = self.broadcasts.selected.clone();
+            self.open_round(round, game, window, cx);
+        }
     }
 
     /// What the tab shows when it opens: TV's last channel, an open tournament's round.

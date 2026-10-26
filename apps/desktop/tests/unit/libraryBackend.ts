@@ -36,8 +36,14 @@ const library = {
   library: (now = Date.now()) => nativeCallSync<LibrarySnapshot>('store.library.library', now),
   importLibrary: (documents: LegacyDocuments) =>
     nativeCallSync<LibrarySnapshot>('store.library.importLibrary', documents),
-  studyCommand: (command: StudyCommand, now = Date.now(), incremental = false) =>
-    nativeCallSync<StudyCommandResult>('store.library.studyCommand', command, now, incremental),
+  studyCommand: (command: StudyCommand, now = Date.now(), incremental = false, basedOn?: string) =>
+    nativeCallSync<StudyCommandResult>(
+      'store.library.studyCommand',
+      command,
+      now,
+      incremental,
+      basedOn,
+    ),
   saveArchivedGame: (game: ArchivedGame): void => {
     nativeCallSync('store.library.saveArchivedGame', game)
   },
@@ -101,12 +107,13 @@ export function libraryApi(): Pick<CoreApi, LibraryMethod> {
     library: () => run(() => library.library()),
     importLibrary: (documents) =>
       run(() => library.importLibrary(assertLegacyDocuments(documents))),
-    studyCommand: (command, incremental) =>
+    studyCommand: (command, incremental, basedOn) =>
       run(() =>
         library.studyCommand(
           assertStudyCommand(assertStudyCommandShape(command)),
           Date.now(),
           incremental,
+          basedOn,
         ),
       ),
     saveArchivedGame: (game) =>
@@ -124,6 +131,12 @@ export function libraryApi(): Pick<CoreApi, LibraryMethod> {
     recordRepertoireMiss: (key, fen) => run(() => library.recordRepertoireMiss(key, fen)),
     clearRepertoireMisses: (key) => run(() => library.clearRepertoireMisses(key)),
   }
+}
+
+/** Another KChess window's study command, straight to the core. */
+export function otherWindowStudyCommand(command: StudyCommand): StudyCommandResult {
+  ready()
+  return library.studyCommand(command, Date.now(), true)
 }
 
 /** What the core holds now, as a later app start would load it. */

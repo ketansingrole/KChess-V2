@@ -17,6 +17,8 @@ import type { NativeCoreHandle } from './native.ts'
 /** What this client can do for the core when it asks (`host:request`). */
 const CAPABILITIES = ['browser', 'focus', 'legacySecrets'] as const
 const START_DEADLINE_MS = 5000
+/** How long a core has to answer `hello`. */
+const HANDSHAKE_MS = 5000
 const RETRY_MS = 50
 const MAX_FRAME = 16 * 1024 * 1024
 const STOPPED = 'The KChess core stopped.'
@@ -146,12 +148,18 @@ interface Connection {
   connection: number
 }
 
-/** Connects to the running core, or reports why not: `undefined` when none runs. */
+/**
+ * Connects to the running core, or reports why not: `undefined` when none runs or `signal` ended
+ * the attempt. Connecting and the handshake together take at most `timeout` ms; a core that
+ * does not answer in time fails the attempt.
+ */
 async function tryConnect(
   dataDir: string,
   own: { release: string; protocol: string },
   onFrame: (frame: Frame) => void,
   onClose: () => void,
+  signal: AbortSignal,
+  timeout: number,
 ): Promise<Connection | undefined> {
   const info = readInfo(dataDir)
   let token: string
@@ -161,15 +169,35 @@ async function tryConnect(
     logDebug('core-service', 'No core token:', cause)
     return undefined
   }
-  if (!info) return undefined
+  if (!info || signal.aborted) return undefined
+  const attempt = connect({ path: info.socket })
+  let settled = false
+  const timer = setTimeout(
+    () => attempt.destroy(new Error('The KChess core did not answer.')),
+    timeout,
+  )
+  const abandon = () => attempt.destroy()
+  signal.addEventListener('abort', abandon, { once: true })
+  const done = () => {
+    settled = true
+    clearTimeout(timer)
+    signal.removeEventListener('abort', abandon)
+  }
   const socket = await new Promise<Socket | undefined>((resolve) => {
-    const attempt = connect({ path: info.socket })
     attempt.once('connect', () => resolve(attempt))
     attempt.once('error', () => resolve(undefined))
+    attempt.once('close', () => resolve(undefined))
   })
-  if (!socket) return undefined
+  if (!socket) {
+    done()
+    return undefined
+  }
   return new Promise<Connection | undefined>((resolve, reject) => {
     let welcomed = false
+    const answered = (connection: Connection | undefined) => {
+      if (!settled) done()
+      resolve(connection)
+    }
     let buffered = Buffer.alloc(0)
     socket.on('data', (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk])
@@ -185,8 +213,9 @@ async function tryConnect(
         if (welcomed) onFrame(frame)
         else if (frame.type === 'welcome') {
           welcomed = true
-          resolve({ socket, connection: frame.connection })
+          answered({ socket, connection: frame.connection })
         } else if (frame.type === 'refuse') {
+          done()
           socket.destroy()
           if (frame.reason === 'version')
             reject(
@@ -196,16 +225,20 @@ async function tryConnect(
                 frame.clients,
               ),
             )
-          else resolve(undefined)
+          else answered(undefined)
         }
       }
     })
-    socket.once('error', () => {
-      if (!welcomed) resolve(undefined)
+    socket.once('error', (cause: Error) => {
+      if (welcomed) return
+      if (cause.message === 'The KChess core did not answer.') {
+        done()
+        reject(cause)
+      } else answered(undefined)
     })
     socket.once('close', () => {
       if (welcomed) onClose()
-      else resolve(undefined)
+      else answered(undefined)
     })
     send(socket, {
       type: 'hello',
@@ -225,7 +258,17 @@ function send(socket: Socket, frame: unknown): void {
   socket.write(Buffer.concat([length, body]))
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+/** Waits `ms`, or less once `signal` ends. */
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    signal.addEventListener('abort', done, { once: true })
+  })
 
 /**
  * The shared core as a `NativeCoreHandle`. It connects at once; calls wait for the connection.
@@ -243,6 +286,10 @@ export class ServiceCore implements NativeCoreHandle {
   >()
   private next = 1
   private closed = false
+  /** Ends every connection attempt and wait when this client closes. */
+  private readonly scope = new AbortController()
+  /** The window's focus as last reported, sent again on each new connection. */
+  private focused: boolean | undefined
 
   private readonly options: ServiceOptions
 
@@ -267,48 +314,93 @@ export class ServiceCore implements NativeCoreHandle {
 
   private onClose = (): void => {
     this.current = undefined
-    for (const [, waiting] of this.pending) waiting.reject(new Error(STOPPED))
-    this.pending.clear()
+    this.rejectPending()
     if (this.closed) return
     logWarn('core-service', 'The core stopped; reconnecting.')
     this.connecting = this.reconnect()
+    // A failure is reported to the calls waiting for it.
+    this.connecting.catch((cause: unknown) => logDebug('core-service', 'Not reconnected:', cause))
   }
 
+  private rejectPending(): void {
+    for (const [, waiting] of this.pending) waiting.reject(new Error(STOPPED))
+    this.pending.clear()
+  }
+
+  /**
+   * Connects again after the core stopped. What this window had started on the old connection
+   * (an analysis, a watch, voice input) ended with it: `core:reconnected` tells its owners to
+   * start it again.
+   */
   private async reconnect(): Promise<Connection> {
     let delay = 200
-    for (;;) {
+    while (!this.closed) {
       try {
-        return await this.connectOrStart()
+        const connection = await this.connectOrStart()
+        this.options.onEvent('core:reconnected', null)
+        return connection
       } catch (cause) {
+        if (this.closed) break
         logWarn('core-service', `The core could not restart: ${String(cause)}`)
-        await sleep(delay)
+        await sleep(delay, this.scope.signal)
         delay = Math.min(delay * 2, 5000)
       }
     }
+    throw new Error(STOPPED)
+  }
+
+  /** Takes a new connection unless this client closed meanwhile; it learns the window's focus. */
+  private adopt(connection: Connection): Connection {
+    if (this.closed) {
+      connection.socket.end()
+      throw new Error(STOPPED)
+    }
+    this.current = connection
+    if (this.focused !== undefined)
+      send(connection.socket, { type: 'focus', focused: this.focused })
+    return connection
   }
 
   /** `connect_or_start`: a running core first; else this release's copy, copied if needed. */
   private async connectOrStart(): Promise<Connection> {
-    const attempt = () =>
-      tryConnect(this.options.dataDir, this.own, this.onFrame, this.onClose).catch(
+    const signal = this.scope.signal
+    const attempt = (timeout: number) =>
+      tryConnect(this.options.dataDir, this.own, this.onFrame, this.onClose, signal, timeout).catch(
         (cause: unknown) => {
           if (cause instanceof CoreRefused && cause.sole) return 'replace' as const
           throw cause
         },
       )
-    const first = await attempt()
-    if (first && first !== 'replace') return (this.current = first)
+    const stopped = () => {
+      if (this.closed) throw new Error(STOPPED)
+    }
+    const first = await attempt(HANDSHAKE_MS)
+    if (first && first !== 'replace') return this.adopt(first)
+    stopped()
     if (first === 'replace') {
       const deadline = Date.now() + START_DEADLINE_MS
-      while (readInfo(this.options.dataDir) && Date.now() < deadline) await sleep(RETRY_MS)
+      while (readInfo(this.options.dataDir) && Date.now() < deadline) await sleep(RETRY_MS, signal)
+      stopped()
     }
     this.launch()
     const deadline = Date.now() + START_DEADLINE_MS
+    const notStarted = () => new Error('The KChess core did not start.')
     for (;;) {
-      const connected = await attempt()
-      if (connected && connected !== 'replace') return (this.current = connected)
-      if (Date.now() > deadline) throw new Error('The KChess core did not start.')
-      await sleep(RETRY_MS)
+      // The start deadline bounds each attempt too, not only the waits between them.
+      const left = deadline - Date.now()
+      if (left <= 0) throw notStarted()
+      let connected: Connection | 'replace' | undefined
+      try {
+        connected = await attempt(left)
+      } catch (cause) {
+        stopped()
+        if (Date.now() >= deadline) throw notStarted()
+        throw cause
+      }
+      if (connected && connected !== 'replace') return this.adopt(connected)
+      stopped()
+      await sleep(RETRY_MS, signal)
+      stopped()
     }
   }
 
@@ -332,7 +424,9 @@ export class ServiceCore implements NativeCoreHandle {
   }
 
   async call(method: string, args: string): Promise<string> {
+    if (this.closed) throw new Error(STOPPED)
     const connection = this.current ?? (await this.connecting)
+    if (this.closed) throw new Error(STOPPED)
     const id = this.next++
     return new Promise<string>((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
@@ -351,13 +445,19 @@ export class ServiceCore implements NativeCoreHandle {
 
   /** Tells the core whether this app's window is focused. */
   focus(focused: boolean): void {
+    this.focused = focused
     if (this.current) send(this.current.socket, { type: 'focus', focused })
   }
 
-  /** Leaves the shared core; it closes on its own once no window uses it. */
+  /**
+   * Leaves the shared core; it closes on its own once no window uses it. A connection still
+   * being made is abandoned, and no call waits any longer.
+   */
   async close(): Promise<void> {
     this.closed = true
+    this.scope.abort()
     this.current?.socket.end()
     this.current = undefined
+    this.rejectPending()
   }
 }

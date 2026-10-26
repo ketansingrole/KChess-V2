@@ -193,10 +193,14 @@ profile. Every window sees the same data, so a write in one window must reach th
   studies, played games and accounts (`core::on_profile_change`). Events name areas, not
   documents, so the core stays the source of truth. A window with its own edits still to save
   keeps them and shows the library once they are saved.
-- Concurrent edits: `studyCommand` takes an optional `basedOn`, the study's `updatedAt` as the
-  window read it. A save based on an older study is refused ("This study was changed in another
-  KChess window. Reload it to see the latest version.") instead of overwriting the other
-  window's. The documents' `version` field is the schema version and stays as it is.
+- Concurrent edits: `studyCommand` takes an optional `basedOn`, the chapter's PGN as the window's
+  board last read or wrote it. Both libraries (`stores/studies.ts`, GPUI `studies.rs`) keep it per
+  chapter and send it with every chapter save; a library refresh does not move it, so a board
+  still showing older moves stays protected. A save whose chapter has changed since is refused
+  ("This study was changed in another KChess window. Reload it to see the latest version.")
+  instead of overwriting the other window's, and is not retried: reopening the study adopts the
+  newer moves. Renames and other chapters do not conflict. The documents' `version` field is the
+  schema version and stays as it is.
 - View preferences (tabs, sort order, layout) are per-profile and last-write-wins. They are read
   when a page opens and are deliberately not broadcast, so one window's tab change never moves
   another window's tabs.

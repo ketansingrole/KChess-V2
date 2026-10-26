@@ -21,6 +21,9 @@ use crate::transport;
 
 /// How long a started core has to accept its first client.
 const START_DEADLINE: Duration = Duration::from_secs(5);
+/// How long a core has to answer `hello`.
+const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(5);
+const STOPPED: &str = "The KChess core stopped.";
 const RETRY: Duration = Duration::from_millis(50);
 
 /// Who this client is, for `hello`.
@@ -66,7 +69,17 @@ impl std::fmt::Display for ConnectError {
     }
 }
 
-type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+/// Calls waiting for their answers; `None` once the connection closed, so a later call fails at
+/// once instead of waiting for a reader that has gone.
+type Pending = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>>;
+
+/// The connection closed: no call is admitted, and every waiting one fails.
+fn close(pending: &Pending) {
+    let waiting = pending.lock().ok().and_then(|mut pending| pending.take());
+    for (_, waiting) in waiting.into_iter().flatten() {
+        let _ = waiting.send(Err(STOPPED.into()));
+    }
+}
 
 /// A connection to the profile's core. Cloning shares it.
 #[derive(Clone)]
@@ -79,8 +92,22 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connects to the core running for `profile`.
+    /// Connects to the core running for `profile`. A core that does not answer `hello` in time
+    /// fails the connection.
     pub async fn connect(
+        profile: &Path,
+        hello: &Hello,
+    ) -> Result<(Client, mpsc::UnboundedReceiver<ClientEvent>), ConnectError> {
+        tokio::time::timeout(HANDSHAKE_DEADLINE, Self::handshake(profile, hello))
+            .await
+            .unwrap_or_else(|_| {
+                Err(ConnectError::Failed(
+                    "The KChess core did not answer.".into(),
+                ))
+            })
+    }
+
+    async fn handshake(
         profile: &Path,
         hello: &Hello,
     ) -> Result<(Client, mpsc::UnboundedReceiver<ClientEvent>), ConnectError> {
@@ -129,17 +156,22 @@ impl Client {
             _ => return Err(ConnectError::NotRunning),
         };
 
+        let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
         let (sender, mut queue) = mpsc::channel::<Frame>(1024);
-        tokio::spawn(async move {
-            while let Some(frame) = queue.recv().await {
-                if write_frame(&mut writer, &frame).await.is_err() {
-                    break;
+        {
+            let pending = Arc::clone(&pending);
+            tokio::spawn(async move {
+                while let Some(frame) = queue.recv().await {
+                    if write_frame(&mut writer, &frame).await.is_err() {
+                        // Nothing more reaches the core: waiting calls would never be answered.
+                        close(&pending);
+                        return;
+                    }
                 }
-            }
-            // Every handle was dropped: the core sees this client leave.
-            let _ = tokio::io::AsyncWriteExt::shutdown(&mut writer).await;
-        });
-        let pending: Pending = Arc::default();
+                // Every handle was dropped: the core sees this client leave.
+                let _ = tokio::io::AsyncWriteExt::shutdown(&mut writer).await;
+            });
+        }
         let (events, received) = mpsc::unbounded_channel();
         {
             let pending = Arc::clone(&pending);
@@ -147,7 +179,10 @@ impl Client {
                 while let Ok(Some(frame)) = read_frame(&mut reader).await {
                     match frame {
                         Frame::Result { id, value, error } => {
-                            let waiting = pending.lock().ok().and_then(|mut p| p.remove(&id));
+                            let waiting = pending
+                                .lock()
+                                .ok()
+                                .and_then(|mut p| p.as_mut().and_then(|p| p.remove(&id)));
                             if let Some(waiting) = waiting {
                                 let _ = waiting.send(match error {
                                     Some(error) => Err(error),
@@ -161,11 +196,7 @@ impl Client {
                         _ => {}
                     }
                 }
-                if let Ok(mut pending) = pending.lock() {
-                    for (_, waiting) in pending.drain() {
-                        let _ = waiting.send(Err("The KChess core stopped.".into()));
-                    }
-                }
+                close(&pending);
                 let _ = events.send(ClientEvent::Closed);
             });
         }
@@ -199,22 +230,32 @@ impl Client {
     ) -> impl std::future::Future<Output = Result<Value, String>> + Send + 'static + use<> {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let (answer, answered) = oneshot::channel();
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.insert(id, answer);
-        }
-        let sender = self.sender.clone();
+        // Admitted under the lock that closing drains: a call racing the close fails too.
+        let admitted = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.as_mut().map(|p| p.insert(id, answer)))
+            .is_some();
+        let (sender, pending) = (self.sender.clone(), Arc::clone(&self.pending));
         let frame = Frame::Call {
             id,
             method: method.to_string(),
             args,
         };
         async move {
-            if sender.send(frame).await.is_err() {
-                return Err("The KChess core stopped.".into());
+            if !admitted {
+                return Err(STOPPED.into());
             }
-            answered
-                .await
-                .unwrap_or_else(|_| Err("The KChess core stopped.".into()))
+            if sender.send(frame).await.is_err() {
+                if let Ok(mut pending) = pending.lock()
+                    && let Some(pending) = pending.as_mut()
+                {
+                    pending.remove(&id);
+                }
+                return Err(STOPPED.into());
+            }
+            answered.await.unwrap_or_else(|_| Err(STOPPED.into()))
         }
     }
 
@@ -283,17 +324,16 @@ pub async fn connect_or_start(
     }
     launch(profile, start)?;
     let deadline = tokio::time::Instant::now() + START_DEADLINE;
+    let not_started = || ConnectError::Failed("The KChess core did not start.".into());
     loop {
-        match Client::connect(profile, hello).await {
-            Err(ConnectError::NotRunning) if tokio::time::Instant::now() < deadline => {
+        // The start deadline bounds each attempt too, not only the waits between them.
+        match tokio::time::timeout_at(deadline, Client::connect(profile, hello)).await {
+            Err(_) => return Err(not_started()),
+            Ok(Err(ConnectError::NotRunning)) if tokio::time::Instant::now() < deadline => {
                 tokio::time::sleep(RETRY).await;
             }
-            Err(ConnectError::NotRunning) => {
-                return Err(ConnectError::Failed(
-                    "The KChess core did not start.".into(),
-                ));
-            }
-            other => return other,
+            Ok(Err(ConnectError::NotRunning)) => return Err(not_started()),
+            Ok(other) => return other,
         }
     }
 }
