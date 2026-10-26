@@ -1,7 +1,10 @@
 export const PERFORMANCE_BUDGETS = Object.freeze({
   rendererBytes: 12 * 1024 * 1024,
   packageBytes: 32 * 1024 * 1024,
-  individualFileBytes: 16 * 1024 * 1024,
+  // The largest file is the native core module. Measured 2026-10-26 in CI: Linux x64 16.7 MiB
+  // (14.5 MiB before the OS credential store, whose Secret Service client is D-Bus), macOS arm64
+  // 14.5 MiB, Windows x64 13.5 MiB.
+  individualFileBytes: 20 * 1024 * 1024,
   // The speech recognition runtime (the helper and the official prebuilt libvosk beside it),
   // budgeted apart from the app payload because its size is upstream's. Measured 2026-10-21:
   // libvosk 0.3.42's macOS arm64 slice 5.6 MiB; 0.3.45 Linux x64 24.8 MiB; 0.3.45 Windows x64
