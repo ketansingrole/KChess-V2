@@ -19,7 +19,7 @@
     "@kchess/contracts": "workspace:*",
     "@kchess/native": "workspace:*",
     "@kchess/rules": "workspace:*",
-    "electron-updater": "^6.8.9",
+    "electron-updater": "^6.8.11",
     "stockfish": "^19.0.1"
   },
   "devDependencies": {
