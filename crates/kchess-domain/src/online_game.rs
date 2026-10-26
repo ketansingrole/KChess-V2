@@ -1,5 +1,5 @@
 //! `crates/kchess-wasm/js/onlineGame.ts`: how a Lichess game on the board changes with each server
-//! event, connection report and network reply (see RUST_MIGRATION.md, "Porting a stateful module").
+//! event, connection report and network reply (see RUST_MIGRATION.md, "Stateful modules").
 //! The class keeps the state object and executes the effects; every decision lives here, including
 //! which call to make and how its reply lands. Each method takes the state, its input, and the
 //! context the host read at that moment (`now`, `activeAccount`, `chatEnabled`) as the last argument.

@@ -1,11 +1,13 @@
 # Shared core: one core per profile, any number of KChess windows
 
-Status: proposed, 2026-10-26. Nothing here is built yet.
+Status: built, 2026-10-26. Stages 1–5 have shipped, except that both apps still accept
+`KCHESS_CORE_MODE=embedded`; stage 6 is later. Open findings are in the
+[26 October review](reviews/2026-10-26-code-review.md).
 
 ## Why
 
-Today every KChess app embeds its own core. Electron loads it through N-API in the main process
-(`crates/kchess-node`); GPUI runs it on a Tokio runtime inside the app (`apps/gpui/src/core.rs`).
+Before this, every KChess app embedded its own core. Electron loaded it through N-API in the main process
+(`crates/kchess-node`); GPUI ran it on a Tokio runtime inside the app (`apps/gpui/src/core.rs`).
 The core is the profile's only writer, and `ProfileClaim` (`crates/kchess-core/src/facade.rs`)
 enforces that with an advisory `profile.lock`: a second app on the same profile fails with
 "A KChess core is already running for this profile."
@@ -387,7 +389,7 @@ sibling of it, never inside it: a profile can be copied, backed up or pointed at
 
 ## Staged plan
 
-Each stage ships on its own and keeps both apps working.
+Each stage ships on its own and keeps both apps working. Stages 1–5 are done.
 
 1. **Prepare the core, in-process.** Add connection-scoped sessions (analysis, watch, voice,
    puzzle runs), the change events, document revisions, alert ownership and host-request routing
