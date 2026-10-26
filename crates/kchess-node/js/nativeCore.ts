@@ -1,6 +1,8 @@
 import { bindCoreCallback, platform, scopedState } from './platform.ts'
 import { nativeRules, type NativeCoreHandle } from './native.ts'
 import { logDebug, logError, logInfo, logWarn } from './logger.ts'
+import { ServiceCore } from './serviceCore.ts'
+import { existsSync } from 'node:fs'
 
 /**
  * The Rust core (`crates/kchess-core`), one instance per core scope. Its logs go to the core
@@ -12,6 +14,8 @@ type Sink = (event: string, payload: unknown) => void
 
 const state = scopedState(() => ({
   core: undefined as NativeCoreHandle | undefined,
+  /** The shared core service's client, when the scope uses it (`docs/shared-core.md`). */
+  service: undefined as ServiceCore | undefined,
   closed: false,
   handlers: new Map<string, Set<Handler>>(),
   sinks: new Set<Sink>(),
@@ -72,9 +76,27 @@ async function answer(request: { id: number; kind: string; payload: unknown }): 
 function core(): NativeCoreHandle {
   if (state.closed) throw new Error('The KChess core is closed.')
   if (state.core) return state.core
+  const host = platform()
+  if (useService(host.serviceBinaryPath)) {
+    state.service = new ServiceCore({
+      dataDir: host.dataDir,
+      binary: host.serviceBinaryPath as string,
+      config: {
+        legacyDatabasePath: host.legacyDatabasePath ?? null,
+        bundledEnginePath: host.bundledEnginePath,
+        runtimePath: process.execPath,
+        runtimeEnv: host.nodeEnv ?? {},
+        managedEngineDir: host.managedEngineDir ?? null,
+        voiceHelperPath: host.voiceHelperPath ?? null,
+        systemCredentials: host.systemCredentials ?? false,
+      },
+      onEvent: handle,
+    })
+    state.core = state.service
+    return state.core
+  }
   const rules = nativeRules()
   if (!rules) throw new Error('The native core is not built (pnpm run build:native).')
-  const host = platform()
   state.core = new rules.NativeCore(
     {
       dataDir: host.dataDir,
@@ -98,9 +120,34 @@ function core(): NativeCoreHandle {
   return state.core
 }
 
+/**
+ * The scope reaches the shared core service (`docs/shared-core.md`): `KCHESS_CORE_MODE=service`
+ * or `embedded` chooses; otherwise it does when the platform ships the service binary.
+ */
+function useService(binary: string | undefined): boolean {
+  const mode = process.env.KCHESS_CORE_MODE
+  if (mode === 'embedded') return false
+  if (mode === 'service') return true
+  return Boolean(binary && existsSync(binary))
+}
+
 /** Opens the scope's native core now, so a profile in use is reported at once. */
 export function openNativeCore(): void {
   core()
+}
+
+/**
+ * Settles once the scope's core can answer: at once for an embedded core; for the shared core,
+ * when connected, or with why not (another release has the profile open, naming the app to update).
+ */
+export async function nativeReady(): Promise<void> {
+  core()
+  await state.service?.ready
+}
+
+/** Tells the shared core whether this app's window is focused; the window focused last alerts. */
+export function nativeFocus(focused: boolean): void {
+  state.service?.focus(focused)
 }
 
 /** Call a Rust core method; rejects with its message (an `AbortError` when cancelled). */
@@ -138,6 +185,7 @@ export function onNativeEvents(sink: Sink): () => void {
 export async function closeNativeCore(): Promise<void> {
   const previous = state.core
   state.core = undefined
+  state.service = undefined
   state.closed = true
   state.handlers.clear()
   state.sinks.clear()

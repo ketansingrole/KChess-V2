@@ -81,6 +81,7 @@ target/
 *.node
 crates/kchess-node/THIRD_PARTY_LICENSES.txt
 crates/kchess-node/voice/
+crates/kchess-node/service/
 apps/desktop/app/assets/rules/
 
 # Benchmark output (perf/README.md)

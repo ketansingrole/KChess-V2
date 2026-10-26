@@ -3,7 +3,8 @@ import type { CoreApi, CoreSettings, Settings } from '@kchess/contracts/types'
 import {
   closeNativeCore,
   nativeCall,
-  nativeCallSync,
+  nativeFocus,
+  nativeReady,
   onNativeEvents,
   openNativeCore,
 } from './nativeCore'
@@ -29,9 +30,16 @@ export interface KChessCore extends CoreApi {
   desktopSettings(): Promise<Settings>
   saveDesktopSettings(settings: Settings): Promise<Settings>
   /** Allow an engine executable the user picked themselves to be saved in settings. */
-  trustEnginePath(path: string): void
+  trustEnginePath(path: string): Promise<void>
   /** The voice log as a JSON document, for the frontend to save. */
-  voiceHistoryDocument(): string
+  voiceHistoryDocument(): Promise<string>
+  /**
+   * Settles once the core can answer. With the shared core (`docs/shared-core.md`) it rejects
+   * when another KChess release has the profile open; the message names the app to update.
+   */
+  ready(): Promise<void>
+  /** This app's window gained or lost focus: the window focused last raises system alerts. */
+  focus(focused: boolean): void
   /** Stop live work nothing can answer without a frontend; services stay usable. */
   suspend(): void
   /** Stop everything and close the databases. */
@@ -87,9 +95,12 @@ function createCore(): KChessCore {
       set.add(listener)
       return () => void set.delete(listener)
     },
-    trustEnginePath: (path: string) =>
-      inScope(() => nativeCallSync<unknown>('trustEnginePath', path)),
-    voiceHistoryDocument: () => inScope(() => nativeCallSync<string>('voiceHistoryDocument')),
+    trustEnginePath: async (path: string) => {
+      await inScope(() => nativeCall<unknown>('trustEnginePath', path))
+    },
+    voiceHistoryDocument: () => inScope(() => nativeCall<string>('voiceHistoryDocument')),
+    ready: () => inScope(() => nativeReady()),
+    focus: (focused: boolean) => inScope(() => nativeFocus(focused)),
     suspend() {
       void inScope(() => nativeCall<unknown>('suspend')).catch((cause: unknown) =>
         logWarn('core', 'Core suspend failed:', cause),

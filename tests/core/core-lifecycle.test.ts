@@ -15,7 +15,7 @@ it('reopens a fresh profile without carrying accounts, settings or trusted execu
   await core.addAccount('ProfileA')
   const data = await core.loadData()
   await core.saveSettings({ ...data.settings, cloudEval: true })
-  core.trustEnginePath('/opt/profile-a/stockfish')
+  await core.trustEnginePath('/opt/profile-a/stockfish')
   const old = core
   await core.close()
   core = createKChessCore(second)
@@ -58,7 +58,7 @@ it('isolates two direct cores even when methods are first read after both are cr
     await Promise.all([a.addAccount('ProfileA'), b.addAccount('ProfileB')])
     const original = await a.settings()
     await a.saveSettings({ ...original, cloudEval: true })
-    a.trustEnginePath('/opt/profile-a/stockfish')
+    await a.trustEnginePath('/opt/profile-a/stockfish')
     expect((await b.settings()).cloudEval).toBe(false)
     await expect(
       b.saveSettings({ ...(await b.settings()), enginePath: '/opt/profile-a/stockfish' }),

@@ -282,6 +282,9 @@ function createWindow(): void {
   window.on('closed', () => {
     window = null
   })
+  // The window focused last raises system notifications for every window (docs/shared-core.md).
+  window.on('focus', () => core?.focus(true))
+  window.on('blur', () => core?.focus(false))
   const owner = window
   let closingWindow = false
   let preparingClose = false
@@ -458,6 +461,18 @@ void app
     setupDiagnostics()
     const service = createKChessCore(electronPlatform(bringToFront))
     core = service
+    try {
+      await service.ready()
+    } catch (error) {
+      // Another KChess release has this profile open: say which app to update.
+      dialog.showMessageBoxSync({
+        type: 'warning',
+        message: 'KChess cannot open this profile',
+        detail: error instanceof Error ? error.message : String(error),
+        buttons: ['Quit'],
+      })
+      throw error
+    }
     forwardCore(service)
     handle('exportDiagnostics', exportDiagnostics)
     handle('reportRendererError', (_event, report) => {
@@ -544,7 +559,7 @@ void app
         properties: ['openFile'],
       })
       const path = result.canceled ? null : (result.filePaths[0] ?? null)
-      if (path) service.trustEnginePath(path)
+      if (path) await service.trustEnginePath(path)
       return path
     })
     handle('saveExport', (_event, raw: unknown) => {
@@ -561,12 +576,12 @@ void app
         data: request.data,
       })
     })
-    handle('exportVoiceHistory', () =>
+    handle('exportVoiceHistory', async () =>
       saveWithDialog(window, {
         title: 'Export voice history',
         defaultPath: `kchess-voice-history-${new Date().toISOString().slice(0, 10)}.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }],
-        data: service.voiceHistoryDocument(),
+        data: await service.voiceHistoryDocument(),
       }),
     )
     handle('notify', (_event, request: unknown) =>

@@ -389,6 +389,17 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             () = cut.notified() => break,
         };
         match frame {
+            // A client without a window stops only its own work, not the other clients'.
+            Frame::Call { id, method, .. } if method == "suspend" => {
+                state.core.suspend_connection(connection);
+                let _ = sender
+                    .send(Frame::Result {
+                        id,
+                        value: Some(Value::Null),
+                        error: None,
+                    })
+                    .await;
+            }
             // The shared core closes on its own once idle: no client closes it for everyone.
             Frame::Call { id, method, .. } if method == "close" => {
                 let _ = sender

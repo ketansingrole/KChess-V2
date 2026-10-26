@@ -46,7 +46,7 @@ describe('voice log', () => {
 
   it('exports entries as a JSON document', async () => {
     await core.saveVoiceAttempt(attempt({ heard: 'castle kingside' }))
-    const exported = JSON.parse(core.voiceHistoryDocument()) as {
+    const exported = JSON.parse(await core.voiceHistoryDocument()) as {
       entries: { heard: string; time: string }[]
     }
     expect(exported.entries).toHaveLength(1)

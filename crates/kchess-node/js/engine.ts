@@ -13,6 +13,10 @@ export const BUNDLED_ENGINE_SCRIPT = 'node_modules/stockfish/bin/stockfish-19-li
 export const VOICE_HELPER_FILE = `voice/kchess-voice${process.platform === 'win32' ? '.exe' : ''}`
 /** `VOICE_HELPER_FILE` from the desktop app's directory. */
 export const VOICE_HELPER = `node_modules/@kchess/native/${VOICE_HELPER_FILE}`
+/** The shared core service (`docs/shared-core.md`), staged by `build:native`. */
+export const SERVICE_BINARY = `node_modules/@kchess/native/service/kchess-service${
+  process.platform === 'win32' ? '.exe' : ''
+}`
 
 /** A search ended on purpose (`SearchCancelled`); `isExpectedCancellation` recognises it. */
 export class SearchCancelled extends Error {

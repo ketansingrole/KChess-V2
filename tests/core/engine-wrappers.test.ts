@@ -28,7 +28,7 @@ describe('engine status and trust', () => {
 
   it('saves only the executable paths the host has trusted', async () => {
     const picked = join(dataDir, 'picked-engine')
-    core.trustEnginePath(picked)
+    await core.trustEnginePath(picked)
     await expect(
       core.saveSettings({ ...(await core.settings()), enginePath: picked }),
     ).resolves.toMatchObject({ enginePath: picked })

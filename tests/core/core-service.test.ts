@@ -48,7 +48,7 @@ describe('headless core', () => {
     await expect(core.saveSettings({ ...settings, enginePath: picked })).rejects.toThrow(
       'file picker',
     )
-    core.trustEnginePath(picked)
+    await core.trustEnginePath(picked)
     expect((await core.saveSettings({ ...settings, enginePath: picked })).enginePath).toBe(picked)
     await core.saveSettings(settings)
   })

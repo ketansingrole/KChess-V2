@@ -1,7 +1,12 @@
 import { app, powerMonitor, safeStorage, shell } from 'electron'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { BUNDLED_ENGINE_SCRIPT, VOICE_HELPER, type CorePlatform } from '@kchess/native'
+import {
+  BUNDLED_ENGINE_SCRIPT,
+  SERVICE_BINARY,
+  VOICE_HELPER,
+  type CorePlatform,
+} from '@kchess/native'
 
 /** The core's host capabilities, backed by Electron. */
 export function electronPlatform(focus: () => void): CorePlatform {
@@ -14,6 +19,11 @@ export function electronPlatform(focus: () => void): CorePlatform {
     ),
     // Native executables cannot run from inside the asar either.
     voiceHelperPath: join(app.getAppPath(), VOICE_HELPER).replace(
+      /app\.asar([\\/])/,
+      'app.asar.unpacked$1',
+    ),
+    // The profile's shared core (docs/shared-core.md); it runs from a copy outside the app.
+    serviceBinaryPath: join(app.getAppPath(), SERVICE_BINARY).replace(
       /app\.asar([\\/])/,
       'app.asar.unpacked$1',
     ),

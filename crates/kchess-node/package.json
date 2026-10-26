@@ -33,6 +33,7 @@
     "index.d.ts",
     "*.node",
     "voice/**",
+    "service/**",
     "THIRD_PARTY_LICENSES.txt"
   ]
 }

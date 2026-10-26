@@ -300,6 +300,12 @@ impl Core {
         self.report_alert_owner();
     }
 
+    /// A client has no window open (`suspend`): what it started stops, and every other client's
+    /// work carries on.
+    pub fn suspend_connection(&self, connection: u64) {
+        self.end_connection(connection);
+    }
+
     /// A client's window gained or lost focus; the window focused last alerts the person.
     pub fn focus(&self, connection: u64, focused: bool) {
         self.connections.focus(connection, focused);

@@ -138,7 +138,8 @@
     "asarUnpack": [
       "node_modules/stockfish/bin/**",
       "node_modules/@kchess/native/*.node",
-      "node_modules/@kchess/native/voice/**"
+      "node_modules/@kchess/native/voice/**",
+      "node_modules/@kchess/native/service/**"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "nsis": {

@@ -1,5 +1,6 @@
 //! `kchess-service serve --profile <dir> [--config <json>] [--idle-ms <ms>]`: the shared core
-//! of one KChess profile (`docs/shared-core.md`). Apps start it through
+//! of one KChess profile. `kchess-service version` prints the release and protocol a client of
+//! this build sends (`docs/shared-core.md`). Apps start it through
 //! `kchess_service::connect_or_start`; it stops on its own once no app has used it for the idle
 //! period.
 
@@ -14,9 +15,25 @@ const IDLE: Duration = Duration::from_secs(10);
 
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("serve") {
-        eprintln!("usage: kchess-service serve --profile <dir> [--config <json>] [--idle-ms <ms>]");
-        return std::process::ExitCode::from(2);
+    match args.next().as_deref() {
+        Some("serve") => {}
+        // What a client of this build sends in `hello` (the Electron app asks its bundled copy).
+        Some("version") => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "release": kchess_service::protocol::release(),
+                    "protocol": kchess_service::protocol::protocol(),
+                })
+            );
+            return std::process::ExitCode::SUCCESS;
+        }
+        _ => {
+            eprintln!(
+                "usage: kchess-service serve --profile <dir> [--config <json>] [--idle-ms <ms>]\n       kchess-service version"
+            );
+            return std::process::ExitCode::from(2);
+        }
     }
     let (mut profile, mut config, mut idle) = (None, ServiceConfig::default(), IDLE);
     while let Some(flag) = args.next() {
