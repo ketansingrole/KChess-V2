@@ -774,25 +774,30 @@ impl WatchPage {
                 ))
             })
             .child(
-                h_flex()
-                    .gap(px(8.))
-                    .pt(px(14.))
-                    .border_t_1()
-                    .border_color(palette.border)
-                    .child(
+                widgets::panel_actions(
+                    false,
+                    [
                         Button::new("watch-analyse")
                             .outline()
+                            .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")
-                            .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx))),
-                    )
-                    .child(
+                            .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
+                            .into_any_element()
+                            .into(),
                         Button::new("watch-stop")
                             .outline()
+                            .w_full()
                             .icon(icon("square"))
                             .label("Stop")
-                            .on_click(cx.listener(|this, _, _, cx| this.stop(cx))),
-                    ),
+                            .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+                            .into_any_element()
+                            .into(),
+                    ],
+                )
+                .pt(px(14.))
+                .border_t_1()
+                .border_color(palette.border),
             );
         if self.layout.is_stacked() {
             let column = |child: AnyElement| div().w(board_size).max_w_full().child(child);

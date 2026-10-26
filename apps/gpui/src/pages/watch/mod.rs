@@ -708,7 +708,7 @@ impl Render for WatchPage {
                         .flatten(),
                 ),
             )
-            .child(widgets::pills(
+            .child(widgets::header_pills(
                 "watch-tabs",
                 tabs.into_iter()
                     .map(|(_, label, glyph)| Pill {
@@ -720,7 +720,6 @@ impl Render for WatchPage {
                     .collect(),
                 selected,
                 choose,
-                true,
                 &palette,
             ));
         let notices = self.notices(cx, &palette);

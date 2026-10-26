@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::pages::Page;
-use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
+use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
 
@@ -125,6 +125,8 @@ fn choices(items: &[(&str, &str)]) -> Vec<Choice> {
 type Choices = Entity<SelectState<Vec<Choice>>>;
 
 pub struct InsightsPage {
+    /// The breakdowns' width at the last layout.
+    area: Measured,
     account: String,
     account_select: Choices,
     speed: Choices,
@@ -179,6 +181,7 @@ impl InsightsPage {
             this.sync_accounts(window, cx)
         }));
         let mut page = InsightsPage {
+            area: Measured::default(),
             account: String::new(),
             account_select,
             speed,
@@ -388,11 +391,49 @@ fn headline(report: &Value, palette: &Palette) -> Div {
         .children(accuracy.map(|(average, sub)| figure("Accuracy", average, Some(sub), palette)))
 }
 
+/// `USelect size="sm"`: a filter only as wide as its choice, so the four fit beside the figures.
+fn fit(select: &Choices, choices: &[(&str, &str)], cx: &App) -> Div {
+    let chosen = select.read(cx).selected_value().cloned();
+    let label = choices
+        .iter()
+        .find(|(value, _)| Some(*value) == chosen.as_deref())
+        .map_or(choices[0].1, |(_, label)| label);
+    div().w(px(label.chars().count() as f32 * 7. + 40.))
+}
+
+/// `.insight-sections { columns: 3 300px }`: sections kept whole and in order, split into as many
+/// columns as fit (at most three) at the least height that holds them, as CSS balances columns.
+fn balance(heights: &[f32], columns: usize) -> Vec<usize> {
+    let fits = |limit: f32| {
+        let mut used = 1;
+        let mut height = 0.;
+        let mut starts = vec![0];
+        for (index, section) in heights.iter().enumerate() {
+            if height > 0. && height + section > limit {
+                used += 1;
+                height = 0.;
+                starts.push(index);
+            }
+            height += section;
+        }
+        (used <= columns).then_some(starts)
+    };
+    let mut limits: Vec<f32> = (0..heights.len())
+        .flat_map(|start| {
+            (start + 1..=heights.len()).map(move |end| heights[start..end].iter().sum())
+        })
+        .collect();
+    limits.sort_by(f32::total_cmp);
+    limits.into_iter().find_map(fits).unwrap_or_else(|| vec![0])
+}
+
+/// A breakdown's entries: each label with its wins, draws and losses.
+type Rows = Vec<(String, (f64, f64, f64))>;
+
 /// One breakdown: its title and a result row per entry.
-fn section(title: &'static str, rows: Vec<(String, (f64, f64, f64))>, palette: &Palette) -> Div {
+fn section(title: &'static str, rows: Rows, palette: &Palette) -> Div {
     v_flex()
-        .flex_1()
-        .min_w(px(300.))
+        .w_full()
         .gap(px(6.))
         .child(div().mb(px(4.)).child(widgets::heading(title, palette)))
         .children(
@@ -415,9 +456,9 @@ impl Render for InsightsPage {
                         .child(Select::new(&self.account_select).small()),
                 )
             })
-            .child(div().w(px(150.)).child(Select::new(&self.speed).small()))
-            .child(div().w(px(140.)).child(Select::new(&self.period).small()))
-            .child(div().w(px(160.)).child(Select::new(&self.rated).small()));
+            .child(fit(&self.speed, &SPEEDS, cx).child(Select::new(&self.speed).small()))
+            .child(fit(&self.period, &PERIODS, cx).child(Select::new(&self.period).small()))
+            .child(fit(&self.rated, &RATED, cx).child(Select::new(&self.rated).small()));
         let report = self.report.clone();
         let total = report
             .as_ref()
@@ -515,7 +556,8 @@ impl Render for InsightsPage {
                 )
                 .into_any_element()
         } else if let Some(report) = self.report.clone() {
-            self.breakdowns(&report, &palette).into_any_element()
+            self.breakdowns(&report, self.area.size().width, &palette)
+                .into_any_element()
         } else {
             div().into_any_element()
         };
@@ -531,13 +573,14 @@ impl Render for InsightsPage {
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
                     .child(header)
-                    .child(body),
+                    // Measured for the breakdowns' column count (`columns: 3 300px`).
+                    .child(div().relative().child(self.area.probe(cx)).child(body)),
             )
     }
 }
 
 impl InsightsPage {
-    fn breakdowns(&self, report: &Value, palette: &Palette) -> Div {
+    fn breakdowns(&self, report: &Value, width: Pixels, palette: &Palette) -> Div {
         let list =
             |key: &str, label: &dyn Fn(&Value) -> String| -> Vec<(String, (f64, f64, f64))> {
                 report[key]
@@ -550,29 +593,23 @@ impl InsightsPage {
         let text = |field: &'static str| {
             move |entry: &Value| entry[field].as_str().unwrap_or_default().to_string()
         };
-        let sections = vec![
-            section(
+        let parts: Vec<(&'static str, Rows)> = vec![
+            (
                 "By colour",
                 vec![
                     ("White".into(), record(&report["byColor"]["white"])),
                     ("Black".into(), record(&report["byColor"]["black"])),
                 ],
-                palette,
             ),
-            section(
+            (
                 "By speed",
                 list("bySpeed", &|entry| {
                     speed_name(entry["speed"].as_str().unwrap_or_default())
                 }),
-                palette,
             ),
-            section(
-                "By opponent rating",
-                list("byOpponent", &text("label")),
-                palette,
-            ),
-            section("By game length", list("byLength", &text("label")), palette),
-            section(
+            ("By opponent rating", list("byOpponent", &text("label"))),
+            ("By game length", list("byLength", &text("label"))),
+            (
                 "By day",
                 report["byWeekday"]
                     .as_array()
@@ -581,29 +618,40 @@ impl InsightsPage {
                     .enumerate()
                     .map(|(day, entry)| (WEEKDAYS[day % 7].to_string(), record(entry)))
                     .collect(),
-                palette,
             ),
-            section("By time of day", by_time(&report["byHour"]), palette),
-            section(
+            ("By time of day", by_time(&report["byHour"])),
+            (
                 "How games ended",
                 list("endings", &|entry| {
                     ending(entry["status"].as_str().unwrap_or_default()).to_string()
                 }),
-                palette,
             ),
         ];
         let openings = report["byOpening"].as_array().cloned().unwrap_or_default();
         let best = best_and_weakest(&openings);
+        // Each section's height for balancing: its title and a row per entry.
+        let heights: Vec<f32> = parts
+            .iter()
+            .map(|(_, rows)| 30. + rows.len() as f32 * 34. + 28.)
+            .collect();
+        let columns = ((f32::from(width) + 40.) / 340.).floor().clamp(1., 3.) as usize;
+        let mut starts = balance(&heights, columns);
+        starts.push(parts.len());
+        let mut parts = parts.into_iter();
+        let column_list: Vec<Div> = starts
+            .windows(2)
+            .map(|range| {
+                v_flex().flex_1().min_w_0().gap(px(28.)).children(
+                    parts
+                        .by_ref()
+                        .take(range[1] - range[0])
+                        .map(|(title, rows)| section(title, rows, palette)),
+                )
+            })
+            .collect();
         v_flex()
             .gap(px(28.))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .items_start()
-                    .gap_x(px(40.))
-                    .gap_y(px(28.))
-                    .children(sections),
-            )
+            .child(h_flex().items_start().gap(px(40.)).children(column_list))
             .child(
                 v_flex()
                     .gap(px(6.))
@@ -642,8 +690,18 @@ impl InsightsPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{best_and_weakest, by_time, speed_name};
+    use super::{balance, best_and_weakest, by_time, speed_name};
     use serde_json::json;
+
+    /// Electron's columns put colour, speed and opponent rating first; length and day next;
+    /// time of day and endings last.
+    #[test]
+    fn sections_balance_into_columns_as_css_does() {
+        let rows = [2., 6., 5., 4., 7., 6., 9.];
+        let heights: Vec<f32> = rows.iter().map(|rows| 30. + rows * 34. + 28.).collect();
+        assert_eq!(balance(&heights, 3), vec![0, 3, 5]);
+        assert_eq!(balance(&heights, 1), vec![0]);
+    }
 
     #[test]
     fn hours_group_into_four_hour_blocks() {

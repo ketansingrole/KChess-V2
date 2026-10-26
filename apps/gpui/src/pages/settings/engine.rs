@@ -448,7 +448,7 @@ impl SettingsPage {
             palette,
         );
         rows.rows.push(self.engine_option(
-            "Bundled Stockfish",
+            "Bundled Stockfish 19 lite",
             "Included".into(),
             source == Source::Bundled,
             bundled_buttons,
@@ -496,15 +496,19 @@ impl SettingsPage {
                 |s, on| s.core.review_on_battery = on,
                 palette,
             );
+        // `#settings-review`: one card, its title and status above the rows.
         v_flex().gap(px(16.)).child(rows.card(palette)).child(
-            v_flex()
-                .gap(px(8.))
-                .child(info(
-                    "Game review",
-                    Some(review_text(&review, auto).into()),
-                    palette,
-                ))
-                .child(review_rows.card(palette)),
+            review_rows.card_under(
+                Some(
+                    info(
+                        "Game review",
+                        Some(review_text(&review, auto).into()),
+                        palette,
+                    )
+                    .into_any_element(),
+                ),
+                palette,
+            ),
         )
     }
 }

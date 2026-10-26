@@ -163,29 +163,34 @@ impl Render for LichessActivity {
         let progress = self.profile["perfs"]["blitz"]["prog"]
             .as_f64()
             .filter(|prog| *prog != 0.);
+        // `.record`: each count with its letter small after it.
+        let tally = |value: f64, letter: &'static str, color: Hsla| {
+            h_flex()
+                .items_baseline()
+                .text_color(color)
+                .child(format!("{value}"))
+                .child(
+                    div()
+                        .ml(px(2.))
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .opacity(0.7)
+                        .child(letter),
+                )
+        };
         let record_value = h_flex()
+            .items_baseline()
             .gap(px(10.))
-            .child(
-                div()
-                    .text_color(palette.win)
-                    .child(format!("{}W", count("win"))),
-            )
-            .child(
-                div()
-                    .text_color(palette.loss)
-                    .child(format!("{}L", count("loss"))),
-            )
-            .child(
-                div()
-                    .text_color(palette.text_muted)
-                    .child(format!("{}D", count("draw"))),
-            );
+            .text_size(px(22.))
+            .child(tally(count("win"), "W", palette.win))
+            .child(tally(count("loss"), "L", palette.loss))
+            .child(tally(count("draw"), "D", palette.text_muted));
         let stats = h_flex()
             .flex_wrap()
             .gap(px(12.))
             .child(stat(
                 "Games",
-                widgets::format_count(games),
+                format!("{games}"),
                 if lifetime.is_some() {
                     "Lichess lifetime"
                 } else {

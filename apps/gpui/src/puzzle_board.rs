@@ -81,6 +81,16 @@ pub struct PuzzleBoard {
 impl EventEmitter<PuzzleBoardEvent> for PuzzleBoard {}
 
 impl PuzzleBoard {
+    /// What the board's column holds besides the board: the material row above and the move box
+    /// below, or the move box alone.
+    pub fn around(&self) -> Pixels {
+        if self.material {
+            px(18.) + px(4.) * 2. + px(36.)
+        } else {
+            widgets::STACK_GAP + px(36.)
+        }
+    }
+
     pub fn new(material: bool, window: &mut Window, cx: &mut Context<Self>) -> PuzzleBoard {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
@@ -502,9 +512,24 @@ impl Render for PuzzleBoard {
             .piece_set
             .clone();
         let orientation = self.orientation();
-        let entry = widgets::move_entry(&self.move_input, true, &palette)
-            .h(px(36.))
-            .flex_1();
+        let entry = widgets::move_entry(&self.move_input, true, &palette).h(px(36.));
+        let playing = self.playing();
+        let voice = board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, _, cx| this.on_move(uci, cx),
+            },
+            BoardBar {
+                id: "puzzle-voice",
+                hint: "Say “E four” or “Knight F three”.",
+                active: playing,
+                listening: playing,
+                grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+            },
+            cx,
+        );
         let board = div()
             .rounded(px(6.))
             .border_3()
@@ -530,33 +555,16 @@ impl Render for PuzzleBoard {
                         .h(px(36.))
                         .gap(px(12.))
                         .children(material(orientation == Color::White))
-                        .child(div().flex_1().pl(px(60.)).child(entry)),
+                        .child(widgets::move_row(entry, voice)),
                 )
         } else {
             v_flex()
                 .gap(widgets::STACK_GAP)
                 .child(board)
-                .child(h_flex().child(entry))
+                .child(widgets::input_row(entry, voice))
         };
-        let playing = self.playing();
         column
             .w_full()
-            .child(board_bar(
-                &self.voice,
-                cx.entity().downgrade(),
-                Access {
-                    write: |this: &mut Self| &mut this.voice,
-                    play: |this: &mut Self, uci, _, cx| this.on_move(uci, cx),
-                },
-                BoardBar {
-                    id: "puzzle-voice",
-                    hint: "Say “E four” or “Knight F three”.",
-                    active: playing,
-                    listening: playing,
-                    grammar: crate::voice::grammar("MOVE_GRAMMAR"),
-                },
-                cx,
-            ))
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))

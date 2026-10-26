@@ -569,7 +569,41 @@ pub fn pills(
     compact: bool,
     palette: &Palette,
 ) -> impl IntoElement {
-    pill_row(id, tabs, selected, choose, compact, false, palette)
+    pill_row(
+        id,
+        tabs,
+        selected,
+        choose,
+        PillRow {
+            compact,
+            wrap: false,
+            fill: !compact,
+        },
+        palette,
+    )
+}
+
+/// A page header's tabs (`UTabs variant="pill"` in `PageHeader`): full-size pills, only as wide
+/// as their labels.
+pub fn header_pills(
+    id: &'static str,
+    tabs: Vec<Pill>,
+    selected: usize,
+    choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    palette: &Palette,
+) -> impl IntoElement {
+    pill_row(
+        id,
+        tabs,
+        selected,
+        choose,
+        PillRow {
+            compact: false,
+            wrap: false,
+            fill: false,
+        },
+        palette,
+    )
 }
 
 /// Full-width pills that take another row when they do not fit on one, each row's pills
@@ -581,7 +615,25 @@ pub fn wrapping_pills(
     choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     palette: &Palette,
 ) -> impl IntoElement {
-    pill_row(id, tabs, selected, choose, false, true, palette)
+    pill_row(
+        id,
+        tabs,
+        selected,
+        choose,
+        PillRow {
+            compact: false,
+            wrap: true,
+            fill: true,
+        },
+        palette,
+    )
+}
+
+/// How a pill row is drawn: small pills, wrapping to more rows, or filling the width.
+struct PillRow {
+    compact: bool,
+    wrap: bool,
+    fill: bool,
 }
 
 fn pill_row(
@@ -589,13 +641,17 @@ fn pill_row(
     tabs: Vec<Pill>,
     selected: usize,
     choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    compact: bool,
-    wrap: bool,
+    look: PillRow,
     palette: &Palette,
 ) -> impl IntoElement {
+    let PillRow {
+        compact,
+        wrap,
+        fill,
+    } = look;
     h_flex()
         .id(id)
-        .when(!compact, |row| row.w_full())
+        .when(fill, |row| row.w_full())
         .when(wrap, |row| row.flex_wrap())
         .p(px(2.))
         .gap(px(4.))
@@ -608,7 +664,7 @@ fn pill_row(
             let choose = choose.clone();
             h_flex()
                 .id((id, index))
-                .when(!compact && !wrap, |tab| tab.flex_1())
+                .when(fill && !wrap, |tab| tab.flex_1())
                 .when(wrap, |tab| tab.flex_grow(1.))
                 .justify_center()
                 .gap(px(if compact { 6. } else { 8. }))
@@ -680,6 +736,75 @@ pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) 
                 .text_color(palette.text_muted)
                 .child("↵"),
         )
+}
+
+/// `@container side-panel (max-width: 400px)`: a panel this narrow puts two actions per row.
+const NARROW_PANEL: Pixels = px(400.);
+
+/// A side panel measured `width` wide on the outside (zero before its first layout) is narrow:
+/// the container query reads its content box, inside the 16px padding and 1px border.
+pub fn is_narrow(width: Pixels) -> bool {
+    width > px(0.) && width - px(34.) <= NARROW_PANEL
+}
+
+/// One of a panel's actions: filling its share of the row, or (`fit`) only as wide as it is.
+pub struct Action(AnyElement, bool);
+
+impl From<AnyElement> for Action {
+    fn from(element: AnyElement) -> Action {
+        Action(element, true)
+    }
+}
+
+/// An action kept to its own width (an icon button such as Flip).
+pub fn fit(element: impl IntoElement) -> Action {
+    Action(element.into_any_element(), false)
+}
+
+/// `.panel-actions`: the panel's buttons sharing one row equally; in a narrow panel two per row,
+/// an odd one out taking the whole row.
+pub fn panel_actions(narrow: bool, actions: impl IntoIterator<Item = Action>) -> Div {
+    h_flex()
+        .w_full()
+        .gap(px(8.))
+        .when(narrow, |row| row.flex_wrap())
+        .children(actions.into_iter().map(|Action(element, fill)| {
+            h_flex()
+                .min_w_0()
+                .justify_center()
+                .when(fill, |cell| cell.flex_1())
+                .when(!fill, |cell| cell.flex_none())
+                .when(narrow && fill, |cell| cell.min_w(relative(0.45)))
+                .child(element)
+        }))
+}
+
+/// `.board-input-row`: the move box and the controls a page adds (voice) on one line, the box
+/// taking the room and the controls at most 60% of it.
+pub fn input_row(entry: Div, controls: impl IntoElement) -> Div {
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .gap(px(8.))
+        .child(entry.flex_1().min_w_0())
+        .child(div().max_w(relative(0.6)).min_w_0().child(controls))
+}
+
+/// `.player-middle` > `.move-entry`: the input row in a player's line, kept to the right and at
+/// most 22rem wide.
+pub fn move_row(entry: Div, controls: impl IntoElement) -> AnyElement {
+    h_flex()
+        .flex_1()
+        .min_w_0()
+        .justify_end()
+        .child(
+            div()
+                .flex_1()
+                .max_w(px(352.))
+                .min_w_0()
+                .child(input_row(entry, controls)),
+        )
+        .into_any_element()
 }
 
 /// `UEmpty`: an icon, a title and an optional line under it; the caller adds the actions.
@@ -838,7 +963,9 @@ pub fn study_card(
                                 .text_size(px(16.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .line_height(relative(1.4))
+                                // `-webkit-line-clamp: 2`: a longer name ends in "…".
                                 .line_clamp(2)
+                                .text_ellipsis()
                                 .cursor_pointer()
                                 .on_click(move |_, window, cx| open_title(window, cx))
                                 .child(card.name),
@@ -910,6 +1037,22 @@ pub enum Look {
 
 /// `UBadge`: a short label in a soft color; callers add an icon, a width or a dot.
 pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> Div {
+    badge_box(look, palette).child(label.into())
+}
+
+/// A badge with its leading icon (`UBadge :icon`).
+pub fn icon_badge(
+    glyph: Icon,
+    label: impl Into<SharedString>,
+    look: Look,
+    palette: &Palette,
+) -> Div {
+    badge_box(look, palette)
+        .child(glyph.size(px(13.)))
+        .child(label.into())
+}
+
+fn badge_box(look: Look, palette: &Palette) -> Div {
     let (bg, fg, ring) = match look {
         Look::Success => (tint(palette.success, 10.), palette.success, None),
         Look::Error => (tint(palette.error, 10.), palette.error, None),
@@ -935,7 +1078,6 @@ pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> D
         .line_height(px(16.))
         .font_weight(FontWeight::MEDIUM)
         .when_some(ring, |badge, ring| badge.border_1().border_color(ring))
-        .child(label.into())
 }
 
 /// `ResultBar.vue`: a label, the score (wins plus half the draws), the games, and a bar of won,
@@ -986,10 +1128,10 @@ pub fn result_row(
                         })),
                 )
                 .child(
+                    // `.result-value`: the score at the row's weight, its unit 12px and muted.
                     h_flex()
                         .gap(px(3.))
                         .items_baseline()
-                        .font_weight(FontWeight::SEMIBOLD)
                         .child(if total > 0. {
                             format!("{score}%")
                         } else {
@@ -998,8 +1140,7 @@ pub fn result_row(
                         .when(total > 0., |value| {
                             value.child(
                                 div()
-                                    .text_size(px(11.))
-                                    .font_weight(FontWeight::NORMAL)
+                                    .text_size(px(12.))
                                     .text_color(palette.text_muted)
                                     .child("score"),
                             )

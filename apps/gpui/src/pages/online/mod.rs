@@ -415,47 +415,64 @@ impl OnlinePage {
                 )
                 .child(control)
         };
-        let time_grid = h_flex()
-            .gap(px(6.))
-            .children(
-                TIME_CONTROLS
-                    .iter()
-                    .enumerate()
-                    .map(|(index, (minutes, label))| {
-                        let chosen = form.minutes == *minutes;
-                        v_flex()
-                            .id(("time-control", index))
-                            .flex_1()
-                            .min_w(px(72.))
-                            .items_center()
-                            .py(px(8.))
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(if chosen {
-                                palette.primary
-                            } else {
-                                palette.border
-                            })
-                            .when(chosen, |cell| {
-                                cell.bg(crate::theme::tint(palette.primary, 14.))
-                            })
-                            .cursor_pointer()
-                            .hover(|cell| cell.bg(palette.accented))
-                            .on_click(set(|form, value| form.minutes = value, *minutes))
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(format!("{minutes} min")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(palette.text_muted)
-                                    .child(*label),
-                            )
-                    }),
-            );
+        // `.tc-grid`: the six presets in rows of three (the form's card is never under 340px).
+        let columns = 3;
+        let cells: Vec<AnyElement> = TIME_CONTROLS
+            .iter()
+            .enumerate()
+            .map(|(index, (minutes, label))| {
+                let chosen = form.minutes == *minutes;
+                // `.tc-option`.
+                v_flex()
+                    .id(("time-control", index))
+                    .flex_1()
+                    .min_w_0()
+                    .items_start()
+                    .gap(px(2.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(if chosen {
+                        palette.primary
+                    } else {
+                        palette.border
+                    })
+                    .bg(if chosen {
+                        crate::theme::tint(palette.primary, 12.)
+                    } else {
+                        palette.bg
+                    })
+                    .text_color(palette.text)
+                    .cursor_pointer()
+                    .when(!chosen, |cell| {
+                        cell.hover(|cell| {
+                            cell.border_color(palette.border_accented)
+                                .bg(palette.accented)
+                        })
+                    })
+                    .on_click(set(|form, value| form.minutes = value, *minutes))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(FontWeight::BOLD)
+                            .child(format!("{minutes} min")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(palette.text_muted)
+                            .child(*label),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let mut rows = Vec::new();
+        let mut cells = cells.into_iter().peekable();
+        while cells.peek().is_some() {
+            rows.push(h_flex().gap(px(8.)).children(cells.by_ref().take(columns)));
+        }
+        let time_grid = v_flex().gap(px(8.)).children(rows);
         let mut card = widgets::card(palette)
             .gap(px(16.))
             .flex_1()

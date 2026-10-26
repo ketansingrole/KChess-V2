@@ -2712,12 +2712,32 @@ impl Render for AnalysisPage {
             }
         });
         // The column always keeps the eval bar's width beside the board.
-        let board_size = self
-            .layout
-            .board_size_in(EVAL_BAR + EVAL_GAP, STUDY_BAR, window);
-        let entry = widgets::move_entry(&self.move_input, true, &palette)
-            .h(px(36.))
-            .flex_1();
+        // The column holds the board and the move box under it (`.analysis-surface`).
+        let board_size = self.layout.board_size_around(
+            EVAL_BAR + EVAL_GAP,
+            STUDY_BAR,
+            widgets::STACK_GAP + px(36.),
+            window,
+        );
+        let entry = widgets::move_entry(&self.move_input, true, &palette).h(px(36.));
+        let voice = board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, _, cx| {
+                    this.play(uci, cx);
+                },
+            },
+            BoardBar {
+                id: "analysis-voice",
+                hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”.",
+                active: true,
+                listening: true,
+                grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
+            },
+            cx,
+        );
         let board_column = v_flex()
             .w(board_size + EVAL_BAR + EVAL_GAP)
             .flex_none()
@@ -2748,25 +2768,7 @@ impl Render for AnalysisPage {
                 v_flex()
                     .pl(EVAL_BAR + EVAL_GAP)
                     .gap(px(4.))
-                    .child(entry)
-                    .child(board_bar(
-                        &self.voice,
-                        cx.entity().downgrade(),
-                        Access {
-                            write: |this: &mut Self| &mut this.voice,
-                            play: |this: &mut Self, uci, _, cx| {
-                                this.play(uci, cx);
-                            },
-                        },
-                        BoardBar {
-                            id: "analysis-voice",
-                            hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”.",
-                            active: true,
-                            listening: true,
-                            grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
-                        },
-                        cx,
-                    ))
+                    .child(widgets::input_row(entry, voice))
                     .children(self.move_message.clone().map(|message| {
                         div()
                             .text_size(px(12.))

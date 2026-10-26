@@ -465,14 +465,17 @@ impl PlayersPage {
         let recent: Vec<String> = crate::prefs::get(cx, RECENT_KEY, Vec::new());
         let names = suggestions(&recent, followed);
         let empty = self.profile.is_none();
-        let typed = !self.input.read(cx).value().trim().is_empty();
+        let online = crate::network::online(cx);
+        // `.player-search-empty`: 28px above and 32px below, the `UEmpty` with room around it.
         widgets::card(palette)
             .gap(px(10.))
             .when(empty, |card| {
-                card.py(px(28.)).items_center().child(
+                card.pt(px(28.)).pb(px(32.)).items_center().child(
                     v_flex()
                         .items_center()
-                        .gap(px(6.))
+                        .pt(px(40.))
+                        .pb(px(24.))
+                        .gap(px(20.))
                         .child(
                             icon("user-search")
                                 .size(px(22.))
@@ -481,7 +484,8 @@ impl PlayersPage {
                         .child(
                             div()
                                 .text_size(px(14.))
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(palette.highlighted)
                                 .child("Look up a player"),
                         ),
                 )
@@ -489,19 +493,26 @@ impl PlayersPage {
             .child(
                 h_flex()
                     .gap(px(8.))
-                    .when(empty, |row| row.w(px(480.)))
+                    .when(empty, |row| row.w_full().justify_center())
                     .when(!empty, |row| row.w_full())
                     .child(
+                        // `.player-search-input`: up to 420px, with its user-search icon.
                         div()
-                            .flex_1()
-                            .child(Input::new(&self.input).aria_label("Lichess username")),
+                            .when(empty, |field| field.flex_1().max_w(px(420.)))
+                            .when(!empty, |field| field.flex_1())
+                            .min_w(px(192.))
+                            .child(
+                                Input::new(&self.input)
+                                    .prefix(icon("user-search").size(px(16.)))
+                                    .aria_label("Lichess username"),
+                            ),
                     )
                     .child(
                         Button::new("players-lookup")
                             .primary()
                             .label("Look up")
                             .loading(self.loading)
-                            .disabled(!typed)
+                            .disabled(!online)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.lookup(None, window, cx)),
                             ),
@@ -514,13 +525,16 @@ impl PlayersPage {
                         .gap(px(4.))
                         .when(empty, |row| row.justify_center())
                         .children(names.into_iter().enumerate().map(|(index, name)| {
-                            Button::new(("players-suggestion", index))
-                                .xsmall()
-                                .ghost()
-                                .label(name.clone())
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show_player(&name, window, cx)
-                                }))
+                            // `variant="soft" color="neutral"`: a filled chip.
+                            div().rounded(px(6.)).bg(palette.accented).child(
+                                Button::new(("players-suggestion", index))
+                                    .xsmall()
+                                    .ghost()
+                                    .label(name.clone())
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.show_player(&name, window, cx)
+                                    })),
+                            )
                         })),
                 )
             })

@@ -26,7 +26,7 @@ use crate::export::{Exporter, GameExport};
 use crate::game::history::HistoryPlace;
 use crate::game::local::{Flagged, LocalGame};
 use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
+use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 use crate::widgets::{self, Side as PieceSide, Tone};
@@ -99,6 +99,8 @@ pub struct LocalPage {
     ticker: Option<Task<()>>,
     clock_ticker: Option<Task<()>>,
     layout: PlayLayout,
+    /// The side panel, measured for `.panel-actions`' narrow rule.
+    panel_area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -233,6 +235,7 @@ impl LocalPage {
             ticker: None,
             clock_ticker: None,
             layout: PlayLayout::default(),
+            panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -1179,6 +1182,7 @@ impl Render for LocalPage {
         }
         let now = self.now();
         let board_size = self.layout.board_size(window);
+        let narrow = widgets::is_narrow(self.panel_area.size().width);
         let moves = self.moves();
         let sans = view::sans(self.setup(), &moves);
         let shown = self.shown_ply();
@@ -1251,35 +1255,30 @@ impl Render for LocalPage {
             )
         };
         let interactive = !over && self.at_live();
-        let entry = widgets::move_entry(&self.move_input, interactive, &palette)
-            .flex_1()
-            .min_w(px(160.));
+        let entry = widgets::move_entry(&self.move_input, interactive, &palette);
+        let voice = crate::voice::moves::board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            crate::voice::moves::Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
+            },
+            crate::voice::moves::BoardBar {
+                id: "local-voice",
+                hint: "Either player can say “E four” or “Knight F three”.",
+                active: self.voice_taking(),
+                listening: self.voice_taking(),
+                grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+            },
+            cx,
+        );
         let board_column = v_flex()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, None))
             .child(self.board.clone())
-            .child(line(
-                orientation,
-                Some(h_flex().pl(px(120.)).child(entry).into_any_element()),
-            ))
-            .child(crate::voice::moves::board_bar(
-                &self.voice,
-                cx.entity().downgrade(),
-                crate::voice::moves::Access {
-                    write: |this: &mut Self| &mut this.voice,
-                    play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
-                },
-                crate::voice::moves::BoardBar {
-                    id: "local-voice",
-                    hint: "Either player can say “E four” or “Knight F three”.",
-                    active: self.voice_taking(),
-                    listening: self.voice_taking(),
-                    grammar: crate::voice::grammar("MOVE_GRAMMAR"),
-                },
-                cx,
-            ))
+            .child(line(orientation, Some(widgets::move_row(entry, voice))))
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))
@@ -1399,6 +1398,8 @@ impl Render for LocalPage {
         let auto_flip = self.auto_flip(cx);
         let in_progress = !over && !moves.is_empty();
         let panel = widgets::side_panel(&palette)
+            .relative()
+            .child(self.panel_area.probe(cx))
             .h(self.layout.panel_height(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
@@ -1480,7 +1481,7 @@ impl Render for LocalPage {
                         Button::new("local-takeback")
                             .outline()
                             .flex_1()
-                            .min_w(relative(0.45))
+                            .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("undo-2"))
                             .label("Take back")
                             .disabled(moves.is_empty() || self.timed_out())
@@ -1491,7 +1492,7 @@ impl Render for LocalPage {
                             Button::new("local-pause")
                                 .outline()
                                 .flex_1()
-                                .min_w(relative(0.45))
+                                .when(narrow, |button| button.min_w(relative(0.45)))
                                 .icon(if paused { icon("play") } else { icon("pause") })
                                 .label(if paused { "Resume" } else { "Pause" })
                                 .disabled(moves.is_empty())
@@ -1503,7 +1504,7 @@ impl Render for LocalPage {
                             Button::new("local-draw")
                                 .outline()
                                 .flex_1()
-                                .min_w(relative(0.45))
+                                .when(narrow, |button| button.min_w(relative(0.45)))
                                 .icon(icon("handshake"))
                                 .label("Draw")
                                 .on_click(cx.listener(|this, _, _, cx| this.agree_draw(cx))),
@@ -1513,7 +1514,7 @@ impl Render for LocalPage {
                                 .outline()
                                 .danger()
                                 .flex_1()
-                                .min_w(relative(0.45))
+                                .when(narrow, |button| button.min_w(relative(0.45)))
                                 .icon(icon("flag"))
                                 .label("Resign")
                                 .on_click(
@@ -1525,7 +1526,7 @@ impl Render for LocalPage {
                         Button::new("local-new")
                             .primary()
                             .flex_1()
-                            .min_w(relative(0.45))
+                            .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("plus"))
                             .label("New game")
                             .on_click(
@@ -1535,43 +1536,44 @@ impl Render for LocalPage {
             )
             .when(!frontend.zen_mode, |panel| {
                 let standard = self.setup()["variant"].as_str().unwrap_or("standard") == "standard";
-                panel.child(
-                    h_flex()
-                        .justify_center()
-                        .flex_wrap()
-                        .gap(px(4.))
-                        .child(
-                            Button::new("copy-pgn")
-                                .ghost()
-                                .xsmall()
-                                .icon(icon("copy"))
-                                .label("Copy PGN")
-                                .disabled(moves.is_empty())
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.copy_pgn(window, cx)),
-                                ),
-                        )
-                        .child(crate::export::export_menu(
+                // `.panel-actions`: Copy PGN, Export and Analyse share the row.
+                panel.child(widgets::panel_actions(
+                    narrow,
+                    [
+                        Button::new("copy-pgn")
+                            .ghost()
+                            .xsmall()
+                            .w_full()
+                            .icon(icon("copy"))
+                            .label("Copy PGN")
+                            .disabled(moves.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| this.copy_pgn(window, cx)))
+                            .into_any_element()
+                            .into(),
+                        crate::export::export_menu(
                             "local-export",
                             &self.exporter,
                             self.game_export(cx),
                             Anchor::BottomCenter,
                             cx,
-                        ))
-                        .when(standard, |row| {
-                            row.child(
-                                Button::new("local-analyse")
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(icon("microscope"))
-                                    .label("Analyse")
-                                    .disabled(moves.is_empty())
-                                    .on_click(
-                                        cx.listener(|this, _, window, cx| this.analyse(window, cx)),
-                                    ),
-                            )
-                        }),
-                )
+                        )
+                        .into_any_element()
+                        .into(),
+                    ]
+                    .into_iter()
+                    .chain(standard.then(|| {
+                        Button::new("local-analyse")
+                            .ghost()
+                            .xsmall()
+                            .w_full()
+                            .icon(icon("microscope"))
+                            .label("Analyse")
+                            .disabled(moves.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
+                            .into_any_element()
+                            .into()
+                    })),
+                ))
             });
         self.layout
             .render("local-page", board_column, panel, window, cx)

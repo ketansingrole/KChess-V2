@@ -426,9 +426,14 @@ impl EditorPage {
         &self,
         color: Color,
         set: &str,
+        width: Pixels,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> impl IntoElement {
+        // `.spare`: eight cells across the row (4px padding and gaps, a 1px border), square up to
+        // 56px tall.
+        let across = (width - px(10.) - px(4.) * 7.) / 8.;
+        let cell = across.min(SPARE_ROWS);
         let tool_button = |id: &'static str,
                            tool: EditTool,
                            glyph: gpui_kit::component::Icon,
@@ -438,8 +443,7 @@ impl EditorPage {
             div()
                 .id(SharedString::from(format!("{id}-{color:?}")))
                 .flex_1()
-                .aspect_ratio(1.)
-                .max_h(SPARE_ROWS)
+                .h(cell)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -482,8 +486,7 @@ impl EditorPage {
             div()
                 .id(SharedString::from(format!("spare-{color:?}-{role:?}")))
                 .flex_1()
-                .aspect_ratio(1.)
-                .max_h(SPARE_ROWS)
+                .h(cell)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -513,11 +516,14 @@ impl EditorPage {
                 })
                 .child(
                     // A stable light square keeps both piece colors legible in every theme.
-                    div()
-                        .size(relative(0.86))
+                    // `.spare-piece`: 86% of the cell, the piece contained in it.
+                    h_flex()
+                        .w(across * 0.86)
+                        .h(cell * 0.86)
+                        .justify_center()
                         .rounded(px(5.))
                         .bg(rgb(0xf0d9b5))
-                        .child(img(image).size_full()),
+                        .child(img(image).size(cell * 0.86)),
                 )
                 .into_any_element()
         });
@@ -577,10 +583,11 @@ impl Render for EditorPage {
             .w(board_size)
             .flex_none()
             .gap(px(8.))
-            .child(self.render_spares(top, &set, cx, &palette))
+            .child(self.render_spares(top, &set, board_size, cx, &palette))
             .child(self.board.clone())
-            .child(self.render_spares(bottom, &set, cx, &palette))
-            .child(self.voice.bar(
+            .child(self.render_spares(bottom, &set, board_size, cx, &palette))
+            // Voice sits at the end of its row, as in `BoardEditor.vue`.
+            .child(h_flex().justify_end().child(self.voice.bar(
                 cx.entity().downgrade(),
                 |this: &mut Self| &mut this.voice,
                 BarSpec {
@@ -590,7 +597,7 @@ impl Render for EditorPage {
                     grammar: crate::voice::grammar("EDITOR_GRAMMAR"),
                 },
                 cx,
-            ));
+            )));
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))
@@ -621,9 +628,12 @@ impl Render for EditorPage {
                 h_flex()
                     .gap(px(8.))
                     .child(
-                        div().flex_1().min_w_0().text_size(px(12.)).child(
+                        div().flex_1().min_w_0().child(
+                            // `.fen-input`: 12px monospace, set on the input, whose size
+                            // would otherwise make it 14px.
                             Input::new(&self.fen_input)
                                 .small()
+                                .text_size(px(12.))
                                 .font_family("Menlo")
                                 .aria_label("FEN"),
                         ),

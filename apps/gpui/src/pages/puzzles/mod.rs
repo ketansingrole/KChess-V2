@@ -734,40 +734,42 @@ pub(crate) fn status_panel(
             None,
             palette,
         ))
-        .child(
-            h_flex()
-                .gap(px(8.))
-                .flex_wrap()
-                .child(
-                    Button::new("puzzle-hint")
-                        .when(hinted, |button| button.primary())
-                        .when(!hinted, |button| button.outline())
-                        .icon(icon("lightbulb"))
-                        .label("Hint")
-                        .disabled(!playing)
-                        .on_click({
-                            let board = board_entity.downgrade();
-                            move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.hint(cx));
-                            }
-                        }),
-                )
-                .child(
-                    Button::new("puzzle-solution")
-                        .outline()
-                        .icon(icon("eye"))
-                        .label("Solution")
-                        .disabled(!playing)
-                        .on_click({
-                            let board = board_entity.downgrade();
-                            move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.show_solution(cx));
-                            }
-                        }),
-                )
-                .child(
+        // `.panel-actions`: Hint, Solution, Flip and Next share the row.
+        .child(widgets::panel_actions(
+            false,
+            [
+                Button::new("puzzle-hint")
+                    .w_full()
+                    .when(hinted, |button| button.primary())
+                    .when(!hinted, |button| button.outline())
+                    .icon(icon("lightbulb"))
+                    .label("Hint")
+                    .disabled(!playing)
+                    .on_click({
+                        let board = board_entity.downgrade();
+                        move |_, _, cx| {
+                            let _ = board.update(cx, |board, cx| board.hint(cx));
+                        }
+                    })
+                    .into_any_element()
+                    .into(),
+                Button::new("puzzle-solution")
+                    .w_full()
+                    .outline()
+                    .icon(icon("eye"))
+                    .label("Solution")
+                    .disabled(!playing)
+                    .on_click({
+                        let board = board_entity.downgrade();
+                        move |_, _, cx| {
+                            let _ = board.update(cx, |board, cx| board.show_solution(cx));
+                        }
+                    })
+                    .into_any_element()
+                    .into(),
+                widgets::fit(
                     Button::new("puzzle-flip")
-                        .outline()
+                        .ghost()
                         .icon(icon("arrow-up-down"))
                         .tooltip("Flip board")
                         .accessibility_label("Flip board")
@@ -777,20 +779,25 @@ pub(crate) fn status_panel(
                                 let _ = board.update(cx, |board, cx| board.flip(cx));
                             }
                         }),
-                )
-                .children(next.map(|next| {
-                    Button::new("puzzle-next")
-                        .when(finished, |button| button.primary())
-                        .when(!finished, |button| button.outline())
-                        .child(
-                            h_flex()
-                                .gap(px(6.))
-                                .child("Next")
-                                .child(icon("arrow-right").size(px(14.))),
-                        )
-                        .on_click(move |_, window, cx| next(window, cx))
-                })),
-        )
+                ),
+            ]
+            .into_iter()
+            .chain(next.map(|next| {
+                Button::new("puzzle-next")
+                    .w_full()
+                    .when(finished, |button| button.primary())
+                    .when(!finished, |button| button.outline())
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .child("Next")
+                            .child(icon("arrow-right").size(px(14.))),
+                    )
+                    .on_click(move |_, window, cx| next(window, cx))
+                    .into_any_element()
+                    .into()
+            })),
+        ))
         .children(facts)
         .into_any_element()
 }
@@ -1118,7 +1125,10 @@ impl PuzzlesPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        let board_size = self.layout.board_size(window);
+        let around = self.puzzle.read(cx).around();
+        let board_size = self
+            .layout
+            .board_size_around(px(0.), px(0.), around, window);
         let mode = Self::mode(cx);
         let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready";
         let board_column = if ready {
@@ -1210,7 +1220,7 @@ impl PuzzlesPage {
             }
         });
         let panel = widgets::side_panel(palette)
-            .h(self.layout.panel_height(board_size))
+            .h(self.layout.fixed(board_size + around))
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

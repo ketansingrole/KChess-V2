@@ -26,6 +26,11 @@ const MODES: [(&str, &str); 6] = [
     ("puzzle", "Puzzle"),
 ];
 const RANGES: [&str; 6] = ["1M", "3M", "6M", "YTD", "1Y", "All"];
+
+/// A small select's width for `label`: its text at 12px, padding and the chevron.
+fn fit_select(label: &str) -> Pixels {
+    px(label.chars().count() as f32 * 7. + 40.)
+}
 const DAY_MS: f64 = 86_400_000.;
 /// Ratings are padded by this much above and below (`ratingYDomain`).
 const RATING_PAD: f64 = 15.;
@@ -335,17 +340,23 @@ impl Render for RatingHistory {
                                     .child("over range")
                             })),
                     )
+                    // `USelect size="sm"`: each only as wide as its choice and chevron.
                     .child(
                         h_flex()
                             .gap(px(6.))
                             .child(
                                 div()
-                                    .w(px(150.))
+                                    .w(fit_select(
+                                        MODES
+                                            .iter()
+                                            .find(|(value, _)| *value == self.mode)
+                                            .map_or("", |(_, label)| label),
+                                    ))
                                     .child(Select::new(&self.mode_select).small()),
                             )
                             .child(
                                 div()
-                                    .w(px(80.))
+                                    .w(fit_select(self.range))
                                     .child(Select::new(&self.range_select).small()),
                             ),
                     ),

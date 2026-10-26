@@ -114,6 +114,23 @@ impl PlayLayout {
         extra_height: Pixels,
         window: &Window,
     ) -> Pixels {
+        self.board_size_around(
+            extra_width,
+            extra_height,
+            widgets::PLAYER_LINE * 2. + widgets::STACK_GAP * 2.,
+            window,
+        )
+    }
+
+    /// The board's side when its column holds `around` besides the board (`v-board-fit`'s
+    /// measured chrome): nothing for a bare board, a material row and the move box for a puzzle.
+    pub fn board_size_around(
+        &self,
+        extra_width: Pixels,
+        extra_height: Pixels,
+        around: Pixels,
+        window: &Window,
+    ) -> Pixels {
         let page = self.area.size();
         let page_width = self.width(window);
         let width = page_width - extra_width;
@@ -134,7 +151,7 @@ impl PlayLayout {
             return size;
         }
         self.stacked.set(None);
-        let chrome = PAGE_TOP + PAGE_BOTTOM + widgets::PLAYER_LINE * 2. + widgets::STACK_GAP * 2.;
+        let chrome = PAGE_TOP + PAGE_BOTTOM + around;
         let by_height = height - chrome;
         let by_width = width - side_padding(window) * 2. - px(344.);
         by_height.min(by_width).max(px(260.)).min(px(1200.))

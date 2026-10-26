@@ -139,7 +139,13 @@ pub fn time_ago(timestamp: f64, now: f64) -> String {
     if days < 31. {
         return format!("{days} day{} ago", if days == 1. { "" } else { "s" });
     }
-    crate::game::game_date(timestamp)
+    // `toLocaleDateString()`: the numeric date, 12/30/2025.
+    use chrono::TimeZone as _;
+    chrono::Local
+        .timestamp_millis_opt(timestamp as i64)
+        .single()
+        .map(|date| date.format("%-m/%-d/%Y").to_string())
+        .unwrap_or_default()
 }
 
 /// Milliseconds since the epoch.
@@ -313,6 +319,9 @@ mod tests {
         assert_eq!(time_ago(now - 3. * 3_600_000., now), "3 h ago");
         assert_eq!(time_ago(now - 86_400_000., now), "1 day ago");
         assert_eq!(time_ago(0., now), "never");
+        // Older than a month: the numeric date, as `toLocaleDateString()` writes it.
+        let old = time_ago(now - 90. * 86_400_000., now);
+        assert_eq!(old.matches('/').count(), 2, "{old}");
     }
 
     #[test]
