@@ -69,6 +69,22 @@ pub fn decide(settings: &Settings, kind: &str, away: bool, page: Page) -> Outcom
     }
 }
 
+/// Who sends a notification on macOS: a packaged app's own bundle, or for a bare `cargo run`
+/// binary (no bundle) the branded development app `pnpm run dev` builds. Without one the
+/// notification library asks macOS for an app named "use_default", which opens a Choose
+/// Application dialog.
+#[cfg(target_os = "macos")]
+fn sender() -> String {
+    objc2_foundation::NSBundle::mainBundle()
+        .bundleIdentifier()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| DEV_SENDER.to_string())
+}
+
+/// `.dev/KChess.app`'s bundle identifier (`tooling/with-branded-electron.mjs`).
+#[cfg(target_os = "macos")]
+const DEV_SENDER: &str = "com.kchess.app.dev";
+
 /// Alert the player about `kind` (`notifyDesktop`).
 pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     let Some(settings) = cx
@@ -90,6 +106,13 @@ pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
             );
             // The system call can wait on the notification centre; it stays off the UI thread.
             std::thread::spawn(move || {
+                #[cfg(target_os = "macos")]
+                {
+                    static SENDER: std::sync::Once = std::sync::Once::new();
+                    SENDER.call_once(|| {
+                        let _ = notify_rust::set_application(&sender());
+                    });
+                }
                 let mut notification = notify_rust::Notification::new();
                 notification.summary(&title).body(&body);
                 if sound {
@@ -123,6 +146,13 @@ mod tests {
         settings.frontend.notify_background = true;
         settings.frontend.notify_low_time = true;
         settings
+    }
+
+    /// A bare test binary has no bundle: it sends as the development app, never "use_default".
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_binary_without_a_bundle_sends_as_the_development_app() {
+        assert_eq!(super::sender(), super::DEV_SENDER);
     }
 
     #[test]
