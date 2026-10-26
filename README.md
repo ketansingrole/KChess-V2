@@ -97,6 +97,11 @@ prints its path. Add `--release` to `cargo run` for a fast build; a release buil
 and shows no development badge. What the GPUI app does and does
 not match yet is tracked in [apps/gpui/PARITY.md](apps/gpui/PARITY.md).
 
+Several KChess windows can share one profile through its core service
+([docs/shared-core.md](docs/shared-core.md)). The GPUI app uses it when `kchess-service` is built
+beside it (`cargo build -p kchess-service`); `KCHESS_CORE_MODE=embedded` or `service` chooses
+explicitly.
+
 On macOS, `cargo run` re-signs the app with your Apple Development identity and a fixed
 identifier (`tooling/macos-dev-runner.sh`), so the keychain's "Always Allow" for the profile's
 credential key lasts across rebuilds. Choose another identity with `KCHESS_DEV_SIGNING_IDENTITY`,

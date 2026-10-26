@@ -389,6 +389,16 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             () = cut.notified() => break,
         };
         match frame {
+            // The shared core closes on its own once idle: no client closes it for everyone.
+            Frame::Call { id, method, .. } if method == "close" => {
+                let _ = sender
+                    .send(Frame::Result {
+                        id,
+                        value: Some(Value::Null),
+                        error: None,
+                    })
+                    .await;
+            }
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));

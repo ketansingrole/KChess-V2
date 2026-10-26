@@ -564,6 +564,12 @@ impl Workspace {
                 crate::theme::apply(window, cx);
                 crate::dock_icon::apply(cx);
             }),
+            // The window focused last raises system notifications (`docs/shared-core.md`).
+            cx.observe_window_activation(window, |_, window, cx| {
+                cx.global::<crate::core::AppCore>()
+                    .bridge
+                    .focus(window.is_window_active());
+            }),
             cx.subscribe_in(
                 &settings,
                 window,

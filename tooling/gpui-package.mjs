@@ -62,6 +62,9 @@ if (!args.has('--skip-build')) {
   })
   say('Building the voice helper (release)…')
   run('cargo', ['build', '--release', '--locked', '-p', 'kchess-voice'])
+  // The profile's shared core, which every KChess window uses (docs/shared-core.md).
+  say('Building the core service (release)…')
+  run('cargo', ['build', '--release', '--locked', '-p', 'kchess-service'])
   await stageVoiceRuntime('release')
 }
 // The app runs voice/kchess-voice beside its own executable, or in the Mac bundle's Resources
@@ -88,6 +91,8 @@ const stockfish = execFileSync(
   { cwd: root, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' },
 ).trim()
 const binary = join(root, `target/release/KChess${exe}`)
+// The app starts it from beside its own executable (apps/gpui/src/core.rs).
+const service = join(root, `target/release/kchess-service${exe}`)
 // Debug builds draw a development badge in the sidebar; a release binary must not contain it.
 await verifyNoDevBuild(binary, 'GPUI release')
 
@@ -138,11 +143,13 @@ function packageMac() {
   copyFileSync(binary, join(contents, 'MacOS/kchess'))
   copyFileSync(stockfish, join(contents, 'MacOS/stockfish'))
   chmodSync(join(contents, 'MacOS/stockfish'), 0o755)
+  copyFileSync(service, join(contents, 'MacOS/kchess-service'))
+  chmodSync(join(contents, 'MacOS/kchess-service'), 0o755)
   // Resources, not MacOS: the notices beside the helper are not code, which codesign rejects there.
   const voiceCode = copyVoice(join(contents, 'Resources'))
   copyFileSync(join(root, 'apps/desktop', desktop.mac.icon), join(contents, 'Resources/icon.icns'))
   writeFileSync(join(contents, 'Info.plist'), infoPlist())
-  sign(app, voiceCode)
+  sign(app, [...voiceCode, join(contents, 'MacOS/kchess-service')])
   say('Making the zip and the disk image…')
   run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, join(out, `${base}.zip`)])
   symlinkSync('/Applications', join(stage, 'Applications'))
@@ -254,6 +261,7 @@ function packageWindows() {
   mkdirSync(folder, { recursive: true })
   copyFileSync(binary, join(folder, `${desktop.productName}.exe`))
   copyFileSync(stockfish, join(folder, 'stockfish.exe'))
+  copyFileSync(service, join(folder, 'kchess-service.exe'))
   copyVoice(folder)
   say('Making the zip…')
   run('powershell', [
@@ -268,8 +276,10 @@ function packageLinux() {
   mkdirSync(folder, { recursive: true })
   copyFileSync(binary, join(folder, 'kchess'))
   copyFileSync(stockfish, join(folder, 'stockfish'))
+  copyFileSync(service, join(folder, 'kchess-service'))
   chmodSync(join(folder, 'kchess'), 0o755)
   chmodSync(join(folder, 'stockfish'), 0o755)
+  chmodSync(join(folder, 'kchess-service'), 0o755)
   copyVoice(folder)
   copyFileSync(join(root, 'apps/desktop/build/icon.png'), join(folder, 'kchess.png'))
   writeFileSync(
