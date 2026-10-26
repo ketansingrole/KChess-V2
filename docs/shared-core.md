@@ -203,15 +203,22 @@ profile. Every window sees the same data, so a write in one window must reach th
 
 Some methods hold one caller's activity, and today replace the previous one:
 `startAnalysis`/`stopAnalysis` ("replacing any running analysis"), `watch` and `watchBroadcast`
-("replacing what was watched"), `voiceStart`/`voiceStop`, and the puzzle run in progress.
+("replacing what was watched"), and `voiceStart`/`voiceStop`.
 
-- These become sessions owned by the connection. Two windows can analyse two positions and watch
-  two channels at once; `engine:analysis`, `watch:frame` and voice results go only to the
-  connection that started them.
-- A session ends when its connection closes. Engine work keeps going through
-  `EngineContext::lease`, now shared by every connection, with the existing thread budget.
-- `AnalysisRequest` already carries `client_id`. It becomes the connection id plus the client's
-  own id, so caches keep distinguishing clients as the repository rules require.
+- **Watching** is per connection: two windows watch two channels or broadcasts at once, and
+  `watch:*` events go only to the window that asked.
+- **Analysis** is per connection, and its `engine:analysis` updates go only to the window that
+  started it. The engine scheduler gives its whole thread budget to one lease at a time
+  (`EngineContext::lease`), so the newest request wins: starting an analysis interrupts any other
+  window's (a final `interrupted` update), and that window restarts it when the person returns to
+  it. A window's `stopAnalysis` stops only its own.
+- **Voice input** has one owner: the window that called `voiceStart` last. Audio from another
+  window is refused ("Voice input is in use in another KChess window.") until the owner stops or
+  disconnects.
+- A connection closing ends its watch and analysis and releases voice input.
+- Analysis updates already carry the client's `clientId`; with one analysis per connection, the
+  ids never meet another window's, so caches keep distinguishing clients as the repository rules
+  require.
 
 ### Live play: one, shared
 

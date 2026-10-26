@@ -253,10 +253,19 @@ mod tests {
             capabilities: Vec::new(),
         });
         // The CLI asked, but it has no browser: the window opens it.
-        assert_eq!(connections.route(Capability::Browser, Some(cli)), Some(gpui));
-        assert_eq!(connections.route(Capability::Browser, Some(gpui)), Some(gpui));
+        assert_eq!(
+            connections.route(Capability::Browser, Some(cli)),
+            Some(gpui)
+        );
+        assert_eq!(
+            connections.route(Capability::Browser, Some(gpui)),
+            Some(gpui)
+        );
         // Nobody can open Electron's sealed logins.
-        assert_eq!(connections.route(Capability::LegacySecrets, Some(gpui)), None);
+        assert_eq!(
+            connections.route(Capability::LegacySecrets, Some(gpui)),
+            None
+        );
         let electron = connections.connect(ClientInfo {
             capabilities: vec![Capability::Focus, Capability::LegacySecrets],
             ..window("electron")

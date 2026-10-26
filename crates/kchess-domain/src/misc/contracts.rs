@@ -309,7 +309,11 @@ const CORE: &[Row] = &[
     (
         "studyCommand",
         1,
-        &[Valid("assertStudyCommandShape"), Optional("assertBoolean")],
+        &[
+            Valid("assertStudyCommandShape"),
+            Optional("assertBoolean"),
+            Optional("assertRevision"),
+        ],
     ),
     ("saveArchivedGame", 1, &[Valid("assertArchivedGameShape")]),
     ("removeArchivedGame", 1, &[Valid("assertLibraryId")]),

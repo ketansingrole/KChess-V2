@@ -633,7 +633,11 @@ pub fn methods() -> Vec<Method> {
         method(
             "studyCommand",
             "",
-            vec![req("command", "StudyCommand"), opt("incremental", boolean)],
+            vec![
+                req("command", "StudyCommand"),
+                opt("incremental", boolean),
+                opt("basedOn", number),
+            ],
             t::<StudyCommandResult>(),
         ),
         method(
@@ -745,6 +749,12 @@ pub struct CoreEvents {
     pub challenge_received: ChallengeInfo,
     #[serde(rename = "settings:saved")]
     pub settings_saved: CoreSettings,
+    /// Another window (or this one) changed part of the profile; refetch what is shown.
+    #[serde(rename = "profile:changed")]
+    pub profile_changed: ProfileChange,
+    /// Which window raises system notifications now; the others stay quiet.
+    #[serde(rename = "alerts:owner")]
+    pub alerts_owner: AlertOwner,
 }
 
 /// Renders the `CoreApi` interface from `methods()`.

@@ -1092,6 +1092,16 @@ _id: string, combo: number, errors: number, highest: number, moves: number, runs
 
 export type StormDashboard = { high: StormHigh, days: Array<StormDay>, };
 
+export type ProfileArea = "studies" | "playedGames" | "drills" | "sessions" | "tournaments" | "repertoire" | "lichessGames" | "accounts" | "desktopSettings" | "puzzles" | "voiceHistory" | "usage" | "engine";
+
+export type AlertOwner = { connection?: number, };
+
+export type ProfileChange = { areas: Array<ProfileArea>, 
+/**
+ * The connection that wrote it; a window ignores its own writes.
+ */
+origin: number, };
+
 export type PuzzleDbProgress = { phase: PuzzleDbPhase, 
 /**
  * Compressed bytes received so far.

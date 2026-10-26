@@ -137,10 +137,11 @@ pub struct AnalysisEngine {
     shared: Arc<Shared>,
 }
 
-/// The analysis service: one `AnalysisEngine` per connection (`crate::connection`), so two
-/// windows analyse two positions at once. Their engines share the scheduler's threads
-/// (`EngineContext::lease`), and an idle one closes after two minutes as before. Cloning shares
-/// them.
+/// The analysis service: one `AnalysisEngine` per connection (`crate::connection`). The
+/// scheduler gives the whole thread budget to one lease at a time (`EngineContext::lease`), so
+/// the newest request wins: starting an analysis interrupts every other connection's, whose
+/// window restarts it when the person returns to it. An idle engine closes after two minutes as
+/// before. Cloning shares them.
 #[derive(Clone)]
 pub struct Analysis {
     ctx: EngineContext,
@@ -168,8 +169,22 @@ impl Analysis {
         lock(&self.engines).values().cloned().collect()
     }
 
+    /// Interrupts every other connection's analysis: the engine goes to the newest request.
+    fn interrupt_others(&self) {
+        let connection = crate::connection::current_or_app();
+        let others: Vec<AnalysisEngine> = lock(&self.engines)
+            .iter()
+            .filter(|(id, _)| **id != connection)
+            .map(|(_, engine)| engine.clone())
+            .collect();
+        for engine in others {
+            engine.stop_analysis(false);
+        }
+    }
+
     /// `startAnalysis` for the calling connection: supersedes only its own analysis.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
+        self.interrupt_others();
         self.mine().start_analysis(raw, configured, send)
     }
 
@@ -179,6 +194,7 @@ impl Analysis {
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
+        self.interrupt_others();
         self.mine()
             .start_analysis_with_settings(raw, configured, send)
             .await

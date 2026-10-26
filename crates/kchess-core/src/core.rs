@@ -17,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::capabilities::Capabilities;
-use crate::engine::EngineContext;
 use crate::connection::{APP, ClientInfo, Connections};
+use crate::engine::EngineContext;
 use crate::engine::analysis::{ANALYSIS_EVENT, Analysis, AnalysisSink, AnalysisUpdate};
 use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
 use crate::engine::managed::{
@@ -90,6 +90,8 @@ pub struct Core {
     data_dir: PathBuf,
     /// Its clients: the embedding app, or the shared service's connections.
     pub(crate) connections: Arc<Connections>,
+    /// The alert owner last reported (`alerts:owner`); `u64::MAX` none, `APP` at first.
+    alert_owner: AtomicU64,
 }
 
 fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -174,10 +176,10 @@ impl Core {
         let credentials = config
             .system_credentials
             .then(|| Arc::new(Credentials::for_profile(&config.data_dir)));
-        let capabilities = Arc::new(Capabilities::with_credentials(
-            Arc::clone(&host),
-            credentials,
-        ));
+        let capabilities = Arc::new(
+            Capabilities::with_credentials(Arc::clone(&host), credentials)
+                .with_connections(Arc::clone(&connections)),
+        );
         let battery = Battery::new(Arc::clone(&host));
         let scheduler = {
             let battery = Arc::clone(&battery);
@@ -235,6 +237,7 @@ impl Core {
         Ok(Core {
             data_dir,
             connections,
+            alert_owner: AtomicU64::new(APP),
             puzzles: PuzzleService::new(config, services_host),
             voice,
             voice_owner: Mutex::new(None),
@@ -279,23 +282,38 @@ impl Core {
 
     /// A new client of this core (the shared service's socket connections); its connection id.
     pub fn connect(&self, info: ClientInfo) -> u64 {
-        self.connections.connect(info)
+        let id = self.connections.connect(info);
+        self.report_alert_owner();
+        id
     }
 
     /// The shared service serves its own clients: the embedding app's connection goes.
     pub fn serve_connections(&self) {
         self.connections.without_app();
+        self.report_alert_owner();
     }
 
     /// A client went away: what it started stops.
     pub fn disconnect(&self, connection: u64) {
         self.end_connection(connection);
         self.connections.disconnect(connection);
+        self.report_alert_owner();
     }
 
     /// A client's window gained or lost focus; the window focused last alerts the person.
     pub fn focus(&self, connection: u64, focused: bool) {
         self.connections.focus(connection, focused);
+        self.report_alert_owner();
+    }
+
+    /// Tells every client which window alerts now (`alerts:owner`), when that changed.
+    fn report_alert_owner(&self) {
+        let owner = self.connections.alert_owner();
+        let encoded = owner.unwrap_or(u64::MAX);
+        if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
+            self.host
+                .emit("alerts:owner", json!({ "connection": owner }));
+        }
     }
 
     /// The clients connected now.

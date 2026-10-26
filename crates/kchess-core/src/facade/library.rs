@@ -27,7 +27,7 @@ impl Core {
                 self.database
                     .call_async(
                         "store.library.studyCommand",
-                        &[command, json!(now_ms()), arg(args, 1)],
+                        &[command, json!(now_ms()), arg(args, 1), arg(args, 2)],
                     )
                     .await
             }

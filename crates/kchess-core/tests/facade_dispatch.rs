@@ -179,3 +179,30 @@ async fn every_listed_method_is_dispatched() {
     );
     core.close().await;
 }
+
+/// `profile:changed` names only areas the contract knows (`ProfileArea`), for methods the facade
+/// answers, so another window can always tell what to refetch.
+#[test]
+fn profile_changes_name_contract_areas_of_listed_methods() {
+    use kchess_contracts::types::ProfileArea;
+    use kchess_core::facade::changed_areas;
+    let mut written = 0;
+    for method in listed() {
+        for area in changed_areas(method) {
+            let parsed: Result<ProfileArea, _> = serde_json::from_value(json!(area));
+            assert!(parsed.is_ok(), "{method} reports an unknown area {area}");
+            written += 1;
+        }
+    }
+    assert!(written > 0);
+    // Reads report nothing.
+    for read in [
+        "library",
+        "gamePage",
+        "puzzleProgress",
+        "voiceHistory",
+        "usage",
+    ] {
+        assert!(changed_areas(read).is_empty(), "{read} is a read");
+    }
+}

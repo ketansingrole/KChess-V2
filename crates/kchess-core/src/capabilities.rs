@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
+use crate::connection::{Capability, Connections};
 use crate::error::{CoreError, Result};
 use crate::host::Host;
 use crate::secrets::{self, Credentials};
@@ -27,6 +28,19 @@ pub struct Capabilities {
     pending: Pending,
     /// The profile's credentials, when the host uses them instead of sealing tokens itself.
     credentials: Option<Arc<Credentials>>,
+    /// The core's clients: a request goes to one that can answer it (`Connections::route`).
+    /// Without them (tests), requests go to the host as any event.
+    connections: Option<Arc<Connections>>,
+}
+
+/// What a client must be able to do to answer a request of `kind`.
+fn needed(kind: &str) -> Capability {
+    match kind {
+        "openExternal" => Capability::Browser,
+        kind if kind.starts_with("secrets.") => Capability::LegacySecrets,
+        // `focus`, `onBattery`: a window.
+        _ => Capability::Focus,
+    }
 }
 
 impl Capabilities {
@@ -43,7 +57,14 @@ impl Capabilities {
             next: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             credentials,
+            connections: None,
         }
+    }
+
+    /// Requests go to the client that can answer them: the caller, else the window focused last.
+    pub fn with_connections(mut self, connections: Arc<Connections>) -> Capabilities {
+        self.connections = Some(connections);
+        self
     }
 
     /// A log line through the host.
@@ -68,16 +89,30 @@ impl Capabilities {
         payload: Value,
         deadline: Duration,
     ) -> Result<Value> {
+        let target = match &self.connections {
+            Some(connections) => {
+                match connections.route(needed(kind), crate::connection::current()) {
+                    Some(target) => Some(target),
+                    None => {
+                        return Err(CoreError::new(format!(
+                            "No KChess window can answer {kind} now."
+                        )));
+                    }
+                }
+            }
+            None => None,
+        };
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = oneshot::channel();
         self.pending
             .lock()
             .map_err(|_| CoreError::new("The host is unavailable."))?
             .insert(id, send);
-        self.host.emit(
-            "host:request",
-            json!({ "id": id, "kind": kind, "payload": payload }),
-        );
+        let request = json!({ "id": id, "kind": kind, "payload": payload });
+        match target {
+            Some(target) => self.host.emit_to(target, "host:request", request),
+            None => self.host.emit("host:request", request),
+        }
         let answer = tokio::time::timeout(deadline, receive).await;
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(&id);

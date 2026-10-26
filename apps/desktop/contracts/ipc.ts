@@ -2,8 +2,12 @@ import type { CoreEvents } from '@kchess/contracts/core'
 import type { AppUpdateStatus, DesktopApi, VoiceModelProgress } from './types'
 import type { InterfaceZoomState } from './interfaceZoom'
 
-/** Core events the shell handles itself instead of forwarding. */
-type ShellHandledCoreEvent = 'challenge:received' | 'settings:saved'
+/**
+ * Core events the shell handles itself instead of forwarding. `profile:changed` and
+ * `alerts:owner` matter once several windows share one core (`docs/shared-core.md`).
+ */
+type ShellHandledCoreEvent =
+  'challenge:received' | 'settings:saved' | 'profile:changed' | 'alerts:owner'
 export type ForwardedCoreEvent = Exclude<keyof CoreEvents, ShellHandledCoreEvent>
 
 export interface IpcEvents extends Pick<CoreEvents, ForwardedCoreEvent> {

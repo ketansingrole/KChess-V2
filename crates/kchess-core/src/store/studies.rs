@@ -239,6 +239,32 @@ fn read_command_studies(db: &Connection, command: &Map<String, Value>) -> Result
 }
 
 /// `studyCommand(command, now)`: one change to the study library, stored on success.
+/// Another window saved the study after this one read it (`docs/shared-core.md`).
+pub const STALE_STUDY: &str =
+    "This study was changed in another KChess window. Reload it to see the latest version.";
+
+/// A write based on the study as of `based_on` (its `updatedAt` when the window read it) is
+/// refused once the study has changed since, so two windows never overwrite each other's work.
+/// A study that is not there (new, or removed) has nothing to compare.
+pub(crate) fn check_based_on(db: &Connection, command: &Value, based_on: f64) -> Result<()> {
+    let Some(id) = command
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return Ok(());
+    };
+    migrate_studies(db)?;
+    let current = read_command_studies(db, object(command, "study command")?)?
+        .into_iter()
+        .find(|study| study.get("id").and_then(Value::as_str) == Some(id))
+        .and_then(|study| study.get("updatedAt").and_then(Value::as_f64));
+    match current {
+        Some(updated) if updated != based_on => Err(CoreError::new(STALE_STUDY)),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn study_command(
     db: &Connection,
     command: &Value,

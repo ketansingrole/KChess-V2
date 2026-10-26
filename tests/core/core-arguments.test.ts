@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { CORE_CONTRACTS, validateCoreArguments } from '@kchess/contracts/apiContracts'
 
 /**
- * The headless argument contracts for the study library's incremental flag
- * (`studyCommand(command, incremental?)`, `kchess_domain::misc::contracts`):
+ * The headless argument contracts for the study library's incremental flag and revision
+ * (`studyCommand(command, incremental?, basedOn?)`, `kchess_domain::misc::contracts`):
  * the arity the new argument added and the boolean check on it. Mirrors the
  * desktop's `validateIpcArguments` pinning in
  * `apps/desktop/tests/unit/ipc-contracts.test.ts`, which has no core
@@ -12,16 +12,27 @@ import { CORE_CONTRACTS, validateCoreArguments } from '@kchess/contracts/apiCont
  */
 describe('core argument contracts', () => {
   it('pins the studyCommand incremental flag contract', () => {
-    expect(CORE_CONTRACTS.studyCommand).toEqual({ min: 1, max: 2 })
+    expect(CORE_CONTRACTS.studyCommand).toEqual({ min: 1, max: 3 })
     const command = { op: 'save', name: 'Study', pgn: '1. e4 *' }
     expect(() => validateCoreArguments('studyCommand', [command])).not.toThrow()
     expect(() => validateCoreArguments('studyCommand', [command, true])).not.toThrow()
     expect(() => validateCoreArguments('studyCommand', [command, false])).not.toThrow()
     expect(() => validateCoreArguments('studyCommand', [command, 'yes' as never])).toThrow()
     expect(() => validateCoreArguments('studyCommand', [])).toThrow('argument count')
-    expect(() => validateCoreArguments('studyCommand', [command, true, 'extra'])).toThrow(
+    expect(() => validateCoreArguments('studyCommand', [command, true, 'extra'])).toThrow()
+    expect(() => validateCoreArguments('studyCommand', [command, true, 1, 'extra'])).toThrow(
       'argument count',
     )
+  })
+
+  it('pins the studyCommand basedOn revision (docs/shared-core.md)', () => {
+    const command = { op: 'save', id: 'a', name: 'Study', pgn: '1. e4 *' }
+    // The study's updatedAt as the window read it.
+    expect(() =>
+      validateCoreArguments('studyCommand', [command, true, 1761464000000]),
+    ).not.toThrow()
+    expect(() => validateCoreArguments('studyCommand', [command, true, -1])).toThrow()
+    expect(() => validateCoreArguments('studyCommand', [command, true, Number.NaN])).toThrow()
   })
 
   it('pins engine teardown and empty-sync arities', () => {
