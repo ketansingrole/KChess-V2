@@ -280,6 +280,12 @@ impl Host for GatedHost {
             self.inner.emit(event, payload);
         }
     }
+
+    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+        if event == "host:request" || !self.closed.load(Ordering::SeqCst) {
+            self.inner.emit_to(connection, event, payload);
+        }
+    }
 }
 
 /// Whether `method` is one of the facade's (answered by `Core::facade`).

@@ -28,7 +28,7 @@ impl Core {
                 self.inner("spectate.watchRound", vec![round]).await
             }
             "stopWatching" => {
-                self.services.spectator().stop();
+                self.services.spectator().stop_mine();
                 Ok(Value::Null)
             }
             "broadcasts" => {

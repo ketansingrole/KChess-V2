@@ -18,6 +18,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::capabilities::Capabilities;
 use crate::engine::EngineContext;
+use crate::connection::{APP, ClientInfo, Connections};
 use crate::engine::analysis::{ANALYSIS_EVENT, Analysis, AnalysisSink, AnalysisUpdate};
 use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
 use crate::engine::managed::{
@@ -64,7 +65,9 @@ pub struct Core {
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
     pub(crate) services: Services,
     /// Offline speech recognition through the `kchess-voice` helper.
-    pub(crate) voice: VoiceRecognizer,
+    pub(crate) voice: Arc<VoiceRecognizer>,
+    /// The client listening through `voice`: one microphone at a time.
+    pub(crate) voice_owner: Mutex<Option<u64>>,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
@@ -85,6 +88,8 @@ pub struct Core {
     pub(crate) claim: ProfileClaim,
     /// The profile directory (`Config::data_dir`).
     data_dir: PathBuf,
+    /// Its clients: the embedding app, or the shared service's connections.
+    pub(crate) connections: Arc<Connections>,
 }
 
 fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -161,6 +166,7 @@ impl Core {
     /// Opens the core over `config`'s profile. Fails when a live core already owns that profile.
     pub fn open(config: Config, host: Arc<dyn Host>) -> Result<Core> {
         let claim = ProfileClaim::claim(&config.data_dir)?;
+        let connections = Arc::new(Connections::new());
         let closed = Arc::new(AtomicBool::new(false));
         let host: Arc<dyn Host> = Arc::new(GatedHost::new(host, Arc::clone(&closed)));
         crate::panics::report_to(&host);
@@ -220,16 +226,18 @@ impl Core {
                 busy: Arc::clone(&busy),
             },
         );
-        let voice = VoiceRecognizer::new(
+        let voice = Arc::new(VoiceRecognizer::new(
             Arc::clone(&host),
             config.voice_helper_path.clone(),
             crate::voice::model_dir(&config.data_dir),
-        );
+        ));
         let data_dir = config.data_dir.clone();
         Ok(Core {
             data_dir,
+            connections,
             puzzles: PuzzleService::new(config, services_host),
             voice,
+            voice_owner: Mutex::new(None),
             host,
             capabilities,
             database,
@@ -260,6 +268,49 @@ impl Core {
     /// Run one method: a facade method (`CoreApi`) or an internal service method. Unknown
     /// methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
+        self.call_as(APP, method, args).await
+    }
+
+    /// Run one method for client `connection` (`connect`): what it starts (an analysis, a watch,
+    /// voice input) is its own, and its events go to it.
+    pub async fn call_as(&self, connection: u64, method: &str, args: Vec<Value>) -> Result<Value> {
+        crate::connection::scope(connection, self.call_unscoped(method, args)).await
+    }
+
+    /// A new client of this core (the shared service's socket connections); its connection id.
+    pub fn connect(&self, info: ClientInfo) -> u64 {
+        self.connections.connect(info)
+    }
+
+    /// The shared service serves its own clients: the embedding app's connection goes.
+    pub fn serve_connections(&self) {
+        self.connections.without_app();
+    }
+
+    /// A client went away: what it started stops.
+    pub fn disconnect(&self, connection: u64) {
+        self.end_connection(connection);
+        self.connections.disconnect(connection);
+    }
+
+    /// A client's window gained or lost focus; the window focused last alerts the person.
+    pub fn focus(&self, connection: u64, focused: bool) {
+        self.connections.focus(connection, focused);
+    }
+
+    /// The clients connected now.
+    pub fn connections(&self) -> &Connections {
+        &self.connections
+    }
+
+    /// Stops what `connection` started: its analysis, its watch, its voice input.
+    fn end_connection(&self, connection: u64) {
+        self.analysis.forget(connection);
+        self.services.spectator().forget(connection);
+        self.release_voice(connection);
+    }
+
+    async fn call_unscoped(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         if crate::facade::is_facade_method(method) {
             self.start_unless_closed();
             return Box::pin(self.facade(method, args)).await;
@@ -380,8 +431,9 @@ impl Core {
             "analysis.start" => {
                 let configured: String = optional(args, 1, "configured")?;
                 let host = Arc::clone(&self.host);
+                let connection = crate::connection::current_or_app();
                 let sink: AnalysisSink = Arc::new(move |update: AnalysisUpdate| {
-                    host.emit(ANALYSIS_EVENT, json!(update));
+                    host.emit_to(connection, ANALYSIS_EVENT, json!(update));
                 });
                 json(
                     self.analysis
@@ -511,7 +563,7 @@ impl Core {
                 .and_then(|path| json(self.search.is_trusted_engine_path(&PathBuf::from(path)))),
             "analysis.running" => json(self.analysis.analysis_running()),
             "analysis.stop" => optional::<bool>(args, 0, "kill").map(|kill| {
-                self.analysis.stop_analysis(kill);
+                self.analysis.stop_mine(kill);
                 Value::Null
             }),
             // Test-only: a live online game blocks the engines (`online:state` sets it in service).

@@ -7,6 +7,7 @@ pub const USER_AGENT: &str = "KChess";
 
 pub mod archive;
 pub mod capabilities;
+pub mod connection;
 pub mod core;
 pub mod engine;
 pub mod error;

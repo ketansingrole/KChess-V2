@@ -231,6 +231,14 @@ impl Host for UsageHost {
         let bytes = payload.get("bytes").and_then(Value::as_i64).unwrap_or(0);
         self.batch.record(account, kind, requests, bytes);
     }
+
+    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+        if event == "host:usage" {
+            self.emit(event, payload);
+        } else {
+            self.inner.emit_to(connection, event, payload);
+        }
+    }
 }
 
 #[cfg(test)]

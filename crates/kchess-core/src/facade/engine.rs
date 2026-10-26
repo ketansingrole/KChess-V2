@@ -80,12 +80,18 @@ impl Core {
                         .to_string())
                 };
                 let host = Arc::clone(&self.host);
+                // Its updates go to the window that asked, not to every window.
+                let connection = crate::connection::current_or_app();
                 self.analysis
                     .start_analysis_with_settings(
                         arg(args, 0),
                         configured,
                         Arc::new(move |update| {
-                            host.emit(crate::engine::analysis::ANALYSIS_EVENT, json!(update))
+                            host.emit_to(
+                                connection,
+                                crate::engine::analysis::ANALYSIS_EVENT,
+                                json!(update),
+                            )
                         }),
                     )
                     .await
@@ -96,7 +102,7 @@ impl Core {
                     None | Some(Value::Null) => false,
                     Some(value) => normal("assertBoolean", value)?.as_bool() == Some(true),
                 };
-                self.analysis.stop_analysis(kill);
+                self.analysis.stop_mine(kill);
                 Ok(Value::Null)
             }
             "reviewGet" => {

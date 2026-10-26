@@ -250,34 +250,130 @@ pub trait WatchSink: Send + Sync {
 /// The sink of the host: `watch:frame`, `watch:state` and `watch:broadcast` events.
 pub struct HostSink {
     host: Arc<dyn Host>,
+    /// The client watching (`crate::connection`), or every client.
+    connection: Option<u64>,
 }
 
 impl HostSink {
     pub fn new(host: Arc<dyn Host>) -> HostSink {
-        HostSink { host }
+        HostSink {
+            host,
+            connection: None,
+        }
+    }
+
+    /// A sink whose events go to one client only.
+    pub fn to(host: Arc<dyn Host>, connection: u64) -> HostSink {
+        HostSink {
+            host,
+            connection: Some(connection),
+        }
+    }
+
+    fn emit(&self, event: &str, payload: Value) {
+        match self.connection {
+            Some(connection) => self.host.emit_to(connection, event, payload),
+            None => self.host.emit(event, payload),
+        }
     }
 }
 
 impl WatchSink for HostSink {
     fn frame(&self, frame: WatchFrame) {
-        self.host.emit(
+        self.emit(
             "watch:frame",
             serde_json::to_value(frame).unwrap_or(Value::Null),
         );
     }
 
     fn state(&self, state: WatchState) {
-        self.host.emit(
+        self.emit(
             "watch:state",
             serde_json::to_value(state).unwrap_or(Value::Null),
         );
     }
 
     fn broadcast(&self, update: BroadcastUpdate) {
-        self.host.emit(
+        self.emit(
             "watch:broadcast",
             serde_json::to_value(update).unwrap_or(Value::Null),
         );
+    }
+}
+
+/// The watches of every client: one `Spectator` per connection, so two windows watch two
+/// channels at once. Each one's frames go to its own client. Cloning shares them.
+#[derive(Clone)]
+pub struct Spectators {
+    lichess: Arc<crate::lichess::accounts::Lichess>,
+    host: Arc<dyn Host>,
+    watches: Arc<std::sync::Mutex<std::collections::BTreeMap<u64, Spectator>>>,
+}
+
+impl Spectators {
+    pub fn new(lichess: Arc<crate::lichess::accounts::Lichess>, host: Arc<dyn Host>) -> Spectators {
+        Spectators {
+            lichess,
+            host,
+            watches: Arc::default(),
+        }
+    }
+
+    /// The calling connection's watch, made on first use.
+    pub fn mine(&self) -> Spectator {
+        let connection = crate::connection::current_or_app();
+        let mut watches = self
+            .watches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        watches
+            .entry(connection)
+            .or_insert_with(|| {
+                Spectator::new(
+                    Arc::clone(&self.lichess),
+                    Arc::new(HostSink::to(Arc::clone(&self.host), connection)),
+                )
+            })
+            .clone()
+    }
+
+    fn all(&self) -> Vec<Spectator> {
+        self.watches
+            .lock()
+            .map(|watches| watches.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Stops every client's watch: a live game, closing.
+    pub fn stop(&self) {
+        for spectator in self.all() {
+            spectator.stop();
+        }
+    }
+
+    /// `stopWatching`: the calling connection's watch only.
+    pub fn stop_mine(&self) {
+        let connection = crate::connection::current_or_app();
+        let spectator = self
+            .watches
+            .lock()
+            .ok()
+            .and_then(|watches| watches.get(&connection).cloned());
+        if let Some(spectator) = spectator {
+            spectator.stop();
+        }
+    }
+
+    /// A client went away: its watch stops.
+    pub fn forget(&self, connection: u64) {
+        let spectator = self
+            .watches
+            .lock()
+            .ok()
+            .and_then(|mut watches| watches.remove(&connection));
+        if let Some(spectator) = spectator {
+            spectator.stop();
+        }
     }
 }
 
