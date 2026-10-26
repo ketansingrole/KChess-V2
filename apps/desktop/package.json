@@ -23,8 +23,8 @@
     "stockfish": "^19.0.1"
   },
   "devDependencies": {
-    "@iconify-json/lucide": "^1.2.146",
-    "@lichess-org/chessground": "^10.4.2",
+    "@iconify-json/lucide": "^1.2.147",
+    "@lichess-org/chessground": "^10.5.0",
     "@nuxt/eslint": "^1.17.0",
     "@nuxt/icon": "^2.5.1",
     "@nuxt/ui": "^4.12.0",
