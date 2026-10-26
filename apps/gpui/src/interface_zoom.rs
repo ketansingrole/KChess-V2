@@ -15,8 +15,11 @@ pub const PERCENTS: [u16; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 20
 const DESIGN_LONG_SIDE: f32 = 2560.;
 const DESIGN_SHORT_SIDE: f32 = 1360.;
 /// The top bar's height at 100%, which the macOS traffic lights centre on (`TOPBAR_HEIGHT`).
+#[cfg(target_os = "macos")]
 const TOPBAR: f32 = 52.;
+#[cfg(target_os = "macos")]
 const TRAFFIC_LIGHT_X: f32 = 16.;
+#[cfg(target_os = "macos")]
 const TRAFFIC_LIGHT_SIZE: f32 = 16.;
 
 /// `auto`, or one of `PERCENTS`.
@@ -142,7 +145,8 @@ pub fn percent(window: &Window, cx: &App) -> u16 {
 pub fn apply(window: &mut Window, cx: &App) {
     let factor = f32::from(percent(window, cx)) / 100.;
     window.set_zoom(factor);
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         let y = ((TOPBAR * factor - TRAFFIC_LIGHT_SIZE) / 2.)
             .round()
             .max(4.);

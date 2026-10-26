@@ -6,6 +6,13 @@
 
 /// What the system says about recording (`MicrophoneStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "only macOS reports a refusal before recording starts"
+    )
+)]
 pub enum Access {
     Granted,
     Denied,
