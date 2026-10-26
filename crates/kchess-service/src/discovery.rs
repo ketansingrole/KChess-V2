@@ -29,10 +29,32 @@ pub struct CoreInfo {
 
 /// The profile's real path, which names its socket: two spellings of one folder share a core.
 pub fn canonical(profile: &Path) -> std::io::Result<PathBuf> {
-    std::fs::canonicalize(profile)
+    let real = std::fs::canonicalize(profile)?;
+    if cfg!(windows) {
+        return Ok(plain_windows(&real.to_string_lossy()).map_or(real, PathBuf::from));
+    }
+    Ok(real)
 }
 
-/// A short, stable name for a profile.
+/// The usual spelling of a verbatim Windows path (`\\?\D:\x` → `D:\x`, `\\?\UNC\s\x` →
+/// `\\s\x`), which Windows answers `canonicalize` with. Every path in the profile derives from
+/// this one, and a verbatim path takes `/` literally, so the voice helper's speech library, which
+/// joins `/am/final.mdl` onto the model folder, could not open it. None when it is not verbatim
+/// or too long for the usual spelling.
+fn plain_windows(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\")?;
+    let plain = match rest.strip_prefix(r"UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None if matches!(rest.as_bytes(), [letter, b':', b'\\', ..] if letter.is_ascii_alphabetic()) => {
+            rest.to_string()
+        }
+        None => return None,
+    };
+    (plain.len() < 260).then_some(plain)
+}
+
+/// A short, stable name for a profile (Windows pipes hash the user with it instead).
+#[cfg(unix)]
 fn profile_hash(profile: &Path) -> String {
     let mut hash = Sha256::new();
     hash.update(profile.to_string_lossy().as_bytes());
@@ -175,6 +197,27 @@ mod tests {
         assert!(!same_token(&token, &token[..63]));
         assert!(!same_token("a".repeat(64).as_str(), &"b".repeat(64)));
         assert_ne!(token, new_token().expect("random bytes"));
+    }
+
+    #[test]
+    fn windows_profiles_keep_their_usual_spelling() {
+        // Verbatim paths broke the voice model on Windows: it could not load from the profile.
+        assert_eq!(
+            plain_windows(r"\\?\D:\a\profile").as_deref(),
+            Some(r"D:\a\profile")
+        );
+        assert_eq!(
+            plain_windows(r"\\?\UNC\server\share\profile").as_deref(),
+            Some(r"\\server\share\profile")
+        );
+        assert_eq!(plain_windows(r"D:\a\profile"), None);
+        assert_eq!(plain_windows(r"\\?\Volume{1234}\profile"), None);
+        let long = format!(r"\\?\D:\{}", "a".repeat(300));
+        assert_eq!(
+            plain_windows(&long),
+            None,
+            "only the verbatim form reaches that far"
+        );
     }
 
     #[cfg(unix)]
