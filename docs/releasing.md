@@ -38,6 +38,11 @@ rerunning its original tag-push workflow.
 | Windows  | `.exe` installer (x64)                        |
 | Linux    | `.AppImage` and `.deb` (x64)                  |
 
+The same release carries the GPUI preview (`KChess-Preview-*`, built by the `gpui` job with
+`tooling/gpui-package.mjs`) in the same formats. It installs beside the Electron app under its own
+name, install folder, NSIS GUID and `.deb` package, and writes no `latest*.yml`, so Electron's
+updater never reads it as its own.
+
 Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`tooling/release-config.cjs`), so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
 and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).
@@ -64,6 +69,15 @@ Windows NSIS, Linux AppImage and Debian installations support automatic installa
 (Debian may require an operating-system authorization prompt). Ad-hoc signed Mac releases
 check for updates and link to a manual download. [macOS automatic installation requires
 Developer ID signing](https://www.electron.build/v26/docs/features/auto-update/).
+
+The GPUI app has its own updater (`apps/gpui/src/updates.rs`) on the same feed, with the same
+switches. It downloads the package it was installed from, checks it against `SHA256SUMS.txt`, and
+refuses one not signed as the running app is (the same macOS team and bundle identifier, or the
+same Windows certificate; an ad hoc Mac build accepts only a valid ad hoc build of itself). It then
+replaces the `.app`, runs the NSIS installer silently (`--updated /S`, as Electron's updater does),
+replaces the AppImage, or installs the `.deb` with `pkexec dpkg -i`. `gpui-package.mjs --final`
+builds the app under Electron's identity with the `latest*.yml` manifests, so that at the switch
+Electron's own updater installs it over the Electron app.
 
 To enable Mac automatic installation, add these GitHub Actions repository secrets:
 

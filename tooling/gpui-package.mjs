@@ -1,12 +1,16 @@
 // Packages the GPUI app (apps/gpui) for this machine, with its own native Stockfish and the voice
-// runtime (the recognition helper, libvosk and their notices, tooling/voice-runtime.mjs) beside it:
-// macOS: KChess.app as a .dmg and a .zip (Apple Silicon); Windows: a .zip; Linux: a .tar.gz with a
-// desktop entry. Every file gets a line in SHA256SUMS.txt. Output: apps/gpui/dist/.
+// runtime (the recognition helper, libvosk and their notices, tooling/voice-runtime.mjs) beside it,
+// in the formats the Electron app ships (electron-builder, given the staged app as --prepackaged):
+// macOS: a .dmg and a .zip (Apple Silicon); Windows: the per-user NSIS installer (.exe); Linux: an
+// .AppImage and a .deb. The updater installs each kind (apps/gpui/src/updates.rs). Every file gets
+// a line in SHA256SUMS.txt. Output: apps/gpui/dist/.
 //
 // Usage: node tooling/gpui-package.mjs [--skip-build] [--final]
 //   --skip-build  package the release binary already built
-//   --final       the identity that replaces the Electron app (com.kchess.app, "KChess"); without
-//                 it the preview installs beside Electron as "KChess Preview"
+//   --final       the identity that replaces the Electron app (com.kchess.app, "KChess", its
+//                 installer GUID and .deb name), with the update manifests (latest*.yml) Electron's
+//                 updater reads; without it the preview installs beside Electron as "KChess Preview"
+//                 and writes no manifests, so Electron never mistakes it for its own update
 //
 // Stockfish is the latest official release, fetched and verified exactly as the app's own
 // download is (crates/kchess-core/examples/fetch_stockfish.rs) and cached under target/.
@@ -26,10 +30,10 @@ import {
   readdirSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { stageVoiceRuntime } from './voice-runtime.mjs'
 import { verifyNoDevBuild } from './dev-build-marker.mjs'
@@ -41,6 +45,15 @@ const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).ver
 const desktop = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'), 'utf8')).build
 const name = final ? desktop.productName : `${desktop.productName} Preview`
 const appId = final ? desktop.appId : `${desktop.appId}.preview`
+// The package name (Windows install folder, .deb package) and the Linux and Windows executables:
+// the final app's are Electron's, so its installers upgrade Electron's installation in place.
+const packageName = final ? 'kchess' : 'kchess-preview'
+const executable = {
+  win: final ? desktop.productName : name,
+  linux: final ? desktop.linux.executableName : `${desktop.linux.executableName}-preview`,
+}
+// The preview's own NSIS identity, so its installer never touches Electron's installation.
+const previewGuid = '3ddfc8df-572e-41e0-a3bd-fc08e5e3da9f'
 const platform = { darwin: 'mac', win32: 'win', linux: 'linux' }[process.platform]
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
 if (!platform) throw new Error(`[gpui-package] Unsupported platform ${process.platform}`)
@@ -100,7 +113,7 @@ rmSync(stage, { recursive: true, force: true })
 rmSync(out, { recursive: true, force: true })
 mkdirSync(stage, { recursive: true })
 mkdirSync(out, { recursive: true })
-const base = `${name.replace(/ /g, '-')}-${version}-${platform}-${arch}`
+const artifactPrefix = name.replace(/ /g, '-')
 
 /** Copy the voice runtime into `dir`/voice; the paths of its programs and libraries. */
 function copyVoice(dir) {
@@ -117,9 +130,9 @@ function copyVoice(dir) {
   return code
 }
 
-if (platform === 'mac') packageMac()
-else if (platform === 'win') packageWindows()
-else packageLinux()
+const prepackaged =
+  platform === 'mac' ? packageMac() : platform === 'win' ? packageWindows() : packageLinux()
+makeInstallers(prepackaged)
 
 const sums = readdirSync(out)
   .filter((file) => statSync(join(out, file)).isFile())
@@ -150,21 +163,7 @@ function packageMac() {
   copyFileSync(join(root, 'apps/desktop', desktop.mac.icon), join(contents, 'Resources/icon.icns'))
   writeFileSync(join(contents, 'Info.plist'), infoPlist())
   sign(app, [...voiceCode, join(contents, 'MacOS/kchess-service')])
-  say('Making the zip and the disk image…')
-  run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, join(out, `${base}.zip`)])
-  symlinkSync('/Applications', join(stage, 'Applications'))
-  run('hdiutil', [
-    'create',
-    '-quiet',
-    '-volname',
-    name,
-    '-srcfolder',
-    stage,
-    '-ov',
-    '-format',
-    'UDZO',
-    join(out, `${base}.dmg`),
-  ])
+  return app
 }
 
 function infoPlist() {
@@ -259,40 +258,95 @@ function sign(app, nested) {
 function packageWindows() {
   const folder = join(stage, name)
   mkdirSync(folder, { recursive: true })
-  copyFileSync(binary, join(folder, `${desktop.productName}.exe`))
+  copyFileSync(binary, join(folder, `${executable.win}.exe`))
   copyFileSync(stockfish, join(folder, 'stockfish.exe'))
   copyFileSync(service, join(folder, 'kchess-service.exe'))
   copyVoice(folder)
-  say('Making the zip…')
-  run('powershell', [
-    '-NoProfile',
-    '-Command',
-    `Compress-Archive -Path '${folder}' -DestinationPath '${join(out, `${base}.zip`)}'`,
-  ])
+  return folder
 }
 
 function packageLinux() {
-  const folder = join(stage, base)
+  const folder = join(stage, name)
   mkdirSync(folder, { recursive: true })
-  copyFileSync(binary, join(folder, 'kchess'))
+  copyFileSync(binary, join(folder, executable.linux))
   copyFileSync(stockfish, join(folder, 'stockfish'))
   copyFileSync(service, join(folder, 'kchess-service'))
-  chmodSync(join(folder, 'kchess'), 0o755)
+  chmodSync(join(folder, executable.linux), 0o755)
   chmodSync(join(folder, 'stockfish'), 0o755)
   chmodSync(join(folder, 'kchess-service'), 0o755)
   copyVoice(folder)
-  copyFileSync(join(root, 'apps/desktop/build/icon.png'), join(folder, 'kchess.png'))
+  return folder
+}
+
+/** The installers, made by electron-builder from the staged (and on macOS signed) app. */
+function makeInstallers(app) {
+  say('Making the installers…')
+  // A project of its own: the desktop project's packaging hooks are for the Electron app.
+  const project = join(root, 'target/gpui-package/builder')
+  rmSync(project, { recursive: true, force: true })
+  mkdirSync(project, { recursive: true })
   writeFileSync(
-    join(folder, 'kchess.desktop'),
-    `[Desktop Entry]
-Type=Application
-Name=${name}
-Exec=kchess
-Icon=kchess
-Categories=${desktop.linux.category};
-Terminal=false
-`,
+    join(project, 'package.json'),
+    JSON.stringify({
+      name: packageName,
+      version,
+      description:
+        'A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.',
+      author: 'Ketan Singrole',
+      license: 'GPL-3.0-or-later',
+      homepage: 'https://github.com/ketansingrole/KChess-V2#readme',
+    }),
   )
-  say('Making the archive…')
-  run('tar', ['-czf', join(out, `${base}.tar.gz`), '-C', stage, base])
+  const resources = join(root, 'apps/desktop/build')
+  const config = {
+    appId,
+    productName: name,
+    copyright: desktop.copyright,
+    // Only read for Electron's own files, which a prepackaged app has none of.
+    electronVersion: JSON.parse(
+      readFileSync(join(root, 'apps/desktop/node_modules/electron/package.json'), 'utf8'),
+    ).version,
+    directories: { output: out, buildResources: resources },
+    artifactName: `${artifactPrefix}-\${version}-\${os}-\${arch}.\${ext}`,
+    // Signed and notarized above; the zip and disk image keep that signature.
+    mac: { target: desktop.mac.target, icon: join(resources, 'icon.icns'), identity: null },
+    win: {
+      target: desktop.win.target,
+      icon: join(resources, 'icon.ico'),
+      executableName: executable.win,
+    },
+    nsis: { ...desktop.nsis, guid: final ? desktop.nsis.guid : previewGuid },
+    linux: {
+      ...desktop.linux,
+      icon: join(resources, 'icon.png'),
+      executableName: executable.linux,
+    },
+    ...(final ? { deb: desktop.deb } : {}),
+    publish: final ? desktop.publish : null,
+  }
+  writeFileSync(join(project, 'electron-builder.json'), JSON.stringify(config, null, 2))
+  const cli = createRequire(join(root, 'package.json')).resolve('electron-builder/cli.js')
+  const target = {
+    mac: ['--mac', '--arm64'],
+    win: ['--win', '--x64'],
+    linux: ['--linux', `--${arch}`],
+  }
+  run(process.execPath, [
+    cli,
+    '--projectDir',
+    project,
+    '--config',
+    'electron-builder.json',
+    ...target[platform],
+    '--prepackaged',
+    app,
+    '--publish',
+    'never',
+  ])
+  // Keep the installers, their block maps and update manifests; drop the builder's working files.
+  for (const entry of readdirSync(out)) {
+    const keep =
+      /\.(dmg|zip|exe|AppImage|deb|blockmap)$/.test(entry) || /^latest.*\.yml$/.test(entry)
+    if (!keep) rmSync(join(out, entry), { recursive: true, force: true })
+  }
 }

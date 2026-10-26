@@ -321,9 +321,9 @@ download, as it is today.
 The service never runs from inside an app's folder. A core still serving GPUI must not keep
 Electron's folder in use, because:
 
-- Windows cannot replace or rename a running executable, so Electron's NSIS installer and the GPUI
-  updater (`replace` in `apps/gpui/src/updates.rs`, which renames the app folder aside) would fail
-  while the other app is open;
+- Windows cannot replace or rename a running executable, so Electron's NSIS installer, and the
+  GPUI app's (which its updater runs, `apps/gpui/src/updates.rs`), would fail while the other app
+  is open;
 - an AppImage's files live on a mount that disappears when the Electron app that started the core
   quits;
 - deleting an app (dragging it to the Bin, uninstalling) would pull the core out from under the
