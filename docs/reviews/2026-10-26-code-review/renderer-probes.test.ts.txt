@@ -1,0 +1,26 @@
+import { it, expect, vi } from 'vitest'
+import { nextTick } from 'vue'
+import { desktop } from './fixtures'
+import { loadViewPreferences, useViewPreference, flushViewPreferences } from '../../app/composables/useViewPreference'
+import { useStudyStore } from '../../app/stores/studies'
+
+it('audit: a failed preference migration discards the only saved copy', async () => {
+  desktop({ viewPreferences: async () => ({}), setViewPreference: async () => { throw new Error('Disk unavailable') } })
+  localStorage.setItem('kchess:audit-pref', 'previous value')
+  await loadViewPreferences()
+  expect(useViewPreference('kchess:audit-pref', 'default').value).toBe('previous value')
+  await flushViewPreferences()
+  expect(localStorage.getItem('kchess:audit-pref')).toBeNull()
+})
+
+it('audit: desktop study saves omit the core revision guard', async () => {
+  const { api } = desktop()
+  const backend = api.studyCommand
+  api.studyCommand = vi.fn(backend)
+  const store = useStudyStore()
+  const id = await store.save('Study', '1. e4 *')
+  await store.saveChapter(id, store.items[0]!.chapters[0]!.id, '1. e4 e5 *')
+  const args = vi.mocked(api.studyCommand).mock.calls.at(-1)!
+  expect(args).toHaveLength(2)
+  await nextTick()
+})

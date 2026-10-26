@@ -1,0 +1,48 @@
+import { EventEmitter } from 'node:events'
+import { it, expect, vi } from 'vitest'
+
+const fixture = vi.hoisted(() => ({ socket: undefined as unknown }))
+vi.mock('node:child_process', async (original) => {
+  const actual = await original<typeof import('node:child_process')>()
+  const execFileSync = () => JSON.stringify({ release: '2026.10.12', protocol: 'audit' })
+  return { ...actual, execFileSync, default: { ...actual, execFileSync } }
+})
+vi.mock('node:fs', async (original) => {
+  const fs = await original<typeof import('node:fs')>()
+  const readFileSync = (...args: Parameters<typeof fs.readFileSync>) => {
+    const path = String(args[0])
+    if (path === '/audit/core.json') return JSON.stringify({ socket: '/audit/socket' })
+    if (path === '/audit/core.token') return 'token'
+    return fs.readFileSync(...args)
+  }
+  return { ...fs, readFileSync, default: { ...fs, readFileSync } }
+})
+vi.mock('node:net', async (original) => {
+  const actual = await original<typeof import('node:net')>()
+  const connect = () => {
+    const socket = fixture.socket as EventEmitter
+    queueMicrotask(() => socket.emit('connect'))
+    return socket
+  }
+  return { ...actual, connect, default: { ...actual, connect } }
+})
+
+import { ServiceCore } from '../../crates/kchess-node/js/serviceCore'
+
+it('audit: close during the handshake still installs a live connection later', async () => {
+  const socket = Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn(), destroy: vi.fn() })
+  fixture.socket = socket
+  const core = new ServiceCore({ dataDir: '/audit', binary: '/audit/binary', config: {}, onEvent: vi.fn() })
+  // Let tryConnect install the handshake listener and send hello.
+  for (let n = 0; n < 5; n++) await Promise.resolve()
+  expect(socket.write).toHaveBeenCalled()
+  await core.close()
+  const body = Buffer.from(JSON.stringify({ type: 'welcome', connection: 7, release: '2026.10.12', protocol: 'audit' }))
+  const header = Buffer.alloc(4)
+  header.writeUInt32BE(body.length)
+  socket.emit('data', Buffer.concat([header, body]))
+  await core.ready
+  expect(core.connection).toBe(7)
+  expect(socket.end).not.toHaveBeenCalled()
+  await core.close()
+})
