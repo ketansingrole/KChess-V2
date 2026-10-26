@@ -275,6 +275,8 @@ function packageLinux() {
   chmodSync(join(folder, 'stockfish'), 0o755)
   chmodSync(join(folder, 'kchess-service'), 0o755)
   copyVoice(folder)
+  // electron-builder's .deb writes its AppArmor profile into Electron's resources folder.
+  mkdirSync(join(folder, 'resources'))
   return folder
 }
 
@@ -326,18 +328,15 @@ function makeInstallers(app) {
   }
   writeFileSync(join(project, 'electron-builder.json'), JSON.stringify(config, null, 2))
   const cli = createRequire(join(root, 'package.json')).resolve('electron-builder/cli.js')
-  const target = {
-    mac: ['--mac', '--arm64'],
-    win: ['--win', '--x64'],
-    linux: ['--linux', `--${arch}`],
-  }
+  // The configured targets fix each platform's architecture, as Electron's release does.
+  const target = { mac: '--mac', win: '--win', linux: '--linux' }
   run(process.execPath, [
     cli,
     '--projectDir',
     project,
     '--config',
     'electron-builder.json',
-    ...target[platform],
+    target[platform],
     '--prepackaged',
     app,
     '--publish',
