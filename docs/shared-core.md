@@ -125,14 +125,27 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
 
 ### Start
 
-1. A client reads `core.json` and connects.
-2. If that fails, it starts `kchess-core serve --profile <dir>` detached from itself (its own
-   process group or session, so closing the window that started it does not end it), then retries
-   the connection with backoff for up to 5 seconds.
-3. Two clients may start a service at the same moment. The profile lock decides: the second
-   service fails its claim and exits, and both clients connect to the first.
-4. The service writes `core.json` and opens the socket only after the claim succeeds and the core
-   is open, so a client never reaches a half-started core.
+An app always reuses what is already there. It copies or starts something only when it must:
+
+1. **A core is running for the profile:** the app reads `core.json` and connects. Nothing is
+   copied or started. This is the normal case for the second app, a second window and every tool.
+2. **No core is running, and this release's copy exists** in the runtime folder (see
+   [Where the service runs from](#where-the-service-runs-from)): the app checks the copy's hash
+   and starts it. Nothing is copied.
+3. **No core is running and there is no copy of this release:** the app copies its bundled binary
+   (first launch after installing or updating), then starts it.
+
+Starting means `kchess-core serve --profile <dir>`, detached from the app (its own process group or
+session, so closing the window that started it does not end it); the app then connects, retrying
+with backoff for up to 5 seconds.
+
+- Two apps may find no core at the same moment and both start one. The profile lock decides: the
+  second service fails its claim and exits, and both apps connect to the first.
+- The service writes `core.json` and opens the socket only after the claim succeeds and the core is
+  open, so an app never reaches a half-started core.
+- A running core from another release is never replaced while other apps use it, and an older or
+  newer copy is never started in place of the app's own release: see
+  [Version check](#version-check).
 
 ### Running
 
