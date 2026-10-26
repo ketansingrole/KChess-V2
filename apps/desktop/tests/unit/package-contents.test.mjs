@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   LEGAL_FILES,
-  devBuildMarker,
   verifyEntries,
   verifyLegalFiles,
   verifyRendererEntries,
 } from '../../../../tooling/verify-package.mjs'
+import { devBuildMarker } from '../../../../tooling/dev-build-marker.mjs'
 
 describe('release payload checks', () => {
   it('accepts frontend assets, runtime dependencies, and the lite engine', () => {

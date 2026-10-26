@@ -32,7 +32,7 @@ import {
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stageVoiceRuntime } from './voice-runtime.mjs'
-import { verifyNoDevBuild } from './verify-package.mjs'
+import { verifyNoDevBuild } from './dev-build-marker.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const args = new Set(process.argv.slice(2))
