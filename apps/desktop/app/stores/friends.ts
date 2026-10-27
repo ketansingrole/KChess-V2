@@ -6,6 +6,8 @@ import { useKChessStore } from './kchess'
 import { useUsageStore } from './usage'
 
 const PRESENCE_CHUNK = 50
+/** The most players `profiles` takes at once. */
+const PROFILES_CHUNK = 1000
 
 /** Live details of the players being followed: their Lichess profile and whether they are online. */
 export const useFriendsStore = defineStore('friends', () => {
@@ -20,7 +22,7 @@ export const useFriendsStore = defineStore('friends', () => {
 
   const friends = computed(() => kchess.trackedAccounts)
 
-  /** Saved profiles paint at once; fresh ones follow one at a time (Lichess asks for no parallel requests). */
+  /** Saved profiles paint at once; the rest follow in one request per thousand players. */
   async function loadProfiles(): Promise<void> {
     loading.value = true
     // Profiles saved within the last hour (e.g. by an import) are not worth another request.
@@ -44,15 +46,16 @@ export const useFriendsStore = defineStore('friends', () => {
           }
         }),
       )
-      for (const friend of friends.value) {
-        if (!online.value || fresh.has(friend.username.toLowerCase())) continue
+      const stale = friends.value
+        .map((friend) => friend.username)
+        .filter((name) => !fresh.has(name.toLowerCase()))
+      for (let start = 0; online.value && start < stale.length; start += PROFILES_CHUNK) {
         try {
-          profiles.value[friend.username.toLowerCase()] = await window.kchess.profile(
-            friend.username,
-          )
+          const users = await window.kchess.profiles(stale.slice(start, start + PROFILES_CHUNK))
+          for (const user of users) profiles.value[user.username.toLowerCase()] = user
         } catch (cause) {
-          console.warn('[friends] loading profile failed:', cause)
-          // Keep whatever was saved; the card simply shows fewer details.
+          console.warn('[friends] loading profiles failed:', cause)
+          // Keep whatever was saved; the cards simply show fewer details.
         }
       }
     } finally {

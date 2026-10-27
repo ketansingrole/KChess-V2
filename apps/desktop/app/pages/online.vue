@@ -761,6 +761,7 @@ function backToTournament(): void {
                 :black="onlineColor === 'black' ? activeOnlineAccount : onlineOpponent"
                 :ply="onlinePly"
                 :result="onlineResult || '*'"
+                :lichess-id="onlineId || undefined"
               />
               <UButton
                 v-if="onlinePhase === 'finished' && onlineTournament"

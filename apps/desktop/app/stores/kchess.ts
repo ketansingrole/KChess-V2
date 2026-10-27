@@ -576,6 +576,8 @@ export const useKChessStore = defineStore('kchess', () => {
       selectedAccount.value ||= defaultAccount(result.accounts)
       // Following someone already listed keeps their row where it is, so find it by name.
       const added = result.accounts.find((account) => account.username.toLowerCase() === typed)
+      // A connected account follows them on Lichess too.
+      if (added && !added.connected) void setLichessRelation(added.username, 'follow')
       await sync(added?.username ?? result.accounts.at(-1)?.username)
     }
   }
@@ -597,6 +599,39 @@ export const useKChessStore = defineStore('kchess', () => {
     info(
       `Added ${usernames.length} ${usernames.length === 1 ? 'player' : 'players'} to Following. Their games aren't downloaded until you sync them.`,
     )
+    return true
+  }
+  /**
+   * Follows, unfollows, blocks or unblocks `username` on Lichess as the online account. Without a
+   * connected account there is nothing to do; a login from before the permission is asked to
+   * reconnect. True when Lichess took it.
+   */
+  async function setLichessRelation(
+    username: string,
+    action: 'follow' | 'unfollow' | 'block' | 'unblock',
+  ): Promise<boolean> {
+    const account = activeOnlineAccount.value
+    if (!account) return false
+    try {
+      const result = await window.kchess.setRelation(account, username, action)
+      if (result === true) return true
+      toast.add({
+        title: 'Lichess needs a new permission',
+        description: `Connect @${account} again to ${action} players on Lichess.`,
+        icon: 'i-lucide-key-round',
+        color: 'warning',
+        actions: [{ label: 'Reconnect', icon: 'i-lucide-link', onClick: () => void connect() }],
+      })
+    } catch (cause) {
+      console.warn(`[kchess] Lichess ${action} failed:`, cause)
+      fail(cause)
+    }
+    return false
+  }
+  /** Adds `username` to Following and, with an account connected, follows them on Lichess. */
+  async function followPlayer(username: string): Promise<boolean> {
+    if (!(await importFriends([username]))) return false
+    void setLichessRelation(username, 'follow')
     return true
   }
   async function logout(all = false): Promise<void> {
@@ -636,6 +671,8 @@ export const useKChessStore = defineStore('kchess', () => {
     // Disconnecting one's own account signs it out, so it resets the window just like logout.
     if (result && wasConnected) await signedOut(result, username)
     else if (result) {
+      // A friend leaves Following on Lichess too.
+      void setLichessRelation(username, 'unfollow')
       selectedAccount.value = defaultAccount(result.accounts)
       if (historyAccount.value.toLowerCase() === username.toLowerCase())
         historyAccount.value = 'all'
@@ -968,6 +1005,8 @@ export const useKChessStore = defineStore('kchess', () => {
     startOnlineGame,
     challengeFriend,
     importFriends,
+    followPlayer,
+    setLichessRelation,
     clearSyncedData,
     toggleSearch,
     chooseSearch,

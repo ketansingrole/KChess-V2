@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useIntervalFn, useOnline } from '@vueuse/core'
-import type { LichessAccount } from '@kchess/contracts/types'
+import type { LichessAccount, TimelineEntry } from '@kchess/contracts/types'
 import { formatBytes, formatCount } from '../utils/format'
+import { timelineGroups } from '../utils/activity'
 
 const online = useOnline()
 const store = useKChessStore()
@@ -89,6 +90,35 @@ function showGames(friend: LichessAccount): void {
   selectPage('history', { source: 'lichess' })
 }
 
+/** What the players the online account follows on Lichess did lately. */
+const timeline = ref<TimelineEntry[] | null>(null)
+const timelineError = ref('')
+let timelineRequest = 0
+async function loadTimeline(): Promise<void> {
+  const account = store.activeOnlineAccount
+  const current = ++timelineRequest
+  timelineError.value = ''
+  if (!account || !online.value) return
+  try {
+    const answer = await window.kchess.timeline(account)
+    if (current !== timelineRequest) return
+    timeline.value = Array.isArray(answer) ? answer : []
+  } catch (cause) {
+    if (current !== timelineRequest) return
+    console.warn('[friends] Timeline unavailable:', cause)
+    timelineError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+const timelineList = computed(() => timelineGroups(timeline.value ?? []))
+watch(
+  () => [store.activeOnlineAccount, online.value],
+  () => {
+    timeline.value = null
+    void loadTimeline()
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
   void usage.refresh()
   void friendsStore.loadProfiles()
@@ -117,7 +147,11 @@ watch(
           />
           <UButton
             type="submit"
-            title="Follows in KChess and downloads public games; does not change Lichess following."
+            :title="
+              connectedAccounts.length
+                ? `Follows on Lichess as @${store.activeOnlineAccount} and downloads public games.`
+                : 'Follows in KChess and downloads public games.'
+            "
             :disabled="!online || !usernameInput.trim() || busy"
             icon="i-lucide-plus"
             >Follow player</UButton
@@ -202,6 +236,14 @@ watch(
       </div>
     </template>
 
+    <section v-if="store.activeOnlineAccount && online" class="card mt-6">
+      <h2 class="section-title mb-3">Timeline</h2>
+      <p v-if="timelineError" class="text-error text-sm" role="alert">{{ timelineError }}</p>
+      <p v-else-if="!timeline" class="muted text-sm">Loading…</p>
+      <p v-else-if="!timeline.length" class="muted text-sm">Nothing new.</p>
+      <ActivityList v-else :groups="timelineList" />
+    </section>
+
     <FriendImportDialog v-model:open="importOpen" />
     <ConfirmDialog
       v-model:open="confirmClear"
@@ -215,7 +257,7 @@ watch(
     <ConfirmDialog
       v-model:open="confirmRemove"
       title="Stop following this player?"
-      :description="`@${pendingRemoval?.username} and their ${formatCount(usage.storageOf(pendingRemoval?.username ?? '').games)} stored games (${formatBytes(stored(pendingRemoval?.username ?? ''))}) will be deleted from this device. They stay removed until you add them again. Nothing changes on Lichess.`"
+      :description="`@${pendingRemoval?.username} and their ${formatCount(usage.storageOf(pendingRemoval?.username ?? '').games)} stored games (${formatBytes(stored(pendingRemoval?.username ?? ''))}) will be deleted from this device. They stay removed until you add them again.${connectedAccounts.length ? ` @${store.activeOnlineAccount} stops following them on Lichess.` : ''}`"
       confirm-label="Remove"
       color="error"
       @confirm="removePending"

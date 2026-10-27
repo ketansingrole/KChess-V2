@@ -10,11 +10,11 @@ import { judgmentCounts } from '../utils/review'
 import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
 import { OUTCOME_BADGES } from '../utils/games'
 
-type HistorySource = 'computer' | 'board' | 'lichess'
+type HistorySource = 'computer' | 'board' | 'lichess' | 'bookmarks'
 const route = useRoute()
 function routeSource(): HistorySource {
   const value = route.query.source
-  return value === 'lichess' || value === 'board' ? value : 'computer'
+  return value === 'lichess' || value === 'board' || value === 'bookmarks' ? value : 'computer'
 }
 const source = ref<HistorySource>(routeSource())
 /** The saved local game a link asked to open (Home's recent games). */
@@ -28,11 +28,12 @@ watch(
     source.value = routeSource()
   },
 )
-const sourceItems = [
+const sourceItems = computed(() => [
   { label: 'Computer', value: 'computer' },
   { label: 'Over the board', value: 'board' },
   { label: 'Lichess', value: 'lichess' },
-]
+  ...(store.connectedAccounts.length ? [{ label: 'Bookmarks', value: 'bookmarks' }] : []),
+])
 const online = useOnline()
 const store = useKChessStore()
 const {
@@ -98,6 +99,13 @@ function openHistoryReview(game: LichessGame): void {
 watch(source, () => {
   lichessRedo.value = null
 })
+// Bookmarks belong to a connected account; signing out leaves the synced games.
+watch(
+  () => store.connectedAccounts.length,
+  (count) => {
+    if (!count && source.value === 'bookmarks') source.value = 'lichess'
+  },
+)
 
 const analysis = useAnalysisStore()
 const reviews = useReviewStore()
@@ -210,8 +218,9 @@ const reviewBadge = computed(() =>
       >
     </PageHeader>
 
+    <BookmarkedGames v-if="source === 'bookmarks'" />
     <LocalGameHistory
-      v-if="source !== 'lichess'"
+      v-else-if="source !== 'lichess'"
       ref="localHistory"
       :source="source === 'computer' ? 'computer' : 'board'"
       :open-game="openGameId"

@@ -729,6 +729,7 @@ function voiceCommand(text: string): VoiceReply | undefined {
             :black="root.headers?.Black || analysis.origin?.black || 'Black'"
             :ply="Math.min(path ? path.split(' ').length : 0, analysis.mainline.length)"
             :result="root.headers?.Result"
+            :lichess-id="analysis.origin?.gameId"
           />
           <UTooltip text="Import a PGN or FEN">
             <UButton

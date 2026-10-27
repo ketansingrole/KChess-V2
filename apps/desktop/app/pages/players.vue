@@ -4,7 +4,11 @@ import { computed, onScopeDispose, ref, watch } from 'vue'
 import { RequestScope } from '@kchess/rules/requestScope'
 import { useOnline } from '@vueuse/core'
 import type {
+  ActivityDay,
   Crosstable,
+  LeaderboardEntry,
+  LichessRelation,
+  PlayerSuggestion,
   LichessGame,
   LichessRatingHistory,
   LichessUser,
@@ -14,18 +18,17 @@ import type {
 } from '@kchess/contracts/types'
 import { USERNAME } from '@kchess/rules/patterns'
 import { useWatchStore } from '../stores/watch'
-import { useAnalysisStore } from '../stores/analysis'
-import { useReplaceAnalysis } from '../composables/useReplaceAnalysis'
+import { useOpenLichessGame } from '../composables/useOpenLichessGame'
 import { mergeRatingHistories, ratingHistoryFromGames } from '@kchess/rules/ratings'
 import { PERF_LABELS, playedPerfs } from '../utils/perfs'
+import { activityGroups } from '../utils/activity'
 
 const online = useOnline()
 const store = useKChessStore()
 const { activeOnlineAccount, connectedAccounts, data, trackedAccounts } = storeToRefs(store)
 const route = useRoute()
 const watcher = useWatchStore()
-const analysis = useAnalysisStore()
-const replaceAnalysis = useReplaceAnalysis()
+const openGame = useOpenLichessGame()
 const toast = useToast()
 
 const query = ref(typeof route.query.name === 'string' ? route.query.name : '')
@@ -55,6 +58,10 @@ const history = ref<LichessRatingHistory | null>(null)
 /** The chart was rebuilt from recent rated games because Lichess sent no history. */
 const historyFromGames = ref(false)
 const gamesError = ref('')
+const activity = ref<ActivityDay[] | null>(null)
+const activityError = ref('')
+/** How the online account stands with the player on Lichess; null without one to ask. */
+const relation = ref<LichessRelation | null>(null)
 const error = ref('')
 const loading = ref(false)
 let request = 0
@@ -86,6 +93,9 @@ async function lookup(name = query.value.trim()): Promise<void> {
   games.value = null
   gamesError.value = ''
   history.value = null
+  activity.value = null
+  activityError.value = ''
+  relation.value = null
   try {
     const found = await window.kchess.profile(name)
     if (current !== request) return
@@ -113,6 +123,16 @@ async function lookup(name = query.value.trim()): Promise<void> {
         })
     void loadHistory(found.username, current)
     void loadGames(found.username, current)
+    void loadActivity(found.username, current)
+    if (me && me.toLowerCase() !== found.username.toLowerCase())
+      void window.kchess
+        .relation(me, found.username)
+        .then((value) => {
+          if (current === request && !('needsReconnect' in value)) relation.value = value
+        })
+        .catch((error: unknown) => {
+          console.warn('[players] Relation unavailable:', error)
+        })
     void window.kchess
       .presence([found.username])
       .then((report) => {
@@ -209,6 +229,122 @@ async function loadGames(username: string, current: number): Promise<void> {
       gamesError.value = 'Lichess isn’t sending this player’s games right now.'
   }
 }
+async function loadActivity(username: string, current: number): Promise<void> {
+  try {
+    const days = await window.kchess.activity(username)
+    if (current === request) activity.value = days
+  } catch (cause) {
+    console.warn('[players] Activity unavailable:', cause)
+    if (current === request) activityError.value = 'Lichess isn’t sending this player’s activity.'
+  }
+}
+const activityList = computed(() => activityGroups(activity.value ?? []))
+
+/** Adds the player to Following, and follows them on Lichess with an account connected. */
+async function follow(): Promise<void> {
+  const user = profile.value
+  if (user && (await store.followPlayer(user.username)) && relation.value)
+    relation.value = { ...relation.value, following: true }
+}
+/** Blocking hides the player's messages, challenges and chat on Lichess, and unfollows them. */
+function toggleBlock(): void {
+  const user = profile.value
+  const current = relation.value
+  if (!user || !current) return
+  const apply = async (): Promise<void> => {
+    const blocking = !current.blocking
+    if (await store.setLichessRelation(user.username, blocking ? 'block' : 'unblock'))
+      relation.value = { following: blocking ? false : current.following, blocking }
+  }
+  if (current.blocking) void apply()
+  else
+    store.ask({
+      title: `Block ${user.username}?`,
+      description: `@${activeOnlineAccount.value} stops seeing their messages, challenges and chat on Lichess.`,
+      label: 'Block',
+      color: 'error',
+      run: () => void apply(),
+    })
+}
+const moreItems = computed(() => [
+  [
+    {
+      label: relation.value?.blocking ? 'Unblock' : 'Block',
+      icon: 'i-lucide-ban',
+      onSelect: toggleBlock,
+    },
+  ],
+])
+
+/* ── Leaderboard and search, while no player is open ─────────────────── */
+const LEADERBOARD_PERFS: PerfType[] = [
+  'bullet',
+  'blitz',
+  'rapid',
+  'classical',
+  'ultraBullet',
+  'chess960',
+  'crazyhouse',
+  'antichess',
+  'atomic',
+  'horde',
+  'kingOfTheHill',
+  'racingKings',
+  'threeCheck',
+]
+const boardItems = LEADERBOARD_PERFS.map((key) => ({ label: PERF_LABELS[key], value: key }))
+const boardPerf = useViewPreference<PerfType>('kchess:leaderboard-perf', 'blitz')
+const board = ref<LeaderboardEntry[] | null>(null)
+const boardError = ref('')
+const boardRequests = new RequestScope()
+onScopeDispose(() => boardRequests.invalidate())
+async function loadBoard(): Promise<void> {
+  if (profile.value || !online.value) return
+  const pending = boardRequests.next()
+  board.value = null
+  boardError.value = ''
+  try {
+    const entries = await window.kchess.leaderboard(boardPerf.value)
+    if (pending.current()) board.value = entries
+  } catch (cause) {
+    if (!pending.current()) return
+    console.warn('[players] Leaderboard unavailable:', cause)
+    boardError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+watch([boardPerf, () => !profile.value, online], () => void loadBoard(), { immediate: true })
+
+/** Players whose names start with what is typed, while no player with that name is open. */
+const matches = ref<PlayerSuggestion[]>([])
+const searchRequests = new RequestScope()
+onScopeDispose(() => searchRequests.invalidate())
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+onScopeDispose(() => clearTimeout(searchTimer))
+watch(query, (text) => {
+  clearTimeout(searchTimer)
+  const term = text.trim()
+  const pending = searchRequests.next()
+  if (
+    term.length < 3 ||
+    !USERNAME.test(term) ||
+    !online.value ||
+    term.toLowerCase() === profile.value?.username.toLowerCase()
+  ) {
+    matches.value = []
+    return
+  }
+  searchTimer = setTimeout(() => {
+    window.kchess
+      .searchPlayers(term)
+      .then((found) => {
+        if (pending.current()) matches.value = found.slice(0, 12)
+      })
+      .catch((error: unknown) => {
+        console.warn('[players] Player search failed:', error)
+      })
+  }, 250)
+})
+
 /** Asks Lichess again for the history and games it did not send. */
 function retryActivity(): void {
   const user = profile.value
@@ -244,32 +380,6 @@ async function loadHistory(username: string, current: number): Promise<void> {
   if (current !== request) return
   history.value = mergeRatingHistories(official, ratingHistoryFromGames(rated))
   historyFromGames.value = rated.length > 0
-}
-
-/** Opens one of the player's games in the analysis board, from their side. */
-/** Asks first when the game would replace unsaved analysis. */
-function openGame(game: LichessGame): void {
-  replaceAnalysis(() => loadGame(game))
-}
-async function loadGame(game: LichessGame): Promise<void> {
-  try {
-    const pgn = await window.kchess.exportGame(game.id)
-    if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
-    analysis.orientation = game.color
-    analysis.origin = {
-      white: game.color === 'white' ? game.account : game.opponent,
-      black: game.color === 'white' ? game.opponent : game.account,
-      gameId: game.id,
-    }
-    store.selectPage('analysis')
-  } catch (cause) {
-    console.warn('[players] Could not open the game:', cause)
-    toast.add({
-      title: 'Could not open the game',
-      description: cause instanceof Error ? cause.message : String(cause),
-      color: 'error',
-    })
-  }
 }
 
 /* ── Messages ─────────────────────────────────────────────────────────── */
@@ -350,7 +460,23 @@ async function watchGame(): Promise<void> {
         :class="profile ? 'flex-1' : 'player-search-input'"
       />
       <UButton type="submit" :loading="loading" :disabled="!online">Look up</UButton>
-      <div v-if="suggestions.length" class="player-suggestions flex flex-wrap gap-1 w-full">
+      <div
+        v-if="matches.length"
+        class="player-suggestions flex flex-wrap gap-1 w-full"
+        aria-label="Matching players"
+      >
+        <UButton
+          v-for="match in matches"
+          :key="match.username"
+          size="xs"
+          variant="soft"
+          color="neutral"
+          :trailing-icon="match.online ? 'i-lucide-circle-dot' : undefined"
+          @click="lookup(match.username)"
+          >{{ match.title ? `${match.title} ` : '' }}{{ match.username }}</UButton
+        >
+      </div>
+      <div v-else-if="suggestions.length" class="player-suggestions flex flex-wrap gap-1 w-full">
         <UButton
           v-for="name in suggestions"
           :key="name"
@@ -363,6 +489,38 @@ async function watchGame(): Promise<void> {
       </div>
     </form>
     <p v-if="error" class="text-error text-sm" role="alert">{{ error }}</p>
+
+    <section v-if="!profile && online" class="card leaderboard-card">
+      <div class="card-header">
+        <h2 class="section-title">Leaderboard</h2>
+        <USelect
+          v-model="boardPerf"
+          :items="boardItems"
+          size="sm"
+          aria-label="Rating category"
+          class="w-40"
+        />
+      </div>
+      <p v-if="boardError" class="text-error text-sm" role="alert">{{ boardError }}</p>
+      <p v-else-if="!board" class="muted text-sm">Loading…</p>
+      <ol v-else class="leaderboard text-sm">
+        <li v-for="(entry, index) in board" :key="entry.username">
+          <span class="muted tabular">{{ index + 1 }}</span>
+          <span class="truncate"
+            ><strong v-if="entry.title" class="title-tag">{{ entry.title }}</strong>
+            <PlayerLink :username="entry.username"
+          /></span>
+          <span class="tabular">{{ Math.round(entry.rating) }}</span>
+          <span
+            class="tabular text-xs"
+            :class="
+              entry.progress > 0 ? 'text-success' : entry.progress < 0 ? 'text-error' : 'muted'
+            "
+            >{{ entry.progress > 0 ? '+' : '' }}{{ entry.progress || '' }}</span
+          >
+        </li>
+      </ol>
+    </section>
 
     <div v-if="profile" class="online-columns player-columns">
       <section class="card">
@@ -390,7 +548,7 @@ async function watchGame(): Promise<void> {
               color="neutral"
               icon="i-lucide-user-plus"
               :disabled="!online"
-              @click="store.importFriends([profile.username])"
+              @click="follow"
               >Follow player</UButton
             >
             <UButton
@@ -424,10 +582,23 @@ async function watchGame(): Promise<void> {
               @click="watchGame"
               >Watch</UButton
             >
+            <UDropdownMenu v-if="relation" :items="moreItems">
+              <UButton
+                size="sm"
+                variant="ghost"
+                color="neutral"
+                icon="i-lucide-ellipsis"
+                aria-label="More actions"
+                :disabled="!online"
+              />
+            </UDropdownMenu>
           </div>
         </div>
         <p v-if="extrasFailed.length" class="muted text-sm mb-3" role="status">
           Could not load {{ extrasFailed.join(' or ') }}.
+        </p>
+        <p v-if="relation?.blocking" class="muted text-sm mb-3" role="status">
+          Blocked by @{{ activeOnlineAccount }}.
         </p>
         <p v-if="profile.profile?.bio" class="text-sm whitespace-pre-line mb-3">
           {{ profile.profile.bio }}
@@ -604,6 +775,13 @@ async function watchGame(): Promise<void> {
           />
         </div>
       </section>
+      <section class="card player-activity">
+        <h2 class="section-title mb-3">Activity</h2>
+        <p v-if="activityError" class="muted text-sm" role="status">{{ activityError }}</p>
+        <p v-else-if="!activity" class="muted text-sm">Loading…</p>
+        <p v-else-if="!activity.length" class="muted text-sm">No recent activity.</p>
+        <ActivityList v-else :groups="activityList" />
+      </section>
     </div>
     <UModal
       v-model:open="messageOpen"
@@ -671,6 +849,9 @@ async function watchGame(): Promise<void> {
   grid-column: 2;
   grid-row: 1 / span 2;
 }
+.player-activity {
+  grid-column: 1 / -1;
+}
 /* Too narrow for the games table beside the sidebar: stack profile, record, games. */
 @container page (max-width: 1060px) {
   .player-columns {
@@ -723,6 +904,27 @@ async function watchGame(): Promise<void> {
 .opponent-list {
   display: grid;
   gap: 4px;
+}
+.leaderboard-card {
+  margin-bottom: 20px;
+}
+.leaderboard {
+  display: grid;
+  gap: 2px;
+  max-height: 32rem;
+  overflow-y: auto;
+}
+.leaderboard li {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) 4rem 3rem;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--ui-border);
+}
+.title-tag {
+  color: var(--ui-warning);
+  margin-right: 4px;
 }
 .opponent-list li {
   display: flex;

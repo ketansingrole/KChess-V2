@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { useOnline } from '@vueuse/core'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { GameSetup } from '@kchess/rules/variant'
 import { setupPgn } from '@kchess/rules/chess'
@@ -13,8 +14,11 @@ const props = defineProps<{
   /** The position shown, for the PNG; the last one by default. */
   ply?: number
   result?: string
+  /** The game's id when it was played on Lichess, so its link needs no upload. */
+  lichessId?: string
 }>()
 const store = useKChessStore()
+const online = useOnline()
 const toast = useToast()
 const busy = ref(false)
 const progress = ref('')
@@ -26,6 +30,36 @@ const name = computed(() =>
     .replace(/[^\w .()+-]/g, '')
     .slice(0, 80),
 )
+function pgnText(): string {
+  return setupPgn(props.setup, props.moves, {
+    White: props.white,
+    Black: props.black,
+    Result: props.result ?? '*',
+    Date: new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
+  })
+}
+/** Uploads the game to Lichess (as the online account, if any) and copies its page's link. */
+const uploading = ref(false)
+async function upload(): Promise<void> {
+  if (busy.value || uploading.value) return
+  uploading.value = true
+  try {
+    const url = props.lichessId
+      ? `https://lichess.org/${props.lichessId}`
+      : (await window.kchess.importGame(store.activeOnlineAccount, pgnText())).url
+    await navigator.clipboard.writeText(url)
+    toast.add({ title: 'Copied the Lichess link', description: url, icon: 'i-lucide-check' })
+  } catch (cause) {
+    console.warn('[export-game] Upload failed:', cause)
+    toast.add({
+      title: 'Could not upload the game',
+      description: cause instanceof Error ? cause.message : String(cause),
+      color: 'error',
+    })
+  } finally {
+    uploading.value = false
+  }
+}
 async function save(kind: 'gif' | 'png' | 'pgn'): Promise<void> {
   if (busy.value) return
   busy.value = true
@@ -54,12 +88,7 @@ async function save(kind: 'gif' | 'png' | 'pgn'): Promise<void> {
           })
         : kind === 'png'
           ? await positionPng(options, props.ply ?? props.moves.length)
-          : setupPgn(props.setup, props.moves, {
-              White: props.white,
-              Black: props.black,
-              Result: props.result ?? '*',
-              Date: new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
-            })
+          : pgnText()
     controller.signal.throwIfAborted()
     if (await window.kchess.saveExport({ name: name.value, kind, data }))
       toast.add({ title: `Saved the ${kind.toUpperCase()}`, icon: 'i-lucide-check' })
@@ -83,6 +112,14 @@ const items = computed<DropdownMenuItem[][]>(() => [
     { label: 'PNG of this position', icon: 'i-lucide-image', onSelect: () => void save('png') },
     { label: 'PGN file', icon: 'i-lucide-file-text', onSelect: () => void save('pgn') },
   ],
+  [
+    {
+      label: 'Lichess link',
+      icon: 'i-lucide-link',
+      disabled: !props.lichessId && (!online.value || !props.moves.length),
+      onSelect: () => void upload(),
+    },
+  ],
 ])
 </script>
 
@@ -99,8 +136,8 @@ const items = computed<DropdownMenuItem[][]>(() => [
       variant="ghost"
       color="neutral"
       icon="i-lucide-download"
-      :loading="busy"
-      :disabled="busy || (!moves.length && ply === undefined)"
+      :loading="busy || uploading"
+      :disabled="busy || uploading || (!moves.length && ply === undefined)"
       >Export</UButton
     >
   </UDropdownMenu>
