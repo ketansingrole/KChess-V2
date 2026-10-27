@@ -74,6 +74,10 @@ function bridge(playerPerf: (name: string, perf: PerfType) => Promise<PerfStats>
     }),
     recentGames: async () => [],
     crosstable: async () => ({ users: {}, nbGames: 0 }),
+    relation: async () => ({ following: false, blocking: false }),
+    activity: async () => [],
+    leaderboard: async () => [],
+    searchPlayers: async () => [],
     playerPerf,
   })
 }
