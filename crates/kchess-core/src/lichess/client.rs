@@ -265,6 +265,23 @@ impl LichessClient {
         parse_json(&text, path)
     }
 
+    /// `POST path` with a plain-text body, such as the comma-separated names of `/api/users`.
+    pub async fn post_text<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        text: String,
+        auth: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<T> {
+        let headers = auth_header(auth);
+        let body = Some(("text/plain", text));
+        let admitted = self
+            .call(reqwest::Method::POST, path, &[], &headers, body, cancel)
+            .await?;
+        let text = self.read_text(admitted, "POST", path, cancel, None).await?;
+        parse_json(&text, path)
+    }
+
     /// `DELETE path`, whose body is not read for data (Lichess answers `204`).
     pub async fn delete(
         &self,

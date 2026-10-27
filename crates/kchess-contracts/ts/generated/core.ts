@@ -2,7 +2,7 @@
 // Do not edit: change the Rust contract types and run `pnpm run build:native`.
 
 import type { ArchivedGame, JoinedTournament, LegacyDocuments, LibrarySnapshot, MistakeExercise, MistakeGame, RepertoireMisses, SessionDocuments, SessionKind, StudyCommand, StudyCommandResult } from './library'
-import type { AlertOwner, AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, CustomThemeReport, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, ProfileChange, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
+import type { ActivityDay, AlertOwner, AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, CustomThemeReport, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, ImportedGame, InsightsQuery, InsightsReport, LeaderboardEntry, LichessGame, LichessRatingHistory, LichessRelation, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PlayerSuggestion, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, ProfileChange, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TimelineEntry, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
 
 export type CoreEvents = { "online:state": OnlineConnection, "online:event": OnlineEvent, "online:error": string, "puzzledb:progress": PuzzleDbProgress, "engine:analysis": AnalysisUpdate, "review:update": ReviewUpdate, "review:status": ReviewStatus, "challenges:update": Array<ChallengeInfo>, "online:lobby": LobbyState, "online:ongoing-changed": null, "watch:state": WatchState, "watch:frame": WatchFrame, "watch:broadcast": BroadcastUpdate, 
 /**
@@ -172,6 +172,42 @@ export interface CoreApi {
    * A Lichess private message from one of the connected accounts.
    */
   sendMessage(account: string, username: string, text: string): Promise<{ sent: true } | NeedsReconnect>
+  /**
+   * Whether a connected account follows or blocks a player on Lichess.
+   */
+  relation(account: string, username: string): Promise<LichessRelation | NeedsReconnect>
+  /**
+   * Follow, unfollow, block or unblock a player on Lichess as a connected account.
+   */
+  setRelation(account: string, username: string, action: 'follow' | 'unfollow' | 'block' | 'unblock'): Promise<true | NeedsReconnect>
+  /**
+   * Many players' Lichess profiles at once (fewer details than `profile`), unknown names left out.
+   */
+  profiles(usernames: string[]): Promise<LichessUser[]>
+  /**
+   * The top players of a rating category.
+   */
+  leaderboard(perf: PerfType): Promise<LeaderboardEntry[]>
+  /**
+   * Players whose names start with `term` (three characters or more).
+   */
+  searchPlayers(term: string): Promise<PlayerSuggestion[]>
+  /**
+   * A player's recent Lichess activity, by day.
+   */
+  activity(username: string): Promise<ActivityDay[]>
+  /**
+   * What the players a connected account follows did lately.
+   */
+  timeline(account: string): Promise<TimelineEntry[] | NeedsReconnect>
+  /**
+   * Upload a PGN game to Lichess (as `account`, or anonymously when empty) for its page.
+   */
+  importGame(account: string, pgn: string): Promise<ImportedGame>
+  /**
+   * The games a connected account bookmarked on Lichess, from its side.
+   */
+  bookmarkedGames(account: string): Promise<LichessGame[] | NeedsReconnect>
   /**
    * Lichess TV channels and who is on each.
    */
@@ -401,6 +437,15 @@ export const CORE_METHODS: CoreMethod[] = [
   'crosstable',
   'recentGames',
   'sendMessage',
+  'relation',
+  'setRelation',
+  'profiles',
+  'leaderboard',
+  'searchPlayers',
+  'activity',
+  'timeline',
+  'importGame',
+  'bookmarkedGames',
   'tvChannels',
   'watch',
   'watchBroadcast',

@@ -413,6 +413,11 @@ impl Lichess {
         self.cancel_account_syncs(accounts);
     }
 
+    /// `account`'s stored login, when there is one to use.
+    pub(crate) async fn token_of(&self, account: &str) -> Option<String> {
+        self.tokens.token(account).await.ok().flatten()
+    }
+
     /// Revoke the stored logins of these accounts on Lichess (`DELETE /api/token`) before they are
     /// deleted here, or of every connected account when `accounts` is None. Signing out never
     /// waits on Lichess: a refusal, a missing login or no connection is logged and passed over,
@@ -1444,7 +1449,7 @@ async fn wait_for(mut outcome: SyncOutcome) -> CoreResult<usize> {
     }
 }
 
-fn parse_game(line: &str) -> CoreResult<GameJson> {
+pub(crate) fn parse_game(line: &str) -> CoreResult<GameJson> {
     serde_json::from_str(line)
         .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
 }
@@ -1462,7 +1467,7 @@ fn is_game_in_progress(raw: &Value) -> bool {
 }
 
 /// `noSuchUser`: Lichess's generic 404 becomes a message that names the user.
-fn no_such_user(username: &str, failure: Failure) -> Failure {
+pub(crate) fn no_such_user(username: &str, failure: Failure) -> Failure {
     match failure {
         Failure::Lichess(error) if error.status == 404 => {
             Failure::Lichess(super::client::LichessError {

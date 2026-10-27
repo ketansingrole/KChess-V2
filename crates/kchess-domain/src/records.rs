@@ -14,6 +14,9 @@ mod review;
 mod studies;
 mod time_control;
 
+/// The label of each rating category (`RATING_DISPLAY_NAMES`).
+pub use ratings::DISPLAY_NAMES as RATING_DISPLAY_NAMES;
+
 use serde_json::Value;
 use shakmaty::variant::VariantPosition;
 

@@ -748,6 +748,40 @@ export type Crosstable = {
  */
 users: { [key in string]: number }, nbGames: number, matchup?: CrosstableMatchup, };
 
+export type LichessRelation = { following: boolean, blocking: boolean, };
+
+export type LeaderboardEntry = { username: string, title?: string, rating: number, 
+/**
+ * Rating change over the last games.
+ */
+progress: number, online?: boolean, };
+
+export type PlayerSuggestion = { username: string, title?: string, online?: boolean, };
+
+export type ActivityItem = { kind: string, text: string, 
+/**
+ * A player the line is about, for a profile link.
+ */
+username?: string, 
+/**
+ * A game the line is about, to open it.
+ */
+gameId?: string, };
+
+export type ActivityDay = { 
+/**
+ * Start of the day, epoch milliseconds.
+ */
+start: number, items: Array<ActivityItem>, };
+
+export type TimelineEntry = { 
+/**
+ * Epoch milliseconds.
+ */
+date: number, item: ActivityItem, };
+
+export type ImportedGame = { id: string, url: string, };
+
 export type WatchPlayer = { name: string, title?: string, rating?: number, };
 
 export type WatchState = { session: number, phase: WatchPhase, message?: string, };

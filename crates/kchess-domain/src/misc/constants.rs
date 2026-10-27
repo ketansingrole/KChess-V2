@@ -52,6 +52,7 @@ pub const DECLINE_REASONS: &[&str] = &[
     "variant",
 ];
 pub const CHAT_ROOMS: &[&str] = &["player", "spectator"];
+pub const RELATION_ACTIONS: &[&str] = &["follow", "unfollow", "block", "unblock"];
 pub const CHALLENGE_COLORS: &[&str] = &["random", "white", "black"];
 pub const PUZZLE_DIFFICULTIES: &[&str] = &["easiest", "easier", "normal", "harder", "hardest"];
 pub const RUN_KINDS: &[&str] = &[

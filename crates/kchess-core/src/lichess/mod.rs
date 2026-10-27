@@ -13,6 +13,7 @@ pub mod policy;
 pub mod puzzles;
 pub mod reviews;
 pub mod services;
+pub mod social;
 pub mod stream;
 pub mod studies;
 pub mod tournaments;

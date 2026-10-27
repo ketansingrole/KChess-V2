@@ -388,6 +388,68 @@ pub fn methods() -> Vec<Method> {
             format!("{{ sent: true }} | {}", t::<NeedsReconnect>()),
         ),
         method(
+            "relation",
+            "Whether a connected account follows or blocks a player on Lichess.",
+            vec![req("account", string), req("username", string)],
+            format!("{} | {}", t::<LichessRelation>(), t::<NeedsReconnect>()),
+        ),
+        method(
+            "setRelation",
+            "Follow, unfollow, block or unblock a player on Lichess as a connected account.",
+            vec![
+                req("account", string),
+                req("username", string),
+                req("action", "'follow' | 'unfollow' | 'block' | 'unblock'"),
+            ],
+            format!("true | {}", t::<NeedsReconnect>()),
+        ),
+        method(
+            "profiles",
+            "Many players' Lichess profiles at once (fewer details than `profile`), unknown names left out.",
+            vec![req("usernames", array(string))],
+            array("LichessUser"),
+        ),
+        method(
+            "leaderboard",
+            "The top players of a rating category.",
+            vec![req("perf", t::<PerfType>())],
+            array(t::<LeaderboardEntry>()),
+        ),
+        method(
+            "searchPlayers",
+            "Players whose names start with `term` (three characters or more).",
+            vec![req("term", string)],
+            array(t::<PlayerSuggestion>()),
+        ),
+        method(
+            "activity",
+            "A player's recent Lichess activity, by day.",
+            vec![req("username", string)],
+            array(t::<ActivityDay>()),
+        ),
+        method(
+            "timeline",
+            "What the players a connected account follows did lately.",
+            vec![req("account", string)],
+            format!(
+                "{} | {}",
+                array(t::<TimelineEntry>()),
+                t::<NeedsReconnect>()
+            ),
+        ),
+        method(
+            "importGame",
+            "Upload a PGN game to Lichess (as `account`, or anonymously when empty) for its page.",
+            vec![req("account", string), req("pgn", string)],
+            t::<ImportedGame>(),
+        ),
+        method(
+            "bookmarkedGames",
+            "The games a connected account bookmarked on Lichess, from its side.",
+            vec![req("account", string)],
+            format!("{} | {}", array(t::<LichessGame>()), t::<NeedsReconnect>()),
+        ),
+        method(
             "tvChannels",
             "Lichess TV channels and who is on each.",
             vec![],

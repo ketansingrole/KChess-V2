@@ -527,6 +527,44 @@ impl Services {
                 let moves = args.first().cloned().unwrap_or(Value::Null);
                 to_json(self.lookups.opening_popularity(&moves).await)
             }
+            "lichess.relation" => match (text(args, 0), text(args, 1)) {
+                (Ok(account), Ok(name)) => reply_json(self.lichess.relation(&account, &name).await),
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
+            "lichess.setRelation" => match (text(args, 0), text(args, 1), text(args, 2)) {
+                (Ok(account), Ok(name), Ok(action)) => {
+                    reply_true(self.lichess.set_relation(&account, &name, &action).await)
+                }
+                (Err(cause), _, _) | (_, Err(cause), _) | (_, _, Err(cause)) => Err(cause),
+            },
+            "lichess.profiles" => match strings(args, 0) {
+                Ok(names) => to_json(self.lichess.profiles(&names).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.leaderboard" => match text(args, 0) {
+                Ok(perf) => to_json(self.lichess.leaderboard(&perf).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.searchPlayers" => match text(args, 0) {
+                Ok(term) => to_json(self.lichess.search_players(&term).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.activity" => match text(args, 0) {
+                Ok(name) => to_json(self.lichess.activity(&name).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.timeline" => match text(args, 0) {
+                Ok(account) => reply_json(self.lichess.timeline(&account).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.importGame" => match (text(args, 0), text(args, 1)) {
+                (Ok(account), Ok(pgn)) => to_json(self.lichess.import_game(&account, &pgn).await),
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
+            "lichess.bookmarkedGames" => match text(args, 0) {
+                Ok(account) => reply_json(self.lichess.bookmarked_games(&account).await),
+                Err(cause) => Err(cause),
+            },
             "lichess.revokeLogins" => match args.first() {
                 None | Some(Value::Null) => {
                     self.lichess.revoke_logins(None).await;

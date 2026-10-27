@@ -290,6 +290,10 @@ fn assert_action(value: J) -> Checked<String> {
     picked(value, ONLINE_ACTIONS, Some("Invalid game action."))
 }
 
+fn assert_relation_action(value: J) -> Checked<String> {
+    picked(value, RELATION_ACTIONS, Some("Invalid action."))
+}
+
 fn assert_chat_room(value: J) -> Checked<String> {
     picked(value, CHAT_ROOMS, Some("Invalid chat room."))
 }
@@ -2120,6 +2124,7 @@ validators! {
     "assertFriendList" => assert_friend_list,
     "assertAction" => assert_action,
     "assertChatRoom" => assert_chat_room,
+    "assertRelationAction" => assert_relation_action,
     "assertChatText" => assert_chat_text,
     "assertNewArena" => assert_new_arena,
     "assertMessageText" => assert_message_text,

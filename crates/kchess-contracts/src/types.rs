@@ -1078,6 +1078,78 @@ pub struct Crosstable {
     pub matchup: Option<CrosstableMatchup>,
 }
 
+/// Whether a connected account follows or blocks a player on Lichess.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessRelation {
+    pub following: bool,
+    pub blocking: bool,
+}
+
+/// One place on a Lichess leaderboard.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct LeaderboardEntry {
+    pub username: String,
+    pub title: Option<String>,
+    pub rating: f64,
+    /// Rating change over the last games.
+    pub progress: f64,
+    pub online: Option<bool>,
+}
+
+/// A player whose name starts with what was typed.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct PlayerSuggestion {
+    pub username: String,
+    pub title: Option<String>,
+    pub online: Option<bool>,
+}
+
+/// One line of a player's activity or of a timeline, ready to show: `kind` picks the icon
+/// (`games`, `puzzles`, `tournament`, `follow`, `study`, `team`, `post`, `simul`, `patron`,
+/// `stream`, `correspondence`, `other`).
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct ActivityItem {
+    pub kind: String,
+    pub text: String,
+    /// A player the line is about, for a profile link.
+    pub username: Option<String>,
+    /// A game the line is about, to open it.
+    pub game_id: Option<String>,
+}
+
+/// A day of a player's Lichess activity, newest first.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityDay {
+    /// Start of the day, epoch milliseconds.
+    pub start: f64,
+    pub items: Vec<ActivityItem>,
+}
+
+/// One entry of an account's Lichess timeline (what followed players did), newest first.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineEntry {
+    /// Epoch milliseconds.
+    pub date: f64,
+    pub item: ActivityItem,
+}
+
+/// A game uploaded to Lichess, with the address of its page.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedGame {
+    pub id: String,
+    pub url: String,
+}
+
 /* ── Watching games ─────────────────────────────────────────────────── */
 
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
@@ -2311,6 +2383,13 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         PerfStats,
         CrosstableMatchup,
         Crosstable,
+        LichessRelation,
+        LeaderboardEntry,
+        PlayerSuggestion,
+        ActivityItem,
+        ActivityDay,
+        TimelineEntry,
+        ImportedGame,
         WatchPlayer,
         WatchState,
         WatchClock,

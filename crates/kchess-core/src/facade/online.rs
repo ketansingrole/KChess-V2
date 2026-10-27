@@ -108,6 +108,36 @@ impl Core {
                 self.inner("lichess.sendMessage", vec![account, username, text])
                     .await
             }
+            "relation" => {
+                let account = normal("assertUsername", &arg(args, 0))?;
+                let username = normal("assertUsername", &arg(args, 1))?;
+                self.inner("lichess.relation", vec![account, username])
+                    .await
+            }
+            "timeline" | "bookmarkedGames" | "activity" | "searchPlayers" => {
+                let name = normal("assertUsername", &arg(args, 0))?;
+                self.inner(&format!("lichess.{method}"), vec![name]).await
+            }
+            "setRelation" => {
+                let account = normal("assertUsername", &arg(args, 0))?;
+                let username = normal("assertUsername", &arg(args, 1))?;
+                let action = normal("assertRelationAction", &arg(args, 2))?;
+                self.inner("lichess.setRelation", vec![account, username, action])
+                    .await
+            }
+            "profiles" => {
+                let names = normal("assertFriendList", &arg(args, 0))?;
+                self.inner("lichess.profiles", vec![names]).await
+            }
+            "leaderboard" => {
+                let perf = normal("assertPerfType", &arg(args, 0))?;
+                self.inner("lichess.leaderboard", vec![perf]).await
+            }
+            "importGame" => {
+                let account = normal("assertOptionalAccount", &arg(args, 0))?;
+                let pgn = normal("assertPgnText", &arg(args, 1))?;
+                self.inner("lichess.importGame", vec![account, pgn]).await
+            }
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
     }

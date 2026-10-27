@@ -864,3 +864,93 @@ async fn signing_out_revokes_each_connected_login_on_lichess() {
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[2].header("authorization"), Some("Bearer lip_bob"));
 }
+
+/// Following needs `follow:write`; a login made before it was asked for is refused and the
+/// account is asked to reconnect rather than shown an error.
+#[tokio::test]
+async fn following_with_a_login_that_lacks_the_permission_asks_to_reconnect() {
+    let fixture = serve(|seen| match seen.header("authorization") {
+        Some("Bearer lip_old") => Reply::Json(403, r#"{"error":"Missing scope"}"#.into()),
+        _ => Reply::Json(200, r#"{"ok":true}"#.into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true), ("Bob", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        store,
+        MemoryTokens::with(&[("Alice", "lip_alice"), ("Bob", "lip_old")]),
+    );
+
+    let done = lichess
+        .set_relation("Alice", "Carol", "follow")
+        .await
+        .unwrap();
+    assert_eq!(done, Outcome::Done(()));
+    let call = fixture.to("/api/rel/follow/Carol").remove(0);
+    assert_eq!(call.method, "POST");
+    let refused = lichess.set_relation("Bob", "Carol", "block").await.unwrap();
+    assert_eq!(refused, Outcome::NeedsReconnect);
+    assert_eq!(fixture.to("/api/rel/block/Carol").len(), 1);
+    assert!(
+        lichess
+            .set_relation("Alice", "Carol", "mute")
+            .await
+            .is_err()
+    );
+}
+
+/// Many profiles go to Lichess 300 names a request, as one comma-separated body each.
+#[tokio::test]
+async fn looks_up_many_profiles_three_hundred_names_a_request() {
+    let fixture = serve(|seen| {
+        let users: Vec<Value> = seen
+            .body
+            .split(',')
+            .map(|name| json!({ "id": name.to_lowercase(), "username": name }))
+            .collect();
+        Reply::Json(200, Value::Array(users).to_string())
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+    let names: Vec<String> = (0..301).map(|i| format!("player{i}")).collect();
+    let users = lichess.profiles(&names).await.unwrap();
+    assert_eq!(users.len(), 301);
+    let calls = fixture.to("/api/users");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].body, "player300");
+}
+
+/// An upload is attached to the account when it has a login, and anonymous otherwise.
+#[tokio::test]
+async fn uploads_a_game_as_the_account_or_anonymously() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/import" if seen.body.contains("pgn=") => Reply::Json(
+            200,
+            json!({ "id": "R6iLjwz5", "url": "https://lichess.org/R6iLjwz5" }).to_string(),
+        ),
+        _ => Reply::Json(400, r#"{"error":"Invalid PGN"}"#.into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let pgn = "1. e4 e5 *";
+    let game = lichess.import_game("Alice", pgn).await.unwrap();
+    assert_eq!(game.url, "https://lichess.org/R6iLjwz5");
+    lichess.import_game("", pgn).await.unwrap();
+    let calls = fixture.to("/api/import");
+    assert_eq!(calls[0].header("authorization"), Some("Bearer lip_alice"));
+    assert_eq!(calls[1].header("authorization"), None);
+}

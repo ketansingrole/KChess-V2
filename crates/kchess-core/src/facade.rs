@@ -95,6 +95,15 @@ pub const FACADE_METHODS: &[&str] = &[
     "crosstable",
     "recentGames",
     "sendMessage",
+    "relation",
+    "setRelation",
+    "profiles",
+    "leaderboard",
+    "searchPlayers",
+    "activity",
+    "timeline",
+    "importGame",
+    "bookmarkedGames",
     "tvChannels",
     "watch",
     "watchBroadcast",
@@ -647,9 +656,9 @@ impl Core {
             "startOnline" | "resumeOnline" | "cancelOnline" | "playOnline" | "onlineAction"
             | "presence" | "onlineChat" | "sendChat" | "challenges" | "acceptChallenge"
             | "declineChallenge" | "cancelChallenge" | "ongoingGames" | "openGame"
-            | "playerPerf" | "crosstable" | "recentGames" | "sendMessage" => {
-                self.run_online(method, args).await
-            }
+            | "playerPerf" | "crosstable" | "recentGames" | "sendMessage" | "relation"
+            | "setRelation" | "profiles" | "leaderboard" | "searchPlayers" | "activity"
+            | "timeline" | "importGame" | "bookmarkedGames" => self.run_online(method, args).await,
             "tvChannels" | "watch" | "watchBroadcast" | "stopWatching" | "broadcasts"
             | "broadcastTour" => self.run_spectate(method, args).await,
             "tournaments" | "tournament" | "joinTournament" | "leaveTournament"

@@ -24,11 +24,12 @@ pub const OAUTH_CLIENT_ID: &str = "kchess-desktop";
 
 /// Permissions asked for at login. Studies, tournaments, team Swiss events and messages need
 /// their own; accounts connected earlier are asked to reconnect the first time one is used.
-pub const OAUTH_SCOPES: [&str; 11] = [
+pub const OAUTH_SCOPES: [&str; 12] = [
     "board:play",
     "challenge:read",
     "challenge:write",
     "follow:read",
+    "follow:write",
     "msg:write",
     "puzzle:read",
     "puzzle:write",
