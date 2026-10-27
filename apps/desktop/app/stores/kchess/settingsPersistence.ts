@@ -2,6 +2,15 @@ import { registerPersistenceFlush } from '../../utils/library'
 import { computed, watch, onScopeDispose, type Ref } from 'vue'
 import type { AppData, Settings } from '@kchess/contracts/types'
 
+/** `shown` moved from `before` onto `next`: fields still as they were in `before` take `next`'s. */
+function rebase(shown: Settings, before: Settings, next: Settings): Settings {
+  const merged = { ...shown } as Record<string, unknown>
+  const previous = before as unknown as Record<string, unknown>
+  for (const [key, value] of Object.entries(next))
+    if (JSON.stringify(merged[key]) === JSON.stringify(previous[key])) merged[key] = value
+  return merged as unknown as Settings
+}
+
 /** Serialize settings writes and keep edits made while a prior write is pending. */
 export function useSettingsPersistence(options: {
   settings: Ref<Settings | null>
@@ -44,9 +53,13 @@ export function useSettingsPersistence(options: {
       // Only what this window changed from `base` is written (`docs/shared-core.md`).
       const saved = await window.kchess.saveSettings(sent, base)
       data.value = { ...data.value, settings: saved }
-      // Keep edits made while the request was in flight; only adopt the stored
-      // (normalised) copy when the form still matches what was sent.
-      if (settings.value && settingsSignature.value === sentSignature) settings.value = { ...saved }
+      // Adopt the stored (normalised) copy, keeping only fields edited while the request was in
+      // flight: an untouched field must not be written back over another window's change.
+      if (settings.value)
+        settings.value =
+          settingsSignature.value === sentSignature
+            ? { ...saved }
+            : rebase(settings.value, sent, saved)
       if (saved.enginePath !== previousEngine) void refreshEngine()
     } catch (cause) {
       console.warn('[settings] saving settings failed:', cause)
@@ -87,13 +100,7 @@ export function useSettingsPersistence(options: {
    */
   function adoptStored(next: Settings): void {
     const stored = data.value?.settings
-    if (settings.value && stored) {
-      const shown = { ...settings.value } as Record<string, unknown>
-      const before = stored as unknown as Record<string, unknown>
-      for (const [key, value] of Object.entries(next))
-        if (JSON.stringify(shown[key]) === JSON.stringify(before[key])) shown[key] = value
-      settings.value = shown as unknown as Settings
-    }
+    if (settings.value && stored) settings.value = rebase(settings.value, stored, next)
     if (data.value) data.value = { ...data.value, settings: next }
   }
   return { settingsDirty, save, flushSettings, adoptStored }

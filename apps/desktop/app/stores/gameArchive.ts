@@ -40,6 +40,14 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
     )
     return result
   }
+  /** Whether a refresh would overwrite work of this window's not yet stored or settled. */
+  const busy = (): boolean => Boolean(writing || pending.size || failed.size || mutations)
+  /** Read the library again once this window's work is done, if a refresh came meanwhile. */
+  function settled(): void {
+    if (!deferred || busy()) return
+    deferred = false
+    refreshLibraryLater()
+  }
   let timer: ReturnType<typeof setTimeout> | undefined
   function revert(id: string): void {
     const previous = saved.get(id)
@@ -65,10 +73,7 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
       })
       await writing
     }
-    if (deferred && !writing && !pending.size && !failed.size) {
-      deferred = false
-      refreshLibraryLater()
-    }
+    settled()
     if (strict && failed.size)
       throw new AggregateError(
         [...failed.values()].map(({ cause }) => cause),
@@ -128,6 +133,7 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
       // Deletion follows any write already sent; batch entries not sent are invalidated above.
       await mutate(() => window.kchess.removeArchivedGame(id))
       saved.delete(id)
+      settled()
     } catch (cause) {
       console.warn('[history] removing a game failed:', id, cause)
       if (revisions.get(id) === version) {
@@ -135,6 +141,7 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
         const previous = saved.get(id)
         if (previous) games.value = [previous, ...games.value.filter((game) => game.id !== id)]
       }
+      settled()
     }
   }
   const unregister = registerPersistenceFlush(() => flush(true))
@@ -146,7 +153,8 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
   })
   /** Another KChess window saved or removed a game: show the library's, once this window's are saved. */
   function replaceFromLibrary(snapshot: LibrarySnapshot): void {
-    if (writing || pending.size || failed.size) {
+    // A snapshot read before a pending deletion would show the deleted game again.
+    if (busy()) {
       deferred = true
       return
     }

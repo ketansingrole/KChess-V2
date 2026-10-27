@@ -286,6 +286,7 @@ export const useKChessStore = defineStore('kchess', () => {
   let offOnlineState: (() => void) | undefined
   let offOnlineError: (() => void) | undefined
   let offNotification: (() => void) | undefined
+  let offReconnected: (() => void) | undefined
   let initialized = false
   /** True while init() is in flight; drives the startup retry button's loading state. */
   const initializing = ref(false)
@@ -796,6 +797,36 @@ export const useKChessStore = defineStore('kchess', () => {
       if (request.current()) console.warn('[kchess] reloading accounts failed:', cause)
     }
   }
+  /** Attach the game Lichess says is in progress (never replaying a move that was pending). */
+  const resumes = new RequestScope()
+  function resumeOnlineGame(): Promise<void> {
+    const request = resumes.next()
+    return window.kchess
+      .resumeOnline()
+      .then((resumed) => {
+        if (!request.current()) return
+        if (resumed) {
+          // The game may belong to any connected account; make that the active one.
+          setOnlineAccount(resumed.account)
+          onlineAccount.value = resumed.account
+          onlineId.value = resumed.id
+          if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
+        } else {
+          onlinePhase.value = 'idle'
+        }
+      })
+      .catch((cause) => {
+        if (!request.current()) return
+        console.warn('[kchess] resuming online game failed:', cause)
+        if (onlineGame.onlineConnection.value?.phase === 'checking')
+          onlineGame.onlineConnection.value = {
+            ...onlineGame.onlineConnection.value,
+            phase: 'disconnected',
+          }
+        onlineStatus.value =
+          cause instanceof Error ? cause.message : 'Reconnect to verify your game status.'
+      })
+  }
   async function init(): Promise<void> {
     if (initialized || initializing.value) return
     initializing.value = true
@@ -835,29 +866,13 @@ export const useKChessStore = defineStore('kchess', () => {
       offNotification = window.kchess.onNotification(({ title, body }) =>
         toast.add({ title, description: body, icon: 'i-lucide-bell', duration: 8000 }),
       )
-      void window.kchess
-        .resumeOnline()
-        .then((resumed) => {
-          if (resumed) {
-            // The game may belong to any connected account; make that the active one.
-            setOnlineAccount(resumed.account)
-            onlineAccount.value = resumed.account
-            onlineId.value = resumed.id
-            if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
-          } else {
-            onlinePhase.value = 'idle'
-          }
-        })
-        .catch((cause) => {
-          console.warn('[kchess] resuming online game failed:', cause)
-          if (onlineGame.onlineConnection.value?.phase === 'checking')
-            onlineGame.onlineConnection.value = {
-              ...onlineGame.onlineConnection.value,
-              phase: 'disconnected',
-            }
-          onlineStatus.value =
-            cause instanceof Error ? cause.message : 'Reconnect to verify your game status.'
-        })
+      void resumeOnlineGame()
+      // A restarted core attached no game: ask Lichess again, as on startup.
+      offReconnected = window.kchess.onCoreReconnected(() => {
+        if (!['playing', 'seeking', 'disconnected'].includes(onlinePhase.value)) return
+        onlineGame.checkingOnline()
+        void resumeOnlineGame()
+      })
       ticker.resume()
       window.addEventListener('keydown', keydown)
       void loadProfile()
@@ -874,6 +889,8 @@ export const useKChessStore = defineStore('kchess', () => {
     offOnlineError = undefined
     offNotification?.()
     offNotification = undefined
+    offReconnected?.()
+    offReconnected = undefined
     ticker.pause()
     presenceTicker.pause()
     window.removeEventListener('keydown', keydown)

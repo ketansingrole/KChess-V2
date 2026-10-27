@@ -44,4 +44,9 @@ export default defineNuxtPlugin(() => {
     if (areas.some((area) => LIBRARY.includes(area))) refreshLibrary()
     if (areas.some((area) => ACCOUNTS.includes(area))) void useKChessStore().reloadData()
   })
+  // Changes made while this window was disconnected were never reported: read everything again.
+  window.kchess.onCoreReconnected(() => {
+    refreshLibrary()
+    void useKChessStore().reloadData()
+  })
 })

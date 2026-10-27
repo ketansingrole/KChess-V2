@@ -146,3 +146,44 @@ it('resumes the computer turn when assistance returns before the cancelled reply
   expect(game.localMoves.value).toEqual(['e2e4', 'e7e5'])
   scope.stop()
 })
+
+it('asks Lichess for the open online game again after the core restarts', async () => {
+  let reconnected = () => {}
+  const resumeOnline = vi.fn(async () => ({ account: 'me', id: 'game1' }))
+  desktop({
+    resumeOnline: resumeOnline as never,
+    onCoreReconnected: (callback: () => void) => {
+      reconnected = callback
+      return () => {}
+    },
+  })
+  const store = useKChessStore()
+  await store.init()
+  await flushPromises()
+  expect(resumeOnline).toHaveBeenCalledOnce()
+  expect(store.onlinePhase).toBe('disconnected')
+  reconnected()
+  expect(store.onlineConnection?.phase).toBe('checking')
+  await flushPromises()
+  expect(resumeOnline).toHaveBeenCalledTimes(2)
+  expect(store.onlineId).toBe('game1')
+})
+
+it('does not look for an online game after a restart when none was open', async () => {
+  let reconnected = () => {}
+  const resumeOnline = vi.fn(async () => null)
+  desktop({
+    resumeOnline,
+    onCoreReconnected: (callback: () => void) => {
+      reconnected = callback
+      return () => {}
+    },
+  })
+  const store = useKChessStore()
+  await store.init()
+  await flushPromises()
+  reconnected()
+  await flushPromises()
+  expect(resumeOnline).toHaveBeenCalledOnce()
+  expect(store.onlinePhase).toBe('idle')
+})

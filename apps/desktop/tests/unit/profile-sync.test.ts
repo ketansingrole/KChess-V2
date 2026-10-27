@@ -81,3 +81,51 @@ it('shows another window’s game once this window’s own save settles', async 
   await flushPromises()
   expect(archive.games.map((value) => value.id).sort()).toEqual(['local', 'remote'])
 })
+
+it('keeps a deleted game hidden when a library read from before the deletion arrives', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop()
+  await api.saveArchivedGame(game('deleted'))
+  const archive = useGameArchiveStore()
+  archive.replaceFromLibrary(await api.library())
+  const stale = await api.library()
+  const remove = api.removeArchivedGame
+  const gate = deferred<undefined>()
+  api.removeArchivedGame = async (id) => {
+    await gate.promise
+    await remove(id)
+  }
+  let refreshes = 0
+  setLibraryRefresher(() => {
+    refreshes++
+    void api.library().then((snapshot) => archive.replaceFromLibrary(snapshot))
+  })
+  const removing = archive.remove('deleted')
+  await flushPromises()
+  archive.replaceFromLibrary(stale)
+  expect(archive.games.map((value) => value.id)).toEqual([])
+  gate.resolve(undefined)
+  await removing
+  await flushPromises()
+  expect(refreshes).toBe(1)
+  expect(archive.games.map((value) => value.id)).toEqual([])
+})
+
+it('reads the profile again after reconnecting to the core', async () => {
+  const { api } = desktop()
+  let reconnected = () => {}
+  api.onCoreReconnected = (callback) => {
+    reconnected = callback
+    return () => {}
+  }
+  profileSync(api)
+  const library = vi.spyOn(api, 'library')
+  const data = vi.spyOn(api, 'loadData')
+  // Another window saved a game while this one was disconnected; nothing reported it.
+  await api.saveArchivedGame(game('missed'))
+  reconnected()
+  await flushPromises()
+  expect(library).toHaveBeenCalledOnce()
+  expect(data).toHaveBeenCalledOnce()
+  expect(useGameArchiveStore().games.map((value) => value.id)).toEqual(['missed'])
+})
