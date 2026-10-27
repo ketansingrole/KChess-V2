@@ -697,6 +697,7 @@ impl LocalPage {
             black: "Black".into(),
             ply: None,
             result: Some(self.pgn_result().into()),
+            lichess_id: None,
         }
     }
 

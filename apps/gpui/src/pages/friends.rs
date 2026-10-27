@@ -25,6 +25,8 @@ use crate::widgets::{self, Look};
 
 /// Presence is asked for this many players at a time, and again this often.
 const PRESENCE_CHUNK: usize = 50;
+/// The most players `profiles` takes at once.
+const PROFILES_CHUNK: usize = 1000;
 const PRESENCE_EVERY: Duration = Duration::from_secs(20);
 /// A saved profile this recent is not asked for again.
 const PROFILE_FRESH_MS: f64 = 3_600_000.;
@@ -40,6 +42,12 @@ pub struct FriendsPage {
     /// How many players were followed at the last look.
     followed: usize,
     importer: Option<Entity<ImportDialog>>,
+    /// The online account's Lichess timeline (`TimelineEntry`s), once read.
+    timeline: Option<Vec<Value>>,
+    timeline_error: Option<SharedString>,
+    timeline_epoch: u64,
+    /// The account the timeline was read for.
+    timeline_account: Option<String>,
     focus: FocusHandle,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -82,6 +90,9 @@ impl FriendsPage {
                         this.refresh_status(cx);
                     }
                     this.load_versus(cx);
+                    if accounts.read(cx).active(cx) != this.timeline_account {
+                        this.load_timeline(cx);
+                    }
                     cx.notify();
                 }),
             ];
@@ -102,6 +113,10 @@ impl FriendsPage {
             versus: Value::Null,
             followed: 0,
             importer: None,
+            timeline: None,
+            timeline_error: None,
+            timeline_epoch: 0,
+            timeline_account: None,
             focus: cx.focus_handle(),
             _poll: poll,
             _subscriptions: subscriptions,
@@ -120,6 +135,40 @@ impl FriendsPage {
         self.load_profiles(cx);
         self.refresh_status(cx);
         self.load_versus(cx);
+        self.load_timeline(cx);
+    }
+
+    /// What the players the online account follows on Lichess did lately.
+    fn load_timeline(&mut self, cx: &mut Context<Self>) {
+        self.timeline_epoch += 1;
+        let epoch = self.timeline_epoch;
+        self.timeline_error = None;
+        let account = crate::accounts::handle(cx).read(cx).active(cx);
+        if account != self.timeline_account {
+            self.timeline = None;
+            self.timeline_account = account.clone();
+        }
+        let Some(account) = account.filter(|_| crate::network::online(cx)) else {
+            return;
+        };
+        let timeline = cx
+            .global::<AppCore>()
+            .call("timeline", vec![json!(account)]);
+        cx.spawn(async move |this, cx| {
+            let answer = timeline.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.timeline_epoch != epoch {
+                    return;
+                }
+                match answer {
+                    Ok(Value::Array(entries)) => this.timeline = Some(entries),
+                    Ok(_) => this.timeline = Some(Vec::new()),
+                    Err(cause) => this.timeline_error = Some(cause.message.into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn load_versus(&mut self, cx: &mut Context<Self>) {
@@ -137,8 +186,7 @@ impl FriendsPage {
         .detach();
     }
 
-    /// `loadProfiles`: saved profiles at once, fresh ones one at a time (Lichess asks for no
-    /// parallel requests).
+    /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players.
     fn load_profiles(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
             .iter()
@@ -170,13 +218,19 @@ impl FriendsPage {
                     });
                 }
             }
-            for name in &names {
-                if fresh.contains(&key(name)) {
-                    continue;
-                }
-                if let Ok(profile) = core.call("profile", vec![json!(name)]).await {
+            let stale: Vec<String> = names
+                .iter()
+                .filter(|name| !fresh.contains(&key(name)))
+                .cloned()
+                .collect();
+            for chunk in stale.chunks(PROFILES_CHUNK) {
+                if let Ok(Value::Array(users)) = core.call("profiles", vec![json!(chunk)]).await {
                     let _ = this.update(cx, |this, cx| {
-                        this.profiles.insert(key(name), profile);
+                        for user in users {
+                            if let Some(name) = user["username"].as_str() {
+                                this.profiles.insert(key(name), user.clone());
+                            }
+                        }
                         cx.notify();
                     });
                 }
@@ -238,14 +292,20 @@ impl FriendsPage {
     }
 
     fn ask_remove(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
+        let account = crate::accounts::handle(cx).read(cx).active(cx);
         window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
             let name = name.clone();
             dialog
                 .title("Stop following this player?")
                 .description(format!(
-                    "@{name} and their {} stored games ({}) will be deleted from this device. They stay removed until you add them again. Nothing changes on Lichess.",
+                    "@{name} and their {} stored games ({}) will be deleted from this device. They stay removed until you add them again.{}",
                     widgets::format_count(games),
-                    widgets::format_bytes(stored)
+                    widgets::format_bytes(stored),
+                    account
+                        .as_ref()
+                        .map_or(String::new(), |account| format!(
+                            " @{account} stops following them on Lichess."
+                        ))
                 ))
                 .ok_text("Remove")
                 .ok_variant(ButtonVariant::Danger)
@@ -596,7 +656,12 @@ impl Render for FriendsPage {
                     .primary()
                     .icon(icon("plus"))
                     .label("Follow player")
-                    .tooltip("Follows in KChess and downloads public games; does not change Lichess following.")
+                    .tooltip(match accounts.active(cx) {
+                        Some(account) if has_connected => {
+                            format!("Follows on Lichess as @{account} and downloads public games.")
+                        }
+                        _ => "Follows in KChess and downloads public games.".to_string(),
+                    })
                     .disabled(!typed || busy)
                     .on_click(cx.listener(|this, _, window, cx| this.follow(window, cx))),
             )
@@ -620,7 +685,8 @@ impl Render for FriendsPage {
                         .loading(busy)
                         .disabled(busy)
                         .on_click(|_, window, cx| {
-                            crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(None, window, cx))
+                            crate::accounts::handle(cx)
+                                .update(cx, |accounts, cx| accounts.sync(None, window, cx))
                         }),
                 )
             });
@@ -691,8 +757,38 @@ impl Render for FriendsPage {
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
                     .child(header)
-                    .child(body),
+                    .child(body)
+                    .children(self.timeline_card(cx, &palette)),
             )
+    }
+}
+
+impl FriendsPage {
+    fn timeline_card(&self, cx: &App, palette: &Palette) -> Option<Div> {
+        let account = crate::accounts::handle(cx).read(cx).active(cx);
+        if account.is_none() || !crate::network::online(cx) {
+            return None;
+        }
+        let card = widgets::card(palette)
+            .gap(px(8.))
+            .child(widgets::heading("Timeline", palette));
+        Some(match (&self.timeline_error, &self.timeline) {
+            (Some(error), _) => card.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error.clone()),
+            ),
+            (None, None) => card.child(widgets::hint("Loading…", palette)),
+            (None, Some(entries)) if entries.is_empty() => {
+                card.child(widgets::hint("Nothing new.", palette))
+            }
+            (None, Some(entries)) => card.child(crate::activity::activity_list(
+                "friends-timeline",
+                &crate::activity::timeline_groups(entries),
+                palette,
+            )),
+        })
     }
 }
 

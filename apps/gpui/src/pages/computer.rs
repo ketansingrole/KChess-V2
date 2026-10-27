@@ -478,6 +478,7 @@ impl ComputerPage {
             black: black.into(),
             ply: Some(self.ply()),
             result: Some(result.unwrap_or_else(|| "*".into())),
+            lichess_id: None,
         }
     }
 

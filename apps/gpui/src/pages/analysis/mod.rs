@@ -1453,6 +1453,12 @@ impl AnalysisPage {
             white: self.player_name(Color::White),
             black: self.player_name(Color::Black),
             result: Some(self.header("Result")).filter(|result| !result.is_empty()),
+            lichess_id: self
+                .review
+                .origin
+                .as_ref()
+                .and_then(|origin| origin["gameId"].as_str())
+                .map(str::to_string),
         }
     }
 

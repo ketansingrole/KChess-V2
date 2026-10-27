@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -24,6 +25,25 @@ use crate::widgets::{self, Choice, Look};
 const RECENT_KEY: &str = "kchess:players-recent";
 const RECENT_KEPT: usize = 8;
 const SUGGESTED: usize = 12;
+const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
+/// How long typing settles before names are searched.
+const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+/// Rating categories with a Lichess leaderboard, in the order offered.
+const BOARD_PERFS: [&str; 13] = [
+    "bullet",
+    "blitz",
+    "rapid",
+    "classical",
+    "ultraBullet",
+    "chess960",
+    "crazyhouse",
+    "antichess",
+    "atomic",
+    "horde",
+    "kingOfTheHill",
+    "racingKings",
+    "threeCheck",
+];
 
 /// `PERF_LABELS`, in `PERF_TYPES` order.
 const PERFS: [(&str, &str); 14] = [
@@ -114,6 +134,20 @@ pub struct PlayersPage {
     games: Option<Vec<Value>>,
     games_error: bool,
     history: Entity<RatingHistory>,
+    /// `ActivityDay`s, once Lichess sent them.
+    days: Option<Vec<Value>>,
+    days_error: bool,
+    /// `LichessRelation` of the online account with the player; None without one to ask.
+    relation: Option<Value>,
+    /// The leaderboard shown while no player is open.
+    board: Option<Vec<Value>>,
+    board_error: Option<SharedString>,
+    board_perf: String,
+    board_select: Entity<SelectState<Vec<Choice>>>,
+    board_epoch: u64,
+    /// `PlayerSuggestion`s for what is typed.
+    matches: Vec<Value>,
+    search_epoch: u64,
     error: Option<SharedString>,
     loading: bool,
     /// Each lookup; answers to an older one are dropped.
@@ -136,12 +170,29 @@ impl PlayersPage {
         let history =
             cx.new(|cx| RatingHistory::new("Built from the last 200 rated games.", window, cx));
         let accounts = crate::accounts::handle(cx);
+        let board_perf: String = crate::prefs::get(cx, BOARD_PERF_KEY, "blitz".to_string());
+        let board_items: Vec<Choice> = BOARD_PERFS
+            .iter()
+            .map(|key| {
+                let label = PERFS
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map_or(*key, |(_, l)| l);
+                Choice::new(*key, label)
+            })
+            .collect();
+        let chosen = SharedString::from(board_perf.clone());
+        let board_select = cx.new(|cx| {
+            let mut select = SelectState::new(board_items, None, window, cx);
+            select.set_selected_value(&chosen, window, cx);
+            select
+        });
         let subscriptions =
             vec![
                 cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
                     match event {
                         InputEvent::PressEnter { .. } => this.lookup(None, window, cx),
-                        InputEvent::Change => cx.notify(),
+                        InputEvent::Change => this.search_names(cx),
                         _ => {}
                     }
                 }),
@@ -153,6 +204,18 @@ impl PlayersPage {
                         {
                             this.perf = value.to_string();
                             this.load_stats(cx);
+                        }
+                    },
+                ),
+                cx.subscribe(
+                    &board_select,
+                    |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                        if let SelectEvent::Confirm(Some(value)) = event
+                            && *value != this.board_perf.as_str()
+                        {
+                            this.board_perf = value.to_string();
+                            crate::prefs::set(cx, BOARD_PERF_KEY, this.board_perf.clone());
+                            this.load_board(cx);
                         }
                     },
                 ),
@@ -171,6 +234,16 @@ impl PlayersPage {
             games: None,
             games_error: false,
             history,
+            days: None,
+            days_error: false,
+            relation: None,
+            board: None,
+            board_error: None,
+            board_perf,
+            board_select,
+            board_epoch: 0,
+            matches: Vec::new(),
+            search_epoch: 0,
             error: None,
             loading: false,
             epoch: 0,
@@ -178,6 +251,77 @@ impl PlayersPage {
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
+        .with_board(cx)
+    }
+
+    fn with_board(mut self, cx: &mut Context<Self>) -> Self {
+        self.load_board(cx);
+        self
+    }
+
+    /// The leaderboard of the chosen category, while no player is open.
+    fn load_board(&mut self, cx: &mut Context<Self>) {
+        self.board_epoch += 1;
+        let epoch = self.board_epoch;
+        self.board = None;
+        self.board_error = None;
+        cx.notify();
+        let board = cx
+            .global::<AppCore>()
+            .call("leaderboard", vec![json!(self.board_perf)]);
+        cx.spawn(async move |this, cx| {
+            let answer = board.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.board_epoch != epoch {
+                    return;
+                }
+                match answer {
+                    Ok(entries) => {
+                        this.board = Some(entries.as_array().cloned().unwrap_or_default())
+                    }
+                    Err(cause) => this.board_error = Some(message_of(&cause)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Players whose names start with what is typed, once typing settles.
+    fn search_names(&mut self, cx: &mut Context<Self>) {
+        self.search_epoch += 1;
+        let epoch = self.search_epoch;
+        let term = self.input.read(cx).value().trim().to_string();
+        let shown = self
+            .username()
+            .is_some_and(|name| name.eq_ignore_ascii_case(&term));
+        if term.chars().count() < 3 || !is_username(&term) || shown || !crate::network::online(cx) {
+            self.matches.clear();
+            cx.notify();
+            return;
+        }
+        let core = cx.global::<AppCore>().clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SEARCH_WAIT).await;
+            let current = this
+                .read_with(cx, |this, _| this.search_epoch == epoch)
+                .unwrap_or(false);
+            if !current {
+                return;
+            }
+            let found = core.call("searchPlayers", vec![json!(term)]).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.search_epoch != epoch {
+                    return;
+                }
+                if let Ok(found) = found {
+                    this.matches = found.as_array().cloned().unwrap_or_default();
+                    this.matches.truncate(SUGGESTED);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// A profile link opened elsewhere (`/players?name=`): look the player up, unless shown.
@@ -216,6 +360,10 @@ impl PlayersPage {
         self.extras_failed.clear();
         self.games = None;
         self.games_error = false;
+        self.days = None;
+        self.days_error = false;
+        self.relation = None;
+        self.matches.clear();
         self.history.update(cx, |history, cx| {
             history.set(Value::Null, Value::Null, cx);
             history.set_withheld(None, cx);
@@ -272,6 +420,85 @@ impl PlayersPage {
         self.load_stats(cx);
         self.load_extras(&username, cx);
         self.load_activity(cx);
+        self.load_days(&username, cx);
+    }
+
+    /// What the player did lately on Lichess.
+    fn load_days(&mut self, username: &str, cx: &mut Context<Self>) {
+        let epoch = self.epoch;
+        let days = cx
+            .global::<AppCore>()
+            .call("activity", vec![json!(username)]);
+        cx.spawn(async move |this, cx| {
+            let answer = days.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.epoch != epoch {
+                    return;
+                }
+                match answer {
+                    Ok(days) => this.days = Some(days.as_array().cloned().unwrap_or_default()),
+                    Err(_) => this.days_error = true,
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Block or unblock the player as the online account; blocking asks first.
+    fn toggle_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(username), Some(relation)) = (self.username(), self.relation.clone()) else {
+            return;
+        };
+        let blocking = relation["blocking"] != json!(true);
+        let page = cx.entity().downgrade();
+        let apply = move |window: &mut Window, cx: &mut App| {
+            let (page, relation) = (page.clone(), relation.clone());
+            crate::accounts::handle(cx).update(cx, |accounts, cx| {
+                accounts.set_relation(
+                    username.clone(),
+                    if blocking { "block" } else { "unblock" },
+                    window,
+                    cx,
+                    move |took, _, cx| {
+                        if took {
+                            let _ = page.update(cx, |page, cx| {
+                                let following = !blocking && relation["following"] == json!(true);
+                                page.relation =
+                                    Some(json!({ "following": following, "blocking": blocking }));
+                                cx.notify();
+                            });
+                        }
+                    },
+                )
+            });
+        };
+        if !blocking {
+            apply(window, cx);
+            return;
+        }
+        let name = self.username().unwrap_or_default();
+        let account = Self::active_account(cx).unwrap_or_default();
+        let apply = std::rc::Rc::new(apply);
+        window.open_alert_dialog(
+            cx,
+            move |dialog: gpui_kit::component::dialog::AlertDialog, _, _| {
+                let apply = apply.clone();
+                dialog
+                    .title(format!("Block {name}?"))
+                    .description(format!(
+                        "@{account} stops seeing their messages, challenges and chat on Lichess."
+                    ))
+                    .ok_text("Block")
+                    .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                    .cancel_text("Cancel")
+                    .show_cancel(true)
+                    .on_ok(move |_, window, cx| {
+                        apply(window, cx);
+                        true
+                    })
+            },
+        );
     }
 
     /// Your record against them, and whether they are online.
@@ -281,6 +508,20 @@ impl PlayersPage {
         if let Some(me) = Self::active_account(cx)
             && !me.eq_ignore_ascii_case(username)
         {
+            let relation = core.call("relation", vec![json!(me), json!(username)]);
+            cx.spawn(async move |this, cx| {
+                let answer = relation.await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.epoch == epoch
+                        && let Ok(relation) = answer
+                        && relation.get("needsReconnect").is_none()
+                    {
+                        this.relation = Some(relation);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
             let crosstable = core.call("crosstable", vec![json!(me), json!(username)]);
             cx.spawn(async move |this, cx| {
                 let answer = crosstable.await;
@@ -421,7 +662,7 @@ impl PlayersPage {
     }
 
     /// Open one of their games on the analysis board, from their side.
-    fn open_game(game: Value, window: &mut Window, cx: &mut App) {
+    pub fn open_game(game: Value, window: &mut Window, cx: &mut App) {
         let white = game["color"] != json!("black");
         let (account, opponent) = (game["account"].clone(), game["opponent"].clone());
         let (white_name, black_name) = if white {
@@ -518,7 +759,34 @@ impl PlayersPage {
                             ),
                     ),
             )
-            .when(!names.is_empty(), |card| {
+            .when(!self.matches.is_empty(), |card| {
+                card.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .when(empty, |row| row.justify_center())
+                        .children(self.matches.iter().enumerate().map(|(index, found)| {
+                            let name = found["username"].as_str().unwrap_or_default().to_string();
+                            let label = match found["title"].as_str() {
+                                Some(title) => format!("{title} {name}"),
+                                None => name.clone(),
+                            };
+                            div().rounded(px(6.)).bg(palette.accented).child(
+                                Button::new(("players-match", index))
+                                    .xsmall()
+                                    .ghost()
+                                    .label(label)
+                                    .when(found["online"] == json!(true), |button| {
+                                        button.icon(icon("circle-dot"))
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.show_player(&name, window, cx)
+                                    })),
+                            )
+                        })),
+                )
+            })
+            .when(self.matches.is_empty() && !names.is_empty(), |card| {
                 card.child(
                     h_flex()
                         .flex_wrap()
@@ -682,8 +950,45 @@ impl PlayersPage {
                                     .on_click(move |_, window, cx| {
                                         crate::shell::watch_game(&id, window, cx)
                                     })
+                            }))
+                            .children(self.relation.as_ref().map(|relation| {
+                                let label = if relation["blocking"] == json!(true) {
+                                    "Unblock"
+                                } else {
+                                    "Block"
+                                };
+                                let page = cx.entity().downgrade();
+                                Button::new("players-more")
+                                    .small()
+                                    .ghost()
+                                    .icon(icon("ellipsis"))
+                                    .tooltip("More actions")
+                                    .disabled(!crate::network::online(cx))
+                                    .dropdown_menu(move |menu, _, _| {
+                                        let page = page.clone();
+                                        menu.item(
+                                            PopupMenuItem::new(label).icon(icon("ban")).on_click(
+                                                move |_, window, cx| {
+                                                    let _ = page.update(cx, |page, cx| {
+                                                        page.toggle_block(window, cx)
+                                                    });
+                                                },
+                                            ),
+                                        )
+                                    })
                             })),
                     ),
+            )
+            .when(
+                self.relation
+                    .as_ref()
+                    .is_some_and(|relation| relation["blocking"] == json!(true)),
+                |card| {
+                    card.child(widgets::hint(
+                        format!("Blocked by @{}.", me.clone().unwrap_or_default()),
+                        palette,
+                    ))
+                },
             )
             .when(!self.extras_failed.is_empty(), |card| {
                 card.child(widgets::hint(
@@ -872,6 +1177,115 @@ impl PlayersPage {
         )
     }
 
+    fn board_card(&self, palette: &Palette) -> Div {
+        let card = widgets::card(palette).gap(px(8.)).child(
+            h_flex()
+                .justify_between()
+                .items_center()
+                .child(widgets::heading("Leaderboard", palette))
+                .child(
+                    div()
+                        .w(px(160.))
+                        .child(Select::new(&self.board_select).small()),
+                ),
+        );
+        if let Some(error) = &self.board_error {
+            return card.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error.clone()),
+            );
+        }
+        let Some(board) = &self.board else {
+            return card.child(widgets::hint("Loading…", palette));
+        };
+        card.child(
+            v_flex()
+                .id("players-board")
+                .max_h(px(512.))
+                .overflow_y_scroll()
+                .text_size(px(13.))
+                .children(board.iter().enumerate().map(|(index, entry)| {
+                    let name = entry["username"].as_str().unwrap_or_default().to_string();
+                    let progress = entry["progress"].as_f64().unwrap_or_default();
+                    h_flex()
+                        .gap(px(8.))
+                        .py(px(4.))
+                        .border_t_1()
+                        .border_color(palette.border)
+                        .child(
+                            div()
+                                .w(px(40.))
+                                .text_color(palette.text_muted)
+                                .child((index + 1).to_string()),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(px(4.))
+                                .children(entry["title"].as_str().map(|title| {
+                                    div()
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(palette.warning)
+                                        .child(title.to_string())
+                                }))
+                                .child(player_link(("players-board-name", index), name)),
+                        )
+                        .child(
+                            div().w(px(64.)).child(
+                                entry["rating"]
+                                    .as_f64()
+                                    .unwrap_or_default()
+                                    .round()
+                                    .to_string(),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .w(px(48.))
+                                .text_size(px(12.))
+                                .text_color(if progress > 0. {
+                                    palette.success
+                                } else if progress < 0. {
+                                    palette.error
+                                } else {
+                                    palette.text_muted
+                                })
+                                .child(match progress {
+                                    p if p > 0. => format!("+{p}"),
+                                    p if p < 0. => p.to_string(),
+                                    _ => String::new(),
+                                }),
+                        )
+                })),
+        )
+    }
+
+    fn days_card(&self, palette: &Palette) -> Div {
+        let card = widgets::card(palette)
+            .gap(px(8.))
+            .child(widgets::heading("Activity", palette));
+        if self.days_error {
+            return card.child(widgets::hint(
+                "Lichess isn’t sending this player’s activity.",
+                palette,
+            ));
+        }
+        match &self.days {
+            None => card.child(widgets::hint("Loading…", palette)),
+            Some(days) if days.is_empty() => {
+                card.child(widgets::hint("No recent activity.", palette))
+            }
+            Some(days) => card.child(crate::activity::activity_list(
+                "players-activity",
+                &crate::activity::activity_groups(days),
+                palette,
+            )),
+        }
+    }
+
     fn games_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let card = widgets::card(palette)
             .gap(px(8.))
@@ -973,28 +1387,37 @@ impl Render for PlayersPage {
             let profile_card = self.profile_card(&profile, cx, &palette);
             let record = self.record_card(&palette);
             let games = self.games_card(cx, &palette);
+            let days = self.days_card(&palette);
             if narrow {
                 v_flex()
                     .gap(px(16.))
                     .child(profile_card)
                     .child(record)
                     .child(games)
+                    .child(days)
             } else {
-                // Record is a sidebar beside the profile and the games.
-                h_flex()
-                    .items_start()
+                // Record is a sidebar beside the profile and the games; activity runs under both.
+                v_flex()
                     .gap(px(16.))
                     .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
+                        h_flex()
+                            .items_start()
                             .gap(px(16.))
-                            .child(profile_card)
-                            .child(games),
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(16.))
+                                    .child(profile_card)
+                                    .child(games),
+                            )
+                            .child(div().w(px(380.)).flex_none().child(record)),
                     )
-                    .child(div().w(px(380.)).flex_none().child(record))
+                    .child(days)
             }
         });
+        let board = (self.profile.is_none() && crate::network::online(cx))
+            .then(|| self.board_card(&palette));
         div()
             .id("players-page")
             .track_focus(&self.focus)
@@ -1013,6 +1436,7 @@ impl Render for PlayersPage {
                             .text_color(palette.error)
                             .child(error)
                     }))
+                    .children(board)
                     .children(body),
             )
     }

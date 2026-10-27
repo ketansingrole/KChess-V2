@@ -31,6 +31,8 @@ enum Source {
     Computer,
     Board,
     Lichess,
+    /// The online account's games bookmarked on Lichess.
+    Bookmarks,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,6 +203,11 @@ pub struct HistoryPage {
     message: Option<SharedString>,
     /// The Lichess tab: synced games, their filters and the game open.
     lichess: lichess::LichessTab,
+    /// The Bookmarks tab: the games, once read, or why they are not.
+    bookmarks: Option<Vec<Value>>,
+    bookmarks_error: Option<SharedString>,
+    bookmarks_reconnect: bool,
+    bookmarks_epoch: u64,
     area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -232,6 +239,10 @@ impl HistoryPage {
             open: None,
             message: None,
             lichess,
+            bookmarks: None,
+            bookmarks_error: None,
+            bookmarks_reconnect: false,
+            bookmarks_epoch: 0,
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -289,7 +300,112 @@ impl HistoryPage {
             self.lichess.open = None;
             self.load_lichess(cx);
         }
+        if source == Source::Bookmarks {
+            self.load_bookmarks(cx);
+        }
         cx.notify();
+    }
+
+    fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
+        self.bookmarks_epoch += 1;
+        let epoch = self.bookmarks_epoch;
+        self.bookmarks = None;
+        self.bookmarks_error = None;
+        self.bookmarks_reconnect = false;
+        let account = crate::accounts::handle(cx).read(cx).active(cx);
+        let Some(account) = account.filter(|_| crate::network::online(cx)) else {
+            return;
+        };
+        let games = cx
+            .global::<crate::core::AppCore>()
+            .call("bookmarkedGames", vec![json!(account)]);
+        cx.spawn(async move |this, cx| {
+            let answer = games.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.bookmarks_epoch != epoch {
+                    return;
+                }
+                match answer {
+                    Ok(Value::Array(games)) => this.bookmarks = Some(games),
+                    Ok(_) => this.bookmarks_reconnect = true,
+                    Err(cause) => this.bookmarks_error = Some(cause.message.into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_bookmarks(&self, cx: &App, palette: &Palette) -> AnyElement {
+        let account = crate::accounts::handle(cx)
+            .read(cx)
+            .active(cx)
+            .unwrap_or_default();
+        let card = widgets::card(palette).gap(px(8.));
+        let note =
+            |text: String, color: Hsla| div().text_size(px(13.)).text_color(color).child(text);
+        if !crate::network::online(cx) {
+            return card
+                .child(note(
+                    "Offline · reconnect to see bookmarks.".into(),
+                    palette.text_muted,
+                ))
+                .into_any_element();
+        }
+        if self.bookmarks_reconnect {
+            return card
+                .child(note(format!("Connect @{account} again"), palette.warning))
+                .child(
+                    Button::new("bookmarks-reconnect")
+                        .small()
+                        .icon(icon("link"))
+                        .label("Reconnect")
+                        .on_click(|_, window, cx| {
+                            crate::accounts::handle(cx)
+                                .update(cx, |accounts, cx| accounts.connect(window, cx))
+                        }),
+                )
+                .into_any_element();
+        }
+        if let Some(error) = &self.bookmarks_error {
+            return card
+                .child(note(error.to_string(), palette.error))
+                .into_any_element();
+        }
+        match &self.bookmarks {
+            None => card
+                .child(widgets::hint("Loading…", palette))
+                .into_any_element(),
+            Some(games) if games.is_empty() => card
+                .items_center()
+                .py(px(28.))
+                .child(widgets::empty_state(
+                    icon("bookmark"),
+                    format!("No bookmarks on @{account}"),
+                    None,
+                    palette,
+                ))
+                .into_any_element(),
+            Some(games) => card
+                .children(games.iter().enumerate().map(|(index, game)| {
+                    let chosen = game.clone();
+                    lichess::game_row(
+                        ("history-bookmark", index),
+                        game,
+                        None,
+                        lichess::RowDetail::NoReview,
+                        move |window, cx| {
+                            crate::pages::players::PlayersPage::open_game(
+                                chosen.clone(),
+                                window,
+                                cx,
+                            )
+                        },
+                        palette,
+                    )
+                }))
+                .into_any_element(),
+        }
     }
 
     fn choose_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
@@ -419,15 +535,21 @@ fn source_tabs(
     cx: &mut Context<HistoryPage>,
     palette: &Palette,
 ) -> impl IntoElement {
-    let sources = [Source::Computer, Source::Board, Source::Lichess];
+    let connected = !crate::accounts::handle(cx).read(cx).connected().is_empty();
+    let mut sources = vec![Source::Computer, Source::Board, Source::Lichess];
+    let mut labels: Vec<(Option<Icon>, SharedString)> = vec![
+        (None, "Computer".into()),
+        (None, "Over the board".into()),
+        (None, "Lichess".into()),
+    ];
+    if connected {
+        sources.push(Source::Bookmarks);
+        labels.push((None, "Bookmarks".into()));
+    }
     let page = cx.entity().downgrade();
     widgets::pill_tabs(
         "history-source",
-        vec![
-            (None, "Computer".into()),
-            (None, "Over the board".into()),
-            (None, "Lichess".into()),
-        ],
+        labels,
         sources.iter().position(|item| *item == source).unwrap_or(0),
         move |index, _, cx| {
             let _ = page.update(cx, |page, cx| page.choose_source(sources[index], cx));
@@ -851,6 +973,12 @@ impl HistoryPage {
 impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
+        // Bookmarks belong to a connected account; signing out leaves the synced games.
+        if self.source == Source::Bookmarks
+            && crate::accounts::handle(cx).read(cx).connected().is_empty()
+        {
+            self.choose_source(Source::Lichess, cx);
+        }
         let error = cx.global::<PlayedHandle>().0.read(cx).error.clone();
         let header = v_flex()
             .px(side_padding(window))
@@ -866,6 +994,7 @@ impl Render for HistoryPage {
         }
         let body = match self.source {
             Source::Lichess => self.render_lichess(window, cx, &palette),
+            Source::Bookmarks => self.render_bookmarks(cx, &palette),
             _ => self.render_list(cx, &palette),
         };
         div()

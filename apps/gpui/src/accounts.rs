@@ -259,6 +259,11 @@ impl Accounts {
                             .map(str::to_string);
                         // After this update: the caller reads the accounts again.
                         window.defer(cx, move |window, cx| done(true, window, cx));
+                        // A connected account follows them on Lichess too.
+                        if let Some(name) = username.clone().filter(|name| !this.is_connected(name))
+                        {
+                            this.set_relation(name, "follow", window, cx, |_, _, _| {});
+                        }
                         this.sync(username, window, cx);
                     }
                     Err(cause) => {
@@ -267,6 +272,67 @@ impl Accounts {
                     }
                 }
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn is_connected(&self, username: &str) -> bool {
+        self.connected()
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(username))
+    }
+
+    /// `setLichessRelation`: follow, unfollow, block or unblock `username` on Lichess as the
+    /// online account. Without one there is nothing to do; a login from before the permission is
+    /// asked to reconnect. `done` hears whether Lichess took it.
+    pub fn set_relation(
+        &mut self,
+        username: String,
+        action: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(bool, &mut Window, &mut App) + 'static,
+    ) {
+        let Some(account) = self.active(cx) else {
+            return;
+        };
+        let call = cx.global::<AppCore>().call(
+            "setRelation",
+            vec![json!(account), json!(username), json!(action)],
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = call.await;
+            let _ = this.update_in(cx, |_, window, cx| {
+                let took = match answer {
+                    Ok(Value::Bool(true)) => true,
+                    Ok(_) => {
+                        let note = gpui_kit::component::notification::Notification::warning(
+                            format!("Connect @{account} again to {action} players on Lichess."),
+                        )
+                        .title("Lichess needs a new permission");
+                        let reconnect = crate::widgets::action_notification(
+                            note,
+                            "relation-reconnect",
+                            "Reconnect",
+                            |window, cx| {
+                                handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
+                            },
+                        );
+                        window.push_notification(reconnect, cx);
+                        false
+                    }
+                    Err(cause) => {
+                        crate::log::write(
+                            Level::Warn,
+                            "accounts",
+                            &format!("Lichess {action} failed: {}", cause.message),
+                        );
+                        say(window, cx, cause.message);
+                        false
+                    }
+                };
+                window.defer(cx, move |window, cx| done(took, window, cx));
             });
         })
         .detach();
@@ -370,6 +436,10 @@ impl Accounts {
         let note = (!connected).then(|| {
             format!("@{username} removed. Their stored games were deleted from this device.")
         });
+        // A friend leaves Following on Lichess too.
+        if !connected {
+            self.set_relation(username.clone(), "unfollow", window, cx, |_, _, _| {});
+        }
         self.after_sign_out(call, note, window, cx);
     }
 

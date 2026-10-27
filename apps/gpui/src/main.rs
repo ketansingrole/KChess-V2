@@ -2,6 +2,7 @@
 //! accounts as the Electron app (`apps/desktop`), drawn natively.
 
 mod accounts;
+mod activity;
 mod assets;
 #[cfg(feature = "bench")]
 mod bench;

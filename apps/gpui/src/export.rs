@@ -74,6 +74,8 @@ pub struct GameExport {
     /// The position shown, for the PNG; the last one by default.
     pub ply: Option<usize>,
     pub result: Option<String>,
+    /// The game's id when it was played on Lichess, so its link needs no upload.
+    pub lichess_id: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -117,6 +119,7 @@ fn game_pgn(game: &GameExport) -> Option<String> {
 #[derive(Default)]
 pub struct Exporter {
     busy: bool,
+    uploading: bool,
     progress: String,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -139,6 +142,65 @@ impl Exporter {
         self.progress.clear();
         self.cancel = None;
         cx.notify();
+    }
+
+    /// Upload the game to Lichess (as the online account, if any) and copy its page's link.
+    fn upload(&mut self, game: GameExport, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.uploading {
+            return;
+        }
+        let link = if let Some(id) = &game.lichess_id {
+            Ok(format!("https://lichess.org/{id}"))
+        } else {
+            let account = crate::accounts::handle(cx)
+                .read(cx)
+                .active(cx)
+                .unwrap_or_default();
+            let Some(pgn) = game_pgn(&game) else {
+                window.push_notification(
+                    Notification::error("That game cannot be replayed.")
+                        .title("Could not upload the game"),
+                    cx,
+                );
+                return;
+            };
+            Err(cx
+                .global::<crate::core::AppCore>()
+                .call("importGame", vec![json!(account), json!(pgn)]))
+        };
+        self.uploading = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let url = match link {
+                Ok(url) => Ok(url),
+                Err(upload) => upload.await.and_then(|game| {
+                    game["url"]
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| kchess_core::CoreError::new("Lichess sent no link."))
+                }),
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.uploading = false;
+                cx.notify();
+                match url {
+                    Ok(url) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                        window.push_notification(
+                            Notification::new()
+                                .title("Copied the Lichess link")
+                                .message(url),
+                            cx,
+                        );
+                    }
+                    Err(cause) => window.push_notification(
+                        Notification::error(cause.message).title("Could not upload the game"),
+                        cx,
+                    ),
+                }
+            });
+        })
+        .detach();
     }
 
     fn save(&mut self, kind: Kind, game: GameExport, window: &mut Window, cx: &mut Context<Self>) {
@@ -240,7 +302,10 @@ pub fn export_menu(
     } else {
         state.progress.clone()
     };
-    let disabled = busy || (game.moves.is_empty() && game.ply.is_none());
+    let uploading = state.uploading;
+    let disabled = busy || uploading || (game.moves.is_empty() && game.ply.is_none());
+    let can_upload =
+        game.lichess_id.is_some() || (crate::network::online(cx) && !game.moves.is_empty());
     let target = exporter.downgrade();
     h_flex()
         .gap(px(4.))
@@ -272,7 +337,7 @@ pub fn export_menu(
                 .xsmall()
                 .icon(icon("download"))
                 .label("Export")
-                .loading(busy)
+                .loading(busy || uploading)
                 .disabled(disabled)
                 .dropdown_menu_with_anchor(anchor, move |menu, _, _| {
                     let item = |label: &'static str, glyph, kind: Kind| {
@@ -285,9 +350,21 @@ pub fn export_menu(
                                 });
                             })
                     };
+                    let (upload_target, upload_game) = (target.clone(), game.clone());
                     menu.item(item("Animated GIF of the game", icon("film"), Kind::Gif))
                         .item(item("PNG of this position", icon("image"), Kind::Png))
                         .item(item("PGN file", icon("file-text"), Kind::Pgn))
+                        .separator()
+                        .item(
+                            PopupMenuItem::new("Lichess link")
+                                .icon(icon("link"))
+                                .disabled(!can_upload)
+                                .on_click(move |_, window, cx| {
+                                    let _ = upload_target.update(cx, |exporter, cx| {
+                                        exporter.upload(upload_game.clone(), window, cx)
+                                    });
+                                }),
+                        )
                 }),
         )
 }
@@ -308,6 +385,7 @@ mod tests {
             black: "Stockfish".into(),
             ply: None,
             result: None,
+            lichess_id: None,
         })
         .unwrap();
         assert!(pgn.contains("[White \"You\"]"));

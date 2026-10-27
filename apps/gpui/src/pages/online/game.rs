@@ -746,6 +746,7 @@ impl OnlinePage {
                     .unwrap_or("*")
                     .to_string(),
             ),
+            lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
         }
     }
 }
