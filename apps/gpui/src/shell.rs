@@ -361,6 +361,14 @@ pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
 }
 
 /// A page's view, once it has been shown.
+/// Redraw the shell, as its network, account and update observers do.
+#[cfg(feature = "bench")]
+pub fn notify_shell(cx: &mut App) {
+    if let Some(workspace) = cx.try_global::<Navigator>().and_then(|nav| nav.0.upgrade()) {
+        workspace.update(cx, |_, cx| cx.notify());
+    }
+}
+
 pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
     workspace.read(cx).pages.view_of::<V>(page)

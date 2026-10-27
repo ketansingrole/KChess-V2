@@ -503,14 +503,14 @@ impl AnalysisPage {
         self.go_to(&path_of(&moves), cx);
     }
 
-    fn forward(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn forward(&mut self, cx: &mut Context<Self>) {
         if let Some(child) = self.node().children.first() {
             let next = child_path(&self.path, &child.uci);
             self.go_to(&next, cx);
         }
     }
 
-    fn go_to_start(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_start(&mut self, cx: &mut Context<Self>) {
         self.go_to("", cx);
     }
 
@@ -910,7 +910,7 @@ impl AnalysisPage {
 
     /* ── The engine ───────────────────────────────────────────────────── */
 
-    fn engine_on(cx: &App) -> bool {
+    pub(crate) fn engine_on(cx: &App) -> bool {
         crate::prefs::get(cx, ENGINE_ON, true)
     }
 
@@ -1410,7 +1410,7 @@ impl AnalysisPage {
         cx.notify();
     }
 
-    fn toggle_engine(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_engine(&mut self, cx: &mut Context<Self>) {
         let on = !Self::engine_on(cx);
         crate::prefs::set(cx, ENGINE_ON, on);
         self.engine_changed(cx);

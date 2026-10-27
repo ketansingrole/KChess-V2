@@ -318,7 +318,7 @@ impl LocalPage {
         }
     }
 
-    fn play(&mut self, uci: &str, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn play(&mut self, uci: &str, _: &mut Window, cx: &mut Context<Self>) {
         if !self.at_live() {
             return self.after_change(cx);
         }
@@ -639,7 +639,7 @@ impl LocalPage {
     }
 
     /// Start a game, asking first when one on the board is still being played.
-    fn replace_game(
+    pub(crate) fn replace_game(
         &mut self,
         setup: Value,
         clock: Value,

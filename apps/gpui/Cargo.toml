@@ -12,6 +12,10 @@ publish.workspace = true
 name = "KChess"
 path = "src/main.rs"
 
+[features]
+# Frame benchmarks of the real app (`src/bench.rs`, `tooling/gpui-render-benchmark.mjs`).
+bench = ["gpui-kit/profiler"]
+
 [dependencies]
 kchess-core = { path = "../../crates/kchess-core" }
 # The shared core: one core per profile for every KChess window (docs/shared-core.md).

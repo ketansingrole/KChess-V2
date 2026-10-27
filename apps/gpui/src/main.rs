@@ -3,6 +3,8 @@
 
 mod accounts;
 mod assets;
+#[cfg(feature = "bench")]
+mod bench;
 mod board;
 mod chart;
 mod core;
@@ -171,6 +173,10 @@ fn open_main_window(cx: &mut App) {
         });
         cx.new(|cx| shell::Workspace::new(window, cx))
     });
+    #[cfg(feature = "bench")]
+    if let Ok(window) = &opened {
+        bench::start(window.0, cx);
+    }
     if let Err(cause) = opened {
         log::write(
             Level::Error,
