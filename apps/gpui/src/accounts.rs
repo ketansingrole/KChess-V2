@@ -8,7 +8,7 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Wind
 use kchess_core::Level;
 use serde_json::{Value, json};
 
-use crate::core::AppCore;
+use crate::core::{Answer, AppCore, Reads};
 
 /// The account chosen for online play (`onlineAccountPreference`).
 pub const ONLINE_ACCOUNT: &str = "kchess:online-account";
@@ -19,6 +19,7 @@ pub struct Accounts {
     /// `usage`: bytes downloaded per account, and what each keeps (`UsageReport`).
     pub usage: Value,
     pub busy: bool,
+    reads: Reads,
 }
 
 /// How views reach the accounts: `cx.global::<AccountsHandle>().0`.
@@ -32,6 +33,7 @@ pub fn init(cx: &mut App) {
         data: Value::Null,
         usage: Value::Null,
         busy: false,
+        reads: Reads::default(),
     });
     cx.set_global(AccountsHandle(accounts.clone()));
     accounts.update(cx, |accounts, cx| accounts.refresh(cx));
@@ -104,6 +106,7 @@ impl Accounts {
 
     /// Read the accounts and their usage again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let read = self.reads.start();
         let core = cx.global::<AppCore>().clone();
         let (data, usage) = (
             core.call("loadData", Vec::new()),
@@ -112,6 +115,10 @@ impl Accounts {
         cx.spawn(async move |this, cx| {
             let (data, usage) = (data.await, usage.await);
             let _ = this.update(cx, |this, cx| {
+                // Only the newest read shows: an older answer may predate a sign-in or sync.
+                if this.reads.answer(read) != Answer::Show {
+                    return;
+                }
                 if let Ok(data) = data {
                     this.data = data;
                 }

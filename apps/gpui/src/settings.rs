@@ -11,7 +11,7 @@ use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
 use kchess_core::{CoreError, Level};
 use serde_json::Value;
 
-use crate::core::{AppCore, BoxedSave, CoreEvent};
+use crate::core::{Answer, AppCore, BoxedSave, CoreEvent, Reads};
 
 /// How long edits settle before they are saved, as in the Electron app.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -29,6 +29,7 @@ pub struct AppSettings {
     dirty: bool,
     save_soon: Option<Task<()>>,
     writes: mpsc::UnboundedSender<Write>,
+    reads: Reads,
 }
 
 enum Write {
@@ -85,6 +86,7 @@ pub fn init(cx: &mut App) {
         dirty: false,
         save_soon: None,
         writes,
+        reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
     crate::core::on_quit(cx, {
@@ -96,7 +98,8 @@ pub fn init(cx: &mut App) {
     cx.subscribe(&events, {
         let entity = entity.clone();
         move |_, event: &CoreEvent, cx| {
-            if event.name == "settings:saved" {
+            // Another window saved, or this one reconnected and may have missed a save.
+            if event.name == "settings:saved" || event.name == crate::core::RECONNECTED {
                 reload(&entity, cx);
             }
         }
@@ -104,16 +107,28 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-/// Read the settings and themes again.
+/// Read the settings and themes again: after this window's saves already sent, and only the
+/// newest read, so an older answer never becomes the base of this window's next save.
 pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
-    let core = cx.global::<AppCore>().clone();
-    let settings = core.call("desktopSettings", Vec::new());
-    let themes = core.call("customThemes", Vec::new());
+    let (read, sent) = entity.update(cx, |this, _| (this.reads.start(), this.sent()));
     let entity = entity.downgrade();
     cx.spawn(async move |cx| {
+        sent.await;
+        let (settings, themes) = cx.update(|cx| {
+            let core = cx.global::<AppCore>().clone();
+            (
+                core.call("desktopSettings", Vec::new()),
+                core.call("customThemes", Vec::new()),
+            )
+        });
         let settings = settings.await;
         let themes = themes.await;
         let _ = entity.update(cx, |this, cx| {
+            match this.reads.answer(read) {
+                Answer::Show => {}
+                Answer::Again => return reload(&cx.entity(), cx),
+                Answer::Superseded => return,
+            }
             match settings.map(serde_json::from_value::<Settings>) {
                 // Edits not yet stored stay; every other setting shows what is stored.
                 Ok(Ok(settings)) => {
@@ -199,6 +214,11 @@ fn write_in_order(
                         if unchanged {
                             this.dirty = this.save_soon.is_some();
                             this.settings = stored.clone();
+                        } else {
+                            // Edited meanwhile: only those edits stay; every other setting takes
+                            // the stored copy, so the next save does not write back what another
+                            // window changed.
+                            this.settings = adopt(&this.settings, &sent, &stored);
                         }
                         this.stored = stored;
                     }
@@ -247,6 +267,7 @@ impl AppSettings {
     /// Send the edits to be saved now.
     fn save_now(&mut self) {
         self.save_soon = None;
+        self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Save(Box::new((
             self.settings.clone(),
             self.stored.clone(),
@@ -258,6 +279,11 @@ impl AppSettings {
         if self.save_soon.is_some() {
             self.save_now();
         }
+        self.sent()
+    }
+
+    /// Wait for the saves already sent.
+    fn sent(&self) -> BoxedSave {
         let (done, wait) = oneshot::channel();
         let _ = self.writes.unbounded_send(Write::Flushed(done));
         Box::pin(async move {
@@ -320,5 +346,21 @@ mod tests {
             merged.frontend.sound_enabled, next.frontend.sound_enabled,
             "the other window's shows"
         );
+    }
+
+    #[test]
+    fn an_edit_during_a_save_keeps_what_the_core_merged_from_another_window() {
+        // This window shows volume 0.2 and saves an appearance change; the core keeps another
+        // window's volume (0.8) in what it stores. Zen mode was edited before the answer came.
+        let mut sent = defaults();
+        sent.frontend.sound_volume = 0.2;
+        sent.frontend.zen_mode = false;
+        let mut stored = sent.clone();
+        stored.frontend.sound_volume = 0.8;
+        let mut shown = sent.clone();
+        shown.frontend.zen_mode = true;
+        let rebased = adopt(&shown, &sent, &stored);
+        assert_eq!(rebased.frontend.sound_volume, 0.8, "not written back");
+        assert!(rebased.frontend.zen_mode, "the later edit stays");
     }
 }

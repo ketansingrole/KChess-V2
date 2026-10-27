@@ -351,8 +351,59 @@ pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
     }
 }
 
+/// Orders a surface's reads of the profile (`RequestScope` in the Electron app): only the newest
+/// read is shown, and one started before a local change is read again rather than shown over it.
+#[derive(Default)]
+pub struct Reads {
+    latest: u64,
+    edits: u64,
+}
+
+/// A read in flight: which one it was, and the local changes made before it started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Read {
+    id: u64,
+    edits: u64,
+}
+
+/// What to do with a read's answer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Answer {
+    Show,
+    /// A newer read was started: drop this one.
+    Superseded,
+    /// A local change came after the read started: read again.
+    Again,
+}
+
+impl Reads {
+    pub fn start(&mut self) -> Read {
+        self.latest += 1;
+        Read {
+            id: self.latest,
+            edits: self.edits,
+        }
+    }
+
+    /// A local change was made (sent to the core, or shown before it is).
+    pub fn edited(&mut self) {
+        self.edits += 1;
+    }
+
+    pub fn answer(&self, read: Read) -> Answer {
+        if read.id != self.latest {
+            Answer::Superseded
+        } else if read.edits != self.edits {
+            Answer::Again
+        } else {
+            Answer::Show
+        }
+    }
+}
+
 /// Runs `reload` when another window changes one of `areas` of the profile (`profile:changed`,
-/// `docs/shared-core.md`); this app's own writes are ignored.
+/// `docs/shared-core.md`), and after reconnecting to the core, which did not report what changed
+/// meanwhile; this app's own writes are ignored.
 pub fn on_profile_change(
     cx: &mut App,
     areas: &'static [&'static str],
@@ -360,6 +411,9 @@ pub fn on_profile_change(
 ) {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, move |_, event: &CoreEvent, cx| {
+        if event.name == RECONNECTED {
+            return reload(cx);
+        }
         if event.name != "profile:changed" {
             return;
         }
@@ -513,4 +567,25 @@ fn answer_host(request: &Value, cx: &mut App) {
             }
         })
         .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Answer, Reads};
+
+    #[test]
+    fn only_the_newest_read_without_later_changes_is_shown() {
+        let mut reads = Reads::default();
+        let older = reads.start();
+        let newer = reads.start();
+        // Answers in reverse order: the older one never replaces the newer.
+        assert_eq!(reads.answer(newer), Answer::Show);
+        assert_eq!(reads.answer(older), Answer::Superseded);
+        // A local change after a read started: that read may predate it.
+        let read = reads.start();
+        reads.edited();
+        assert_eq!(reads.answer(read), Answer::Again);
+        let again = reads.start();
+        assert_eq!(reads.answer(again), Answer::Show);
+    }
 }

@@ -12,7 +12,7 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_core::Level;
 use serde_json::{Map, Value, json};
 
-use crate::core::{AppCore, BoxedSave};
+use crate::core::{Answer, AppCore, BoxedSave, Reads};
 
 /// Studies a library may hold.
 pub const MAX_STUDIES: usize = 50;
@@ -43,6 +43,7 @@ pub struct StudyLibrary {
     pub error: Option<String>,
     writes: mpsc::UnboundedSender<Write>,
     bases: Bases,
+    reads: Reads,
 }
 
 /// How views reach the library: `cx.global::<StudyHandle>().0`.
@@ -67,6 +68,7 @@ pub fn init(cx: &mut App) {
         error,
         writes,
         bases: Arc::clone(&bases),
+        reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, bases, cx);
     crate::core::on_quit(cx, {
@@ -162,6 +164,7 @@ fn write_in_order(
                 match answer {
                     Ok(result) => {
                         this.apply(&result);
+                        this.reads.edited();
                         this.error = None;
                     }
                     Err(cause) => {
@@ -331,17 +334,29 @@ impl StudyLibrary {
             .collect();
     }
 
-    /// Show the studies the profile keeps (after a command failed).
+    /// Show the studies the profile keeps (after a command failed, or another window changed
+    /// them): read once this window's commands are answered, and never over a newer answer.
     fn reload(&mut self, cx: &mut Context<Self>) {
-        let library = cx.global::<AppCore>().call("library", Vec::new());
+        let read = self.reads.start();
+        let sent = self.flushed();
         cx.spawn(async move |this, cx| {
+            sent.await;
+            let Ok(library) = this.update(cx, |_, cx| {
+                cx.global::<AppCore>().call("library", Vec::new())
+            }) else {
+                return;
+            };
             if let Ok(library) = library.await
                 && let Some(items) = library["studies"].as_array()
             {
                 let items = items.clone();
-                let _ = this.update(cx, |this, cx| {
-                    this.items = items;
-                    cx.notify();
+                let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
+                    Answer::Show => {
+                        this.items = items;
+                        cx.notify();
+                    }
+                    Answer::Again => this.reload(cx),
+                    Answer::Superseded => {}
                 });
             }
         })
@@ -366,6 +381,7 @@ mod tests {
             error: None,
             writes,
             bases: Default::default(),
+            reads: Default::default(),
         };
         // An incremental answer: the changed study, and every id in order.
         library.apply(&json!({

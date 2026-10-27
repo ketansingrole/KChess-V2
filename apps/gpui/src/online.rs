@@ -110,6 +110,8 @@ pub struct OnlineState {
     _ticker: Option<Task<()>>,
     _presence: Option<Task<()>>,
     _ongoing_poll: Option<Task<()>>,
+    /// Which `resumeOnline` answer is current: a later one (after a reconnect) replaces it.
+    resumes: u64,
 }
 
 impl OnlineState {
@@ -937,6 +939,7 @@ pub fn init(cx: &mut App) {
             _ticker: None,
             _presence: None,
             _ongoing_poll: None,
+            resumes: 0,
         };
         state.transition("onlineGameChecking", Vec::new(), None, cx);
         state
@@ -952,10 +955,41 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+    // A restarted core attached no game, joined no stream: ask Lichess again, as on startup,
+    // never replaying a move that was pending on the old core.
+    cx.subscribe(&events, {
+        let state = state.clone();
+        move |_, event: &CoreEvent, cx| {
+            if event.name != crate::core::RECONNECTED {
+                return;
+            }
+            state.update(cx, |state, cx| {
+                let phase = state.model["onlinePhase"].as_str().unwrap_or_default();
+                if matches!(phase, "playing" | "seeking" | "disconnected") {
+                    state.phase = Phase::Checking;
+                    state.transition("onlineGameChecking", Vec::new(), None, cx);
+                }
+            });
+            resume(state.clone(), cx);
+        }
+    })
+    .detach();
+    resume(state, cx);
+}
+
+/// Attach the game Lichess says is in progress, then stay connected for challenges and games.
+fn resume(state: Entity<OnlineState>, cx: &mut App) {
+    let attempt = state.update(cx, |state, _| {
+        state.resumes += 1;
+        state.resumes
+    });
     let resume = cx.global::<AppCore>().call("resumeOnline", Vec::new());
     cx.spawn(async move |cx| {
         let resumed = resume.await;
         state.update(cx, |state, cx| {
+            if state.resumes != attempt {
+                return;
+            }
             match resumed {
                 Ok(game) if game.is_object() => {
                     // The game may belong to any connected account; it becomes the active one.

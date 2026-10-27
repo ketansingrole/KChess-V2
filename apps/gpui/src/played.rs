@@ -9,7 +9,7 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_core::Level;
 use serde_json::{Value, json};
 
-use crate::core::{AppCore, BoxedSave};
+use crate::core::{Answer, AppCore, BoxedSave, Reads};
 
 enum Write {
     Game(Value),
@@ -25,6 +25,7 @@ pub struct PlayedGames {
     /// Why the last write failed, until one succeeds.
     pub error: Option<String>,
     writes: mpsc::UnboundedSender<Write>,
+    reads: Reads,
 }
 
 /// How views reach the played games: `cx.global::<PlayedHandle>().0`.
@@ -47,6 +48,7 @@ pub fn init(cx: &mut App) {
         games,
         error: None,
         writes,
+        reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
     crate::core::on_quit(cx, {
@@ -129,6 +131,7 @@ impl PlayedGames {
         let id = game["id"].clone();
         self.games.retain(|entry| entry["id"] != id);
         self.games.insert(0, game.clone());
+        self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Game(game));
         cx.notify();
     }
@@ -137,6 +140,7 @@ impl PlayedGames {
         let before = self.games.len();
         self.games.retain(|entry| entry["id"] != id);
         if self.games.len() != before {
+            self.reads.edited();
             let _ = self.writes.unbounded_send(Write::Remove(id.to_string()));
             cx.notify();
         }
@@ -157,16 +161,29 @@ impl PlayedGames {
     }
 
     /// Show the games the profile keeps (after a write failed).
+    /// Show the profile's games: read once this window's writes are done, and never over a
+    /// game saved or removed here after the read started (a deleted game would come back).
     fn reload(&mut self, cx: &mut Context<Self>) {
-        let library = cx.global::<AppCore>().call("library", Vec::new());
+        let read = self.reads.start();
+        let written = self.flushed();
         cx.spawn(async move |this, cx| {
+            written.await;
+            let Ok(library) = this.update(cx, |_, cx| {
+                cx.global::<AppCore>().call("library", Vec::new())
+            }) else {
+                return;
+            };
             if let Ok(library) = library.await
                 && let Some(games) = library["games"].as_array()
             {
                 let games = games.clone();
-                let _ = this.update(cx, |this, cx| {
-                    this.games = games;
-                    cx.notify();
+                let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
+                    Answer::Show => {
+                        this.games = games;
+                        cx.notify();
+                    }
+                    Answer::Again => this.reload(cx),
+                    Answer::Superseded => {}
                 });
             }
         })
