@@ -21,7 +21,7 @@ use super::puzzles::{PuzzleRequest, PuzzleSolveRequest};
 use super::reviews::{fetch_lichess_reviews, review_from_lichess};
 use super::studies::StudySyncRequest;
 use super::tournaments::NewArena;
-use super::watch::{HostSink, Spectator, WatchTarget};
+use super::watch::{Spectators, WatchTarget};
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result};
 use crate::host::Host;
@@ -33,7 +33,7 @@ pub struct Services {
     lichess: Arc<Lichess>,
     tokens: Arc<dyn TokenSource>,
     online: OnlineSession,
-    spectator: Spectator,
+    spectator: Spectators,
     lookups: PositionLookups,
     cloud: CloudCache,
     database: Arc<Database>,
@@ -101,7 +101,7 @@ impl Services {
             lifetime.clone(),
         ));
         let online = OnlineSession::new(Arc::clone(&lichess), Arc::clone(&tokens), http.clone());
-        let spectator = Spectator::new(Arc::clone(&lichess), Arc::new(HostSink::new(host.clone())));
+        let spectator = Spectators::new(Arc::clone(&lichess), host.clone());
         // Before each state is reported: a live game (or the startup check) stops the engines and the
         // watch, and the engines' busy state is taken from the session as it now is.
         {
@@ -150,7 +150,7 @@ impl Services {
     }
 
     /// The spectator (the watch of a TV channel, a game or a broadcast round).
-    pub fn spectator(&self) -> &Spectator {
+    pub fn spectator(&self) -> &Spectators {
         &self.spectator
     }
 
@@ -487,11 +487,11 @@ impl Services {
                 Err(cause) => Err(cause),
             },
             "spectate.watch" => match parse_target(args, 0) {
-                Ok(target) => Ok(json!(self.spectator.watch(target))),
+                Ok(target) => Ok(json!(self.spectator.mine().watch(target))),
                 Err(cause) => Err(cause),
             },
             "spectate.watchRound" => match text(args, 0) {
-                Ok(round) => Ok(json!(self.spectator.watch_round(&round))),
+                Ok(round) => Ok(json!(self.spectator.mine().watch_round(&round))),
                 Err(cause) => Err(cause),
             },
             "spectate.tvChannels" => to_json(super::watch::tv_channels(&self.lichess).await),
@@ -590,7 +590,7 @@ impl Services {
                 Ok(Value::Null)
             }
             "spectate.stop" => {
-                self.spectator.stop();
+                self.spectator.stop_mine();
                 Ok(Value::Null)
             }
             "spectate.broadcastGame" => match text(args, 0) {

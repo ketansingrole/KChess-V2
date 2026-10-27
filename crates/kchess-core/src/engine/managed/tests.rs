@@ -90,7 +90,16 @@ async fn serve(build: impl FnOnce(&str) -> Vec<Route>) -> (String, Hits) {
                 }
                 let text = String::from_utf8_lossy(&head).into_owned();
                 let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
-                hits.lock().unwrap().push(path.clone());
+                // A request with a token is recorded with it.
+                let authorization = text.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("authorization")
+                        .then(|| value.trim().to_string())
+                });
+                hits.lock().unwrap().push(match authorization {
+                    Some(value) => format!("{path} ({value})"),
+                    None => path.clone(),
+                });
                 let (status, body) = routes
                     .get(&path)
                     .cloned()
@@ -412,6 +421,43 @@ async fn installs_the_verified_release_and_records_its_version() {
             .map(|u| u["bytes"].as_u64().unwrap())
             .sum::<u64>(),
         size as u64
+    );
+}
+
+#[tokio::test]
+async fn a_token_authenticates_the_release_check_but_not_the_download() {
+    // Packaging in CI was refused by GitHub's anonymous rate limit (403).
+    let archive = tar_gz(&[Member::File("stockfish-ubuntu", FAKE_ENGINE.as_bytes())]);
+    let digest = sha256(&archive);
+    let size = archive.len();
+    let (base, hits) = serve(|base| {
+        vec![
+            Route(
+                "/release",
+                200,
+                release(
+                    "sf_18",
+                    vec![asset(
+                        LINUX_ASSET,
+                        &format!("{base}/asset"),
+                        size,
+                        Some(digest),
+                    )],
+                ),
+            ),
+            Route("/asset", 200, archive),
+        ]
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut location = location(&dir.path().join("current"), &base);
+    location.github_token = Some("test-token".to_string());
+    install_managed_engine(&RecordingHost::default(), &location)
+        .await
+        .unwrap();
+    assert_eq!(
+        *hits.lock().unwrap(),
+        ["/release (Bearer test-token)", "/asset"]
     );
 }
 

@@ -40,7 +40,10 @@ it('preserves edits made during a failed save and persists them on the next save
   expect(owner.settings.value!.appearance).toBe('light')
   expect(owner.fail).toHaveBeenCalledOnce()
   await owner.save()
-  expect(saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ appearance: 'light' }))
+  expect(saveSettings).toHaveBeenLastCalledWith(
+    expect.objectContaining({ appearance: 'light' }),
+    expect.objectContaining({ appearance: expect.any(String) }),
+  )
   expect(owner.data.value.settings.appearance).toBe('light')
 })
 

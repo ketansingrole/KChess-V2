@@ -12,11 +12,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::capabilities::Capabilities;
+use crate::connection::{APP, ClientInfo, Connections};
 use crate::engine::EngineContext;
 use crate::engine::analysis::{ANALYSIS_EVENT, Analysis, AnalysisSink, AnalysisUpdate};
 use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
@@ -64,7 +66,9 @@ pub struct Core {
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
     pub(crate) services: Services,
     /// Offline speech recognition through the `kchess-voice` helper.
-    pub(crate) voice: VoiceRecognizer,
+    pub(crate) voice: Arc<VoiceRecognizer>,
+    /// The client listening through `voice`: one microphone at a time.
+    pub(crate) voice_owner: Mutex<Option<u64>>,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
@@ -85,6 +89,14 @@ pub struct Core {
     pub(crate) claim: ProfileClaim,
     /// The profile directory (`Config::data_dir`).
     data_dir: PathBuf,
+    /// Its clients: the embedding app, or the shared service's connections.
+    pub(crate) connections: Arc<Connections>,
+    /// The alert owner last reported (`alerts:owner`); `u64::MAX` none, `APP` at first.
+    alert_owner: AtomicU64,
+    /// Held while the alert owner is reported, so a joining client's snapshot is not stale.
+    alert_reports: Mutex<()>,
+    /// Held while settings are read, merged and written, so two windows' saves never interleave.
+    pub(crate) settings_writes: AsyncMutex<()>,
 }
 
 fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
@@ -161,6 +173,7 @@ impl Core {
     /// Opens the core over `config`'s profile. Fails when a live core already owns that profile.
     pub fn open(config: Config, host: Arc<dyn Host>) -> Result<Core> {
         let claim = ProfileClaim::claim(&config.data_dir)?;
+        let connections = Arc::new(Connections::new());
         let closed = Arc::new(AtomicBool::new(false));
         let host: Arc<dyn Host> = Arc::new(GatedHost::new(host, Arc::clone(&closed)));
         crate::panics::report_to(&host);
@@ -168,10 +181,10 @@ impl Core {
         let credentials = config
             .system_credentials
             .then(|| Arc::new(Credentials::for_profile(&config.data_dir)));
-        let capabilities = Arc::new(Capabilities::with_credentials(
-            Arc::clone(&host),
-            credentials,
-        ));
+        let capabilities = Arc::new(
+            Capabilities::with_credentials(Arc::clone(&host), credentials)
+                .with_connections(Arc::clone(&connections)),
+        );
         let battery = Battery::new(Arc::clone(&host));
         let scheduler = {
             let battery = Arc::clone(&battery);
@@ -220,16 +233,21 @@ impl Core {
                 busy: Arc::clone(&busy),
             },
         );
-        let voice = VoiceRecognizer::new(
+        let voice = Arc::new(VoiceRecognizer::new(
             Arc::clone(&host),
             config.voice_helper_path.clone(),
             crate::voice::model_dir(&config.data_dir),
-        );
+        ));
         let data_dir = config.data_dir.clone();
         Ok(Core {
             data_dir,
+            connections,
+            alert_owner: AtomicU64::new(APP),
+            alert_reports: Mutex::new(()),
+            settings_writes: AsyncMutex::new(()),
             puzzles: PuzzleService::new(config, services_host),
             voice,
+            voice_owner: Mutex::new(None),
             host,
             capabilities,
             database,
@@ -260,6 +278,79 @@ impl Core {
     /// Run one method: a facade method (`CoreApi`) or an internal service method. Unknown
     /// methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
+        self.call_as(APP, method, args).await
+    }
+
+    /// Run one method for client `connection` (`connect`): what it starts (an analysis, a watch,
+    /// voice input) is its own, and its events go to it.
+    pub async fn call_as(&self, connection: u64, method: &str, args: Vec<Value>) -> Result<Value> {
+        crate::connection::scope(connection, self.call_unscoped(method, args)).await
+    }
+
+    /// A new client of this core (the shared service's socket connections); its connection id.
+    pub fn connect(&self, info: ClientInfo) -> u64 {
+        let id = self.connections.connect(info);
+        self.report_alert_owner();
+        id
+    }
+
+    /// The shared service serves its own clients: the embedding app's connection goes.
+    pub fn serve_connections(&self) {
+        self.connections.without_app();
+        self.report_alert_owner();
+    }
+
+    /// A client went away: what it started stops.
+    pub fn disconnect(&self, connection: u64) {
+        self.end_connection(connection);
+        self.connections.disconnect(connection);
+        self.report_alert_owner();
+    }
+
+    /// A client has no window open (`suspend`): what it started stops, and every other client's
+    /// work carries on.
+    pub fn suspend_connection(&self, connection: u64) {
+        self.end_connection(connection);
+    }
+
+    /// A client's window gained or lost focus; the window focused last alerts the person.
+    pub fn focus(&self, connection: u64, focused: bool) {
+        self.connections.focus(connection, focused);
+        self.report_alert_owner();
+    }
+
+    /// Tells every client which window alerts now (`alerts:owner`), when that changed.
+    fn report_alert_owner(&self) {
+        let _reporting = self.alert_reports.lock();
+        let owner = self.connections.alert_owner();
+        let encoded = owner.unwrap_or(u64::MAX);
+        if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
+            self.host
+                .emit("alerts:owner", json!({ "connection": owner }));
+        }
+    }
+
+    /// Runs `join` with the current `alerts:owner` payload while no change of owner is reported:
+    /// a client that joins queues it before it receives any event, so it misses no change.
+    pub fn with_alert_owner<T>(&self, join: impl FnOnce(Value) -> T) -> T {
+        let _reporting = self.alert_reports.lock();
+        join(json!({ "connection": self.connections.alert_owner() }))
+    }
+
+    /// The clients connected now.
+    pub fn connections(&self) -> &Connections {
+        &self.connections
+    }
+
+    /// Stops what `connection` started: its analysis, its watch, its voice input.
+    fn end_connection(&self, connection: u64) {
+        self.search.stop_connection(connection);
+        self.analysis.forget(connection);
+        self.services.spectator().forget(connection);
+        self.release_voice(connection);
+    }
+
+    async fn call_unscoped(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         if crate::facade::is_facade_method(method) {
             self.start_unless_closed();
             return Box::pin(self.facade(method, args)).await;
@@ -380,8 +471,9 @@ impl Core {
             "analysis.start" => {
                 let configured: String = optional(args, 1, "configured")?;
                 let host = Arc::clone(&self.host);
+                let connection = crate::connection::current_or_app();
                 let sink: AnalysisSink = Arc::new(move |update: AnalysisUpdate| {
-                    host.emit(ANALYSIS_EVENT, json!(update));
+                    host.emit_to(connection, ANALYSIS_EVENT, json!(update));
                 });
                 json(
                     self.analysis
@@ -511,7 +603,7 @@ impl Core {
                 .and_then(|path| json(self.search.is_trusted_engine_path(&PathBuf::from(path)))),
             "analysis.running" => json(self.analysis.analysis_running()),
             "analysis.stop" => optional::<bool>(args, 0, "kill").map(|kill| {
-                self.analysis.stop_analysis(kill);
+                self.analysis.stop_mine(kill);
                 Value::Null
             }),
             // Test-only: a live online game blocks the engines (`online:state` sets it in service).

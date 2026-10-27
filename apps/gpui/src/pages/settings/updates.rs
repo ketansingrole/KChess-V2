@@ -90,7 +90,10 @@ fn summary(updates: &Updates, settings: &Settings) -> String {
             "Installs when you quit KChess, or restart now.".into()
         }
         Phase::Downloaded => "Restart KChess to install.".into(),
-        Phase::Disabled => "This copy of KChess is updated by hand.".into(),
+        Phase::Disabled => {
+            "This installation cannot update itself. Download and install the latest release."
+                .into()
+        }
         Phase::Idle => "Not checked yet".into(),
         _ => String::new(),
     }
@@ -207,11 +210,13 @@ impl SettingsPage {
                                     .text_size(px(18.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(palette.highlighted)
-                                    .child(format!("KChess {}", updates.current)),
+                                    .child(format!(
+                                        "KChess {}",
+                                        crate::updates::client_version(&updates.current)
+                                    )),
                             )
                             .children(badge(phase).map(|(label, look, glyph)| {
-                                widgets::badge(label, look, palette)
-                                    .child(icon(glyph).size(px(13.)))
+                                widgets::icon_badge(icon(glyph), label, look, palette)
                             })),
                     )
                     .child(

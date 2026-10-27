@@ -30,6 +30,12 @@ pub trait Host: Send + Sync + 'static {
     fn log(&self, level: Level, scope: &str, message: &str);
     /// An event for the host to deliver (`CoreEvents` names, or internal `host:*` requests).
     fn emit(&self, event: &str, payload: Value);
+    /// An event for one client only (`crate::connection`): an analysis's updates, a watch's
+    /// frames, a host request. A host with one client delivers it like any event.
+    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+        let _ = connection;
+        self.emit(event, payload);
+    }
 }
 
 /// Where the core keeps its files, and where the host keeps the engines.

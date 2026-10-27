@@ -43,6 +43,21 @@ describe('release payload checks', () => {
     ).toThrow('native rules sources or extra files')
   })
 
+  it('budgets the shared core service apart from the app payload', () => {
+    const MiB = 1024 * 1024
+    const service = { path: 'node_modules/@kchess/native/service/kchess-service', size: 14.4 * MiB }
+    expect(verifyEntries([service])).toBe(0)
+    expect(
+      verifyEntries([
+        { ...service, path: 'node_modules/@kchess/native/service/kchess-service.exe' },
+      ]),
+    ).toBe(0)
+    expect(() => verifyEntries([{ ...service, size: 21 * MiB }])).toThrow('core service exceeds')
+    expect(() =>
+      verifyEntries([{ path: 'node_modules/@kchess/native/service/notes.txt', size: 1 }]),
+    ).toThrow('native rules sources or extra files')
+  })
+
   it.each([
     '.output/public/mac-arm64/Electron.app/Contents/MacOS/Electron',
     '.output/public/mac-arm64/KChess.app/Contents/Resources/app.asar',

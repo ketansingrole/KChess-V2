@@ -41,7 +41,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Menus: KChess (Services, Hide, Quit), File, Edit, View, Window
 - [x] Search box and command palette in the top bar: ⌘K (View → Search…), ⇧⌘P for commands,
       `@` players, `#` settings, `?` help; ranked fuzzy matches highlighted, recent entries, the
-      game to return to; ⌘, opens Settings
+      game to return to; ⌘, opens Settings. Drawn as Electron's: one bordered box up to 600px
+      wide and 32px tall, centred in the top bar, that grows down into the results and a footer
+      of key chips; ⌘K chips hidden below 560px
 - [x] Connect Lichess and the account menu in the sidebar footer (play as, connect another,
       Settings, log out); signing out starts the pages afresh
 - [x] Sidebar footer as Electron's: Settings, then Connect Lichess (off while offline or busy) or
@@ -300,13 +302,18 @@ None.
 
 ## Packaging
 
-- [x] Packages for macOS (.dmg, .zip), Windows (.zip) and Linux (.tar.gz) with the official
-      native Stockfish and the voice runtime (helper, libvosk, notices) beside the app (`tooling/gpui-package.mjs`; the preview installs beside
-      Electron as "KChess Preview", `--final` takes Electron's identity)
+- [x] Packages in Electron's formats, made by electron-builder from the staged app: macOS
+      (.dmg, .zip), Windows (NSIS .exe) and Linux (.AppImage, .deb), with the official native
+      Stockfish and the voice runtime (helper, libvosk, notices) beside the app
+      (`tooling/gpui-package.mjs`; the preview installs beside Electron as "KChess Preview",
+      `--final` takes Electron's identity, NSIS GUID and .deb name and writes `latest*.yml`)
 - [x] Rust updater on the same GitHub release feed: check, background download checked against
-      `SHA256SUMS.txt`, restart to install or install on quit, the top bar's button and Settings
-- [ ] The switch from Electron: the Release workflow publishing these packages, and Electron's
-      updater installing the final GPUI build
+      `SHA256SUMS.txt` and the running app's signature, then the new bundle, the installer run
+      silently, the new AppImage or the .deb (`pkexec`); restart to install or install on quit,
+      the top bar's button and Settings
+- [x] The Release workflow publishes the preview packages beside Electron's (`gpui` job)
+- [ ] The switch from Electron: the Release workflow building `--final` in place of Electron's
+      packages, so Electron's updater installs the GPUI app
 - [x] Signing: ad hoc without credentials; a Developer ID (`KCHESS_SIGN_IDENTITY`) signs with the
       hardened runtime and notarizes (untried here: no certificate)
 - [x] CI: lint, test and package `kchess-gpui` on macOS, Windows and Linux (`gpui` job); Linux

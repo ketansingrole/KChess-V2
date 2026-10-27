@@ -10,6 +10,7 @@ import type {
   DesktopApi,
   OnlineEvent,
   OnlineConnection,
+  ProfileChange,
   PuzzleDbProgress,
   ReviewStatus,
   ReviewUpdate,
@@ -83,7 +84,7 @@ const api: DesktopApi = {
     return () => ipcRenderer.removeListener(IPC_EVENTS.interfaceZoom, listener)
   },
   loadData: () => invoke('loadData'),
-  saveSettings: (settings) => invoke('saveSettings', settings),
+  saveSettings: (settings, base) => invoke('saveSettings', settings, base),
   addAccount: (username) => invoke('addAccount', username),
   logout: (username) => invoke('logout', username),
   logoutAll: () => invoke('logoutAll'),
@@ -176,6 +177,16 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC_EVENTS.broadcast, listener)
     return () => ipcRenderer.removeListener(IPC_EVENTS.broadcast, listener)
   },
+  onProfileChanged: (callback) => {
+    const listener = (_: unknown, change: ProfileChange): void => callback(change)
+    ipcRenderer.on(IPC_EVENTS.profileChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.profileChanged, listener)
+  },
+  onCoreReconnected: (callback) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(IPC_EVENTS.coreReconnected, listener)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.coreReconnected, listener)
+  },
   onLobbyState: (callback) => {
     const listener = (_: unknown, state: LobbyState): void => callback(state)
     ipcRenderer.on(IPC_EVENTS.lobby, listener)
@@ -252,7 +263,8 @@ const api: DesktopApi = {
   voiceStop: () => invoke('voiceStop'),
   library: () => invoke('library'),
   importLibrary: (documents) => invoke('importLibrary', documents),
-  studyCommand: (command) => invoke('studyCommand', command),
+  studyCommand: (command, incremental, basedOn) =>
+    invoke('studyCommand', command, incremental, basedOn),
   saveArchivedGame: (game) => invoke('saveArchivedGame', game),
   removeArchivedGame: (id) => invoke('removeArchivedGame', id),
   addMistakes: (reviewKey, color) => invoke('addMistakes', reviewKey, color),

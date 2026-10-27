@@ -439,6 +439,23 @@ impl Render for HomePage {
                 None
             }
         };
+        // `PageHeader`: Sync games for the connected account, above the tiles.
+        let online = crate::network::online(cx);
+        let header = connected.clone().map(|account| {
+            h_flex().justify_end().mb(px(20.)).child(
+                Button::new("home-sync")
+                    .outline()
+                    .icon(icon("refresh-cw"))
+                    .label("Sync games")
+                    .loading(busy)
+                    .disabled(!online)
+                    .on_click(move |_, window, cx| {
+                        let name = account.clone();
+                        crate::accounts::handle(cx)
+                            .update(cx, |accounts, cx| accounts.sync(Some(name), window, cx))
+                    }),
+            )
+        });
         div()
             .id("home-page")
             .track_focus(&self.focus)
@@ -446,9 +463,10 @@ impl Render for HomePage {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .pt(PAGE_TOP + HEADER)
+                    .pt(PAGE_TOP + if header.is_some() { px(0.) } else { HEADER })
                     .pb(PAGE_BOTTOM)
                     .px(side_padding(window))
+                    .children(header)
                     .child(
                         v_flex().gap(px(12.)).mb(px(32.)).children(tile_rows).child(
                             h_flex()

@@ -115,6 +115,9 @@ pub struct ManagedLocation {
     pub dir: PathBuf,
     /// The "latest release" endpoint. Tests point this at a local server.
     pub release_url: String,
+    /// Sent with the release check only (never the download), so packaging on shared CI
+    /// runners is not refused by GitHub's anonymous rate limit. The app sends none.
+    pub github_token: Option<String>,
     pub target: Target,
     /// Suspends engine owners while the verified replacement is published.
     pub handoff: Option<Arc<dyn EngineHandoff>>,
@@ -129,6 +132,7 @@ impl ManagedLocation {
         ManagedLocation {
             dir,
             release_url: RELEASE_URL.to_string(),
+            github_token: None,
             target: Target::current(),
             handoff: None,
             cancel: None,
@@ -315,7 +319,14 @@ async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallR
         .build()
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
-    let release = fetch_release(host, &client, &location.release_url, &mut cancel).await?;
+    let release = fetch_release(
+        host,
+        &client,
+        &location.release_url,
+        location.github_token.as_deref(),
+        &mut cancel,
+    )
+    .await?;
     let current = managed_engine(host, &dir).await;
     if current.installed && current.version.as_deref() == Some(release.tag.as_str()) {
         return Ok(InstallResult {
@@ -427,22 +438,27 @@ async fn fetch_release(
     host: &dyn Host,
     client: &reqwest::Client,
     url: &str,
+    token: Option<&str>,
     cancel: &mut Option<watch::Receiver<bool>>,
 ) -> Result<Release> {
     let response = until_cancelled(cancel, async {
-        client
+        let request = client
             .get(url)
             .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .timeout(RELEASE_TIMEOUT)
-            .send()
-            .await
-            .map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Could not check Stockfish releases (timed out)."
-                } else {
-                    "Could not check Stockfish releases (network error)."
-                })
+            .timeout(RELEASE_TIMEOUT);
+        match token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        }
+        .send()
+        .await
+        .map_err(|cause| {
+            CoreError::new(if cause.is_timeout() {
+                "Could not check Stockfish releases (timed out)."
+            } else {
+                "Could not check Stockfish releases (network error)."
             })
+        })
     })
     .await?;
     usage(host, 1, 0);

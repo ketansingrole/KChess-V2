@@ -1,0 +1,78 @@
+use std::path::Path;
+use std::time::Duration;
+use kchess_core::Config;
+use kchess_service::{Client, ClientEvent, Hello, Capability, discovery};
+use kchess_service::server::{serve, ServeOptions};
+use kchess_service::protocol::{self, Frame, read_frame, write_frame};
+use serde_json::json;
+
+fn hello() -> Hello { Hello { kind: "audit".into(), capabilities: vec![Capability::Focus] } }
+async fn connect(path: &Path) -> (Client, tokio::sync::mpsc::UnboundedReceiver<ClientEvent>) {
+    for _ in 0..200 {
+        if let Ok(value) = Client::connect(path, &hello()).await { return value; }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("service did not start")
+}
+
+#[tokio::test(flavor="multi_thread")]
+async fn audit_new_window_does_not_receive_current_alert_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = tokio::spawn(serve(ServeOptions { config: Config::new(dir.path().into()), idle: Duration::from_secs(30) }));
+    let (first, mut first_events) = connect(dir.path()).await;
+    first.focus(true);
+    // Barrier: wait for the focus frame to be consumed before connecting window two.
+    first.call("library", vec![]).await.unwrap();
+    let (second, mut events) = connect(dir.path()).await;
+    second.call("library", vec![]).await.unwrap();
+    let found = tokio::time::timeout(Duration::from_millis(150), async {
+        while let Some(event) = events.recv().await {
+            if let ClientEvent::Event { name, .. } = event {
+                if name == "alerts:owner" { return; }
+            }
+        }
+    }).await;
+    assert!(found.is_err(), "broken behavior: new window never learns the owner");
+    // Keep the first event receiver alive through the test.
+    let _ = first_events.try_recv();
+    drop((first, second));
+    service.abort();
+}
+
+#[tokio::test(flavor="multi_thread")]
+async fn audit_frontend_style_save_overwrites_other_windows_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = tokio::spawn(serve(ServeOptions { config: Config::new(dir.path().into()), idle: Duration::from_secs(30) }));
+    let (first, _) = connect(dir.path()).await;
+    let (second, _) = connect(dir.path()).await;
+    let saved = first.call("studyCommand", vec![json!({"op":"save","name":"Study","pgn":"1. e4 *"}), json!(true)]).await.unwrap();
+    let id = saved["id"].clone();
+    second.call("studyCommand", vec![json!({"op":"save","id":id,"name":"Study","pgn":"1. d4 *"}), json!(true)]).await.unwrap();
+    first.call("studyCommand", vec![json!({"op":"save","id":id,"name":"Study","pgn":"1. e4 e5 *"}), json!(true)]).await.unwrap();
+    let library = second.call("library", vec![]).await.unwrap();
+    assert!(library["studies"][0]["pgn"].as_str().unwrap().contains("e4 e5"));
+    assert!(!library["studies"][0]["pgn"].as_str().unwrap().contains("d4"));
+    drop((first, second));
+    service.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn audit_call_after_closed_event_never_settles() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("fake.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let info = discovery::CoreInfo { pid: std::process::id(), socket: socket.to_string_lossy().into(), release: protocol::release(), protocol: protocol::protocol(), started_at: 0 };
+    discovery::write_private(&dir.path().join("core.json"), &serde_json::to_vec(&info).unwrap()).unwrap();
+    discovery::write_private(&dir.path().join("core.token"), b"test-token").unwrap();
+    let fake = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        read_frame(&mut stream).await.unwrap();
+        write_frame(&mut stream, &Frame::Welcome { connection: 1, release: protocol::release(), protocol: protocol::protocol() }).await.unwrap();
+    });
+    let (client, mut events) = Client::connect(dir.path(), &hello()).await.unwrap();
+    fake.await.unwrap();
+    assert_eq!(events.recv().await, Some(ClientEvent::Closed));
+    let answer = tokio::time::timeout(Duration::from_millis(150), client.call("library", vec![])).await;
+    assert!(answer.is_err(), "broken behavior: call hangs instead of returning core stopped");
+}

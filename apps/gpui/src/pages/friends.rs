@@ -482,8 +482,7 @@ impl FriendsPage {
                             .xsmall()
                             .ghost()
                             .icon(icon("history"))
-                            .tooltip("Games")
-                            .accessibility_label("Games")
+                            .label("Games")
                             .disabled(games <= 0.)
                             .on_click(move |_, window, cx| {
                                 crate::shell::open_history_account(&games_name, window, cx)
@@ -584,7 +583,14 @@ impl Render for FriendsPage {
         let header = h_flex()
             .flex_wrap()
             .gap(px(8.))
-            .child(div().w(px(240.)).child(Input::new(&self.input).aria_label("Lichess username to follow")))
+            // `.friends-add-input`: 10rem to 22rem, with its user-plus icon.
+            .child(
+                div().flex_1().min_w(px(160.)).max_w(px(352.)).child(
+                    Input::new(&self.input)
+                        .prefix(icon("user-plus").size(px(16.)))
+                        .aria_label("Lichess username to follow"),
+                ),
+            )
             .child(
                 Button::new("friends-follow")
                     .primary()
@@ -649,16 +655,19 @@ impl Render for FriendsPage {
                                 .gap(px(12.))
                                 .px(px(12.))
                                 .py(px(8.))
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::SEMIBOLD)
+                                // `.friends-table thead th`: 12px, medium, as written.
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.text_muted)
-                                .child(div().flex_1().min_w(px(180.)).child("PLAYER"))
-                                .child(head_cell("BULLET", 60.))
-                                .child(head_cell("BLITZ", 60.))
-                                .child(head_cell("RAPID", 60.))
-                                .child(head_cell("CLASSICAL", 70.))
-                                .child(head_cell("YOU VS THEM", 100.))
-                                .child(div().w(px(130.)).child("SYNCED"))
+                                .border_b_1()
+                                .border_color(palette.border)
+                                .child(div().flex_1().min_w(px(180.)).child("Player"))
+                                .child(head_cell("Bullet", 60.))
+                                .child(head_cell("Blitz", 60.))
+                                .child(head_cell("Rapid", 60.))
+                                .child(head_cell("Classical", 70.))
+                                .child(head_cell("You vs them", 100.))
+                                .child(div().w(px(130.)).child("Synced"))
                                 .child(div().w(px(190.))),
                         )
                         .children(

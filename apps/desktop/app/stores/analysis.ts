@@ -31,7 +31,7 @@ import {
 import { useKChessStore } from './kchess'
 import { useMistakeStore } from './mistakes'
 import { useReviewStore } from './review'
-import { useStudyStore } from './studies'
+import { isStaleStudy, useStudyStore } from './studies'
 import {
   addMove,
   deleteAt,
@@ -77,6 +77,10 @@ export interface ReviewMark {
  * The analysis board and board editor. Both live here rather than in their pages, so a position
  * survives leaving the page, and the editor can hand its position to analysis (and back).
  */
+/** Why the board left its study: another window changed the chapter it was saving to. */
+const STALE_COPY =
+  'This study was changed in another KChess window. Your board is kept as an unsaved copy; save it under a new name or reopen the study.'
+
 export const useAnalysisStore = defineStore('analysis', () => {
   const app = useKChessStore()
   const session = initialLibrary().sessions.analysis
@@ -101,6 +105,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /** The saved study the board is showing; its edits are saved back to it as they happen. */
   const studyId = ref(conflict ? '' : (saved?.study ?? ''))
   const studyChapterId = ref(saved?.chapter ?? linked?.chapters[0]?.id ?? '')
+  if (studyId.value) studies.track(studyId.value, studyChapterId.value)
   const saveError = persistSession(
     'analysis',
     () => ({
@@ -235,6 +240,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
     studyId.value = id
     studyChapterId.value = chapter.id
+    studies.track(id, chapter.id)
     studyPgn = pgn()
     studySaveError.value = ''
     return true
@@ -270,6 +276,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       if (!id || !board.current() || studyId.value) return
       studyId.value = id
       studyChapterId.value = chapterId
+      studies.track(id, chapterId)
     }
   }
   /** Save the open study before returning to an empty analysis board. */
@@ -314,6 +321,15 @@ export const useAnalysisStore = defineStore('analysis', () => {
       studySaveError.value = ''
     } catch (cause) {
       console.warn('[analysis] saving study failed:', cause)
+      if (isStaleStudy(cause) && studyId.value === open.id) {
+        // Another window changed the chapter: the board keeps its moves as an unsaved copy
+        // rather than overwriting that window's, or blocking every later save and quit.
+        studyId.value = ''
+        studyChapterId.value = ''
+        studyPgn = ''
+        studySaveError.value = STALE_COPY
+        return
+      }
       if (studyPgn === text) studyPgn = previous
       studySaveError.value = cause instanceof Error ? cause.message : String(cause)
     }
@@ -538,7 +554,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /** Start following the board with the engine (the analysis page is open). */
   function attach(): void {
     if (scope) return
-    off = window.kchess.onAnalysis(receive)
+    const offAnalysis = window.kchess.onAnalysis(receive)
+    // A search on a lost connection ended with it: the board's is started again.
+    const offReconnect = window.kchess.onCoreReconnected(() => void analyse())
+    off = () => {
+      offAnalysis()
+      offReconnect()
+    }
     scope = effectScope()
     scope.run(() => {
       watch(

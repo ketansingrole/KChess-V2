@@ -280,6 +280,12 @@ impl Host for GatedHost {
             self.inner.emit(event, payload);
         }
     }
+
+    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+        if event == "host:request" || !self.closed.load(Ordering::SeqCst) {
+            self.inner.emit_to(connection, event, payload);
+        }
+    }
 }
 
 /// Whether `method` is one of the facade's (answered by `Core::facade`).
@@ -306,6 +312,45 @@ pub fn core_data(data: &Value) -> Value {
         core_settings(data.get("settings").unwrap_or(&Value::Null)),
     );
     Value::Object(out)
+}
+
+/// The event a write to the profile reports (`ProfileChange` in `kchess-contracts`).
+pub const PROFILE_CHANGED: &str = "profile:changed";
+
+/// The parts of the profile a successful call of `method` changed (`ProfileArea` names), so the
+/// other windows refetch them. `saveSettings` reports `settings:saved` instead.
+pub fn changed_areas(method: &str) -> &'static [&'static str] {
+    match method {
+        "importLibrary" => &[
+            "studies",
+            "playedGames",
+            "drills",
+            "sessions",
+            "tournaments",
+            "repertoire",
+        ],
+        "studyCommand" => &["studies"],
+        "saveArchivedGame" | "removeArchivedGame" => &["playedGames"],
+        "addMistakes" | "answerMistake" => &["drills"],
+        "saveSession" => &["sessions"],
+        "joinTournament" | "leaveTournament" | "createTournament" => &["tournaments"],
+        "recordRepertoireMiss" | "clearRepertoireMisses" => &["repertoire"],
+        "syncGames" => &["lichessGames", "accounts"],
+        "clearAccountData" => &["lichessGames", "accounts", "usage"],
+        "addAccount" | "logout" | "logoutAll" | "removeAccount" | "connectLichess"
+        | "addFriends" => &["accounts"],
+        "saveDesktopSettings" => &["desktopSettings"],
+        "recordPuzzleAttempt"
+        | "saveRun"
+        | "clearRuns"
+        | "puzzleSolve"
+        | "puzzleDbInstall"
+        | "puzzleDbDelete" => &["puzzles"],
+        "saveVoiceAttempt" | "updateVoiceAttempt" | "clearVoiceHistory" => &["voiceHistory"],
+        "resetUsage" => &["usage"],
+        "installEngine" | "deleteEngine" => &["engine"],
+        _ => &[],
+    }
 }
 
 /// What a method's result shows a client: stored data reduces to its core settings, and a
@@ -351,6 +396,13 @@ impl Core {
         }
         // Boxed: the method table is one large future, too big to lay out on a worker's stack.
         let result = Box::pin(self.run_facade(method, &args)).await?;
+        let areas = changed_areas(method);
+        if !areas.is_empty() {
+            self.host.emit(
+                PROFILE_CHANGED,
+                json!({ "areas": areas, "origin": crate::connection::current_or_app() }),
+            );
+        }
         Ok(project(method, result))
     }
 

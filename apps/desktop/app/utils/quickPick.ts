@@ -24,6 +24,9 @@ export interface QuickPickMatch {
   ranges: [number, number][]
 }
 
+/** What a query naming the whole label adds, above any longer label it also starts. */
+const EXACT_LABEL = 100
+
 const WORD_BREAK = /[\s·›/@:,()+-]/
 
 function isWordStart(text: string, index: number): boolean {
@@ -97,6 +100,8 @@ export function matchQuickPick(query: string, label: string, extra = ''): QuickP
     if (!inExtra) return null
     score += inExtra.score / 2
   }
+  // Typing an entry's whole name finds it first: "Appearance" before "Appearance: Dark".
+  if (query.trim().toLowerCase() === label.toLowerCase()) score += EXACT_LABEL
   return { score, ranges: mergeRanges(ranges) }
 }
 

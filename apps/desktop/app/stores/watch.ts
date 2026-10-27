@@ -131,7 +131,13 @@ export const useWatchStore = defineStore('watch', () => {
       () => window.kchess.onWatchState(state),
       () => window.kchess.onWatch(receiveFrame),
       () => window.kchess.onBroadcast(receiveRound),
+      () => window.kchess.onCoreReconnected(resume),
     ])
+  }
+  /** The stream on a lost connection ended with it: what is watched streams again. */
+  function resume(): void {
+    if (target.value && session !== -1) void watch(target.value)
+    else if (roundId.value && roundSession !== -1) void openRound(roundId.value, selectedGame.value)
   }
   function unlisten(): void {
     requests.invalidate()

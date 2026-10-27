@@ -10,7 +10,7 @@ import type {
 import { useKChessStore } from './kchess'
 import { initialLibrary } from '../utils/library'
 import { errorText } from '../utils/format'
-import type { JoinedTournament } from '@kchess/rules/library'
+import type { JoinedTournament, LibrarySnapshot } from '@kchess/rules/library'
 
 export const useTournamentStore = defineStore('tournaments', () => {
   const app = useKChessStore()
@@ -178,7 +178,12 @@ export const useTournamentStore = defineStore('tournaments', () => {
       return { error: errorText(cause) }
     }
   }
+  /** Another KChess window joined or left a tournament. */
+  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+    stored.value = snapshot.joinedTournaments
+  }
   return {
+    replaceFromLibrary,
     list,
     page,
     loading,

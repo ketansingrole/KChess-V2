@@ -71,6 +71,7 @@ beforeEach(() => {
     ...window.kchess,
     ensureVoiceModel: vi.fn(async () => {}),
     onVoiceModelProgress: vi.fn(() => vi.fn()),
+    onCoreReconnected: vi.fn(() => vi.fn()),
     ...core,
   } as unknown as typeof window.kchess
 })

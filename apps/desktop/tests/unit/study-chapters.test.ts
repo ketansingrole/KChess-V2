@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from 'vitest'
-import { seedSaved, storedLibrary } from './libraryBackend'
+import { otherWindowStudyCommand, seedSaved, storedLibrary } from './libraryBackend'
 import { nextTick } from 'vue'
 import { useStudyStore } from '../../app/stores/studies'
 import { useAnalysisStore } from '../../app/stores/analysis'
@@ -54,6 +54,36 @@ it('keeps all chapters together and edits the selected chapter without overwriti
     'King pawn',
     'Queen pawn',
   ])
+})
+
+it('never overwrites moves another window saved to the open chapter', async () => {
+  const library = useStudyStore()
+  const analysis = useAnalysisStore()
+  const id = await library.save('Shared', '1. e4 *')
+  const chapterId = library.items[0]!.chapters[0]!.id
+  expect(await analysis.openStudy(id, chapterId)).toBe(true)
+  // Another window renames the study, then replaces the moves; this window refreshes its library.
+  otherWindowStudyCommand({ op: 'rename', id, name: 'Shared openings' })
+  otherWindowStudyCommand({ op: 'save', id, chapterId, name: 'Shared openings', pgn: '1. d4 *' })
+  library.replaceFromLibrary(storedLibrary())
+  // The board still shows 1. e4, and its edit is based on it.
+  analysis.root.comments = ['Board notes']
+  await nextTick()
+  await analysis.flushStudy()
+  expect(storedLibrary().studies[0]!.chapters[0]!.pgn).toBe('1. d4 *')
+  expect(analysis.studyId).toBe('')
+  expect(analysis.studySaveError).toContain('unsaved copy')
+  expect(analysis.pgn()).toContain('Board notes')
+  // Nothing is queued to be sent again at quit.
+  await expect(library.flush(true)).resolves.toBeUndefined()
+
+  // Reopened, the chapter's newer moves are the base: edits save again.
+  expect(await analysis.openStudy(id, chapterId)).toBe(true)
+  analysis.root.comments = ['After reopening']
+  await nextTick()
+  await analysis.flushStudy()
+  expect(storedLibrary().studies[0]!.chapters[0]!.pgn).toContain('After reopening')
+  expect(storedLibrary().studies[0]!.chapters[0]!.pgn).toContain('d4')
 })
 
 it('updates an unchanged offline copy without duplicates and keeps edited copies on download conflicts', async () => {

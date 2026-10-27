@@ -32,7 +32,10 @@ it('flushes a pending settings change without waiting for its timer', async () =
   await store.init()
   store.settings!.appearance = 'dark'
   await flushSavedDocuments()
-  expect(save).toHaveBeenCalledWith(expect.objectContaining({ appearance: 'dark' }))
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ appearance: 'dark' }),
+    expect.objectContaining({ appearance: expect.any(String) }),
+  )
 })
 it('detaches persistence callbacks when their scope is disposed', async () => {
   const saveSession = vi.fn(async () => {})

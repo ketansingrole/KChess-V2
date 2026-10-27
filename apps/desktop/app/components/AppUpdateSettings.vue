@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useIntervalFn, useNow } from '@vueuse/core'
 import { useAppUpdatesStore } from '../stores/appUpdates'
 import { formatBytes, timeAgo } from '../utils/format'
-import { RESTART_UPDATE_DESCRIPTION } from '../utils/appUpdate'
+import { RESTART_UPDATE_DESCRIPTION, clientVersion } from '../utils/appUpdate'
 
 const store = useKChessStore()
 const { settings } = storeToRefs(store)
@@ -123,7 +123,7 @@ async function restart(): Promise<void> {
       <div class="update-info">
         <div class="update-title-row">
           <h2 id="update-status-title" class="update-title">
-            KChess {{ status?.currentVersion ?? '…' }}
+            KChess {{ clientVersion(status?.currentVersion) ?? '…' }}
           </h2>
           <UBadge
             v-if="badge"

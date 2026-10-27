@@ -239,6 +239,47 @@ fn read_command_studies(db: &Connection, command: &Map<String, Value>) -> Result
 }
 
 /// `studyCommand(command, now)`: one change to the study library, stored on success.
+/// Another window saved the study after this one read it (`docs/shared-core.md`).
+pub const STALE_STUDY: &str =
+    "This study was changed in another KChess window. Reload it to see the latest version.";
+
+/// A chapter save based on the chapter as the window last read or wrote it (`based_on`, its PGN)
+/// is refused once the chapter holds other moves, so two windows never overwrite each other's
+/// work. Renames and other chapters do not conflict. A study or chapter that is not there (new,
+/// or removed) has nothing to compare.
+pub(crate) fn check_based_on(db: &Connection, command: &Value, based_on: &str) -> Result<()> {
+    let Some(id) = command
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return Ok(());
+    };
+    migrate_studies(db)?;
+    let study = read_command_studies(db, object(command, "study command")?)?
+        .into_iter()
+        .find(|study| study.get("id").and_then(Value::as_str) == Some(id));
+    let chapters = study
+        .as_ref()
+        .and_then(|study| study.get("chapters"))
+        .and_then(Value::as_array);
+    let chapter = match non_empty(command.get("chapterId").and_then(Value::as_str)) {
+        Some(chapter_id) => chapters.and_then(|chapters| {
+            chapters
+                .iter()
+                .find(|c| c.get("id").and_then(Value::as_str) == Some(chapter_id))
+        }),
+        None => chapters.and_then(|chapters| chapters.first()),
+    };
+    match chapter
+        .and_then(|chapter| chapter.get("pgn"))
+        .and_then(Value::as_str)
+    {
+        Some(current) if current != based_on => Err(CoreError::new(STALE_STUDY)),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn study_command(
     db: &Connection,
     command: &Value,

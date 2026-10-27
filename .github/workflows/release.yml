@@ -16,6 +16,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  GPUI_LINUX_LIBS: >-
+    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -171,8 +176,65 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # The GPUI preview ("KChess Preview", beside the Electron app) in the same formats, which its
+  # updater installs from the release (apps/gpui/src/updates.rs). Ad hoc signed on macOS.
+  gpui:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gpui
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: node tooling/gpui-package.mjs
+        env:
+          # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
+          GH_TOKEN: ${{ github.token }}
+          KCHESS_SIGN_IDENTITY: ''
+      - name: Verify every supported package exists
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            macOS) packages="KChess-Preview-*-mac-arm64.dmg KChess-Preview-*-mac-arm64.zip" ;;
+            Windows) packages="KChess-Preview-*-win-x64.exe" ;;
+            Linux) packages="KChess-Preview-*-linux-x86_64.AppImage KChess-Preview-*-linux-amd64.deb" ;;
+          esac
+          for pattern in $packages; do
+            found=$(find apps/gpui/dist -maxdepth 1 -name "$pattern" -size +0 | head -n 1)
+            test -n "$found" || { echo "::error::Missing package: $pattern"; exit 1; }
+          done
+          # The preview must never carry manifests Electron's updater would read as its own.
+          if ls apps/gpui/dist/latest*.yml >/dev/null 2>&1; then
+            echo "::error::The preview wrote update manifests."; exit 1
+          fi
+      # The release job writes one SHA256SUMS.txt for every package.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gpui-${{ runner.os }}
+          path: |
+            apps/gpui/dist/*
+            !apps/gpui/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
   release:
-    needs: [validate, package]
+    needs: [validate, package, gpui]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

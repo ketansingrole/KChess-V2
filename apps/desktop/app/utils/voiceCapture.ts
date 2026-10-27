@@ -117,8 +117,16 @@ export class VoiceCapture {
   private disposed = false
   /** This control's claim on the shared recognizer. */
   private readonly owner = {}
+  /** Stops following reconnections of the shared core. */
+  private readonly offReconnect: () => void
 
-  constructor(private callbacks: Callbacks) {}
+  constructor(private callbacks: Callbacks) {
+    // The recognizer session on a lost connection ended with it: the listening control starts
+    // a fresh one.
+    this.offReconnect = window.kchess.onCoreReconnected(() => {
+      if (this.active && recognizerOwner === this.owner) this.resetRecognizer()
+    })
+  }
 
   /** Queues a `voiceStart`, which makes this control the recognizer's owner. */
   private claim(work: () => Promise<void>): Promise<void> {
@@ -415,6 +423,7 @@ export class VoiceCapture {
   }
 
   dispose(): void {
+    this.offReconnect()
     this.disposed = true
     this.active = false
     this.pause()

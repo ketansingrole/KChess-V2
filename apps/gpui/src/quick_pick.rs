@@ -118,6 +118,9 @@ fn merge(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     merged
 }
 
+/// What a query naming the whole label adds, above any longer label it also starts.
+const EXACT_LABEL: f64 = 100.;
+
 /// Every token must match the label or the extra text (keywords, details); only label matches are
 /// highlighted, and they score higher (`matchQuickPick`).
 pub fn match_query(query: &str, label: &str, extra: &str) -> Option<Match> {
@@ -142,6 +145,10 @@ pub fn match_query(query: &str, label: &str, extra: &str) -> Option<Match> {
         }
         let found = match_token(token, extra)?;
         score += found.score / 2.;
+    }
+    // Typing an entry's whole name finds it first: "Appearance" before "Appearance: Dark".
+    if query.trim().to_lowercase() == label.to_lowercase() {
+        score += EXACT_LABEL;
     }
     Some(Match {
         score,
@@ -198,6 +205,13 @@ mod tests {
         let acronym = match_query("otb", "Over the board", "").unwrap();
         assert_eq!(acronym.ranges, vec![(0, 0), (5, 5), (9, 9)]);
         assert!(match_query("xyz", "Puzzles", "").is_none());
+    }
+
+    #[test]
+    fn a_whole_name_beats_longer_labels_it_starts() {
+        let exact = match_query("appearance", "Appearance", "Settings").unwrap();
+        let longer = match_query("appearance", "Appearance: Match system", "").unwrap();
+        assert!(exact.score > longer.score);
     }
 
     #[test]

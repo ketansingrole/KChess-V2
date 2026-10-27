@@ -863,7 +863,7 @@ impl OpeningsPage {
                             crate::prefs::set(cx, GROUP, GROUPS[index].0);
                             window.refresh();
                         },
-                        true,
+                        false,
                         palette,
                     )),
                 )

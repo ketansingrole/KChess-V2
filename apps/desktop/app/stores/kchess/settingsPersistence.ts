@@ -37,9 +37,12 @@ export function useSettingsPersistence(options: {
     // A reactive array cannot cross IPC (structured clone): send a plain copy of the list.
     const sent = { ...settings.value, engineLevels: [...settings.value.engineLevels] }
     const sentSignature = JSON.stringify(sent)
-    const previousEngine = data.value.settings.enginePath
+    const stored = data.value.settings
+    const base = { ...stored, engineLevels: [...stored.engineLevels] }
+    const previousEngine = stored.enginePath
     try {
-      const saved = await window.kchess.saveSettings(sent)
+      // Only what this window changed from `base` is written (`docs/shared-core.md`).
+      const saved = await window.kchess.saveSettings(sent, base)
       data.value = { ...data.value, settings: saved }
       // Keep edits made while the request was in flight; only adopt the stored
       // (normalised) copy when the form still matches what was sent.
@@ -78,5 +81,20 @@ export function useSettingsPersistence(options: {
   function flushSettings(): void {
     if (settingsDirty.value) void save()
   }
-  return { settingsDirty, save, flushSettings }
+  /**
+   * Another window stored `next`: settings this window has not changed show it; its own edits
+   * stay, still to be saved.
+   */
+  function adoptStored(next: Settings): void {
+    const stored = data.value?.settings
+    if (settings.value && stored) {
+      const shown = { ...settings.value } as Record<string, unknown>
+      const before = stored as unknown as Record<string, unknown>
+      for (const [key, value] of Object.entries(next))
+        if (JSON.stringify(shown[key]) === JSON.stringify(before[key])) shown[key] = value
+      settings.value = shown as unknown as Settings
+    }
+    if (data.value) data.value = { ...data.value, settings: next }
+  }
+  return { settingsDirty, save, flushSettings, adoptStored }
 }

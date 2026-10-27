@@ -52,7 +52,7 @@ import {
 import { assertExport, assertNotification } from '@kchess/rules/validate'
 import { InterfaceZoomController } from './interfaceZoom'
 import { isInterfaceZoom } from '../../contracts/interfaceZoom'
-import type { ChallengeInfo } from '../../contracts/types'
+import type { ChallengeInfo, ProfileChange } from '../../contracts/types'
 
 let window: BrowserWindow | null = null
 let appUpdates: AppUpdates | undefined
@@ -123,6 +123,13 @@ function bringToFront(): void {
   window.focus()
 }
 
+/** The connection whose window raises system alerts (`alerts:owner`); null when none. */
+let alertOwner: number | null = null
+/** This app may alert: it is the alert owner, or no window is. */
+function alertsHere(): boolean {
+  return alertOwner === null || alertOwner === core?.connection()
+}
+
 function challengeAlert(service: KChessCore, challenge: ChallengeInfo): void {
   const control =
     challenge.timeControl.type === 'clock'
@@ -141,6 +148,7 @@ function challengeAlert(service: KChessCore, challenge: ChallengeInfo): void {
     },
     (alert) => send(IPC_EVENTS.notification, alert),
     service.desktopSettings,
+    alertsHere,
   ).catch((cause: unknown) => {
     logDebug('notify', 'Challenge notification failed:', cause)
     return undefined
@@ -156,6 +164,7 @@ function forwardCore(service: KChessCore): void {
       if (method === 'saveSettings')
         return (await service.saveDesktopSettings(
           args[0] as import('../../contracts/types').Settings,
+          args[1] as import('../../contracts/types').Settings | undefined,
         )) as never
       const result = await call(...(args as IpcArguments<CoreMethod>))
       if (result && typeof result === 'object' && 'settings' in result && 'accounts' in result)
@@ -169,8 +178,16 @@ function forwardCore(service: KChessCore): void {
     })
   }
   for (const event of FORWARDED_CORE_EVENTS)
-    service.on(event, (payload) => send(event, payload as never))
+    service.on(event, (payload) => {
+      // This window's own writes need no refresh (docs/shared-core.md).
+      if (event === 'profile:changed' && (payload as ProfileChange).origin === service.connection())
+        return
+      send(event, payload as never)
+    })
   service.on('challenge:received', (challenge) => challengeAlert(service, challenge))
+  service.on('alerts:owner', ({ connection }) => {
+    alertOwner = connection ?? null
+  })
   service.on('settings:saved', () => {
     void service
       .desktopSettings()
@@ -282,6 +299,9 @@ function createWindow(): void {
   window.on('closed', () => {
     window = null
   })
+  // The window focused last raises system notifications for every window (docs/shared-core.md).
+  window.on('focus', () => core?.focus(true))
+  window.on('blur', () => core?.focus(false))
   const owner = window
   let closingWindow = false
   let preparingClose = false
@@ -458,6 +478,18 @@ void app
     setupDiagnostics()
     const service = createKChessCore(electronPlatform(bringToFront))
     core = service
+    try {
+      await service.ready()
+    } catch (error) {
+      // Another KChess release has this profile open: say which app to update.
+      dialog.showMessageBoxSync({
+        type: 'warning',
+        message: 'KChess cannot open this profile',
+        detail: error instanceof Error ? error.message : String(error),
+        buttons: ['Quit'],
+      })
+      throw error
+    }
     forwardCore(service)
     handle('exportDiagnostics', exportDiagnostics)
     handle('reportRendererError', (_event, report) => {
@@ -544,7 +576,7 @@ void app
         properties: ['openFile'],
       })
       const path = result.canceled ? null : (result.filePaths[0] ?? null)
-      if (path) service.trustEnginePath(path)
+      if (path) await service.trustEnginePath(path)
       return path
     })
     handle('saveExport', (_event, raw: unknown) => {
@@ -561,12 +593,12 @@ void app
         data: request.data,
       })
     })
-    handle('exportVoiceHistory', () =>
+    handle('exportVoiceHistory', async () =>
       saveWithDialog(window, {
         title: 'Export voice history',
         defaultPath: `kchess-voice-history-${new Date().toISOString().slice(0, 10)}.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }],
-        data: service.voiceHistoryDocument(),
+        data: await service.voiceHistoryDocument(),
       }),
     )
     handle('notify', (_event, request: unknown) =>
@@ -575,6 +607,7 @@ void app
         assertNotification(request),
         (alert) => send(IPC_EVENTS.notification, alert),
         service.desktopSettings,
+        alertsHere,
       ),
     )
     handle('openThemesFolder', async () => {

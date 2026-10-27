@@ -633,7 +633,11 @@ pub fn methods() -> Vec<Method> {
         method(
             "studyCommand",
             "",
-            vec![req("command", "StudyCommand"), opt("incremental", boolean)],
+            vec![
+                req("command", "StudyCommand"),
+                opt("incremental", boolean),
+                opt("basedOn", string),
+            ],
             t::<StudyCommandResult>(),
         ),
         method(
@@ -745,6 +749,17 @@ pub struct CoreEvents {
     pub challenge_received: ChallengeInfo,
     #[serde(rename = "settings:saved")]
     pub settings_saved: CoreSettings,
+    /// Another window (or this one) changed part of the profile; refetch what is shown.
+    #[serde(rename = "profile:changed")]
+    pub profile_changed: ProfileChange,
+    /// Which window raises system notifications now; the others stay quiet.
+    #[serde(rename = "alerts:owner")]
+    pub alerts_owner: AlertOwner,
+    /// The client connected to the shared core again after it stopped (`docs/shared-core.md`):
+    /// what this window had started there (an analysis, a watch, voice input) ended with the
+    /// old connection, and its owners start it again. Sent by the client, not the core.
+    #[serde(rename = "core:reconnected")]
+    pub core_reconnected: (),
 }
 
 /// Renders the `CoreApi` interface from `methods()`.

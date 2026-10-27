@@ -575,7 +575,10 @@ impl Render for Coordinates {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let running = self.stage == Stage::Running;
-        let board_size = self.layout.board_size(window);
+        // The board alone in its column: no player lines take height.
+        let board_size = self
+            .layout
+            .board_size_around(px(0.), px(0.), px(0.), window);
         // As on Lichess: the square to find over the board, so no row above it takes height.
         let prompt = (running && self.mode == Mode::Find).then(|| {
             v_flex()
@@ -684,7 +687,7 @@ impl Render for Coordinates {
         let limited = crate::prefs::get(cx, LIMITED, false);
         let length = Self::length(cx);
         let mut panel = widgets::side_panel(&palette)
-            .h(self.layout.panel_height(board_size))
+            .h(self.layout.fixed(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

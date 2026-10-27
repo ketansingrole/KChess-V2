@@ -2,13 +2,27 @@
 // Do not edit: change the Rust contract types and run `pnpm run build:native`.
 
 import type { ArchivedGame, JoinedTournament, LegacyDocuments, LibrarySnapshot, MistakeExercise, MistakeGame, RepertoireMisses, SessionDocuments, SessionKind, StudyCommand, StudyCommandResult } from './library'
-import type { AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, CustomThemeReport, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
+import type { AlertOwner, AnalysisRequest, AnalysisUpdate, BestMoveOptions, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate, ChallengeInfo, ChatLine, ChatRoom, CloudEval, CoreData, CoreSettings, Crosstable, CustomThemeReport, DeclineReason, EngineLevel, EngineStatus, FollowingReport, GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, InsightsReport, LichessGame, LichessRatingHistory, LichessStudy, LichessStudyChapter, LichessUser, LobbyState, LocalLadderQuery, LocalPuzzleQuery, LookupOptions, NeedsReconnect, NewArena, OAuthPageLook, OngoingGame, OnlineAction, OnlineConnection, OnlineEvent, OnlineOptions, OpeningDescription, PerfStats, PerfType, PlayerColor, PopularityMonth, PositionLookup, PositionLookupKind, PresenceReport, ProfileChange, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput, PuzzleDashboard, PuzzleDbProgress, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, ReviewRequest, ReviewStatus, ReviewSummary, ReviewUpdate, RunInput, RunKind, RunSaved, RunSummary, StoredReview, StormDashboard, StudySyncRequest, TournamentDetail, TournamentList, TournamentSummary, TournamentSystem, TvChannel, UsageReport, VoiceAttempt, VoiceAttemptInput, VoiceAttemptUpdate, VoiceHeard, WatchFrame, WatchState } from './types'
 
 export type CoreEvents = { "online:state": OnlineConnection, "online:event": OnlineEvent, "online:error": string, "puzzledb:progress": PuzzleDbProgress, "engine:analysis": AnalysisUpdate, "review:update": ReviewUpdate, "review:status": ReviewStatus, "challenges:update": Array<ChallengeInfo>, "online:lobby": LobbyState, "online:ongoing-changed": null, "watch:state": WatchState, "watch:frame": WatchFrame, "watch:broadcast": BroadcastUpdate, 
 /**
  * A challenge that was not pending before; frontends decide how to alert.
  */
-"challenge:received": ChallengeInfo, "settings:saved": CoreSettings, };
+"challenge:received": ChallengeInfo, "settings:saved": CoreSettings, 
+/**
+ * Another window (or this one) changed part of the profile; refetch what is shown.
+ */
+"profile:changed": ProfileChange, 
+/**
+ * Which window raises system notifications now; the others stay quiet.
+ */
+"alerts:owner": AlertOwner, 
+/**
+ * The client connected to the shared core again after it stopped (`docs/shared-core.md`):
+ * what this window had started there (an analysis, a watch, voice input) ended with the
+ * old connection, and its owners start it again. Sent by the client, not the core.
+ */
+"core:reconnected": null, };
 
 export interface CoreApi {
   positionLookup(kind: PositionLookupKind, fen: string, options?: LookupOptions): Promise<PositionLookup>
@@ -289,7 +303,7 @@ export interface CoreApi {
    * Take over the documents an earlier release kept in the renderer; runs once.
    */
   importLibrary(documents: LegacyDocuments): Promise<LibrarySnapshot>
-  studyCommand(command: StudyCommand, incremental?: boolean): Promise<StudyCommandResult>
+  studyCommand(command: StudyCommand, incremental?: boolean, basedOn?: string): Promise<StudyCommandResult>
   /**
    * Add or replace a played game; it becomes the most recent.
    */

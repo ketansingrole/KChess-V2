@@ -279,7 +279,7 @@ impl TournamentsPage {
             let label = local
                 .map(|local| {
                     if hour {
-                        local.format("%-I %p").to_string()
+                        local.format("%-I:%M %p").to_string()
                     } else {
                         format!(":{:02}", local.minute())
                     }
@@ -289,98 +289,104 @@ impl TournamentsPage {
             time += 10. * MINUTE;
         }
         let height = AXIS + 8. + lanes.len() as f32 * (ROW + ROW_GAP) + 10.;
+        // How far the schedule is scrolled: a bar that began before it keeps its name in view
+        // (`.timeline-label { position: sticky; left: 10px }`).
+        let scrolled = f32::from(-self.schedule.offset().x).max(0.);
         let mut index = 0usize;
-        let bars: Vec<AnyElement> =
-            lanes
-                .iter()
-                .enumerate()
-                .flat_map(|(row, lane)| {
-                    lane.iter()
-                        .map(|arena| {
-                            index += 1;
-                            let left = x(start_of(arena)).max(0.);
-                            let right = x(end_of(arena).min(end));
-                            let id = arena["id"].as_str().unwrap_or_default().to_string();
-                            let color = CATEGORIES
-                                .iter()
-                                .find(|(category, _, _)| *category == category_of(arena))
-                                .map_or(0x3a8a30, |(_, _, color)| *color);
-                            let joined = self.is_joined("arena", &id, account.as_deref());
-                            let finished = arena["status"] == json!("finished");
-                            let players = arena["nbPlayers"].as_f64().unwrap_or_default();
-                            let mut sub = format!(
-                                "{} {}",
-                                control(&arena["clock"]),
-                                if arena["rated"] == json!(true) {
-                                    "Rated"
-                                } else {
-                                    "Casual"
-                                }
-                            );
-                            if players > 0. {
-                                sub.push_str(&format!(" · {players}"));
+        let bars: Vec<AnyElement> = lanes
+            .iter()
+            .enumerate()
+            .flat_map(|(row, lane)| {
+                lane.iter()
+                    .map(|arena| {
+                        index += 1;
+                        let left = x(start_of(arena)).max(0.);
+                        let right = x(end_of(arena).min(end));
+                        let id = arena["id"].as_str().unwrap_or_default().to_string();
+                        let color = CATEGORIES
+                            .iter()
+                            .find(|(category, _, _)| *category == category_of(arena))
+                            .map_or(0x3a8a30, |(_, _, color)| *color);
+                        let joined = self.is_joined("arena", &id, account.as_deref());
+                        let finished = arena["status"] == json!("finished");
+                        let players = arena["nbPlayers"].as_f64().unwrap_or_default();
+                        let sub = format!(
+                            "{} {}",
+                            control(&arena["clock"]),
+                            if arena["rated"] == json!(true) {
+                                "Rated"
+                            } else {
+                                "Casual"
                             }
-                            h_flex()
-                                .id(("arena", index))
-                                .absolute()
-                                .left(px(left))
-                                .top(px(AXIS + 8. + row as f32 * (ROW + ROW_GAP)))
-                                .w(px((right - left).max(1.)))
-                                .h(px(ROW))
-                                .px(px(10.))
-                                .gap(px(8.))
-                                .overflow_hidden()
-                                .rounded(px(6.))
-                                .bg(rgb(color))
-                                .text_color(rgb(0xffffff))
-                                .when(finished, |bar| bar.opacity(0.42))
-                                .cursor_pointer()
-                                .hover(|bar| bar.opacity(0.9))
-                                .tooltip({
-                                    let text = SharedString::from(describe(arena));
-                                    move |window, cx| {
-                                        gpui_kit::component::tooltip::Tooltip::new(text.clone())
-                                            .build(window, cx)
-                                    }
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                        );
+                        let pinned = (scrolled - left).max(0.).min((right - left - 40.).max(0.));
+                        h_flex()
+                            .id(("arena", index))
+                            .absolute()
+                            .left(px(left))
+                            .top(px(AXIS + 8. + row as f32 * (ROW + ROW_GAP)))
+                            .w(px((right - left).max(1.)))
+                            .h(px(ROW))
+                            .pl(px(10. + pinned))
+                            .pr(px(10.))
+                            .gap(px(8.))
+                            .overflow_hidden()
+                            .rounded(px(6.))
+                            .bg(rgb(color))
+                            .text_color(rgb(0xffffff))
+                            .when(finished, |bar| bar.opacity(0.42))
+                            .cursor_pointer()
+                            .hover(|bar| bar.opacity(0.9))
+                            .tooltip({
+                                let text = SharedString::from(describe(arena));
+                                move |window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(text.clone())
+                                        .build(window, cx)
+                                }
+                            })
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
                                     this.show_event("arena", &id, cx)
-                                }))
-                                .child(perf_icon(arena).size(px(22.)).flex_none())
-                                .child(
-                                    v_flex()
-                                        .min_w_0()
-                                        .child(
-                                            div()
-                                                .text_size(px(14.))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .truncate()
-                                                .child(
-                                                    arena["name"]
-                                                        .as_str()
-                                                        .unwrap_or_default()
-                                                        .to_string(),
-                                                ),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap(px(4.))
-                                                .text_size(px(13.))
-                                                .opacity(0.9)
-                                                .child(div().truncate().child(sub))
-                                                .when(players > 0., |line| {
-                                                    line.child(icon("user").size(px(12.)))
-                                                })
-                                                .when(joined, |line| {
-                                                    line.child(icon("check").size(px(12.)))
-                                                }),
-                                        ),
-                                )
-                                .into_any_element()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect();
+                                }),
+                            )
+                            .child(perf_icon(arena).size(px(22.)).flex_none())
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .text_size(px(14.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .truncate()
+                                            .child(
+                                                arena["name"]
+                                                    .as_str()
+                                                    .unwrap_or_default()
+                                                    .to_string(),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap(px(4.))
+                                            .text_size(px(13.))
+                                            .opacity(0.9)
+                                            .child(div().truncate().child(sub))
+                                            // "· 👤 23": the count after its icon.
+                                            .when(players > 0., |line| {
+                                                line.child("·")
+                                                    .child(icon("user").size(px(12.)))
+                                                    .child(format!("{players}"))
+                                            })
+                                            .when(joined, |line| {
+                                                line.child(icon("check").size(px(12.)))
+                                            }),
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         let canvas = div()
             .relative()
             .w(px(width))
@@ -435,12 +441,14 @@ impl TournamentsPage {
                     .track_scroll(&self.schedule)
                     .overflow_x_scroll()
                     // A sideways scroll here moves the schedule, not between pages.
-                    .on_scroll_wheel(|event, _, cx| {
+                    .on_scroll_wheel(cx.listener(|_, event: &ScrollWheelEvent, _, cx| {
                         let delta = event.delta.pixel_delta(px(16.));
                         if delta.x.abs() > delta.y.abs() {
                             cx.stop_propagation();
                         }
-                    })
+                        // Redraw so the pinned names follow the scroll.
+                        cx.notify();
+                    }))
                     .rounded(px(10.))
                     .border_1()
                     .border_color(palette.border)

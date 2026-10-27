@@ -1,7 +1,8 @@
-//! The Rust core (`kchess-core`) as the GPUI app holds it. The core runs on its own Tokio
-//! runtime; the UI awaits its answers through channels, and its events reach views through
-//! `CoreEvents`, an entity they subscribe to. Host requests (`host:request`) are answered on the
-//! UI thread, which owns the window and the browser (`answer_host`).
+//! The Rust core (`kchess-core`) as the GPUI app holds it: the profile's shared core service
+//! (`docs/shared-core.md`), which every KChess window uses, or a core embedded in the app. Either
+//! runs on a Tokio runtime; the UI awaits its answers through channels, and its events reach
+//! views through `CoreEvents`, an entity they subscribe to. Host requests (`host:request`) are
+//! answered on the UI thread, which owns the window and the browser (`answer_host`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,20 +43,106 @@ impl Host for ChannelHost {
     }
 }
 
+/// Where the app's core runs.
+enum Backend {
+    /// In this process, for this app alone.
+    Embedded(Arc<Core>),
+    /// The profile's shared core service; the client is replaced when it reconnects.
+    Service(Arc<std::sync::Mutex<kchess_service::Client>>),
+}
+
 /// The core and the runtime it runs on.
 pub struct CoreBridge {
     runtime: tokio::runtime::Runtime,
-    core: Arc<Core>,
+    backend: Backend,
+    /// The window's focus as last reported (0 unknown, 1 blurred, 2 focused), sent again on each
+    /// new connection to the shared core.
+    focused: Arc<std::sync::atomic::AtomicU8>,
+}
+
+/// What the app hears when it reached the shared core again (`core:reconnected`): what it had
+/// started there ended with the old connection, and its owners start it again.
+pub const RECONNECTED: &str = "core:reconnected";
+
+/// How the app reaches its core: `KCHESS_CORE_MODE=service` or `embedded`; otherwise the shared
+/// service when its binary ships beside the app.
+fn use_service() -> bool {
+    match std::env::var("KCHESS_CORE_MODE").as_deref() {
+        Ok("service") => true,
+        Ok("embedded") => false,
+        _ => service_binary().is_some_and(|binary| binary.exists()),
+    }
+}
+
+/// The `kchess-service` binary beside the app's executable.
+fn service_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(
+        exe.parent()?
+            .join(format!("kchess-service{}", std::env::consts::EXE_SUFFIX)),
+    )
+}
+
+/// What the GPUI window can do for the core when it asks.
+fn hello() -> kchess_service::Hello {
+    kchess_service::Hello {
+        kind: "gpui".into(),
+        capabilities: vec![
+            kchess_service::Capability::Browser,
+            kchess_service::Capability::Focus,
+        ],
+    }
+}
+
+/// A release as numbers, to tell which of two is newer.
+fn release_parts(release: &str) -> Vec<u64> {
+    release
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+/// What the person reads when another KChess release has this profile open
+/// (`docs/shared-core.md`, "Version check").
+fn refusal(error: &kchess_service::ConnectError) -> String {
+    let kchess_service::ConnectError::Refused { clients, .. } = error else {
+        return error.to_string();
+    };
+    let ours = kchess_service::protocol::release();
+    let Some(other) = clients.first() else {
+        return error.to_string();
+    };
+    let app = match other.kind.as_str() {
+        "electron" => "Electron",
+        "gpui" => "GPUI",
+        kind => kind,
+    };
+    if release_parts(&other.release) > release_parts(&ours) {
+        format!(
+            "KChess {} ({app}) is open on this profile. Update this app to {} to use them together.",
+            other.release, other.release
+        )
+    } else {
+        format!(
+            "KChess {} ({app}) is open on this profile. Update it to {ours}, or quit it, to open this app.",
+            other.release
+        )
+    }
 }
 
 impl CoreBridge {
-    /// Opens the core over `config`'s profile; fails when another KChess app has it open.
-    fn open(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<CoreEvent>), String> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+    fn runtime() -> Result<tokio::runtime::Runtime, String> {
+        tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_name("kchess-core")
             .build()
-            .map_err(|e| format!("The core could not start: {e}"))?;
+            .map_err(|e| format!("The core could not start: {e}"))
+    }
+
+    /// Opens a core in this process over `config`'s profile; fails when another KChess app has
+    /// it open.
+    fn open(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<CoreEvent>), String> {
+        let runtime = Self::runtime()?;
         let (events, receiver) = mpsc::unbounded();
         let core = {
             let _entered = runtime.enter();
@@ -64,10 +151,115 @@ impl CoreBridge {
         Ok((
             CoreBridge {
                 runtime,
-                core: Arc::new(core),
+                backend: Backend::Embedded(Arc::new(core)),
+                focused: Arc::default(),
             },
             receiver,
         ))
+    }
+
+    /// Connects to the profile's shared core, starting it when none runs. If it stops, the app
+    /// starts it again and carries on with the new connection.
+    fn connect(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<CoreEvent>), String> {
+        let runtime = Self::runtime()?;
+        let binary = service_binary().ok_or("The KChess core service is missing.")?;
+        let profile = config.data_dir.clone();
+        let start = kchess_service::Start {
+            binary,
+            config: kchess_service::ServiceConfig {
+                legacy_database_path: config.legacy_database_path,
+                bundled_engine_path: config.bundled_engine_path,
+                runtime_path: config.runtime_path,
+                runtime_env: config.runtime_env,
+                managed_engine_dir: config.managed_engine_dir,
+                voice_helper_path: config.voice_helper_path,
+                system_credentials: config.system_credentials,
+            },
+        };
+        let (client, mut received) = runtime
+            .block_on(kchess_service::connect_or_start(&profile, &hello(), &start))
+            .map_err(|error| refusal(&error))?;
+        let shared = Arc::new(std::sync::Mutex::new(client));
+        let focused: Arc<std::sync::atomic::AtomicU8> = Arc::default();
+        let (events, receiver) = mpsc::unbounded();
+        {
+            let shared = Arc::clone(&shared);
+            let focused = Arc::clone(&focused);
+            runtime.spawn(async move {
+                loop {
+                    while let Some(event) = received.recv().await {
+                        match event {
+                            kchess_service::ClientEvent::Event { name, payload } => {
+                                let _ = events.unbounded_send(CoreEvent { name, payload });
+                            }
+                            kchess_service::ClientEvent::Closed => break,
+                        }
+                    }
+                    crate::log::write(Level::Warn, "core", "The core stopped; reconnecting.");
+                    let mut delay = std::time::Duration::from_millis(200);
+                    loop {
+                        match kchess_service::connect_or_start(&profile, &hello(), &start).await {
+                            Ok((client, reconnected)) => {
+                                match focused.load(std::sync::atomic::Ordering::SeqCst) {
+                                    0 => {}
+                                    known => client.focus(known == 2),
+                                }
+                                if let Ok(mut current) = shared.lock() {
+                                    *current = client;
+                                }
+                                received = reconnected;
+                                let _ = events.unbounded_send(CoreEvent {
+                                    name: RECONNECTED.into(),
+                                    payload: Value::Null,
+                                });
+                                break;
+                            }
+                            Err(error) => {
+                                crate::log::write(
+                                    Level::Warn,
+                                    "core",
+                                    &format!("The core could not restart: {}", refusal(&error)),
+                                );
+                                tokio::time::sleep(delay).await;
+                                delay = (delay * 2).min(std::time::Duration::from_secs(5));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        Ok((
+            CoreBridge {
+                runtime,
+                backend: Backend::Service(shared),
+                focused,
+            },
+            receiver,
+        ))
+    }
+
+    /// This app's connection on the core: `origin` of its own writes in `profile:changed`.
+    pub fn connection(&self) -> u64 {
+        match &self.backend {
+            Backend::Embedded(_) => kchess_core::connection::APP,
+            Backend::Service(client) => client
+                .lock()
+                .map_or(kchess_core::connection::APP, |client| client.connection()),
+        }
+    }
+
+    /// Tells the shared core whether this app's window is focused: the window focused last
+    /// raises system notifications.
+    pub fn focus(&self, focused: bool) {
+        self.focused.store(
+            if focused { 2 } else { 1 },
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        if let Backend::Service(client) = &self.backend
+            && let Ok(client) = client.lock()
+        {
+            client.focus(focused);
+        }
     }
 
     /// Run a core method; the future resolves on any executor.
@@ -76,11 +268,22 @@ impl CoreBridge {
         method: &str,
         args: Vec<Value>,
     ) -> impl Future<Output = Result<Value, CoreError>> + 'static + use<> {
-        let core = Arc::clone(&self.core);
         let method = method.to_string();
-        let task = self
-            .runtime
-            .spawn(async move { core.call(&method, args).await });
+        let task = match &self.backend {
+            Backend::Embedded(core) => {
+                let core = Arc::clone(core);
+                self.runtime
+                    .spawn(async move { core.call(&method, args).await })
+            }
+            Backend::Service(client) => {
+                let answer = client
+                    .lock()
+                    .map(|client| client.call(&method, args))
+                    .map_err(|_| CoreError::new("The KChess core stopped."));
+                self.runtime
+                    .spawn(async move { answer?.await.map_err(CoreError::new) })
+            }
+        };
         async move {
             task.await
                 .unwrap_or_else(|_| Err(CoreError::new("The KChess core stopped.")))
@@ -99,14 +302,17 @@ impl CoreBridge {
     /// Run a core method and wait for it: only before the window opens, as the Electron renderer
     /// waits for its library and preferences before it mounts.
     pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
-        let core = Arc::clone(&self.core);
-        self.runtime
-            .block_on(async move { core.call(method, args).await })
+        let answer = self.call(method, args);
+        self.runtime.block_on(answer)
     }
 
     /// Cancel the core's work and release the profile, waiting at most a few seconds.
     pub fn close(&self) {
-        let core = Arc::clone(&self.core);
+        // The shared core closes on its own once no window uses it.
+        let Backend::Embedded(core) = &self.backend else {
+            return;
+        };
+        let core = Arc::clone(core);
         let closing = self.runtime.spawn(async move {
             // The facade's own close (`close`) stops the services; then the files are released.
             let _ = core.call("close", Vec::new()).await;
@@ -145,6 +351,48 @@ pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
     }
 }
 
+/// Runs `reload` when another window changes one of `areas` of the profile (`profile:changed`,
+/// `docs/shared-core.md`); this app's own writes are ignored.
+pub fn on_profile_change(
+    cx: &mut App,
+    areas: &'static [&'static str],
+    reload: impl Fn(&mut App) + 'static,
+) {
+    let events = cx.global::<AppCore>().events.clone();
+    cx.subscribe(&events, move |_, event: &CoreEvent, cx| {
+        if event.name != "profile:changed" {
+            return;
+        }
+        let own = cx.global::<AppCore>().bridge.connection();
+        if event.payload["origin"].as_u64() == Some(own) {
+            return;
+        }
+        let changed = event.payload["areas"].as_array().is_some_and(|changed| {
+            changed
+                .iter()
+                .any(|area| area.as_str().is_some_and(|area| areas.contains(&area)))
+        });
+        if changed {
+            reload(cx);
+        }
+    })
+    .detach();
+}
+
+/// Which connection raises system notifications now (`alerts:owner`); `None` until the core says.
+#[derive(Default)]
+pub struct AlertOwner(pub Option<u64>);
+
+impl Global for AlertOwner {}
+
+/// Whether this app may raise a system notification: it is the alert owner, or nobody is.
+pub fn alerts_here(cx: &App) -> bool {
+    let own = cx.global::<AppCore>().bridge.connection();
+    cx.try_global::<AlertOwner>()
+        .and_then(|owner| owner.0)
+        .is_none_or(|owner| owner == own)
+}
+
 /// The app's core, reachable from any view: `cx.global::<AppCore>()`.
 #[derive(Clone)]
 pub struct AppCore {
@@ -175,7 +423,11 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
         system_credentials: true,
         ..Config::new(data_dir.clone())
     };
-    let (bridge, mut receiver) = CoreBridge::open(config)?;
+    let (bridge, mut receiver) = if use_service() {
+        CoreBridge::connect(config)?
+    } else {
+        CoreBridge::open(config)?
+    };
     let core = AppCore {
         bridge: Arc::new(bridge),
         events: cx.new(|_| CoreEvents),
@@ -186,6 +438,10 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
             if event.name == "host:request" {
                 cx.update(|cx| answer_host(&event.payload, cx));
                 continue;
+            }
+            if event.name == "alerts:owner" {
+                let owner = event.payload["connection"].as_u64();
+                cx.update(|cx| cx.set_global(AlertOwner(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));
         }

@@ -232,9 +232,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          install: false
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
+          cache: pnpm
+      # electron-builder makes the GPUI installers from the staged app.
+      - run: pnpm install --frozen-lockfile
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
@@ -247,6 +253,8 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
       - run: node tooling/gpui-package.mjs
         env:
+          # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
+          GH_TOKEN: ${{ github.token }}
           # Release packages are made by the Release workflow; CI's are ad hoc signed previews.
           KCHESS_SIGN_IDENTITY: ''
       - uses: actions/upload-artifact@v7

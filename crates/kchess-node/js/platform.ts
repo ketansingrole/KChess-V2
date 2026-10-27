@@ -16,6 +16,11 @@ export interface CorePlatform {
   /** The `kchess-voice` speech recognition helper, with libvosk beside it; without it, voice
    * input is unavailable. */
   voiceHelperPath?: string
+  /**
+   * The shared core service (`docs/shared-core.md`). With it, every KChess window on the profile
+   * shares one core; without it, this process embeds its own.
+   */
+  serviceBinaryPath?: string
   /** OS-backed encryption for stored Lichess tokens. */
   secrets: SecretStore
   /**

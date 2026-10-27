@@ -26,7 +26,7 @@ use crate::game::computer::{ComputerGame, Effect, Host, SearchRequest};
 use crate::game::history::HistoryPlace;
 use crate::game::rules;
 use crate::pages::computer_options::{Chosen, Current, GameOptions};
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
+use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Side, Tone};
@@ -84,6 +84,8 @@ pub struct ComputerPage {
     voice: crate::voice::moves::VoiceMoves,
     asked: Option<Question>,
     layout: PlayLayout,
+    /// The side panel, measured for `.panel-actions`' narrow rule.
+    panel_area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -193,6 +195,7 @@ impl ComputerPage {
             voice: crate::voice::moves::VoiceMoves::new("computer", cx),
             asked: None,
             layout: PlayLayout::default(),
+            panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -1342,6 +1345,7 @@ impl Render for ComputerPage {
         let palette = *cx.global::<Palette>();
         let host = self.host();
         let board_size = self.layout.board_size(window);
+        let narrow = widgets::is_narrow(self.panel_area.size().width);
         let user = self.user_color();
         let (user_name, computer_name) = if user == Color::White {
             ("white", "black")
@@ -1441,9 +1445,23 @@ impl Render for ComputerPage {
                 .into_any_element()
             }),
         );
-        let entry = widgets::move_entry(&self.move_input, interactive, &palette)
-            .flex_1()
-            .min_w(px(160.));
+        let entry = widgets::move_entry(&self.move_input, interactive, &palette);
+        let voice = crate::voice::moves::board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            crate::voice::moves::Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
+            },
+            crate::voice::moves::BoardBar {
+                id: "computer-voice",
+                hint: "Say “E four”, “Knight F three”, or “take back”.",
+                active: self.voice_taking(),
+                listening: self.voice_listening(),
+                grammar: crate::voice::grammar("GAME_GRAMMAR"),
+            },
+            cx,
+        );
         let you_line = widgets::player_line(
             h_flex()
                 .gap(px(10.))
@@ -1460,7 +1478,7 @@ impl Render for ComputerPage {
                     &piece_set,
                     &palette,
                 )),
-            Some(h_flex().pl(px(120.)).child(entry).into_any_element()),
+            Some(widgets::move_row(entry, voice)),
             self.clock_text(user_name).map(|text| {
                 widgets::clock(
                     text,
@@ -1477,22 +1495,6 @@ impl Render for ComputerPage {
             .child(computer_line)
             .child(self.board.clone())
             .child(you_line)
-            .child(crate::voice::moves::board_bar(
-                &self.voice,
-                cx.entity().downgrade(),
-                crate::voice::moves::Access {
-                    write: |this: &mut Self| &mut this.voice,
-                    play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
-                },
-                crate::voice::moves::BoardBar {
-                    id: "computer-voice",
-                    hint: "Say “E four”, “Knight F three”, or “take back”.",
-                    active: self.voice_taking(),
-                    listening: self.voice_listening(),
-                    grammar: crate::voice::grammar("GAME_GRAMMAR"),
-                },
-                cx,
-            ))
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))
@@ -1542,6 +1544,8 @@ impl Render for ComputerPage {
         let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
+            .relative()
+            .child(self.panel_area.probe(cx))
             .h(self.layout.panel_height(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
@@ -1622,7 +1626,7 @@ impl Render for ComputerPage {
                         Button::new("takeback")
                             .outline()
                             .flex_1()
-                            .min_w(relative(0.45))
+                            .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("undo-2"))
                             .label("Take back")
                             .disabled(!self.can_takeback())
@@ -1633,7 +1637,7 @@ impl Render for ComputerPage {
                             Button::new("resign")
                                 .outline()
                                 .flex_1()
-                                .min_w(relative(0.45))
+                                .when(narrow, |button| button.min_w(relative(0.45)))
                                 .icon(icon("flag"))
                                 .label("Resign")
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -1646,7 +1650,7 @@ impl Render for ComputerPage {
                             .when(result.is_some(), |button| button.primary())
                             .when(result.is_none(), |button| button.outline())
                             .flex_1()
-                            .min_w(relative(0.45))
+                            .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("rotate-ccw"))
                             .label("New game")
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1655,13 +1659,18 @@ impl Render for ComputerPage {
                     ),
             )
             .when(!zen, |panel| {
-                panel.child(h_flex().child(crate::export::export_menu(
-                    "computer-export",
-                    &self.exporter,
-                    self.game_export(),
-                    Anchor::BottomLeft,
-                    cx,
-                )))
+                panel.child(widgets::panel_actions(
+                    narrow,
+                    [crate::export::export_menu(
+                        "computer-export",
+                        &self.exporter,
+                        self.game_export(),
+                        Anchor::BottomCenter,
+                        cx,
+                    )
+                    .into_any_element()
+                    .into()],
+                ))
             });
 
         self.layout

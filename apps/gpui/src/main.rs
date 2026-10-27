@@ -63,7 +63,7 @@ fn main() {
         Level::Info,
         "diagnostics",
         &format!(
-            "KChess started (GPUI) {{ sessionId: {}, version: {}, platform: {}, arch: {} }}",
+            "KChess started (GPUI) {{ sessionId: {}, version: {}, client: gpui, platform: {}, arch: {} }}",
             log::session_id(),
             updates::current_version(),
             std::env::consts::OS,
@@ -83,7 +83,7 @@ fn main() {
         menu::init(cx);
         if let Err(message) = core::start(data_dir, cx) {
             log::write(Level::Error, "app", &message);
-            cx.quit();
+            explain_and_quit(message, cx);
             return;
         }
         settings::init(cx);
@@ -104,6 +104,42 @@ fn main() {
         open_main_window(cx);
         cx.activate(true);
     });
+}
+
+/// A blank stand-in window for the dialog below.
+struct Blank;
+
+impl Render for Blank {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+/// The core could not open the profile (another KChess release has it open, naming the app to
+/// update; `docs/shared-core.md`): say so in a dialog, then quit.
+fn explain_and_quit(message: String, cx: &mut App) {
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(420.), px(160.)), cx)),
+        ..WindowOptions::default()
+    };
+    let opened = gpui_kit::open_window(options, cx, |window, cx| {
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "KChess cannot open this profile",
+            Some(&message),
+            &["Quit"],
+            cx,
+        );
+        cx.spawn(async move |cx| {
+            let _ = answer.await;
+            cx.update(|cx| cx.quit());
+        })
+        .detach();
+        cx.new(|_| Blank)
+    });
+    if opened.is_err() {
+        cx.quit();
+    }
 }
 
 /// The window, where and as it was left (`createWindow`).

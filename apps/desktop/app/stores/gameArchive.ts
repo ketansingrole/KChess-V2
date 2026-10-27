@@ -1,8 +1,13 @@
 import { GameArchive, archiveState } from '@kchess/rules/gameArchive'
 import { defineStore } from 'pinia'
 import { onScopeDispose, reactive, ref, shallowRef, watch, toRef, type Ref } from 'vue'
-import { initialLibrary, persistSession, registerPersistenceFlush } from '../utils/library'
-import type { ArchivedGame, GameSnapshot } from '@kchess/rules/library'
+import {
+  initialLibrary,
+  persistSession,
+  refreshLibraryLater,
+  registerPersistenceFlush,
+} from '../utils/library'
+import type { ArchivedGame, GameSnapshot, LibrarySnapshot } from '@kchess/rules/library'
 
 export type { ArchivedGame, GameSnapshot }
 
@@ -18,6 +23,8 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
   const failed = new Map<string, { game: ArchivedGame; cause: unknown }>()
   const revisions = new Map<string, number>()
   let writing: Promise<void> | undefined
+  /** A refresh came while this window's games were still to be saved: read it again after. */
+  let deferred = false
   let changes: Promise<void> = Promise.resolve()
   let mutations = 0
   function mutate<T>(work: () => Promise<T>): Promise<T> {
@@ -57,6 +64,10 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
         writing = undefined
       })
       await writing
+    }
+    if (deferred && !writing && !pending.size && !failed.size) {
+      deferred = false
+      refreshLibraryLater()
     }
     if (strict && failed.size)
       throw new AggregateError(
@@ -133,7 +144,18 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
     unregister()
     window.removeEventListener('beforeunload', flushNow)
   })
-  return { games, error, save, remove, flush }
+  /** Another KChess window saved or removed a game: show the library's, once this window's are saved. */
+  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+    if (writing || pending.size || failed.size) {
+      deferred = true
+      return
+    }
+    deferred = false
+    games.value = snapshot.games
+    saved.clear()
+    for (const game of snapshot.games) saved.set(game.id, game)
+  }
+  return { games, error, save, remove, flush, replaceFromLibrary }
 })
 
 /** One stable identity per session: reloads and takebacks update the same history entry. */

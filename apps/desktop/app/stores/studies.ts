@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
 import { onScopeDispose, ref } from 'vue'
-import { initialLibrary, plain, registerPersistenceFlush } from '../utils/library'
+import {
+  initialLibrary,
+  plain,
+  refreshLibraryLater,
+  registerPersistenceFlush,
+} from '../utils/library'
 import {
   studyDocumentPgn,
   type RepertoireMisses,
@@ -8,10 +13,17 @@ import {
   type StudyChapter,
   type StudyCommand,
   type StudyCommandResult,
+  type LibrarySnapshot,
 } from '@kchess/rules/library'
 import type { LichessStudyChapter } from '@kchess/contracts/types'
 
 export type { SavedStudy, StudyChapter }
+
+/** The core refused a chapter save: another window changed the chapter since this one read it. */
+export const isStaleStudy = (cause: unknown): boolean =>
+  String(cause instanceof Error ? cause.message : cause).includes(
+    'This study was changed in another KChess window.',
+  )
 
 /** A study's chapters as select items, numbered as the study orders them. */
 export const chapterItems = (study: SavedStudy): { label: string; value: string }[] =>
@@ -28,7 +40,33 @@ export const useStudyStore = defineStore('studies', () => {
    */
   type Intent = () => StudyCommand | undefined
   const failed: { intent: Intent; cause: unknown }[] = []
+  /** A refresh came while edits were still to be saved: read the library again once they are. */
+  let deferred = false
+  function settled(): void {
+    if (!deferred || failed.length) return
+    deferred = false
+    refreshLibraryLater()
+  }
   const study = (id: string | undefined) => items.value.find((item) => item.id === id)
+  /**
+   * The moves each chapter held when this window last opened or saved it, by `studyId chapterId`.
+   * Chapter saves are based on them (`basedOn`), so they never overwrite another window's newer
+   * moves. A library refresh leaves them, since the open board still shows the older moves.
+   */
+  const bases = new Map<string, string>()
+  const baseKey = (studyId: string, chapterId: string) => `${studyId} ${chapterId}`
+  /** The board shows this chapter as the library has it: its saves are based on that. */
+  function track(studyId: string, chapterId: string): void {
+    const pgn = study(studyId)?.chapters.find((chapter) => chapter.id === chapterId)?.pgn
+    if (pgn === undefined) bases.delete(baseKey(studyId, chapterId))
+    else bases.set(baseKey(studyId, chapterId), pgn)
+  }
+  /** The chapter a content save writes, once the study exists. */
+  function savedChapter(sent: StudyCommand, id = 'id' in sent ? sent.id : undefined) {
+    if (sent.op !== 'save' || !id) return undefined
+    const chapterId = sent.chapterId || study(id)?.chapters[0]?.id
+    return chapterId ? baseKey(id, chapterId) : undefined
+  }
   /** What a command overwrites; a newer command for the same target makes an older one obsolete. */
   function target(command: StudyCommand): string | undefined {
     switch (command.op) {
@@ -124,8 +162,9 @@ export const useStudyStore = defineStore('studies', () => {
   async function persist(intent: Intent): Promise<StudyCommandResult> {
     const sent = intent()
     if (!sent) return { studies: items.value }
+    const based = savedChapter(sent)
     try {
-      const result = await window.kchess.studyCommand(sent, true)
+      const result = await window.kchess.studyCommand(sent, true, based && bases.get(based))
       if (result.order) {
         const byId = new Map(items.value.map((study) => [study.id, study]))
         for (const study of result.studies) byId.set(study.id, study)
@@ -136,15 +175,19 @@ export const useStudyStore = defineStore('studies', () => {
         })
       } else items.value = result.studies
       error.value = ''
+      const written = sent.op === 'save' && savedChapter(sent, result.id)
+      if (written) bases.set(written, sent.pgn)
       // Failed edits to a study or chapter removed since then no longer apply.
       if (sent.op === 'remove') forget((older) => 'id' in older && older.id === sent.id)
       if (sent.op === 'removeChapter')
         forget((older) => 'chapterId' in older && older.chapterId === sent.chapterId)
+      settled()
       return result
     } catch (cause) {
       console.warn('[studies] saving the study library failed:', sent.op, cause)
       error.value = cause instanceof Error ? cause.message : String(cause)
-      failed.push({ intent, cause })
+      // Sent again, it would be refused again: the window reopens the chapter instead.
+      if (!isStaleStudy(cause)) failed.push({ intent, cause })
       throw cause
     }
   }
@@ -234,9 +277,24 @@ export const useStudyStore = defineStore('studies', () => {
       if (!taken.has(name)) return name
     }
   }
+  /**
+   * Another KChess window changed the library (`docs/shared-core.md`): show its studies, unless
+   * this window still has edits to save, which are saved first and then shown.
+   */
+  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+    if (failed.length) {
+      deferred = true
+      return
+    }
+    deferred = false
+    items.value = snapshot.studies
+    misses.value = snapshot.repertoireMisses
+  }
   return {
     items,
     flush,
+    track,
+    replaceFromLibrary,
     error,
     save,
     saveChapter,

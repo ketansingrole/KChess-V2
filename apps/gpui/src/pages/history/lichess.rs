@@ -762,13 +762,14 @@ pub fn game_row(
             .truncate()
             .child(text)
     };
+    // `.game-row`: 11px by 12px, 13px text.
     h_flex()
         .id(id)
-        .px(px(14.))
-        .py(px(10.))
+        .px(px(12.))
+        .py(px(11.))
         .gap(px(12.))
         .rounded(px(8.))
-        .text_size(px(14.))
+        .text_size(px(13.))
         .cursor_pointer()
         .hover(|row| row.bg(palette.accented))
         .on_click(move |_, window, cx| select(window, cx))

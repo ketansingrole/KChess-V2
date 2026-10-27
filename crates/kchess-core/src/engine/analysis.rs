@@ -131,10 +131,103 @@ struct Shared {
     state: Mutex<State>,
 }
 
-/// The analysis service. Cloning shares the same engine and state.
+/// One client's analysis: its engine and the request in progress. Cloning shares them.
+#[derive(Clone)]
+pub struct AnalysisEngine {
+    shared: Arc<Shared>,
+}
+
+/// The analysis service: one `AnalysisEngine` per connection (`crate::connection`). The
+/// scheduler gives the whole thread budget to one lease at a time (`EngineContext::lease`), so
+/// the newest request wins: starting an analysis interrupts every other connection's, whose
+/// window restarts it when the person returns to it. An idle engine closes after two minutes as
+/// before. Cloning shares them.
 #[derive(Clone)]
 pub struct Analysis {
-    shared: Arc<Shared>,
+    ctx: EngineContext,
+    engines: Arc<Mutex<BTreeMap<u64, AnalysisEngine>>>,
+}
+
+impl Analysis {
+    pub fn new(ctx: EngineContext) -> Analysis {
+        Analysis {
+            ctx,
+            engines: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// The analysis of the calling connection, made on first use.
+    fn mine(&self) -> AnalysisEngine {
+        let connection = crate::connection::current_or_app();
+        lock(&self.engines)
+            .entry(connection)
+            .or_insert_with(|| AnalysisEngine::new(self.ctx.clone()))
+            .clone()
+    }
+
+    fn all(&self) -> Vec<AnalysisEngine> {
+        lock(&self.engines).values().cloned().collect()
+    }
+
+    /// Interrupts every other connection's analysis: the engine goes to the newest request.
+    fn interrupt_others(&self) {
+        let connection = crate::connection::current_or_app();
+        let others: Vec<AnalysisEngine> = lock(&self.engines)
+            .iter()
+            .filter(|(id, _)| **id != connection)
+            .map(|(_, engine)| engine.clone())
+            .collect();
+        for engine in others {
+            engine.stop_analysis(false);
+        }
+    }
+
+    /// `startAnalysis` for the calling connection: supersedes only its own analysis.
+    pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
+        self.interrupt_others();
+        self.mine().start_analysis(raw, configured, send)
+    }
+
+    pub(crate) async fn start_analysis_with_settings(
+        &self,
+        raw: Value,
+        configured: impl Future<Output = Result<String>>,
+        send: AnalysisSink,
+    ) -> Result<u64> {
+        self.interrupt_others();
+        self.mine()
+            .start_analysis_with_settings(raw, configured, send)
+            .await
+    }
+
+    /// Any connection's analysis is in progress (the review queue waits for them).
+    pub fn analysis_running(&self) -> bool {
+        self.all().iter().any(AnalysisEngine::analysis_running)
+    }
+
+    /// Stops every connection's analysis: a live game, an engine being replaced, closing.
+    pub fn stop_analysis(&self, kill: bool) {
+        for engine in self.all() {
+            engine.stop_analysis(kill);
+        }
+    }
+
+    /// `stopAnalysis` from a client: stops the calling connection's analysis only.
+    pub fn stop_mine(&self, kill: bool) {
+        let connection = crate::connection::current_or_app();
+        let engine = lock(&self.engines).get(&connection).cloned();
+        if let Some(engine) = engine {
+            engine.stop_analysis(kill);
+        }
+    }
+
+    /// A connection went away: its analysis stops and its engine closes.
+    pub fn forget(&self, connection: u64) {
+        let engine = lock(&self.engines).remove(&connection);
+        if let Some(engine) = engine {
+            engine.stop_analysis(true);
+        }
+    }
 }
 
 /// What one analysis reports as it goes (`lines`, `nps`, the engine key), under its own lock.
@@ -267,9 +360,9 @@ fn stop_locked(state: &mut State, kill: bool) {
     }
 }
 
-impl Analysis {
-    pub fn new(ctx: EngineContext) -> Analysis {
-        Analysis {
+impl AnalysisEngine {
+    pub fn new(ctx: EngineContext) -> AnalysisEngine {
+        AnalysisEngine {
             shared: Arc::new(Shared {
                 ctx,
                 state: Mutex::new(State::default()),

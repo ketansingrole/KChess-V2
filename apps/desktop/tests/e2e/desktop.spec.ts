@@ -338,6 +338,9 @@ const test = base.extend<{
           ...process.env,
           KCHESS_NUXT_URL: '',
           KCHESS_USER_DATA_DIR: profile,
+          // The shared core service runs from a copy in the test profile, not the user's runtime
+          // folder (docs/shared-core.md).
+          KCHESS_RUNTIME_DIR: join(profile, 'runtime'),
           // The test switch serves Lichess from the local stand-in (`crates/kchess-core/src/core.rs`).
           KCHESS_STORE_DEBUG: '1',
           KCHESS_TEST_LICHESS_BASE: lichess.stand.base,
@@ -557,10 +560,14 @@ test('loads cached voice recognition offline and releases the microphone after a
   await expect(bar).toHaveAttribute('data-state', 'off')
   // A reload never unmounts the voice control; the main process still releases the helper.
   if (process.platform === 'win32') return
+  // The helper itself: the shared core service's own command line names it in its config.
   const helpers = () =>
     execFileSync('ps', ['-axww', '-o', 'command='], { encoding: 'utf8' })
       .split('\n')
-      .filter((line) => line.includes('kchess-voice') && line.includes(profile)).length
+      .filter(
+        (line) =>
+          (line.trim().split(/\s+/)[0] ?? '').endsWith('kchess-voice') && line.includes(profile),
+      ).length
   await voice.click()
   await expect(bar).toHaveAttribute('data-state', 'listening', { timeout: 60_000 })
   expect(helpers()).toBe(1)
@@ -1262,7 +1269,7 @@ test('shows update capabilities and persists update preferences @packaged', asyn
   await navigate(page, 'Updates')
   await expect(page.getByRole('heading', { name: 'Updates', level: 1 })).toBeVisible()
   await expect(
-    page.getByRole('heading', { name: `KChess ${status.currentVersion}`, level: 2 }),
+    page.getByRole('heading', { name: `KChess ${status.currentVersion} · Electron`, level: 2 }),
   ).toBeVisible()
   const check = page.getByRole('button', { name: 'Check for updates', exact: true })
   const download = page.getByRole('switch', {
@@ -1336,6 +1343,7 @@ test('exports redacted diagnostics through Settings', async ({
     'generatedAt',
     'sessionId',
     'version',
+    'client',
     'platform',
     'arch',
     'versions',

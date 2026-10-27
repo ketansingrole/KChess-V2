@@ -53,6 +53,13 @@ pub fn init(cx: &mut App) {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
     });
+    // Another window saved or removed a game: show the profile's.
+    crate::core::on_profile_change(cx, &["playedGames"], {
+        let entity = entity.downgrade();
+        move |cx| {
+            let _ = entity.update(cx, |games, cx| games.reload(cx));
+        }
+    });
     cx.set_global(PlayedHandle(entity));
 }
 

@@ -198,6 +198,7 @@ impl SettingsPage {
             "generatedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "sessionId": crate::log::session_id(),
             "version": crate::updates::current_version(),
+            "client": "gpui",
             "platform": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
             "versions": { "app": "gpui" },
@@ -260,11 +261,18 @@ impl SettingsPage {
                 .text_color(palette.text_muted)
                 .child(text)
         };
+        // `.data-totals > div`: a bordered tile, at least 200px.
         let tile = |label: &'static str, value: String, note: Option<String>| {
             v_flex()
                 .flex_1()
-                .min_w(px(160.))
+                .min_w(px(200.))
                 .gap(px(2.))
+                .px(px(16.))
+                .py(px(14.))
+                .rounded(px(10.))
+                .border_1()
+                .border_color(palette.border)
+                .bg(palette.bg)
                 .child(muted(label.into()))
                 .child(
                     div()
@@ -310,7 +318,8 @@ impl SettingsPage {
             .child(
                 h_flex()
                     .flex_wrap()
-                    .gap(px(16.))
+                    .items_stretch()
+                    .gap(px(12.))
                     .child(tile(
                         "Downloaded",
                         format_bytes(downloaded),

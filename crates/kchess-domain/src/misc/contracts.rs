@@ -309,7 +309,11 @@ const CORE: &[Row] = &[
     (
         "studyCommand",
         1,
-        &[Valid("assertStudyCommandShape"), Optional("assertBoolean")],
+        &[
+            Valid("assertStudyCommandShape"),
+            Optional("assertBoolean"),
+            Optional("assertPgnText"),
+        ],
     ),
     ("saveArchivedGame", 1, &[Valid("assertArchivedGameShape")]),
     ("removeArchivedGame", 1, &[Valid("assertLibraryId")]),
@@ -382,7 +386,11 @@ const DESKTOP: &[Row] = &[
     ("openMicrophoneSettings", 0, &[]),
     ("reloadWindow", 0, &[]),
     ("exportVoiceHistory", 0, &[]),
-    ("saveSettings", 1, &[Valid("assertSettings")]),
+    (
+        "saveSettings",
+        1,
+        &[Valid("assertSettings"), Optional("assertSettings")],
+    ),
 ];
 
 /// The row of `method` in `scope`, or `None` when it has no contract there.

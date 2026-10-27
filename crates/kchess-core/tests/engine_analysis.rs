@@ -305,3 +305,67 @@ async fn requests_that_are_not_positions_are_refused() {
     );
     assert!(!analysis.analysis_running());
 }
+
+/// Two windows on one core (`docs/shared-core.md`): each connection has its own analysis and
+/// its own updates. The engine budget goes to the newest request, so starting one interrupts the
+/// other window's; a client's stop ends only its own, and a connection going away ends its own.
+#[tokio::test]
+async fn each_connection_has_its_own_analysis() {
+    use kchess_core::connection::scope;
+    let log = log_path("analysis-connections");
+    let (analysis, _) = analysis_with("search", &log);
+    let (first, first_sink) = recorder();
+    let (second, second_sink) = recorder();
+    let request = |fen: &str| json!({ "fen": fen, "lines": 1, "infinite": true });
+    let first_id = scope(1, async {
+        analysis.start_analysis(request(START), &fake_path(), first_sink)
+    })
+    .await
+    .expect("a valid request");
+    wait_until(WAIT, "the first window's lines", || {
+        find(&first, |u| {
+            u.id == first_id && u.fen == START && !u.lines.is_empty()
+        })
+    })
+    .await;
+
+    let second_id = scope(2, async {
+        analysis.start_analysis(request(ITALIAN), &fake_path(), second_sink)
+    })
+    .await
+    .expect("a valid request");
+    wait_until(WAIT, "the first window's analysis interrupted", || {
+        find(&first, |u| {
+            u.id == first_id && u.reason == Some(Reason::Interrupted)
+        })
+    })
+    .await;
+    wait_until(WAIT, "the second window's lines", || {
+        find(&second, |u| {
+            u.id == second_id && u.fen == ITALIAN && !u.lines.is_empty()
+        })
+    })
+    .await;
+    assert!(
+        find(&first, |u| u.fen == ITALIAN).is_none(),
+        "updates stay with their window"
+    );
+
+    // The first window's stop leaves the second window's analysis running.
+    scope(1, async { analysis.stop_mine(false) }).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(analysis.analysis_running());
+    assert!(find(&second, |u| u.done).is_none());
+
+    analysis.forget(2);
+    wait_until(WAIT, "the second analysis interrupted", || {
+        find(&second, |u| {
+            u.id == second_id && u.reason == Some(Reason::Interrupted)
+        })
+    })
+    .await;
+    wait_until(WAIT, "no analysis left", || {
+        (!analysis.analysis_running()).then_some(())
+    })
+    .await;
+}

@@ -1,0 +1,31 @@
+[package]
+name = "kchess-service"
+description = "The shared KChess core: one core per profile, served to every KChess window over a local socket (docs/shared-core.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kchess-service"
+path = "src/bin/kchess-service.rs"
+
+[dependencies]
+kchess-core = { path = "../kchess-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net", "signal"] }
+# The socket name and the protocol fingerprint (already in Cargo.lock through kchess-core).
+sha2 = { version = "0.11", default-features = false }
+# The connection token (already in Cargo.lock through kchess-core).
+getrandom = "0.4"
+
+# The caller's user id, checked against the socket's peer (already in Cargo.lock).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

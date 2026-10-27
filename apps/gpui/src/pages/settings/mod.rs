@@ -492,9 +492,15 @@ impl Rows {
     }
 
     fn card(self, palette: &Palette) -> Div {
+        self.card_under(None, palette)
+    }
+
+    /// The rows in a card that opens with `header` (`.card-header`: a title and its status).
+    fn card_under(self, header: Option<AnyElement>, palette: &Palette) -> Div {
         // `.settings-list` keeps 4px above and below: the rows bring their own padding.
         widgets::card(palette)
             .py(px(4.))
+            .children(header.map(|header| div().pt(px(14.)).pb(px(4.)).px(px(4.)).child(header)))
             .children(self.rows.into_iter().enumerate().map(|(index, row)| {
                 div()
                     .py(px(18.))

@@ -1628,6 +1628,43 @@ pub struct StormDashboard {
 }
 
 /// A puzzle-database download or import in progress (or finished), streamed to the window.
+/// What part of the profile a write changed (`profile:changed`), so other windows refetch it.
+#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProfileArea {
+    Studies,
+    PlayedGames,
+    Drills,
+    Sessions,
+    Tournaments,
+    Repertoire,
+    LichessGames,
+    Accounts,
+    DesktopSettings,
+    Puzzles,
+    VoiceHistory,
+    Usage,
+    Engine,
+}
+
+/// `alerts:owner`: the connection whose window raises system notifications now (the window
+/// focused last), or none. Every other window updates silently (`docs/shared-core.md`).
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct AlertOwner {
+    pub connection: Option<f64>,
+}
+
+/// `profile:changed`: a write to the profile, from connection `origin` (`docs/shared-core.md`).
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileChange {
+    pub areas: Vec<ProfileArea>,
+    /// The connection that wrote it; a window ignores its own writes.
+    pub origin: f64,
+}
+
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
@@ -2317,6 +2354,9 @@ pub fn items(cfg: &Config) -> Vec<Item> {
         StormHigh,
         StormDay,
         StormDashboard,
+        ProfileArea,
+        AlertOwner,
+        ProfileChange,
         PuzzleDbProgress,
         PuzzleDbStatus,
         LocalPuzzleQuery,

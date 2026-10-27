@@ -51,6 +51,15 @@ describe('quick pick', () => {
     ])
   })
 
+  it('ranks an entry named in full above longer labels it starts', () => {
+    const items = [
+      { label: 'Appearance: Match system' },
+      { label: 'Appearance: Light' },
+      { label: 'Appearance', detail: 'Settings' },
+    ]
+    expect(rankQuickPick('Appearance', items)[0]?.item.label).toBe('Appearance')
+  })
+
   it('splits labels into plain and marked text without building HTML', () => {
     expect(labelSegments('<b> & Bishop', [[6, 8]])).toEqual([
       { text: '<b> & ', mark: false },

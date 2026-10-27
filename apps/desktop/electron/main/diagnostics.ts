@@ -53,6 +53,7 @@ export function setupDiagnostics(): void {
   console.info('[diagnostics] KChess started', {
     sessionId: diagnosticSessionId(),
     version: app.getVersion(),
+    client: 'electron',
     platform: process.platform,
     arch: process.arch,
     versions: process.versions,
@@ -74,6 +75,7 @@ export async function exportDiagnostics(): Promise<boolean> {
         generatedAt: new Date().toISOString(),
         sessionId: diagnosticSessionId(),
         version: app.getVersion(),
+        client: 'electron',
         platform: process.platform,
         arch: process.arch,
         versions: process.versions,

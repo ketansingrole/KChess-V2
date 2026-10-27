@@ -564,6 +564,12 @@ impl Workspace {
                 crate::theme::apply(window, cx);
                 crate::dock_icon::apply(cx);
             }),
+            // The window focused last raises system notifications (`docs/shared-core.md`).
+            cx.observe_window_activation(window, |_, window, cx| {
+                cx.global::<crate::core::AppCore>()
+                    .bridge
+                    .focus(window.is_window_active());
+            }),
             cx.subscribe_in(
                 &settings,
                 window,
@@ -1015,16 +1021,43 @@ impl Workspace {
             .items_center()
             .h(TOPBAR_HEIGHT)
             .flex_none()
-            .px_5()
+            // `.topbar`: `minmax(40px, 1fr) minmax(0, 600px) minmax(40px, 1fr)`, the search
+            // centred between equal sides; 12px padding below 560px.
+            .px(if window.viewport_size().width < px(560.) {
+                px(12.)
+            } else {
+                px(20.)
+            })
             .gap(px(8.))
             .border_b_1()
             .border_color(cx.theme().border)
-            .when(cfg!(target_os = "macos") && !self.sidebar_open, |bar| {
-                bar.child(div().flex_none().w(spacer))
-            })
-            .child(div().flex_1())
-            .child(self.palette.clone())
-            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .flex_1()
+                    .flex_basis(px(0.))
+                    .min_w(px(40.))
+                    .when(cfg!(target_os = "macos") && !self.sidebar_open, |left| {
+                        left.child(div().flex_none().w(spacer))
+                    }),
+            )
+            .child(
+                div()
+                    .flex_basis(px(600.))
+                    .flex_shrink_1()
+                    .min_w_0()
+                    .child(self.palette.clone()),
+            )
+            .child(self.render_topbar_right(cx))
+    }
+
+    /// `.topbar-right`: connection, update and work state, at the end.
+    fn render_topbar_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .flex_1()
+            .flex_basis(px(0.))
+            .min_w(px(40.))
+            .justify_end()
+            .gap(px(8.))
             .when(!crate::network::online(cx), |bar| {
                 bar.child(
                     h_flex()

@@ -1891,6 +1891,7 @@ struct StudyRef {
 
 /// `studyCommandShape`: one study command, chosen by its `op`, with the fields that command
 /// takes (others are dropped). A study to restore is passed on as it is; the core checks it.
+/// A document's revision as the client read it: its `updatedAt`, milliseconds since the epoch.
 fn assert_study_command_shape(value: J) -> Checked<Value> {
     if !value.is_object() {
         let error = decode::<SaveStudy>(value, plain).err();

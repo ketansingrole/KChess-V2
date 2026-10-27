@@ -7,6 +7,7 @@
 //! it is called, before its future is polled; the search itself runs inside the returned future.
 //! Dropping that future ends the search.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -83,8 +84,9 @@ struct Warm {
 struct State {
     /// Bumped by every `stopEngine`; a search that sees a newer value was superseded.
     generation: u64,
-    /// The search in progress, with the ticket that identifies it.
-    active: Option<(u64, CancellationToken)>,
+    /// The searches in progress or in line, by the connection that asked (each window plays its
+    /// own computer game), with the ticket that identifies each.
+    active: HashMap<u64, (u64, CancellationToken)>,
     ticket: u64,
     last_move_at: i64,
     warm: Option<Warm>,
@@ -109,6 +111,7 @@ pub struct Search {
 /// Runs when a search ends (`finally`), before the next search in line may start.
 struct Finish {
     shared: Arc<Shared>,
+    connection: u64,
     ticket: u64,
 }
 
@@ -117,10 +120,12 @@ impl Drop for Finish {
         let mut state = lock(&self.shared.state);
         if state
             .active
-            .as_ref()
+            .get(&self.connection)
             .is_some_and(|(ticket, _)| *ticket == self.ticket)
         {
-            state.active = None;
+            state.active.remove(&self.connection);
+        }
+        if state.active.is_empty() {
             let weak = Arc::downgrade(&self.shared);
             let idle = after(WARM_IDLE_MS, move || {
                 if let Some(shared) = weak.upgrade() {
@@ -139,10 +144,10 @@ fn close_warm(shared: &Shared) {
     }
 }
 
-/// `stopEngine`'s body, under the state lock.
+/// `stopEngine`'s body, under the state lock: every connection's search stops.
 fn stop_locked(state: &mut State, close: bool) {
     state.generation += 1;
-    if let Some((_, token)) = &state.active {
+    for (_, token) in state.active.values() {
         token.cancel();
     }
     if close {
@@ -196,10 +201,18 @@ impl Search {
             .is_trusted(path, &self.shared.ctx.locations.managed_dir)
     }
 
-    /// `stopEngine(close)`: supersedes the search running; with `close`, also ends the warm
-    /// engine and its idle timer.
+    /// `stopEngine(close)`: supersedes every search (settings, a live game, closing); with
+    /// `close`, also ends the warm engine and its idle timer.
     pub fn stop_engine(&self, close: bool) {
         stop_locked(&mut lock(&self.shared.state), close);
+    }
+
+    /// Stops the search `connection` asked for (a window's takeback or teardown); other windows'
+    /// computer games carry on.
+    pub fn stop_connection(&self, connection: u64) {
+        if let Some((_, token)) = lock(&self.shared.state).active.get(&connection) {
+            token.cancel();
+        }
     }
 
     /// `resetEngine`: stops and closes the engine, forgets trusted paths and the last move.
@@ -213,7 +226,7 @@ impl Search {
     pub fn computer_playing(&self, within_ms: i64) -> bool {
         let state = lock(&self.shared.state);
         computer_playing(
-            state.active.is_some(),
+            !state.active.is_empty(),
             state.last_move_at,
             within_ms,
             now_ms(),
@@ -222,7 +235,8 @@ impl Search {
 
     /// `bestMove(moves, level, configured, options)`: the engine's move from the position the
     /// moves reach, at the level's strength. Invalid input is refused at once; otherwise the
-    /// search supersedes the one running and waits its turn in line.
+    /// search supersedes the one the same connection asked for, and waits its turn in line
+    /// behind other connections' searches.
     pub fn best_move(
         &self,
         moves: Value,
@@ -245,13 +259,15 @@ impl Search {
             Ok(request) => request,
             Err(cause) => return Box::pin(ready(Err(cause))),
         };
-        let (epoch, ticket, token, prev, done) = self.register();
+        let connection = crate::connection::current_or_app();
+        let (epoch, ticket, token, prev, done) = self.register(connection);
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
             // Declared so that the finish bookkeeping runs first, then the next search may start.
             let _done = done;
             let _finish = Finish {
                 shared: Arc::clone(&shared),
+                connection,
                 ticket,
             };
             let mut key = String::new();
@@ -309,16 +325,17 @@ impl Search {
         })
     }
 
-    /// The synchronous part of `bestMove`: supersedes the search running, takes a ticket and
+    /// The synchronous part of `bestMove`: supersedes `connection`'s search, takes a ticket and
     /// queues behind the last search in line.
-    fn register(&self) -> Ticket {
+    fn register(&self, connection: u64) -> Ticket {
         let mut state = lock(&self.shared.state);
-        stop_locked(&mut state, false);
         let epoch = state.generation;
         state.ticket += 1;
         let ticket = state.ticket;
         let token = CancellationToken::new();
-        state.active = Some((ticket, token.clone()));
+        if let Some((_, superseded)) = state.active.insert(connection, (ticket, token.clone())) {
+            superseded.cancel();
+        }
         clear_timer(&mut state.idle);
         state.last_move_at = now_ms();
         let (done, queued) = oneshot::channel();

@@ -97,6 +97,16 @@ prints its path. Add `--release` to `cargo run` for a fast build; a release buil
 and shows no development badge. What the GPUI app does and does
 not match yet is tracked in [apps/gpui/PARITY.md](apps/gpui/PARITY.md).
 
+Several KChess windows can share one profile through its core service
+([docs/shared-core.md](docs/shared-core.md)). The GPUI app uses it when `kchess-service` is built
+beside it (`cargo build -p kchess-service`); `KCHESS_CORE_MODE=embedded` or `service` chooses
+explicitly.
+
+On macOS, `cargo run` re-signs the app with your Apple Development identity and a fixed
+identifier (`tooling/macos-dev-runner.sh`), so the keychain's "Always Allow" for the profile's
+credential key lasts across rebuilds. Choose another identity with `KCHESS_DEV_SIGNING_IDENTITY`,
+or `-` to skip signing.
+
 `KCHESS_USER_DATA_DIR` selects an isolated profile for the Electron app too.
 
 ### CLI
@@ -129,7 +139,7 @@ pnpm run build:packages         # Node host and CLI under their dist/ folders
 
 `gpui-package.mjs` builds a "KChess Preview" that installs beside the Electron app; `--final` uses
 the Electron app's identity and `--skip-build` reuses the release binary already built. Release
-installers come from CI; see [Releasing](#releasing).
+installers come from CI; see [Releasing](docs/releasing.md).
 
 ### Tests and checks
 
@@ -214,95 +224,9 @@ Settings → Data & storage → **Export diagnostics** saves a JSON report conta
 
 ### Releasing
 
-Installers are built by `.github/workflows/release.yml`. Versions are dates with a counter,
-`YEAR.MONTH.COUNTER`: the first release in October 2026 is `2026.10.0`, the next `2026.10.1`, and
-the counter restarts each UTC month. There's no zero padding (`2026.10.0`, not `2026.10.00`), which keeps
-the version valid semver. Follow the release checklist in [AGENTS.md](AGENTS.md).
-Merge the intended changes with green CI first, then prepare the version change:
-
-```bash
-pnpm run release:version   # fetches origin's tags; updates package.json; dependencies stay locked
-pnpm run release:verify
-pnpm run check
-git diff -- package.json pnpm-lock.yaml
-git add package.json pnpm-lock.yaml
-git commit -m "Release $(node -p "require('./package.json').version")"
-```
-
-Merge the reviewed version commit into `main` and wait for green CI. From a clean checkout
-of that commit, create an annotated tag derived from its package version and push only
-that tag, as shown in `AGENTS.md`. Never reuse or move a release tag. The version helper
-stops if it cannot refresh remote tags; it does not guess using a stale local list.
-
-The workflow builds on macOS, Windows and Linux and attaches the installers, plus `SHA256SUMS.txt`,
-and updater manifests/blockmaps to a **draft** GitHub Release; review it and press _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER`
-or doesn't match `package.json` fails validation, as does
-a release commit outside `main` or failing repository checks. Reruns can replace assets
-on an existing draft, but refuse to overwrite a published release. Creating a release
-prepares a draft; publishing it is a separate action.
-_Run workflow_ in the Actions tab builds the same installers as downloadable artifacts
-without creating a release, including when a tag is selected. Retry a draft release by
-rerunning its original tag-push workflow.
-
-| Platform | Files                                         |
-| -------- | --------------------------------------------- |
-| macOS    | `.dmg` and `.zip` for Apple Silicon (`arm64`) |
-| Windows  | `.exe` installer (x64)                        |
-| Linux    | `.AppImage` and `.deb` (x64)                  |
-
-Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`tooling/release-config.cjs`), so on
-first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
-and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).
-
-### Snap Store
-
-The existing [`kchess` listing](https://snapcraft.io/kchess) now follows this project.
-Release builds include a Snap package; publishing a stable GitHub release triggers a
-checksum-verified upload to Snap Store once its repository credential is configured.
-See [Snap Store setup and migration](docs/snap-store.md).
-
-### App updates
-
-**Settings → Updates** shows the installed version, update status, last successful check,
-download progress, manual check/download/restart actions and a link to release notes.
-By default, installed builds check stable GitHub releases ten seconds after startup and every
-six hours, download updates in the background, and install when the user quits. Each behaviour
-has its own switch. KChess never initiates a restart while you are playing; **Restart and install**
-asks first. A normal quit with an update ready installs it without reopening the app.
-Accounts, preferences and saved history remain in the existing user-data directory.
-Development builds do not check for updates; unsupported unpacked installations cannot update themselves.
-
-Windows NSIS, Linux AppImage and Debian installations support automatic installation
-(Debian may require an operating-system authorization prompt). Ad-hoc signed Mac releases
-check for updates and link to a manual download. [macOS automatic installation requires
-Developer ID signing](https://www.electron.build/v26/docs/features/auto-update/).
-
-To enable Mac automatic installation, add these GitHub Actions repository secrets:
-
-- `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
-- `MAC_CSC_KEY_PASSWORD`: its export password.
-- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
-
-The release config imports the certificate, requires signing and notarization, and marks only
-those Mac builds as able to install updates. Keep the same app ID and signing identity across
-releases. Before uploading signed Mac packages, the workflow verifies their code signature,
-signing team, Gatekeeper acceptance and stapled notarization ticket.
-Never put signing credentials or a GitHub token in the app. Windows signing can be
-added separately without changing the update feed.
-
-Publish the complete release: installers, `latest.yml` (Windows), `latest-mac.yml` (Mac),
-`latest-linux.yml` (Linux), and `.blockmap` files. The workflow verifies and attaches the manifests;
-electron-builder generates the packaged `app-update.yml` from the fixed public GitHub provider.
-Drafts and prereleases are excluded. Do not overwrite an already published release to ship a
-fix: advance `YEAR.MONTH.COUNTER`, create a new tag, and publish its draft once all platforms
-are ready. macOS requires the ZIP artifacts as well as DMGs.
-
-**Bootstrap:** releases shipped before the updater was added cannot acquire it automatically.
-Users must install the first updater-enabled release manually; subsequent releases use this flow.
-An ad-hoc Mac installation also needs a manual upgrade to the first Developer ID signed release.
-Before publishing broadly, verify a real version A → B update on installed copies of each
-supported platform, including restart, normal quit, opt-out, offline retry and data preservation.
-Mocked tests and local unsigned builds cannot verify signing or the published feed end to end.
+Installers come from `.github/workflows/release.yml` as a draft GitHub Release, versioned
+`YEAR.MONTH.COUNTER`. Release steps, the Snap Store listing, signing and the app updater are in
+[docs/releasing.md](docs/releasing.md); the checklist is in [AGENTS.md](AGENTS.md).
 
 ## Features
 
@@ -348,7 +272,7 @@ On first launch on macOS, the app imports accounts, game history, settings, and 
 - `apps/desktop/app/pages/` contains separate Dashboard, Online, Computer, Puzzles, Practice, History, Friends, and Settings routes (Settings shows one category at a time, chosen from the sidebar).
 - `apps/desktop/app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (navigation, accounts, settings), with `kchess/computerGame.ts`, `onlineGame.ts` and `gameHistory.ts` owning their respective game state, `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `apps/desktop/app/components/` holds reusable board, game row, and page header components.
 - `apps/desktop/app/assets/` and `apps/desktop/app/utils/` hold styles, media and presentation helpers (board pieces, sounds, image export, swipe navigation), and `utils/library.ts`, which loads the core's library before the app mounts.
-- `crates/kchess-node/js/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:packages` builds it as a plain Node library in `core/dist`.
+- `crates/kchess-node/js/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:packages` builds it, with the CLI, into `hosts/node/dist` and `apps/cli/dist`.
 - `apps/desktop/electron/main/` and `apps/desktop/electron/preload/` are the Electron desktop shell. Main configures the core with an Electron platform, serves every `CoreApi` method and event over IPC, and adds the window, updater, dialogs, notifications, themes, microphone access and the `kchess://` route that serves the core's voice model.
 - `crates/kchess-wasm/js/` contains pure chess, training and document rules. `crates/kchess-contracts/ts/` owns the headless API, events, types and validation tuples. Desktop IPC and diagnostics contracts live in `apps/desktop/contracts/`.
 - `apps/desktop/nuxt.config.ts` enables client rendering and hash routing, so the generated app works from Electron's local file URL without a running server. Nuxt's generated files live in `apps/desktop/.output/public/` and are included in the macOS package.

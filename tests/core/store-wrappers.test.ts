@@ -72,7 +72,9 @@ describe('voice log', () => {
       await core.updateVoiceAttempt(id, { outcome: 'invalid', expected: 'Nf3' })
       const [entry] = await core.voiceHistory(10)
       expect(entry).toMatchObject({ id, outcome: 'invalid', expected: 'Nf3' })
-      const document = JSON.parse(core.voiceHistoryDocument()) as { entries: { time: string }[] }
+      const document = JSON.parse(await core.voiceHistoryDocument()) as {
+        entries: { time: string }[]
+      }
       expect(document.entries[0]?.time).toMatch(/^\d{4}-\d{2}-\d{2}T/)
       await core.clearVoiceHistory()
       expect(await core.voiceHistory(10)).toEqual([])
