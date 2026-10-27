@@ -204,6 +204,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: node tooling/gpui-package.mjs
         env:
+          # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
+          GH_TOKEN: ${{ github.token }}
           KCHESS_SIGN_IDENTITY: ''
       - name: Verify every supported package exists
         shell: bash

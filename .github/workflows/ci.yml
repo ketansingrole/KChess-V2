@@ -253,6 +253,8 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
       - run: node tooling/gpui-package.mjs
         env:
+          # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
+          GH_TOKEN: ${{ github.token }}
           # Release packages are made by the Release workflow; CI's are ad hoc signed previews.
           KCHESS_SIGN_IDENTITY: ''
       - uses: actions/upload-artifact@v7
