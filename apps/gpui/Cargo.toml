@@ -63,5 +63,8 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSData", "NSBundle"] }
 objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "AVCaptureDevice", "AVMediaFormat"] }
 block2 = "0.6"
+# Swapping an update's bundle with the installed one in one step (`renamex_np`; already in
+# Cargo.lock).
+libc = "0.2"
 # The Dock icon (`app.dock.setIcon` in Electron): NSApplication's icon image.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }

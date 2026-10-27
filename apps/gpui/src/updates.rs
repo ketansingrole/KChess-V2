@@ -23,6 +23,12 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 
 const REPOSITORY: &str = "ketansingrole/KChess-V2";
 const FEED: &str = "https://api.github.com";
+/// How long a download waits for the server's next bytes before it counts as stopped.
+const IDLE: Duration = if cfg!(test) {
+    Duration::from_millis(500)
+} else {
+    Duration::from_secs(30)
+};
 /// `checkAutomatically`: on startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// The release's own version (`package.json`), the one releases are tagged with.
@@ -42,6 +48,8 @@ pub enum Phase {
     Available,
     Downloading,
     Downloaded,
+    /// Putting the update in place; then KChess quits.
+    Installing,
     Error,
     /// Updates are not installed here (a development build).
     Disabled,
@@ -115,6 +123,8 @@ pub struct Updates {
     staged: Option<PathBuf>,
     /// How this copy was installed; none for a build run from where it was made.
     install: Option<Install>,
+    /// This app's own download folder; none where updates are not checked.
+    workspace: Option<Workspace>,
     feed: Option<String>,
     work: Option<Task<()>>,
     _timer: Option<Task<()>>,
@@ -262,6 +272,8 @@ fn http() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(kchess_core::USER_AGENT)
         .connect_timeout(Duration::from_secs(20))
+        // A server that stops sending ends the download instead of holding it forever.
+        .read_timeout(IDLE)
         .build()
         .map_err(|cause| cause.to_string())
 }
@@ -300,6 +312,7 @@ async fn download(
         .ok_or("The release lists no checksums.")?;
     let sums = client
         .get(&sums.browser_download_url)
+        .timeout(Duration::from_secs(60))
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
@@ -542,7 +555,8 @@ fn aside(installed: &Path) -> PathBuf {
     ))
 }
 
-/// Where `swap_file` writes the new AppImage before it takes the old one's name.
+/// Where `replace` puts the new bundle, and `swap_file` the new AppImage, before it takes the old
+/// one's name.
 fn incoming(installed: &Path) -> PathBuf {
     installed.with_file_name(format!(
         ".{}.new",
@@ -553,21 +567,61 @@ fn incoming(installed: &Path) -> PathBuf {
     ))
 }
 
-/// Put `staged` where the running app is, keeping the old one aside until it is done.
+/// Put `staged` where the running app is. The new bundle is first put whole beside the installed
+/// one, on its disk; then the two trade places in one step, so an interruption at any point leaves
+/// a complete app where KChess opens from. What is left beside it goes on the next start (`tidy`).
 fn replace(staged: &Path, installed: &Path) -> Result<(), String> {
+    let incoming = incoming(installed);
+    let fail = |cause: std::io::Error| format!("The update could not be installed ({cause}).");
+    let _ = std::fs::remove_dir_all(&incoming);
+    if std::fs::rename(staged, &incoming).is_err() {
+        copy_tree(staged, &incoming).map_err(|cause| {
+            let _ = std::fs::remove_dir_all(&incoming);
+            fail(cause)
+        })?;
+    }
+    if exchange(&incoming, installed).is_ok() {
+        // `incoming` now holds the old bundle.
+        let _ = std::fs::remove_dir_all(&incoming);
+        return Ok(());
+    }
+    // No exchange on this disk: the old bundle steps aside for the complete new one.
     let aside = aside(installed);
     let _ = std::fs::remove_dir_all(&aside);
     std::fs::rename(installed, &aside).map_err(|cause| {
         format!("KChess could not replace itself ({cause}). Install the update by hand.")
     })?;
-    if let Err(cause) = std::fs::rename(staged, installed).or_else(|_| copy_tree(staged, installed))
-    {
-        let _ = std::fs::remove_dir_all(installed);
+    if let Err(cause) = std::fs::rename(&incoming, installed) {
         let _ = std::fs::rename(&aside, installed);
-        return Err(format!("The update could not be installed ({cause})."));
+        return Err(fail(cause));
     }
     let _ = std::fs::remove_dir_all(&aside);
     Ok(())
+}
+
+/// Swap the entries at `a` and `b` in one step (`renamex_np` with `RENAME_SWAP`).
+#[cfg(target_os = "macos")]
+#[expect(
+    unsafe_code,
+    reason = "renamex_np is the only atomic exchange of two paths on macOS"
+)]
+fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let path = |path: &Path| {
+        std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
+    };
+    let (a, b) = (path(a)?, path(b)?);
+    // SAFETY: both are valid NUL-terminated paths that outlive the call.
+    match unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) } {
+        0 => Ok(()),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn exchange(_: &Path, _: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 /// Replace the file at `installed` with `staged`, executable, in one rename on the same disk.
@@ -624,21 +678,120 @@ fn reopen_after_exit(target: &Path) {
     }
 }
 
-/// Where this identity's downloads go: one folder per version, cleared on startup.
-fn downloads() -> PathBuf {
-    std::env::temp_dir().join("kchess-update").join(PREFIX)
+/// Where this identity's downloads go: a folder of this user's, never the shared temporary folder,
+/// where another user could replace a checked package before it is installed.
+fn downloads_root() -> Result<PathBuf, String> {
+    let cache = dirs::cache_dir().ok_or("KChess has no folder to download updates to.")?;
+    downloads_in(&cache)
 }
 
-/// What an earlier run left behind: its downloads, and an old bundle or new AppImage that an
-/// interrupted install did not remove.
+/// `kchess-update/PREFIX` in `cache`, each folder private to this user.
+fn downloads_in(cache: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(cache).map_err(|cause| cause.to_string())?;
+    let parent = cache.join("kchess-update");
+    private_dir(&parent, cache)?;
+    let root = parent.join(PREFIX);
+    private_dir(&root, cache)?;
+    Ok(root)
+}
+
+/// Make `dir` a folder only its owner can use, refusing a link or another user's folder (its
+/// owner must be `owner`'s).
+fn private_dir(dir: &Path, owner: &Path) -> Result<(), String> {
+    let refused = || format!("The update folder {} is not private.", dir.display());
+    match std::fs::create_dir(dir) {
+        Ok(()) => {}
+        Err(cause) if cause.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(cause) => return Err(cause.to_string()),
+    }
+    let found = std::fs::symlink_metadata(dir).map_err(|cause| cause.to_string())?;
+    if !found.is_dir() {
+        return Err(refused());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let user = std::fs::metadata(owner)
+            .map_err(|cause| cause.to_string())?
+            .uid();
+        if found.uid() != user {
+            return Err(refused());
+        }
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|cause| cause.to_string())?;
+    }
+    #[cfg(not(unix))]
+    let _ = owner;
+    Ok(())
+}
+
+/// This app's download folder in the root: kept from every other KChess (another profile, a
+/// development build) by a lock held while this app runs, and removed once it is not.
+struct Workspace {
+    path: PathBuf,
+    _held: std::fs::File,
+}
+
+impl Workspace {
+    fn open(root: &Path) -> Result<Self, String> {
+        let fail = |cause: std::io::Error| cause.to_string();
+        // One app at a time clears stopped apps' folders and claims its own.
+        let guard = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(root.join(".lock"))
+            .map_err(fail)?;
+        guard.lock().map_err(fail)?;
+        clear_stopped(root);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        let name = format!("{}-{nanos}", std::process::id());
+        let held = std::fs::File::create_new(root.join(format!("{name}.lock"))).map_err(fail)?;
+        held.try_lock().map_err(|cause| cause.to_string())?;
+        let path = root.join(name);
+        std::fs::create_dir(&path).map_err(fail)?;
+        Ok(Self { path, _held: held })
+    }
+}
+
+/// Remove the folders of apps no longer running: their lock is free (or they left no lock).
+fn clear_stopped(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".lock" {
+            continue;
+        }
+        if let Some(folder) = name.strip_suffix(".lock") {
+            let Ok(lock) = std::fs::File::options().write(true).open(&path) else {
+                continue;
+            };
+            if lock.try_lock().is_ok() {
+                let _ = std::fs::remove_dir_all(root.join(folder));
+                drop(lock);
+                let _ = std::fs::remove_file(&path);
+            }
+        } else if !root.join(format!("{name}.lock")).exists() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// What an interrupted install left beside the app: the old bundle, or a new one not yet in place.
 fn tidy(install: Option<&Install>) {
-    let _ = std::fs::remove_dir_all(downloads());
     match install {
         Some(Install {
             package: Package::MacZip,
             path,
         }) => {
             let _ = std::fs::remove_dir_all(aside(path));
+            let _ = std::fs::remove_dir_all(incoming(path));
         }
         Some(Install {
             package: Package::AppImage,
@@ -650,6 +803,25 @@ fn tidy(install: Option<&Install>) {
     }
 }
 
+/// Install on quit, once the saves are done and the core has closed. The package manager asks for
+/// a password, so it runs after this app has exited rather than holding the quit.
+fn apply_on_quit(staged: &Path, install: &Install) -> Result<(), String> {
+    if install.package != Package::Deb {
+        return apply(staged, install, false);
+    }
+    Command::new("sh")
+        .arg("-c")
+        .arg("while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; exec pkexec dpkg -i \"$0\"")
+        .arg(staged)
+        .arg(std::process::id().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|cause| format!("The update could not be installed ({cause})."))
+}
+
 pub fn init(cx: &mut App) {
     let install = (!cfg!(debug_assertions)).then(installed).flatten();
     tidy(install.as_ref());
@@ -657,6 +829,12 @@ pub fn init(cx: &mut App) {
         .ok()
         .filter(|feed| !feed.is_empty())
         .or_else(|| install.is_some().then(|| FEED.to_string()));
+    let workspace = feed.as_ref().and_then(|_| {
+        downloads_root()
+            .and_then(|root| Workspace::open(&root))
+            .inspect_err(|cause| log(&format!("no download folder: {cause}")))
+            .ok()
+    });
     let updates = cx.new(|cx: &mut Context<Updates>| {
         let settings = cx.global::<SettingsHandle>().0.clone();
         cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
@@ -678,6 +856,7 @@ pub fn init(cx: &mut App) {
             release: None,
             staged: None,
             install,
+            workspace,
             feed,
             work: None,
             _timer: None,
@@ -685,9 +864,10 @@ pub fn init(cx: &mut App) {
         updates.schedule(cx);
         updates
     });
-    // An update downloaded and waiting goes in when KChess quits, if the settings say so.
+    // An update downloaded and waiting goes in when KChess quits, if the settings say so: only
+    // after every document is saved, since the installer closes the app.
     let quitting = updates.clone();
-    crate::core::on_quit(cx, move |cx| {
+    crate::core::after_quit(cx, move |cx| {
         let on_quit = cx
             .global::<SettingsHandle>()
             .0
@@ -696,13 +876,16 @@ pub fn init(cx: &mut App) {
             .frontend
             .update_install_on_quit;
         let updates = quitting.read(cx);
-        if let (true, Some(staged), Some(install)) =
-            (on_quit, updates.staged.as_ref(), updates.install.as_ref())
-            && let Err(cause) = apply(staged, install, false)
-        {
-            log(&cause);
-        }
-        None
+        let (true, Some(staged), Some(install)) =
+            (on_quit, updates.staged.clone(), updates.install.clone())
+        else {
+            return None;
+        };
+        Some(Box::new(move || {
+            if let Err(cause) = apply_on_quit(&staged, &install) {
+                log(&cause);
+            }
+        }))
     });
     cx.set_global(UpdatesHandle(updates));
 }
@@ -753,7 +936,7 @@ impl Updates {
         };
         if matches!(
             self.phase,
-            Phase::Checking | Phase::Downloading | Phase::Downloaded
+            Phase::Checking | Phase::Downloading | Phase::Downloaded | Phase::Installing
         ) {
             return;
         }
@@ -825,7 +1008,13 @@ impl Updates {
         self.error = None;
         self.progress = None;
         cx.notify();
-        let folder = downloads().join(&version);
+        let Some(workspace) = self.workspace.as_ref() else {
+            self.phase = Phase::Error;
+            self.error = Some("KChess has no private folder to download the update to.".into());
+            cx.notify();
+            return;
+        };
+        let folder = workspace.path.join(&version);
         let (sender, mut heard) = futures::channel::mpsc::unbounded();
         let done = on_runtime(fetch(
             release,
@@ -863,11 +1052,13 @@ impl Updates {
         }));
     }
 
-    /// `install`: put the downloaded update in place of this app and reopen it.
+    /// `install`: put the downloaded update in place of this app and reopen it. One install at a
+    /// time: it takes the staged update, so neither a second request nor quitting installs it
+    /// again while this one runs.
     pub fn install(&mut self, cx: &mut Context<Self>) {
-        let Some(staged) = self.staged.clone() else {
+        if self.phase == Phase::Installing || self.staged.is_none() {
             return;
-        };
+        }
         let Some(install) = self.install.clone() else {
             self.phase = Phase::Error;
             self.error = Some(
@@ -877,20 +1068,29 @@ impl Updates {
             cx.notify();
             return;
         };
+        let Some(staged) = self.staged.take() else {
+            return;
+        };
+        self.phase = Phase::Installing;
+        self.error = None;
+        cx.notify();
         // Off the UI thread: the package manager may wait for a password.
-        let done = on_runtime(async move { apply(&staged, &install, true) });
+        let done =
+            on_runtime(
+                async move { apply(&staged, &install, true).map_err(|cause| (cause, staged)) },
+            );
         self.work = Some(cx.spawn(async move |this, cx| {
-            let done = done
-                .await
-                .unwrap_or_else(|_| Err("The update could not be installed.".into()));
+            let done = done.await.unwrap_or_else(|_| {
+                Err(("The update could not be installed.".into(), PathBuf::new()))
+            });
             let _ = this.update(cx, |this, cx| match done {
-                Ok(()) => {
-                    // Installed: quitting must not install it again.
-                    this.staged = None;
-                    cx.quit();
-                }
-                Err(cause) => {
+                Ok(()) => cx.quit(),
+                Err((cause, staged)) => {
                     log(&format!("install failed: {cause}"));
+                    // Still whole where it was: it can be installed again.
+                    if staged.exists() {
+                        this.staged = Some(staged);
+                    }
                     this.phase = Phase::Error;
                     this.error = Some(cause);
                     cx.notify();
@@ -911,8 +1111,9 @@ impl Updates {
 #[cfg(test)]
 mod tests {
     use super::{
-        Install, Package, Release, Signer, asset_name, detect, digest_for, download, latest, offer,
-        parse_version, replace, signed_alike, swap_file,
+        Install, Package, Release, Signer, Workspace, asset_name, detect, digest_for, download,
+        downloads_in, incoming, latest, offer, parse_version, replace, signed_alike, swap_file,
+        tidy,
     };
     use sha2::{Digest, Sha256};
     use std::io::{Read as _, Write as _};
@@ -996,6 +1197,70 @@ mod tests {
             "new"
         );
         assert!(!folder.join(".KChess.app-old").exists());
+        assert!(!incoming(&installed).exists());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn an_interrupted_replacement_leaves_the_installed_app_whole() {
+        let folder = scratch("interrupted");
+        let installed = folder.join("KChess.app");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("kchess"), "old").unwrap();
+        // Stopped halfway through copying the new bundle beside the installed one.
+        let partial = incoming(&installed);
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(partial.join("half"), "").unwrap();
+        let install = Install {
+            package: Package::MacZip,
+            path: installed.clone(),
+        };
+        tidy(Some(&install));
+        assert!(!partial.exists());
+        assert_eq!(
+            std::fs::read_to_string(installed.join("kchess")).unwrap(),
+            "old"
+        );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn each_running_app_keeps_its_own_downloads() {
+        let folder = scratch("workspaces");
+        let root = downloads_in(&folder).unwrap();
+        let first = Workspace::open(&root).unwrap();
+        let staged = first.path.join("2026.11.0/update");
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        std::fs::write(&staged, "checked").unwrap();
+        // Another app starting (a development build, another profile) leaves it alone.
+        let second = Workspace::open(&root).unwrap();
+        assert!(staged.exists());
+        // Once the first app has stopped, the next one to start clears its folder.
+        let stopped = first.path.clone();
+        drop(first);
+        let _third = Workspace::open(&root).unwrap();
+        assert!(!stopped.exists());
+        assert!(second.path.exists());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn downloads_never_go_through_a_folder_that_is_not_private() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let folder = scratch("private");
+        let elsewhere = folder.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let cache = folder.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, cache.join("kchess-update")).unwrap();
+        assert!(downloads_in(&cache).is_err(), "a link is refused");
+        let fresh = folder.join("fresh");
+        let root = downloads_in(&fresh).unwrap();
+        for dir in [root.parent().unwrap(), root.as_path()] {
+            let mode = std::fs::metadata(dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "only its owner can use {}", dir.display());
+        }
         let _ = std::fs::remove_dir_all(&folder);
     }
 
@@ -1185,6 +1450,67 @@ mod tests {
             "/repos/ketansingrole/KChess-V2/releases/latest".into(),
             release.to_string().into_bytes(),
         )])
+    }
+
+    /// A server that accepts each connection, answers with `head` (nothing when empty), and then
+    /// sends nothing more; its base URL.
+    fn stall(head: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut open = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                }
+                let _ = stream.write_all(head.as_bytes());
+                open.push(stream);
+            }
+        });
+        base
+    }
+
+    #[test]
+    fn a_stalled_server_ends_the_download() {
+        let folder = scratch("stalled");
+        let name = asset_name("2026.11.0", Package::AppImage).unwrap();
+        let attempt = |sums: String, package: String| {
+            let release: Release = serde_json::from_value(serde_json::json!({
+                "tag_name": "v2026.11.0",
+                "assets": [
+                    { "name": name, "browser_download_url": package },
+                    { "name": "SHA256SUMS.txt", "browser_download_url": sums },
+                ],
+            }))
+            .unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, _heard) = futures::channel::mpsc::unbounded();
+            let target = folder.join("download");
+            let started = std::time::Instant::now();
+            let result = block_on(download(release, asset, target, progress));
+            assert!(started.elapsed() < std::time::Duration::from_secs(10));
+            result
+        };
+        // No answer at all to the checksums.
+        let silent = stall("");
+        assert_eq!(
+            attempt(format!("{silent}/sums"), format!("{silent}/pkg")),
+            Err("Could not download the checksums.".into())
+        );
+        // The package stops halfway through its body.
+        let sums = serve(vec![(
+            "/SHA256SUMS.txt".into(),
+            format!("{}  {name}\n", "0".repeat(64)).into_bytes(),
+        )]);
+        let halfway = stall("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nhalf");
+        assert_eq!(
+            attempt(format!("{sums}/SHA256SUMS.txt"), format!("{halfway}/pkg")),
+            Err("The download stopped.".into())
+        );
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     fn block_on<T: Send + 'static>(

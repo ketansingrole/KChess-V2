@@ -67,6 +67,7 @@ fn badge(phase: Phase) -> Option<(&'static str, Look, &'static str)> {
         Phase::Available => ("Update available", Look::Primary, "sparkles"),
         Phase::Downloading => ("Downloading", Look::Primary, "download"),
         Phase::Downloaded => ("Ready to install", Look::Primary, "rotate-cw"),
+        Phase::Installing => ("Installing", Look::Primary, "rotate-cw"),
         Phase::Error => ("Update failed", Look::Error, "circle-alert"),
         Phase::Disabled => ("Manual updates", Look::NeutralSoft, "hand"),
         Phase::Idle | Phase::Checking => return None,
@@ -90,6 +91,7 @@ fn summary(updates: &Updates, settings: &Settings) -> String {
             "Installs when you quit KChess, or restart now.".into()
         }
         Phase::Downloaded => "Restart KChess to install.".into(),
+        Phase::Installing => "Installing the update…".into(),
         Phase::Disabled => {
             "This installation cannot update itself. Download and install the latest release."
                 .into()
@@ -112,7 +114,11 @@ impl SettingsPage {
         let target = updates.version.clone().filter(|_| {
             matches!(
                 phase,
-                Phase::Available | Phase::Downloading | Phase::Downloaded | Phase::Error
+                Phase::Available
+                    | Phase::Downloading
+                    | Phase::Downloaded
+                    | Phase::Installing
+                    | Phase::Error
             )
         });
         let mut line = summary(updates, settings);
@@ -162,7 +168,10 @@ impl SettingsPage {
             _ => None,
         };
         let check = (updates.can_check()
-            && !matches!(phase, Phase::Downloaded | Phase::Downloading))
+            && !matches!(
+                phase,
+                Phase::Downloaded | Phase::Downloading | Phase::Installing
+            ))
         .then(|| {
             Button::new("update-check")
                 .when(primary.is_some(), |button| button.ghost())

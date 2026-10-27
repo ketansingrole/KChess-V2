@@ -340,14 +340,37 @@ pub fn on_quit(cx: &mut App, flush: impl Fn(&mut App) -> Option<BoxedSave> + 'st
     cx.default_global::<QuitFlushes>().0.push(Box::new(flush));
 }
 
-/// Every registered flush, then the core's close.
+/// Work for once the saves are done and the core has closed (`after_quit`).
+#[derive(Default)]
+pub struct QuitLast(Vec<Last>);
+
+type Last = Box<dyn Fn(&mut App) -> Option<Box<dyn FnOnce()>>>;
+
+impl Global for QuitLast {}
+
+/// Run the work `last` returns (decided as the app starts quitting) only after every `on_quit`
+/// save has finished and the core has closed: work that must not overlap them, such as an
+/// installer that closes the app. Saves that do not finish in time never run it.
+pub fn after_quit(cx: &mut App, last: impl Fn(&mut App) -> Option<Box<dyn FnOnce()>> + 'static) {
+    cx.default_global::<QuitLast>().0.push(Box::new(last));
+}
+
+/// Every registered flush, then the core's close, then the work for after both.
 pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
     let flushes = std::mem::take(&mut cx.default_global::<QuitFlushes>().0);
     let pending: Vec<BoxedSave> = flushes.iter().filter_map(|flush| flush(cx)).collect();
+    let last = std::mem::take(&mut cx.default_global::<QuitLast>().0);
+    let last: Vec<Box<dyn FnOnce()>> = last.iter().filter_map(|last| last(cx)).collect();
     let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
-    async move {
-        futures::future::join_all(pending).await;
-        bridge.close();
+    finish(pending, move || bridge.close(), last)
+}
+
+/// The saves, then `close`, then the work for after both: never before every save has finished.
+async fn finish(pending: Vec<BoxedSave>, close: impl FnOnce(), last: Vec<Box<dyn FnOnce()>>) {
+    futures::future::join_all(pending).await;
+    close();
+    for work in last {
+        work();
     }
 }
 
@@ -571,7 +594,33 @@ fn answer_host(request: &Value, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Reads};
+    use super::{Answer, BoxedSave, Reads, finish};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn work_after_quitting_waits_for_every_save_and_the_core() {
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let (saved, save) = futures::channel::oneshot::channel::<()>();
+        let pending: Vec<BoxedSave> = vec![Box::pin(async move {
+            let _ = save.await;
+        })];
+        let closed = Rc::clone(&order);
+        let installed = Rc::clone(&order);
+        let mut quitting = Box::pin(finish(
+            pending,
+            move || closed.borrow_mut().push("close"),
+            vec![Box::new(move || installed.borrow_mut().push("install"))],
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        // A slow save: nothing installs while it is still being written.
+        assert!(quitting.as_mut().poll(&mut cx).is_pending());
+        assert!(order.borrow().is_empty());
+        let _ = saved.send(());
+        assert_eq!(quitting.as_mut().poll(&mut cx), Poll::Ready(()));
+        assert_eq!(*order.borrow(), ["close", "install"]);
+    }
 
     #[test]
     fn only_the_newest_read_without_later_changes_is_shown() {
