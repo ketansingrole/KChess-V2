@@ -7,15 +7,19 @@ import { useMistakeStore } from '../stores/mistakes'
 import { useTournamentStore } from '../stores/tournaments'
 import { useKChessStore } from '../stores/kchess'
 
-/** The library's documents: one read of the library refreshes them all. */
-const LIBRARY: ProfileArea[] = [
-  'studies',
-  'playedGames',
-  'drills',
-  'sessions',
-  'tournaments',
-  'repertoire',
-]
+type LibraryStore = 'studies' | 'archive' | 'mistakes' | 'tournaments'
+const ALL_STORES: LibraryStore[] = ['studies', 'archive', 'mistakes', 'tournaments']
+/**
+ * The store each library area is shown by. Sessions are only read when a page opens
+ * (`initialLibrary`), so another window's session save, made after every move, needs no read.
+ */
+const LIBRARY: Partial<Record<ProfileArea, LibraryStore>> = {
+  studies: 'studies',
+  repertoire: 'studies',
+  playedGames: 'archive',
+  drills: 'mistakes',
+  tournaments: 'tournaments',
+}
 const ACCOUNTS: ProfileArea[] = ['accounts', 'lichessGames', 'usage', 'desktopSettings']
 
 /**
@@ -26,7 +30,11 @@ export default defineNuxtPlugin(() => {
   if (!window.kchess) return
   // One read at a time is shown: a reply older than the newest read is dropped.
   const reads = new RequestScope()
-  function refreshLibrary(): void {
+  // Stores still waiting for a read: a newer read replaces an older one's reply, so it shows
+  // every store either was for.
+  const pending = new Set<LibraryStore>()
+  function refreshLibrary(stores: LibraryStore[] = ALL_STORES): void {
+    for (const store of stores) pending.add(store)
     const read = reads.next()
     // A store's own writes made after this read starts make it stale for that store.
     const studies = useStudyStore()
@@ -43,16 +51,18 @@ export default defineNuxtPlugin(() => {
       .library()
       .then((snapshot) => {
         if (!read.current()) return
-        studies.replaceFromLibrary(snapshot, since.studies)
-        archive.replaceFromLibrary(snapshot, since.archive)
-        mistakes.replaceFromLibrary(snapshot, since.mistakes)
-        tournaments.replaceFromLibrary(snapshot, since.tournaments)
+        if (pending.has('studies')) studies.replaceFromLibrary(snapshot, since.studies)
+        if (pending.has('archive')) archive.replaceFromLibrary(snapshot, since.archive)
+        if (pending.has('mistakes')) mistakes.replaceFromLibrary(snapshot, since.mistakes)
+        if (pending.has('tournaments')) tournaments.replaceFromLibrary(snapshot, since.tournaments)
+        pending.clear()
       })
       .catch((cause: unknown) => console.warn('[library] refreshing the library failed:', cause))
   }
-  setLibraryRefresher(refreshLibrary)
+  setLibraryRefresher(() => refreshLibrary())
   window.kchess.onProfileChanged(({ areas }) => {
-    if (areas.some((area) => LIBRARY.includes(area))) refreshLibrary()
+    const stores = areas.flatMap((area) => LIBRARY[area] ?? [])
+    if (stores.length) refreshLibrary(stores)
     if (areas.some((area) => ACCOUNTS.includes(area))) void useKChessStore().reloadData()
   })
   // Changes made while this window was disconnected were never reported: read everything again.

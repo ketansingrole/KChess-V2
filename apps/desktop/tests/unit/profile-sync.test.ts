@@ -202,3 +202,29 @@ it('keeps a removed account gone when an account read from before the removal ar
   expect(load).toHaveBeenCalledTimes(2)
   expect(app.data!.accounts.map((account) => account.username)).toEqual(['Alice'])
 })
+
+it('does not read the library when another window saves only a session', async () => {
+  const { api } = desktop()
+  const changed = profileSync(api)
+  const library = vi.spyOn(api, 'library')
+  changed(['sessions'])
+  await flushPromises()
+  expect(library).not.toHaveBeenCalled()
+})
+
+it('shows an earlier change’s store when a newer read for another store replaces its reply', async () => {
+  const { api } = desktop()
+  const replies = [deferred<LibrarySnapshot>(), deferred<LibrarySnapshot>()]
+  const real = api.library
+  let reads = 0
+  api.library = () => replies[reads++]!.promise
+  const changed = profileSync(api)
+  changed(['playedGames'])
+  changed(['drills'])
+  const library = await real()
+  replies[1]!.resolve({ ...library, games: [game('remote')] })
+  await flushPromises()
+  replies[0]!.resolve({ ...library, games: [] })
+  await flushPromises()
+  expect(useGameArchiveStore().games.map((value) => value.id)).toEqual(['remote'])
+})
