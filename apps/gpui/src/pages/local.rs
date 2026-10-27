@@ -98,6 +98,9 @@ pub struct LocalPage {
     save: Option<Task<()>>,
     ticker: Option<Task<()>>,
     clock_ticker: Option<Task<()>>,
+    /// What the clocks showed at the last tick: a tick redraws only when a clock face changes
+    /// (each second, each tenth in the last ten).
+    ticked: Option<[String; 2]>,
     layout: PlayLayout,
     /// The side panel, measured for `.panel-actions`' narrow rule.
     panel_area: Measured,
@@ -234,6 +237,7 @@ impl LocalPage {
             save: None,
             ticker: None,
             clock_ticker: None,
+            ticked: None,
             layout: PlayLayout::default(),
             panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
@@ -496,14 +500,17 @@ impl LocalPage {
                 loop {
                     cx.background_executor().timer(TICK).await;
                     let alive = this.update(cx, |this, cx| {
-                        let flagged = this.game.expire(this.now());
+                        let now = this.now();
+                        let flagged = this.game.expire(now);
                         let fell = matches!(flagged, Ok(Flagged(true)));
                         this.flagged(flagged, cx);
                         if fell {
                             this.ticker = None;
                             this.changed(cx);
                         }
-                        cx.notify();
+                        let shown = ["white", "black"]
+                            .map(|side| clock_face(this.game.remaining(side, now)));
+                        this.redraw_if_ticked(shown, cx);
                     });
                     if alive.is_err() {
                         break;
@@ -755,11 +762,14 @@ impl LocalPage {
                 loop {
                     cx.background_executor().timer(TICK).await;
                     let alive = this.update(cx, |this, cx| {
-                        if this.clock.expire(this.now()) {
+                        let now = this.now();
+                        if this.clock.expire(now) {
                             crate::sound::play(crate::sound::Sound::LowTime, cx);
                             this.clock_flagged(cx);
                         }
-                        cx.notify();
+                        let shown = [Side::Top, Side::Bottom]
+                            .map(|side| clock_face(this.clock.left(side, now)));
+                        this.redraw_if_ticked(shown, cx);
                     });
                     if alive.is_err() {
                         break;
@@ -770,6 +780,14 @@ impl LocalPage {
             self.clock_ticker = None;
         }
         cx.notify();
+    }
+
+    /// A tick redraws the page only when a clock face shows something else.
+    fn redraw_if_ticked(&mut self, shown: [String; 2], cx: &mut Context<Self>) {
+        if self.ticked.as_ref() != Some(&shown) {
+            self.ticked = Some(shown);
+            cx.notify();
+        }
     }
 
     /// A flag fell: the session is saved to history as it ended.
@@ -1863,4 +1881,12 @@ impl Render for NewGame {
                     ),
             )
     }
+}
+
+/// A clock face's text (`formatClock`), as the page shows it.
+fn clock_face(millis: f64) -> String {
+    rules("formatClock", &[json!(millis)])
+        .ok()
+        .and_then(|text| text.as_str().map(str::to_string))
+        .unwrap_or_default()
 }

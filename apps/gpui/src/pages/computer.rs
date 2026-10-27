@@ -75,6 +75,8 @@ pub struct ComputerPage {
     search: Option<Task<()>>,
     save: Option<Task<()>>,
     ticker: Option<Task<()>>,
+    /// What the clocks showed at the last tick: a tick redraws only when a clock face changes.
+    ticked: Option<[Option<SharedString>; 2]>,
     error: Option<SharedString>,
     /// Options waiting for the player to confirm throwing away the game in progress.
     pending: Option<Chosen>,
@@ -189,6 +191,7 @@ impl ComputerPage {
             search: None,
             save: None,
             ticker: None,
+            ticked: None,
             error: None,
             pending: None,
             history: None,
@@ -650,8 +653,13 @@ impl ComputerPage {
                     let alive = this.update(cx, |this, cx| {
                         let host = this.host();
                         let effects = this.game.expire(&host);
+                        let acted = effects.as_ref().is_ok_and(|effects| !effects.is_empty());
                         this.perform(effects, cx);
-                        cx.notify();
+                        let shown = ["white", "black"].map(|color| this.clock_text(color));
+                        if acted || this.ticked.as_ref() != Some(&shown) {
+                            this.ticked = Some(shown);
+                            cx.notify();
+                        }
                         if this.game.over(&this.host()) {
                             this.ticker = None;
                             this.changed(cx);

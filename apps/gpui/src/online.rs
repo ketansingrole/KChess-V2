@@ -108,6 +108,8 @@ pub struct OnlineState {
     /// Turn flags seen at the last check, to say only when it becomes your turn.
     turns: std::collections::HashMap<String, bool>,
     _ticker: Option<Task<()>>,
+    /// What the game showed by the clock at the last tick (`tick`).
+    ticked: Option<([String; 2], [Option<i64>; 2])>,
     _presence: Option<Task<()>>,
     _ongoing_poll: Option<Task<()>>,
     /// Which `resumeOnline` answer is current: a later one (after a reconnect) replaces it.
@@ -571,7 +573,22 @@ impl OnlineState {
                 }
             }
         }
-        cx.notify();
+        // Redraw only when something the game shows by the clock changes: a clock face (each
+        // second, each tenth in the last ten) or a countdown to abort or claim.
+        let now = now();
+        let seconds_until = |key: &str| {
+            self.model[key]
+                .as_f64()
+                .map(|at| ((at - now) / 1000.).ceil().max(0.) as i64)
+        };
+        let shown = (
+            [self.clock_text("white"), self.clock_text("black")],
+            [seconds_until("firstMoveBy"), seconds_until("claimAt")],
+        );
+        if self.ticked.as_ref() != Some(&shown) {
+            self.ticked = Some(shown);
+            cx.notify();
+        }
     }
 
     /// Both players' connections, as Lichess sees them, and the round trip there.
@@ -937,6 +954,7 @@ pub fn init(cx: &mut App) {
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
             _ticker: None,
+            ticked: None,
             _presence: None,
             _ongoing_poll: None,
             resumes: 0,
