@@ -28,12 +28,15 @@ export default defineNuxtPlugin(() => {
   const reads = new RequestScope()
   function refreshLibrary(): void {
     const read = reads.next()
+    // Played games written here after this read starts make it stale for them.
+    const archive = useGameArchiveStore()
+    const since = archive.revision()
     void window.kchess
       .library()
       .then((snapshot) => {
         if (!read.current()) return
         useStudyStore().replaceFromLibrary(snapshot)
-        useGameArchiveStore().replaceFromLibrary(snapshot)
+        archive.replaceFromLibrary(snapshot, since)
         useMistakeStore().replaceFromLibrary(snapshot)
         useTournamentStore().replaceFromLibrary(snapshot)
       })

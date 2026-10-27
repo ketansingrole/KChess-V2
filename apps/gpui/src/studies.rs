@@ -24,7 +24,9 @@ enum Write {
         command: Value,
         reply: Option<oneshot::Sender<Result<Value, String>>>,
     },
-    Flushed(oneshot::Sender<()>),
+    /// Done once every command before it was answered: with the chapters whose last content save
+    /// failed, if any did.
+    Flushed(oneshot::Sender<crate::core::Saved>),
 }
 
 /// The moves each chapter held when this window last opened or saved it, by study and chapter
@@ -122,11 +124,17 @@ fn write_in_order(
     let (answers, mut answered) = mpsc::unbounded::<Result<Value, String>>();
     cx.background_executor()
         .spawn(async move {
+            // Chapters whose last content save failed, until one succeeds: their moves are not
+            // in the profile (a chapter another window changed keeps its moves as a copy).
+            let mut unsaved: HashMap<(String, String), String> = HashMap::new();
             while let Some(write) = queue.next().await {
                 let (command, reply) = match write {
                     Write::Command { command, reply } => (command, reply),
                     Write::Flushed(done) => {
-                        let _ = done.send(());
+                        let _ = done.send(match unsaved.values().next() {
+                            Some(cause) => Err(format!("A study could not be saved: {cause}")),
+                            None => Ok(()),
+                        });
                         continue;
                     }
                 };
@@ -143,6 +151,24 @@ fn write_in_order(
                     );
                     cause.message
                 });
+                if let Some(key) = saved_chapter(&command) {
+                    match &result {
+                        Err(cause) if !is_stale(cause) => {
+                            unsaved.insert(key, cause.clone());
+                        }
+                        _ => {
+                            unsaved.remove(&key);
+                        }
+                    }
+                }
+                // A removed study or chapter has nothing left to save.
+                if result.is_ok() && (op == "remove" || op == "removeChapter") {
+                    let study = command["id"].as_str().unwrap_or_default();
+                    let chapter = command["chapterId"].as_str();
+                    unsaved.retain(|(id, at), _| {
+                        id != study || chapter.is_some_and(|chapter| chapter != at)
+                    });
+                }
                 if let Ok(result) = &result
                     && let Some(key) = written_chapter(&command, result)
                     && let Some(pgn) = command["pgn"].as_str()
@@ -304,12 +330,13 @@ impl StudyLibrary {
         }
     }
 
-    /// Wait for every command sent so far.
+    /// Wait for every command sent so far: with why a chapter's moves are not saved, if any.
     pub fn flushed(&self) -> BoxedSave {
         let (done, wait) = oneshot::channel();
         let _ = self.writes.unbounded_send(Write::Flushed(done));
         Box::pin(async move {
-            let _ = wait.await;
+            wait.await
+                .unwrap_or_else(|_| Err("The study library is closed.".to_string()))
         })
     }
 
@@ -340,7 +367,7 @@ impl StudyLibrary {
         let read = self.reads.start();
         let sent = self.flushed();
         cx.spawn(async move |this, cx| {
-            sent.await;
+            let _ = sent.await;
             let Ok(library) = this.update(cx, |_, cx| {
                 cx.global::<AppCore>().call("library", Vec::new())
             }) else {

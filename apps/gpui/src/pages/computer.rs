@@ -213,11 +213,7 @@ impl ComputerPage {
             });
             let pending: Vec<crate::core::BoxedSave> =
                 [session, history].into_iter().flatten().collect();
-            Some(Box::pin(async move {
-                for save in pending {
-                    save.await;
-                }
-            }))
+            Some(crate::core::all_saved(pending))
         });
         page
     }
@@ -680,7 +676,7 @@ impl ComputerPage {
             cx.background_executor().timer(SAVE_DELAY).await;
             let save = this.update(cx, |this, cx| this.save_now(cx)).ok().flatten();
             if let Some(save) = save {
-                save.await;
+                let _ = save.await;
             }
         }));
     }
@@ -696,13 +692,15 @@ impl ComputerPage {
         let page = cx.entity().downgrade();
         let mut cx = cx.to_async();
         Some(Box::pin(async move {
-            let result = save.await;
+            let result = save
+                .await
+                .map(|_| ())
+                .map_err(|cause| format!("Automatic saving: {}", cause.message));
             let _ = page.update(&mut cx, |page, cx| {
-                page.error = result
-                    .err()
-                    .map(|cause| format!("Automatic saving: {}", cause.message).into());
+                page.error = result.clone().err().map(Into::into);
                 cx.notify();
             });
+            result
         }))
     }
 

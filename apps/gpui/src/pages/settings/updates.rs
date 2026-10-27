@@ -31,14 +31,8 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
             .cancel_text("Cancel")
             .show_cancel(true)
             .on_ok(move |_, _, cx| {
-                // Unsaved work reaches the profile first, as on any quit.
-                let saved = crate::settings::flush(cx);
-                let handle = handle.clone();
-                cx.spawn(async move |cx| {
-                    saved.await;
-                    handle.update(cx, |updates, cx| updates.install(cx));
-                })
-                .detach();
+                // Unsaved work reaches the profile first, as on any quit (`Updates::install`).
+                handle.update(cx, |updates, cx| updates.install(cx));
                 true
             })
     });

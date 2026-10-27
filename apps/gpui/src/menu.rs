@@ -96,7 +96,10 @@ pub fn init(cx: &mut App) {
             }
         })
     });
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    // Everything is saved, with the window still open to say what could not be, before quitting.
+    cx.on_action(|_: &Quit, cx| {
+        crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+    });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());

@@ -66,3 +66,35 @@ it('keeps a membership and its event stream with the account that joined', async
   expect(stayConnected).not.toHaveBeenCalledWith('Bob')
   challenges.stop()
 })
+
+it('opens the challenge stream again after the core restarts', async () => {
+  const stayConnected = vi.fn(async () => {})
+  const challengesRead = vi.fn(async () => [])
+  let reconnected = () => {}
+  desktop({
+    stayConnected,
+    onChallenges: () => vi.fn(),
+    onLobbyState: () => vi.fn(),
+    onOngoingChanged: () => vi.fn(),
+    onCoreReconnected: (callback: () => void) => {
+      reconnected = callback
+      return vi.fn()
+    },
+    challenges: challengesRead,
+    ongoingGames: async () => [],
+  })
+  const app = useKChessStore()
+  await app.init()
+  app.setOnlineAccount('Alice')
+  app.settings!.receiveChallenges = true
+  const challenges = useChallengeStore()
+  challenges.start()
+  expect(stayConnected).toHaveBeenLastCalledWith('Alice')
+  stayConnected.mockClear()
+  challengesRead.mockClear()
+  // The idle window's account is unchanged; only the core restarted.
+  reconnected()
+  expect(stayConnected).toHaveBeenCalledWith('Alice')
+  expect(challengesRead).toHaveBeenCalledOnce()
+  challenges.stop()
+})

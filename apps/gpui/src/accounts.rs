@@ -104,6 +104,12 @@ impl Accounts {
         )
     }
 
+    /// Show the accounts a change made here answered with: a read started before it is read again.
+    fn adopt(&mut self, data: Value) {
+        self.data = data;
+        self.reads.edited();
+    }
+
     /// Read the accounts and their usage again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let read = self.reads.start();
@@ -115,9 +121,12 @@ impl Accounts {
         cx.spawn(async move |this, cx| {
             let (data, usage) = (data.await, usage.await);
             let _ = this.update(cx, |this, cx| {
-                // Only the newest read shows: an older answer may predate a sign-in or sync.
-                if this.reads.answer(read) != Answer::Show {
-                    return;
+                // Only the newest read shows: an older answer may predate a sign-in or sync, so one
+                // that started before this window's own change reads again.
+                match this.reads.answer(read) {
+                    Answer::Show => {}
+                    Answer::Again => return this.refresh(cx),
+                    Answer::Superseded => return,
                 }
                 if let Ok(data) = data {
                     this.data = data;
@@ -159,7 +168,7 @@ impl Accounts {
                     Err(cause) => return say(window, cx, cause.message),
                 };
                 if result["data"].is_object() {
-                    this.data = result["data"].clone();
+                    this.adopt(result["data"].clone());
                 }
                 let Some(username) = result["username"].as_str().map(str::to_string) else {
                     return;
@@ -203,7 +212,7 @@ impl Accounts {
                 }
                 match result {
                     Ok(data) => {
-                        this.data = data;
+                        this.adopt(data);
                         let downloaded = this.total_downloaded() - before;
                         let message = if downloaded > 0. {
                             format!(
@@ -241,7 +250,7 @@ impl Accounts {
                 this.busy = false;
                 match result {
                     Ok(data) => {
-                        this.data = data;
+                        this.adopt(data);
                         let username = this
                             .all()
                             .iter()
@@ -273,7 +282,7 @@ impl Accounts {
             let _ = this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(data) => {
-                        this.data = data;
+                        this.adopt(data);
                         this.refresh(cx);
                         say(
                             window,
@@ -303,7 +312,7 @@ impl Accounts {
                 this.busy = false;
                 match result {
                     Ok(data) => {
-                        this.data = data;
+                        this.adopt(data);
                         this.refresh(cx);
                         say(
                             window,
@@ -387,7 +396,7 @@ impl Accounts {
                         return;
                     }
                 };
-                this.data = data;
+                this.adopt(data);
                 let first = this.connected().into_iter().next().unwrap_or_default();
                 crate::prefs::set(cx, ONLINE_ACCOUNT, json!(first));
                 if let Some(note) = note {
@@ -411,5 +420,28 @@ impl Accounts {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Accounts;
+    use crate::core::{Answer, Reads};
+    use serde_json::json;
+
+    /// A refresh started before a sign-in (or sync, or removal) here answers with the accounts
+    /// as they were: it reads again rather than replacing the newer ones.
+    #[test]
+    fn a_read_from_before_a_local_change_is_read_again() {
+        let mut accounts = Accounts {
+            data: json!({ "accounts": [] }),
+            usage: json!({}),
+            busy: false,
+            reads: Reads::default(),
+        };
+        let read = accounts.reads.start();
+        accounts.adopt(json!({ "accounts": [{ "username": "new", "connected": true }] }));
+        assert_eq!(accounts.reads.answer(read), Answer::Again);
+        assert_eq!(accounts.connected(), ["new"]);
     }
 }

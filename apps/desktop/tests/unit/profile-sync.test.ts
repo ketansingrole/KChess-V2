@@ -111,6 +111,28 @@ it('keeps a deleted game hidden when a library read from before the deletion arr
   expect(archive.games.map((value) => value.id)).toEqual([])
 })
 
+it('keeps a deleted game hidden when a library read from before the deletion arrives after it', async () => {
+  const { api } = desktop()
+  await api.saveArchivedGame(game('deleted'))
+  const archive = useGameArchiveStore()
+  archive.replaceFromLibrary(await api.library())
+  const stale = await api.library()
+  const real = api.library
+  const gate = deferred<LibrarySnapshot>()
+  const library = vi
+    .spyOn(api, 'library')
+    .mockImplementationOnce(() => gate.promise)
+    .mockImplementation(() => real())
+  const changed = profileSync(api)
+  changed(['playedGames'])
+  await archive.remove('deleted')
+  expect(archive.games).toEqual([])
+  gate.resolve(stale)
+  await flushPromises()
+  expect(library).toHaveBeenCalledTimes(2)
+  expect(archive.games).toEqual([])
+})
+
 it('reads the profile again after reconnecting to the core', async () => {
   const { api } = desktop()
   let reconnected = () => {}

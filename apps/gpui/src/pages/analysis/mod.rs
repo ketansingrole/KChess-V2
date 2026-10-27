@@ -443,10 +443,12 @@ impl AnalysisPage {
                 let study = page.persist_study(cx);
                 let session = page.save_now(cx);
                 Box::pin(async move {
-                    if let Some(study) = study {
-                        let _ = study.await;
-                    }
-                    session.await;
+                    let study = match study {
+                        Some(study) => study.await.map(|_| ()),
+                        None => Ok(()),
+                    };
+                    // The board's moves are in the session even when the study refused them.
+                    session.await.and(study)
                 }) as BoxedSave
             }))
         });
@@ -876,7 +878,7 @@ impl AnalysisPage {
             cx.background_executor().timer(SAVE_DELAY).await;
             let save = this.update(cx, |this, cx| this.save_now(cx)).ok();
             if let Some(save) = save {
-                save.await;
+                let _ = save.await;
             }
         }));
     }
@@ -895,13 +897,14 @@ impl AnalysisPage {
             .global::<AppCore>()
             .call("saveSession", vec![json!("analysis"), session]);
         Box::pin(async move {
-            if let Err(cause) = save.await {
+            save.await.map(|_| ()).map_err(|cause| {
                 crate::log::write(
                     Level::Warn,
                     "library",
                     &format!("saving session failed: analysis {}", cause.message),
                 );
-            }
+                format!("The analysis board could not be saved: {}", cause.message)
+            })
         })
     }
 

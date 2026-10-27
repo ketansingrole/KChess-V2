@@ -27,15 +27,20 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
   let deferred = false
   let changes: Promise<void> = Promise.resolve()
   let mutations = 0
+  /** Counts this window's writes as they start and finish: a library read from before one is stale. */
+  let revision = 0
   function mutate<T>(work: () => Promise<T>): Promise<T> {
     mutations++
+    revision++
     const result = changes.then(work)
     changes = result.then(
       () => {
         mutations--
+        revision++
       },
       () => {
         mutations--
+        revision++
       },
     )
     return result
@@ -151,11 +156,16 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
     unregister()
     window.removeEventListener('beforeunload', flushNow)
   })
-  /** Another KChess window saved or removed a game: show the library's, once this window's are saved. */
-  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
-    // A snapshot read before a pending deletion would show the deleted game again.
-    if (busy()) {
+  /**
+   * Another KChess window saved or removed a game: show the library's, once this window's are
+   * saved. `since` is `revision()` when the snapshot was read.
+   */
+  function replaceFromLibrary(snapshot: LibrarySnapshot, since = revision): void {
+    // A snapshot read before a pending deletion, or one since finished, would show the deleted
+    // game again: read the library again once this window's work is done.
+    if (busy() || since !== revision) {
       deferred = true
+      settled()
       return
     }
     deferred = false
@@ -163,7 +173,7 @@ export const useGameArchiveStore = defineStore('gameArchive', () => {
     saved.clear()
     for (const game of snapshot.games) saved.set(game.id, game)
   }
-  return { games, error, save, remove, flush, replaceFromLibrary }
+  return { games, error, save, remove, flush, replaceFromLibrary, revision: () => revision }
 })
 
 /** One stable identity per session: reloads and takebacks update the same history entry. */

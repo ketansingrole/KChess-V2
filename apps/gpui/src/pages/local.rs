@@ -258,11 +258,7 @@ impl LocalPage {
         crate::core::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
             let pending = page.update(cx, |page, cx| page.flush(cx));
-            Some(Box::pin(async move {
-                for save in pending {
-                    save.await;
-                }
-            }))
+            Some(crate::core::all_saved(pending))
         });
         page
     }
@@ -426,7 +422,7 @@ impl LocalPage {
             cx.background_executor().timer(SAVE_DELAY).await;
             let save = this.update(cx, |this, cx| this.save_now(cx)).ok();
             if let Some(save) = save {
-                save.await;
+                let _ = save.await;
             }
         }));
         let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
@@ -442,13 +438,14 @@ impl LocalPage {
             .global::<AppCore>()
             .call("saveSession", vec![json!("local"), snapshot]);
         Box::pin(async move {
-            if let Err(cause) = save.await {
+            save.await.map(|_| ()).map_err(|cause| {
                 crate::log::write(
                     Level::Warn,
                     "library",
                     &format!("saving session failed: local {}", cause.message),
                 );
-            }
+                format!("The game could not be saved: {}", cause.message)
+            })
         })
     }
 

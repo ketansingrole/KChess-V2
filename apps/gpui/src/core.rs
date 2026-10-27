@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use futures::StreamExt as _;
 use futures::channel::mpsc;
-use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global};
+use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, PromptLevel};
 use kchess_core::{Config, Core, CoreError, Host, Level};
 use serde_json::{Value, json};
 
@@ -330,7 +330,10 @@ pub struct QuitFlushes(Vec<Flush>);
 
 type Flush = Box<dyn Fn(&mut App) -> Option<BoxedSave>>;
 
-pub type BoxedSave = std::pin::Pin<Box<dyn Future<Output = ()>>>;
+/// Whether a save reached the profile, or why it did not.
+pub type Saved = Result<(), String>;
+
+pub type BoxedSave = std::pin::Pin<Box<dyn Future<Output = Saved>>>;
 
 impl Global for QuitFlushes {}
 
@@ -338,6 +341,22 @@ impl Global for QuitFlushes {}
 /// The Electron app does the same through its prepare-quit handshake.
 pub fn on_quit(cx: &mut App, flush: impl Fn(&mut App) -> Option<BoxedSave> + 'static) {
     cx.default_global::<QuitFlushes>().0.push(Box::new(flush));
+}
+
+/// Wait for every save, and report each that failed.
+pub fn all_saved(saves: Vec<BoxedSave>) -> BoxedSave {
+    Box::pin(async move {
+        let failures: Vec<String> = futures::future::join_all(saves)
+            .await
+            .into_iter()
+            .filter_map(Result::err)
+            .collect();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    })
 }
 
 /// Work for once the saves are done and the core has closed (`after_quit`).
@@ -350,25 +369,137 @@ impl Global for QuitLast {}
 
 /// Run the work `last` returns (decided as the app starts quitting) only after every `on_quit`
 /// save has finished and the core has closed: work that must not overlap them, such as an
-/// installer that closes the app. Saves that do not finish in time never run it.
+/// installer that closes the app. Saves that fail or do not finish in time never run it, unless
+/// the person chose to go on without them (`prepare_quit`).
 pub fn after_quit(cx: &mut App, last: impl Fn(&mut App) -> Option<Box<dyn FnOnce()>> + 'static) {
     cx.default_global::<QuitLast>().0.push(Box::new(last));
 }
 
+/// How far preparing to quit has got (`QuitPreparation` in the Electron app).
+#[derive(Default)]
+struct Quitting {
+    /// Saving with the window open: a second request waits for this one.
+    preparing: bool,
+    /// The person chose to quit without the saves that failed.
+    discarded: bool,
+}
+
+impl Global for Quitting {}
+
+/// Every registered save, started now.
+fn flush_all(cx: &mut App) -> Vec<BoxedSave> {
+    let flushes = std::mem::take(&mut cx.default_global::<QuitFlushes>().0);
+    let pending = flushes.iter().filter_map(|flush| flush(cx)).collect();
+    // Surfaces opened while saving registered theirs meanwhile: keep both.
+    let mut kept = flushes;
+    kept.append(&mut cx.default_global::<QuitFlushes>().0);
+    cx.default_global::<QuitFlushes>().0 = kept;
+    pending
+}
+
+/// Save everything while the window is still open, then run `then` (quit, or install and
+/// restart). A save that fails asks first: retry, go on without it (`without`, the button's
+/// label), or cancel and keep working (`cancelled`).
+pub fn prepare_quit(
+    cx: &mut App,
+    without: &'static str,
+    then: impl FnOnce(&mut App) + 'static,
+    cancelled: impl FnOnce(&mut App) + 'static,
+) {
+    if std::mem::replace(&mut cx.default_global::<Quitting>().preparing, true) {
+        return cx.defer(cancelled);
+    }
+    cx.spawn(async move |cx| {
+        loop {
+            let saved = all_saved(cx.update(flush_all)).await;
+            let Err(cause) = saved else {
+                cx.update(|cx| {
+                    cx.default_global::<Quitting>().preparing = false;
+                    then(cx);
+                });
+                return;
+            };
+            crate::log::write(
+                Level::Warn,
+                "app",
+                &format!("Saving before quitting failed: {cause}"),
+            );
+            let answer = cx.update(|cx| {
+                let window = cx
+                    .active_window()
+                    .or_else(|| cx.windows().first().copied())?;
+                window
+                    .update(cx, |_, window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Some changes could not be saved.",
+                            Some(&cause),
+                            &["Retry", without, "Cancel"],
+                            cx,
+                        )
+                    })
+                    .ok()
+            });
+            // No window to ask in: quit, but nothing installs over the unsaved work.
+            let asked = answer.is_some();
+            let choice = match answer {
+                Some(answer) => answer.await.unwrap_or(2),
+                None => 1,
+            };
+            match choice {
+                0 => continue,
+                1 => {
+                    cx.update(|cx| {
+                        let quitting = cx.default_global::<Quitting>();
+                        quitting.preparing = false;
+                        quitting.discarded = asked;
+                        then(cx);
+                    });
+                    return;
+                }
+                _ => {
+                    cx.update(|cx| {
+                        cx.default_global::<Quitting>().preparing = false;
+                        cancelled(cx);
+                    });
+                    return;
+                }
+            }
+        }
+    })
+    .detach();
+}
+
 /// Every registered flush, then the core's close, then the work for after both.
 pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
-    let flushes = std::mem::take(&mut cx.default_global::<QuitFlushes>().0);
-    let pending: Vec<BoxedSave> = flushes.iter().filter_map(|flush| flush(cx)).collect();
+    let pending = flush_all(cx);
+    let discarded = cx.default_global::<Quitting>().discarded;
     let last = std::mem::take(&mut cx.default_global::<QuitLast>().0);
     let last: Vec<Box<dyn FnOnce()>> = last.iter().filter_map(|last| last(cx)).collect();
     let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
-    finish(pending, move || bridge.close(), last)
+    finish(pending, move || bridge.close(), last, discarded)
 }
 
-/// The saves, then `close`, then the work for after both: never before every save has finished.
-async fn finish(pending: Vec<BoxedSave>, close: impl FnOnce(), last: Vec<Box<dyn FnOnce()>>) {
-    futures::future::join_all(pending).await;
+/// The saves, then `close`, then the work for after both: never before every save has finished,
+/// and only when every save succeeded or the person chose to go on without them (`discarded`).
+async fn finish(
+    pending: Vec<BoxedSave>,
+    close: impl FnOnce(),
+    last: Vec<Box<dyn FnOnce()>>,
+    discarded: bool,
+) {
+    let saved = all_saved(pending).await;
     close();
+    if let Err(cause) = saved
+        && !discarded
+    {
+        crate::log::write(
+            Level::Warn,
+            "app",
+            &format!("Unsaved work kept the update from installing: {cause}"),
+        );
+        return;
+    }
     for work in last {
         work();
     }
@@ -594,7 +725,7 @@ fn answer_host(request: &Value, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, BoxedSave, Reads, finish};
+    use super::{Answer, BoxedSave, Reads, all_saved, finish};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
@@ -605,6 +736,7 @@ mod tests {
         let (saved, save) = futures::channel::oneshot::channel::<()>();
         let pending: Vec<BoxedSave> = vec![Box::pin(async move {
             let _ = save.await;
+            Ok(())
         })];
         let closed = Rc::clone(&order);
         let installed = Rc::clone(&order);
@@ -612,6 +744,7 @@ mod tests {
             pending,
             move || closed.borrow_mut().push("close"),
             vec![Box::new(move || installed.borrow_mut().push("install"))],
+            false,
         ));
         let mut cx = Context::from_waker(Waker::noop());
         // A slow save: nothing installs while it is still being written.
@@ -620,6 +753,45 @@ mod tests {
         let _ = saved.send(());
         assert_eq!(quitting.as_mut().poll(&mut cx), Poll::Ready(()));
         assert_eq!(*order.borrow(), ["close", "install"]);
+    }
+
+    /// A study and a session that both fail to save: the core still closes, but no installer
+    /// runs over the unsaved work unless the person chose to go on without it.
+    #[test]
+    fn a_failed_save_keeps_the_update_from_installing() {
+        for (discarded, expected) in [(false, vec!["close"]), (true, vec!["close", "install"])] {
+            let order = Rc::new(RefCell::new(Vec::new()));
+            let pending: Vec<BoxedSave> = vec![
+                Box::pin(async { Err("study: disk full".to_string()) }),
+                Box::pin(async { Err("session: disk full".to_string()) }),
+            ];
+            let closed = Rc::clone(&order);
+            let installed = Rc::clone(&order);
+            let mut quitting = Box::pin(finish(
+                pending,
+                move || closed.borrow_mut().push("close"),
+                vec![Box::new(move || installed.borrow_mut().push("install"))],
+                discarded,
+            ));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(quitting.as_mut().poll(&mut cx), Poll::Ready(()));
+            assert_eq!(*order.borrow(), expected);
+        }
+    }
+
+    #[test]
+    fn every_failure_is_reported() {
+        let saves: Vec<BoxedSave> = vec![
+            Box::pin(async { Ok(()) }),
+            Box::pin(async { Err("study".to_string()) }),
+            Box::pin(async { Err("session".to_string()) }),
+        ];
+        let mut all = all_saved(saves);
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(
+            all.as_mut().poll(&mut cx),
+            Poll::Ready(Err("study\nsession".to_string()))
+        );
     }
 
     #[test]

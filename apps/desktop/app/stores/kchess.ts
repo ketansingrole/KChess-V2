@@ -788,9 +788,12 @@ export const useKChessStore = defineStore('kchess', () => {
   const reloads = new RequestScope()
   async function reloadData(): Promise<void> {
     const request = reloads.next()
+    const since = persistence.revision()
     try {
       const next = await window.kchess.loadData()
       if (!request.current()) return
+      // Read before this window's own settings save finished: it may predate that save.
+      if (persistence.revision() !== since) return reloadData()
       persistence.adoptStored(next.settings)
       data.value = next
     } catch (cause) {
@@ -811,7 +814,8 @@ export const useKChessStore = defineStore('kchess', () => {
           onlineAccount.value = resumed.account
           onlineId.value = resumed.id
           if (onlinePhase.value !== 'playing') onlinePhase.value = 'disconnected'
-        } else {
+        } else if (onlinePhase.value !== 'finished') {
+          // A finished game stays on the board.
           onlinePhase.value = 'idle'
         }
       })
@@ -867,10 +871,11 @@ export const useKChessStore = defineStore('kchess', () => {
         toast.add({ title, description: body, icon: 'i-lucide-bell', duration: 8000 }),
       )
       void resumeOnlineGame()
-      // A restarted core attached no game: ask Lichess again, as on startup.
+      // A restarted core attached no game and holds back the engine until it knows none is
+      // live: ask Lichess again, as on startup, whatever this window was showing.
       offReconnected = window.kchess.onCoreReconnected(() => {
-        if (!['playing', 'seeking', 'disconnected'].includes(onlinePhase.value)) return
-        onlineGame.checkingOnline()
+        if (['playing', 'seeking', 'disconnected'].includes(onlinePhase.value))
+          onlineGame.checkingOnline()
         void resumeOnlineGame()
       })
       ticker.resume()

@@ -27,6 +27,12 @@ pub struct AppSettings {
     pub theme_problems: Vec<String>,
     /// Edits not yet stored: the core's copy is not reloaded over them.
     dirty: bool,
+    /// Saves sent and not yet answered, and the newest of them: the next save is based on it,
+    /// so a change undone while an earlier save is still writing is written too.
+    pending: usize,
+    queued: Settings,
+    /// The last save failed: its edits stay shown and are sent again with the next save.
+    failed: bool,
     save_soon: Option<Task<()>>,
     writes: mpsc::UnboundedSender<Write>,
     reads: Reads,
@@ -35,7 +41,8 @@ pub struct AppSettings {
 enum Write {
     /// The settings shown, and those they were edited from: only what changed is written.
     Save(Box<(Settings, Settings)>),
-    Flushed(oneshot::Sender<()>),
+    /// Done once every save before it was answered: with why the last of them failed, if it did.
+    Flushed(oneshot::Sender<crate::core::Saved>),
 }
 
 /// Sent when the settings or themes change.
@@ -79,11 +86,14 @@ pub fn init(cx: &mut App) {
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| AppSettings {
         stored: settings.clone(),
+        queued: settings.clone(),
         settings,
         custom_themes: report.themes,
         themes_dir: report.dir,
         theme_problems: report.problems,
         dirty: false,
+        pending: 0,
+        failed: false,
         save_soon: None,
         writes,
         reads: Reads::default(),
@@ -113,7 +123,7 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
     let (read, sent) = entity.update(cx, |this, _| (this.reads.start(), this.sent()));
     let entity = entity.downgrade();
     cx.spawn(async move |cx| {
-        sent.await;
+        let _ = sent.await;
         let (settings, themes) = cx.update(|cx| {
             let core = cx.global::<AppCore>().clone();
             (
@@ -176,7 +186,7 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
 
 /// Write saves one at a time, in the order they were made, off the UI thread so they also finish
 /// while the app quits. A save that the core stored as sent leaves nothing unsaved; one that
-/// failed shows what is stored again.
+/// failed keeps its edits shown, to be sent again.
 fn write_in_order(
     entity: WeakEntity<AppSettings>,
     mut queue: mpsc::UnboundedReceiver<Write>,
@@ -186,20 +196,32 @@ fn write_in_order(
     let (stored, mut results) = mpsc::unbounded::<(Settings, Result<Value, CoreError>)>();
     cx.background_executor()
         .spawn(async move {
+            // The last save, if it failed: with the settings it was based on, and why.
+            let mut failed: Option<(Settings, Settings, String)> = None;
             while let Some(write) = queue.next().await {
                 match write {
                     Write::Save(save) => {
                         let (sent, base) = *save;
+                        let base = rebased(base, failed.as_ref());
                         let saved = core
                             .call(
                                 "saveDesktopSettings",
                                 vec![serde_json::json!(sent), serde_json::json!(base)],
                             )
                             .await;
+                        failed = saved
+                            .as_ref()
+                            .err()
+                            .map(|cause| (sent.clone(), base, cause.message.clone()));
                         let _ = stored.unbounded_send((sent, saved));
                     }
                     Write::Flushed(done) => {
-                        let _ = done.send(());
+                        let _ = done.send(match &failed {
+                            Some((_, _, cause)) => {
+                                Err(format!("Settings could not be saved: {cause}"))
+                            }
+                            None => Ok(()),
+                        });
                     }
                 }
             }
@@ -208,11 +230,13 @@ fn write_in_order(
     cx.spawn(async move |cx| {
         while let Some((sent, saved)) = results.next().await {
             let _ = entity.update(cx, |this, cx| {
+                this.pending = this.pending.saturating_sub(1);
                 let unchanged = this.settings == sent;
+                this.failed = saved.is_err();
                 match saved.map(serde_json::from_value::<Settings>) {
                     Ok(Ok(stored)) => {
                         if unchanged {
-                            this.dirty = this.save_soon.is_some();
+                            this.dirty = this.save_soon.is_some() || this.pending > 0;
                             this.settings = stored.clone();
                         } else {
                             // Edited meanwhile: only those edits stay; every other setting takes
@@ -233,10 +257,9 @@ fn write_in_order(
                             "settings",
                             &format!("Saving settings failed: {}", cause.message),
                         );
-                        if unchanged {
-                            this.dirty = false;
-                            reload(&cx.entity(), cx);
-                        }
+                        // The edits stay, unsaved: what another window stored shows beside them.
+                        this.dirty = true;
+                        reload(&cx.entity(), cx);
                     }
                 }
                 cx.emit(SettingsChanged);
@@ -264,19 +287,27 @@ impl AppSettings {
         }));
     }
 
-    /// Send the edits to be saved now.
+    /// Send the edits to be saved now: what changed since the newest save still writing, or
+    /// else since what is stored.
     fn save_now(&mut self) {
         self.save_soon = None;
         self.reads.edited();
-        let _ = self.writes.unbounded_send(Write::Save(Box::new((
-            self.settings.clone(),
-            self.stored.clone(),
-        ))));
+        let base = if self.pending > 0 {
+            self.queued.clone()
+        } else {
+            self.stored.clone()
+        };
+        self.pending += 1;
+        self.queued = self.settings.clone();
+        let _ = self
+            .writes
+            .unbounded_send(Write::Save(Box::new((self.settings.clone(), base))));
     }
 
-    /// Save waiting edits now and wait for every save so far (before the app quits).
+    /// Save waiting edits (and those a failed save left) now, and wait for every save so far:
+    /// with why the last failed, if it did (before the app quits).
     fn flushed(&mut self) -> BoxedSave {
-        if self.save_soon.is_some() {
+        if self.save_soon.is_some() || (self.failed && self.dirty) {
             self.save_now();
         }
         self.sent()
@@ -287,8 +318,18 @@ impl AppSettings {
         let (done, wait) = oneshot::channel();
         let _ = self.writes.unbounded_send(Write::Flushed(done));
         Box::pin(async move {
-            let _ = wait.await;
+            wait.await
+                .unwrap_or_else(|_| Err("The settings writer stopped.".to_string()))
         })
+    }
+}
+
+/// The base to write `base`'s save from: when it was based on a save that failed, that save's own
+/// base, so the failed save's edits are written with this one rather than lost.
+fn rebased(base: Settings, failed: Option<&(Settings, Settings, String)>) -> Settings {
+    match failed {
+        Some((sent, failed_base, _)) if *sent == base => failed_base.clone(),
+        _ => base,
     }
 }
 
@@ -327,7 +368,96 @@ pub fn flush(cx: &mut App) -> BoxedSave {
 
 #[cfg(test)]
 mod tests {
-    use super::{adopt, defaults};
+    use super::{AppSettings, Write, adopt, defaults, rebased};
+    use crate::core::Reads;
+    use futures::channel::mpsc;
+    use kchess_contracts::types::Settings;
+    use serde_json::Value;
+
+    fn settings(writes: mpsc::UnboundedSender<Write>) -> AppSettings {
+        let stored = defaults();
+        AppSettings {
+            settings: stored.clone(),
+            queued: stored.clone(),
+            stored,
+            custom_themes: Vec::new(),
+            themes_dir: String::new(),
+            theme_problems: Vec::new(),
+            dirty: false,
+            pending: 0,
+            failed: false,
+            save_soon: None,
+            writes,
+            reads: Reads::default(),
+        }
+    }
+
+    /// The core's `saveDesktopSettings`: what `sent` changed from `base`, over `stored`.
+    fn store(stored: &Settings, sent: &Settings, base: &Settings) -> Settings {
+        let (Value::Object(mut merged), Value::Object(sent), Value::Object(base)) = (
+            serde_json::to_value(stored).unwrap(),
+            serde_json::to_value(sent).unwrap(),
+            serde_json::to_value(base).unwrap(),
+        ) else {
+            unreachable!()
+        };
+        for (key, value) in sent {
+            if base.get(&key) != Some(&value) {
+                merged.insert(key, value);
+            }
+        }
+        serde_json::from_value(Value::Object(merged)).unwrap()
+    }
+
+    fn saves(queue: &mut mpsc::UnboundedReceiver<Write>) -> Vec<(Settings, Settings)> {
+        let mut saves = Vec::new();
+        while let Ok(write) = queue.try_recv() {
+            if let Write::Save(save) = write {
+                saves.push(*save);
+            }
+        }
+        saves
+    }
+
+    /// Sound on; off (save A); on again (save B) before A is answered. Both are written, so the
+    /// profile ends with sound on, as shown.
+    #[test]
+    fn a_change_undone_while_a_save_is_writing_is_saved() {
+        let (writes, mut queue) = mpsc::unbounded();
+        let mut this = settings(writes);
+        let on = this.settings.frontend.sound_enabled;
+        this.settings.frontend.sound_enabled = !on;
+        this.save_now();
+        this.settings.frontend.sound_enabled = on;
+        this.save_now();
+        let mut profile = this.stored.clone();
+        for (sent, base) in saves(&mut queue) {
+            profile = store(&profile, &sent, &base);
+        }
+        assert_eq!(profile.frontend.sound_enabled, on);
+    }
+
+    /// Save A fails; save B, made before A was answered, writes A's edits too.
+    #[test]
+    fn a_save_based_on_a_failed_one_writes_its_edits() {
+        let (writes, mut queue) = mpsc::unbounded();
+        let mut this = settings(writes);
+        let stored = this.stored.clone();
+        this.settings.frontend.zen_mode = !stored.frontend.zen_mode;
+        this.save_now();
+        this.settings.frontend.sound_enabled = !stored.frontend.sound_enabled;
+        this.save_now();
+        let saves = saves(&mut queue);
+        let (failed_sent, failed_base) = saves[0].clone();
+        let (sent, base) = saves[1].clone();
+        let base = rebased(base, Some(&(failed_sent, failed_base, "disk full".into())));
+        let profile = store(&stored, &sent, &base);
+        assert_eq!(profile.frontend.zen_mode, !stored.frontend.zen_mode);
+        assert_eq!(
+            profile.frontend.sound_enabled,
+            !stored.frontend.sound_enabled
+        );
+    }
 
     #[test]
     fn another_windows_settings_show_beside_this_windows_edits() {

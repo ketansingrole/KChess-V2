@@ -92,14 +92,8 @@ export const useChallengeStore = defineStore('challenges', () => {
     if (!account) lobby.value = null
   })
 
-  function start(): void {
-    if (started) return
-    started = true
-    offs = [
-      window.kchess.onChallenges((next) => (list.value = next)),
-      window.kchess.onLobbyState((state) => (lobby.value = state)),
-      window.kchess.onOngoingChanged(() => void refreshOngoing()),
-    ]
+  /** Keep the lobby's stream open for its account, and read the challenges. */
+  function connect(): void {
     void window.kchess
       .challenges()
       .then((next) => (list.value = next))
@@ -110,6 +104,19 @@ export const useChallengeStore = defineStore('challenges', () => {
       console.warn('[challenges] staying connected failed:', error)
     })
     void refreshOngoing()
+  }
+
+  function start(): void {
+    if (started) return
+    started = true
+    offs = [
+      window.kchess.onChallenges((next) => (list.value = next)),
+      window.kchess.onLobbyState((state) => (lobby.value = state)),
+      window.kchess.onOngoingChanged(() => void refreshOngoing()),
+      // A restarted core has no stream open and knows no challenges: open and read them again.
+      window.kchess.onCoreReconnected(connect),
+    ]
+    connect()
     if (app.settings.correspondencePoll) {
       pollMs.value = app.settings.correspondencePoll * 60_000
       poll.resume()

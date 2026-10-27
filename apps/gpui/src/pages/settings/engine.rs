@@ -110,7 +110,7 @@ impl SettingsPage {
         crate::settings::change(cx, move |settings| settings.core.engine_path = path);
         let saved = crate::settings::flush(cx);
         cx.spawn_in(window, async move |this, cx| {
-            saved.await;
+            let _ = saved.await;
             let status = this
                 .update(cx, |_, cx| {
                     cx.global::<AppCore>().call("engineStatus", Vec::new())

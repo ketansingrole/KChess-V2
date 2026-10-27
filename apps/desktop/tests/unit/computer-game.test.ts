@@ -169,7 +169,7 @@ it('asks Lichess for the open online game again after the core restarts', async 
   expect(store.onlineId).toBe('game1')
 })
 
-it('does not look for an online game after a restart when none was open', async () => {
+it('verifies online play again after a restart even when no game was open', async () => {
   let reconnected = () => {}
   const resumeOnline = vi.fn(async () => null)
   desktop({
@@ -182,8 +182,55 @@ it('does not look for an online game after a restart when none was open', async 
   const store = useKChessStore()
   await store.init()
   await flushPromises()
+  // A fresh core holds back the engine until it knows no game is live.
   reconnected()
   await flushPromises()
-  expect(resumeOnline).toHaveBeenCalledOnce()
+  expect(resumeOnline).toHaveBeenCalledTimes(2)
   expect(store.onlinePhase).toBe('idle')
+})
+
+it('keeps a finished game on the board when a restart finds no game in progress', async () => {
+  let reconnected = () => {}
+  const resumeOnline = vi.fn(async () => null)
+  desktop({
+    resumeOnline,
+    onCoreReconnected: (callback: () => void) => {
+      reconnected = callback
+      return () => {}
+    },
+  })
+  const store = useKChessStore()
+  await store.init()
+  await flushPromises()
+  store.onlinePhase = 'finished'
+  reconnected()
+  await flushPromises()
+  expect(resumeOnline).toHaveBeenCalledTimes(2)
+  expect(store.onlinePhase).toBe('finished')
+})
+
+it('reads settings again when a read from before this window’s save arrives after it', async () => {
+  const { api } = desktop()
+  const store = useKChessStore()
+  await store.init()
+  await flushPromises()
+  const before = store.settings!.soundVolume
+  const stale = await api.loadData()
+  const read = deferred<typeof stale>()
+  const loadData = vi
+    .spyOn(api, 'loadData')
+    .mockImplementationOnce(() => read.promise)
+    .mockImplementation(async () => ({
+      ...stale,
+      settings: { ...stale.settings, soundVolume: store.settings!.soundVolume },
+    }))
+  const reloading = store.reloadData()
+  store.settings!.soundVolume = before === 0.8 ? 0.2 : 0.8
+  const edited = store.settings!.soundVolume
+  await store.save()
+  read.resolve(stale)
+  await reloading
+  await flushPromises()
+  expect(loadData).toHaveBeenCalledTimes(2)
+  expect(store.settings!.soundVolume).toBe(edited)
 })

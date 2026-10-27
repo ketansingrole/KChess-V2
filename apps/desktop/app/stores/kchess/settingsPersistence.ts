@@ -33,6 +33,8 @@ export function useSettingsPersistence(options: {
   // when nothing changed, so explicit calls (engine actions) and the debounced
   // watcher below never double-write.
   let saveChain: Promise<void> = Promise.resolve()
+  /** Counts saves as they start and finish: settings read before one may predate it. */
+  let revision = 0
   function save(strict = false): Promise<void> {
     const result = saveChain.then(() => persistSettings(strict))
     saveChain = result.then(
@@ -49,6 +51,7 @@ export function useSettingsPersistence(options: {
     const stored = data.value.settings
     const base = { ...stored, engineLevels: [...stored.engineLevels] }
     const previousEngine = stored.enginePath
+    revision++
     try {
       // Only what this window changed from `base` is written (`docs/shared-core.md`).
       const saved = await window.kchess.saveSettings(sent, base)
@@ -68,6 +71,8 @@ export function useSettingsPersistence(options: {
       if (data.value && settingsSignature.value === sentSignature)
         settings.value = { ...data.value.settings }
       if (strict) throw cause
+    } finally {
+      revision++
     }
   }
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -103,5 +108,5 @@ export function useSettingsPersistence(options: {
     if (settings.value && stored) settings.value = rebase(settings.value, stored, next)
     if (data.value) data.value = { ...data.value, settings: next }
   }
-  return { settingsDirty, save, flushSettings, adoptStored }
+  return { settingsDirty, save, flushSettings, adoptStored, revision: () => revision }
 }

@@ -121,6 +121,8 @@ pub struct Updates {
     /// The checked update, ready to take this app's place: the new bundle on macOS, else the
     /// downloaded package.
     staged: Option<PathBuf>,
+    /// Install the staged update as the app quits and reopen it (`restart`).
+    restart: bool,
     /// How this copy was installed; none for a build run from where it was made.
     install: Option<Install>,
     /// This app's own download folder; none where updates are not checked.
@@ -509,7 +511,8 @@ fn apply(staged: &Path, install: &Install, reopen: bool) -> Result<(), String> {
             }
         }
         Package::WindowsInstaller => {
-            // As Electron's updater runs it: silently over this installation, which it closes.
+            // As Electron's updater runs it: silently over this installation, which it closes, so
+            // only once this app has saved and closed its core (`apply_on_quit`).
             let mut installer = Command::new(staged);
             installer.args(["--updated", "/S"]);
             if reopen {
@@ -544,7 +547,7 @@ fn apply(staged: &Path, install: &Install, reopen: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Where `replace` keeps the old bundle until the new one is in place.
+/// Where earlier releases kept the old bundle while the new one went in place.
 fn aside(installed: &Path) -> PathBuf {
     installed.with_file_name(format!(
         ".{}-old",
@@ -571,6 +574,17 @@ fn incoming(installed: &Path) -> PathBuf {
 /// one, on its disk; then the two trade places in one step, so an interruption at any point leaves
 /// a complete app where KChess opens from. What is left beside it goes on the next start (`tidy`).
 fn replace(staged: &Path, installed: &Path) -> Result<(), String> {
+    replace_by(staged, installed, exchange)
+}
+
+/// `replace`, trading places with `exchange`. Where the disk cannot exchange two paths in one
+/// step, the installed app stays as it is: moving it aside first would leave nothing where KChess
+/// opens from if the app stopped between the two moves.
+fn replace_by(
+    staged: &Path,
+    installed: &Path,
+    exchange: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), String> {
     let incoming = incoming(installed);
     let fail = |cause: std::io::Error| format!("The update could not be installed ({cause}).");
     let _ = std::fs::remove_dir_all(&incoming);
@@ -580,23 +594,12 @@ fn replace(staged: &Path, installed: &Path) -> Result<(), String> {
             fail(cause)
         })?;
     }
-    if exchange(&incoming, installed).is_ok() {
-        // `incoming` now holds the old bundle.
-        let _ = std::fs::remove_dir_all(&incoming);
-        return Ok(());
-    }
-    // No exchange on this disk: the old bundle steps aside for the complete new one.
-    let aside = aside(installed);
-    let _ = std::fs::remove_dir_all(&aside);
-    std::fs::rename(installed, &aside).map_err(|cause| {
+    let exchanged = exchange(&incoming, installed);
+    // `incoming` now holds the old bundle, or (not exchanged) the new one: neither is needed.
+    let _ = std::fs::remove_dir_all(&incoming);
+    exchanged.map_err(|cause| {
         format!("KChess could not replace itself ({cause}). Install the update by hand.")
-    })?;
-    if let Err(cause) = std::fs::rename(&incoming, installed) {
-        let _ = std::fs::rename(&aside, installed);
-        return Err(fail(cause));
-    }
-    let _ = std::fs::remove_dir_all(&aside);
-    Ok(())
+    })
 }
 
 /// Swap the entries at `a` and `b` in one step (`renamex_np` with `RENAME_SWAP`).
@@ -757,7 +760,51 @@ impl Workspace {
     }
 }
 
+/// What a KChess process, or the helper installing after it quits, holds while an update goes in
+/// place of an installation: one installer at a time for each installation, across every KChess
+/// process, and no start tidies what an installer is still using. In the downloads root, beside
+/// the packages a helper installs from (`INSTALLING`).
+struct InstallLock {
+    _held: std::fs::File,
+}
+
+/// Names in the downloads root that belong to installations, not to running apps' folders.
+const INSTALLING: &str = ".install-";
+
+impl InstallLock {
+    /// The lock file for `installed`, by its canonical path.
+    fn path(root: &Path, installed: &Path) -> PathBuf {
+        let installed = std::fs::canonicalize(installed).unwrap_or_else(|_| installed.into());
+        let digest = Sha256::digest(installed.as_os_str().as_encoded_bytes());
+        let name: String = digest[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        root.join(format!("{INSTALLING}{name}.lock"))
+    }
+
+    /// Take the installation, or say another KChess is installing into it.
+    fn take(root: &Path, installed: &Path) -> Result<Self, String> {
+        let file = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(Self::path(root, installed))
+            .map_err(|cause| format!("The update could not be installed ({cause})."))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _held: file }),
+            Err(std::fs::TryLockError::WouldBlock) => Err(
+                "Another KChess is installing an update. Try again once it has finished.".into(),
+            ),
+            Err(std::fs::TryLockError::Error(cause)) => {
+                Err(format!("The update could not be installed ({cause})."))
+            }
+        }
+    }
+}
+
 /// Remove the folders of apps no longer running: their lock is free (or they left no lock).
+/// Installations' locks and packages are their installers' (`InstallLock`).
 fn clear_stopped(root: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -765,7 +812,7 @@ fn clear_stopped(root: &Path) {
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".lock" {
+        if name == ".lock" || name.starts_with(INSTALLING) {
             continue;
         }
         if let Some(folder) = name.strip_suffix(".lock") {
@@ -784,7 +831,15 @@ fn clear_stopped(root: &Path) {
 }
 
 /// What an interrupted install left beside the app: the old bundle, or a new one not yet in place.
-fn tidy(install: Option<&Install>) {
+/// Only while no KChess is installing into it (`InstallLock`): a running installer's new copy stays.
+fn tidy(install: Option<&Install>, root: Option<&Path>) {
+    let _installing = match (install, root) {
+        (Some(install), Some(root)) => match InstallLock::take(root, &install.path) {
+            Ok(lock) => Some(lock),
+            Err(_) => return,
+        },
+        _ => None,
+    };
     match install {
         Some(Install {
             package: Package::MacZip,
@@ -799,32 +854,76 @@ fn tidy(install: Option<&Install>) {
         }) => {
             let _ = std::fs::remove_file(incoming(path));
         }
+        Some(Install {
+            package: Package::Deb,
+            path,
+        }) => {
+            // A helper that stopped before installing it.
+            if let Some(root) = root {
+                let _ = std::fs::remove_file(InstallLock::path(root, path).with_extension("deb"));
+            }
+        }
         _ => {}
     }
 }
 
-/// Install on quit, once the saves are done and the core has closed. The package manager asks for
-/// a password, so it runs after this app has exited rather than holding the quit.
-fn apply_on_quit(staged: &Path, install: &Install) -> Result<(), String> {
+/// Install once the saves are done and the core has closed: on quit, or (`reopen`) to restart into
+/// the update. The installation is this app's (`InstallLock`) until it exits; the package
+/// manager, which asks for a password, then runs in a helper that holds it until it is done.
+fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), String> {
+    let root = downloads_root()?;
+    let lock = InstallLock::take(&root, &install.path)?;
     if install.package != Package::Deb {
-        return apply(staged, install, false);
+        return apply(staged, install, reopen);
     }
-    Command::new("sh")
+    let held = InstallLock::path(&root, &install.path);
+    let (package, failed) = (held.with_extension("deb"), held.with_extension("failed"));
+    // Out of this app's download folder, which the next start may clear: the helper's now.
+    std::fs::rename(staged, &package)
+        .map_err(|cause| format!("The update could not be installed ({cause})."))?;
+    let helper = Command::new("sh")
         .arg("-c")
-        .arg("while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; exec pkexec dpkg -i \"$0\"")
-        .arg(staged)
+        .arg(DEB_HELPER)
+        .arg("kchess-update")
+        .arg(&held)
+        .arg(&package)
         .arg(std::process::id().to_string())
+        .arg(&failed)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|cause| format!("The update could not be installed ({cause})."))
+        .spawn();
+    if let Err(cause) = helper {
+        let _ = std::fs::remove_file(&package);
+        return Err(format!("The update could not be installed ({cause})."));
+    }
+    // Held until this process exits, when the helper (waiting for it) takes the installation.
+    std::mem::forget(lock);
+    Ok(())
+}
+
+/// Installs the .deb (`$2`) once KChess (`$3`) has exited, holding the installation's lock (`$1`)
+/// until the package manager is done, and notes a failure (`$4`) for the next start.
+const DEB_HELPER: &str = r#"exec 9>>"$1"
+command -v flock >/dev/null 2>&1 && flock 9
+while kill -0 "$3" 2>/dev/null; do sleep 0.2; done
+if pkexec dpkg -i "$2"; then rm -f "$4"; else echo failed > "$4"; fi
+rm -f "$2""#;
+
+/// What the helper installing a .deb left for this start: whether it failed.
+fn last_install_failed(install: Option<&Install>, root: Option<&Path>) -> bool {
+    let (Some(install), Some(root)) = (install, root) else {
+        return false;
+    };
+    let failed = InstallLock::path(root, &install.path).with_extension("failed");
+    std::fs::remove_file(failed).is_ok()
 }
 
 pub fn init(cx: &mut App) {
     let install = (!cfg!(debug_assertions)).then(installed).flatten();
-    tidy(install.as_ref());
+    let root = install.as_ref().and_then(|_| downloads_root().ok());
+    tidy(install.as_ref(), root.as_deref());
+    let failed = last_install_failed(install.as_ref(), root.as_deref());
     let feed = std::env::var("KCHESS_UPDATE_FEED")
         .ok()
         .filter(|feed| !feed.is_empty())
@@ -842,7 +941,9 @@ pub fn init(cx: &mut App) {
         })
         .detach();
         let mut updates = Updates {
-            phase: if feed.is_some() {
+            phase: if failed {
+                Phase::Error
+            } else if feed.is_some() {
                 Phase::Idle
             } else {
                 Phase::Disabled
@@ -852,9 +953,10 @@ pub fn init(cx: &mut App) {
             released: None,
             checked_at: None,
             progress: None,
-            error: None,
+            error: failed.then(|| "The last update was not installed.".to_string()),
             release: None,
             staged: None,
+            restart: false,
             install,
             workspace,
             feed,
@@ -864,8 +966,8 @@ pub fn init(cx: &mut App) {
         updates.schedule(cx);
         updates
     });
-    // An update downloaded and waiting goes in when KChess quits, if the settings say so: only
-    // after every document is saved, since the installer closes the app.
+    // An update downloaded and waiting goes in when KChess quits, if the settings say so (or to
+    // restart into it): only after every document is saved, since the installer closes the app.
     let quitting = updates.clone();
     crate::core::after_quit(cx, move |cx| {
         let on_quit = cx
@@ -876,13 +978,16 @@ pub fn init(cx: &mut App) {
             .frontend
             .update_install_on_quit;
         let updates = quitting.read(cx);
-        let (true, Some(staged), Some(install)) =
-            (on_quit, updates.staged.clone(), updates.install.clone())
-        else {
+        let reopen = updates.restart;
+        let (true, Some(staged), Some(install)) = (
+            on_quit || reopen,
+            updates.staged.clone(),
+            updates.install.clone(),
+        ) else {
             return None;
         };
         Some(Box::new(move || {
-            if let Err(cause) = apply_on_quit(&staged, &install) {
+            if let Err(cause) = apply_on_quit(&staged, &install, reopen) {
                 log(&cause);
             }
         }))
@@ -1052,14 +1157,14 @@ impl Updates {
         }));
     }
 
-    /// `install`: put the downloaded update in place of this app and reopen it. One install at a
-    /// time: it takes the staged update, so neither a second request nor quitting installs it
-    /// again while this one runs.
+    /// `install`: save everything, then put the downloaded update in place of this app and reopen
+    /// it. One install at a time: it takes the staged update, so neither a second request nor
+    /// quitting installs it again while this one runs.
     pub fn install(&mut self, cx: &mut Context<Self>) {
         if self.phase == Phase::Installing || self.staged.is_none() {
             return;
         }
-        let Some(install) = self.install.clone() else {
+        if self.install.is_none() {
             self.phase = Phase::Error;
             self.error = Some(
                 "This copy of KChess is not an installed package; install the update by hand."
@@ -1067,18 +1172,46 @@ impl Updates {
             );
             cx.notify();
             return;
-        };
-        let Some(staged) = self.staged.take() else {
-            return;
-        };
+        }
         self.phase = Phase::Installing;
         self.error = None;
         cx.notify();
+        let (saved, cancelled) = (cx.entity().downgrade(), cx.entity().downgrade());
+        // Every document reaches the profile first, as on any quit: the installer may close
+        // the app.
+        crate::core::prepare_quit(
+            cx,
+            "Restart without saving",
+            move |cx| {
+                let _ = saved.update(cx, |this, cx| this.install_saved(cx));
+            },
+            move |cx| {
+                let _ = cancelled.update(cx, |this, cx| {
+                    this.phase = Phase::Downloaded;
+                    cx.notify();
+                });
+            },
+        );
+    }
+
+    /// `install`, once everything is saved.
+    fn install_saved(&mut self, cx: &mut Context<Self>) {
+        let (Some(install), Some(staged)) = (self.install.clone(), self.staged.clone()) else {
+            return;
+        };
+        if install.package == Package::WindowsInstaller {
+            // The installer closes this app: it starts as the app quits, after the core closes.
+            self.restart = true;
+            return cx.quit();
+        }
+        self.staged = None;
         // Off the UI thread: the package manager may wait for a password.
-        let done =
-            on_runtime(
-                async move { apply(&staged, &install, true).map_err(|cause| (cause, staged)) },
-            );
+        let done = on_runtime(async move {
+            let applied = downloads_root()
+                .and_then(|root| InstallLock::take(&root, &install.path))
+                .and_then(|_installing| apply(&staged, &install, true));
+            applied.map_err(|cause| (cause, staged))
+        });
         self.work = Some(cx.spawn(async move |this, cx| {
             let done = done.await.unwrap_or_else(|_| {
                 Err(("The update could not be installed.".into(), PathBuf::new()))
@@ -1111,9 +1244,9 @@ impl Updates {
 #[cfg(test)]
 mod tests {
     use super::{
-        Install, Package, Release, Signer, Workspace, asset_name, detect, digest_for, download,
-        downloads_in, incoming, latest, offer, parse_version, replace, signed_alike, swap_file,
-        tidy,
+        INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace, aside, asset_name,
+        detect, digest_for, download, downloads_in, incoming, last_install_failed, latest, offer,
+        parse_version, replace, replace_by, signed_alike, swap_file, tidy,
     };
     use sha2::{Digest, Sha256};
     use std::io::{Read as _, Write as _};
@@ -1215,12 +1348,101 @@ mod tests {
             package: Package::MacZip,
             path: installed.clone(),
         };
-        tidy(Some(&install));
+        tidy(Some(&install), None);
         assert!(!partial.exists());
         assert_eq!(
             std::fs::read_to_string(installed.join("kchess")).unwrap(),
             "old"
         );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Where the disk cannot exchange the two bundles, nothing moves the installed app: a crash
+    /// between moving it aside and moving the new one in would leave no app to open.
+    #[test]
+    fn without_an_exchange_the_installed_app_stays_in_place() {
+        let folder = scratch("no-exchange");
+        let (installed, staged) = (folder.join("KChess.app"), folder.join("new/KChess.app"));
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::write(installed.join("kchess"), "old").unwrap();
+        std::fs::write(staged.join("kchess"), "new").unwrap();
+        let unsupported = |_: &Path, _: &Path| Err(std::io::ErrorKind::Unsupported.into());
+        let failed = replace_by(&staged, &installed, unsupported).unwrap_err();
+        assert!(failed.contains("Install the update by hand"), "{failed}");
+        assert_eq!(
+            std::fs::read_to_string(installed.join("kchess")).unwrap(),
+            "old"
+        );
+        assert!(!aside(&installed).exists());
+        assert!(!incoming(&installed).exists());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Two KChess processes from one installation: only one installs at a time, and a start
+    /// meanwhile leaves the installer's new copy alone.
+    #[test]
+    fn one_installer_at_a_time_for_each_installation() {
+        let folder = scratch("install-lock");
+        let root = downloads_in(&folder.join("cache")).unwrap();
+        let installed = folder.join("KChess.AppImage");
+        std::fs::write(&installed, "old").unwrap();
+        let install = Install {
+            package: Package::AppImage,
+            path: installed.clone(),
+        };
+        let first = InstallLock::take(&root, &installed).unwrap();
+        let second = InstallLock::take(&root, &installed).err().unwrap();
+        assert!(second.contains("Another KChess is installing"), "{second}");
+        // Paused after putting the new copy beside the installed one.
+        std::fs::write(incoming(&installed), "new").unwrap();
+        tidy(Some(&install), Some(&root));
+        assert!(incoming(&installed).exists(), "the installer's copy stays");
+        // An app starting clears stopped apps' folders, never an installer's files.
+        let package = InstallLock::path(&root, &installed).with_extension("deb");
+        std::fs::write(&package, "deb").unwrap();
+        let _workspace = Workspace::open(&root).unwrap();
+        assert!(InstallLock::path(&root, &installed).exists());
+        assert!(package.exists());
+        drop(first);
+        tidy(Some(&install), Some(&root));
+        assert!(
+            !incoming(&installed).exists(),
+            "an interrupted install is tidied"
+        );
+        assert!(InstallLock::take(&root, &installed).is_ok());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A .deb whose helper stopped before installing it goes on the next start, once no helper
+    /// holds the installation; one that failed is reported once.
+    #[test]
+    fn a_deb_helpers_package_and_failure_outlive_the_app() {
+        let folder = scratch("deb-helper");
+        let root = downloads_in(&folder.join("cache")).unwrap();
+        let install = Install {
+            package: Package::Deb,
+            path: folder.join("kchess"),
+        };
+        let held = InstallLock::path(&root, &install.path);
+        assert!(
+            held.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(INSTALLING)
+        );
+        let package = held.with_extension("deb");
+        std::fs::write(&package, "deb").unwrap();
+        // The helper still waits for a password: its package stays.
+        let helper = InstallLock::take(&root, &install.path).unwrap();
+        tidy(Some(&install), Some(&root));
+        assert!(package.exists());
+        drop(helper);
+        tidy(Some(&install), Some(&root));
+        assert!(!package.exists());
+        std::fs::write(held.with_extension("failed"), "failed").unwrap();
+        assert!(last_install_failed(Some(&install), Some(&root)));
+        assert!(!last_install_failed(Some(&install), Some(&root)));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
