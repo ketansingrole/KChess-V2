@@ -212,6 +212,13 @@ impl LichessStore for DbLichessStore {
         })
     }
 
+    fn receives_challenges<'a>(&'a self) -> BoxFuture<'a, CoreResult<bool>> {
+        Box::pin(async move {
+            let settings = self.call("store.games.getSettings", &[]).await?;
+            Ok(settings["receiveChallenges"].as_bool().unwrap_or(true))
+        })
+    }
+
     fn mark_checked<'a>(
         &'a self,
         ids: &'a [String],

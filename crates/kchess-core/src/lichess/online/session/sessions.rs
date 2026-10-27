@@ -408,6 +408,14 @@ impl OnlineSession {
             .filter(|row| row.connected)
             .map(|row| row.username)
             .collect();
+        // An account without an open event stream hears of no challenge: list them instead.
+        let challenges_wanted = self
+            .inner
+            .lichess
+            .store()
+            .receives_challenges()
+            .await
+            .unwrap_or(false);
         let mut games = Vec::new();
         let mut first_error: Option<Failure> = None;
         for account in accounts {
@@ -437,6 +445,9 @@ impl OnlineSession {
                     .flatten()
                 {
                     games.push(ongoing_game(game, &account));
+                }
+                if challenges_wanted && !self.has_event_stream(&account) {
+                    self.sync_challenges(&account, &token).await;
                 }
                 Ok(())
             }
@@ -476,5 +487,60 @@ impl OnlineSession {
             }
         }
         self.attach(account, id).await
+    }
+
+    /// Whether `account`'s event stream is open (the idle lobby or a game's), so it keeps the
+    /// inbox current by itself.
+    fn has_event_stream(&self, account: &str) -> bool {
+        let st = self.st();
+        let lobby = st.lobby.as_ref().is_some_and(|(running, token)| {
+            running.eq_ignore_ascii_case(account) && !token.is_cancelled()
+        });
+        lobby || (st.controller.is_some() && st.current_account.eq_ignore_ascii_case(account))
+    }
+
+    /// Bring `account`'s challenges in the inbox up to date from `GET /api/challenge`; a failure
+    /// leaves them as they were.
+    async fn sync_challenges(&self, account: &str, token: &str) {
+        let listed = self
+            .policy()
+            .with_usage(account, "play", async {
+                self.inner
+                    .lichess
+                    .client()
+                    .get_json::<Value>(
+                        "/api/challenge",
+                        &[],
+                        Some(&authorize(token)),
+                        self.inner.lichess.lifetime(),
+                    )
+                    .await
+            })
+            .await;
+        let listed = match listed {
+            Ok(listed) => listed,
+            Err(cause) => {
+                if !cause.is_aborted() {
+                    self.log(
+                        Level::Warn,
+                        format!("Could not load challenges: {account} {}", cause.message()),
+                    );
+                }
+                return;
+            }
+        };
+        let Some(fresh) = self.inner.challenges.sync(account, &listed) else {
+            self.log(
+                Level::Warn,
+                format!("Lichess returned an invalid challenge list: {account}"),
+            );
+            return;
+        };
+        for info in fresh {
+            self.emit(
+                "challenge:received",
+                serde_json::to_value(info).unwrap_or(Value::Null),
+            );
+        }
     }
 }

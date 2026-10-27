@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::host::Host;
 pub use kchess_domain::records::challenge::{
@@ -94,6 +94,57 @@ impl ChallengeInbox {
         fresh.then_some(event.info)
     }
 
+    /// Replace `account`'s challenges with the pending ones Lichess lists for it
+    /// (`GET /api/challenge`, `{ in, out }`), for an account whose event stream is not open. A
+    /// challenge already known keeps its first sighting; one no longer listed was answered or
+    /// withdrawn elsewhere. Returns the incoming ones not seen before, or None when the listing is
+    /// malformed (the inbox is left as it was).
+    pub fn sync(&self, account: &str, listed: &Value) -> Option<Vec<ChallengeInfo>> {
+        let now = (self.now)();
+        let mut read = Vec::new();
+        for direction in ["in", "out"] {
+            for item in listed.get(direction)?.as_array()? {
+                // The listing has no `compat`; Lichess keeps bullet off the Board API.
+                let speed = item.get("speed").and_then(Value::as_str).unwrap_or("");
+                let board = !matches!(speed, "bullet" | "ultraBullet");
+                let event =
+                    json!({ "type": "challenge", "challenge": item, "compat": { "board": board } });
+                // One malformed challenge is skipped, as the stream skips a malformed event.
+                if let Some(event) = read_challenge_event(account, &event, now) {
+                    read.push(event.info);
+                }
+            }
+        }
+        let listed_ids: Vec<String> = read.iter().map(|info| info.id.clone()).collect();
+        let mut entries = lock(&self.entries);
+        let before = entries.clone();
+        let mut fresh = Vec::new();
+        for mut info in read {
+            match entries.iter().position(|known| known.id == info.id) {
+                Some(at) => {
+                    info.received_at = entries[at].received_at;
+                    entries[at] = info;
+                }
+                None => {
+                    if info.direction == "in" {
+                        fresh.push(info.clone());
+                    }
+                    entries.push(info);
+                }
+            }
+        }
+        entries.retain(|info| {
+            !info.account.eq_ignore_ascii_case(account) || listed_ids.contains(&info.id)
+        });
+        while entries.len() > MAX_CHALLENGES {
+            entries.remove(0);
+        }
+        if *entries != before {
+            self.emit(&entries);
+        }
+        Some(fresh)
+    }
+
     /// Remove one challenge that was answered here (accepted, declined or withdrawn).
     pub fn remove(&self, id: &str) {
         let mut entries = lock(&self.entries);
@@ -143,7 +194,7 @@ fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
 mod tests {
     use super::*;
     use crate::host::Level;
-    use serde_json::{Number, json};
+    use serde_json::Number;
     use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
     fn challenge(overrides: Value) -> Value {
@@ -270,5 +321,34 @@ mod tests {
         inbox.forget("alice");
         assert!(inbox.list().is_empty());
         assert!(host.0.load(Ordering::SeqCst) > 0);
+    }
+
+    #[test]
+    fn a_listing_replaces_only_its_own_accounts_challenges_and_a_malformed_one_changes_nothing() {
+        let host = Arc::new(Updates::default());
+        let inbox = ChallengeInbox::new(Arc::clone(&host) as Arc<dyn Host>, Arc::new(|| 1_000));
+        inbox.ingest("Alice", &challenge(json!({})));
+        let to_bob = challenge(json!({
+            "id": "BobChal1",
+            "destUser": { "id": "bob", "name": "Bob" },
+            "direction": "in",
+        }))["challenge"]
+            .clone();
+        let fresh = inbox
+            .sync("Bob", &json!({ "in": [to_bob], "out": [] }))
+            .unwrap();
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(inbox.list().len(), 2);
+        assert!(inbox.sync("Bob", &json!({ "in": "nope" })).is_none());
+        assert_eq!(inbox.list().len(), 2);
+        assert!(
+            inbox
+                .sync("Bob", &json!({ "in": [], "out": [] }))
+                .unwrap()
+                .is_empty()
+        );
+        let left = inbox.list();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].account, "Alice");
     }
 }

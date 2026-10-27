@@ -129,6 +129,10 @@ pub trait LichessStore: Send + Sync {
         reviews: &'a [Value],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>>;
+    /// Whether the user takes challenges (`getSettings().receiveChallenges`).
+    fn receives_challenges<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<bool>> {
+        Box::pin(async { Ok(true) })
+    }
     /// Games Lichess was asked about, so they are not asked again soon (`markChecked`).
     fn mark_checked<'a>(
         &'a self,

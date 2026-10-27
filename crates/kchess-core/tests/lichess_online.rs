@@ -1298,3 +1298,69 @@ async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
     drop(lines_tx);
     online.close();
 }
+
+/// Challenges sent to a connected account whose event stream is not open reached no inbox: the
+/// ongoing refresh lists them (`GET /api/challenge`) for every account but the one streaming, and a
+/// later listing without one removes it.
+#[tokio::test]
+async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
+    let pending = Arc::new(Mutex::new(true));
+    let listing = Arc::clone(&pending);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => Reply::Hang,
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        "/api/challenge" => {
+            let challenge = json!({
+                "id": "BobChal1",
+                "url": "https://lichess.org/BobChal1",
+                "status": "created",
+                "challenger": { "id": "carol", "name": "Carol", "rating": 1800 },
+                "destUser": { "id": "bob", "name": "Bob", "rating": 1700 },
+                "variant": { "key": "standard", "name": "Standard" },
+                "rated": true,
+                "speed": "bullet",
+                "timeControl": { "type": "clock", "limit": 60, "increment": 0 },
+                "color": "random",
+                "perf": { "name": "Bullet" },
+                "direction": "in",
+            });
+            let incoming = if *listing.lock().unwrap() {
+                vec![challenge]
+            } else {
+                vec![]
+            };
+            Reply::Json(200, json!({ "in": incoming, "out": [] }).to_string())
+        }
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+
+    online.ongoing().await.unwrap();
+    let calls = fixture.to("/api/challenge");
+    assert_eq!(
+        calls.len(),
+        1,
+        "only the account without a stream is listed"
+    );
+    assert_eq!(calls[0].header("Authorization"), Some("Bearer Bob-token"));
+    let inbox = online.challenges().list();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].account, "Bob");
+    assert_eq!(inbox[0].opponent.name, "Carol");
+    assert!(!inbox[0].playable, "bullet is off the Board API");
+    assert_eq!(emitted(&host, "challenge:received").len(), 1);
+
+    // Listed again: not announced again.
+    online.ongoing().await.unwrap();
+    assert_eq!(emitted(&host, "challenge:received").len(), 1);
+
+    // Answered elsewhere: gone from the next listing, gone from the inbox.
+    *pending.lock().unwrap() = false;
+    online.ongoing().await.unwrap();
+    assert!(online.challenges().list().is_empty());
+    online.close();
+}
