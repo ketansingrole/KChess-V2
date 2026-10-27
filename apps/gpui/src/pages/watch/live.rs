@@ -625,7 +625,7 @@ impl WatchPage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, 0))
-            .child(self.live.board.clone())
+            .child(crate::board::cached(&self.live.board))
             .child(line(orientation, 1));
 
         let browsing = self.live.browsing();

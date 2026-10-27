@@ -557,7 +557,10 @@ impl Render for KnightPaths {
                     .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
             );
         }
-        let board_column = v_flex().w(board_size).flex_none().child(self.board.clone());
+        let board_column = v_flex()
+            .w(board_size)
+            .flex_none()
+            .child(crate::board::cached(&self.board));
         div().size_full().child(
             self.layout
                 .render("knight-paths", board_column, panel, window, cx),

@@ -649,15 +649,17 @@ impl StudiesPage {
     ) -> AnyElement {
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
         let now = now();
+        let mut shown_fens = std::collections::HashSet::new();
         let cards: Vec<AnyElement> = studies
             .iter()
             .map(|study| {
                 let id = study["id"].as_str().unwrap_or_default().to_string();
                 let name = study["name"].as_str().unwrap_or_default().to_string();
                 let summary = summary(study["pgn"].as_str().unwrap_or_default());
-                let board = summary["fen"]
-                    .as_str()
-                    .map(|fen| self.preview(fen, cx).into());
+                let board = summary["fen"].as_str().map(|fen| {
+                    shown_fens.insert(fen.to_string());
+                    self.preview(fen, cx).into()
+                });
                 let event = summary["event"].as_str().filter(|event| *event != name);
                 let description = [summary["players"].as_str(), event]
                     .into_iter()
@@ -728,6 +730,8 @@ impl StudiesPage {
                 )
             })
             .collect();
+        // Pictures of studies no longer listed (edited, removed, filtered out) are let go.
+        self.previews.retain(|fen, _| shown_fens.contains(fen));
         let mut rows = Vec::new();
         let mut cards = cards.into_iter().peekable();
         while cards.peek().is_some() {

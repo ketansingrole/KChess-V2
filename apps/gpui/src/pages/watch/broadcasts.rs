@@ -882,7 +882,7 @@ impl WatchPage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
-            .child(broadcasts.board.clone())
+            .child(crate::board::cached(&broadcasts.board))
             .child(line(orientation));
         let sans = view::sans(&setup, &moves);
         let page = cx.entity().downgrade();

@@ -584,7 +584,7 @@ impl Render for EditorPage {
             .flex_none()
             .gap(px(8.))
             .child(self.render_spares(top, &set, board_size, cx, &palette))
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
             // Voice sits at the end of its row, as in `BoardEditor.vue`.
             .child(h_flex().justify_end().child(self.voice.bar(

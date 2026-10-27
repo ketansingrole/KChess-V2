@@ -209,7 +209,7 @@ impl OnlinePage {
         }
         board_column = board_column
             .child(line(!orientation))
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .child(line(orientation));
 
         let panel = self

@@ -2786,7 +2786,7 @@ impl Render for AnalysisPage {
                                 MouseButton::Left,
                                 cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
                             )
-                            .child(self.board.clone()),
+                            .child(crate::board::cached(&self.board)),
                     ),
             )
             .child(

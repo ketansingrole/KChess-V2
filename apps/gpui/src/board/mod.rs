@@ -1310,6 +1310,17 @@ fn paint_corners(window: &mut Window, cell: Bounds<Pixels>, color: Rgba) {
     }
 }
 
+/// The board as a cached view (`Entity::cached`): its last frame is reused while only its parent
+/// redraws (a clock tick, an engine line) and drawn again when the board itself changes
+/// (`set_state`, a drag, an animation step) or the windows refresh (settings, preferences). It
+/// fills its slot's width and is square, as its own root is.
+pub fn cached(board: &Entity<ChessBoard>) -> AnyElement {
+    let mut style = StyleRefinement::default();
+    style.size.width = Some(relative(1.).into());
+    style.aspect_ratio = Some(1.);
+    board.clone().cached(style).into_any_element()
+}
+
 impl Render for ChessBoard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frontend = cx

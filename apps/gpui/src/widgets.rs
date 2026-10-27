@@ -938,7 +938,16 @@ pub fn study_card(
                 .cursor_pointer()
                 .on_click(move |_, window, cx| open(window, cx))
                 .child(match card.board {
-                    Some(board) => div().size_full().child(board).into_any_element(),
+                    Some(board) => {
+                        // A still picture: kept from frame to frame until it changes.
+                        let mut style = StyleRefinement::default();
+                        style.size.width = Some(relative(1.).into());
+                        style.size.height = Some(relative(1.).into());
+                        div()
+                            .size_full()
+                            .child(board.cached(style))
+                            .into_any_element()
+                    }
                     None => icon("book-open")
                         .size(px(48.))
                         .text_color(palette.text_muted)

@@ -539,7 +539,7 @@ impl Render for PuzzleBoard {
                 gpui_kit::transparent_black()
             })
             .m(px(-3.))
-            .child(self.board.clone());
+            .child(crate::board::cached(&self.board));
         let material = |white: bool| widgets::material(&fen, white, &set, &palette);
         let column = if self.material {
             v_flex()

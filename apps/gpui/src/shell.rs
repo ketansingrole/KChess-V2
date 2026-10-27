@@ -150,6 +150,17 @@ impl SidebarItem for NavBlock {
     }
 }
 
+/// The page as a cached view fills its slot: the shell redrawing alone (the sidebar, the command
+/// palette, a model only the shell shows) reuses the page's last frame. The page redraws when it
+/// or a view inside it changes, when the shell forwards a shared model (`shared_changed`), or
+/// when the windows refresh.
+fn page_style() -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.size.width = Some(relative(1.).into());
+    style.size.height = Some(relative(1.).into());
+    style
+}
+
 /// The window's workspace, so a page can open another (`selectPage`).
 struct Navigator(WeakEntity<Workspace>);
 
@@ -1489,7 +1500,7 @@ impl Render for Workspace {
                                     .size_full()
                                     .relative()
                                     .left(px(self.swipe_shift))
-                                    .child(self.pages.view()),
+                                    .child(self.pages.view().cached(page_style())),
                             )
                             .children(self.swipe_edge(cx)),
                     ),

@@ -1491,7 +1491,7 @@ impl Render for ComputerPage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(computer_line)
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .child(you_line)
             .children(self.move_message.clone().map(|message| {
                 div()

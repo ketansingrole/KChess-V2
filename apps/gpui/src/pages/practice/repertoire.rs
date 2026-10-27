@@ -897,7 +897,7 @@ impl Render for Repertoire {
         let board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
         let board_column = if self.at.is_some() {
             board_column
-                .child(self.board.clone())
+                .child(crate::board::cached(&self.board))
                 .child(widgets::move_entry(&self.move_input, your_turn, &palette).h(px(36.)))
         } else if !(drills_opening && self.preparing) {
             board_column.child(widgets::card(&palette).child(Self::empty(

@@ -356,7 +356,7 @@ impl Render for GameOptions {
                 .child(
                     h_flex()
                         .justify_center()
-                        .child(div().w(px(180.)).child(self.preview.clone())),
+                        .child(div().w(px(180.)).child(crate::board::cached(&self.preview))),
                 )
             })
             .when(self.start == Start::Fen, |form| {

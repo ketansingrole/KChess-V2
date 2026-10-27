@@ -173,7 +173,7 @@ impl Render for GameReplay {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .child(line(orientation));
 
         let page = cx.entity().downgrade();

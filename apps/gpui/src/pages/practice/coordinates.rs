@@ -604,7 +604,7 @@ impl Render for Coordinates {
             .w(board_size)
             .flex_none()
             .relative()
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .children(prompt);
         let frontend = cx
             .global::<SettingsHandle>()

@@ -785,7 +785,12 @@ impl OpeningsPage {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.show_line(Some(moves.clone()), cx)
                         }))
-                        .child(div().w(px(44.)).flex_none().child(board))
+                        .child(
+                            div()
+                                .w(px(44.))
+                                .flex_none()
+                                .child(crate::board::cached(&board)),
+                        )
                         .child(
                             div()
                                 .flex_1()
@@ -890,7 +895,7 @@ impl OpeningsPage {
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .child(entry);
         let moves = h_flex()
             .flex_wrap()

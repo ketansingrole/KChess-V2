@@ -1274,7 +1274,7 @@ impl Render for LocalPage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, None))
-            .child(self.board.clone())
+            .child(crate::board::cached(&self.board))
             .child(line(orientation, Some(widgets::move_row(entry, voice))))
             .children(self.move_message.clone().map(|message| {
                 div()
