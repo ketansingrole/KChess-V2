@@ -262,6 +262,8 @@ function packageWindows() {
   copyFileSync(stockfish, join(folder, 'stockfish.exe'))
   copyFileSync(service, join(folder, 'kchess-service.exe'))
   copyVoice(folder)
+  // electron-builder's NSIS installer copies its elevate.exe into Electron's resources folder.
+  mkdirSync(join(folder, 'resources'))
   return folder
 }
 
