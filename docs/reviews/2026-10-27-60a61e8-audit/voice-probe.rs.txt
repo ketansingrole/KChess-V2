@@ -1,0 +1,26 @@
+use std::sync::Arc;
+use kchess_core::{Config, Core, Host, Level};
+use kchess_core::connection::ClientInfo;
+use serde_json::{Value, json};
+struct Quiet;
+impl Host for Quiet {
+    fn log(&self, _: Level, _: &str, _: &str) {}
+    fn emit(&self, _: &str, _: Value) {}
+}
+#[tokio::test(flavor = "current_thread")]
+async fn diagnostic_disconnect_stops_new_owners_recognizer() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(kchess_core::voice::model_dir(dir.path())).unwrap();
+    let mut config = Config::new(dir.path().into());
+    config.voice_helper_path = Some(env!("CARGO_BIN_EXE_kchess-fake-voice").into());
+    let core = Core::open(config, Arc::new(Quiet)).unwrap();
+    let a = core.connect(ClientInfo::app());
+    let b = core.connect(ClientInfo::app());
+    core.call_as(a, "voiceStart", vec![json!(["e four"]), json!(16000)]).await.unwrap();
+    core.disconnect(a);
+    core.call_as(b, "voiceStart", vec![json!(["d four"]), json!(16000)]).await.unwrap();
+    tokio::task::yield_now().await;
+    let result = core.call_as(b, "voiceAccept", vec![json!("AAA=")]).await;
+    assert_eq!(result.unwrap_err().message, "Voice input isn’t listening.");
+    core.call("close", vec![]).await.unwrap();
+}

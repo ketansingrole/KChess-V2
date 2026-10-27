@@ -1,0 +1,68 @@
+import { expect, it, vi } from 'vitest'
+import { defineComponent, effectScope, nextTick, ref } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
+import { desktop, deferred } from './fixtures'
+import { flushSavedDocuments, persistSession } from '../../app/utils/library'
+import { useTvPosition } from '../../app/composables/useTvPosition'
+import { useAnalysisStore } from '../../app/stores/analysis'
+import { useRunLength } from '../../app/composables/useRunLength'
+import { loadViewPreferences } from '../../app/composables/useViewPreference'
+import type { TvPastGame } from '@kchess/contracts/types'
+
+it('diagnostic: quit skips a reverted session while an older autosave remains pending', async () => {
+  vi.useFakeTimers()
+  const gate = deferred<void>()
+  let stored = '*'
+  const saveSession = vi.fn(async (_kind: unknown, value: { pgn: string }) => {
+    await gate.promise
+    stored = value.pgn
+  })
+  desktop({ saveSession: saveSession as never })
+  const doc = ref({ pgn: '*', path: '', orientation: 'white' as const, study: '', chapter: '' })
+  const scope = effectScope()
+  scope.run(() => persistSession('analysis', () => ({ ...doc.value })))
+  doc.value.pgn = '1. e4 *'
+  await nextTick()
+  await vi.advanceTimersByTimeAsync(150)
+  expect(saveSession).toHaveBeenCalledTimes(1)
+  doc.value.pgn = '*'
+  await flushSavedDocuments()
+  // Quit already returned without waiting or sending the reverted state.
+  expect(saveSession).toHaveBeenCalledTimes(1)
+  gate.resolve()
+  await flushPromises()
+  expect(stored).toBe('1. e4 *')
+  scope.stop()
+})
+
+it('diagnostic: late TV export overwrites analysis entered after the request', async () => {
+  const gate = deferred<string>()
+  desktop({ exportGame: () => gate.promise, reviewGet: async () => null, onReviewUpdate: () => () => {}, onReviewStatus: () => () => {}, reviewStatus: async () => ({ waiting: 0 }) })
+  const scope = effectScope()
+  const tv = scope.run(() => useTvPosition())!
+  const analysis = useAnalysisStore()
+  tv.openPast({ gameId: 'abcdefgh', orientation: 'white', white: { name: 'Alice' }, black: { name: 'Bob' } } as TvPastGame)
+  analysis.loadPgn('1. d4 d5 2. c4 *')
+  gate.resolve('1. e4 e5 *')
+  await flushPromises()
+  expect(analysis.mainline).toEqual(['e2e4', 'e7e5'])
+  scope.stop()
+})
+
+it('diagnostic: a shared preference change relabels an already running drill', async () => {
+  desktop({ viewPreferences: async () => ({ 'kchess:coordinates-length': 300 }) })
+  let run!: ReturnType<typeof useRunLength>
+  const wrapper = mount(defineComponent({
+    setup() {
+      run = useRunLength('kchess:coordinates-length', 30, () => {})
+      return () => null
+    },
+  }))
+  run.start()
+  // Same refresh used by profile:changed when another client edits preferences.
+  await loadViewPreferences()
+  expect(run.length.value).toBe(300)
+  expect(run.recordVariant('find')).toBe('find-300s')
+  run.stop()
+  wrapper.unmount()
+})
