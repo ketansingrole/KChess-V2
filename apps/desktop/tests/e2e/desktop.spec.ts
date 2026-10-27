@@ -2483,6 +2483,67 @@ test('validates account-free online, following and player lookup', async ({
   ).toBeVisible()
 })
 
+test('shows a leaderboard, suggests players while typing and lists a player’s activity', async ({
+  desktop: { page, lichess },
+}) => {
+  lichess.route = async (request) => {
+    if (request.headers.has('authorization')) throw new Error('Player lookups are anonymous')
+    const url = new URL(request.url)
+    const path = url.pathname
+    if (path === '/api/player/top/100/blitz')
+      return Response.json({
+        users: [
+          {
+            id: 'carol',
+            username: 'Carol',
+            title: 'GM',
+            perfs: { blitz: { rating: 3010, progress: 12 } },
+          },
+          { id: 'dave', username: 'Dave', perfs: { blitz: { rating: 2990, progress: -4 } } },
+        ],
+      })
+    if (path === '/api/player/autocomplete' && url.searchParams.get('term') === 'Car')
+      return Response.json({ result: [{ id: 'carol', name: 'Carol', title: 'GM', online: true }] })
+    if (path === '/api/user/Carol')
+      return Response.json({
+        id: 'carol',
+        username: 'Carol',
+        perfs: { blitz: { games: 20, rating: 3010, rd: 50, prog: 12 } },
+        count: { all: 20 },
+        createdAt: 1_600_000_000_000,
+      })
+    if (path === '/api/user/Carol/activity')
+      return Response.json([
+        {
+          interval: { start: Date.now() - 3_600_000, end: Date.now() },
+          games: { blitz: { win: 3, loss: 1, draw: 0, rp: { before: 2998, after: 3010 } } },
+          follows: { out: { ids: ['Dave'] } },
+        },
+      ])
+    if (path === '/api/users/status') return Response.json([])
+    throw new Error('Unexpected request: ' + path)
+  }
+  await navigate(page, 'Players')
+  const board = page.locator('.leaderboard')
+  await expect(board.getByRole('listitem')).toHaveCount(2)
+  await expect(board.getByRole('listitem').first()).toContainText('GM')
+  await expect(board.getByRole('listitem').first()).toContainText('3010')
+  await page.screenshot({ path: test.info().outputPath('kchess-leaderboard.png') })
+
+  await page.getByRole('textbox', { name: 'Lichess username', exact: true }).fill('Car')
+  const matches = page.getByLabel('Matching players')
+  await expect(matches.getByRole('button', { name: 'GM Carol' })).toBeVisible()
+  await matches.getByRole('button', { name: 'GM Carol' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible()
+  await expect(
+    page.getByText('Played 4 Blitz games: 3 wins, 1 loss · 2998 → 3010', { exact: true }),
+  ).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Dave', exact: true })).toBeVisible()
+  await expect(page.locator('.leaderboard')).toBeHidden()
+  await page.screenshot({ path: test.info().outputPath('kchess-player-activity.png') })
+})
+
 test('watches TV channels and followed players without an account', async ({
   desktop: { page },
 }) => {
