@@ -240,12 +240,6 @@ async function loadActivity(username: string, current: number): Promise<void> {
 }
 const activityList = computed(() => activityGroups(activity.value ?? []))
 
-/** Adds the player to Following, and follows them on Lichess with an account connected. */
-async function follow(): Promise<void> {
-  const user = profile.value
-  if (user && (await store.followPlayer(user.username)) && relation.value)
-    relation.value = { ...relation.value, following: true }
-}
 /** Blocking hides the player's messages, challenges and chat on Lichess, and unfollows them. */
 function toggleBlock(): void {
   const user = profile.value
@@ -548,7 +542,7 @@ async function watchGame(): Promise<void> {
               color="neutral"
               icon="i-lucide-user-plus"
               :disabled="!online"
-              @click="follow"
+              @click="store.followPlayer(profile.username)"
               >Follow player</UButton
             >
             <UButton

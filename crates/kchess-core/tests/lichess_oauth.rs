@@ -112,7 +112,12 @@ async fn a_login_completes_through_the_loopback_callback() {
             .split(' ')
             .any(|scope| scope == "study:write")
     );
-    assert_eq!(query["scope"].split(' ').count(), 11);
+    assert!(
+        query["scope"]
+            .split(' ')
+            .any(|scope| scope == "follow:write")
+    );
+    assert_eq!(query["scope"].split(' ').count(), 12);
 
     // The token exchange proves the verifier behind the challenge, and carries the code.
     let exchange = query_of(&format!("http://x/?{}", origin.to("/api/token")[0].body));
