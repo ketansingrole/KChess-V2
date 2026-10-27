@@ -245,15 +245,21 @@ pub const STALE_STUDY: &str =
 
 /// A chapter save based on the chapter as the window last read or wrote it (`based_on`, its PGN)
 /// is refused once the chapter holds other moves, so two windows never overwrite each other's
-/// work. Renames and other chapters do not conflict. A study or chapter that is not there (new,
-/// or removed) has nothing to compare.
-pub(crate) fn check_based_on(db: &Connection, command: &Value, based_on: &str) -> Result<()> {
+/// work. Renames and other chapters do not conflict. A study or chapter removed since then is
+/// refused the same way rather than created again: the window keeps its moves as a copy.
+/// Answers the study's stored name, which a content save keeps (another window may have renamed
+/// it); `None` for a command without a study id.
+pub(crate) fn check_based_on(
+    db: &Connection,
+    command: &Value,
+    based_on: &str,
+) -> Result<Option<String>> {
     let Some(id) = command
         .get("id")
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
     else {
-        return Ok(());
+        return Ok(None);
     };
     migrate_studies(db)?;
     let study = read_command_studies(db, object(command, "study command")?)?
@@ -275,8 +281,12 @@ pub(crate) fn check_based_on(db: &Connection, command: &Value, based_on: &str) -
         .and_then(|chapter| chapter.get("pgn"))
         .and_then(Value::as_str)
     {
-        Some(current) if current != based_on => Err(CoreError::new(STALE_STUDY)),
-        _ => Ok(()),
+        Some(current) if current == based_on => Ok(study
+            .as_ref()
+            .and_then(|study| study.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_string)),
+        _ => Err(CoreError::new(STALE_STUDY)),
     }
 }
 

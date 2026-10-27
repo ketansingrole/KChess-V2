@@ -2,20 +2,117 @@
 //! Electron app under the same `kchess:` names (`useViewPreference`), so a page opens as it was left
 //! in either app.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use futures::StreamExt as _;
+use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, Global};
 use kchess_core::Level;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-use crate::core::AppCore;
+use crate::core::{AppCore, BoxedSave, Saved};
 
 #[derive(Default)]
 pub struct ViewPreferences {
     values: Map<String, Value>,
+    /// Keys whose latest write the core refused, with that write: retried as the app quits.
+    failed: Failed,
+    /// Writes, sent in order by one writer off the UI thread (`write_in_order`).
+    writes: Option<mpsc::UnboundedSender<Write>>,
+}
+
+type Failed = Arc<Mutex<HashMap<String, (Value, String)>>>;
+
+enum Write {
+    /// Store `key` as `value`; `null` forgets it.
+    Set(String, Value),
+    /// Done once every write before it was answered, and refused ones were tried again.
+    Flushed(oneshot::Sender<Saved>),
 }
 
 impl Global for ViewPreferences {}
+
+impl ViewPreferences {
+    /// The core refused the latest write of `key`: the shown value is not what the profile keeps.
+    fn unsaved(&self, key: &str) -> bool {
+        self.failed
+            .lock()
+            .is_ok_and(|failed| failed.contains_key(key))
+    }
+
+    fn write(&self, key: &str, value: Value) {
+        if let Some(writes) = &self.writes {
+            let _ = writes.unbounded_send(Write::Set(key.to_string(), value));
+        }
+    }
+
+    /// Every write so far reached the profile, or why one did not.
+    fn flushed(&self) -> BoxedSave {
+        let (done, wait) = oneshot::channel();
+        let sent = self
+            .writes
+            .as_ref()
+            .is_some_and(|writes| writes.unbounded_send(Write::Flushed(done)).is_ok());
+        Box::pin(async move {
+            if !sent {
+                return Ok(());
+            }
+            wait.await
+                .unwrap_or_else(|_| Err("View preferences are closed.".to_string()))
+        })
+    }
+}
+
+/// Write each preference in order. A refused write is kept until a later write of its key
+/// succeeds, and tried again when the app quits, which reports it if it fails again.
+async fn write_in_order<F, Fut>(mut queue: mpsc::UnboundedReceiver<Write>, failed: Failed, save: F)
+where
+    F: Fn(String, Value) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
+    let record = |key: String, value: Value, result: Result<(), String>| {
+        if let Ok(mut failed) = failed.lock() {
+            match result {
+                Ok(()) => failed.remove(&key),
+                Err(cause) => failed.insert(key, (value, cause)),
+            };
+        }
+    };
+    while let Some(write) = queue.next().await {
+        match write {
+            Write::Set(key, value) => {
+                let result = save(key.clone(), value.clone()).await;
+                record(key, value, result);
+            }
+            Write::Flushed(done) => {
+                let retry: Vec<(String, Value)> = failed
+                    .lock()
+                    .map(|failed| {
+                        failed
+                            .iter()
+                            .map(|(key, (value, _))| (key.clone(), value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (key, value) in retry {
+                    let result = save(key.clone(), value.clone()).await;
+                    record(key, value, result);
+                }
+                let cause = failed
+                    .lock()
+                    .ok()
+                    .and_then(|failed| failed.values().next().map(|(_, cause)| cause.clone()));
+                let _ = done.send(match cause {
+                    Some(cause) => Err(format!("A view preference could not be saved: {cause}")),
+                    None => Ok(()),
+                });
+            }
+        }
+    }
+}
 
 /// Read the saved preferences before the window opens.
 pub fn init(cx: &mut App) {
@@ -35,7 +132,37 @@ pub fn init(cx: &mut App) {
             Map::new()
         }
     };
-    cx.set_global(ViewPreferences { values });
+    let (writes, queue) = mpsc::unbounded();
+    let failed = Failed::default();
+    let core = cx.global::<AppCore>().clone();
+    cx.background_executor()
+        .spawn(write_in_order(
+            queue,
+            Arc::clone(&failed),
+            move |key, value| {
+                let save = core.call("setViewPreference", vec![json!(key), value]);
+                async move {
+                    save.await.map(|_| ()).map_err(|cause| {
+                        crate::log::write(
+                            Level::Warn,
+                            "view-preferences",
+                            &format!("Saving a view preference failed: {key} {}", cause.message),
+                        );
+                        cause.message
+                    })
+                }
+            },
+        ))
+        .detach();
+    cx.set_global(ViewPreferences {
+        values,
+        failed,
+        writes: Some(writes),
+    });
+    crate::core::on_quit(cx, |cx| {
+        cx.try_global::<ViewPreferences>()
+            .map(ViewPreferences::flushed)
+    });
 }
 
 /// The preference `key`, or `fallback` until it is changed or when it is unreadable.
@@ -46,43 +173,89 @@ pub fn get<T: DeserializeOwned>(cx: &App, key: &str, fallback: T) -> T {
         .unwrap_or(fallback)
 }
 
-/// Remember a preference for every KChess app on this profile.
+/// Remember a preference for every KChess app on this profile. Choosing the shown value again
+/// writes it again when the core refused it.
 pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {
     let value = json!(value);
     let prefs = cx.default_global::<ViewPreferences>();
-    if prefs.values.get(key) == Some(&value) {
+    if prefs.values.get(key) == Some(&value) && !prefs.unsaved(key) {
         return;
     }
     prefs.values.insert(key.to_string(), value.clone());
-    let save = cx
-        .global::<AppCore>()
-        .call("setViewPreference", vec![json!(key), value]);
-    let key = key.to_string();
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(cause) = save.await {
-                crate::log::write(
-                    Level::Warn,
-                    "view-preferences",
-                    &format!("Saving a view preference failed: {key} {}", cause.message),
-                );
-            }
-        })
-        .detach();
+    prefs.write(key, value);
 }
 
 /// Forget a preference (`forgetViewPreference`): its default applies again in both apps.
 pub fn forget(cx: &mut App, key: &str) {
     let prefs = cx.default_global::<ViewPreferences>();
-    if prefs.values.remove(key).is_none() {
+    if prefs.values.remove(key).is_none() && !prefs.unsaved(key) {
         return;
     }
-    let save = cx
-        .global::<AppCore>()
-        .call("setViewPreference", vec![json!(key), Value::Null]);
-    cx.background_executor()
-        .spawn(async move {
-            let _ = save.await;
-        })
-        .detach();
+    prefs.write(key, Value::Null);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::LocalPool;
+    use futures::task::LocalSpawnExt as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A refused write (a set, then a forget) was dropped: the core never heard of it again, and
+    /// quitting reported success. It is kept, tried again at quit once the core recovers, and a
+    /// later write of the key replaces it.
+    #[test]
+    fn refused_writes_are_retried_at_quit_until_the_profile_keeps_them() {
+        let refuse = Arc::new(AtomicBool::new(true));
+        let stored = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let failed = Failed::default();
+        let (writes, queue) = mpsc::unbounded();
+        let mut pool = LocalPool::new();
+        pool.spawner()
+            .spawn_local(write_in_order(queue, Arc::clone(&failed), {
+                let refuse = Arc::clone(&refuse);
+                let stored = Arc::clone(&stored);
+                move |key, value| {
+                    let result = if refuse.load(Ordering::SeqCst) {
+                        Err("disk full".to_string())
+                    } else {
+                        stored.lock().unwrap().push((key, value));
+                        Ok(())
+                    };
+                    async move { result }
+                }
+            }))
+            .unwrap();
+        let mut prefs = ViewPreferences {
+            values: Map::new(),
+            failed: Arc::clone(&failed),
+            writes: Some(writes),
+        };
+        prefs.write("kchess:tab", json!("games"));
+        prefs.write("kchess:mode", Value::Null);
+        prefs.write("kchess:size", json!(1));
+        pool.run_until_stalled();
+        assert!(prefs.unsaved("kchess:tab") && prefs.unsaved("kchess:mode"));
+        let quit = pool.run_until(prefs.flushed());
+        assert!(quit.unwrap_err().contains("disk full"));
+
+        refuse.store(false, Ordering::SeqCst);
+        // A later write of a key replaces its refused one.
+        prefs.write("kchess:size", json!(2));
+        pool.run_until_stalled();
+        assert!(!prefs.unsaved("kchess:size"));
+        assert_eq!(pool.run_until(prefs.flushed()), Ok(()));
+        let mut kept = stored.lock().unwrap().clone();
+        kept.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            kept,
+            [
+                ("kchess:mode".to_string(), Value::Null),
+                ("kchess:size".to_string(), json!(2)),
+                ("kchess:tab".to_string(), json!("games")),
+            ]
+        );
+        assert!(failed.lock().unwrap().is_empty());
+        prefs.writes = None;
+    }
 }

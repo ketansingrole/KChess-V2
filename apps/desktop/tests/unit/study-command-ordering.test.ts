@@ -147,3 +147,33 @@ it('recovers from consecutive failed saves without replaying either at quit', as
   expect((await api.library()).studies[0]!.pgn).toContain('c4')
   expect(studies.error).toBe('')
 })
+
+it('keeps another window’s study rename when this window autosaves the chapter', async () => {
+  // The content save sent this window's older name with the moves, and the core stored both.
+  const { api } = desktop()
+  const store = useStudyStore()
+  const id = await store.save('Original', '1. e4 *')
+  const chapter = store.items[0]!.chapters[0]!.id
+  store.track(id, chapter)
+  await api.studyCommand({ op: 'rename', id, name: 'Remote rename' })
+  await store.saveChapter(id, chapter, '1. e4 e5 *')
+  const [saved] = (await api.library()).studies
+  expect(saved!.name).toBe('Remote rename')
+  expect(saved!.chapters[0]!.pgn).toBe('1. e4 e5 *')
+})
+
+it('does not recreate a study another window removed when this window autosaves it', async () => {
+  // The save recreated the study with a new chapter id, so every later save was refused.
+  const { api } = desktop()
+  const store = useStudyStore()
+  const id = await store.save('Original', '1. e4 *')
+  const chapter = store.items[0]!.chapters[0]!.id
+  store.track(id, chapter)
+  await api.studyCommand({ op: 'remove', id })
+  await expect(store.saveChapter(id, chapter, '1. e4 e5 *')).rejects.toThrow(
+    'This study was changed in another KChess window.',
+  )
+  expect((await api.library()).studies).toEqual([])
+  // Refused like any other window's change: the board keeps a copy, and quitting is not blocked.
+  await store.flush(true)
+})

@@ -201,7 +201,9 @@ profile. Every window sees the same data, so a write in one window must reach th
   still showing older moves stays protected. A save whose chapter has changed since is refused
   ("This study was changed in another KChess window. Reload it to see the latest version.")
   instead of overwriting the other window's, and is not retried: reopening the study adopts the
-  newer moves. Renames and other chapters do not conflict. The documents' `version` field is the
+  newer moves. A save whose study or chapter was removed since is refused the same way, rather
+  than recreating it. A save with a `basedOn` writes only the chapter's moves: the study keeps
+  its stored name. Renames and other chapters do not conflict. The documents' `version` field is the
   schema version and stays as it is.
 - View preferences (tabs, sort order, layout) are per-profile and last-write-wins. They are read
   when a page opens and are deliberately not broadcast, so one window's tab change never moves

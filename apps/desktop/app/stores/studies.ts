@@ -166,26 +166,9 @@ export const useStudyStore = defineStore('studies', () => {
     const sent = intent()
     if (!sent) return { studies: items.value }
     const based = savedChapter(sent)
+    let result: StudyCommandResult
     try {
-      const result = await window.kchess.studyCommand(sent, true, based && bases.get(based))
-      if (result.order) {
-        const byId = new Map(items.value.map((study) => [study.id, study]))
-        for (const study of result.studies) byId.set(study.id, study)
-        items.value = result.order.map((id) => {
-          const study = byId.get(id)
-          if (!study) throw new Error('The study library changed. Reopen the app to reload it.')
-          return study
-        })
-      } else items.value = result.studies
-      error.value = ''
-      const written = sent.op === 'save' && savedChapter(sent, result.id)
-      if (written) bases.set(written, sent.pgn)
-      // Failed edits to a study or chapter removed since then no longer apply.
-      if (sent.op === 'remove') forget((older) => 'id' in older && older.id === sent.id)
-      if (sent.op === 'removeChapter')
-        forget((older) => 'chapterId' in older && older.chapterId === sent.chapterId)
-      settled()
-      return result
+      result = await window.kchess.studyCommand(sent, true, based && bases.get(based))
     } catch (cause) {
       console.warn('[studies] saving the study library failed:', sent.op, cause)
       error.value = cause instanceof Error ? cause.message : String(cause)
@@ -193,6 +176,24 @@ export const useStudyStore = defineStore('studies', () => {
       if (!isStaleStudy(cause)) failed.push({ intent, cause })
       throw cause
     }
+    // The core has stored the command: from here nothing is sent again.
+    if (result.order) {
+      const byId = new Map(items.value.map((study) => [study.id, study]))
+      for (const study of result.studies) byId.set(study.id, study)
+      // A study another window added that this one has not read yet: read the library for it.
+      const known = result.order.flatMap((id) => byId.get(id) ?? [])
+      items.value = known
+      if (known.length < result.order.length) refreshLibraryLater()
+    } else items.value = result.studies
+    error.value = ''
+    const written = sent.op === 'save' && savedChapter(sent, result.id)
+    if (written) bases.set(written, sent.pgn)
+    // Failed edits to a study or chapter removed since then no longer apply.
+    if (sent.op === 'remove') forget((older) => 'id' in older && older.id === sent.id)
+    if (sent.op === 'removeChapter')
+      forget((older) => 'chapterId' in older && older.chapterId === sent.chapterId)
+    settled()
+    return result
   }
   const id = async (sent: StudyCommand): Promise<string> => {
     const result = await command(sent)

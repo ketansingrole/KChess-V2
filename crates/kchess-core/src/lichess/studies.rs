@@ -245,7 +245,8 @@ pub async fn lichess_study_chapters(
 }
 
 /// `exportToLichessStudy(account, studyId, name, pgn)`: adds a game to a Lichess study as new
-/// chapters, or to a new private study when `study_id` is empty. Returns the study id.
+/// chapters, or to a new private study when `study_id` is empty. Returns the study id once
+/// Lichess reports a chapter for every game: a full study answers success yet adds none.
 pub async fn export_to_lichess_study(
     lichess: &Lichess,
     account: &str,
@@ -284,7 +285,7 @@ pub async fn export_to_lichess_study(
                     .ok_or_else(|| CoreError::new("Lichess did not create the study."))?;
             }
             let path = format!("/api/study/{}/import-pgn", path_segment(&id));
-            let _: Value = lichess
+            let imported: Value = lichess
                 .client()
                 .post_form(
                     &path,
@@ -293,6 +294,23 @@ pub async fn export_to_lichess_study(
                     &cancel,
                 )
                 .await?;
+            let added = imported
+                .get("chapters")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            let games = split_pgn(pgn).len().max(1);
+            if added == 0 {
+                return Err(CoreError::new(format!(
+                    "Lichess added no chapters. A study holds at most {MAX_CHAPTERS} chapters."
+                ))
+                .into());
+            }
+            if added < games {
+                return Err(CoreError::new(format!(
+                    "Lichess added only {added} of {games} chapters. A study holds at most {MAX_CHAPTERS} chapters."
+                ))
+                .into());
+            }
             Ok(id)
         })
         .await
@@ -321,16 +339,20 @@ pub async fn sync_lichess_study(
     let joined: Vec<String> = current.iter().map(|chapter| chapter.pgn.clone()).collect();
     let remote = valid_chapters(&joined.join("\n\n"))?;
     // An earlier upload may have stopped partway: chapters it already wrote (and chapters it
-    // already appended) match the local edit rather than the baseline. Anything else changed
-    // on Lichess, and is never overwritten.
-    let mut written = vec![false; before.len()];
+    // already appended) match the local edit rather than the baseline, and a chapter whose moves
+    // were written before its tags were not holds the edit's moves with the baseline's tags.
+    // Anything else changed on Lichess, and is never overwritten.
+    let mut pending = vec![Pending::Chapter; before.len()];
     let mut changed_remotely = remote.len() < before.len() || remote.len() > after.len();
     if !changed_remotely {
         for (index, game) in remote.iter().enumerate() {
             match before.get(index) {
                 Some(expected) if game.pgn == expected.pgn => {}
-                Some(_) if uploaded(game, &after[index]) => written[index] = true,
-                None if uploaded(game, &after[index]) => {}
+                Some(expected) => match interrupted(game, expected, &after[index]) {
+                    Some(left) => pending[index] = left,
+                    None => changed_remotely = true,
+                },
+                None if uploaded(game, &after[index], &[]) => {}
                 _ => changed_remotely = true,
             }
         }
@@ -359,7 +381,7 @@ pub async fn sync_lichess_study(
             let auth = authorize(&token);
             for (index, expected) in before.iter().enumerate() {
                 let game = &after[index];
-                if game.pgn == expected.pgn || written[index] {
+                if game.pgn == expected.pgn || pending[index] == Pending::Nothing {
                     continue;
                 }
                 let base = format!(
@@ -367,15 +389,18 @@ pub async fn sync_lichess_study(
                     path_segment(&request.study_id),
                     path_segment(&ids[index])
                 );
-                let _: Value = lichess
-                    .client()
-                    .post_form(
-                        &format!("{base}/moves"),
-                        &[("pgn", game.pgn.as_str())],
-                        Some(auth.as_str()),
-                        &cancel,
-                    )
-                    .await?;
+                // Moves already written are never sent again.
+                if pending[index] == Pending::Chapter {
+                    let _: Value = lichess
+                        .client()
+                        .post_form(
+                            &format!("{base}/moves"),
+                            &[("pgn", game.pgn.as_str())],
+                            Some(auth.as_str()),
+                            &cancel,
+                        )
+                        .await?;
+                }
                 let mut tags = game.headers.clone();
                 // Chapter identity belongs to Lichess, rather than an edited local PGN.
                 let site = map_get(&expected.headers, "Site").unwrap_or("").to_string();
@@ -443,15 +468,51 @@ fn movetext(pgn: &str) -> &str {
     rest.trim_end()
 }
 
-/// Lichess already holds the local `chapter`: the same moves, and every tag the upload sets
-/// (the chapter identity in `[Site]` stays Lichess's).
-fn uploaded(remote: &Chapter, chapter: &Chapter) -> bool {
-    movetext(&remote.pgn) == movetext(&chapter.pgn)
-        && chapter
-            .headers
+/// What an upload still has to write to one existing chapter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pending {
+    /// Its moves, then its tags.
+    Chapter,
+    /// Its tags: the moves were written before the upload stopped.
+    Tags,
+    Nothing,
+}
+
+/// Lichess holds `tags` of `chapter` (the chapter identity in `[Site]` stays Lichess's), and
+/// none of the `removed` ones.
+fn has_tags(remote: &Chapter, chapter: &Chapter, removed: &[&str]) -> bool {
+    chapter
+        .headers
+        .iter()
+        .filter(|(key, _)| key != "Site")
+        .all(|(key, value)| map_get(&remote.headers, key) == Some(value.as_str()))
+        && removed
             .iter()
-            .filter(|(key, _)| key != "Site")
-            .all(|(key, value)| map_get(&remote.headers, key) == Some(value.as_str()))
+            .all(|key| map_get(&remote.headers, key).is_none_or(str::is_empty))
+}
+
+/// Lichess already holds the local `chapter`: the same moves, every tag the upload sets, and
+/// none it removes.
+fn uploaded(remote: &Chapter, chapter: &Chapter, removed: &[&str]) -> bool {
+    movetext(&remote.pgn) == movetext(&chapter.pgn) && has_tags(remote, chapter, removed)
+}
+
+/// A chapter an earlier upload of `edit` over `baseline` stopped partway through: what is left
+/// to write, or `None` when Lichess holds something this upload never wrote.
+fn interrupted(remote: &Chapter, baseline: &Chapter, edit: &Chapter) -> Option<Pending> {
+    let removed: Vec<&str> = baseline
+        .headers
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .filter(|key| *key != "Site" && map_get(&edit.headers, key).is_none())
+        .collect();
+    if uploaded(remote, edit, &removed) {
+        Some(Pending::Nothing)
+    } else if movetext(&remote.pgn) == movetext(&edit.pgn) && has_tags(remote, baseline, &[]) {
+        Some(Pending::Tags)
+    } else {
+        None
+    }
 }
 
 /// `[Site]` of a cloud chapter: `…/study/{study}/{chapter}`, optionally followed by `?` or `#`.

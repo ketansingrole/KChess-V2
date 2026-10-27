@@ -69,11 +69,17 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         }
         "store.library.importLibrary" => import_library(host, db, args.first()),
         "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
-            let command = args.first().unwrap_or(&Value::Null);
+            let mut command = args.first().cloned().unwrap_or(Value::Null);
             if let Some(based_on) = args.get(3).and_then(Value::as_str) {
-                check_based_on(db, command, based_on)?;
+                let name = check_based_on(db, &command, based_on)?;
+                // A content save changes the chapter's moves only, never the study's name.
+                if let (Some(name), Some(fields)) = (name, command.as_object_mut())
+                    && fields.get("op").and_then(Value::as_str) == Some("save")
+                {
+                    fields.insert("name".into(), Value::String(name));
+                }
             }
-            study_command(db, command, now, args.get(2) == Some(&Value::Bool(true)))
+            study_command(db, &command, now, args.get(2) == Some(&Value::Bool(true)))
         }),
         "store.library.saveArchivedGame" => {
             write_game(db, args.first().unwrap_or(&Value::Null)).map(|()| Value::Null)
@@ -932,13 +938,14 @@ mod tests {
         let db = study_db();
         let save = |pgn: &str| json!({"op":"save", "id":"a", "name":"A", "pgn":pgn});
         study_command(&db, &save("1. e4 *"), 1.0, true).expect("create");
-        // A brand-new study has nothing to compare.
-        check_based_on(
+        // A study removed since the chapter was read is not created again under its old id.
+        let removed = check_based_on(
             &db,
-            &json!({"op":"save", "id":"new", "name":"N"}),
+            &json!({"op":"save", "id":"removed", "name":"N"}),
             "1. e4 *",
         )
-        .expect("new");
+        .expect_err("removed");
+        assert_eq!(removed.message, super::super::studies::STALE_STUDY);
         check_based_on(&db, &save("1. d4 *"), "1. e4 *").expect("based on the current chapter");
         study_command(&db, &save("1. d4 *"), 1.0, true).expect("first window saves");
         let stale = check_based_on(&db, &save("1. e4 e5 *"), "1. e4 *").expect_err("second window");
@@ -952,6 +959,57 @@ mod tests {
         )
         .expect("rename");
         check_based_on(&db, &save("1. c4 *"), "1. d4 *").expect("a rename changes no moves");
+    }
+
+    /// A content save from one window, based on the chapter it shows, after another window
+    /// renamed the study or removed it: the rename stays, and the removed study is not recreated
+    /// with a new chapter id that the open board can never save to.
+    #[test]
+    fn a_based_on_chapter_save_keeps_another_windows_rename_and_removal() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::store::migrations::migrate(&db).unwrap();
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = crate::store::StoreContext {
+            db: &db,
+            host: &Quiet,
+            config: &config,
+            cache: &cache,
+        };
+        let call = |args: &[Value]| crate::store::call(&ctx, "store.library.studyCommand", args);
+        let created = call(&[
+            json!({"op":"save", "name":"Original", "pgn":"1. e4 *"}),
+            json!(1.0),
+            json!(true),
+        ])
+        .unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        let chapter = created["studies"][0]["chapters"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        call(&[
+            json!({"op":"rename", "id":id, "name":"Remote rename"}),
+            json!(2.0),
+            json!(true),
+        ])
+        .unwrap();
+        let save = |pgn: &str, based_on: &str| {
+            call(&[
+                json!({"op":"save", "name":"Original", "pgn":pgn, "id":id, "chapterId":chapter}),
+                json!(3.0),
+                json!(true),
+                json!(based_on),
+            ])
+        };
+        save("1. e4 e5 *", "1. e4 *").expect("autosave");
+        let studies = read_studies(&db).unwrap();
+        assert_eq!(studies[0]["name"], "Remote rename");
+        assert_eq!(studies[0]["chapters"][0]["pgn"], "1. e4 e5 *");
+        call(&[json!({"op":"remove", "id":id}), json!(4.0), json!(true)]).unwrap();
+        let removed = save("1. e4 e5 2. Nf3 *", "1. e4 e5 *").expect_err("removed");
+        assert_eq!(removed.message, super::super::studies::STALE_STUDY);
+        assert!(read_studies(&db).unwrap().is_empty());
     }
 
     #[test]

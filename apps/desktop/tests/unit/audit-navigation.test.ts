@@ -37,9 +37,10 @@ it('opens Settings at the section a link names', async () => {
 
 // Following a name already listed synced whoever happened to be the newest row.
 it('syncs the player just followed, not the newest row', async () => {
-  const syncGames = vi.fn(async () => ({ accounts, gameCount: 0 }) as unknown as AppData)
+  const reply = async () => ({ ...store.data!, accounts, gameCount: 0 }) as AppData
+  const syncGames = vi.fn(reply)
   const { store } = await setup({
-    addAccount: async () => ({ accounts, gameCount: 0 }) as unknown as AppData,
+    addAccount: reply,
     usage: async () => ({ accounts: {} }) as never,
     syncGames,
   })

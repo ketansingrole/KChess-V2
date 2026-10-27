@@ -41,6 +41,7 @@ export default defineNuxtPlugin(() => {
     const archive = useGameArchiveStore()
     const mistakes = useMistakeStore()
     const tournaments = useTournamentStore()
+    const owners = { studies, archive, mistakes, tournaments }
     const since = {
       studies: studies.revision(),
       archive: archive.revision(),
@@ -51,11 +52,17 @@ export default defineNuxtPlugin(() => {
       .library()
       .then((snapshot) => {
         if (!read.current()) return
-        if (pending.has('studies')) studies.replaceFromLibrary(snapshot, since.studies)
-        if (pending.has('archive')) archive.replaceFromLibrary(snapshot, since.archive)
-        if (pending.has('mistakes')) mistakes.replaceFromLibrary(snapshot, since.mistakes)
-        if (pending.has('tournaments')) tournaments.replaceFromLibrary(snapshot, since.tournaments)
+        // A store may ask for another read while it takes this one (`refreshLibraryLater`): that
+        // read's stores stay pending, and this older snapshot is not shown to the rest.
+        const stores = [...pending]
         pending.clear()
+        for (const [index, store] of stores.entries()) {
+          if (!read.current()) {
+            for (const rest of stores.slice(index)) pending.add(rest)
+            return
+          }
+          owners[store].replaceFromLibrary(snapshot, since[store])
+        }
       })
       .catch((cause: unknown) => console.warn('[library] refreshing the library failed:', cause))
   }

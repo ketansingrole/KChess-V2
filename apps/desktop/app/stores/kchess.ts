@@ -328,13 +328,31 @@ export const useKChessStore = defineStore('kchess', () => {
    * one may predate it (`reloadData`).
    */
   let accountRevision = 0
-  async function changeAccounts<T>(action: () => Promise<T>): Promise<T | undefined> {
-    accountRevision++
+  /**
+   * Run an account change and show the profile it answers (`appData` picks it from the reply).
+   * Its settings are adopted as another window's would be (`adoptStored`), so this window's
+   * unchanged form fields never write that window's change back. A reply that may predate this
+   * window's own settings save or another account change is followed by a fresh read instead.
+   */
+  async function changeAccounts<T>(
+    action: () => Promise<T>,
+    appData: (result: T) => AppData = (result) => result as AppData,
+  ): Promise<T | undefined> {
+    const started = ++accountRevision
+    const settingsSince = persistence.revision()
+    let result: T | undefined
     try {
-      return await run(action)
+      result = await run(action)
     } finally {
       accountRevision++
     }
+    if (result === undefined) return undefined
+    const next = appData(result)
+    const settingsCurrent = persistence.revision() === settingsSince
+    if (settingsCurrent) persistence.adoptStored(next.settings)
+    data.value = { ...next, settings: data.value?.settings ?? next.settings }
+    if (!settingsCurrent || accountRevision !== started + 1) void reloadData()
+    return result
   }
   /** Open a page; `query` picks what it shows first (History's `source`/`game`). */
   function selectPage(next: Page, query?: Record<string, string>): void {
@@ -554,7 +572,6 @@ export const useKChessStore = defineStore('kchess', () => {
     const typed = usernameInput.value.trim().replace(/^@/, '').toLowerCase()
     const result = await changeAccounts(() => window.kchess.addAccount(usernameInput.value))
     if (result) {
-      data.value = result
       usernameInput.value = ''
       selectedAccount.value ||= defaultAccount(result.accounts)
       // Following someone already listed keeps their row where it is, so find it by name.
@@ -566,7 +583,6 @@ export const useKChessStore = defineStore('kchess', () => {
   async function clearSyncedData(username: string): Promise<void> {
     const result = await changeAccounts(() => window.kchess.clearAccountData(username))
     if (!result) return
-    data.value = result
     if (reviewGame.value?.account.toLowerCase() === username.toLowerCase()) reviewGame.value = null
     void usage.refresh()
     info(`Cleared @${username}'s synced data. You still follow them; sync to download again.`)
@@ -577,7 +593,6 @@ export const useKChessStore = defineStore('kchess', () => {
     const names = [...usernames]
     const result = await changeAccounts(() => window.kchess.addFriends(names))
     if (!result) return false
-    data.value = result
     void usage.refresh()
     info(
       `Added ${usernames.length} ${usernames.length === 1 ? 'player' : 'players'} to Following. Their games aren't downloaded until you sync them.`,
@@ -594,7 +609,6 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   /** Drops renderer state for a signed-out account (all when `account` is omitted) and reloads. */
   async function signedOut(result: AppData, account?: string): Promise<void> {
-    data.value = result
     onlineAccountPreference.value = result.accounts.find((a) => a.connected)?.username ?? ''
     selectedAccount.value = onlineAccountPreference.value
     reviewGame.value = null
@@ -622,7 +636,6 @@ export const useKChessStore = defineStore('kchess', () => {
     // Disconnecting one's own account signs it out, so it resets the window just like logout.
     if (result && wasConnected) await signedOut(result, username)
     else if (result) {
-      data.value = result
       selectedAccount.value = defaultAccount(result.accounts)
       if (historyAccount.value.toLowerCase() === username.toLowerCase())
         historyAccount.value = 'all'
@@ -643,9 +656,11 @@ export const useKChessStore = defineStore('kchess', () => {
           findTheme(current.darkTheme, customThemes.value),
         )
       : undefined
-    const result = await changeAccounts(() => window.kchess.connectLichess(look))
+    const result = await changeAccounts(
+      () => window.kchess.connectLichess(look),
+      (connected) => connected.data,
+    )
     if (!result) return
-    data.value = result.data
     selectedAccount.value = result.username
     if (knownBefore.has(result.username.toLowerCase())) {
       // Lichess authorises whoever is signed in to the browser, so this is the same account again.
@@ -662,7 +677,6 @@ export const useKChessStore = defineStore('kchess', () => {
     const before = (await usage.refresh())?.accounts
     const result = await changeAccounts(() => window.kchess.syncGames(username))
     if (result) {
-      data.value = result
       // Say what the sync cost, so downloads are never a surprise.
       const after = (await usage.refresh())?.accounts
       const downloaded = Object.entries(after ?? {}).reduce(

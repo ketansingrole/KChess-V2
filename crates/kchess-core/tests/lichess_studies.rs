@@ -172,6 +172,68 @@ async fn resumes_an_upload_that_stopped_partway_without_rewriting_what_it_wrote(
     );
 }
 
+/// An upload that wrote a chapter's moves and then failed before its tags: retried, it writes the
+/// tags (never the moves again), including a tag the edit removed. It was refused as a cloud
+/// change when a tag was edited, and reported done, with the tag still there, when one was removed.
+#[tokio::test]
+async fn resumes_an_upload_that_stopped_between_a_chapters_moves_and_its_tags() {
+    let annotated = BASELINE.replace("[Result", "[Annotator \"Alice\"]\n[Result");
+    for (baseline, edited, tag) in [
+        (
+            BASELINE.to_string(),
+            BASELINE
+                .replace("Example", "After")
+                .replace("{Keep}", "{Edited}"),
+            "[Event \"After\"]",
+        ),
+        (
+            annotated.clone(),
+            annotated
+                .replace("[Annotator \"Alice\"]\n", "")
+                .replace("{Keep}", "{Edited}"),
+            "[Annotator \"\"]",
+        ),
+    ] {
+        // Lichess holds the edit's moves with the baseline's tags.
+        let cloud = Arc::new(Mutex::new(baseline.replace("{Keep}", "{Edited}")));
+        let fixture = study_fixture(cloud, 200).await;
+        let lichess = service(&fixture.base);
+        let mut retry = request(&edited);
+        retry.baseline = baseline;
+        sync_lichess_study(&lichess, &retry).await.unwrap();
+        let sent = posts(&fixture);
+        let targets: Vec<&str> = sent.iter().map(|seen| seen.path()).collect();
+        assert_eq!(targets, ["/api/study/Study001/Chapter1/tags"]);
+        assert!(
+            form_field(&sent[0].body, "pgn").unwrap().contains(tag),
+            "{tag}"
+        );
+    }
+}
+
+/// A full study answers an import with success and no chapters, and a partly accepted import
+/// lists only what it added: neither is reported as exported.
+#[tokio::test]
+async fn an_export_lichess_did_not_fully_import_is_reported() {
+    for (chapters, games, message) in [
+        ("[]", 1, "Lichess added no chapters."),
+        (
+            "[{\"id\":\"Chapter1\"}]",
+            2,
+            "Lichess added only 1 of 2 chapters.",
+        ),
+    ] {
+        let fixture =
+            serve(move |_| Reply::Json(200, format!("{{\"chapters\":{chapters}}}"))).await;
+        let lichess = service(&fixture.base);
+        let pgn = vec![BASELINE; games].join("\n\n");
+        let error = export_to_lichess_study(&lichess, "Alice", "Study001", "Game", &pgn)
+            .await
+            .unwrap_err();
+        assert!(error.message.starts_with(message), "{}", error.message);
+    }
+}
+
 #[tokio::test]
 async fn appends_new_chapters_to_the_linked_cloud_study_without_duplicating_the_existing_chapters()
 {
@@ -240,7 +302,7 @@ async fn exports_a_game_into_a_new_private_study_and_reports_its_id() {
         if seen.path() == "/api/study" {
             Reply::Json(200, "{\"id\":\"NewStudy1\"}".into())
         } else {
-            Reply::Json(200, "{}".into())
+            Reply::Json(200, "{\"chapters\":[{\"id\":\"Chapter1\"}]}".into())
         }
     })
     .await;
