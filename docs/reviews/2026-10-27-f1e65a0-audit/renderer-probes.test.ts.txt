@@ -1,0 +1,176 @@
+import { expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
+import { desktop, deferred, emptyProgress } from './fixtures'
+import { useLocalGameStore } from '../../app/stores/local'
+import { useKChessStore } from '../../app/stores/kchess'
+import { usePuzzleStore } from '../../app/stores/puzzles'
+import { useStudyStore } from '../../app/stores/studies'
+import { flushSavedDocuments, loadLibrary, setLibraryRefresher } from '../../app/utils/library'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+import { INITIAL_FEN } from '@kchess/rules/position'
+import type { ProfileChange, PuzzleDbProgress, TournamentDetail } from '@kchess/contracts/types'
+import type { RepertoireMisses } from '@kchess/rules/library'
+import profileSyncPlugin from '../../app/plugins/profileSync.client'
+import TournamentEvent from '../../app/components/TournamentEvent.vue'
+
+vi.hoisted(() => {
+  ;(globalThis as Record<string, unknown>).defineNuxtPlugin = (setup: unknown) => setup
+})
+
+// Diagnostic assertions pin observed defects, rather than intended behavior.
+it('an untouched local session overwrites another client at quit', async () => {
+  const { api } = desktop()
+  await loadLibrary()
+  const local = useLocalGameStore()
+  expect(local.moves).toEqual([])
+  await api.saveSession('local', {
+    setup: STANDARD_SETUP,
+    moves: ['e2e4'],
+    clock: null,
+    times: null,
+    result: null,
+  })
+  expect((await api.library()).sessions.local?.moves).toEqual(['e2e4'])
+  await flushSavedDocuments()
+  expect((await api.library()).sessions.local?.moves).toEqual([])
+})
+
+it('a second client stays busy after another client finishes the puzzle download', async () => {
+  let progress: (value: PuzzleDbProgress) => void = () => {}
+  let busy = true
+  desktop({
+    puzzleDbStatus: async () => ({ installed: true, busy, count: 20, bytes: 100 }),
+    onPuzzleDbProgress: (callback) => {
+      progress = callback
+      return () => {}
+    },
+  })
+  await useKChessStore().init()
+  const puzzles = usePuzzleStore()
+  await puzzles.refreshDb()
+  expect(puzzles.dbBusy).toBe(true)
+  busy = false
+  progress({ phase: 'done', received: 100, kept: 20 })
+  await flushPromises()
+  expect(puzzles.dbBusy).toBe(true)
+  await puzzles.refreshDb()
+  expect(puzzles.dbBusy).toBe(false)
+})
+
+it('a late repertoire record acknowledgment restores counters after successful clearing', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const real = api.recordRepertoireMiss
+  const gate = deferred<RepertoireMisses>()
+  let committed: RepertoireMisses | undefined
+  api.recordRepertoireMiss = async (key, fen) => {
+    committed = await real(key, fen)
+    return gate.promise
+  }
+  studies.recordMiss('study:white', INITIAL_FEN)
+  await flushPromises()
+  studies.clearMisses('study:white')
+  await flushPromises()
+  expect((await api.library()).repertoireMisses).toEqual({})
+  expect(studies.misses).toEqual({})
+  gate.resolve(committed!)
+  await flushPromises()
+  expect(studies.misses).toEqual({ 'study:white': { [INITIAL_FEN]: 1 } })
+  expect((await api.library()).repertoireMisses).toEqual({})
+})
+
+it('cached puzzle history ignores another client’s profile change and reopening', async () => {
+  let changed: (value: ProfileChange) => void = () => {}
+  let attempts = 0
+  const read = vi.fn(async () => {
+    const value = emptyProgress()
+    value.all.attempts = attempts
+    return value
+  })
+  desktop({
+    puzzleProgress: read,
+    onProfileChanged: (callback) => {
+      changed = callback
+      return () => {}
+    },
+  })
+  await useKChessStore().init()
+  ;(profileSyncPlugin as unknown as () => void)()
+  const puzzles = usePuzzleStore()
+  await puzzles.loadHistory()
+  attempts = 1
+  changed({ areas: ['puzzles'], origin: 99 })
+  await flushPromises()
+  await puzzles.loadHistory()
+  expect(read).toHaveBeenCalledTimes(1)
+  expect(puzzles.history?.all.attempts).toBe(0)
+  setLibraryRefresher(undefined)
+})
+
+it('a delayed history read consumes invalidation from a newly recorded attempt', async () => {
+  const gate = deferred<ReturnType<typeof emptyProgress>>()
+  const saved = emptyProgress()
+  saved.all.attempts = 1
+  const read = vi.fn(() => gate.promise)
+  desktop({ puzzleProgress: read, recordPuzzleAttempt: async () => saved })
+  await useKChessStore().init()
+  const puzzles = usePuzzleStore()
+  const reading = puzzles.loadHistory()
+  await puzzles.loadNext()
+  await puzzles.report(true)
+  puzzles.end()
+  await flushPromises()
+  expect(puzzles.progress?.all.attempts).toBe(1)
+  gate.resolve(emptyProgress())
+  await reading
+  await puzzles.loadHistory()
+  expect(read).toHaveBeenCalledTimes(1)
+  expect(puzzles.history?.all.attempts).toBe(0)
+})
+
+it('an account switch keeps another account’s tournament membership on screen', async () => {
+  const detail: TournamentDetail = {
+    id: 'Arena001',
+    system: 'arena',
+    name: 'Blitz',
+    status: 'started',
+    variant: 'standard',
+    variantName: 'Standard',
+    rated: true,
+    clock: { limit: 180, increment: 0 },
+    nbPlayers: 2,
+    startsAt: 0,
+    playable: true,
+    standing: [],
+    me: { withdraw: false, gameId: 'Game0001' },
+  }
+  const tournament = vi.fn(async () => detail)
+  desktop({ tournament })
+  const app = useKChessStore()
+  await app.init()
+  app.setOnlineAccount('Alice')
+  const wrapper = mount(TournamentEvent, {
+    props: { system: 'arena', id: 'Arena001' },
+    global: {
+      stubs: {
+        UButton: { template: '<button><slot /></button>' },
+        UBadge: { template: '<span><slot /></span>' },
+        UIcon: true,
+        UInput: true,
+        UAlert: true,
+        PlayerLink: true,
+        ChessBoard: true,
+      },
+    },
+  })
+  await flushPromises()
+  expect(wrapper.text()).toContain('You are in')
+  app.setOnlineAccount('Bob')
+  await nextTick()
+  expect(app.activeOnlineAccount).toBe('Bob')
+  expect(wrapper.text()).toContain('You are in')
+  expect(wrapper.text()).toContain('Go to your game')
+  expect(tournament).toHaveBeenCalledTimes(1)
+  wrapper.unmount()
+})
