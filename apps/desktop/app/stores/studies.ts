@@ -265,23 +265,34 @@ export const useStudyStore = defineStore('studies', () => {
     (await command({ op: 'duplicate', id: studyId })).id
   /** Missed repertoire moves by `studyId:color`, then by FEN: the trainer steers towards them. */
   const misses = ref<RepertoireMisses>(initialLibrary().repertoireMisses)
+  /**
+   * The core answers each change with the whole table: only the newest change's answer is shown,
+   * since an older one, arriving late, predates the changes made after it.
+   */
+  let missChanges = 0
+  function changeMisses(next: RepertoireMisses, work: Promise<RepertoireMisses>, what: string) {
+    misses.value = next
+    const change = ++missChanges
+    writes.track(work).then(
+      (saved) => {
+        if (change === missChanges) misses.value = saved
+      },
+      (cause: unknown) => console.warn(`[studies] ${what} failed:`, cause),
+    )
+  }
   function recordMiss(key: string, fen: string): void {
     const table = { ...(misses.value[key] ?? {}) }
     table[fen] = (table[fen] ?? 0) + 1
-    misses.value = { ...misses.value, [key]: table }
-    writes.track(window.kchess.recordRepertoireMiss(key, fen)).then(
-      (saved) => (misses.value = saved),
-      (cause: unknown) => console.warn('[studies] saving a repertoire miss failed:', cause),
+    changeMisses(
+      { ...misses.value, [key]: table },
+      window.kchess.recordRepertoireMiss(key, fen),
+      'saving a repertoire miss',
     )
   }
   function clearMisses(key: string): void {
     const next = { ...misses.value }
     delete next[key]
-    misses.value = next
-    writes.track(window.kchess.clearRepertoireMisses(key)).then(
-      (saved) => (misses.value = saved),
-      (cause: unknown) => console.warn('[studies] clearing repertoire misses failed:', cause),
-    )
+    changeMisses(next, window.kchess.clearRepertoireMisses(key), 'clearing repertoire misses')
   }
   function freshName(base = 'Untitled study'): string {
     const taken = new Set(items.value.map((item) => item.name))

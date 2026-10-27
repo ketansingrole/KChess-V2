@@ -144,7 +144,8 @@ const sessionPayload = <T>(value: T): T => (isReactive(value) ? plain(value) : v
 
 /**
  * Keep an unfinished session in the core's library: saved shortly after each change, and when the
- * window closes. The returned ref holds the last save error.
+ * window closes. The returned ref holds the last save error; its `flush` saves even an unchanged
+ * session.
  */
 export function persistSession<K extends SessionKind>(
   kind: K,
@@ -154,12 +155,21 @@ export function persistSession<K extends SessionKind>(
 ): Ref<string> & { flush: () => Promise<void> } {
   const error = ref('')
   let timer: ReturnType<typeof setTimeout> | undefined
-  const save = async (strict = false): Promise<void> => {
+  /**
+   * The session as this window loaded or last saved it. Another window may have saved the same
+   * kind since, so closing a window that never changed its session must not write it back.
+   */
+  let saved = JSON.stringify(sessionPayload(source()))
+  const save = async (strict = false, force = false): Promise<void> => {
     clearTimeout(timer)
     // Unloaded documents must never be replaced by a store's default session.
     if (!libraryReady.value) return
+    const payload = sessionPayload(source())
+    const text = JSON.stringify(payload)
+    if (!force && text === saved && !error.value) return
     try {
-      await window.kchess.saveSession(kind, sessionPayload(source()))
+      await window.kchess.saveSession(kind, payload)
+      saved = text
       error.value = ''
     } catch (cause) {
       console.warn('[library] saving session failed:', kind, cause)
@@ -187,5 +197,5 @@ export function persistSession<K extends SessionKind>(
     off()
     window.removeEventListener('beforeunload', saveNow)
   })
-  return Object.assign(error, { flush: () => save() })
+  return Object.assign(error, { flush: () => save(false, true) })
 }

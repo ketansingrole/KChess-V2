@@ -82,9 +82,10 @@ export const useTournamentStore = defineStore('tournaments', () => {
     if (standingPage) page.value = standingPage
     selected.value = { system, id }
     const request = ++detailRequest
+    const account = app.activeOnlineAccount
     detailError.value = ''
     try {
-      const next = await window.kchess.tournament(system, id, app.activeOnlineAccount, page.value)
+      const next = await window.kchess.tournament(system, id, account, page.value)
       if (request !== detailRequest) return
       detail.value = next
       // The core forgets an arena that is over or that you left.
@@ -97,6 +98,19 @@ export const useTournamentStore = defineStore('tournaments', () => {
       }
     }
   }
+  // `me` is the account the details were read for: another account must not be shown as in the
+  // event, nor act on that account's game, while its own details load.
+  watch(
+    () => app.activeOnlineAccount,
+    () => {
+      detailRequest++
+      if (detail.value?.me) {
+        const { me: _, ...shared } = detail.value
+        detail.value = shared
+      }
+    },
+    { flush: 'sync' },
+  )
   function close(): void {
     selected.value = null
     detail.value = null

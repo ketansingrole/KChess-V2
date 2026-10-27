@@ -80,7 +80,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
         .then(() => window.kchess.recordPuzzleAttempt(attempt))
         .then((next) => {
           progress.value = next
-          historyStale = true
+          invalidateHistory()
         })
         .catch((cause: unknown) => console.warn('[puzzles] recording the attempt failed:', cause))
     },
@@ -122,7 +122,13 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const progress = ref<PuzzleProgress | null>(null)
   /** The History tab's longer list. */
   const history = ref<PuzzleProgress | null>(null)
-  let historyStale = true
+  /** Bumped by every change to the log: a read started before one must not count as fresh. */
+  let historyGeneration = 0
+  /** The generation and local day the shown history was read at; Today totals change at midnight. */
+  let historyRead: { generation: number; day: string } | undefined
+  function invalidateHistory(): void {
+    historyGeneration++
+  }
   async function loadProgress(): Promise<void> {
     try {
       progress.value = await window.kchess.puzzleProgress({ today: localDay(), limit: 10 })
@@ -131,13 +137,26 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     }
   }
   async function loadHistory(): Promise<void> {
-    if (!historyStale && history.value) return
+    const day = localDay()
+    if (history.value && historyRead?.generation === historyGeneration && historyRead.day === day)
+      return
+    const generation = historyGeneration
     try {
-      history.value = await window.kchess.puzzleProgress({ today: localDay(), limit: 200 })
-      historyStale = false
+      history.value = await window.kchess.puzzleProgress({ today: day, limit: 200 })
+      historyRead = { generation, day }
     } catch (cause) {
       console.warn('[puzzles] reading the attempt log failed:', cause)
     }
+  }
+  /**
+   * Another window changed the puzzle log or database, or the core reconnected: read again what
+   * this window shows.
+   */
+  function reloadFromCore(): void {
+    invalidateHistory()
+    if (progress.value) void loadProgress()
+    if (history.value && tab.value === 'history') void loadHistory()
+    if (db.value) void refreshDb()
   }
 
   // ── Daily puzzle ──────────────────────────────────────────────────────────────────────────────
@@ -274,18 +293,32 @@ export const usePuzzleStore = defineStore('puzzles', () => {
   const db = ref<PuzzleDbStatus | null>(null)
   const dbProgress = ref<PuzzleDbProgress | null>(null)
   const dbError = ref('')
-  let offProgress: (() => void) | undefined
-
+  const terminal = (progress: PuzzleDbProgress | null): boolean =>
+    progress?.phase === 'done' || progress?.phase === 'cancelled' || progress?.phase === 'failed'
+  // Every window sees the download's progress, whichever started it; its end changes the status.
+  const offProgress = window.kchess.onPuzzleDbProgress((progress) => {
+    dbProgress.value = progress
+    if (terminal(progress)) void refreshDb()
+  })
+  onScopeDispose(offProgress)
+  let statusRead = 0
   async function refreshDb(): Promise<void> {
+    const read = ++statusRead
     try {
-      db.value = await window.kchess.puzzleDbStatus()
+      const status = await window.kchess.puzzleDbStatus()
+      if (read !== statusRead) return
+      db.value = status
+      // The installing window's own end clears its progress after this read (`installDb`).
+      if (
+        !status.busy &&
+        (dbProgress.value?.phase === 'done' || dbProgress.value?.phase === 'cancelled')
+      )
+        dbProgress.value = null
     } catch (cause) {
+      if (read !== statusRead) return
       console.warn('[puzzles] reading puzzle database status failed:', cause)
       dbError.value = message(cause)
     }
-    offProgress ??= window.kchess.onPuzzleDbProgress((progress) => {
-      dbProgress.value = progress
-    })
   }
   async function installDb(): Promise<void> {
     dbError.value = ''
@@ -312,9 +345,11 @@ export const usePuzzleStore = defineStore('puzzles', () => {
       dbError.value = message(cause)
     }
   }
+  // A download reports its end before the service stops counting it as running, so a status read
+  // just after the end may still say busy.
   const dbBusy = computed(
     () =>
-      db.value?.busy === true ||
+      (db.value?.busy === true && !terminal(dbProgress.value)) ||
       dbProgress.value?.phase === 'downloading' ||
       dbProgress.value?.phase === 'importing',
   )
@@ -350,6 +385,7 @@ export const usePuzzleStore = defineStore('puzzles', () => {
     loadProgress,
     history,
     loadHistory,
+    reloadFromCore,
     daily,
     dailyError,
     dailyLoading,

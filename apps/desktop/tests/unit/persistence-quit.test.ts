@@ -87,6 +87,7 @@ it('keeps a failed session open and saves its latest contents on retry', async (
   const scope = effectScope()
   const persistence = scope.run(() => persistSession('analysis', () => document.value))!
   try {
+    document.value.pgn = '1. e4 c5 *'
     await expect(flushSavedDocuments()).rejects.toThrow('Some changes could not be saved')
     expect(persistence.value).toBe('Disk unavailable')
     document.value.pgn = '1. e4 e5 *'

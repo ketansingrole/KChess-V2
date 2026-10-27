@@ -1,4 +1,5 @@
 import type { ProfileArea } from '@kchess/contracts/types'
+import { getActivePinia } from 'pinia'
 import { RequestScope } from '@kchess/rules/requestScope'
 import { setLibraryRefresher } from '../utils/library'
 import { useStudyStore } from '../stores/studies'
@@ -6,6 +7,7 @@ import { useGameArchiveStore } from '../stores/gameArchive'
 import { useMistakeStore } from '../stores/mistakes'
 import { useTournamentStore } from '../stores/tournaments'
 import { useKChessStore } from '../stores/kchess'
+import { usePuzzleStore } from '../stores/puzzles'
 import { loadViewPreferences } from '../composables/useViewPreference'
 
 type LibraryStore = 'studies' | 'archive' | 'mistakes' | 'tournaments'
@@ -27,6 +29,11 @@ const ACCOUNTS: ProfileArea[] = ['accounts', 'lichessGames', 'usage', 'desktopSe
  * Another KChess window on this profile changed it (`docs/shared-core.md`): show the profile as
  * it now is. This window's own writes are never reported here.
  */
+/** The puzzle store reads what it shows when created, so only an existing one reads again. */
+function reloadPuzzles(): void {
+  if (getActivePinia()?.state.value.puzzles) usePuzzleStore().reloadFromCore()
+}
+
 export default defineNuxtPlugin(() => {
   if (!window.kchess) return
   // One read at a time is shown: a reply older than the newest read is dropped.
@@ -73,11 +80,13 @@ export default defineNuxtPlugin(() => {
     if (stores.length) refreshLibrary(stores)
     if (areas.some((area) => ACCOUNTS.includes(area))) void useKChessStore().reloadData()
     if (areas.includes('viewPreferences')) void loadViewPreferences()
+    if (areas.includes('puzzles')) reloadPuzzles()
   })
   // Changes made while this window was disconnected were never reported: read everything again.
   window.kchess.onCoreReconnected(() => {
     refreshLibrary()
     void useKChessStore().reloadData()
     void loadViewPreferences()
+    reloadPuzzles()
   })
 })

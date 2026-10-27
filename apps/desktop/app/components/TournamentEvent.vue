@@ -25,7 +25,7 @@ const watcher = useWatchStore()
 const password = ref('')
 
 watch(
-  () => `${props.system}:${props.id}`,
+  () => `${props.system}:${props.id}:${activeOnlineAccount.value}`,
   () => online.value && void tournaments.open(props.system, props.id),
   { immediate: true },
 )
