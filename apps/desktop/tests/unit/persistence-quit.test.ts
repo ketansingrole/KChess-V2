@@ -259,3 +259,77 @@ it('drains queued study commands before completing quit preparation', async () =
   expect(library.studies[0]!.name).toBe('Renamed')
   expect(library.studies[0]!.chapters).toHaveLength(2)
 })
+
+// Audit 60a61e8 #1: an edit's autosave was still being written when the edit was undone; quit
+// compared only with the acknowledged session, skipped the undone one, and did not wait.
+it('waits for a pending autosave and saves an undone edit before quitting', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop()
+  const backend = api.saveSession
+  const gate = deferred<undefined>()
+  const saveSession = vi.fn(async (...args: Parameters<typeof backend>) => {
+    if (saveSession.mock.calls.length === 1) await gate.promise
+    return backend(...args)
+  })
+  api.saveSession = saveSession
+  const doc = ref({ pgn: '*', path: '', orientation: 'white' as const, study: '', chapter: '' })
+  const scope = effectScope()
+  scope.run(() => persistSession('analysis', () => ({ ...doc.value })))
+  try {
+    doc.value.pgn = '1. e4 *'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(saveSession).toHaveBeenCalledTimes(1)
+    doc.value.pgn = '*'
+    let finished = false
+    const quit = flushSavedDocuments().then(() => {
+      finished = true
+    })
+    await flushPromises()
+    expect(finished).toBe(false)
+    gate.resolve(undefined)
+    await quit
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect((await api.library()).sessions.analysis?.pgn).toBe('*')
+  } finally {
+    scope.stop()
+  }
+})
+
+it('saves the latest of overlapping edits in order, through a failed pending save', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop()
+  const backend = api.saveSession
+  const gate = deferred<undefined>()
+  const sent: string[] = []
+  api.saveSession = async (...args: Parameters<typeof backend>) => {
+    sent.push((args[1] as { pgn: string }).pgn)
+    if (sent.length === 1) {
+      await gate.promise
+      throw new Error('Disk unavailable')
+    }
+    return backend(...args)
+  }
+  const doc = ref({ pgn: '*', path: '', orientation: 'white' as const, study: '', chapter: '' })
+  const scope = effectScope()
+  scope.run(() => persistSession('analysis', () => ({ ...doc.value })))
+  try {
+    doc.value.pgn = '1. e4 *'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(150)
+    doc.value.pgn = '1. d4 *'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(150)
+    doc.value.pgn = '*'
+    const quit = flushSavedDocuments()
+    await flushPromises()
+    // The later writes wait for the first one instead of racing it.
+    expect(sent).toEqual(['1. e4 *'])
+    gate.resolve(undefined)
+    await quit
+    expect(sent).toEqual(['1. e4 *', '1. d4 *', '*'])
+    expect((await api.library()).sessions.analysis?.pgn).toBe('*')
+  } finally {
+    scope.stop()
+  }
+})

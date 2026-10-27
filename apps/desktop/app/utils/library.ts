@@ -160,23 +160,36 @@ export function persistSession<K extends SessionKind>(
    * kind since, so closing a window that never changed its session must not write it back.
    */
   let saved = JSON.stringify(sessionPayload(source()))
-  const save = async (strict = false, force = false): Promise<void> => {
+  /**
+   * Writes run one at a time, each comparing with what the previous one left stored: returning
+   * to the saved session while a different one is being written still needs its own write, and
+   * a flush settles only after every earlier write has.
+   */
+  let writes: Promise<void> = Promise.resolve()
+  const save = (strict = false, force = false): Promise<void> => {
     clearTimeout(timer)
     // Unloaded documents must never be replaced by a store's default session.
-    if (!libraryReady.value) return
+    if (!libraryReady.value) return Promise.resolve()
     const payload = sessionPayload(source())
     const text = JSON.stringify(payload)
-    if (!force && text === saved && !error.value) return
-    try {
-      await window.kchess.saveSession(kind, payload)
-      saved = text
-      error.value = ''
-    } catch (cause) {
-      console.warn('[library] saving session failed:', kind, cause)
-      error.value =
-        cause instanceof Error ? cause.message : 'Automatic saving failed. Export a PGN copy.'
-      if (strict) throw cause
-    }
+    const write = writes.then(async (): Promise<{ failed?: unknown }> => {
+      if (!force && text === saved && !error.value) return {}
+      try {
+        await window.kchess.saveSession(kind, payload)
+        saved = text
+        error.value = ''
+        return {}
+      } catch (cause) {
+        console.warn('[library] saving session failed:', kind, cause)
+        error.value =
+          cause instanceof Error ? cause.message : 'Automatic saving failed. Export a PGN copy.'
+        return { failed: cause }
+      }
+    })
+    writes = write.then(() => undefined)
+    return write.then(({ failed }) => {
+      if (strict && failed !== undefined) throw failed
+    })
   }
   const unregister = registerPersistenceFlush(() => save(true))
   const saveNow = (): void => void save()

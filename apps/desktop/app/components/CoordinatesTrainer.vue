@@ -62,6 +62,8 @@ function toggle(list: readonly string[], item: string): string[] {
 }
 const allowed = computed(() => (limited.value ? squaresOn(files.value, ranks.value) : undefined))
 const runLimited = ref(false)
+/** The squares the run on screen asks, as chosen when it started. */
+let runAllowed: Square[] | undefined
 const stage = ref<'idle' | 'running' | 'over'>('idle')
 const orientation = ref<'white' | 'black'>('white')
 const target = ref<Square>('e4')
@@ -77,9 +79,8 @@ let mounted = true
 
 const run = useRunLength('kchess:coordinates-length', 30, () => void finish())
 const { length, untimed, runUntimed, clock, low, label: lengthLabel } = run
-const recordVariant = computed(() =>
-  run.recordVariant(mode.value === 'voice' ? 'name-voice' : mode.value),
-)
+const recordBase = computed(() => (mode.value === 'voice' ? 'name-voice' : mode.value))
+const recordVariant = computed(() => run.recordVariant(recordBase.value))
 const best = computed(() => summary.value?.best[recordVariant.value]?.score)
 const accuracy = computed(() =>
   score.value + mistakes.value
@@ -159,8 +160,9 @@ async function start(): Promise<void> {
   pendingFile.value = ''
   saved.value = null
   runLimited.value = limited.value
-  target.value = randomSquare(undefined, Math.random, allowed.value)
-  upcoming.value = randomSquare(target.value, Math.random, allowed.value)
+  runAllowed = allowed.value
+  target.value = randomSquare(undefined, Math.random, runAllowed)
+  upcoming.value = randomSquare(target.value, Math.random, runAllowed)
   stage.value = 'running'
   run.start()
 }
@@ -168,7 +170,7 @@ async function start(): Promise<void> {
 function advance(): void {
   question.value++
   target.value = upcoming.value
-  upcoming.value = randomSquare(target.value, Math.random, allowed.value)
+  upcoming.value = randomSquare(target.value, Math.random, runAllowed)
   pendingFile.value = ''
 }
 
@@ -247,7 +249,7 @@ async function finish(): Promise<void> {
   try {
     saved.value = await window.kchess.saveRun({
       kind: 'coordinates',
-      variant: recordVariant.value,
+      variant: run.runVariant(recordBase.value),
       score: score.value,
       detail: { mistakes: mistakes.value, accuracy: accuracy.value, side: orientation.value },
     })

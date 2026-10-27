@@ -208,30 +208,27 @@ const tiles = computed(() => {
 const toast = useToast()
 /** Asks first when the game would replace unsaved analysis. */
 function openGame(game: ExplorerGame): void {
-  replaceAnalysis(() => loadGame(game))
-}
-async function loadGame(game: ExplorerGame): Promise<void> {
-  try {
-    const pgn =
-      result.value?.kind === 'masters'
-        ? await window.kchess.mastersGame(game.id)
-        : await window.kchess.exportGame(game.id)
-    if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
-    analysis.origin = {
-      white: game.white,
-      black: game.black,
-      gameId: result.value?.kind === 'masters' ? undefined : game.id,
-    }
-    // Away from the analysis board, the game opens on it.
-    if (props.fen !== undefined) store.selectPage('analysis')
-  } catch (cause) {
-    console.warn('[position-explorer] Could not open the game:', cause)
-    toast.add({
-      title: 'Could not open the game',
-      description: cause instanceof Error ? cause.message : String(cause),
-      color: 'error',
-    })
-  }
+  const masters = result.value?.kind === 'masters'
+  replaceAnalysis.after(
+    () => (masters ? window.kchess.mastersGame(game.id) : window.kchess.exportGame(game.id)),
+    (pgn) => {
+      if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
+      analysis.origin = {
+        white: game.white,
+        black: game.black,
+        gameId: masters ? undefined : game.id,
+      }
+      // Away from the analysis board, the game opens on it.
+      if (props.fen !== undefined) store.selectPage('analysis')
+    },
+    (cause) => {
+      toast.add({
+        title: 'Could not open the game',
+        description: cause instanceof Error ? cause.message : String(cause),
+        color: 'error',
+      })
+    },
+  )
 }
 const heading = computed(() => {
   const data = result.value

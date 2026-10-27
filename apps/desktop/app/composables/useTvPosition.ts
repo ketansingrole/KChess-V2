@@ -280,45 +280,46 @@ export function useTvPosition() {
 
   /** Opens a past TV game in the analysis board, asking first if that replaces unsaved moves. */
   function openPast(entry: TvPastGame): void {
-    replaceAnalysis(() => loadPast(entry))
-  }
-
-  async function loadPast(entry: TvPastGame): Promise<void> {
-    try {
-      const pgn = await window.kchess.exportGame(entry.gameId)
-      if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
-      analysis.orientation = entry.orientation
-      analysis.origin = { white: entry.white.name, black: entry.black.name, gameId: entry.gameId }
-      store.selectPage('analysis')
-    } catch (cause) {
-      console.warn('[watch] Could not open the game:', cause)
-      toast.add({
-        title: 'Could not open the game',
-        description: cause instanceof Error ? cause.message : String(cause),
-        color: 'error',
-      })
-    }
+    replaceAnalysis.after(
+      () => window.kchess.exportGame(entry.gameId),
+      (pgn) => {
+        if (!analysis.loadPgn(pgn)) throw new Error('That game could not be read.')
+        analysis.orientation = entry.orientation
+        analysis.origin = { white: entry.white.name, black: entry.black.name, gameId: entry.gameId }
+        store.selectPage('analysis')
+      },
+      (cause) => {
+        toast.add({
+          title: 'Could not open the game',
+          description: cause instanceof Error ? cause.message : String(cause),
+          color: 'error',
+        })
+      },
+    )
   }
 
   /** Opens the TV game so far in the analysis board, at the move being looked at. */
   function analyseTv(): void {
-    if (frame.value) replaceAnalysis(loadTv)
-  }
-
-  async function loadTv(): Promise<void> {
     const current = frame.value
     if (!current) return
-    const origin = { white: current.white.name, black: current.black.name, gameId: current.gameId }
-    if (tvSetup.value) {
-      const pgn = setupPgn(tvSetup.value, tvMoves.value, {
-        White: current.white.name,
-        Black: current.black.name,
+    if (!tvSetup.value) {
+      openPast({ ...current, orientation: tvOrientation.value })
+      return
+    }
+    replaceAnalysis(() => {
+      const shown = frame.value
+      const setup = tvSetup.value
+      if (!shown || !setup) return
+      const origin = { white: shown.white.name, black: shown.black.name, gameId: shown.gameId }
+      const pgn = setupPgn(setup, tvMoves.value, {
+        White: shown.white.name,
+        Black: shown.black.name,
       })
       if (!analysis.loadPgn(pgn, tvShownPly.value)) return
       analysis.orientation = tvOrientation.value
       analysis.origin = origin
       store.selectPage('analysis')
-    } else await loadPast({ ...current, orientation: tvOrientation.value })
+    })
   }
 
   return {

@@ -5,6 +5,7 @@ import { defineComponent } from 'vue'
 import ChessBoard from '../../app/components/ChessBoard.vue'
 import CoordinatesTrainer from '../../app/components/CoordinatesTrainer.vue'
 import { useKChessStore } from '../../app/stores/kchess'
+import { loadViewPreferences } from '../../app/composables/useViewPreference'
 import { EMPTY_FEN } from '@kchess/rules/coordinates'
 import { desktop, componentStubs, deferred, keydownListeners } from './fixtures'
 import type { RunInput, RunSummary } from '@kchess/contracts/types'
@@ -174,6 +175,37 @@ describe('coordinates trainer controls', () => {
     expect(saveRun).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('1 correct · 100% accuracy')
     lengthTabs.vm.$emit('update:modelValue', 30)
+    wrapper.unmount()
+  })
+
+  // Audit 60a61e8 #4: another window's length choice, adopted mid-run, filed a 30-second run's
+  // score under the 5-minute record; its file & rank limit likewise changed a recorded run.
+  it('records a run under the length and squares it started with', async () => {
+    const { wrapper, board, saveRun } = await trainer()
+    await button(wrapper, 'Start').trigger('click')
+    const asked = wrapper.find('.coord-target').text()
+    window.kchess.viewPreferences = async () => ({
+      'kchess:coordinates-length': 300,
+      'kchess:coordinates-limited': true,
+      'kchess:coordinates-files': ['a'],
+      'kchess:coordinates-ranks': ['1'],
+    })
+    await loadViewPreferences()
+    await flushPromises()
+    board().vm.$emit('select', asked)
+    await flushPromises()
+    // The next square still comes from the whole board, not only a1.
+    const targets = new Set<string>()
+    for (let i = 0; i < 8; i++) {
+      const target = wrapper.find('.coord-target').text()
+      targets.add(target)
+      board().vm.$emit('select', target)
+      await flushPromises()
+    }
+    expect([...targets].some((target) => target !== 'a1')).toBe(true)
+    await button(wrapper, 'End run').trigger('click')
+    await flushPromises()
+    expect(saveRun).toHaveBeenCalledWith(expect.objectContaining({ variant: 'find', score: 9 }))
     wrapper.unmount()
   })
 

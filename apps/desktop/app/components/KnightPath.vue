@@ -202,7 +202,7 @@ async function finish(): Promise<void> {
   try {
     saved.value = await window.kchess.saveRun({
       kind: 'knightPath',
-      variant: run.recordVariant(level.value),
+      variant: run.runVariant(level.value),
       score: optimal.value,
       detail: { reached: reached.value, skipped: missedRounds.value },
     })

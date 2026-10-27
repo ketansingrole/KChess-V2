@@ -67,8 +67,9 @@ pub struct Core {
     pub(crate) services: Services,
     /// Offline speech recognition through the `kchess-voice` helper.
     pub(crate) voice: Arc<VoiceRecognizer>,
-    /// The client listening through `voice`: one microphone at a time.
-    pub(crate) voice_owner: Mutex<Option<u64>>,
+    /// The client listening through `voice`: one microphone at a time. Held across each
+    /// recognizer call, so a change of owner and the session it starts or ends happen together.
+    pub(crate) voice_owner: Arc<AsyncMutex<Option<u64>>>,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
@@ -247,7 +248,7 @@ impl Core {
             settings_writes: AsyncMutex::new(()),
             puzzles: PuzzleService::new(config, services_host),
             voice,
-            voice_owner: Mutex::new(None),
+            voice_owner: Arc::new(AsyncMutex::new(None)),
             host,
             capabilities,
             database,

@@ -23,6 +23,11 @@ export function useRunLength(storageKey: string, defaultSeconds: number, onEnd: 
   const untimed = computed(() => length.value === 0)
   /** Whether the run on screen (or just ended) was untimed, whatever is chosen since. */
   const runUntimed = ref(false)
+  /**
+   * The length the run on screen (or just ended) was started with. Another window can change the
+   * shared choice mid-run; the run keeps its own length and its record.
+   */
+  const runSeconds = ref(defaultSeconds)
   const label = computed(
     () => RUN_LENGTHS.find((item) => item.value === length.value)?.label ?? `${length.value}s`,
   )
@@ -34,6 +39,7 @@ export function useRunLength(storageKey: string, defaultSeconds: number, onEnd: 
   })
 
   function start(): void {
+    runSeconds.value = length.value
     runUntimed.value = untimed.value
     if (untimed.value) {
       startedAt = performance.now()
@@ -46,8 +52,12 @@ export function useRunLength(storageKey: string, defaultSeconds: number, onEnd: 
     stopwatch.pause()
   }
   /** The record name for a run of the chosen length (`find`, `find-120s`, ...). */
-  function recordVariant(base: string): string {
-    return length.value === defaultSeconds ? base : `${base}-${length.value}s`
+  function recordVariant(base: string, seconds = length.value): string {
+    return seconds === defaultSeconds ? base : `${base}-${seconds}s`
+  }
+  /** The record name for the run on screen (or just ended), whatever is chosen since. */
+  function runVariant(base: string): string {
+    return recordVariant(base, runSeconds.value)
   }
 
   return {
@@ -58,6 +68,7 @@ export function useRunLength(storageKey: string, defaultSeconds: number, onEnd: 
     start,
     stop,
     recordVariant,
+    runVariant,
     elapsed,
     /** What the run's clock shows: time left, or time spent when untimed. */
     clock: computed(() => formatRunClock(runUntimed.value ? elapsed.value : countdown.left.value)),
