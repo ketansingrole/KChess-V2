@@ -413,6 +413,7 @@ pub struct ChessBoard {
     queued: Option<(Square, Square)>,
     /// Pieces sliding to where the new position put them.
     animation: Option<Animation>,
+    _animating: Option<Task<()>>,
     selected: Option<Square>,
     drag: Option<Drag>,
     /// A pawn move waiting for its promotion piece.
@@ -430,6 +431,7 @@ impl ChessBoard {
             drawing: None,
             queued: None,
             animation: None,
+            _animating: None,
             state,
             selected: None,
             drag: None,
@@ -489,6 +491,28 @@ impl ChessBoard {
             start: std::time::Instant::now(),
             duration: std::time::Duration::from_secs_f64(duration / 1000.),
         });
+        self._animating = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(16))
+                    .await;
+                let going = this
+                    .update(cx, |this, cx| {
+                        cx.notify();
+                        let done = this.animation.as_ref().is_none_or(|animation| {
+                            animation.start.elapsed() >= animation.duration
+                        });
+                        if done {
+                            this.animation = None;
+                        }
+                        !done
+                    })
+                    .unwrap_or(false);
+                if !going {
+                    return;
+                }
+            }
+        }));
     }
 
     /// A queued premove plays once its side is to move and it is legal; otherwise it is dropped.
@@ -1298,18 +1322,7 @@ pub fn cached(board: &Entity<ChessBoard>) -> AnyElement {
 }
 
 impl Render for ChessBoard {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // A slide draws once per display frame until it lands.
-        if self
-            .animation
-            .as_ref()
-            .is_some_and(|animation| animation.start.elapsed() >= animation.duration)
-        {
-            self.animation = None;
-        }
-        if self.animation.is_some() {
-            window.request_animation_frame();
-        }
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frontend = cx
             .global::<SettingsHandle>()
             .0
