@@ -46,6 +46,43 @@ export function refreshLibraryLater(): void {
   refresher?.()
 }
 
+/**
+ * One store's writes to the library, counted as they start and finish: a library snapshot read
+ * before one finished may predate it, so the store keeps its own copy (`fresh` answers false)
+ * and the library is read again once its writes are done.
+ */
+export function libraryWrites() {
+  let revision = 0
+  let active = 0
+  let deferred = false
+  function finish(): void {
+    active--
+    revision++
+    if (deferred && !active) {
+      deferred = false
+      refreshLibraryLater()
+    }
+  }
+  return {
+    /** Taken when a library read starts, and passed to `fresh` with its snapshot. */
+    revision: (): number => revision,
+    /** Count `work`, a write this store has just started, until it settles. */
+    track<T>(work: Promise<T>): Promise<T> {
+      active++
+      revision++
+      work.then(finish, finish)
+      return work
+    },
+    /** Whether a snapshot read at `since` may replace the store's copy. */
+    fresh(since: number): boolean {
+      if (!active && since === revision) return true
+      if (active) deferred = true
+      else refreshLibraryLater()
+      return false
+    },
+  }
+}
+
 const persistence = new Set<() => Promise<void>>()
 export function registerPersistenceFlush(flush: () => Promise<void>): () => void {
   persistence.add(flush)

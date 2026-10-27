@@ -63,6 +63,19 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
     });
 }
 
+/// Close `window` once everything is saved, with it still open to say what could not be: its
+/// pages own the unsaved work, and on macOS closing it does not quit the app.
+pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
+    crate::core::prepare_quit(
+        cx,
+        "Close without saving",
+        move |cx| {
+            let _ = window.update(cx, |_, window, _| window.remove_window());
+        },
+        |_| {},
+    );
+}
+
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),
@@ -103,7 +116,13 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &CloseWindow, cx| on_window(cx, |window| window.remove_window()));
+    cx.on_action(|_: &CloseWindow, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                close_window(window, cx);
+            }
+        })
+    });
     cx.on_action(|_: &Minimize, cx| on_window(cx, |window| window.minimize_window()));
     cx.on_action(|_: &Zoom, cx| on_window(cx, |window| window.zoom_window()));
     cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window| window.toggle_fullscreen()));

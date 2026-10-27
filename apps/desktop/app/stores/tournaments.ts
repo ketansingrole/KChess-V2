@@ -8,7 +8,7 @@ import type {
   TournamentSystem,
 } from '@kchess/contracts/types'
 import { useKChessStore } from './kchess'
-import { initialLibrary } from '../utils/library'
+import { initialLibrary, libraryWrites } from '../utils/library'
 import { errorText } from '../utils/format'
 import type { JoinedTournament, LibrarySnapshot } from '@kchess/rules/library'
 
@@ -23,6 +23,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
   const needsReconnect = ref(false)
   /** Tournaments joined from KChess, as the core keeps them. */
   const stored = ref<JoinedTournament[]>(initialLibrary().joinedTournaments)
+  const writes = libraryWrites()
   /**
    * The time `joined` is judged at, moved on when the next tournament ends: `Date.now()` alone is
    * not reactive, so an ended tournament stayed joined (and kept its stream wanted).
@@ -103,7 +104,7 @@ export const useTournamentStore = defineStore('tournaments', () => {
   }
   async function reloadJoined(): Promise<void> {
     try {
-      stored.value = await window.kchess.joinedTournaments()
+      stored.value = await writes.track(window.kchess.joinedTournaments())
     } catch (cause) {
       console.warn('[tournaments] loading joined tournaments failed:', cause)
     }
@@ -131,8 +132,10 @@ export const useTournamentStore = defineStore('tournaments', () => {
   }
   async function join(summary: TournamentSummary, password?: string): Promise<boolean> {
     needsReconnect.value = false
-    const result = await app.runAction(() =>
-      window.kchess.joinTournament(summary.system, summary.id, app.activeOnlineAccount, password),
+    const result = await writes.track(
+      app.runAction(() =>
+        window.kchess.joinTournament(summary.system, summary.id, app.activeOnlineAccount, password),
+      ),
     )
     if (!result) return false
     if (result !== true) {
@@ -149,8 +152,10 @@ export const useTournamentStore = defineStore('tournaments', () => {
     return true
   }
   async function leave(summary: Pick<TournamentSummary, 'system' | 'id'>): Promise<void> {
-    const result = await app.runAction(() =>
-      window.kchess.leaveTournament(summary.system, summary.id, app.activeOnlineAccount),
+    const result = await writes.track(
+      app.runAction(() =>
+        window.kchess.leaveTournament(summary.system, summary.id, app.activeOnlineAccount),
+      ),
     )
     if (!result) return
     if (result !== true) {
@@ -178,12 +183,13 @@ export const useTournamentStore = defineStore('tournaments', () => {
       return { error: errorText(cause) }
     }
   }
-  /** Another KChess window joined or left a tournament. */
-  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
-    stored.value = snapshot.joinedTournaments
+  /** Another KChess window joined or left a tournament; `since` is `revision()` when it was read. */
+  function replaceFromLibrary(snapshot: LibrarySnapshot, since = writes.revision()): void {
+    if (writes.fresh(since)) stored.value = snapshot.joinedTournaments
   }
   return {
     replaceFromLibrary,
+    revision: writes.revision,
     list,
     page,
     loading,

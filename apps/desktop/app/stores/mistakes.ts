@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Puzzle, StoredReview } from '@kchess/contracts/types'
 import type { LibrarySnapshot, MistakeExercise, MistakeGame } from '@kchess/rules/library'
-import { initialLibrary } from '../utils/library'
+import { initialLibrary, libraryWrites } from '../utils/library'
 
 /**
  * Answered right this many times in a row, a position is next due in four days or more (the core
@@ -16,6 +16,7 @@ export const useMistakeStore = defineStore('mistakes', () => {
   const error = ref('')
   /** The reviewed games the drills come from, most recently played first. */
   const games = ref<MistakeGame[]>([])
+  const writes = libraryWrites()
   async function update<T>(request: Promise<T>, apply: (value: T) => void): Promise<T> {
     try {
       const value = await request
@@ -31,27 +32,41 @@ export const useMistakeStore = defineStore('mistakes', () => {
   /** Drills for a completed review's mistakes (one side's, when given); how many are new. */
   async function add(review: StoredReview, color?: 'white' | 'black'): Promise<number> {
     if (!review.complete) return 0
-    const result = await update(window.kchess.addMistakes(review.key, color), (value) => {
-      items.value = value.items
-    })
+    const result = await writes.track(
+      update(window.kchess.addMistakes(review.key, color), (value) => {
+        items.value = value.items
+      }),
+    )
     return result.added
   }
   function puzzle(item: MistakeExercise): Puzzle {
     return { id: item.id, fen: item.fen, solution: [...item.solution], rating: 0, themes: [] }
   }
   async function answered(id: string, clean: boolean): Promise<void> {
-    await update(window.kchess.answerMistake(id, clean), (value) => {
-      items.value = value
-    })
+    await writes.track(
+      update(window.kchess.answerMistake(id, clean), (value) => {
+        items.value = value
+      }),
+    )
   }
   async function loadGames(): Promise<void> {
     await update(window.kchess.mistakeGames(), (value) => {
       games.value = value
     })
   }
-  /** Another KChess window answered or added drills. */
-  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
-    items.value = snapshot.mistakes
+  /** Another KChess window answered or added drills; `since` is `revision()` when it was read. */
+  function replaceFromLibrary(snapshot: LibrarySnapshot, since = writes.revision()): void {
+    if (writes.fresh(since)) items.value = snapshot.mistakes
   }
-  return { items, error, games, add, puzzle, answered, loadGames, replaceFromLibrary }
+  return {
+    items,
+    error,
+    games,
+    add,
+    puzzle,
+    answered,
+    loadGames,
+    replaceFromLibrary,
+    revision: writes.revision,
+  }
 })

@@ -163,6 +163,12 @@ fn open_main_window(cx: &mut App) {
         ..WindowOptions::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
+        // The window's own close button saves first too (`menu::close_window`).
+        window.on_window_should_close(cx, |window, cx| {
+            let handle = window.window_handle();
+            cx.defer(move |cx| menu::close_window(handle, cx));
+            false
+        });
         cx.new(|cx| shell::Workspace::new(window, cx))
     });
     if let Err(cause) = opened {

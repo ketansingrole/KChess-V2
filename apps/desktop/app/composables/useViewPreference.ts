@@ -14,6 +14,8 @@ let saved: Record<string, unknown> = {}
 const values = new Map<string, Ref<unknown>>()
 /** Each name's latest save, so a fast run of changes reaches the core in order. */
 const pending = new Map<string, Promise<void>>()
+/** Each name's latest value the core refused, retried before quitting until a later save succeeds. */
+const failed = new Map<string, unknown>()
 /**
  * Earlier releases' `localStorage` text, by name, until the core has saved the preference: a save
  * that fails leaves it to be moved again at the next start.
@@ -39,6 +41,7 @@ export function resetViewPreferences(): void {
   saved = {}
   values.clear()
   pending.clear()
+  failed.clear()
   legacy.clear()
 }
 
@@ -101,9 +104,13 @@ function save(key: string, value: unknown): void {
   const previous = pending.get(key) ?? Promise.resolve()
   const next = previous
     .then(() => window.kchess.setViewPreference?.(key, body))
-    .then(() => forgetLegacy(key))
+    .then(() => {
+      failed.delete(key)
+      forgetLegacy(key)
+    })
     .catch((cause: unknown) => {
       console.warn('[view-preferences] Saving a view preference failed:', key, cause)
+      failed.set(key, body)
     })
   pending.set(key, next)
   void next.then(() => {
@@ -111,9 +118,21 @@ function save(key: string, value: unknown): void {
   })
 }
 
-/** Wait for every preference change to be saved (before quitting). */
-export async function flushViewPreferences(): Promise<void> {
+async function settle(): Promise<void> {
   while (pending.size) await Promise.all(pending.values())
+}
+
+/**
+ * Wait for every preference change to be saved (before quitting), trying those the core refused
+ * once more; rejects if any is still unsaved.
+ */
+export async function flushViewPreferences(): Promise<void> {
+  await settle()
+  if (!failed.size) return
+  for (const [key, body] of [...failed]) save(key, body)
+  await settle()
+  if (failed.size)
+    throw new Error(`View preferences could not be saved: ${[...failed.keys()].join(', ')}`)
 }
 
 /** The preference `key` (a `kchess:` name), or `fallback` until it is changed. */

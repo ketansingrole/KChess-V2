@@ -28,17 +28,25 @@ export default defineNuxtPlugin(() => {
   const reads = new RequestScope()
   function refreshLibrary(): void {
     const read = reads.next()
-    // Played games written here after this read starts make it stale for them.
+    // A store's own writes made after this read starts make it stale for that store.
+    const studies = useStudyStore()
     const archive = useGameArchiveStore()
-    const since = archive.revision()
+    const mistakes = useMistakeStore()
+    const tournaments = useTournamentStore()
+    const since = {
+      studies: studies.revision(),
+      archive: archive.revision(),
+      mistakes: mistakes.revision(),
+      tournaments: tournaments.revision(),
+    }
     void window.kchess
       .library()
       .then((snapshot) => {
         if (!read.current()) return
-        useStudyStore().replaceFromLibrary(snapshot)
-        archive.replaceFromLibrary(snapshot, since)
-        useMistakeStore().replaceFromLibrary(snapshot)
-        useTournamentStore().replaceFromLibrary(snapshot)
+        studies.replaceFromLibrary(snapshot, since.studies)
+        archive.replaceFromLibrary(snapshot, since.archive)
+        mistakes.replaceFromLibrary(snapshot, since.mistakes)
+        tournaments.replaceFromLibrary(snapshot, since.tournaments)
       })
       .catch((cause: unknown) => console.warn('[library] refreshing the library failed:', cause))
   }

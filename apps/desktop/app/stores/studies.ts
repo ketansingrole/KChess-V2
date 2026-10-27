@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { onScopeDispose, ref } from 'vue'
 import {
   initialLibrary,
+  libraryWrites,
   plain,
   refreshLibraryLater,
   registerPersistenceFlush,
@@ -34,6 +35,7 @@ export const useStudyStore = defineStore('studies', () => {
   const items = ref<SavedStudy[]>(initialLibrary().studies)
   const error = ref(initialLibrary().studyError ?? '')
   let changes: Promise<unknown> = Promise.resolve()
+  const writes = libraryWrites()
   /**
    * A command built when it reaches the core, so values it does not change (a content save's
    * study name) come from the library as earlier commands left it. `undefined`: nothing to do.
@@ -113,6 +115,7 @@ export const useStudyStore = defineStore('studies', () => {
       if (queued) forget((older) => supersedes(queued, older))
       return persist(intent)
     })
+    void writes.track(result)
     // A failed command must not prevent later commands from reaching the core.
     changes = result.then(
       () => {},
@@ -256,7 +259,7 @@ export const useStudyStore = defineStore('studies', () => {
     const table = { ...(misses.value[key] ?? {}) }
     table[fen] = (table[fen] ?? 0) + 1
     misses.value = { ...misses.value, [key]: table }
-    window.kchess.recordRepertoireMiss(key, fen).then(
+    writes.track(window.kchess.recordRepertoireMiss(key, fen)).then(
       (saved) => (misses.value = saved),
       (cause: unknown) => console.warn('[studies] saving a repertoire miss failed:', cause),
     )
@@ -265,7 +268,7 @@ export const useStudyStore = defineStore('studies', () => {
     const next = { ...misses.value }
     delete next[key]
     misses.value = next
-    window.kchess.clearRepertoireMisses(key).then(
+    writes.track(window.kchess.clearRepertoireMisses(key)).then(
       (saved) => (misses.value = saved),
       (cause: unknown) => console.warn('[studies] clearing repertoire misses failed:', cause),
     )
@@ -279,13 +282,15 @@ export const useStudyStore = defineStore('studies', () => {
   }
   /**
    * Another KChess window changed the library (`docs/shared-core.md`): show its studies, unless
-   * this window still has edits to save, which are saved first and then shown.
+   * this window still has edits to save, which are saved first and then shown. A snapshot read
+   * (at `since`, from `revision()`) before this window's own change finished may predate it.
    */
-  function replaceFromLibrary(snapshot: LibrarySnapshot): void {
+  function replaceFromLibrary(snapshot: LibrarySnapshot, since = writes.revision()): void {
     if (failed.length) {
       deferred = true
       return
     }
+    if (!writes.fresh(since)) return
     deferred = false
     items.value = snapshot.studies
     misses.value = snapshot.repertoireMisses
@@ -295,6 +300,7 @@ export const useStudyStore = defineStore('studies', () => {
     flush,
     track,
     replaceFromLibrary,
+    revision: writes.revision,
     error,
     save,
     saveChapter,

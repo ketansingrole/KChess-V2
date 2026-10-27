@@ -500,9 +500,9 @@ async fn fetch(
     Ok(staged)
 }
 
-/// Put the staged update in place of `install`; with `reopen`, open the new KChess once this one
-/// has quit.
-fn apply(staged: &Path, install: &Install, reopen: bool) -> Result<(), String> {
+/// Put the staged update in place of `install`, which `lock` holds; with `reopen`, open the new
+/// KChess once this one has quit.
+fn apply(staged: &Path, install: &Install, lock: &InstallLock, reopen: bool) -> Result<(), String> {
     match install.package {
         Package::MacZip => {
             replace(staged, &install.path)?;
@@ -514,7 +514,8 @@ fn apply(staged: &Path, install: &Install, reopen: bool) -> Result<(), String> {
             // As Electron's updater runs it: silently over this installation, which it closes, so
             // only once this app has saved and closed its core (`apply_on_quit`).
             let mut installer = Command::new(staged);
-            installer.args(["--updated", "/S"]);
+            // It runs on after this app exits: the installation stays locked until it is done.
+            installer.args(["--updated", "/S"]).stdin(lock.inherited()?);
             if reopen {
                 installer.arg("--force-run");
             }
@@ -765,7 +766,7 @@ impl Workspace {
 /// process, and no start tidies what an installer is still using. In the downloads root, beside
 /// the packages a helper installs from (`INSTALLING`).
 struct InstallLock {
-    _held: std::fs::File,
+    held: std::fs::File,
 }
 
 /// Names in the downloads root that belong to installations, not to running apps' folders.
@@ -792,7 +793,7 @@ impl InstallLock {
             .open(Self::path(root, installed))
             .map_err(|cause| format!("The update could not be installed ({cause})."))?;
         match file.try_lock() {
-            Ok(()) => Ok(Self { _held: file }),
+            Ok(()) => Ok(Self { held: file }),
             Err(std::fs::TryLockError::WouldBlock) => Err(
                 "Another KChess is installing an update. Try again once it has finished.".into(),
             ),
@@ -800,6 +801,16 @@ impl InstallLock {
                 Err(format!("The update could not be installed ({cause})."))
             }
         }
+    }
+
+    /// The lock for a process that finishes the installation after this app exits, as its
+    /// standard input: the installation stays locked, with no moment free for another KChess to
+    /// take it, until that process (and this app) has closed it (`File::lock`).
+    fn inherited(&self) -> Result<Stdio, String> {
+        self.held
+            .try_clone()
+            .map(Stdio::from)
+            .map_err(|cause| format!("The update could not be installed ({cause})."))
     }
 }
 
@@ -868,13 +879,16 @@ fn tidy(install: Option<&Install>, root: Option<&Path>) {
 }
 
 /// Install once the saves are done and the core has closed: on quit, or (`reopen`) to restart into
-/// the update. The installation is this app's (`InstallLock`) until it exits; the package
-/// manager, which asks for a password, then runs in a helper that holds it until it is done.
+/// the update. The installation is this app's (`InstallLock`) until it exits, and stays locked
+/// by the Windows installer, or the helper running the package manager (which asks for a
+/// password), until it is done.
 fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), String> {
     let root = downloads_root()?;
     let lock = InstallLock::take(&root, &install.path)?;
     if install.package != Package::Deb {
-        return apply(staged, install, reopen);
+        apply(staged, install, &lock, reopen)?;
+        std::mem::forget(lock);
+        return Ok(());
     }
     let held = InstallLock::path(&root, &install.path);
     let (package, failed) = (held.with_extension("deb"), held.with_extension("failed"));
@@ -885,11 +899,10 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
         .arg("-c")
         .arg(DEB_HELPER)
         .arg("kchess-update")
-        .arg(&held)
         .arg(&package)
         .arg(std::process::id().to_string())
         .arg(&failed)
-        .stdin(Stdio::null())
+        .stdin(lock.inherited()?)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
@@ -897,18 +910,18 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
         let _ = std::fs::remove_file(&package);
         return Err(format!("The update could not be installed ({cause})."));
     }
-    // Held until this process exits, when the helper (waiting for it) takes the installation.
+    // Held until this process exits; the helper holds it from the start.
     std::mem::forget(lock);
     Ok(())
 }
 
-/// Installs the .deb (`$2`) once KChess (`$3`) has exited, holding the installation's lock (`$1`)
-/// until the package manager is done, and notes a failure (`$4`) for the next start.
-const DEB_HELPER: &str = r#"exec 9>>"$1"
-command -v flock >/dev/null 2>&1 && flock 9
-while kill -0 "$3" 2>/dev/null; do sleep 0.2; done
-if pkexec dpkg -i "$2"; then rm -f "$4"; else echo failed > "$4"; fi
-rm -f "$2""#;
+/// Installs the .deb (`$1`) once KChess (`$2`) has exited, and notes a failure (`$3`) for the next
+/// start. Its standard input is the installation's lock (`InstallLock::inherited`), kept until
+/// the package manager is done and the package removed.
+const DEB_HELPER: &str = r#"exec 9<&0 0</dev/null
+while kill -0 "$2" 2>/dev/null; do sleep 0.2; done
+if pkexec dpkg -i "$1" 9<&-; then rm -f "$3"; else echo failed > "$3"; fi
+rm -f "$1""#;
 
 /// What the helper installing a .deb left for this start: whether it failed.
 fn last_install_failed(install: Option<&Install>, root: Option<&Path>) -> bool {
@@ -1209,7 +1222,7 @@ impl Updates {
         let done = on_runtime(async move {
             let applied = downloads_root()
                 .and_then(|root| InstallLock::take(&root, &install.path))
-                .and_then(|_installing| apply(&staged, &install, true));
+                .and_then(|installing| apply(&staged, &install, &installing, true));
             applied.map_err(|cause| (cause, staged))
         });
         self.work = Some(cx.spawn(async move |this, cx| {
@@ -1251,6 +1264,16 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::io::{Read as _, Write as _};
     use std::path::{Path, PathBuf};
+
+    /// Held by tests that start processes and by those that check a lock is free once dropped: a
+    /// process started meanwhile can briefly share another test's lock.
+    static PROCESSES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn processes() -> std::sync::MutexGuard<'static, ()> {
+        PROCESSES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let folder = std::env::temp_dir().join(format!("kchess-{name}-{}", std::process::id()));
@@ -1383,6 +1406,7 @@ mod tests {
     /// meanwhile leaves the installer's new copy alone.
     #[test]
     fn one_installer_at_a_time_for_each_installation() {
+        let _processes = processes();
         let folder = scratch("install-lock");
         let root = downloads_in(&folder.join("cache")).unwrap();
         let installed = folder.join("KChess.AppImage");
@@ -1418,6 +1442,7 @@ mod tests {
     /// holds the installation; one that failed is reported once.
     #[test]
     fn a_deb_helpers_package_and_failure_outlive_the_app() {
+        let _processes = processes();
         let folder = scratch("deb-helper");
         let root = downloads_in(&folder.join("cache")).unwrap();
         let install = Install {
@@ -1446,8 +1471,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// The process finishing an installation after the app exits holds it from the moment it
+    /// starts: a KChess starting meanwhile neither installs into it nor tidies its package.
+    #[cfg(unix)]
+    #[test]
+    fn an_installer_started_on_quit_keeps_the_installation_until_it_exits() {
+        let _processes = processes();
+        let folder = scratch("install-handover");
+        let root = downloads_in(&folder.join("cache")).unwrap();
+        let install = Install {
+            package: Package::Deb,
+            path: folder.join("kchess"),
+        };
+        let package = InstallLock::path(&root, &install.path).with_extension("deb");
+        std::fs::write(&package, "deb").unwrap();
+        let release = folder.join("release");
+        let lock = InstallLock::take(&root, &install.path).unwrap();
+        // An installer still waiting (for a password, or to finish): moves the lock off its
+        // standard input as the helper does, and runs until told to stop.
+        let mut installer = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(r#"exec 9<&0 0</dev/null; while [ ! -e "$1" ]; do sleep 0.02; done"#)
+            .arg("installer")
+            .arg(&release)
+            .stdin(lock.inherited().unwrap())
+            .spawn()
+            .unwrap();
+        // The app has exited.
+        drop(lock);
+        assert!(InstallLock::take(&root, &install.path).is_err());
+        tidy(Some(&install), Some(&root));
+        assert!(package.exists(), "the installer's package stays");
+        std::fs::write(&release, "").unwrap();
+        assert!(installer.wait().unwrap().success());
+        assert!(InstallLock::take(&root, &install.path).is_ok());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn each_running_app_keeps_its_own_downloads() {
+        let _processes = processes();
         let folder = scratch("workspaces");
         let root = downloads_in(&folder).unwrap();
         let first = Workspace::open(&root).unwrap();
@@ -1545,6 +1608,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn codesign_reads_who_signed_a_bundle() {
+        let _processes = processes();
         use super::signer;
         let folder = scratch("codesign");
         let bundle = |id: &str| {

@@ -2,10 +2,13 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { desktop, deferred } from './fixtures'
 import { useGameArchiveStore } from '../../app/stores/gameArchive'
+import { useStudyStore } from '../../app/stores/studies'
+import { useKChessStore } from '../../app/stores/kchess'
+import { useUsageStore } from '../../app/stores/usage'
 import { setLibraryRefresher } from '../../app/utils/library'
 import { STANDARD_SETUP } from '@kchess/rules/variant'
 import type { ArchivedGame, LibrarySnapshot } from '@kchess/rules/library'
-import type { ProfileChange } from '@kchess/contracts/types'
+import type { AppData, ProfileChange } from '@kchess/contracts/types'
 import profileSyncPlugin from '../../app/plugins/profileSync.client'
 
 // The plugin module calls `defineNuxtPlugin` as it loads; hoisted above the imports.
@@ -150,4 +153,52 @@ it('reads the profile again after reconnecting to the core', async () => {
   expect(library).toHaveBeenCalledOnce()
   expect(data).toHaveBeenCalledOnce()
   expect(useGameArchiveStore().games.map((value) => value.id)).toEqual(['missed'])
+})
+
+it('keeps a study rename when a library read from before it arrives, and autosaves the new name', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Original', '1. e4 *')
+  const chapter = studies.items[0]!.chapters[0]!.id
+  studies.track(id, chapter)
+  const stale = await api.library()
+  const real = api.library
+  const gate = deferred<LibrarySnapshot>()
+  const library = vi
+    .spyOn(api, 'library')
+    .mockImplementationOnce(() => gate.promise)
+    .mockImplementation(() => real())
+  const changed = profileSync(api)
+  changed(['studies'])
+  await studies.rename(id, 'Renamed')
+  gate.resolve(stale)
+  await flushPromises()
+  expect(library).toHaveBeenCalledTimes(2)
+  expect(studies.items[0]!.name).toBe('Renamed')
+  await studies.saveChapter(id, chapter, '1. e4 e5 *')
+  expect((await real()).studies[0]!.name).toBe('Renamed')
+})
+
+it('keeps a removed account gone when an account read from before the removal arrives', async () => {
+  const { api } = desktop()
+  const old = await api.loadData()
+  old.accounts[1]!.connected = false
+  const removed: AppData = { ...old, accounts: old.accounts.slice(0, 1) }
+  const app = useKChessStore()
+  api.loadData = async () => old
+  await app.reloadData()
+  vi.spyOn(useUsageStore(), 'refresh').mockResolvedValue(null)
+  const gate = deferred<AppData>()
+  const load = vi
+    .fn<() => Promise<AppData>>()
+    .mockImplementationOnce(() => gate.promise)
+    .mockImplementation(async () => removed)
+  api.loadData = load
+  api.removeAccount = async () => removed
+  const reading = app.reloadData()
+  await app.removeAccount('Bob')
+  gate.resolve(old)
+  await reading
+  expect(load).toHaveBeenCalledTimes(2)
+  expect(app.data!.accounts.map((account) => account.username)).toEqual(['Alice'])
 })

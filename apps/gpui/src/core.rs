@@ -397,9 +397,30 @@ fn flush_all(cx: &mut App) -> Vec<BoxedSave> {
     pending
 }
 
+/// How long saving before quitting may take before the person is asked what to do, as the
+/// Electron app's `QuitPreparation` waits for its renderer.
+const SAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// What became of saves waited for until a deadline.
+enum Waited {
+    Saved(Saved),
+    /// Still unanswered at the deadline: kept, so a retry waits for the same saves rather than
+    /// starting them again over writes that may still land.
+    Unanswered(BoxedSave),
+}
+
+/// Wait for `save` until `deadline` fires.
+async fn wait_saved(save: BoxedSave, deadline: impl Future<Output = ()>) -> Waited {
+    let deadline = std::pin::pin!(deadline);
+    match futures::future::select(save, deadline).await {
+        futures::future::Either::Left((saved, _)) => Waited::Saved(saved),
+        futures::future::Either::Right(((), save)) => Waited::Unanswered(save),
+    }
+}
+
 /// Save everything while the window is still open, then run `then` (quit, or install and
-/// restart). A save that fails asks first: retry, go on without it (`without`, the button's
-/// label), or cancel and keep working (`cancelled`).
+/// restart). A save that fails, or does not finish within `SAVE_WAIT`, asks first: retry, go on
+/// without it (`without`, the button's label), or cancel and keep working (`cancelled`).
 pub fn prepare_quit(
     cx: &mut App,
     without: &'static str,
@@ -410,8 +431,20 @@ pub fn prepare_quit(
         return cx.defer(cancelled);
     }
     cx.spawn(async move |cx| {
+        let mut unanswered: Option<BoxedSave> = None;
         loop {
-            let saved = all_saved(cx.update(flush_all)).await;
+            let save = match unanswered.take() {
+                Some(save) => save,
+                None => all_saved(cx.update(flush_all)),
+            };
+            let deadline = cx.background_executor().timer(SAVE_WAIT);
+            let saved = match wait_saved(save, deadline).await {
+                Waited::Saved(saved) => saved,
+                Waited::Unanswered(save) => {
+                    unanswered = Some(save);
+                    Err("Saving is taking longer than expected.".to_string())
+                }
+            };
             let Err(cause) = saved else {
                 cx.update(|cx| {
                     cx.default_global::<Quitting>().preparing = false;
@@ -725,10 +758,33 @@ fn answer_host(request: &Value, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, BoxedSave, Reads, all_saved, finish};
+    use super::{Answer, BoxedSave, Reads, Waited, all_saved, finish, wait_saved};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn an_unanswered_save_is_reported_at_the_deadline_and_kept_for_a_retry() {
+        let mut cx = Context::from_waker(Waker::noop());
+        let (answered, answer) = futures::channel::oneshot::channel::<()>();
+        // The core received the save and never replies, with its connection still open.
+        let save: BoxedSave = Box::pin(async move {
+            let _ = answer.await;
+            Ok(())
+        });
+        let mut waiting = Box::pin(wait_saved(save, std::future::ready(())));
+        let Poll::Ready(Waited::Unanswered(save)) = waiting.as_mut().poll(&mut cx) else {
+            panic!("an unanswered save must end the wait at the deadline");
+        };
+        // Retrying waits for the same save, which may still land, rather than sending it again.
+        let mut retry = Box::pin(wait_saved(save, std::future::pending()));
+        assert!(retry.as_mut().poll(&mut cx).is_pending());
+        let _ = answered.send(());
+        assert!(matches!(
+            retry.as_mut().poll(&mut cx),
+            Poll::Ready(Waited::Saved(Ok(())))
+        ));
+    }
 
     #[test]
     fn work_after_quitting_waits_for_every_save_and_the_core() {

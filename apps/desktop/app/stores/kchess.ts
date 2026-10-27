@@ -323,6 +323,19 @@ export const useKChessStore = defineStore('kchess', () => {
       activeOperations.value--
     }
   }
+  /**
+   * Counts this window's account changes as they start and finish: an account read begun before
+   * one may predate it (`reloadData`).
+   */
+  let accountRevision = 0
+  async function changeAccounts<T>(action: () => Promise<T>): Promise<T | undefined> {
+    accountRevision++
+    try {
+      return await run(action)
+    } finally {
+      accountRevision++
+    }
+  }
   /** Open a page; `query` picks what it shows first (History's `source`/`game`). */
   function selectPage(next: Page, query?: Record<string, string>): void {
     const path = next === 'dashboard' ? '/' : `/${next}`
@@ -539,7 +552,7 @@ export const useKChessStore = defineStore('kchess', () => {
   /** True while the form differs from what is stored; auto-save clears it. */
   async function addAccount(): Promise<void> {
     const typed = usernameInput.value.trim().replace(/^@/, '').toLowerCase()
-    const result = await run(() => window.kchess.addAccount(usernameInput.value))
+    const result = await changeAccounts(() => window.kchess.addAccount(usernameInput.value))
     if (result) {
       data.value = result
       usernameInput.value = ''
@@ -551,7 +564,7 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   /** Free the space a friend's synced games and profile take, keeping them as a friend. */
   async function clearSyncedData(username: string): Promise<void> {
-    const result = await run(() => window.kchess.clearAccountData(username))
+    const result = await changeAccounts(() => window.kchess.clearAccountData(username))
     if (!result) return
     data.value = result
     if (reviewGame.value?.account.toLowerCase() === username.toLowerCase()) reviewGame.value = null
@@ -562,7 +575,7 @@ export const useKChessStore = defineStore('kchess', () => {
   async function importFriends(usernames: string[]): Promise<boolean> {
     // A plain copy: Electron's IPC cannot clone Vue's reactive arrays ("An object could not be cloned").
     const names = [...usernames]
-    const result = await run(() => window.kchess.addFriends(names))
+    const result = await changeAccounts(() => window.kchess.addFriends(names))
     if (!result) return false
     data.value = result
     void usage.refresh()
@@ -574,7 +587,7 @@ export const useKChessStore = defineStore('kchess', () => {
   async function logout(all = false): Promise<void> {
     const account = activeOnlineAccount.value
     if (!all && !account) return
-    const result = await run(() =>
+    const result = await changeAccounts(() =>
       all ? window.kchess.logoutAll() : window.kchess.logout(account),
     )
     if (result) await signedOut(result, all ? undefined : account)
@@ -594,7 +607,10 @@ export const useKChessStore = defineStore('kchess', () => {
     }
     // Recreate renderer stores so account-only caches and pending requests cannot survive logout.
     // The main process saves pending documents first; signing out never discards them.
-    await flushViewPreferences()
+    // A preference still unsaved is retried as the window reloads, which asks what to do if it fails.
+    await flushViewPreferences().catch((cause: unknown) =>
+      console.warn('[kchess] saving view preferences before signing out failed:', cause),
+    )
     await navigateTo('/')
     await window.kchess.reloadWindow()
   }
@@ -602,7 +618,7 @@ export const useKChessStore = defineStore('kchess', () => {
     const wasConnected = connectedAccounts.value.some(
       (a) => a.username.toLowerCase() === username.toLowerCase(),
     )
-    const result = await run(() => window.kchess.removeAccount(username))
+    const result = await changeAccounts(() => window.kchess.removeAccount(username))
     // Disconnecting one's own account signs it out, so it resets the window just like logout.
     if (result && wasConnected) await signedOut(result, username)
     else if (result) {
@@ -627,7 +643,7 @@ export const useKChessStore = defineStore('kchess', () => {
           findTheme(current.darkTheme, customThemes.value),
         )
       : undefined
-    const result = await run(() => window.kchess.connectLichess(look))
+    const result = await changeAccounts(() => window.kchess.connectLichess(look))
     if (!result) return
     data.value = result.data
     selectedAccount.value = result.username
@@ -644,7 +660,7 @@ export const useKChessStore = defineStore('kchess', () => {
   }
   async function sync(username?: string): Promise<void> {
     const before = (await usage.refresh())?.accounts
-    const result = await run(() => window.kchess.syncGames(username))
+    const result = await changeAccounts(() => window.kchess.syncGames(username))
     if (result) {
       data.value = result
       // Say what the sync cost, so downloads are never a surprise.
@@ -789,11 +805,12 @@ export const useKChessStore = defineStore('kchess', () => {
   async function reloadData(): Promise<void> {
     const request = reloads.next()
     const since = persistence.revision()
+    const accountsSince = accountRevision
     try {
       const next = await window.kchess.loadData()
       if (!request.current()) return
-      // Read before this window's own settings save finished: it may predate that save.
-      if (persistence.revision() !== since) return reloadData()
+      // Read before this window's own settings save or account change finished: it may predate it.
+      if (persistence.revision() !== since || accountRevision !== accountsSince) return reloadData()
       persistence.adoptStored(next.settings)
       data.value = next
     } catch (cause) {
