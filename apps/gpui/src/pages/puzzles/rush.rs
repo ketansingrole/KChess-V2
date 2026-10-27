@@ -11,6 +11,7 @@ use gpui_kit::*;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use super::stats::PuzzleStats;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
@@ -76,8 +77,8 @@ pub struct PuzzleRush {
     board: Entity<PuzzleBoard>,
     layout: PlayLayout,
     timers: Vec<Task<()>>,
-    /// What shows beside the menu (Lichess's Storm results), handed in by the page each frame.
-    pub beside: Option<AnyElement>,
+    /// Lichess's Storm results, shown beside the menu.
+    stats: Entity<PuzzleStats>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -87,7 +88,11 @@ fn step(method: &str, args: &[Value]) -> Option<Value> {
 }
 
 impl PuzzleRush {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> PuzzleRush {
+    pub fn new(
+        stats: Entity<PuzzleStats>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PuzzleRush {
         let training = training();
         let board = cx.new(|cx| {
             let mut board = PuzzleBoard::new(false, window, cx);
@@ -104,6 +109,7 @@ impl PuzzleRush {
                 },
             ),
             cx.observe(&board, |_, _, cx| cx.notify()),
+            cx.observe(&stats, |_, _, cx| cx.notify()),
         ];
         let state = training
             .rush_configs
@@ -131,7 +137,7 @@ impl PuzzleRush {
             board,
             layout: PlayLayout::default(),
             timers: Vec::new(),
-            beside: None,
+            stats,
             _subscriptions: subscriptions,
         };
         rush.load_summaries(cx);
@@ -876,16 +882,16 @@ impl PuzzleRush {
             .into_any_element()
     }
 
-    /// The menu (with Lichess's Storm results beside it, `storm`), or the run.
-    pub fn render_with(
-        &mut self,
-        storm: AnyElement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// The menu (with Lichess's Storm results beside it), or the run.
+    fn render_stage(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
         match self.stage {
-            Stage::Menu | Stage::Loading => self.render_menu(storm, window, cx, &palette),
+            Stage::Menu | Stage::Loading => {
+                let storm = self
+                    .stats
+                    .update(cx, |stats, cx| stats.storm_panel(cx, &palette));
+                self.render_menu(storm, window, cx, &palette)
+            }
             Stage::Running | Stage::Over => self.render_run(window, cx, &palette),
         }
     }
@@ -900,11 +906,7 @@ impl PuzzleRush {
 
 impl Render for PuzzleRush {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let beside = self
-            .beside
-            .take()
-            .unwrap_or_else(|| div().into_any_element());
-        self.render_with(beside, window, cx)
+        self.render_stage(window, cx)
     }
 }
 

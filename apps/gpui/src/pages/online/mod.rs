@@ -217,7 +217,10 @@ impl OnlinePage {
 
     /// Challenge a player casually (`challengeFriend`).
     pub fn challenge(&mut self, username: &str, window: &mut Window, cx: &mut Context<Self>) {
-        crate::online::handle(cx).update(cx, |online, _| online.form.rated = false);
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.form.rated = false;
+            cx.notify();
+        });
         self.challenge_keeping_rated(username, window, cx);
     }
 

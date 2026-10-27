@@ -183,6 +183,9 @@ pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {
     }
     prefs.values.insert(key.to_string(), value.clone());
     prefs.write(key, value);
+    // Views read preferences while rendering without observing them; a cached one shows the
+    // change only when the windows redraw past their caches.
+    cx.refresh_windows();
 }
 
 /// Forget a preference (`forgetViewPreference`): its default applies again in both apps.
@@ -192,6 +195,7 @@ pub fn forget(cx: &mut App, key: &str) {
         return;
     }
     prefs.write(key, Value::Null);
+    cx.refresh_windows();
 }
 
 #[cfg(test)]
@@ -257,5 +261,78 @@ mod tests {
         );
         assert!(failed.lock().unwrap().is_empty());
         prefs.writes = None;
+    }
+
+    /// A view that reads a preference while rendering, counting its renders.
+    struct Reader {
+        renders: std::rc::Rc<std::cell::Cell<u32>>,
+        shown: std::rc::Rc<std::cell::Cell<i64>>,
+    }
+
+    impl gpui_kit::Render for Reader {
+        fn render(
+            &mut self,
+            _: &mut gpui_kit::Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            self.shown.set(get(cx, "kchess:test-size", 0));
+            gpui_kit::div()
+        }
+    }
+
+    /// Holds the reader as a cached view, as the shell holds the page and pages hold the board.
+    struct Holder(gpui_kit::Entity<Reader>);
+
+    impl gpui_kit::Render for Holder {
+        fn render(
+            &mut self,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            use gpui_kit::{ParentElement as _, Styled as _};
+            let mut style = gpui_kit::StyleRefinement::default();
+            style.size.width = Some(gpui_kit::relative(1.).into());
+            style.size.height = Some(gpui_kit::relative(1.).into());
+            gpui_kit::div()
+                .size_full()
+                .child(self.0.clone().cached(style))
+        }
+    }
+
+    /// Views read preferences without observing them; once they are cached, a changed
+    /// preference showed only after something else redrew them (a page tab stayed on the old one).
+    #[gpui_kit::test]
+    fn a_changed_preference_reaches_cached_views(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        cx.update(|cx| cx.set_global(ViewPreferences::default()));
+        let renders = std::rc::Rc::new(std::cell::Cell::new(0));
+        let shown = std::rc::Rc::new(std::cell::Cell::new(-1));
+        let reader = cx.new(|_| Reader {
+            renders: renders.clone(),
+            shown: shown.clone(),
+        });
+        let window = cx.add_window(|_, _| Holder(reader));
+        let draw = |cx: &mut gpui_kit::TestAppContext| {
+            cx.run_until_parked();
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        };
+        draw(cx);
+        assert_eq!(shown.get(), 0);
+
+        // The holder redrawing alone reuses the cached reader.
+        let before = renders.get();
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        draw(cx);
+        assert_eq!(renders.get(), before, "the cached reader drew again");
+
+        cx.update(|cx| set(cx, "kchess:test-size", 5));
+        draw(cx);
+        assert_eq!(shown.get(), 5);
+
+        cx.update(|cx| forget(cx, "kchess:test-size"));
+        draw(cx);
+        assert_eq!(shown.get(), 0);
     }
 }

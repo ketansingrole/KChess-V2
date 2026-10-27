@@ -296,7 +296,10 @@ pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
 
 /// Challenge a player, rated or casual (`challengeFriend(username, rated)`).
 pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mut App) {
-    crate::online::handle(cx).update(cx, |online, _| online.form.rated = rated);
+    crate::online::handle(cx).update(cx, |online, cx| {
+        online.form.rated = rated;
+        cx.notify();
+    });
     open(Page::Online, window, cx);
     if let Some(page) = view_of::<crate::pages::online::OnlinePage>(Page::Online, cx) {
         let username = username.to_string();
@@ -560,14 +563,37 @@ impl Workspace {
         let subscriptions = vec![
             cx.observe(
                 &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
-                |_, _, cx| cx.notify(),
+                |this, _, cx| this.shared_changed(cx),
             ),
-            cx.observe(&crate::online::handle(cx), |_, _, cx| cx.notify()),
-            cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+            cx.observe(&crate::online::handle(cx), |this, _, cx| {
+                this.shared_changed(cx)
+            }),
+            cx.observe(&crate::accounts::handle(cx), |this, _, cx| {
+                this.shared_changed(cx)
+            }),
             cx.observe(
                 &cx.global::<crate::network::NetworkHandle>().0.clone(),
-                |_, _, cx| cx.notify(),
+                |this, _, cx| this.shared_changed(cx),
             ),
+            cx.observe(
+                &cx.global::<crate::studies::StudyHandle>().0.clone(),
+                |this, _, cx| this.shared_changed(cx),
+            ),
+            cx.observe(
+                &cx.global::<crate::played::PlayedHandle>().0.clone(),
+                |this, _, cx| this.shared_changed(cx),
+            ),
+            cx.observe(
+                &cx.global::<crate::reviews::ReviewHandle>().0.clone(),
+                |this, _, cx| this.shared_changed(cx),
+            ),
+            cx.observe(
+                &cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone(),
+                |this, _, cx| this.shared_changed(cx),
+            ),
+            cx.observe(&crate::voice::handle(cx), |this, _, cx| {
+                this.shared_changed(cx)
+            }),
             cx.observe_window_appearance(window, |_, window, cx| {
                 crate::theme::apply(window, cx);
                 crate::dock_icon::apply(cx);
@@ -581,7 +607,12 @@ impl Workspace {
             cx.subscribe_in(
                 &settings,
                 window,
-                |_, _, _: &SettingsChanged, window, cx| crate::theme::apply(window, cx),
+                |_, _, _: &SettingsChanged, window, cx| {
+                    crate::theme::apply(window, cx);
+                    // Views read settings while rendering without observing them (the board's
+                    // theme and pieces); refreshing redraws cached views too.
+                    window.refresh();
+                },
             ),
             crate::window_state::track(crate::profile::data_dir().unwrap_or_default(), window, cx),
             // Auto follows the display: a move to another one may call for another size.
@@ -606,6 +637,14 @@ impl Workspace {
             back: Page::Dashboard,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// A model the shell and the pages read while rendering changed. The page is a cached view,
+    /// which an entity it only reads does not redraw, so it is told as well.
+    fn shared_changed(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+        let page = self.pages.view().entity_id();
+        App::notify(cx, page);
     }
 
     /// Push to talk: Space held on the page speaks (`VoiceInput.vue`'s keys), while voice waits
@@ -694,7 +733,10 @@ impl Workspace {
         if page == Page::Practice
             && let Some(practice) = self.pages.view_of::<PracticePage>(Page::Practice)
         {
-            practice.update(cx, |practice, _| practice.shown());
+            practice.update(cx, |practice, cx| {
+                practice.shown();
+                cx.notify();
+            });
         }
         if page == Page::Studies
             && let Some(studies) = self.pages.view_of::<StudiesPage>(Page::Studies)

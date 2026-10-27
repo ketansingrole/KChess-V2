@@ -1408,13 +1408,11 @@ impl Render for PuzzlesPage {
             let rush = match &self.rush {
                 Some(rush) => rush.clone(),
                 None => {
-                    let rush = cx.new(|cx| rush::PuzzleRush::new(window, cx));
+                    let rush = cx.new(|cx| rush::PuzzleRush::new(stats.clone(), window, cx));
                     self.rush = Some(rush.clone());
                     rush
                 }
             };
-            let beside = stats.update(cx, |stats, cx| stats.storm_panel(cx, &palette));
-            rush.update(cx, |rush, _| rush.beside = Some(beside));
             rush.into_any_element()
         } else {
             div()

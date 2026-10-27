@@ -707,7 +707,10 @@ impl Repertoire {
     ) {
         cx.spawn(async move |this, cx| match saved.await {
             Ok(misses) => {
-                let _ = this.update(cx, |this, _| this.misses = misses);
+                let _ = this.update(cx, |this, cx| {
+                    this.misses = misses;
+                    cx.notify();
+                });
             }
             Err(cause) => crate::log::write(
                 Level::Warn,

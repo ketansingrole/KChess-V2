@@ -72,3 +72,7 @@ block2 = "0.6"
 libc = "0.2"
 # The Dock icon (`app.dock.setIcon` in Electron): NSApplication's icon image.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+
+[dev-dependencies]
+# Headless windows for the rendering regressions (`#[gpui_kit::test]`).
+gpui-kit = { version = "0.8", features = ["test-support"] }
