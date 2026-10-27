@@ -248,7 +248,8 @@ impl LichessClient {
         parse_json(&text, path)
     }
 
-    /// `unwrap(client.POST(path))` with a form body (`urlencoded`).
+    /// `unwrap(client.POST(path))` with a form body (`urlencoded`). It asks for JSON: without that,
+    /// some endpoints (`/api/import`) answer with a redirect to a web page.
     pub async fn post_form<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -256,7 +257,8 @@ impl LichessClient {
         auth: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<T> {
-        let headers = auth_header(auth);
+        let mut headers = vec![("Accept", "application/json".to_string())];
+        headers.extend(auth_header(auth));
         let body = Some(("application/x-www-form-urlencoded", urlencoded(form)));
         let admitted = self
             .call(reqwest::Method::POST, path, &[], &headers, body, cancel)

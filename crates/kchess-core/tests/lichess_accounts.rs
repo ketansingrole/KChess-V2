@@ -951,6 +951,8 @@ async fn uploads_a_game_as_the_account_or_anonymously() {
     assert_eq!(game.url, "https://lichess.org/R6iLjwz5");
     lichess.import_game("", pgn).await.unwrap();
     let calls = fixture.to("/api/import");
+    // Without asking for JSON, Lichess redirects the upload to the game's page.
+    assert_eq!(calls[0].header("accept"), Some("application/json"));
     assert_eq!(calls[0].header("authorization"), Some("Bearer lip_alice"));
     assert_eq!(calls[1].header("authorization"), None);
 }
