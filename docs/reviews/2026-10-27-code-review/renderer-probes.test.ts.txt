@@ -1,0 +1,104 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { effectScope, nextTick, ref } from 'vue'
+import { flushPromises } from '@vue/test-utils'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
+import type { Settings } from '@kchess/contracts/types'
+import type { ArchivedGame, LibrarySnapshot } from '@kchess/rules/library'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+import { useSettingsPersistence } from '../../app/stores/kchess/settingsPersistence'
+import { useGameArchiveStore } from '../../app/stores/gameArchive'
+import { setInitialLibrary, setLibraryRefresher } from '../../app/utils/library'
+import { deferred, desktop } from './fixtures'
+import profileSyncPlugin from '../../app/plugins/profileSync.client'
+vi.hoisted(() => {
+  ;(globalThis as Record<string, unknown>).defineNuxtPlugin = (setup: unknown) => setup
+})
+const scopes: ReturnType<typeof effectScope>[] = []
+afterEach(() => {
+  scopes.splice(0).forEach((scope) => scope.stop())
+  vi.useRealTimers()
+  setLibraryRefresher(undefined)
+})
+
+it('diagnostic: a second edit turns a remote setting merged by the core into a local rollback', async () => {
+  vi.useFakeTimers()
+  const gate = deferred<Settings>()
+  let stored = { ...DEFAULT_SETTINGS, soundVolume: 0.8 }
+  const write = vi.fn(async (sent: Settings, base?: Settings) => {
+    const merged = { ...stored } as Record<string, unknown>
+    for (const [key, value] of Object.entries(sent))
+      if (
+        !base ||
+        JSON.stringify(value) !== JSON.stringify((base as unknown as Record<string, unknown>)[key])
+      )
+        merged[key] = value
+    stored = merged as unknown as Settings
+    return stored
+  })
+  desktop({
+    saveSettings: vi
+      .fn()
+      .mockImplementationOnce(() => gate.promise)
+      .mockImplementation(write),
+  })
+  const settings = ref<Settings | null>({ ...DEFAULT_SETTINGS, soundVolume: 0.2 })
+  const data = ref({ settings: { ...settings.value! }, accounts: [], gameCount: 0 })
+  const scope = effectScope()
+  scopes.push(scope)
+  const owner = scope.run(() =>
+    useSettingsPersistence({ settings, data, fail: vi.fn(), refreshEngine: async () => {} }),
+  )!
+  settings.value!.appearance = 'dark'
+  const first = owner.save()
+  await nextTick()
+  settings.value!.zenMode = !settings.value!.zenMode
+  gate.resolve({ ...stored, appearance: 'dark' })
+  await first
+  await owner.save()
+  expect(stored.soundVolume).toBe(0.2) // broken: this window never edited sound
+})
+
+it('diagnostic: a library refresh can resurrect a game during its successful deletion', async () => {
+  vi.useFakeTimers()
+  const game: ArchivedGame = {
+    id: 'deleted',
+    source: 'board',
+    setup: STANDARD_SETUP,
+    moves: ['e2e4'],
+    result: '*',
+    white: 'White',
+    black: 'Black',
+    reason: 'In progress',
+    timeControl: '',
+    finished: false,
+    startedAt: 1,
+    updatedAt: 2,
+  }
+  const { api } = desktop()
+  setInitialLibrary({ games: [game] })
+  const archive = useGameArchiveStore()
+  const old = await api.library()
+  const gate = deferred<void>()
+  api.removeArchivedGame = () => gate.promise
+  const removing = archive.remove(game.id)
+  await flushPromises()
+  archive.replaceFromLibrary({ ...old, games: [game] })
+  gate.resolve()
+  await removing
+  expect(archive.games.map((g) => g.id)).toEqual(['deleted']) // broken: deletion succeeded
+})
+
+it('diagnostic: transport recovery does not refresh profile snapshots', async () => {
+  const { api } = desktop()
+  api.onProfileChanged = () => () => {}
+  let reconnected = () => {}
+  api.onCoreReconnected = (fn) => {
+    reconnected = fn
+    return () => {}
+  }
+  const read = vi.spyOn(api, 'library')
+  ;(profileSyncPlugin as unknown as () => void)()
+  reconnected()
+  await flushPromises()
+  expect(read).not.toHaveBeenCalled() // broken: changes while disconnected remain missing
+})

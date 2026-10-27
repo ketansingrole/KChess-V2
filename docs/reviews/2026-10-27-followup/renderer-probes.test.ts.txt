@@ -1,0 +1,71 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { effectScope, ref } from 'vue'
+import { DEFAULT_SETTINGS } from '@kchess/contracts/defaultSettings'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+import type { ArchivedGame, LibrarySnapshot } from '@kchess/rules/library'
+import { useGameArchiveStore } from '../../app/stores/gameArchive'
+import { useSettingsPersistence } from '../../app/stores/kchess/settingsPersistence'
+import { useKChessStore } from '../../app/stores/kchess'
+import profileSyncPlugin from '../../app/plugins/profileSync.client'
+import { desktop, deferred } from './fixtures'
+
+vi.hoisted(() => {
+  ;(globalThis as Record<string, unknown>).defineNuxtPlugin = (setup: unknown) => setup
+})
+
+const scopes: ReturnType<typeof effectScope>[] = []
+afterEach(() => scopes.splice(0).forEach((scope) => scope.stop()))
+const game: ArchivedGame = {
+  id: 'deleted', source: 'board', setup: STANDARD_SETUP, moves: ['e2e4'], result: '*',
+  white: 'White', black: 'Black', reason: 'In progress', timeControl: '', finished: false,
+  startedAt: 1, updatedAt: 2,
+}
+
+it('diagnostic: a read started before deletion resurrects the row after deletion settles', async () => {
+  const { api } = desktop()
+  await api.saveArchivedGame(game)
+  const archive = useGameArchiveStore()
+  archive.replaceFromLibrary(await api.library())
+  const stale = await api.library()
+  const gate = deferred<LibrarySnapshot>()
+  api.library = () => gate.promise
+  let changed = (_event: unknown) => {}
+  api.onProfileChanged = (callback) => { changed = callback as never; return () => {} }
+  ;(profileSyncPlugin as unknown as () => void)()
+  changed({ areas: ['playedGames'], origin: 99 })
+  await archive.remove(game.id)
+  expect(archive.games).toEqual([])
+  gate.resolve(stale)
+  await flushPromises()
+  expect(archive.games.map((entry) => entry.id)).toEqual(['deleted'])
+})
+
+it('diagnostic: a stale settings reload after save acknowledgment silently undoes the form', async () => {
+  desktop({ saveSettings: async (value) => ({ ...value }) })
+  const settings = ref({ ...DEFAULT_SETTINGS })
+  const data = ref({ settings: { ...DEFAULT_SETTINGS }, accounts: [], gameCount: 0 })
+  const stale = { ...data.value.settings }
+  const scope = effectScope()
+  scopes.push(scope)
+  const owner = scope.run(() => useSettingsPersistence({ settings, data, fail: vi.fn(), refreshEngine: async () => {} }))!
+  settings.value.soundVolume = stale.soundVolume === 0.8 ? 0.2 : 0.8
+  await owner.save()
+  expect(settings.value.soundVolume).not.toBe(stale.soundVolume)
+  owner.adoptStored(stale)
+  expect(settings.value.soundVolume).toBe(stale.soundVolume)
+  expect(owner.settingsDirty.value).toBe(false)
+})
+
+it('diagnostic: core recovery while idle skips the authoritative online bootstrap', async () => {
+  let reconnect = () => {}
+  const resumeOnline = vi.fn(async () => null)
+  desktop({ resumeOnline, onCoreReconnected: (callback: () => void) => { reconnect = callback; return () => {} } })
+  const app = useKChessStore()
+  await app.init()
+  await flushPromises()
+  expect(app.onlinePhase).toBe('idle')
+  reconnect()
+  await flushPromises()
+  expect(resumeOnline).toHaveBeenCalledOnce()
+})

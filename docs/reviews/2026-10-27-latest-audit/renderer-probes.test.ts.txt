@@ -1,0 +1,122 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { desktop, deferred } from './fixtures'
+import { useGameArchiveStore } from '../../app/stores/gameArchive'
+import { useStudyStore } from '../../app/stores/studies'
+import { useKChessStore } from '../../app/stores/kchess'
+import { useUsageStore } from '../../app/stores/usage'
+import { setLibraryRefresher } from '../../app/utils/library'
+import { STANDARD_SETUP } from '@kchess/rules/variant'
+import type { ArchivedGame, LibrarySnapshot } from '@kchess/rules/library'
+import type { AppData, ProfileChange } from '@kchess/contracts/types'
+import profileSyncPlugin from '../../app/plugins/profileSync.client'
+vi.hoisted(() => {
+  ;(globalThis as Record<string, unknown>).defineNuxtPlugin = (setup: unknown) => setup
+})
+afterEach(() => setLibraryRefresher(undefined))
+const game = (id: string): ArchivedGame => ({
+  id,
+  source: 'board',
+  setup: STANDARD_SETUP,
+  moves: ['e2e4'],
+  result: '*',
+  white: 'White',
+  black: 'Black',
+  reason: 'In progress',
+  timeControl: '',
+  finished: false,
+  startedAt: 1,
+  updatedAt: 2,
+})
+function sync(api: ReturnType<typeof desktop>['api']) {
+  let changed: (change: ProfileChange) => void = () => {}
+  api.onProfileChanged = (callback) => {
+    changed = callback
+    return () => {}
+  }
+  ;(profileSyncPlugin as unknown as () => void)()
+  return (areas: ProfileChange['areas']) => changed({ areas, origin: 99 })
+}
+it('diagnostic: a reentrant follow-up refresh is read but its remote game is not applied', async () => {
+  const { api } = desktop()
+  await api.saveArchivedGame(game('deleted'))
+  const archive = useGameArchiveStore()
+  archive.replaceFromLibrary(await api.library())
+  const stale = await api.library()
+  const real = api.library
+  const gate = deferred<LibrarySnapshot>()
+  const reads = vi
+    .spyOn(api, 'library')
+    .mockImplementationOnce(() => gate.promise)
+    .mockImplementation(() => real())
+  const changed = sync(api)
+  changed(['playedGames'])
+  await api.saveArchivedGame(game('remote'))
+  await archive.remove('deleted')
+  gate.resolve(stale)
+  await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(2)
+  expect((await real()).games.map((g) => g.id)).toEqual(['remote'])
+  expect(archive.games).toEqual([])
+})
+it('diagnostic: a successful duplicate is reported failed then duplicated again at quit', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Local', '1. e4 *')
+  await api.studyCommand({ op: 'save', name: 'Remote', pgn: '1. d4 *' })
+  await expect(studies.duplicate(id)).rejects.toThrow('Reopen the app')
+  expect((await api.library()).studies).toHaveLength(3)
+  await expect(studies.flush(true)).rejects.toThrow('Some studies could not be saved')
+  expect((await api.library()).studies).toHaveLength(4)
+})
+it('diagnostic: an account reply turns another window’s settings into local edits', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop()
+  const old = await api.loadData()
+  old.accounts[1]!.connected = false
+  api.loadData = async () => old
+  const app = useKChessStore()
+  await app.init()
+  vi.spyOn(useUsageStore(), 'refresh').mockResolvedValue(null)
+  api.removeAccount = async () => ({
+    ...old,
+    settings: { ...old.settings, soundVolume: 0.8 },
+    accounts: old.accounts.slice(0, 1),
+  })
+  await app.removeAccount('Bob')
+  expect(app.data.settings.soundVolume).toBe(0.8)
+  expect(app.settings.soundVolume).toBe(old.settings.soundVolume)
+  app.settings.zenMode = !app.settings.zenMode
+  const saved = vi.spyOn(api, 'saveSettings')
+  await app.save()
+  expect(saved).toHaveBeenCalledWith(
+    expect.objectContaining({ soundVolume: old.settings.soundVolume }),
+    expect.objectContaining({ soundVolume: 0.8 }),
+  )
+  expect(app.data.settings.soundVolume).toBe(old.settings.soundVolume)
+})
+it('diagnostic: autosaving chapter moves undoes another window’s completed rename', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Original', '1. e4 *')
+  const chapter = studies.items[0]!.chapters[0]!.id
+  studies.track(id, chapter)
+  await api.studyCommand({ op: 'rename', id, name: 'Remote rename' })
+  await studies.saveChapter(id, chapter, '1. e4 e5 *')
+  expect((await api.library()).studies[0]!.name).toBe('Original')
+})
+it('diagnostic: autosave recreates a remotely deleted study with incompatible chapter identity', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Original', '1. e4 *')
+  const chapter = studies.items[0]!.chapters[0]!.id
+  studies.track(id, chapter)
+  await api.studyCommand({ op: 'remove', id })
+  await studies.saveChapter(id, chapter, '1. e4 e5 *')
+  const saved = (await api.library()).studies[0]!
+  expect(saved.id).toBe(id)
+  expect(saved.chapters[0]!.id).not.toBe(chapter)
+  await expect(studies.saveChapter(id, chapter, '1. e4 e5 2. Nf3 *')).rejects.toThrow(
+    'That chapter cannot be saved',
+  )
+})

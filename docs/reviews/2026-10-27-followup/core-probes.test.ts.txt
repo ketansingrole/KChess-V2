@@ -1,0 +1,30 @@
+import { expect, it } from 'vitest'
+import { createKChessCore } from '@kchess/native'
+import { testPlatform } from '../fixtures/corePlatform'
+
+it('diagnostic: two GPUI queued settings snapshots with the same base lose a revert', async () => {
+  const core = createKChessCore(testPlatform())
+  try {
+    const base = await core.desktopSettings()
+    // GPUI captures both (sent, base) pairs while the first response is still pending.
+    const first = { ...base, soundEnabled: !base.soundEnabled }
+    const second = { ...base }
+    await core.saveDesktopSettings(first, base)
+    await core.saveDesktopSettings(second, base)
+    expect((await core.desktopSettings()).soundEnabled).toBe(first.soundEnabled)
+    expect((await core.desktopSettings()).soundEnabled).not.toBe(second.soundEnabled)
+  } finally {
+    await core.close()
+  }
+})
+
+it('diagnostic: a fresh core blocks computer play until resume even with no accounts', async () => {
+  const core = createKChessCore(testPlatform())
+  try {
+    await expect(core.bestMove(['e2e4'], 'beginner')).rejects.toThrow()
+    expect(await core.resumeOnline()).toBeNull()
+    await expect(core.bestMove(['e2e4'], 'beginner')).resolves.toMatch(/^[a-h][1-8][a-h][1-8]/)
+  } finally {
+    await core.close()
+  }
+})

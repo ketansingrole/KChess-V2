@@ -1,0 +1,61 @@
+use std::path::{Path, PathBuf};
+const PREFIX: &str = "KChess-Audit-Probe";
+enum Package { MacZip, AppImage }
+struct Install { package: Package, path: PathBuf }
+fn aside(installed: &Path) -> PathBuf {
+    installed.with_file_name(format!(
+        ".{}-old",
+        installed
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default()
+    ))
+}
+
+/// Where `swap_file` writes the new AppImage before it takes the old one's name.
+fn incoming(installed: &Path) -> PathBuf {
+    installed.with_file_name(format!(
+        ".{}.new",
+        installed
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default()
+    ))
+}
+
+fn downloads() -> PathBuf {
+    std::env::temp_dir().join("kchess-update").join(PREFIX)
+}
+
+/// What an earlier run left behind: its downloads, and an old bundle or new AppImage that an
+/// interrupted install did not remove.
+fn tidy(install: Option<&Install>) {
+    let _ = std::fs::remove_dir_all(downloads());
+    match install {
+        Some(Install {
+            package: Package::MacZip,
+            path,
+        }) => {
+            let _ = std::fs::remove_dir_all(aside(path));
+        }
+        Some(Install {
+            package: Package::AppImage,
+            path,
+        }) => {
+            let _ = std::fs::remove_file(incoming(path));
+        }
+        _ => {}
+    }
+}
+
+
+fn main() {
+    let staged = downloads().join("2026.11.0/update");
+    std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+    std::fs::write(&staged, b"verified staged update from instance A").unwrap();
+    assert!(staged.exists());
+    // Instance B's init calls this, including for a development build.
+    tidy(None);
+    assert!(!staged.exists());
+    println!("reproduced: startup cleanup removes another instance's staged update");
+}

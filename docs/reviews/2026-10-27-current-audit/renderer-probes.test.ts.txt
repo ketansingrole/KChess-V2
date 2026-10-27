@@ -1,0 +1,60 @@
+import { expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
+import { desktop, deferred } from './fixtures'
+import { useStudyStore } from '../../app/stores/studies'
+import { useKChessStore } from '../../app/stores/kchess'
+import { useUsageStore } from '../../app/stores/usage'
+import {
+  flushViewPreferences,
+  loadViewPreferences,
+  useViewPreference,
+} from '../../app/composables/useViewPreference'
+import type { AppData } from '@kchess/contracts/types'
+
+it('diagnoses a stale library read rolling a completed rename back into storage on autosave', async () => {
+  const { api } = desktop()
+  const studies = useStudyStore()
+  const id = await studies.save('Original', '1. e4 *')
+  const chapter = studies.items[0]!.chapters[0]!.id
+  studies.track(id, chapter)
+  const stale = await api.library()
+  await studies.rename(id, 'Renamed')
+  expect(studies.items[0]!.name).toBe('Renamed')
+  studies.replaceFromLibrary(stale)
+  expect(studies.items[0]!.name).toBe('Original')
+  await studies.saveChapter(id, chapter, '1. e4 e5 *')
+  expect((await api.library()).studies[0]!.name).toBe('Original')
+})
+
+it('diagnoses a stale account read resurrecting a completed local removal', async () => {
+  const { api } = desktop()
+  const old = await api.loadData()
+  old.accounts[1]!.connected = false
+  const removed: AppData = { ...old, accounts: old.accounts.slice(0, 1) }
+  const app = useKChessStore()
+  api.loadData = async () => old
+  await app.reloadData()
+  vi.spyOn(useUsageStore(), 'refresh').mockResolvedValue(null)
+  const gate = deferred<AppData>()
+  api.loadData = () => gate.promise
+  api.removeAccount = async () => removed
+  const reading = app.reloadData()
+  await app.removeAccount('Bob')
+  expect(app.data!.accounts.map((account) => account.username)).toEqual(['Alice'])
+  gate.resolve(old)
+  await reading
+  expect(app.data!.accounts.map((account) => account.username)).toEqual(['Alice', 'Bob'])
+  expect(removed.accounts.map((account) => account.username)).toEqual(['Alice'])
+})
+
+it('diagnoses a failed preference edit being forgotten by the quit barrier', async () => {
+  const write = vi.fn(async () => { throw new Error('disk full') })
+  desktop({ viewPreferences: async () => ({}), setViewPreference: write })
+  await loadViewPreferences()
+  useViewPreference('kchess:audit-pref', 'old').value = 'new'
+  await nextTick()
+  await flushPromises()
+  await expect(flushViewPreferences()).resolves.toBeUndefined()
+  expect(write).toHaveBeenCalledTimes(1)
+})

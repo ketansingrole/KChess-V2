@@ -1,0 +1,87 @@
+#[path = "support/lichess_http.rs"]
+mod fixtures;
+use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, lichess_service, serve};
+use kchess_core::lichess::accounts::Reply as Outcome;
+use kchess_core::lichess::studies::{
+    StudySyncRequest, export_to_lichess_study, sync_lichess_study,
+};
+use std::sync::Arc;
+const BASE: &str = "[Site \"https://lichess.org/study/Study001/Chapter1\"]\n[Event \"Before\"]\n[Result \"*\"]\n\n1. e4 {Original} e5 *";
+#[tokio::test]
+async fn diagnostic_retry_after_moves_but_before_tags_is_rejected_as_external_conflict() {
+    let edited = BASE
+        .replace("Before", "After")
+        .replace("Original", "Edited");
+    let partial = BASE.replace("Original", "Edited");
+    let fixture =
+        serve(move |_| Reply::Text(200, "application/x-chess-pgn", partial.clone())).await;
+    let lichess = lichess_service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let error = sync_lichess_study(
+        &lichess,
+        &StudySyncRequest {
+            account: "Alice".into(),
+            study_id: "Study001".into(),
+            baseline: BASE.into(),
+            pgn: edited,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.message.contains("cloud study changed"));
+    assert!(fixture.requests().iter().all(|r| r.method == "GET"));
+}
+#[tokio::test]
+async fn diagnostic_retry_with_removed_header_reports_success_without_removing_it() {
+    let baseline = BASE.replace("[Result", "[Annotator \"Alice\"]\n[Result");
+    let edited = baseline
+        .replace("[Annotator \"Alice\"]\n", "")
+        .replace("Original", "Edited");
+    let partial = baseline.replace("Original", "Edited");
+    let fixture =
+        serve(move |_| Reply::Text(200, "application/x-chess-pgn", partial.clone())).await;
+    let lichess = lichess_service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let result = sync_lichess_study(
+        &lichess,
+        &StudySyncRequest {
+            account: "Alice".into(),
+            study_id: "Study001".into(),
+            baseline,
+            pgn: edited,
+        },
+    )
+    .await
+    .unwrap();
+    let Outcome::Done(chapters) = result else {
+        panic!("connected")
+    };
+    assert!(chapters[0].pgn.contains("[Annotator \"Alice\"]"));
+    assert!(fixture.requests().iter().all(|r| r.method == "GET"));
+}
+#[tokio::test]
+async fn diagnostic_export_reports_success_when_the_server_imports_zero_chapters() {
+    let fixture = serve(move |_| Reply::Json(200, "{\"chapters\":[]}".into())).await;
+    let lichess = lichess_service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let Outcome::Done(id) = export_to_lichess_study(&lichess, "Alice", "Study001", "Game", BASE)
+        .await
+        .unwrap()
+    else {
+        panic!("connected")
+    };
+    assert_eq!(id, "Study001");
+    assert_eq!(fixture.requests().len(), 1);
+}
