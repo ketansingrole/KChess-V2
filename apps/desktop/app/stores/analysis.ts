@@ -210,9 +210,18 @@ export const useAnalysisStore = defineStore('analysis', () => {
   /* ── Studies ─────────────────────────────────────────────────────── */
 
   const study = computed(() => studies.items.find((item) => item.id === studyId.value))
-  /** The PGN last written to the open study, so opening one does not count as an edit. */
+  /**
+   * The PGN the open study is known to hold: read when it opened, or a save the core acknowledged.
+   * Opening a study does not count as an edit, and a failed save never counts as saved.
+   */
   let studyPgn =
     study.value?.chapters.find((c) => c.id === studyChapterId.value)?.pgn ?? study.value?.pgn ?? ''
+  /** The PGN of the latest save still being written, so the same text is not sent twice. */
+  let studySending: { text: string } | undefined
+  function studyBaseline(text: string): void {
+    studyPgn = text
+    studySending = undefined
+  }
   const studySaveError = ref(
     conflict
       ? 'Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.'
@@ -241,7 +250,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     studyId.value = id
     studyChapterId.value = chapter.id
     studies.track(id, chapter.id)
-    studyPgn = pgn()
+    studyBaseline(pgn())
     studySaveError.value = ''
     return true
   }
@@ -259,7 +268,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const chapterId = saved?.chapters[0]?.id
     if (!chapterId) throw new Error('[analysis] saved study has no chapter.')
     studyChapterId.value = chapterId
-    studyPgn = text
+    studyBaseline(text)
     studySaveError.value = ''
     return id
   }
@@ -292,7 +301,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       return false
     studyId.value = ''
     studyChapterId.value = ''
-    studyPgn = ''
+    studyBaseline('')
     load()
     return true
   }
@@ -312,25 +321,28 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const open = study.value
     if (!open) return
     const text = pgn()
-    if (text === studyPgn) return
-    const previous = studyPgn
-    // Counted as saved while the core writes it; a failure makes it unsaved again.
-    studyPgn = text
+    if (text === (studySending?.text ?? studyPgn)) return
+    // Only an acknowledged save becomes the saved PGN. Saves reach the core in order, so a later
+    // success is newer than an earlier one; a failure leaves the board to be saved again.
+    const sending = { text }
+    studySending = sending
     try {
       await studies.saveChapter(open.id, studyChapterId.value, text)
+      if (studyId.value === open.id) studyPgn = text
+      if (studySending === sending) studySending = undefined
       studySaveError.value = ''
     } catch (cause) {
+      if (studySending === sending) studySending = undefined
       console.warn('[analysis] saving study failed:', cause)
       if (isStaleStudy(cause) && studyId.value === open.id) {
         // Another window changed the chapter: the board keeps its moves as an unsaved copy
         // rather than overwriting that window's, or blocking every later save and quit.
         studyId.value = ''
         studyChapterId.value = ''
-        studyPgn = ''
+        studyBaseline('')
         studySaveError.value = STALE_COPY
         return
       }
-      if (studyPgn === text) studyPgn = previous
       studySaveError.value = cause instanceof Error ? cause.message : String(cause)
     }
   }

@@ -188,11 +188,12 @@ profile. Every window sees the same data, so a write in one window must reach th
 - After each successful write the core broadcasts `profile:changed { areas, origin }`: the parts
   of the profile it changed (`ProfileArea` in `kchess-contracts`: studies, played games, drills,
   sessions, tournaments, repertoire, Lichess games, accounts, desktop settings, puzzles, voice
-  history, usage, engine) and the connection that wrote. `settings:saved` already reported
+  history, usage, engine, view preferences) and the connection that wrote. `settings:saved` already reported
   settings, and still does.
 - A window ignores its own writes (`origin`) and refetches what it shows: the Electron renderer
   reloads the library's stores and the accounts (`plugins/profileSync.client.ts`), GPUI its
-  studies, played games and accounts (`core::on_profile_change`). Events name areas, not
+  studies, played games and accounts (`core::on_profile_change`). Both adopt another app's view
+  preferences at once, except names they changed themselves since reading. Events name areas, not
   documents, so the core stays the source of truth. A window with its own edits still to save
   keeps them and shows the library once they are saved.
 - Concurrent edits: `studyCommand` takes an optional `basedOn`, the chapter's PGN as the window's

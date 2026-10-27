@@ -6,6 +6,7 @@ import { useGameArchiveStore } from '../stores/gameArchive'
 import { useMistakeStore } from '../stores/mistakes'
 import { useTournamentStore } from '../stores/tournaments'
 import { useKChessStore } from '../stores/kchess'
+import { loadViewPreferences } from '../composables/useViewPreference'
 
 type LibraryStore = 'studies' | 'archive' | 'mistakes' | 'tournaments'
 const ALL_STORES: LibraryStore[] = ['studies', 'archive', 'mistakes', 'tournaments']
@@ -71,10 +72,12 @@ export default defineNuxtPlugin(() => {
     const stores = areas.flatMap((area) => LIBRARY[area] ?? [])
     if (stores.length) refreshLibrary(stores)
     if (areas.some((area) => ACCOUNTS.includes(area))) void useKChessStore().reloadData()
+    if (areas.includes('viewPreferences')) void loadViewPreferences()
   })
   // Changes made while this window was disconnected were never reported: read everything again.
   window.kchess.onCoreReconnected(() => {
     refreshLibrary()
     void useKChessStore().reloadData()
+    void loadViewPreferences()
   })
 })

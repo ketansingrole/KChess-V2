@@ -177,3 +177,25 @@ it('does not recreate a study another window removed when this window autosaves 
   // Refused like any other window's change: the board keeps a copy, and quitting is not blocked.
   await store.flush(true)
 })
+
+it('does not send a creation again at quit when only its reply was lost', async () => {
+  // The core stored the duplicate, then the connection closed before its reply: the quit flush
+  // duplicated the study again.
+  const { api } = desktop()
+  const store = useStudyStore()
+  const id = await store.save('Original', '1. e4 *')
+  const backend = api.studyCommand
+  let lose = true
+  api.studyCommand = async (...args) => {
+    const result = await backend(...args)
+    if (lose) {
+      lose = false
+      throw new Error('The KChess core stopped.')
+    }
+    return result
+  }
+  await expect(store.duplicate(id)).rejects.toThrow('core stopped')
+  expect((await api.library()).studies).toHaveLength(2)
+  await store.flush(true)
+  expect((await api.library()).studies).toHaveLength(2)
+})

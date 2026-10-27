@@ -8,10 +8,20 @@ import { effectScope, ref, watch, type Ref } from 'vue'
  *
  * Each name has one shared, deeply reactive value: every component that asks for it sees the
  * same ref, as `useLocalStorage` gave them, and changing it (or something inside it) saves it.
+ * Another app's change reaches it when the preferences are read again (`profile:changed`), unless
+ * this one changed it since.
  */
 
 let saved: Record<string, unknown> = {}
 const values = new Map<string, Ref<unknown>>()
+/** How each shown value takes the core's value of its name (`undefined`: none is saved). */
+const adopters = new Map<string, (value: unknown) => void>()
+/** Each name's value as last taken from the core, so taking it is not saved back. */
+const adopted = new Map<string, string>()
+/** Local changes made so far, and the latest one of each name, so an older read never undoes it. */
+let changes = 0
+const changedAt = new Map<string, number>()
+let reads = 0
 /** Each name's latest save, so a fast run of changes reaches the core in order. */
 const pending = new Map<string, Promise<void>>()
 /** Each name's latest value the core refused, retried before quitting until a later save succeeds. */
@@ -24,13 +34,26 @@ const legacy = new Map<string, string>()
 // The watchers outlive whichever component first asked for a preference.
 let scope = effectScope(true)
 
-/** Read the saved preferences; the app waits for this before it mounts (`plugins/`). */
+/**
+ * Read the saved preferences; the app waits for this before it mounts (`plugins/`), and reads them
+ * again when another app changed them. Names changed here since the read began keep their value.
+ */
 export async function loadViewPreferences(): Promise<void> {
+  const read = ++reads
+  const since = changes
+  let next: Record<string, unknown>
   try {
-    saved = (await window.kchess.viewPreferences?.()) ?? {}
+    next = (await window.kchess.viewPreferences?.()) ?? {}
   } catch (cause) {
     console.warn('[view-preferences] Loading saved view preferences failed:', cause)
-    saved = {}
+    return
+  }
+  if (read !== reads) return
+  for (const key of new Set([...Object.keys(saved), ...Object.keys(next)])) {
+    if (pending.has(key) || failed.has(key) || (changedAt.get(key) ?? 0) > since) continue
+    if (key in next) saved[key] = next[key]
+    else delete saved[key]
+    adopters.get(key)?.(saved[key])
   }
 }
 
@@ -40,6 +63,9 @@ export function resetViewPreferences(): void {
   scope = effectScope(true)
   saved = {}
   values.clear()
+  adopters.clear()
+  adopted.clear()
+  changedAt.clear()
   pending.clear()
   failed.clear()
   legacy.clear()
@@ -101,12 +127,15 @@ function plain(value: unknown): unknown {
 
 function save(key: string, value: unknown): void {
   const body = plain(value)
+  changedAt.set(key, ++changes)
   const previous = pending.get(key) ?? Promise.resolve()
   const next = previous
     .then(() => window.kchess.setViewPreference?.(key, body))
     .then(() => {
       failed.delete(key)
       forgetLegacy(key)
+      if (body === null) delete saved[key]
+      else saved[key] = body
     })
     .catch((cause: unknown) => {
       console.warn('[view-preferences] Saving a view preference failed:', key, cause)
@@ -143,6 +172,15 @@ export function useViewPreference<T>(
 ): Ref<T> {
   const existing = values.get(key)
   if (existing) return existing as Ref<T>
+  const shown = (stored: T): T =>
+    options.mergeDefaults &&
+    stored &&
+    typeof stored === 'object' &&
+    fallback &&
+    typeof fallback === 'object' &&
+    !Array.isArray(fallback)
+      ? ({ ...(plain(fallback) as object), ...(stored as object) } as T)
+      : stored
   let initial: T
   let imported = false
   if (key in saved) initial = saved[key] as T
@@ -151,25 +189,34 @@ export function useViewPreference<T>(
     imported = earlier !== undefined
     initial = imported ? (earlier as T) : (plain(fallback) as T)
   }
-  if (
-    options.mergeDefaults &&
-    initial &&
-    typeof initial === 'object' &&
-    fallback &&
-    typeof fallback === 'object' &&
-    !Array.isArray(fallback)
-  )
-    initial = { ...(plain(fallback) as object), ...(initial as object) } as T
-  const value = ref(initial) as Ref<T>
+  const value = ref(shown(initial)) as Ref<T>
   values.set(key, value as Ref<unknown>)
-  scope.run(() => watch(value, (next) => save(key, next), { deep: true }))
-  if (imported) save(key, initial)
+  adopters.set(key, (stored) => {
+    const next = shown((stored === undefined ? plain(fallback) : stored) as T)
+    const text = JSON.stringify(plain(next))
+    if (text === JSON.stringify(plain(value.value))) return
+    adopted.set(key, text)
+    value.value = next
+  })
+  scope.run(() =>
+    watch(
+      value,
+      (next) => {
+        const taken = adopted.get(key)
+        adopted.delete(key)
+        if (taken !== JSON.stringify(plain(next))) save(key, next)
+      },
+      { deep: true },
+    ),
+  )
+  if (imported) save(key, value.value)
   return value
 }
 
 /** Forget a preference so its page's default applies again. */
 export function forgetViewPreference(key: string): void {
   values.delete(key)
+  adopters.delete(key)
   delete saved[key]
   try {
     localStorage.removeItem(key)

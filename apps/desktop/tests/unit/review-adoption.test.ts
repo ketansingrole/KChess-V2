@@ -10,6 +10,8 @@ import { validateOnlineEvent } from '@kchess/rules/onlineEvent'
 import { pickStockfishAsset } from '@kchess/native/stockfishAsset'
 import { useKChessStore } from '../../app/stores/kchess'
 import { useAnalysisStore } from '../../app/stores/analysis'
+import { useReviewStore } from '../../app/stores/review'
+import type { ReviewStatus } from '@kchess/contracts/types'
 import { desktop, deferred } from './fixtures'
 import { useTestPlatform } from '../../../../tests/fixtures/corePlatform'
 
@@ -212,5 +214,66 @@ describe('desktop recovery', () => {
     second.resolve(await api.loadData())
     await two
     expect(store.busy).toBe(false)
+  })
+})
+
+describe('review queue status', () => {
+  it('keeps a status that streamed in while the first status read was pending', async () => {
+    const read = deferred<ReviewStatus>()
+    let status: (value: ReviewStatus) => void = () => {}
+    desktop({
+      onReviewUpdate: () => () => {},
+      onReviewStatus: (callback) => {
+        status = callback
+        return () => {}
+      },
+      reviewStatus: () => read.promise,
+    })
+    const store = useReviewStore()
+    store.listen()
+    status({ waiting: 3 })
+    read.resolve({ waiting: 0 })
+    await flushPromises()
+    expect(store.status.waiting).toBe(3)
+  })
+
+  it('reads the status and the board’s unfinished review again after reconnecting', async () => {
+    let reconnected = () => {}
+    const running: ReviewStatus = {
+      current: { key: 'k', done: 1, total: 4, background: false },
+      waiting: 2,
+    }
+    const reviewStatus = vi.fn(async (): Promise<ReviewStatus> => running)
+    const unfinished = {
+      key: 'k',
+      fen: INITIAL_FEN,
+      moves: ['e2e4'],
+      complete: false,
+      updatedAt: 1,
+    }
+    const reviewGet = vi.fn(async () => ({ ...unfinished, complete: true, updatedAt: 2 }))
+    desktop({
+      onReviewUpdate: () => () => {},
+      onReviewStatus: () => () => {},
+      onCoreReconnected: (callback) => {
+        reconnected = callback
+        return () => {}
+      },
+      reviewStatus,
+      reviewGet: reviewGet as never,
+      reviewRequest: async () => unfinished as never,
+    })
+    const store = useReviewStore()
+    await store.request({ fen: INITIAL_FEN, moves: ['e2e4'] })
+    store.pin('k')
+    await flushPromises()
+    expect(store.status.waiting).toBe(2)
+    // The queue finished while this window was disconnected; no event will say so.
+    reviewStatus.mockResolvedValue({ waiting: 0 })
+    reconnected()
+    await flushPromises()
+    expect(store.status).toEqual({ waiting: 0 })
+    expect(reviewGet).toHaveBeenCalledWith(INITIAL_FEN, ['e2e4'])
+    expect(store.reviews.get('k')?.complete).toBe(true)
   })
 })

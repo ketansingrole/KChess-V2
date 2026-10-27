@@ -1,0 +1,36 @@
+#[path = "support/lichess_http.rs"]
+mod fixtures;
+
+use std::sync::Arc;
+use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, lichess_service, serve};
+use kchess_core::lichess::accounts::Reply as Outcome;
+use kchess_core::lichess::studies::{StudySyncRequest, sync_lichess_study};
+
+#[tokio::test]
+async fn diagnostic_sync_reports_success_when_appending_imports_no_chapter() {
+    let baseline = "[Site \"https://lichess.org/study/Study001/Chapter1\"]\n[Event \"One\"]\n[Result \"*\"]\n\n1. e4 *";
+    let fixture = serve(move |seen| {
+        if seen.method == "GET" {
+            Reply::Text(200, "application/x-chess-pgn", baseline.into())
+        } else {
+            Reply::Json(200, "{\"chapters\":[]}".into())
+        }
+    }).await;
+    let lichess = lichess_service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let request = StudySyncRequest {
+        account: "Alice".into(),
+        study_id: "Study001".into(),
+        baseline: baseline.into(),
+        pgn: format!("{baseline}\n\n[Event \"Two\"]\n[Result \"*\"]\n\n1. d4 *"),
+    };
+    let result = sync_lichess_study(&lichess, &request).await.unwrap();
+    let Outcome::Done(chapters) = result else { panic!("unexpected login rejection") };
+    assert_eq!(chapters.len(), 1, "reports Done with only the original chapter");
+    assert_eq!(fixture.to("/api/study/Study001/import-pgn").len(), 1);
+    assert!(!chapters[0].pgn.contains("d4"));
+}

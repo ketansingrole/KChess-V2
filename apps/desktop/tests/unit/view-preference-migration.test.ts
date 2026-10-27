@@ -78,3 +78,38 @@ it('forgets a refused preference once a later change to it is saved', async () =
   expect(write).toHaveBeenLastCalledWith('kchess:superseded-pref', 'saved')
   expect(write).toHaveBeenCalledTimes(2)
 })
+
+it('takes another app’s change to a shown preference without saving it back', async () => {
+  let saved: Record<string, unknown> = { 'kchess:studies-tab': 'device' }
+  const setViewPreference = vi.fn(async (key: string, value: unknown) => void (saved[key] = value))
+  desktop({ viewPreferences: async () => ({ ...saved }), setViewPreference })
+  await loadViewPreferences()
+  const tab = useViewPreference('kchess:studies-tab', 'device')
+  saved = { 'kchess:studies-tab': 'lichess', 'kchess:new-page': 'grid' }
+  await loadViewPreferences()
+  await nextTick()
+  await flushPromises()
+  expect(tab.value).toBe('lichess')
+  // A page first opened after the change shows it too.
+  expect(useViewPreference('kchess:new-page', 'list').value).toBe('grid')
+  expect(setViewPreference).not.toHaveBeenCalled()
+})
+
+it('keeps this app’s newer change when a read from before it arrives', async () => {
+  let reply: (value: Record<string, unknown>) => void = () => {}
+  desktop({
+    viewPreferences: () => new Promise((resolve) => (reply = resolve)),
+    setViewPreference: async () => {},
+  })
+  const first = loadViewPreferences()
+  reply({ 'kchess:studies-tab': 'device' })
+  await first
+  const tab = useViewPreference('kchess:studies-tab', 'device')
+  const stale = loadViewPreferences()
+  tab.value = 'lichess'
+  await nextTick()
+  reply({ 'kchess:studies-tab': 'device' })
+  await stale
+  await flushPromises()
+  expect(tab.value).toBe('lichess')
+})

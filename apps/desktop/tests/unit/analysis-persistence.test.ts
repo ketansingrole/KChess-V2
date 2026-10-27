@@ -286,3 +286,50 @@ it('keeps the study and board open when pending edits cannot be persisted', asyn
   expect(analysis.root.children).toHaveLength(1)
   expect(analysis.studySaveError).toContain('Storage full')
 })
+
+it('never counts a failed autosave as saved when overlapping saves fail', async () => {
+  // Saves of A then B both failed; the second restored A as "saved", so returning the board to A
+  // saved nothing while the library's quit retry wrote B.
+  vi.useFakeTimers()
+  const { api } = desktop({
+    reviewGet: async () => null,
+    onReviewUpdate: () => () => {},
+    onReviewStatus: () => () => {},
+    reviewStatus: async () => ({ waiting: 0 }),
+  })
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const analysis = useAnalysisStore()
+  await analysis.openStudy(id)
+  const backend = api.studyCommand
+  const gate = deferred<Awaited<ReturnType<typeof backend>>>()
+  let calls = 0
+  api.studyCommand = (...args) => {
+    if (args[0].op !== 'save') return backend(...args)
+    calls++
+    return calls === 1 ? gate.promise : Promise.reject(new Error('Disk unavailable'))
+  }
+  analysis.root.comments = ['A']
+  await nextTick()
+  const a = expect(analysis.flushStudy()).rejects.toThrow('Disk unavailable')
+  await flushPromises()
+  analysis.root.comments = ['B']
+  await nextTick()
+  const b = expect(analysis.flushStudy()).rejects.toThrow('Disk unavailable')
+  await flushPromises()
+  gate.reject(new Error('Disk unavailable'))
+  await Promise.all([a, b])
+  analysis.root.comments = ['A']
+  await nextTick()
+  await expect(analysis.flushStudy()).rejects.toThrow('Disk unavailable')
+  expect(calls).toBe(3)
+
+  api.studyCommand = backend
+  await studies.flush(true)
+  await analysis.flushStudy()
+  const saved = (await api.library()).studies[0]!.pgn
+  expect(saved).toContain('{ A }')
+  expect(saved).not.toContain('{ B }')
+  expect(analysis.pgn()).toContain('{ A }')
+  vi.useRealTimers()
+})

@@ -1092,7 +1092,7 @@ _id: string, combo: number, errors: number, highest: number, moves: number, runs
 
 export type StormDashboard = { high: StormHigh, days: Array<StormDay>, };
 
-export type ProfileArea = "studies" | "playedGames" | "drills" | "sessions" | "tournaments" | "repertoire" | "lichessGames" | "accounts" | "desktopSettings" | "puzzles" | "voiceHistory" | "usage" | "engine";
+export type ProfileArea = "studies" | "playedGames" | "drills" | "sessions" | "tournaments" | "repertoire" | "lichessGames" | "accounts" | "desktopSettings" | "puzzles" | "voiceHistory" | "usage" | "engine" | "viewPreferences";
 
 export type AlertOwner = { connection?: number, };
 

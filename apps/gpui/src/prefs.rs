@@ -1,6 +1,7 @@
 //! View preferences (tabs, layouts, toggles): kept by the core (`viewPreferences`), shared with the
 //! Electron app under the same `kchess:` names (`useViewPreference`), so a page opens as it was left
-//! in either app.
+//! in either app. Another app's change is taken when it is reported (`profile:changed`), unless
+//! this app changed that preference since.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,9 +23,17 @@ pub struct ViewPreferences {
     failed: Failed,
     /// Writes, sent in order by one writer off the UI thread (`write_in_order`).
     writes: Option<mpsc::UnboundedSender<Write>>,
+    /// Writes of each key the core has not answered yet.
+    sending: Sending,
+    /// Local changes made so far, and the latest one of each key, so an older read never undoes it.
+    changes: u64,
+    changed_at: HashMap<String, u64>,
+    /// Reads of the saved preferences started; only the newest one is taken.
+    reads: u64,
 }
 
 type Failed = Arc<Mutex<HashMap<String, (Value, String)>>>;
+type Sending = Arc<Mutex<HashMap<String, usize>>>;
 
 enum Write {
     /// Store `key` as `value`; `null` forgets it.
@@ -43,10 +52,45 @@ impl ViewPreferences {
             .is_ok_and(|failed| failed.contains_key(key))
     }
 
-    fn write(&self, key: &str, value: Value) {
-        if let Some(writes) = &self.writes {
-            let _ = writes.unbounded_send(Write::Set(key.to_string(), value));
+    fn write(&mut self, key: &str, value: Value) {
+        self.changes += 1;
+        self.changed_at.insert(key.to_string(), self.changes);
+        if let Some(writes) = &self.writes
+            && writes
+                .unbounded_send(Write::Set(key.to_string(), value))
+                .is_ok()
+            && let Ok(mut sending) = self.sending.lock()
+        {
+            *sending.entry(key.to_string()).or_default() += 1;
         }
+    }
+
+    /// Take the core's preferences read after `since` changes, leaving those this app changed
+    /// since then or has still to save. Returns whether any shown preference changed.
+    fn adopt(&mut self, saved: Map<String, Value>, since: u64) -> bool {
+        let keys: Vec<String> = self.values.keys().chain(saved.keys()).cloned().collect();
+        let mut changed = false;
+        for key in keys {
+            let sending = self
+                .sending
+                .lock()
+                .is_ok_and(|sending| sending.contains_key(&key));
+            if sending
+                || self.unsaved(&key)
+                || self.changed_at.get(&key).is_some_and(|at| *at > since)
+            {
+                continue;
+            }
+            match saved.get(&key) {
+                Some(value) if self.values.get(&key) != Some(value) => {
+                    self.values.insert(key, value.clone());
+                    changed = true;
+                }
+                Some(_) => {}
+                None => changed |= self.values.remove(&key).is_some(),
+            }
+        }
+        changed
     }
 
     /// Every write so far reached the profile, or why one did not.
@@ -68,8 +112,12 @@ impl ViewPreferences {
 
 /// Write each preference in order. A refused write is kept until a later write of its key
 /// succeeds, and tried again when the app quits, which reports it if it fails again.
-async fn write_in_order<F, Fut>(mut queue: mpsc::UnboundedReceiver<Write>, failed: Failed, save: F)
-where
+async fn write_in_order<F, Fut>(
+    mut queue: mpsc::UnboundedReceiver<Write>,
+    failed: Failed,
+    sending: Sending,
+    save: F,
+) where
     F: Fn(String, Value) -> Fut,
     Fut: Future<Output = Result<(), String>>,
 {
@@ -85,6 +133,14 @@ where
         match write {
             Write::Set(key, value) => {
                 let result = save(key.clone(), value.clone()).await;
+                if let Ok(mut sending) = sending.lock()
+                    && let Some(count) = sending.get_mut(&key)
+                {
+                    *count -= 1;
+                    if *count == 0 {
+                        sending.remove(&key);
+                    }
+                }
                 record(key, value, result);
             }
             Write::Flushed(done) => {
@@ -134,11 +190,13 @@ pub fn init(cx: &mut App) {
     };
     let (writes, queue) = mpsc::unbounded();
     let failed = Failed::default();
+    let sending = Sending::default();
     let core = cx.global::<AppCore>().clone();
     cx.background_executor()
         .spawn(write_in_order(
             queue,
             Arc::clone(&failed),
+            Arc::clone(&sending),
             move |key, value| {
                 let save = core.call("setViewPreference", vec![json!(key), value]);
                 async move {
@@ -158,11 +216,42 @@ pub fn init(cx: &mut App) {
         values,
         failed,
         writes: Some(writes),
+        sending,
+        ..ViewPreferences::default()
     });
     crate::core::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
             .map(ViewPreferences::flushed)
     });
+    crate::core::on_profile_change(cx, &["viewPreferences"], reload);
+}
+
+/// Read the saved preferences again: another app changed them, or this one reconnected.
+fn reload(cx: &mut App) {
+    let prefs = cx.default_global::<ViewPreferences>();
+    prefs.reads += 1;
+    let (read, since) = (prefs.reads, prefs.changes);
+    let saved = cx.global::<AppCore>().call("viewPreferences", Vec::new());
+    cx.spawn(async move |cx| {
+        let saved = match saved.await {
+            Ok(Value::Object(saved)) => saved,
+            Ok(_) => return,
+            Err(cause) => {
+                return crate::log::write(
+                    Level::Warn,
+                    "view-preferences",
+                    &format!("Reading view preferences failed: {}", cause.message),
+                );
+            }
+        };
+        cx.update(|cx| {
+            let prefs = cx.default_global::<ViewPreferences>();
+            if prefs.reads == read && prefs.adopt(saved, since) {
+                cx.refresh_windows();
+            }
+        });
+    })
+    .detach();
 }
 
 /// The preference `key`, or `fallback` until it is changed or when it is unreadable.
@@ -216,24 +305,29 @@ mod tests {
         let (writes, queue) = mpsc::unbounded();
         let mut pool = LocalPool::new();
         pool.spawner()
-            .spawn_local(write_in_order(queue, Arc::clone(&failed), {
-                let refuse = Arc::clone(&refuse);
-                let stored = Arc::clone(&stored);
-                move |key, value| {
-                    let result = if refuse.load(Ordering::SeqCst) {
-                        Err("disk full".to_string())
-                    } else {
-                        stored.lock().unwrap().push((key, value));
-                        Ok(())
-                    };
-                    async move { result }
-                }
-            }))
+            .spawn_local(write_in_order(
+                queue,
+                Arc::clone(&failed),
+                Sending::default(),
+                {
+                    let refuse = Arc::clone(&refuse);
+                    let stored = Arc::clone(&stored);
+                    move |key, value| {
+                        let result = if refuse.load(Ordering::SeqCst) {
+                            Err("disk full".to_string())
+                        } else {
+                            stored.lock().unwrap().push((key, value));
+                            Ok(())
+                        };
+                        async move { result }
+                    }
+                },
+            ))
             .unwrap();
         let mut prefs = ViewPreferences {
-            values: Map::new(),
             failed: Arc::clone(&failed),
             writes: Some(writes),
+            ..ViewPreferences::default()
         };
         prefs.write("kchess:tab", json!("games"));
         prefs.write("kchess:mode", Value::Null);
@@ -260,6 +354,36 @@ mod tests {
             ]
         );
         assert!(failed.lock().unwrap().is_empty());
+        prefs.writes = None;
+    }
+
+    /// Another app's change stayed unseen until restart. It is taken, except where this app
+    /// changed the preference after the read began or has a write still unanswered.
+    #[test]
+    fn takes_another_apps_preferences_but_keeps_newer_local_changes() {
+        let (writes, _queue) = mpsc::unbounded();
+        let mut prefs = ViewPreferences {
+            writes: Some(writes),
+            ..ViewPreferences::default()
+        };
+        prefs.values.insert("kchess:tab".into(), json!("games"));
+        prefs.values.insert("kchess:gone".into(), json!(1));
+        let since = prefs.changes;
+        prefs.values.insert("kchess:mine".into(), json!("local"));
+        prefs.write("kchess:mine", json!("local"));
+        let saved = Map::from_iter([
+            ("kchess:tab".to_string(), json!("studies")),
+            ("kchess:mine".to_string(), json!("older")),
+            ("kchess:new".to_string(), json!(true)),
+        ]);
+        assert!(prefs.adopt(saved.clone(), since));
+        assert_eq!(prefs.values["kchess:tab"], json!("studies"));
+        assert_eq!(prefs.values["kchess:new"], json!(true));
+        assert_eq!(prefs.values["kchess:mine"], json!("local"));
+        assert!(!prefs.values.contains_key("kchess:gone"));
+        // A read begun after the change still waits for the write's answer.
+        assert!(!prefs.adopt(saved, prefs.changes));
+        assert_eq!(prefs.values["kchess:mine"], json!("local"));
         prefs.writes = None;
     }
 

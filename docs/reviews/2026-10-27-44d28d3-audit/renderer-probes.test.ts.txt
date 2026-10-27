@@ -1,0 +1,105 @@
+import { expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { desktop, deferred } from './fixtures'
+import { useStudyStore } from '../../app/stores/studies'
+import { useReviewStore } from '../../app/stores/review'
+import { useAnalysisStore } from '../../app/stores/analysis'
+import { loadViewPreferences, useViewPreference } from '../../app/composables/useViewPreference'
+import type { ReviewStatus } from '@kchess/contracts/types'
+import type { StudyCommandResult } from '@kchess/rules/library'
+import { nextTick } from 'vue'
+
+it('diagnostic: a committed duplicate with a lost reply is duplicated again at quit', async () => {
+  const { api } = desktop()
+  const store = useStudyStore()
+  const id = await store.save('Original', '1. e4 *')
+  const backend = api.studyCommand
+  let lose = true
+  api.studyCommand = async (...args) => {
+    const result = await backend(...args)
+    if (lose) {
+      lose = false
+      throw new Error('The KChess core stopped.')
+    }
+    return result
+  }
+  await expect(store.duplicate(id)).rejects.toThrow('core stopped')
+  expect((await api.library()).studies).toHaveLength(2)
+  await store.flush(true)
+  expect((await api.library()).studies).toHaveLength(3)
+})
+
+it('diagnostic: initial review status overwrites a newer streamed status', async () => {
+  const gate = deferred<ReviewStatus>()
+  let status: (value: ReviewStatus) => void = () => {}
+  desktop({
+    onReviewUpdate: () => () => {},
+    onReviewStatus: (callback) => { status = callback; return () => {} },
+    reviewStatus: () => gate.promise,
+  })
+  const store = useReviewStore()
+  store.listen()
+  status({ waiting: 3 })
+  expect(store.status.waiting).toBe(3)
+  gate.resolve({ waiting: 0 })
+  await flushPromises()
+  expect(store.status.waiting).toBe(0)
+})
+
+it('diagnostic: even explicitly reloading preferences does not update an existing preference', async () => {
+  let saved = { 'kchess:studies-tab': 'device' }
+  desktop({ viewPreferences: async () => ({ ...saved }) })
+  await loadViewPreferences()
+  const tab = useViewPreference('kchess:studies-tab', 'device')
+  saved = { 'kchess:studies-tab': 'lichess' }
+  await loadViewPreferences()
+  expect(useViewPreference('kchess:studies-tab', 'device')).toBe(tab)
+  expect(tab.value).toBe('device')
+})
+
+it('diagnostic: two failed overlapping autosaves make an unsaved document appear saved', async () => {
+  vi.useFakeTimers()
+  const { api } = desktop({
+    reviewGet: async () => null,
+    onReviewUpdate: () => () => {},
+    onReviewStatus: () => () => {},
+    reviewStatus: async () => ({ waiting: 0 }),
+  })
+  const studies = useStudyStore()
+  const id = await studies.save('Study', '1. e4 *')
+  const analysis = useAnalysisStore()
+  await analysis.openStudy(id)
+  const backend = api.studyCommand
+  const gate = deferred<StudyCommandResult>()
+  let calls = 0
+  api.studyCommand = (...args) => {
+    if (args[0].op === 'save') {
+      calls++
+      if (calls === 1) return gate.promise
+      return Promise.reject(new Error('Disk unavailable'))
+    }
+    return backend(...args)
+  }
+  analysis.root.comments = ['A']
+  await nextTick()
+  const a = analysis.flushStudy().catch(() => {})
+  await flushPromises()
+  analysis.root.comments = ['B']
+  await nextTick()
+  const b = analysis.flushStudy().catch(() => {})
+  await flushPromises()
+  gate.reject(new Error('Disk unavailable'))
+  await Promise.all([a, b])
+  analysis.root.comments = ['A']
+  await nextTick()
+  // No save is attempted: studyPgn was reverted to A, which never reached storage.
+  await analysis.flushStudy()
+  expect(calls).toBe(2)
+  expect((await api.library()).studies[0]!.pgn).not.toContain('{ A }')
+  api.studyCommand = backend
+  // The library's quit retry now writes B even though the board has returned to A.
+  await studies.flush(true)
+  await analysis.flushStudy()
+  expect((await api.library()).studies[0]!.pgn).toContain('B')
+  expect(analysis.pgn()).toContain('A')
+})

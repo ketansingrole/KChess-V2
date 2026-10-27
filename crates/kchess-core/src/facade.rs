@@ -349,6 +349,7 @@ pub fn changed_areas(method: &str) -> &'static [&'static str] {
         "saveVoiceAttempt" | "updateVoiceAttempt" | "clearVoiceHistory" => &["voiceHistory"],
         "resetUsage" => &["usage"],
         "installEngine" | "deleteEngine" => &["engine"],
+        "setViewPreference" => &["viewPreferences"],
         _ => &[],
     }
 }

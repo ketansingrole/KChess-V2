@@ -294,38 +294,44 @@ pub async fn export_to_lichess_study(
                     &cancel,
                 )
                 .await?;
-            let added = imported
-                .get("chapters")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len);
-            let games = split_pgn(pgn).len().max(1);
-            if added == 0 {
-                return Err(CoreError::new(format!(
-                    "Lichess added no chapters. A study holds at most {MAX_CHAPTERS} chapters."
-                ))
-                .into());
-            }
-            if added < games {
-                return Err(CoreError::new(format!(
-                    "Lichess added only {added} of {games} chapters. A study holds at most {MAX_CHAPTERS} chapters."
-                ))
-                .into());
-            }
+            imported_all(&imported, split_pgn(pgn).len().max(1))?;
             Ok(id)
         })
         .await
 }
 
+/// Lichess reported a chapter for each of `games` it was sent: a full study answers success yet
+/// adds none.
+fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
+    let added = imported
+        .get("chapters")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if added == 0 {
+        return Err(CoreError::new(format!(
+            "Lichess added no chapters. A study holds at most {MAX_CHAPTERS} chapters."
+        )));
+    }
+    if added < games {
+        return Err(CoreError::new(format!(
+            "Lichess added only {added} of {games} chapters. A study holds at most {MAX_CHAPTERS} chapters."
+        )));
+    }
+    Ok(())
+}
+
 /// `syncLichessStudy(request)`: uploads edits to a linked study. The cloud copy must still match
 /// the baseline the user downloaded; otherwise nothing is written and the user is told so. Only
 /// changed chapters are updated, and new chapters are appended. Returns the study's chapters
-/// after the upload.
+/// after the upload, once Lichess holds every chapter of the edit; an upload Lichess accepted
+/// only partly fails, and uploading again resumes it.
 pub async fn sync_lichess_study(
     lichess: &Lichess,
     request: &StudySyncRequest,
 ) -> CoreResult<Reply<Vec<LichessStudyChapter>>> {
     let before = valid_chapters(&request.baseline)?;
     let after = valid_chapters(&request.pgn)?;
+    let wanted = after.len();
     if before.is_empty() || before.len() > after.len() || before.len() > MAX_CHAPTERS {
         return Err(CoreError::new(
             "Chapter structure changed. Upload a new cloud copy instead.",
@@ -435,7 +441,7 @@ pub async fn sync_lichess_study(
                     .unwrap_or("New chapter")
                     .to_string();
                 let path = format!("/api/study/{}/import-pgn", path_segment(&request.study_id));
-                let _: Value = lichess
+                let imported: Value = lichess
                     .client()
                     .post_form(
                         &path,
@@ -444,16 +450,27 @@ pub async fn sync_lichess_study(
                         &cancel,
                     )
                     .await?;
+                imported_all(&imported, 1)?;
             }
             Ok(())
         })
         .await?;
-    match result {
-        Reply::NeedsReconnect => Ok(Reply::NeedsReconnect),
-        Reply::Done(()) => {
-            lichess_study_chapters(lichess, &request.account, &request.study_id).await
-        }
+    if let Reply::NeedsReconnect = result {
+        return Ok(Reply::NeedsReconnect);
     }
+    let chapters =
+        match lichess_study_chapters(lichess, &request.account, &request.study_id).await? {
+            Reply::Done(chapters) => chapters,
+            Reply::NeedsReconnect => return Ok(Reply::NeedsReconnect),
+        };
+    if chapters.len() < wanted {
+        return Err(CoreError::new(format!(
+            "Lichess holds only {} of {} chapters. Upload again to finish; your offline edits are kept.",
+            chapters.len(),
+            wanted
+        )));
+    }
+    Ok(Reply::Done(chapters))
 }
 
 /// The movetext of a chapter's PGN: everything after its tag pairs.

@@ -16,7 +16,8 @@ use kchess_core::lichess::studies::{
 
 const BASELINE: &str = "[Site \"https://lichess.org/study/Study001/Chapter1\"]\n[Event \"Example\"]\n[Result \"*\"]\n\n1. e4 {Keep} e5 (1... c5 $1) *";
 
-/// A fixture serving the study's PGN from `cloud` on GET and answering every POST with `post`.
+/// A fixture serving the study's PGN from `cloud` on GET and answering every POST with `post`. A
+/// successful import appends its chapter to `cloud`, as Lichess does.
 async fn study_fixture(cloud: Arc<Mutex<String>>, post: u16) -> fixtures::Fixture {
     serve(move |seen| {
         if seen.method == "GET" {
@@ -25,6 +26,15 @@ async fn study_fixture(cloud: Arc<Mutex<String>>, post: u16) -> fixtures::Fixtur
                 "application/x-chess-pgn",
                 cloud.lock().unwrap().clone(),
             )
+        } else if post == 200 && seen.path().ends_with("/import-pgn") {
+            let pgn = form_field(&seen.body, "pgn").unwrap_or_default();
+            let mut cloud = cloud.lock().unwrap();
+            let site = format!(
+                "[Site \"https://lichess.org/study/Study001/Added{}\"]\n",
+                cloud.matches("[Site").count()
+            );
+            *cloud = format!("{cloud}\n\n{site}{pgn}");
+            Reply::Json(200, "{\"chapters\":[{\"id\":\"Added\"}]}".into())
         } else if post == 200 {
             Reply::Json(200, "{\"ok\":true}".into())
         } else {
@@ -241,15 +251,86 @@ async fn appends_new_chapters_to_the_linked_cloud_study_without_duplicating_the_
     let fixture = study_fixture(cloud, 200).await;
     let lichess = service(&fixture.base);
     let appended = format!("{BASELINE}\n\n[ChapterName \"Second chapter\"]\n\n1. d4 *");
-    sync_lichess_study(&lichess, &request(&appended))
+    let Outcome::Done(chapters) = sync_lichess_study(&lichess, &request(&appended))
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("the account needs reconnecting");
+    };
+    assert_eq!(chapters.len(), 2);
     let posts = posts(&fixture);
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].path(), "/api/study/Study001/import-pgn");
     assert_eq!(
         form_field(&posts[0].body, "name").as_deref(),
         Some("Second chapter")
+    );
+}
+
+/// Lichess answered an appended chapter's import with success and no chapter, and the upload was
+/// reported done (and marked as the cloud baseline) without it.
+#[tokio::test]
+async fn an_appended_chapter_lichess_did_not_import_fails_the_upload() {
+    let cloud = Arc::new(Mutex::new(BASELINE.to_string()));
+    let fixture = serve({
+        let cloud = Arc::clone(&cloud);
+        move |seen| {
+            if seen.method == "GET" {
+                Reply::Text(
+                    200,
+                    "application/x-chess-pgn",
+                    cloud.lock().unwrap().clone(),
+                )
+            } else {
+                Reply::Json(200, "{\"chapters\":[]}".into())
+            }
+        }
+    })
+    .await;
+    let lichess = service(&fixture.base);
+    let appended = format!("{BASELINE}\n\n[Event \"Two\"]\n[Result \"*\"]\n\n1. d4 *");
+    let error = sync_lichess_study(&lichess, &request(&appended))
+        .await
+        .unwrap_err();
+    assert!(
+        error.message.starts_with("Lichess added no chapters."),
+        "{}",
+        error.message
+    );
+    assert_eq!(fixture.to("/api/study/Study001/import-pgn").len(), 1);
+}
+
+/// Lichess acknowledged the import, yet the study read back lacks the chapter: the upload is not
+/// done, and uploading again resumes it.
+#[tokio::test]
+async fn an_upload_whose_chapters_lichess_does_not_hold_is_not_done() {
+    let cloud = Arc::new(Mutex::new(BASELINE.to_string()));
+    let fixture = serve({
+        let cloud = Arc::clone(&cloud);
+        move |seen| {
+            if seen.method == "GET" {
+                Reply::Text(
+                    200,
+                    "application/x-chess-pgn",
+                    cloud.lock().unwrap().clone(),
+                )
+            } else {
+                Reply::Json(200, "{\"chapters\":[{\"id\":\"Chapter2\"}]}".into())
+            }
+        }
+    })
+    .await;
+    let lichess = service(&fixture.base);
+    let appended = format!("{BASELINE}\n\n[Event \"Two\"]\n[Result \"*\"]\n\n1. d4 *");
+    let error = sync_lichess_study(&lichess, &request(&appended))
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .message
+            .starts_with("Lichess holds only 1 of 2 chapters."),
+        "{}",
+        error.message
     );
 }
 

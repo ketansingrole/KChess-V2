@@ -1,0 +1,53 @@
+use serde_json::{Value, Map, json};
+use std::path::Path;
+struct StudyLibrary { items: Vec<Value> }
+impl StudyLibrary {
+    pub fn apply(&mut self, result: &Value) {
+        let studies = result["studies"].as_array().cloned().unwrap_or_default();
+        let Some(order) = result["order"].as_array() else {
+            if result.get("studies").is_some() {
+                self.items = studies;
+            }
+            return;
+        };
+        let mut by_id: Map<String, Value> = Map::new();
+        for study in self.items.drain(..).chain(studies) {
+            if let Some(id) = study["id"].as_str() {
+                by_id.insert(id.to_string(), study);
+            }
+        }
+        self.items = order
+            .iter()
+            .filter_map(|id| id.as_str().and_then(|id| by_id.remove(id)))
+            .collect();
+    }
+}
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+fn main() {
+    let mut library = StudyLibrary { items: vec![json!({"id":"a", "name":"A"})] };
+    library.apply(&json!({"studies":[{"id":"c","name":"Copy"}],"order":["c","b","a"]}));
+    assert_eq!(library.items.len(),2);
+    assert!(!library.items.iter().any(|s|s["id"]=="b"));
+    println!("Confirmed: incremental adoption silently omits the unknown remote study B.");
+    let root=std::env::temp_dir().join(format!("kchess-audit-copy-{}",std::process::id()));
+    let from=root.join("from"); let to=root.join("to");
+    std::fs::create_dir_all(from.join("Versions/A")).unwrap();
+    std::fs::write(from.join("Versions/A/data"),"test").unwrap();
+    std::os::unix::fs::symlink("A",from.join("Versions/Current")).unwrap();
+    let result=copy_tree(&from,&to);
+    assert!(result.is_err());
+    println!("Confirmed: a directory symlink in a valid bundle makes cross-volume copy fail: {}", result.unwrap_err());
+    std::fs::remove_dir_all(root).unwrap();
+}

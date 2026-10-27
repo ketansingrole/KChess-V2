@@ -90,6 +90,15 @@ export const useStudyStore = defineStore('studies', () => {
     const key = target(newer)
     return key ? key === target(older) : JSON.stringify(newer) === JSON.stringify(older)
   }
+  /**
+   * A command that adds a document each time the core applies it. A failure may only have lost its
+   * reply after the core stored it, so it is never sent again: its caller reports the failure.
+   */
+  const creates = (command: StudyCommand): boolean =>
+    command.op === 'duplicate' ||
+    command.op === 'addChapter' ||
+    command.op === 'duplicateChapter' ||
+    ((command.op === 'save' || command.op === 'saveChapters') && !command.id)
   /** A failed command whose study or chapter has since been removed is not replayed. */
   function applicable(command: StudyCommand): boolean {
     if (command.op === 'restore' || command.op === 'offline' || !command.id) return true
@@ -134,8 +143,8 @@ export const useStudyStore = defineStore('studies', () => {
       await pending
     } while (pending !== changes)
     if (!strict || !failed.length) return
-    // Retry what never reached the core, in order; successes stay cleared,
-    // failures re-queue via persist() for the next quit attempt.
+    // Retry failed commands in order; each one replaces what it targets, so applying it again
+    // is harmless. Successes stay cleared, failures re-queue via persist() for the next quit.
     const retry = failed.splice(0, failed.length)
     const causes: unknown[] = []
     for (const { intent } of retry) {
@@ -173,7 +182,7 @@ export const useStudyStore = defineStore('studies', () => {
       console.warn('[studies] saving the study library failed:', sent.op, cause)
       error.value = cause instanceof Error ? cause.message : String(cause)
       // Sent again, it would be refused again: the window reopens the chapter instead.
-      if (!isStaleStudy(cause)) failed.push({ intent, cause })
+      if (!isStaleStudy(cause) && !creates(sent)) failed.push({ intent, cause })
       throw cause
     }
     // The core has stored the command: from here nothing is sent again.

@@ -1645,6 +1645,7 @@ pub enum ProfileArea {
     VoiceHistory,
     Usage,
     Engine,
+    ViewPreferences,
 }
 
 /// `alerts:owner`: the connection whose window raises system notifications now (the window

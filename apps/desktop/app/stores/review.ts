@@ -27,6 +27,8 @@ export const useReviewStore = defineStore('review', () => {
   const reviewStreamedAt = new Map<string, number>()
   let tick = 0
   const status = ref<ReviewStatus>({ waiting: 0 })
+  /** Status events received, so a status read never replaces one that streamed in meanwhile. */
+  let statusEvents = 0
   let listening = false
   const subscriptions: (() => void)[] = []
 
@@ -66,18 +68,47 @@ export const useReviewStore = defineStore('review', () => {
     return review
   }
 
+  /** Read the queue's status, unless a status event arrives first. */
+  function readStatus(): void {
+    const seen = statusEvents
+    void window.kchess
+      .reviewStatus()
+      .then((next) => {
+        if (statusEvents === seen) status.value = next
+      })
+      .catch((error: unknown) => {
+        console.warn('[review] reading review status failed:', error)
+      })
+  }
+
+  /**
+   * After reconnecting, the events missed meanwhile are not sent again: read the status and the
+   * board's unfinished review once more. Nothing is reviewed again.
+   */
+  function resynchronize(): void {
+    readStatus()
+    const review = reviews.value.get(pinned)
+    if (!review || review.complete) return
+    const startedAt = tick
+    window.kchess
+      .reviewGet(review.fen, [...review.moves])
+      .then((found) => adopt(found, startedAt))
+      .catch((cause: unknown) => console.warn('[review] reloading review failed:', cause))
+  }
+
   /** Follow the main process's reviews; safe to call more than once. */
   function listen(): void {
     if (listening || typeof window === 'undefined' || !window.kchess) return
     listening = true
     subscriptions.push(window.kchess.onReviewUpdate(receive))
-    subscriptions.push(window.kchess.onReviewStatus((next) => (status.value = next)))
-    void window.kchess
-      .reviewStatus()
-      .then((next) => (status.value = next))
-      .catch((error: unknown) => {
-        console.warn('[review] reading review status failed:', error)
-      })
+    subscriptions.push(
+      window.kchess.onReviewStatus((next) => {
+        statusEvents++
+        status.value = next
+      }),
+    )
+    subscriptions.push(window.kchess.onCoreReconnected(resynchronize))
+    readStatus()
   }
 
   /**
