@@ -507,43 +507,41 @@ impl StudiesPage {
                 );
                 let page = cx.entity().downgrade();
                 let (opened, downloaded) = (item.clone(), item.clone());
-                widgets::study_card(
-                    widgets::StudyCard {
-                        id: format!("lichess-{id}"),
-                        name: item["name"].as_str().unwrap_or_default().to_string(),
-                        board,
-                        location,
-                        description: None,
-                        edited: item["updatedAt"]
-                            .as_f64()
-                            .filter(|at| *at > 0.)
-                            .map(|updated| format!("Edited {}", time_ago(updated, at))),
-                        rows: 3,
-                        menu: None,
-                        action: Button::new(SharedString::from(format!("keep-{id}")))
-                            .outline()
-                            .xsmall()
-                            .w_full()
-                            .icon(icon("download"))
-                            .label(if copy.is_some() {
-                                "Download latest"
-                            } else {
-                                "Make available offline"
-                            })
-                            .loading(busy)
-                            .disabled(busy)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.download(downloaded.clone(), window, cx)
-                            }))
-                            .into_any_element(),
-                    },
-                    card_width,
-                    move |window, cx| {
+                widgets::StudyCard {
+                    id: format!("lichess-{id}"),
+                    name: item["name"].as_str().unwrap_or_default().to_string(),
+                    board,
+                    location,
+                    description: None,
+                    edited: item["updatedAt"]
+                        .as_f64()
+                        .filter(|at| *at > 0.)
+                        .map(|updated| format!("Edited {}", time_ago(updated, at))),
+                    rows: 3,
+                    menu: None,
+                    action: Button::new(SharedString::from(format!("keep-{id}")))
+                        .outline()
+                        .xsmall()
+                        .w_full()
+                        .icon(icon("download"))
+                        .label(if copy.is_some() {
+                            "Download latest"
+                        } else {
+                            "Make available offline"
+                        })
+                        .loading(busy)
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.download(downloaded.clone(), window, cx)
+                        }))
+                        .into_any_element(),
+                    width: card_width,
+                    on_open: std::rc::Rc::new(move |window, cx| {
                         let _ = page
                             .update(cx, |page, cx| page.open_remote(opened.clone(), window, cx));
-                    },
-                    palette,
-                )
+                    }),
+                }
+                .into_any_element()
             })
             .collect();
         let mut rows = Vec::new();

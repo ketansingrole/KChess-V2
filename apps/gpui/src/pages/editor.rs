@@ -665,23 +665,25 @@ impl Render for EditorPage {
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
             .gap(px(16.))
-            .child(widgets::status_banner(
-                if problem.is_some() {
-                    Tone::Alert
-                } else {
-                    Tone::Plain
-                },
-                if problem.is_some() {
-                    icon("triangle-alert")
-                } else {
-                    icon("circle-check")
-                },
-                if problem.is_some() {
-                    "Not a legal position yet".into()
-                } else {
-                    "Ready to analyse".into()
-                },
-                Some(
+            .child(
+                widgets::StatusBanner::new(
+                    if problem.is_some() {
+                        Tone::Alert
+                    } else {
+                        Tone::Plain
+                    },
+                    if problem.is_some() {
+                        icon("triangle-alert")
+                    } else {
+                        icon("circle-check")
+                    },
+                    if problem.is_some() {
+                        "Not a legal position yet".into()
+                    } else {
+                        "Ready to analyse".into()
+                    },
+                )
+                .detail(
                     problem
                         .map(str::to_string)
                         .unwrap_or_else(|| {
@@ -696,9 +698,7 @@ impl Render for EditorPage {
                         })
                         .into(),
                 ),
-                None,
-                &palette,
-            ))
+            )
             .child(
                 v_flex()
                     .gap(px(6.))

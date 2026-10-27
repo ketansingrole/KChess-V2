@@ -1332,7 +1332,7 @@ impl Render for LocalPage {
         let banner = match &result {
             Some(result) => {
                 let winner = result["winner"].as_str();
-                widgets::status_banner(
+                widgets::StatusBanner::new(
                     if winner.is_some() {
                         Tone::Win
                     } else {
@@ -1348,21 +1348,20 @@ impl Render for LocalPage {
                         Some(_) => "Black wins".into(),
                         None => "Draw".into(),
                     },
+                )
+                .when_some(
                     result["reason"]
                         .as_str()
                         .map(|reason| SharedString::from(reason.to_string())),
-                    None,
-                    &palette,
+                    |banner, value| banner.detail(value),
                 )
             }
-            None if !self.at_live() => widgets::status_banner(
+            None if !self.at_live() => widgets::StatusBanner::new(
                 Tone::Plain,
                 icon("history"),
                 "Reviewing an earlier position".into(),
-                Some("Go to the last move to keep playing.".into()),
-                None,
-                &palette,
-            ),
+            )
+            .detail("Go to the last move to keep playing.".into()),
             None => {
                 let check = display.as_ref().is_some_and(shakmaty::Position::is_check);
                 let detail = if timed && paused && !moves.is_empty() {
@@ -1372,7 +1371,7 @@ impl Render for LocalPage {
                 } else {
                     None
                 };
-                widgets::status_banner(
+                widgets::StatusBanner::new(
                     Tone::Plain,
                     icon("mouse-pointer-click"),
                     format!(
@@ -1384,10 +1383,8 @@ impl Render for LocalPage {
                         }
                     )
                     .into(),
-                    detail,
-                    None,
-                    &palette,
                 )
+                .when_some(detail, |banner, value| banner.detail(value))
             }
         };
         let opening =

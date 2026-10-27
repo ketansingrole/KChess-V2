@@ -508,15 +508,18 @@ impl Render for KnightPaths {
             let best = run::best(&self.summary, &self.record_variant(cx));
             if self.stage == Stage::Over {
                 let is_best = !self.clock.untimed && self.saved["isBest"] == json!(true);
-                panel = panel.child(widgets::status_banner(
-                    if is_best { Tone::Win } else { Tone::Plain },
-                    if is_best {
-                        icon("trophy")
-                    } else {
-                        icon("timer")
-                    },
-                    format!("{} shortest paths · {} reached", self.optimal, self.reached).into(),
-                    Some(
+                panel = panel.child(
+                    widgets::StatusBanner::new(
+                        if is_best { Tone::Win } else { Tone::Plain },
+                        if is_best {
+                            icon("trophy")
+                        } else {
+                            icon("timer")
+                        },
+                        format!("{} shortest paths · {} reached", self.optimal, self.reached)
+                            .into(),
+                    )
+                    .detail(
                         if self.clock.untimed {
                             format!("in {}", self.clock.text())
                         } else if is_best {
@@ -526,9 +529,7 @@ impl Render for KnightPaths {
                         }
                         .into(),
                     ),
-                    None,
-                    &palette,
-                ));
+                );
             } else if length != 0 {
                 panel = panel.child(
                     div()

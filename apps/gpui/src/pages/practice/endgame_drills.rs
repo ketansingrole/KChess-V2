@@ -435,14 +435,12 @@ impl Render for EndgameDrills {
                 ),
                 &palette,
             ))
-            .child(widgets::status_banner(
-                tone,
-                glyph,
-                title.into(),
-                detail.map(SharedString::from),
-                None,
-                &palette,
-            ))
+            .child(
+                widgets::StatusBanner::new(tone, glyph, title.into())
+                    .when_some(detail.map(SharedString::from), |banner, value| {
+                        banner.detail(value)
+                    }),
+            )
             .children(self.engine.error.clone().map(|error| {
                 div()
                     .text_size(px(12.))

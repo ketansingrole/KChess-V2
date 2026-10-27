@@ -668,14 +668,12 @@ impl WatchPage {
         };
         let banner = h_flex()
             .gap(px(8.))
-            .child(div().flex_1().min_w_0().child(widgets::status_banner(
-                Tone::Plain,
-                banner_icon,
-                title.into(),
-                detail.map(Into::into),
-                None,
-                palette,
-            )))
+            .child(
+                div().flex_1().min_w_0().child(
+                    widgets::StatusBanner::new(Tone::Plain, banner_icon, title.into())
+                        .when_some(detail.map(Into::into), |banner, value| banner.detail(value)),
+                ),
+            )
             .children(action);
         let scores = self.live.score_lines();
         let head_to_head = (!scores.is_empty()).then(|| {

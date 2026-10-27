@@ -647,14 +647,12 @@ impl WatchPage {
         let mut notices = Vec::new();
         if Self::playing_own_game(cx) {
             notices.push(
-                widgets::status_banner(
+                widgets::StatusBanner::new(
                     widgets::Tone::Alert,
                     icon("swords"),
                     "You are in a game".into(),
-                    Some("Watching is paused while your game uses the connection.".into()),
-                    None,
-                    palette,
                 )
+                .detail("Watching is paused while your game uses the connection.".into())
                 .into_any_element(),
             );
         }

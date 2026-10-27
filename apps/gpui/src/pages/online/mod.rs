@@ -587,34 +587,18 @@ impl OnlinePage {
                     .into_any_element(),
             ));
         if !allowed {
-            card = card.child(widgets::status_banner(
-                widgets::Tone::Alert,
-                icon("triangle-alert"),
-                format!(
+            card = card.child(widgets::StatusBanner::new(widgets::Tone::Alert, icon("triangle-alert"), format!(
                     "Lichess blocks {perf} ({}+{}) here",
                     form.minutes, form.increment
                 )
-                .into(),
-                Some(
-                    if blitz_needs_target {
+                .into()).detail(if blitz_needs_target {
                         "Add a username above to send it as a direct challenge, or pick a longer control."
                     } else {
                         "Pick Blitz or slower for a direct challenge, Rapid or slower for the public pool."
                     }
-                    .into(),
-                ),
-                None,
-                palette,
-            ));
+                    .into(),));
         } else if form.correspondence && !targeted {
-            card = card.child(widgets::status_banner(
-                widgets::Tone::Plain,
-                icon("info"),
-                "A public correspondence seek stays open on Lichess".into(),
-                Some("Lichess has no way for apps to withdraw it; it closes when someone joins. Add a username to send a challenge you can withdraw instead.".into()),
-                None,
-                palette,
-            ));
+            card = card.child(widgets::StatusBanner::new(widgets::Tone::Plain, icon("info"), "A public correspondence seek stays open on Lichess".into()).detail("Lichess has no way for apps to withdraw it; it closes when someone joins. Add a username to send a challenge you can withdraw instead.".into()));
         }
         let downloaded = crate::accounts::handle(cx).read(cx).downloaded(&active);
         let summary_line = summary(&form, Some(variant_label.as_str()));

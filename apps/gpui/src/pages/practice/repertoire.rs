@@ -1031,7 +1031,7 @@ impl Render for Repertoire {
                     .as_ref()
                     .filter(|_| self.at.is_some())
                     .map(|feedback| {
-                        widgets::status_banner(
+                        widgets::StatusBanner::new(
                             match feedback.kind {
                                 Kind::Ok | Kind::Done => Tone::Win,
                                 Kind::Wrong => Tone::Loss,
@@ -1043,9 +1043,10 @@ impl Render for Repertoire {
                                 Kind::Ok | Kind::Done => icon("check"),
                             },
                             feedback.text.clone().into(),
+                        )
+                        .when_some(
                             feedback.detail.clone().map(SharedString::from),
-                            None,
-                            &palette,
+                            |banner, value| banner.detail(value),
                         )
                     }),
             )

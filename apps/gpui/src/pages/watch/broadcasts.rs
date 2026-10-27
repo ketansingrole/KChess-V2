@@ -909,13 +909,10 @@ impl WatchPage {
         let banner =
             h_flex()
                 .gap(px(8.))
-                .child(div().flex_1().min_w_0().child(widgets::status_banner(
+                .child(div().flex_1().min_w_0().child(widgets::StatusBanner::new(
                     Tone::Plain,
                     if ongoing { icon("radio") } else { icon("flag") },
                     result_text(&game).into(),
-                    None,
-                    None,
-                    palette,
                 )));
         let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
         let origin = json!({ "white": game["white"]["name"], "black": game["black"]["name"] });

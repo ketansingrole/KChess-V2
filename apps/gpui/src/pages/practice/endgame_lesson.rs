@@ -624,14 +624,10 @@ impl EndgameLesson {
                     None,
                 )
             };
-            widgets::status_banner(
-                tone,
-                glyph,
-                title.into(),
-                detail.map(SharedString::from),
-                None,
-                palette,
-            )
+            widgets::StatusBanner::new(tone, glyph, title.into())
+                .when_some(detail.map(SharedString::from), |banner, value| {
+                    banner.detail(value)
+                })
         });
         let actions = h_flex()
             .flex_wrap()

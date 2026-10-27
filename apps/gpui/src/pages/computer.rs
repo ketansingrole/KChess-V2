@@ -1147,29 +1147,28 @@ impl ComputerPage {
             })
     }
 
-    fn render_banner(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let host = self.host();
         if self.engine == Engine::Missing {
             let checking = self.engine == Engine::Checking;
-            return widgets::status_banner(
+            return widgets::StatusBanner::new(
                 Tone::Alert,
                 icon("triangle-alert"),
                 "Stockfish not found".into(),
-                Some("Install or choose an engine in Settings to play.".into()),
-                Some(
-                    h_flex()
-                        .gap(px(12.))
-                        .child(
-                            Button::new("check-engine")
-                                .link()
-                                .xsmall()
-                                .label("Check again")
-                                .loading(checking)
-                                .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),
-                        )
-                        .into_any_element(),
-                ),
-                palette,
+            )
+            .detail("Install or choose an engine in Settings to play.".into())
+            .extra(
+                h_flex()
+                    .gap(px(12.))
+                    .child(
+                        Button::new("check-engine")
+                            .link()
+                            .xsmall()
+                            .label("Check again")
+                            .loading(checking)
+                            .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),
+                    )
+                    .into_any_element(),
             )
             .into_any_element();
         }
@@ -1180,7 +1179,7 @@ impl ComputerPage {
                 "loss" => (Tone::Loss, icon("flag")),
                 _ => (Tone::Plain, icon("handshake")),
             };
-            return widgets::status_banner(
+            return widgets::StatusBanner::new(
                 tone,
                 glyph,
                 result["title"]
@@ -1188,9 +1187,14 @@ impl ComputerPage {
                     .unwrap_or_default()
                     .to_string()
                     .into(),
+            )
+            .when_some(
                 result["detail"]
                     .as_str()
                     .map(|detail| SharedString::from(detail.to_string())),
+                |banner, value| banner.detail(value),
+            )
+            .when_some(
                 // The analysis board and reviews play standard rules (from any position).
                 (!self.moves().is_empty() && self.setup_variant() == "standard").then(|| {
                     Button::new("review-game")
@@ -1201,39 +1205,35 @@ impl ComputerPage {
                         .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
                         .into_any_element()
                 }),
-                palette,
+                |banner, value| banner.extra(value),
             )
             .into_any_element();
         }
         if self.ply() != self.moves().len() {
-            return widgets::status_banner(
+            return widgets::StatusBanner::new(
                 Tone::Plain,
                 icon("history"),
                 "Reviewing an earlier position".into(),
-                Some("Go to the last move to keep playing.".into()),
-                Some(
-                    Button::new("back-to-game")
-                        .link()
-                        .xsmall()
-                        .label("Back to game")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let last = this.moves().len();
-                            this.show_ply(last, cx)
-                        }))
-                        .into_any_element(),
-                ),
-                palette,
+            )
+            .detail("Go to the last move to keep playing.".into())
+            .extra(
+                Button::new("back-to-game")
+                    .link()
+                    .xsmall()
+                    .label("Back to game")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let last = this.moves().len();
+                        this.show_ply(last, cx)
+                    }))
+                    .into_any_element(),
             )
             .into_any_element();
         }
         if self.thinking() {
-            return widgets::status_banner(
+            return widgets::StatusBanner::new(
                 Tone::Plain,
                 icon("loader-circle"),
                 "Stockfish is thinking…".into(),
-                None,
-                None,
-                palette,
             )
             .into_any_element();
         }
@@ -1243,7 +1243,7 @@ impl ComputerPage {
             .map_or(Color::White, shakmaty::Position::turn);
         let check = position.as_ref().is_some_and(shakmaty::Position::is_check);
         let yours = turn == self.user_color();
-        widgets::status_banner(
+        widgets::StatusBanner::new(
             Tone::Plain,
             if yours {
                 icon("mouse-pointer-click")
@@ -1255,16 +1255,14 @@ impl ComputerPage {
             } else {
                 "Stockfish's move".into()
             },
-            Some(if check {
-                "Check!".into()
-            } else if turn == Color::White {
-                "White to play".into()
-            } else {
-                "Black to play".into()
-            }),
-            None,
-            palette,
         )
+        .detail(if check {
+            "Check!".into()
+        } else if turn == Color::White {
+            "White to play".into()
+        } else {
+            "Black to play".into()
+        })
         .into_any_element()
     }
 }
@@ -1591,7 +1589,7 @@ impl Render for ComputerPage {
                         })),
                 )
             })
-            .child(self.render_banner(&palette, cx))
+            .child(self.render_banner(cx))
             .children(self.error.clone().map(|error| {
                 div()
                     .text_size(px(12.))

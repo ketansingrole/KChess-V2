@@ -689,13 +689,9 @@ impl OnlinePage {
                     )),
             )
             .children(banner.map(|(glyph, title, detail)| {
-                widgets::status_banner(
-                    Tone::Plain,
-                    icon(glyph),
-                    title.into(),
+                widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into()).when_some(
                     (!detail.is_empty()).then(|| detail.into()),
-                    None,
-                    palette,
+                    |banner, value| banner.detail(value),
                 )
             }))
             .children(notices)

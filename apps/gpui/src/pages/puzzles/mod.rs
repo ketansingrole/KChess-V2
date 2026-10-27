@@ -726,14 +726,7 @@ pub(crate) fn status_panel(
     });
     v_flex()
         .gap(px(12.))
-        .child(widgets::status_banner(
-            tone,
-            glyph,
-            title.into(),
-            None,
-            None,
-            palette,
-        ))
+        .child(widgets::StatusBanner::new(tone, glyph, title.into()))
         // `.panel-actions`: Hint, Solution, Flip and Next share the row.
         .child(widgets::panel_actions(
             false,

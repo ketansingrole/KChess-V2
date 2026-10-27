@@ -828,14 +828,14 @@ impl PuzzleRush {
             };
             let highest = number("highest");
             panel = panel
-                .child(widgets::status_banner(
-                    if best { Tone::Win } else { Tone::Plain },
-                    if best { icon("trophy") } else { icon("flag") },
-                    over.into(),
-                    Some(detail.into()),
-                    None,
-                    palette,
-                ))
+                .child(
+                    widgets::StatusBanner::new(
+                        if best { Tone::Win } else { Tone::Plain },
+                        if best { icon("trophy") } else { icon("flag") },
+                        over.into(),
+                    )
+                    .detail(detail.into()),
+                )
                 .child(
                     h_flex()
                         .flex_wrap()

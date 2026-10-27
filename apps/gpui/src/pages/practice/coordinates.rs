@@ -833,18 +833,18 @@ impl Render for Coordinates {
                 } else {
                     format!("Best so far: {}", best.unwrap_or(f64::from(self.score)))
                 };
-                panel = panel.child(widgets::status_banner(
-                    if is_best { Tone::Win } else { Tone::Plain },
-                    if is_best {
-                        icon("trophy")
-                    } else {
-                        icon("timer")
-                    },
-                    format!("{} correct · {}% accuracy", self.score, self.accuracy()).into(),
-                    Some(detail.into()),
-                    None,
-                    &palette,
-                ));
+                panel = panel.child(
+                    widgets::StatusBanner::new(
+                        if is_best { Tone::Win } else { Tone::Plain },
+                        if is_best {
+                            icon("trophy")
+                        } else {
+                            icon("timer")
+                        },
+                        format!("{} correct · {}% accuracy", self.score, self.accuracy()).into(),
+                    )
+                    .detail(detail.into()),
+                );
             }
             if length != 0 {
                 for (color, scores, average) in self.side_scores(cx) {

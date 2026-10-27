@@ -403,37 +403,36 @@ impl TournamentsPage {
         }
     }
 
-    fn reconnect_notice(&self, cx: &mut Context<Self>, palette: &Palette) -> Option<AnyElement> {
+    fn reconnect_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.needs_reconnect {
             return None;
         }
         let account = Self::account(cx).unwrap_or_default();
         Some(
-            widgets::status_banner(
+            widgets::StatusBanner::new(
                 widgets::Tone::Alert,
                 icon("key-round"),
                 "Lichess needs a new permission".into(),
-                Some(
-                    format!("Connect @{account} again to allow joining and creating tournaments.")
-                        .into(),
-                ),
-                Some(
-                    h_flex()
-                        .mt(px(6.))
-                        .child(
-                            Button::new("tournaments-reconnect")
-                                .small()
-                                .outline()
-                                .icon(icon("link"))
-                                .label("Reconnect")
-                                .on_click(|_, window, cx| {
-                                    crate::accounts::handle(cx)
-                                        .update(cx, |accounts, cx| accounts.connect(window, cx))
-                                }),
-                        )
-                        .into_any_element(),
-                ),
-                palette,
+            )
+            .detail(
+                format!("Connect @{account} again to allow joining and creating tournaments.")
+                    .into(),
+            )
+            .extra(
+                h_flex()
+                    .mt(px(6.))
+                    .child(
+                        Button::new("tournaments-reconnect")
+                            .small()
+                            .outline()
+                            .icon(icon("link"))
+                            .label("Reconnect")
+                            .on_click(|_, window, cx| {
+                                crate::accounts::handle(cx)
+                                    .update(cx, |accounts, cx| accounts.connect(window, cx))
+                            }),
+                    )
+                    .into_any_element(),
             )
             .into_any_element(),
         )
@@ -498,7 +497,7 @@ impl Render for TournamentsPage {
                     .label("Create arena")
                     .on_click(cx.listener(|this, _, window, cx| this.start_create(window, cx))),
             );
-        let reconnect = self.reconnect_notice(cx, &palette);
+        let reconnect = self.reconnect_notice(cx);
         let body = if showing_event {
             self.event_view(cx, &palette)
         } else {

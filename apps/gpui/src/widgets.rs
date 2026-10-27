@@ -13,6 +13,8 @@ use crate::theme::{Palette, tint};
 
 /// What a button runs when it is clicked.
 pub type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// What opening a card does; shared by its picture and its name.
+pub type OpenHandler = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// `.player-line` height.
 pub const PLAYER_LINE: Pixels = px(36.);
@@ -125,51 +127,79 @@ pub enum Tone {
     Alert,
 }
 
-/// `.status-banner.steady`: the game's state, its icon and a detail line.
-pub fn status_banner(
+/// `.status-banner.steady`: the game's state, its icon, and optionally a detail line and controls
+/// under it.
+#[derive(IntoElement)]
+pub struct StatusBanner {
     tone: Tone,
     glyph: Icon,
     title: SharedString,
     detail: Option<SharedString>,
     extra: Option<AnyElement>,
-    palette: &Palette,
-) -> impl IntoElement {
-    let (background, icon_color) = match tone {
-        Tone::Plain => (palette.accented, palette.text),
-        Tone::Win => (tint(palette.win, 18.), palette.win),
-        Tone::Loss => (tint(palette.loss, 16.), palette.loss),
-        Tone::Alert => (tint(palette.warning, 16.), palette.text),
-    };
-    h_flex()
-        .items_center()
-        .gap(px(10.))
-        .min_h(px(58.))
-        .px(px(12.))
-        .py(px(10.))
-        .rounded(px(10.))
-        .text_size(px(13.))
-        .bg(background)
-        .child(glyph.size(px(16.)).flex_none().text_color(icon_color))
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .line_height(px(20.))
-                        .font_weight(FontWeight(650.))
-                        .text_color(palette.highlighted)
-                        .child(title),
-                )
-                .children(detail.map(|detail| {
-                    div()
-                        .line_height(px(18.))
-                        .text_size(px(12.))
-                        .text_color(palette.toned)
-                        .child(detail)
-                }))
-                .children(extra),
-        )
+}
+
+impl StatusBanner {
+    pub fn new(tone: Tone, glyph: Icon, title: SharedString) -> StatusBanner {
+        StatusBanner {
+            tone,
+            glyph,
+            title,
+            detail: None,
+            extra: None,
+        }
+    }
+
+    pub fn detail(mut self, detail: SharedString) -> StatusBanner {
+        self.detail = Some(detail);
+        self
+    }
+
+    pub fn extra(mut self, extra: AnyElement) -> StatusBanner {
+        self.extra = Some(extra);
+        self
+    }
+}
+
+impl RenderOnce for StatusBanner {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let palette = *cx.global::<Palette>();
+        let (background, icon_color) = match self.tone {
+            Tone::Plain => (palette.accented, palette.text),
+            Tone::Win => (tint(palette.win, 18.), palette.win),
+            Tone::Loss => (tint(palette.loss, 16.), palette.loss),
+            Tone::Alert => (tint(palette.warning, 16.), palette.text),
+        };
+        h_flex()
+            .items_center()
+            .gap(px(10.))
+            .min_h(px(58.))
+            .px(px(12.))
+            .py(px(10.))
+            .rounded(px(10.))
+            .text_size(px(13.))
+            .bg(background)
+            .child(self.glyph.size(px(16.)).flex_none().text_color(icon_color))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .line_height(px(20.))
+                            .font_weight(FontWeight(650.))
+                            .text_color(palette.highlighted)
+                            .child(self.title),
+                    )
+                    .children(self.detail.map(|detail| {
+                        div()
+                            .line_height(px(18.))
+                            .text_size(px(12.))
+                            .text_color(palette.toned)
+                            .child(detail)
+                    }))
+                    .children(self.extra),
+            )
+    }
 }
 
 /// One move of a list: its number, side and SAN.
@@ -878,6 +908,7 @@ impl Choice {
 }
 
 /// What `StudyCard.vue` shows: a study or an opening as a card in a grid.
+#[derive(IntoElement)]
 pub struct StudyCard {
     pub id: String,
     pub name: String,
@@ -893,16 +924,20 @@ pub struct StudyCard {
     pub rows: usize,
     pub menu: Option<AnyElement>,
     pub action: AnyElement,
+    pub width: Pixels,
+    /// Clicking its picture or its name opens it.
+    pub on_open: OpenHandler,
 }
 
-/// `StudyCard.vue`; clicking its picture or its name opens it.
-pub fn study_card(
-    card: StudyCard,
-    width: Pixels,
-    open: impl Fn(&mut Window, &mut App) + 'static,
-    palette: &Palette,
-) -> AnyElement {
-    let open = std::rc::Rc::new(open);
+impl RenderOnce for StudyCard {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        study_card(self, cx.global::<Palette>())
+    }
+}
+
+/// `StudyCard.vue`.
+fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
+    let (width, open) = (card.width, card.on_open.clone());
     let open_title = open.clone();
     let row = |text: Option<String>| {
         div()

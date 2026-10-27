@@ -525,52 +525,44 @@ impl OpeningsPage {
         crate::shell::open(Page::Practice, window, cx);
     }
 
-    fn render_card(
-        &mut self,
-        item: &Entry,
-        width: Pixels,
-        cx: &mut Context<Self>,
-        palette: &Palette,
-    ) -> AnyElement {
+    fn render_card(&mut self, item: &Entry, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
         let board = self.preview(&item.fen, cx);
         let (open, train) = (item.moves.clone(), item.clone());
         let page = cx.entity().downgrade();
-        widgets::study_card(
-            widgets::StudyCard {
-                id: item.name.clone(),
-                name: item.name.clone(),
-                board: Some(board.into()),
-                location: item.eco.clone(),
-                description: Some(item.san.clone()),
-                edited: None,
-                rows: 2,
-                menu: None,
-                action: Button::new(SharedString::from(format!("train-{}", item.name)))
-                    .outline()
-                    .small()
-                    .h(px(28.))
-                    .w_full()
-                    .icon(icon("graduation-cap"))
-                    .label("Train")
-                    .accessibility_label(format!("Train {}", item.name))
-                    .on_click(move |_, window, cx| {
-                        Self::train(
-                            OpeningChoice {
-                                name: train.name.clone(),
-                                moves: train.moves.clone(),
-                            },
-                            window,
-                            cx,
-                        )
-                    })
-                    .into_any_element(),
-            },
+        widgets::StudyCard {
+            id: item.name.clone(),
+            name: item.name.clone(),
+            board: Some(board.into()),
+            location: item.eco.clone(),
+            description: Some(item.san.clone()),
+            edited: None,
+            rows: 2,
+            menu: None,
+            action: Button::new(SharedString::from(format!("train-{}", item.name)))
+                .outline()
+                .small()
+                .h(px(28.))
+                .w_full()
+                .icon(icon("graduation-cap"))
+                .label("Train")
+                .accessibility_label(format!("Train {}", item.name))
+                .on_click(move |_, window, cx| {
+                    Self::train(
+                        OpeningChoice {
+                            name: train.name.clone(),
+                            moves: train.moves.clone(),
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .into_any_element(),
             width,
-            move |_, cx| {
+            on_open: std::rc::Rc::new(move |_, cx| {
                 let _ = page.update(cx, |page, cx| page.show_line(Some(open.clone()), cx));
-            },
-            palette,
-        )
+            }),
+        }
+        .into_any_element()
     }
 
     /// `OpeningsTreeNode.vue`: one entry, with its variations below it once opened.
@@ -821,7 +813,7 @@ impl OpeningsPage {
         let popular = self.popular.clone();
         let cards: Vec<AnyElement> = popular
             .iter()
-            .map(|item| self.render_card(item, card_width, cx, palette))
+            .map(|item| self.render_card(item, card_width, cx))
             .collect();
         let mut rows = Vec::new();
         let mut cards = cards.into_iter().peekable();

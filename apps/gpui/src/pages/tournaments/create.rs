@@ -376,19 +376,11 @@ impl Render for CreateArena {
                 )
             })
             .when(self.reconnect, |form| {
-                form.child(widgets::status_banner(
-                    widgets::Tone::Alert,
-                    icon("key-round"),
-                    "Lichess needs a new permission".into(),
-                    Some(
-                        format!(
+                form.child(widgets::StatusBanner::new(widgets::Tone::Alert, icon("key-round"), "Lichess needs a new permission".into()).detail(format!(
                             "Connect @{} again to allow creating tournaments.",
                             self.account
                         )
-                        .into(),
-                    ),
-                    Some(
-                        h_flex()
+                        .into(),).extra(h_flex()
                             .mt(px(6.))
                             .child(
                                 Button::new("arena-reconnect")
@@ -403,10 +395,7 @@ impl Render for CreateArena {
                                         })
                                     }),
                             )
-                            .into_any_element(),
-                    ),
-                    &palette,
-                ))
+                            .into_any_element(),))
             })
             .children(self.error.clone().map(|error| {
                 div()

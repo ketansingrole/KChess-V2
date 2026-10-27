@@ -645,7 +645,6 @@ impl StudiesPage {
         studies: Vec<Value>,
         width: Pixels,
         cx: &mut Context<Self>,
-        palette: &Palette,
     ) -> AnyElement {
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
         let now = now();
@@ -696,38 +695,38 @@ impl StudiesPage {
                 let page = cx.entity().downgrade();
                 let upload_id = id.clone();
                 let open_id = id.clone();
-                widgets::study_card(
-                    widgets::StudyCard {
-                        id: id.clone(),
-                        name,
-                        board,
-                        location,
-                        description: (!description.is_empty()).then_some(description),
-                        edited: study["updatedAt"]
-                            .as_f64()
-                            .filter(|at| *at > 0.)
-                            .map(|at| format!("Edited {}", time_ago(at, now))),
-                        rows: 3,
-                        menu: Some(self.menu(study).into_any_element()),
-                        action: Button::new(SharedString::from(format!("upload-{id}")))
-                            .outline()
-                            .xsmall()
-                            .w_full()
-                            .icon(icon("cloud-upload"))
-                            .label(upload_label)
-                            .loading(uploading)
-                            .disabled(self.uploading.is_some())
-                            .on_click(move |_, window, cx| {
-                                let _ = page.update(cx, |page, cx| {
-                                    page.upload(upload_id.clone(), false, window, cx)
-                                });
-                            })
-                            .into_any_element(),
-                    },
-                    card_width,
-                    move |window, cx| Self::open(open_id.clone(), window, cx),
-                    palette,
-                )
+                widgets::StudyCard {
+                    id: id.clone(),
+                    name,
+                    board,
+                    location,
+                    description: (!description.is_empty()).then_some(description),
+                    edited: study["updatedAt"]
+                        .as_f64()
+                        .filter(|at| *at > 0.)
+                        .map(|at| format!("Edited {}", time_ago(at, now))),
+                    rows: 3,
+                    menu: Some(self.menu(study).into_any_element()),
+                    action: Button::new(SharedString::from(format!("upload-{id}")))
+                        .outline()
+                        .xsmall()
+                        .w_full()
+                        .icon(icon("cloud-upload"))
+                        .label(upload_label)
+                        .loading(uploading)
+                        .disabled(self.uploading.is_some())
+                        .on_click(move |_, window, cx| {
+                            let _ = page.update(cx, |page, cx| {
+                                page.upload(upload_id.clone(), false, window, cx)
+                            });
+                        })
+                        .into_any_element(),
+                    width: card_width,
+                    on_open: std::rc::Rc::new(move |window, cx| {
+                        Self::open(open_id.clone(), window, cx)
+                    }),
+                }
+                .into_any_element()
             })
             .collect();
         // Pictures of studies no longer listed (edited, removed, filtered out) are let go.
@@ -870,7 +869,7 @@ impl StudiesPage {
                 ))
                 .into_any_element()
         } else {
-            self.render_cards(studies, width, cx, palette)
+            self.render_cards(studies, width, cx)
         };
         v_flex()
             .child(toolbar)
