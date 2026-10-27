@@ -265,6 +265,22 @@ impl LichessClient {
         parse_json(&text, path)
     }
 
+    /// `DELETE path`, whose body is not read for data (Lichess answers `204`).
+    pub async fn delete(
+        &self,
+        path: &str,
+        auth: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        let headers = auth_header(auth);
+        let admitted = self
+            .call(reqwest::Method::DELETE, path, &[], &headers, None, cancel)
+            .await?;
+        self.read_text(admitted, "DELETE", path, cancel, None)
+            .await
+            .map(|_| ())
+    }
+
     /// A text response (`parseAs: 'text'`), such as a game exported as PGN. An empty body is a
     /// valid answer here, as it is for `unwrap`.
     pub async fn get_text(

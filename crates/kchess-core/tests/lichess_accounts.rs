@@ -834,3 +834,33 @@ async fn a_game_is_exported_without_an_account_and_a_missing_one_is_named() {
     assert_eq!(asked[0].query("clocks").as_deref(), Some("true"));
     assert_eq!(asked[0].header("authorization"), None);
 }
+
+/// Signing out deleted the login here only: the token stayed valid on Lichess. Signing out now
+/// revokes it (`DELETE /api/token`), and a failed revocation does not stop the others.
+#[tokio::test]
+async fn signing_out_revokes_each_connected_login_on_lichess() {
+    let fixture = serve(|seen| match seen.header("authorization") {
+        Some("Bearer lip_alice") => Reply::Json(500, String::new()),
+        _ => Reply::Text(204, "text/plain", String::new()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true), ("Bob", true), ("Carol", false)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[("Alice", "lip_alice"), ("Bob", "lip_bob")]),
+    );
+
+    lichess.revoke_logins(None).await;
+    let calls = fixture.to("/api/token");
+    assert_eq!(calls.len(), 2, "the connected accounts with a login");
+    assert!(calls.iter().all(|seen| seen.method == "DELETE"));
+    assert_eq!(calls[1].header("authorization"), Some("Bearer lip_bob"));
+
+    lichess.revoke_logins(Some(&["Bob".to_string()])).await;
+    let calls = fixture.to("/api/token");
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2].header("authorization"), Some("Bearer lip_bob"));
+}

@@ -19,12 +19,16 @@ impl Core {
             "logout" => {
                 let username = username_arg(args)?;
                 self.end_sessions(Some(&username)).await?;
+                self.inner("lichess.revokeLogins", vec![json!([username])])
+                    .await?;
                 let data = self.logout_accounts(Some(&username)).await?;
                 self.reviews.reviews_changed();
                 Ok(data)
             }
             "logoutAll" => {
                 self.end_sessions(None).await?;
+                self.inner("lichess.revokeLogins", vec![Value::Null])
+                    .await?;
                 let data = self.logout_accounts(None).await?;
                 self.reviews.reviews_changed();
                 Ok(data)
@@ -42,6 +46,8 @@ impl Core {
                         .await?;
                 }
                 self.inner("challenges.forget", vec![json!(name)]).await?;
+                self.inner("lichess.revokeLogins", vec![json!([name])])
+                    .await?;
                 self.ensure_migrated().await?;
                 let data = self
                     .database

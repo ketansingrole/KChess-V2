@@ -37,6 +37,8 @@ const SYNC_OVERLAP_MS: i64 = 60_000;
 /// Profile data changes slowly; five minutes of reuse saves a round trip per visit.
 const PROFILE_TTL: Duration = Duration::from_secs(5 * 60);
 const PROFILE_CACHE_MAX: usize = 100;
+/// How long signing out waits for Lichess to revoke one login.
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `recentGames`: how many games a recent-games request returns.
 const RECENT_GAMES: usize = 10;
 const RATED_GAMES: usize = 200;
@@ -409,6 +411,52 @@ impl Lichess {
         self.bump_login_epoch();
         lock(&self.last_following).clear();
         self.cancel_account_syncs(accounts);
+    }
+
+    /// Revoke the stored logins of these accounts on Lichess (`DELETE /api/token`) before they are
+    /// deleted here, or of every connected account when `accounts` is None. Signing out never
+    /// waits on Lichess: a refusal, a missing login or no connection is logged and passed over,
+    /// and each account has a few seconds.
+    pub async fn revoke_logins(&self, accounts: Option<&[String]>) {
+        let names: Vec<String> = match accounts {
+            Some(names) => names.to_vec(),
+            None => match self.store.accounts().await {
+                Ok(rows) => rows
+                    .into_iter()
+                    .filter(|row| row.connected)
+                    .map(|row| row.username)
+                    .collect(),
+                Err(cause) => {
+                    self.host.log(
+                        Level::Warn,
+                        "lichess",
+                        &format!("Could not list logins to revoke: {}", cause.message),
+                    );
+                    return;
+                }
+            },
+        };
+        for name in names {
+            let Ok(Some(token)) = self.tokens.token(&name).await else {
+                continue;
+            };
+            let revoked = tokio::time::timeout(
+                REVOKE_TIMEOUT,
+                self.client
+                    .delete("/api/token", Some(&authorize(&token)), &self.lifetime),
+            )
+            .await;
+            let failure = match revoked {
+                Ok(Ok(())) => continue,
+                Ok(Err(cause)) => cause.message(),
+                Err(_) => "timed out".to_string(),
+            };
+            self.host.log(
+                Level::Warn,
+                "lichess",
+                &format!("Could not revoke the Lichess login: {name} {failure}"),
+            );
+        }
     }
 
     /// `cancelAccountSyncs`: stops the running syncs of these accounts before they save anything

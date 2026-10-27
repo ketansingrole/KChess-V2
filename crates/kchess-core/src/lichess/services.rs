@@ -527,6 +527,19 @@ impl Services {
                 let moves = args.first().cloned().unwrap_or(Value::Null);
                 to_json(self.lookups.opening_popularity(&moves).await)
             }
+            "lichess.revokeLogins" => match args.first() {
+                None | Some(Value::Null) => {
+                    self.lichess.revoke_logins(None).await;
+                    Ok(Value::Null)
+                }
+                Some(_) => match strings(args, 0) {
+                    Ok(accounts) => {
+                        self.lichess.revoke_logins(Some(&accounts)).await;
+                        Ok(Value::Null)
+                    }
+                    Err(cause) => Err(cause),
+                },
+            },
             _ => return None,
         };
         Some(result)
