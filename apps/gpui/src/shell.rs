@@ -740,7 +740,7 @@ impl Workspace {
         if page == Page::Puzzles
             && let Some(puzzles) = self.pages.view_of::<PuzzlesPage>(Page::Puzzles)
         {
-            puzzles.update(cx, |puzzles, cx| puzzles.shown(cx));
+            puzzles.update(cx, |puzzles, cx| puzzles.shown(window, cx));
         }
         if page == Page::Practice
             && let Some(practice) = self.pages.view_of::<PracticePage>(Page::Practice)

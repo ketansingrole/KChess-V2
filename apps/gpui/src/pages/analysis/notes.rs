@@ -33,7 +33,7 @@ fn text(method: &str, args: &[Value]) -> String {
 
 /// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left. The rules
 /// answer numbers as floats.
-fn with_glyph(nags: Option<&[i64]>, nag: Option<i64>) -> Option<Vec<i64>> {
+pub(super) fn with_glyph(nags: Option<&[i64]>, nag: Option<i64>) -> Option<Vec<i64>> {
     let nags = rules("setMoveGlyph", &[json!(nags), json!(nag)]).ok()?;
     let nags: Vec<i64> = nags
         .as_array()?

@@ -7,6 +7,9 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::searchable_list::{
+    SearchableGroup, SearchableListDelegate as _, SearchableVec,
+};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -29,7 +32,7 @@ mod history;
 mod rush;
 mod stats;
 
-use crate::widgets::{self, Pill, Tone};
+use crate::widgets::{self, Choice, Pill, Tone};
 
 const TAB: &str = "kchess:puzzle-tab";
 const MODE: &str = "kchess:puzzle-mode";
@@ -66,9 +69,10 @@ fn mode_hint(mode: &str) -> &'static str {
     }
 }
 
-/// The puzzle themes (`data/puzzle-themes.json`), as Lichess names them.
+/// The puzzle themes (`data/puzzle-themes.json`), as Lichess names them, under their groups.
 #[derive(serde::Deserialize)]
 struct ThemeGroup {
+    label: String,
     themes: Vec<Theme>,
 }
 
@@ -78,17 +82,51 @@ pub(crate) struct Theme {
     name: String,
 }
 
-fn themes() -> Vec<Theme> {
-    let groups: Vec<ThemeGroup> = serde_json::from_str(include_str!(
+fn theme_groups() -> Vec<ThemeGroup> {
+    serde_json::from_str(include_str!(
         "../../../../../crates/kchess-domain/data/puzzle-themes.json"
     ))
-    .unwrap_or_default();
-    std::iter::once(Theme {
+    .unwrap_or_default()
+}
+
+fn mix() -> Theme {
+    Theme {
         key: "mix".into(),
         name: "Healthy mix".into(),
-    })
-    .chain(groups.into_iter().flat_map(|group| group.themes))
-    .collect()
+    }
+}
+
+fn themes() -> Vec<Theme> {
+    std::iter::once(mix())
+        .chain(theme_groups().into_iter().flat_map(|group| group.themes))
+        .collect()
+}
+
+type ThemeChoices = SearchableVec<SearchableGroup<Choice>>;
+
+/// `themeItems`: the mix (and an opening chosen for puzzles), then every theme under its group.
+fn theme_choices(cx: &App) -> ThemeChoices {
+    let mut first = vec![mix()];
+    if let Some(opening) = crate::prefs::get::<Option<OpeningAngle>>(cx, OPENING, None) {
+        first.push(Theme {
+            key: opening.key,
+            name: opening.name,
+        });
+    }
+    let choices = |themes: Vec<Theme>| {
+        themes
+            .into_iter()
+            .map(|theme| Choice::new(theme.key, theme.name))
+    };
+    SearchableVec::new(
+        std::iter::once(SearchableGroup::new("").items(choices(first)))
+            .chain(
+                theme_groups()
+                    .into_iter()
+                    .map(|group| SearchableGroup::new(group.label).items(choices(group.themes))),
+            )
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// An opening chosen for puzzles (`openingAngle`).
@@ -139,8 +177,10 @@ pub struct PuzzlesPage {
     puzzle: Entity<PuzzleBoard>,
     layout: PlayLayout,
     theme_list: Vec<Theme>,
-    theme_select: Entity<SelectState<Vec<SharedString>>>,
+    theme_select: Entity<SelectState<ThemeChoices>>,
     difficulty_select: Entity<SelectState<Vec<SharedString>>>,
+    /// The account rated puzzles go to, while more than one is connected.
+    account_select: Entity<SelectState<Vec<Choice>>>,
     color_select: Entity<SelectState<Vec<SharedString>>>,
     timers: Vec<Task<()>>,
     /// The Daily and History tabs, made when first shown, and the tab shown last.
@@ -176,18 +216,13 @@ impl PuzzlesPage {
         let angle = crate::prefs::get::<String>(cx, ANGLE, "mix".into());
         let difficulty = crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into());
         let color = crate::prefs::get::<String>(cx, COLOR, "random".into());
-        let theme_select = select_of(
-            theme_list
-                .iter()
-                .map(|theme| SharedString::from(theme.name.clone()))
-                .collect(),
-            theme_list
-                .iter()
-                .position(|theme| theme.key == angle)
-                .or(Some(0)),
-            window,
-            cx,
-        );
+        let theme_select = cx.new(|cx| {
+            let choices = theme_choices(cx);
+            let chosen = choices
+                .position(&SharedString::from(angle.clone()))
+                .or(Some(IndexPath::default()));
+            SelectState::new(choices, chosen, window, cx).searchable(true)
+        });
         let difficulty_select = select_of(
             DIFFICULTIES
                 .iter()
@@ -211,7 +246,17 @@ impl PuzzlesPage {
         );
         let puzzle = cx.new(|cx| PuzzleBoard::new(true, window, cx));
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
+        let account_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let subscriptions = vec![
+            cx.subscribe(
+                &account_select,
+                |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                    if let SelectEvent::Confirm(Some(name)) = event {
+                        crate::prefs::set(cx, ACCOUNT, name.to_string());
+                        this.load_next(cx);
+                    }
+                },
+            ),
             cx.subscribe(
                 &puzzle,
                 |this, _, event: &PuzzleBoardEvent, cx| match event {
@@ -234,13 +279,9 @@ impl PuzzlesPage {
             ),
             cx.subscribe(
                 &theme_select,
-                |this, state, _: &SelectEvent<Vec<SharedString>>, cx| {
-                    let row = state
-                        .read(cx)
-                        .selected_index(cx)
-                        .map_or(0, |index| index.row);
-                    if let Some(theme) = this.theme_list.get(row) {
-                        crate::prefs::set(cx, ANGLE, theme.key.clone());
+                |this, _, event: &SelectEvent<ThemeChoices>, cx| {
+                    if let SelectEvent::Confirm(Some(key)) = event {
+                        crate::prefs::set(cx, ANGLE, key.to_string());
                         this.load_next(cx);
                     }
                 },
@@ -268,10 +309,20 @@ impl PuzzlesPage {
                 },
             ),
             // Another account (or none): the tabs show it afresh.
-            cx.observe(&crate::accounts::handle(cx), |this, _, cx| {
-                this.shown_tab.clear();
-                cx.notify();
-            }),
+            // A reconnected login may now have the puzzle permission (`reconnect`).
+            cx.observe_in(
+                &crate::accounts::handle(cx),
+                window,
+                |this, accounts, window, cx| {
+                    this.shown_tab.clear();
+                    this.sync_accounts(window, cx);
+                    let waiting = matches!(this.session.phase(), "noaccount" | "reconnect");
+                    if waiting && !accounts.read(cx).busy {
+                        this.load_next(cx);
+                    }
+                    cx.notify();
+                },
+            ),
             // A database just downloaded has puzzles for a session waiting on it.
             cx.observe(&puzzle_db, |this, db, cx| {
                 if db.read(cx).installed() && this.session.phase() == "nodb" {
@@ -288,6 +339,7 @@ impl PuzzlesPage {
             theme_list,
             theme_select,
             difficulty_select,
+            account_select,
             color_select,
             timers: Vec::new(),
             daily: None,
@@ -304,7 +356,8 @@ impl PuzzlesPage {
 
     /// The page was shown (`onMounted`): read the accounts, the database and the log, and find a
     /// puzzle if there is none.
-    pub fn shown(&mut self, cx: &mut Context<Self>) {
+    pub fn shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_accounts(window, cx);
         let core = cx.global::<AppCore>().clone();
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         puzzle_db.update(cx, |db, cx| db.refresh(cx));
@@ -333,6 +386,20 @@ impl PuzzlesPage {
 
     fn mode(cx: &App) -> String {
         crate::prefs::get::<String>(cx, MODE, "practice".into())
+    }
+
+    /// The account picker lists the connected accounts, with the one rated puzzles go to.
+    fn sync_accounts(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let choices: Vec<Choice> = self
+            .accounts(cx)
+            .into_iter()
+            .map(|name| Choice::new(name.clone(), format!("@{name}")))
+            .collect();
+        let account = SharedString::from(self.account(cx));
+        self.account_select.update(cx, |state, cx| {
+            state.set_items(choices, window, cx);
+            state.set_selected_value(&account, window, cx);
+        });
     }
 
     /// The connected accounts (`connectedAccounts`).
@@ -518,6 +585,7 @@ impl PuzzlesPage {
                 }
                 stats::StatsEvent::Account(name) => {
                     crate::prefs::set(cx, ACCOUNT, name.clone());
+                    this.sync_accounts(window, cx);
                     let (account, accounts) = (this.account(cx), this.accounts(cx));
                     view.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
                     this.load_next(cx);
@@ -555,13 +623,12 @@ impl PuzzlesPage {
     /// Train another theme, as choosing it in the select does.
     fn choose_angle(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, ANGLE, key);
-        let index = self
-            .theme_list
-            .iter()
-            .position(|theme| theme.key == key)
-            .unwrap_or(0);
+        let key = SharedString::from(key.to_string());
         self.theme_select.update(cx, |state, cx| {
-            state.set_selected_index(Some(IndexPath::new(index)), window, cx)
+            state.set_selected_value(&key, window, cx);
+            if state.selected_value() != Some(&key) {
+                state.set_selected_index(Some(IndexPath::default()), window, cx);
+            }
         });
         self.load_next(cx);
     }
@@ -596,13 +663,9 @@ impl PuzzlesPage {
     /// The opening chosen with [`Self::choose_opening`], on a page made before it.
     pub fn opening_chosen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theme_list = theme_items(cx);
-        let names: Vec<SharedString> = self
-            .theme_list
-            .iter()
-            .map(|theme| SharedString::from(theme.name.clone()))
-            .collect();
+        let choices = theme_choices(cx);
         self.theme_select
-            .update(cx, |state, cx| state.set_items(names, window, cx));
+            .update(cx, |state, cx| state.set_items(choices, window, cx));
         let angle = crate::prefs::get::<String>(cx, ANGLE, "mix".into());
         self.choose_angle(&angle, window, cx);
     }
@@ -803,11 +866,34 @@ impl PuzzlesPage {
         let empty = |glyph: Icon, title: String, description: Option<String>| {
             widgets::empty_state(glyph, title, description.map(SharedString::from), palette)
         };
+        let online = crate::network::online(cx);
         let other = |cx: &mut Context<Self>| {
+            let (label, mode) = if online {
+                ("Practice instead", "practice")
+            } else {
+                ("Use downloaded puzzles", "offline")
+            };
             Button::new("other-mode")
                 .outline()
-                .label("Practice instead")
-                .on_click(cx.listener(|this, _, _, cx| this.choose_mode("practice", cx)))
+                .label(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.choose_mode(mode, cx)))
+        };
+        let connect = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
+            Button::new(id)
+                .primary()
+                .icon(icon("log-in"))
+                .label(label)
+                .disabled(!online || crate::accounts::handle(cx).read(cx).busy)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    crate::accounts::handle(cx)
+                        .update(cx, |accounts, cx| accounts.connect(window, cx));
+                }))
+        };
+        let actions = |id, label, cx: &mut Context<Self>| {
+            h_flex()
+                .gap(px(8.))
+                .child(connect(id, label, cx))
+                .child(other(cx))
         };
         let content: AnyElement = match self.session.phase() {
             "noaccount" => empty(
@@ -815,7 +901,7 @@ impl PuzzlesPage {
                 "Connect a Lichess account for rated puzzles".into(),
                 Some("Connect Lichess or switch to Practice.".into()),
             )
-            .child(other(cx))
+            .child(actions("connect-lichess", "Connect Lichess", cx))
             .into_any_element(),
             "reconnect" => empty(
                 icon("key-round"),
@@ -825,7 +911,7 @@ impl PuzzlesPage {
                     self.account(cx)
                 )),
             )
-            .child(other(cx))
+            .child(actions("reconnect-lichess", "Reconnect", cx))
             .into_any_element(),
             "nodb" => crate::puzzle_db::card(false, cx, palette).into_any_element(),
             "exhausted" => {
@@ -1228,6 +1314,16 @@ impl PuzzlesPage {
                         None => mode_hint(&mode).to_string(),
                     }),
             )
+            .when(mode == "rated" && self.accounts(cx).len() > 1, |panel| {
+                panel.child(field(
+                    "Account",
+                    Select::new(&self.account_select)
+                        .small()
+                        .icon(icon("user"))
+                        .accessibility_label("Account")
+                        .into_any_element(),
+                ))
+            })
             .child(field(
                 "Theme",
                 Select::new(&self.theme_select)

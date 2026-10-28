@@ -183,6 +183,11 @@ pub struct AnalysisPage {
     focus: FocusHandle,
     /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
     voice: VoiceMoves,
+    /// Moves tried instead of a studied puzzle's solution, waiting for their reviews to be
+    /// labelled (`usePuzzleAnalysis().label`).
+    tried_labels: Vec<Subscription>,
+    /// The tried moves already labelled, by path.
+    tried_done: Vec<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -433,6 +438,8 @@ impl AnalysisPage {
             wheel: 0.,
             focus: cx.focus_handle(),
             voice: VoiceMoves::new("analysis", cx),
+            tried_labels: Vec::new(),
+            tried_done: Vec::new(),
             _subscriptions: subscriptions,
         };
         page.redraw(cx);

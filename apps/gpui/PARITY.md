@@ -181,11 +181,11 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       results beside the menu
 - [x] Lichess stats: puzzle rating and games, the dashboard's first-try share and performance by
       theme over a period (Train a theme from it), the puzzle rating history
-- [ ] Labels on a studied puzzle's tried moves once the engine has judged them
+- [x] Labels on a studied puzzle's tried moves once the engine has judged them
 - [x] An opening's puzzles, chosen on Openings
 - [x] Voice input on every puzzle board (Train, Daily, runs, mistakes)
-- [ ] Theme groups in the picker, Connect or Reconnect from the panel, choosing the rated
-      account
+- [x] Theme groups in the picker (searchable), Connect or Reconnect from the panel, choosing
+      the rated account
 
 ## Practice
 

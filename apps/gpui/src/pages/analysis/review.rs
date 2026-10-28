@@ -24,6 +24,16 @@ use crate::theme::{Palette, judgment_color};
 use crate::widgets;
 
 /// What a move's label looks like (`MOVE_CLASSIFICATIONS`): its name, glyph and colour.
+/// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
+fn tried_nag(judgment: &str) -> Option<i64> {
+    match judgment {
+        "inaccuracy" => Some(6),
+        "mistake" => Some(2),
+        "blunder" => Some(4),
+        _ => None,
+    }
+}
+
 pub fn classification_look(classification: &str, dark: bool) -> (&'static str, &'static str, Hsla) {
     let fixed = |hex: u32| -> Hsla { rgb(hex).into() };
     match classification {
@@ -554,6 +564,9 @@ impl AnalysisPage {
         if !self.load_pgn(&pgn, cx) {
             return false;
         }
+        self.tried_labels.clear();
+        self.tried_done.clear();
+        let mut tried = Vec::new();
         for wrong in wrong_moves {
             let index = crate::game::whole(&wrong["index"]) as usize;
             let Some(uci) = wrong["uci"].as_str() else {
@@ -563,8 +576,10 @@ impl AnalysisPage {
                 continue;
             }
             let before = crate::game::tree::path_of(&solution[..index]);
+            let fen = self.root.node_at(&before).fen.clone();
             if let Some(path) = self.root.add_move(&before, uci) {
                 self.root.node_at_mut(&path).comments = Some(vec!["Your move".into()]);
+                tried.push((path, fen, uci.to_string()));
             }
         }
         self.orientation = crate::game::puzzle::OnBoard::start(puzzle).player_color();
@@ -572,6 +587,94 @@ impl AnalysisPage {
         self.go_to_ply(0, cx);
         self.request_review(cx);
         self.changed(cx);
+        let start = self.root.fen.clone();
+        for (path, fen, uci) in tried {
+            self.label_tried(start.clone(), path, fen, uci, cx);
+        }
+        true
+    }
+
+    /// Judge a move tried instead of the puzzle's solution from the position before it, and label
+    /// its variation (?!, ?, ??) once that review is done. Without an engine the move stays marked
+    /// as yours, unlabelled.
+    fn label_tried(
+        &mut self,
+        start: String,
+        path: String,
+        fen: String,
+        uci: String,
+        cx: &mut Context<Self>,
+    ) {
+        let asked = cx
+            .global::<AppCore>()
+            .call("reviewRequest", vec![json!({ "fen": fen, "moves": [uci] })]);
+        let store = cx.global::<ReviewHandle>().0.clone();
+        cx.spawn(async move |this, cx| {
+            let stored = match asked.await {
+                Ok(stored) => stored,
+                Err(cause) => {
+                    crate::log::write(
+                        Level::Warn,
+                        "puzzle-analysis",
+                        &format!("Judging a tried move failed: {}", cause.message),
+                    );
+                    return;
+                }
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.apply_tried(&start, &path, &stored, cx) {
+                    return;
+                }
+                let key = stored["key"].as_str().unwrap_or_default().to_string();
+                store.update(cx, |store, cx| {
+                    store.cache.remember(stored);
+                    cx.notify();
+                });
+                let watching = cx.observe(&store, move |this, store, cx| {
+                    let Some(review) = store.read(cx).get(&key).cloned() else {
+                        return;
+                    };
+                    // Once labelled, the move is done; its subscription goes with the next puzzle.
+                    this.apply_tried(&start, &path, &review, cx);
+                });
+                this.tried_labels.push(watching);
+            });
+        })
+        .detach();
+    }
+
+    /// Label the tried move at `path` from its completed review; false while it is not complete.
+    fn apply_tried(
+        &mut self,
+        start: &str,
+        path: &str,
+        review: &Value,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.tried_done.iter().any(|done| done == path) {
+            return true;
+        }
+        if review["complete"] != json!(true) {
+            return false;
+        }
+        self.tried_done.push(path.to_string());
+        let judgment = rules("analyseReview", std::slice::from_ref(review))
+            .ok()
+            .and_then(|analysis| {
+                analysis["moves"][0]["judgment"]
+                    .as_str()
+                    .map(str::to_string)
+            });
+        // The board still holds this puzzle and the variation was not deleted.
+        let held =
+            self.root.fen == start && self.root.nodes_along(path).len() == moves_of(path).len() + 1;
+        if let (Some(nag), true) = (judgment.as_deref().and_then(tried_nag), held) {
+            let node = self.root.node_at_mut(path);
+            node.nags = super::notes::with_glyph(node.nags.as_deref(), Some(nag));
+            self.redraw(cx);
+            self.schedule_save(cx);
+            cx.notify();
+        }
         true
     }
 
@@ -1172,4 +1275,23 @@ pub(super) fn eval_chart(
             )
             .size_full(),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tried_nag;
+    use crate::game::rules;
+    use serde_json::json;
+
+    /// A tried move is labelled as Electron labels it (`NAGS` in `stores/puzzleAnalysis.ts`), and
+    /// the glyph the rules give that NAG is the one the move list shows.
+    #[test]
+    fn a_judged_tried_move_gets_its_glyph() {
+        for (judgment, glyph) in [("inaccuracy", "?!"), ("mistake", "?"), ("blunder", "??")] {
+            let nag = tried_nag(judgment).unwrap();
+            let shown = rules("moveGlyph", &[json!([nag])]).unwrap();
+            assert_eq!(shown["glyph"], json!(glyph), "{judgment}");
+        }
+        assert_eq!(tried_nag("good"), None);
+    }
 }
