@@ -39,7 +39,7 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "m
 # Game history's dates in local time, and the Downloads folder exports start in (already in
 # Cargo.lock through GPUI Kit).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-dirs = "6"
+dirs = "7"
 # Exported pictures of a game: the board and pieces drawn (resvg), encoded as PNG or GIF (image);
 # both already in Cargo.lock through GPUI.
 resvg = "0.46"
