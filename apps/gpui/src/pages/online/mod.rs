@@ -137,7 +137,13 @@ impl OnlinePage {
         let account_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let chat_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Message your opponent"));
+        let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
         let subscriptions = vec![
+            // Blindfold and premoves change the board.
+            cx.subscribe(
+                &settings,
+                |this, _, _: &crate::settings::SettingsChanged, cx| this.redraw(cx),
+            ),
             cx.observe(&online, |this, _, cx| {
                 this.redraw(cx);
                 cx.notify();
@@ -291,14 +297,16 @@ impl OnlinePage {
             let movable = (can_play && turn == online.color()).then_some(online.color());
             let mut state =
                 crate::game::view::board_state(&setup, &moves, ply, online.orientation(), movable);
-            // On the opponent's turn a move can be queued (`premove && !correspondence`).
-            let premove = cx
+            let frontend = &cx
                 .global::<crate::settings::SettingsHandle>()
                 .0
                 .read(cx)
                 .settings
-                .frontend
-                .premove;
+                .frontend;
+            // Blindfold hides the pieces while the game is on (`settings.blindfold && playing`).
+            state.blindfold = frontend.blindfold && online.phase == Phase::Playing;
+            // On the opponent's turn a move can be queued (`premove && !correspondence`).
+            let premove = frontend.premove;
             if premove && can_play && movable.is_none() && !online.correspondence() {
                 state.premove = Some(online.color());
             }

@@ -20,13 +20,14 @@ pub fn icon(name: &'static str) -> Icon {
     Icon::empty().path(format!("icons/{name}.svg"))
 }
 
-/// The Electron renderer's boards, pieces, sounds and app icon.
+/// The Electron renderer's boards, pieces, sounds, app icon and startup logo.
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../desktop/app/assets"]
 #[include = "boards/*"]
 #[include = "pieces/**/*.svg"]
 #[include = "sounds/*.mp3"]
 #[include = "icon.png"]
+#[include = "icon-splash.png"]
 struct Shared;
 
 /// A board image or piece of the Electron renderer's, by its path (`boards/brown.png`).

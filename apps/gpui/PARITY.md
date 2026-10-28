@@ -54,7 +54,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Update button in the top bar
 - [x] Offline badge (a route out, as `navigator.onLine`), "Working…" while Lichess is waited on,
       and the sidebar's dot for a Lichess game (your move, or going on)
-- [ ] Startup screen (the GPUI app reads the profile before its window opens)
+- [x] Startup screen: the profile is read before the window opens; when the core cannot read
+      the settings or library, the window says why with Try again instead of starting from
+      defaults (`src/startup.rs`)
 - [x] macOS keeps KChess running when the window closes; the Dock opens it again
 - [x] ⌘W, ⌘M, Zoom and full screen act on the window (they were lost while it was busy)
 - [x] Two-finger swipe back and forward through the pages visited, with the edge arrow and the
@@ -293,7 +295,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] The chat dock: the opponent's room and spectators', Lichess's quick messages, unread count
 - [x] Desktop notifications with Electron's Settings rules (in-app while KChess is in front)
 - [x] Premoves on this board (not in correspondence)
-- [ ] Blindfold play on this board
+- [x] Blindfold play on this board
 - [ ] The connection panel's ping graph (the line shows the latest round trip)
 
 ## Pages not started

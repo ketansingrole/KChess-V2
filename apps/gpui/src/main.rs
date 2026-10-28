@@ -38,6 +38,7 @@ mod reviews;
 mod settings;
 mod shell;
 mod sound;
+mod startup;
 mod studies;
 mod swipe;
 mod theme;
@@ -77,7 +78,11 @@ fn main() {
     // macOS keeps KChess running with no window; the Dock icon brings one back.
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
-            open_main_window(cx);
+            if cx.has_global::<startup::Started>() {
+                open_main_window(cx);
+            } else if cx.has_global::<core::AppCore>() {
+                startup::start(cx);
+            }
         }
         cx.activate(true);
     });
@@ -89,24 +94,30 @@ fn main() {
             explain_and_quit(message, cx);
             return;
         }
-        settings::init(cx);
-        interface_zoom::init(profile::data_dir().unwrap_or_default(), cx);
-        prefs::init(cx);
-        played::init(cx);
-        studies::init(cx);
-        reviews::init(cx);
-        accounts::init(cx);
-        puzzle_db::init(cx);
-        updates::init(cx);
-        sound::init(cx);
-        online::init(cx);
-        network::init(cx);
-        voice::init(cx);
         cx.on_app_quit(core::quit).detach();
         dock_icon::apply(cx);
-        open_main_window(cx);
+        startup::start(cx);
         cx.activate(true);
     });
+}
+
+/// The models, from the profile the core has read, then the window.
+fn start_models(cx: &mut App) {
+    settings::init(cx);
+    interface_zoom::init(profile::data_dir().unwrap_or_default(), cx);
+    prefs::init(cx);
+    played::init(cx);
+    studies::init(cx);
+    reviews::init(cx);
+    accounts::init(cx);
+    puzzle_db::init(cx);
+    updates::init(cx);
+    sound::init(cx);
+    online::init(cx);
+    network::init(cx);
+    voice::init(cx);
+    cx.set_global(startup::Started);
+    open_main_window(cx);
 }
 
 /// A blank stand-in window for the dialog below.
@@ -146,10 +157,10 @@ fn explain_and_quit(message: String, cx: &mut App) {
 }
 
 /// The window, where and as it was left (`createWindow`).
-fn open_main_window(cx: &mut App) {
+fn main_window_options(cx: &mut App) -> WindowOptions {
     let dir = profile::data_dir().unwrap_or_default();
     let (window_bounds, _) = window_state::bounds(&dir, cx);
-    let options = WindowOptions {
+    WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(profile::APP_NAME.into()),
             appears_transparent: true,
@@ -164,7 +175,11 @@ fn open_main_window(cx: &mut App) {
         )),
         app_id: Some("com.kchess.app".into()),
         ..WindowOptions::default()
-    };
+    }
+}
+
+fn open_main_window(cx: &mut App) {
+    let options = main_window_options(cx);
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         // The window's own close button saves first too (`menu::close_window`).
         window.on_window_should_close(cx, |window, cx| {
