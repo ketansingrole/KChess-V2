@@ -55,7 +55,11 @@ impl DailyPuzzle {
 
     /// `loadDaily`: fetch today's puzzle unless it is already shown (`force` fetches again).
     pub fn load(&mut self, force: bool, cx: &mut Context<Self>) {
-        if self.loading || (self.puzzle.is_some() && !force && self.day == utc_day()) {
+        // A failed fetch stays on screen for Try again: the page draws this on every frame.
+        if self.loading
+            || (!force && self.error.is_some())
+            || (self.puzzle.is_some() && !force && self.day == utc_day())
+        {
             return;
         }
         self.loading = true;

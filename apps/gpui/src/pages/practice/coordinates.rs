@@ -582,6 +582,9 @@ impl Render for Coordinates {
         // As on Lichess: the square to find over the board, so no row above it takes height.
         let prompt = (running && self.mode == Mode::Find).then(|| {
             v_flex()
+                .id("coordinates-target")
+                .test_support()
+                .aria_label(self.target.clone())
                 .absolute()
                 .inset_0()
                 .items_center()

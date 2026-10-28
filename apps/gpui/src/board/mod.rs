@@ -466,6 +466,14 @@ impl ChessBoard {
         cx.notify();
     }
 
+    /// Put the pieces back as the state has them: a move the board played at once and the page
+    /// refused goes back, which `set_state` cannot see when the position did not change.
+    pub fn undo_move(&mut self, cx: &mut Context<Self>) {
+        self.pieces = board_of(&self.state.fen);
+        self.promotion = None;
+        cx.notify();
+    }
+
     /// Slide the pieces from `self.pieces` to `next` (Chessground's `animate`): each piece that
     /// left a square goes to the nearest square a like piece arrived on.
     fn animate(&mut self, next: &Board, orientation: Color, cx: &mut Context<Self>) {

@@ -613,6 +613,7 @@ impl Repertoire {
             self.record_miss(fen, cx);
             // The wrong move goes back.
             self.redraw(cx);
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             return;
         };
         self.correct += 1;

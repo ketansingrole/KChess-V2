@@ -1046,6 +1046,10 @@ impl Render for CommandPalette {
                             let run = command.clone();
                             h_flex()
                                 .id(("palette-item", at))
+                                .test_support()
+                                .role(Role::Button)
+                                .aria_label(command.label.clone())
+                                .aria_selected(chosen)
                                 .gap(px(10.))
                                 .px(px(10.))
                                 .py(px(6.))

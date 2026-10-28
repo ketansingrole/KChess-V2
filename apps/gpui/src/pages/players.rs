@@ -1443,6 +1443,9 @@ impl Render for PlayersPage {
                     .child(search)
                     .children(self.error.clone().map(|error| {
                         div()
+                            .id("players-error")
+                            .test_support()
+                            .aria_label(error.clone())
                             .text_size(px(13.))
                             .text_color(palette.error)
                             .child(error)

@@ -612,6 +612,7 @@ impl OpeningsPage {
             .child({
                 let link = div()
                     .id(SharedString::from(format!("open-{name}")))
+                    .test_support()
                     .role(Role::Link)
                     .keyboard_focus(palette.primary)
                     .aria_label(node.label.clone())
@@ -701,6 +702,9 @@ impl OpeningsPage {
                     let moves = moves.clone();
                     h_flex()
                         .id(SharedString::from(format!("result-{name}")))
+                        .test_support()
+                        .role(Role::Link)
+                        .aria_label(name.clone())
                         .justify_between()
                         .gap(px(12.))
                         .py(px(4.))
@@ -766,6 +770,7 @@ impl OpeningsPage {
                     let moves = recent.moves.clone();
                     h_flex()
                         .id(SharedString::from(format!("recent-{}", recent.name)))
+                        .test_support()
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
                         .aria_label(recent.name.clone())
@@ -915,6 +920,7 @@ impl OpeningsPage {
                     .child(
                         div()
                             .id(("opening-move", index))
+                            .test_support()
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
                             .aria_label(san.clone())
@@ -1045,6 +1051,9 @@ impl OpeningsPage {
                 v_flex()
                     .child(
                         div()
+                            .id("opening-title")
+                            .test_support()
+                            .aria_label(title.clone())
                             .text_size(px(15.))
                             .font_weight(FontWeight(650.))
                             .text_color(palette.highlighted)
@@ -1160,6 +1169,7 @@ impl Render for OpeningsPage {
         let browser = self.render_browser(window, cx, &palette);
         div()
             .id("openings")
+            .test_support()
             .size_full()
             .track_focus(&self.focus)
             .overflow_y_scroll()

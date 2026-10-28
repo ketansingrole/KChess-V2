@@ -245,6 +245,9 @@ pub fn hud(
                 .items_end()
                 .child(
                     div()
+                        .id("run-score")
+                        .test_support()
+                        .aria_label(format!("{score}"))
                         .text_size(px(32.))
                         .font_weight(FontWeight::BOLD)
                         .line_height(relative(1.))
@@ -293,6 +296,7 @@ pub fn training_list(
                     let id = item.id.clone();
                     h_flex()
                         .id(SharedString::from(format!("training-{}", item.id)))
+                        .test_support()
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
                         .aria_label(item.title.clone())

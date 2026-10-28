@@ -292,6 +292,7 @@ impl EndgameLesson {
                 self.wrong = true;
                 // The move goes back.
                 self.redraw(cx);
+                self.board.update(cx, |board, cx| board.undo_move(cx));
             }
         }
     }

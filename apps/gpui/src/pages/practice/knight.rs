@@ -472,12 +472,24 @@ impl Render for KnightPaths {
                         .justify_between()
                         .gap(px(8.))
                         .text_size(px(18.))
-                        .child(div().font_weight(FontWeight::BOLD).child(format!(
-                            "Reach {} in {} {}",
-                            self.goal,
-                            self.best,
-                            if self.best == 1 { "jump" } else { "jumps" }
-                        )))
+                        .child(
+                            div()
+                                .id("knight-target")
+                                .test_support()
+                                .aria_label(format!(
+                                    "Reach {} in {} {}",
+                                    self.goal,
+                                    self.best,
+                                    if self.best == 1 { "jump" } else { "jumps" }
+                                ))
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!(
+                                    "Reach {} in {} {}",
+                                    self.goal,
+                                    self.best,
+                                    if self.best == 1 { "jump" } else { "jumps" }
+                                )),
+                        )
                         .child(
                             div()
                                 .text_color(palette.text_muted)
@@ -486,6 +498,9 @@ impl Render for KnightPaths {
                 )
                 .children(self.notice.clone().map(|notice| {
                     div()
+                        .id("knight-notice")
+                        .test_support()
+                        .aria_label(notice.clone())
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
                         .child(notice)

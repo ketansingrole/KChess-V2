@@ -233,6 +233,7 @@ impl Endgames {
         let view = view.to_string();
         h_flex()
             .id(SharedString::from(format!("card-{view}")))
+            .test_support()
             .role(Role::Button)
             .keyboard_focus(palette.primary)
             .aria_label(title.clone())
@@ -384,6 +385,7 @@ impl Endgames {
         );
         div()
             .id("endgame-courses")
+            .test_support()
             .size_full()
             .overflow_y_scroll()
             .child(

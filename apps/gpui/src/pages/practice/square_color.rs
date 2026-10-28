@@ -260,12 +260,19 @@ impl Render for SquareColors {
                     .child(self.clock.text())
                     .into_any_element(),
                 div()
+                    .id("square-prompt")
+                    .test_support()
+                    .aria_label(self.square.clone())
                     .text_size(px(72.))
                     .font_weight(FontWeight::BOLD)
                     .line_height(relative(1.))
                     .child(self.square.clone())
                     .into_any_element(),
-                muted(format!("{} correct", self.score)).into_any_element(),
+                muted(format!("{} correct", self.score))
+                    .id("square-score")
+                    .test_support()
+                    .aria_label(format!("{} correct", self.score))
+                    .into_any_element(),
             ],
             Stage::Over => vec![
                 div()
@@ -322,6 +329,7 @@ impl Render for SquareColors {
                 let color: &'static str = if light { "light" } else { "dark" };
                 h_flex()
                     .id(id)
+                    .test_support()
                     .role(Role::Button)
                     .keyboard_focus(palette.primary)
                     .aria_label(label)
