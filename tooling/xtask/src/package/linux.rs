@@ -302,6 +302,10 @@ base: core24
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
+website: https://github.com/ketansingrole/KChess-V2#readme
+source-code: https://github.com/ketansingrole/KChess-V2
+issues: https://github.com/ketansingrole/KChess-V2/issues
+contact: https://github.com/ketansingrole/KChess-V2/issues
 platforms:
   amd64:
 
@@ -363,11 +367,11 @@ fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<
     .map_err(|cause| cause.to_string())?;
     let package = out.join(format!("KChess-{}-linux-amd64.snap", identity.version));
     say("Making the Snap…");
+    // snapcraft writes only inside its project folder; the package is moved out afterwards.
+    let packed = project.join("kchess.snap");
     let mut snapcraft = Command::new("snapcraft");
     snapcraft
-        .arg("pack")
-        .arg("--output")
-        .arg(&package)
+        .args(["pack", "--output", "kchess.snap"])
         .current_dir(&project);
     // CI builds in LXD (KCHESS_SNAP_LXD=1); elsewhere snapcraft chooses.
     if std::env::var("KCHESS_SNAP_LXD").as_deref() == Ok("1") {
@@ -379,6 +383,9 @@ fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<
     if !status.success() {
         return Err(format!("snapcraft failed ({status})."));
     }
+    std::fs::rename(&packed, &package)
+        .or_else(|_| std::fs::copy(&packed, &package).map(|_| ()))
+        .map_err(|cause| format!("Cannot move the Snap to {}: {cause}", package.display()))?;
     Ok(package)
 }
 
