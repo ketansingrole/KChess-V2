@@ -1259,7 +1259,7 @@ mod tests {
     use super::{
         INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace, aside, asset_name,
         detect, digest_for, download, downloads_in, incoming, last_install_failed, latest, offer,
-        parse_version, replace, replace_by, signed_alike, swap_file, tidy,
+        parse_version, replace_by, signed_alike, swap_file, tidy,
     };
     use sha2::{Digest, Sha256};
     use std::io::{Read as _, Write as _};
@@ -1349,7 +1349,7 @@ mod tests {
         std::fs::create_dir_all(&staged).unwrap();
         std::fs::write(installed.join("kchess"), "old").unwrap();
         std::fs::write(staged.join("kchess"), "new").unwrap();
-        replace(&staged, &installed).unwrap();
+        super::replace(&staged, &installed).unwrap();
         assert_eq!(
             std::fs::read_to_string(installed.join("kchess")).unwrap(),
             "new"
