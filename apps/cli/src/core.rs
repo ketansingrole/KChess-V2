@@ -140,8 +140,6 @@ impl CoreClient {
                     config: kchess_service::ServiceConfig {
                         legacy_database_path: config.legacy_database_path,
                         bundled_engine_path: config.bundled_engine_path,
-                        runtime_path: config.runtime_path,
-                        runtime_env: config.runtime_env,
                         managed_engine_dir: config.managed_engine_dir,
                         voice_helper_path: config.voice_helper_path,
                         system_credentials: config.system_credentials,

@@ -1,7 +1,6 @@
 //! Helpers shared by the engine integration tests.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -101,9 +100,7 @@ pub fn locations() -> EngineLocations {
     EngineLocations {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
-        bundled_script: PathBuf::from("/nonexistent/kchess-bundled-stockfish.js"),
-        runtime_path: Some(PathBuf::from("node")),
-        runtime_env: BTreeMap::new(),
+        bundled: PathBuf::from("/nonexistent/kchess-bundled-stockfish"),
     }
 }
 
@@ -139,5 +136,22 @@ pub async fn wait_until<T>(
         }
         assert!(started.elapsed() < timeout, "timed out waiting for {what}");
         tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// A native Stockfish for the tests that need a real engine: `KCHESS_ENGINE_PATH` (CI fetches the
+/// official build with `cargo run -p kchess-core --example fetch_stockfish`). None, with a note,
+/// when it is not set, so the test is skipped.
+#[allow(dead_code)]
+pub fn stockfish() -> Option<PathBuf> {
+    let path = std::env::var_os("KCHESS_ENGINE_PATH")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    match path {
+        Some(path) if path.is_file() => Some(path),
+        _ => {
+            eprintln!("skipping: set KCHESS_ENGINE_PATH to a native Stockfish");
+            None
+        }
     }
 }

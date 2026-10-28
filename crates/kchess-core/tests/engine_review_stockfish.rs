@@ -1,5 +1,4 @@
-//! A real game review through the bundled engine (`node_modules/stockfish`, run under Node).
-//! Skipped with a message when node or the script is missing.
+//! A real game review with a native Stockfish as the bundled engine (`support::stockfish`).
 //!
 //! Reviews write castling as king-takes-rook, as the rest of the app does. Without Chess960 mode
 //! the bundled engine took `e1h1` for an illegal move and never answered `go`, so every review of
@@ -7,8 +6,6 @@
 
 mod support;
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,28 +23,14 @@ const CASTLED: [&str; 7] = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e1h
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bundled_stockfish_reviews_a_game_with_castling() {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("node_modules/stockfish/bin/stockfish-19-lite.js");
-    if !script.exists() {
-        eprintln!("skipping: {} is missing", script.display());
+    let Some(engine) = support::stockfish() else {
         return;
-    }
-    if std::process::Command::new("node")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("skipping: node is not on PATH");
-        return;
-    }
+    };
     let host = support::host();
     let locations = EngineLocations {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
-        bundled_script: script,
-        runtime_path: Some(PathBuf::from("node")),
-        runtime_env: BTreeMap::new(),
+        bundled: engine,
     };
     let ctx = EngineContext::new(
         host.clone(),

@@ -1,11 +1,8 @@
-//! One real Stockfish move through the search service: the bundled engine
-//! (`node_modules/stockfish`, the script the TypeScript core runs under Node). Skipped with a
-//! message when node or the script is missing.
+//! One real Stockfish move through the search service, with a native Stockfish as the bundled
+//! engine (`support::stockfish`).
 
 mod support;
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use kchess_core::engine::EngineContext;
@@ -16,32 +13,15 @@ use serde_json::json;
 
 #[tokio::test]
 async fn bundled_stockfish_answers_a_move_for_the_position() {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("node_modules/stockfish/bin/stockfish-19-lite.js");
-    if !script.exists() {
-        eprintln!(
-            "skipping: {} is missing (run pnpm install at the repository root)",
-            script.display()
-        );
+    let Some(engine) = support::stockfish() else {
         return;
-    }
-    if std::process::Command::new("node")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("skipping: node is not on PATH");
-        return;
-    }
+    };
 
     let host = support::host();
     let locations = EngineLocations {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
-        bundled_script: script,
-        runtime_path: Some(PathBuf::from("node")),
-        runtime_env: BTreeMap::new(),
+        bundled: engine,
     };
     let ctx = EngineContext::new(
         host.clone(),

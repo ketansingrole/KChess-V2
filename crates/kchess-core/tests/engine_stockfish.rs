@@ -1,9 +1,7 @@
-//! The bundled Stockfish (`node_modules/stockfish`, the same script the TypeScript core runs)
-//! through the Rust controller. Skipped with a message when node or the script is missing.
+//! A native Stockfish through the Rust controller (`support::stockfish`).
 
 mod support;
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use kchess_core::engine::uci::UciController;
@@ -11,29 +9,13 @@ use tokio::process::Command;
 
 #[tokio::test]
 async fn bundled_stockfish_answers_a_bounded_search() {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("node_modules/stockfish/bin/stockfish-19-lite.js");
-    if !script.exists() {
-        eprintln!(
-            "skipping: {} is missing (run pnpm install at the repository root)",
-            script.display()
-        );
+    let Some(engine) = support::stockfish() else {
         return;
-    }
-    if std::process::Command::new("node")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("skipping: node is not on PATH");
-        return;
-    }
+    };
 
     let host = support::host();
     let hub = support::hub(&host);
-    let mut command = Command::new("node");
-    command.arg(&script);
+    let command = Command::new(&engine);
     let engine = UciController::start(&hub, command, Duration::from_secs(30))
         .expect("spawn the bundled Stockfish");
     engine.ready().await.expect("Stockfish handshake");

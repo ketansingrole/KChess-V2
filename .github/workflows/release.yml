@@ -43,6 +43,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: rustup component add llvm-tools-preview
+      # The official Stockfish, so the tests that need a real engine run (`tests/support`).
+      - name: Fetch Stockfish
+        run: echo "KCHESS_ENGINE_PATH=$(cargo run -q --locked -p kchess-core --example fetch_stockfish -- "$RUNNER_TEMP/stockfish")" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: cargo xtask check
 
   # KChess for every platform in both identities: `final` is the app every KChess installation

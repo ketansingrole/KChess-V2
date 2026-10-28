@@ -169,8 +169,6 @@ impl CoreBridge {
             config: kchess_service::ServiceConfig {
                 legacy_database_path: config.legacy_database_path,
                 bundled_engine_path: config.bundled_engine_path,
-                runtime_path: config.runtime_path,
-                runtime_env: config.runtime_env,
                 managed_engine_dir: config.managed_engine_dir,
                 voice_helper_path: config.voice_helper_path,
                 system_credentials: config.system_credentials,
@@ -657,7 +655,6 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     let config = Config {
         legacy_database_path: crate::profile::legacy_database(&data_dir),
         managed_engine_dir: Some(crate::profile::managed_engine_dir()),
-        // A native executable, so no runtime runs it (`runtime_path: None`).
         bundled_engine_path: crate::profile::bundled_engine(),
         voice_helper_path: crate::profile::voice_helper(),
         system_credentials: true,

@@ -2,7 +2,7 @@
 //! does, the engine paths the frontends may persist, and whether the computer is playing.
 //! Search orchestration (`bestMove`, `stopEngine`) belongs to the UCI controller port.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -15,16 +15,10 @@ use super::managed::{ManagedEngine, Target, can_download, executable_name, manag
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
-/// The bundled Stockfish UCI script, relative to the application: the
-/// lite multi-threaded WASM build, run as a UCI process by the host's own Node runtime. The host
-/// resolves it to an absolute path for `EngineLocations::bundled_script`.
-pub const BUNDLED_ENGINE_SCRIPT: &str = "node_modules/stockfish/bin/stockfish-19-lite.js";
-/// The identity of the bundled engine, which never changes within a build.
-pub const BUNDLED_ENGINE_IDENTITY: &str = "stockfish-19-lite";
-/// The identity of a bundled native engine (a host without a runtime ships Stockfish itself).
-/// It differs from the WebAssembly build's, so analyses cached in a profile that both an
-/// Electron and a GPUI app open never mix the two engines.
-pub const BUNDLED_NATIVE_IDENTITY: &str = "stockfish-native";
+/// The identity of the bundled engine, the official Stockfish shipped beside the app. It never
+/// changes within a build, and differs from the WebAssembly build's (`stockfish-19-lite`) that the
+/// Electron app bundled, so analyses cached in a profile it used never mix the two engines.
+pub const BUNDLED_ENGINE_IDENTITY: &str = "stockfish-native";
 
 /// What the host supplies to find and start engines.
 #[derive(Clone, Debug)]
@@ -33,14 +27,8 @@ pub struct EngineLocations {
     pub managed_dir: PathBuf,
     /// The platform whose official build may be downloaded.
     pub target: Target,
-    /// Absolute path of `BUNDLED_ENGINE_SCRIPT`, or of a native executable when there is no
-    /// runtime.
-    pub bundled_script: PathBuf,
-    /// The host runtime executable, which runs the bundled script (Node's `process.execPath` on
-    /// Node/Electron hosts); `None` when the bundled engine is a native executable (GPUI).
-    pub runtime_path: Option<PathBuf>,
-    /// Extra environment for running the bundled script, on top of the inherited one.
-    pub runtime_env: BTreeMap<String, String>,
+    /// The Stockfish executable shipped beside the app.
+    pub bundled: PathBuf,
 }
 
 /// What `engine_status` reports (`EngineStatus` in the TypeScript contracts).
@@ -55,13 +43,10 @@ pub struct EngineStatus {
     pub managed: ManagedEngine,
     /// An official native download exists for this platform and architecture.
     pub can_download: bool,
-    /// The bundled engine is a native executable rather than a script (no runtime).
-    #[serde(skip)]
-    pub native: bool,
 }
 
 /// The engine the computer would use: a configured executable that is executable, else the
-/// bundled script when it is readable. Not ready when neither is.
+/// bundled one. Not ready when neither is.
 pub async fn engine_status(
     host: &dyn Host,
     locations: &EngineLocations,
@@ -76,31 +61,23 @@ pub async fn engine_status(
             bundled: false,
             managed,
             can_download,
-            native: false,
         };
     }
-    let native = locations.runtime_path.is_none();
-    let bundled = if native {
-        is_executable_file(host, &locations.bundled_script).await
-    } else {
-        access(&locations.bundled_script, AccessMode::Read)
-    };
-    if bundled {
+    if is_executable_file(host, &locations.bundled).await {
         return EngineStatus {
             ready: true,
             path: PathBuf::new(),
             bundled: true,
             managed,
             can_download,
-            native,
         };
     }
     host.log(
         Level::Debug,
         "engine",
         &format!(
-            "Bundled engine check failed: {} is not readable",
-            locations.bundled_script.display()
+            "Bundled engine check failed: {} is not executable",
+            locations.bundled.display()
         ),
     );
     EngineStatus {
@@ -109,12 +86,11 @@ pub async fn engine_status(
         bundled: false,
         managed,
         can_download,
-        native: false,
     }
 }
 
 async fn is_executable_file(host: &dyn Host, path: &Path) -> bool {
-    if !access(path, AccessMode::Execute) {
+    if !executable(path) {
         return false;
     }
     match tokio::fs::metadata(path).await {
@@ -130,21 +106,11 @@ async fn is_executable_file(host: &dyn Host, path: &Path) -> bool {
     }
 }
 
-/// The command that starts the engine `status` names: the bundled script under the host's Node
-/// runtime with its extra environment, or the native executable. The command is not spawned; the
-/// caller chooses its stdio.
+/// The command that starts the engine `status` names: the bundled executable or the configured
+/// one. The command is not spawned; the caller chooses its stdio.
 pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Command {
     if status.bundled {
-        let mut command = match &locations.runtime_path {
-            Some(runtime) => {
-                let mut command = Command::new(runtime);
-                command.arg(&locations.bundled_script);
-                command
-            }
-            None => Command::new(&locations.bundled_script),
-        };
-        command.envs(&locations.runtime_env);
-        command
+        Command::new(&locations.bundled)
     } else {
         Command::new(&status.path)
     }
@@ -154,12 +120,7 @@ pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Com
 /// its size and modification time.
 pub async fn engine_identity(status: &EngineStatus) -> Result<String> {
     if status.bundled {
-        return Ok(if status.native {
-            BUNDLED_NATIVE_IDENTITY
-        } else {
-            BUNDLED_ENGINE_IDENTITY
-        }
-        .to_string());
+        return Ok(BUNDLED_ENGINE_IDENTITY.to_string());
     }
     let metadata = tokio::fs::metadata(&status.path)
         .await
@@ -223,25 +184,15 @@ impl EngineTrust {
     }
 }
 
-#[derive(Clone, Copy)]
-enum AccessMode {
-    Read,
-    Execute,
-}
-
-/// `access(2)` for the mode, as Node's `fs.access` checks it. Without `access`, the Windows
-/// check is existence, which is also what Node does for `X_OK` there.
+/// Whether `path` may be executed (`access(2)` with `X_OK`). Windows has no such bit: there the
+/// check is existence.
 #[cfg(unix)]
-fn access(path: &Path, mode: AccessMode) -> bool {
-    let access = match mode {
-        AccessMode::Read => rustix::fs::Access::READ_OK,
-        AccessMode::Execute => rustix::fs::Access::EXEC_OK,
-    };
-    rustix::fs::access(path, access).is_ok()
+fn executable(path: &Path) -> bool {
+    rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok()
 }
 
 #[cfg(not(unix))]
-fn access(path: &Path, _mode: AccessMode) -> bool {
+fn executable(path: &Path) -> bool {
     std::fs::metadata(path).is_ok()
 }
 
@@ -264,18 +215,24 @@ mod tests {
                 platform: "linux",
                 arch: "x64",
             },
-            bundled_script: dir.join("bundled.js"),
-            runtime_path: Some(PathBuf::from("/usr/bin/node")),
-            runtime_env: BTreeMap::from([("KCHESS_TEST".to_string(), "1".to_string())]),
+            bundled: dir.join("stockfish"),
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
-    async fn bundled_engine_is_ready_when_its_script_is_readable() {
+    async fn bundled_engine_is_ready_when_it_is_executable() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());
         assert!(!engine_status(&SilentHost, &locations, "").await.ready);
-        std::fs::write(&locations.bundled_script, "// engine").unwrap();
+        std::fs::write(&locations.bundled, "#!/bin/sh\n").unwrap();
+        assert!(
+            !engine_status(&SilentHost, &locations, "").await.ready,
+            "a file that cannot run is not an engine"
+        );
+        std::fs::set_permissions(&locations.bundled, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
         let status = engine_status(&SilentHost, &locations, "").await;
         assert!(status.ready && status.bundled);
         assert_eq!(status.path, PathBuf::new());
@@ -285,37 +242,12 @@ mod tests {
             engine_identity(&status).await.unwrap(),
             BUNDLED_ENGINE_IDENTITY
         );
-    }
-
-    #[tokio::test]
-    async fn bundled_command_runs_the_script_with_node_and_its_environment() {
-        let dir = tempfile::tempdir().unwrap();
-        let locations = locations(dir.path());
-        let status = EngineStatus {
-            ready: true,
-            path: PathBuf::new(),
-            bundled: true,
-            managed: ManagedEngine {
-                installed: false,
-                path: managed_path(&locations.managed_dir),
-                version: None,
-            },
-            can_download: true,
-            native: false,
-        };
         let command = engine_command(&locations, &status);
-        let std_command = command.as_std();
         assert_eq!(
-            std_command.get_program(),
-            locations.runtime_path.as_deref().unwrap().as_os_str()
+            command.as_std().get_program(),
+            locations.bundled.as_os_str()
         );
-        let args: Vec<_> = std_command.get_args().collect();
-        assert_eq!(args, [locations.bundled_script.as_os_str()]);
-        let envs: Vec<_> = std_command
-            .get_envs()
-            .map(|(key, value)| (key.to_os_string(), value.map(|v| v.to_os_string())))
-            .collect();
-        assert!(envs.contains(&(OsString::from("KCHESS_TEST"), Some(OsString::from("1")))));
+        assert_eq!(command.as_std().get_args().count(), 0);
     }
 
     #[cfg(unix)]
@@ -324,7 +256,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());
-        std::fs::write(&locations.bundled_script, "// engine").unwrap();
+        std::fs::write(&locations.bundled, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&locations.bundled, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
         let engine = dir.path().join("my-stockfish");
         std::fs::write(&engine, "#!/bin/sh\n").unwrap();
         let configured = engine.display().to_string();

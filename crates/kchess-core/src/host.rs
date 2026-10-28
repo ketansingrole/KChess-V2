@@ -2,7 +2,6 @@
 //! somewhere to log, somewhere to send events, and the directories it owns.
 
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,15 +47,9 @@ pub struct Config {
     /// The main database of an earlier release, imported once into an empty profile
     /// (`CorePlatform.legacyDatabasePath`).
     pub legacy_database_path: Option<PathBuf>,
-    /// Absolute path of the bundled Stockfish UCI script (`CorePlatform.bundledEnginePath`).
-    /// `None` when the host bundles none; the bundled engine is then not ready.
+    /// The Stockfish executable shipped beside the app. `None` when there is none; the bundled
+    /// engine is then not ready.
     pub bundled_engine_path: Option<PathBuf>,
-    /// The runtime executable that runs the bundled script (Node's `process.execPath`
-    /// on Node/Electron hosts). `None`: the bundled engine is a native executable, started as is
-    /// (the GPUI app ships Stockfish itself).
-    pub runtime_path: Option<PathBuf>,
-    /// Extra environment for running the bundled script (`CorePlatform.nodeEnv`).
-    pub runtime_env: BTreeMap<String, String>,
     /// Where the downloaded Stockfish is kept (`CorePlatform.managedEngineDir`); the default is
     /// `engines/stockfish/current` in the data directory.
     pub managed_engine_dir: Option<PathBuf>,
@@ -77,8 +70,6 @@ impl Config {
             data_dir,
             legacy_database_path: None,
             bundled_engine_path: None,
-            runtime_path: None,
-            runtime_env: BTreeMap::new(),
             managed_engine_dir: None,
             voice_helper_path: None,
             system_credentials: false,

@@ -2,7 +2,7 @@
 //! the profile's core through `core.json`, proves itself with `core.token`, and otherwise starts
 //! the core from this release's copy of the service binary (`connect_or_start`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -271,9 +271,6 @@ impl Client {
 pub struct ServiceConfig {
     pub legacy_database_path: Option<PathBuf>,
     pub bundled_engine_path: Option<PathBuf>,
-    pub runtime_path: Option<PathBuf>,
-    #[serde(default)]
-    pub runtime_env: BTreeMap<String, String>,
     pub managed_engine_dir: Option<PathBuf>,
     pub voice_helper_path: Option<PathBuf>,
     #[serde(default)]
@@ -286,8 +283,6 @@ impl ServiceConfig {
         Config {
             legacy_database_path: self.legacy_database_path,
             bundled_engine_path: self.bundled_engine_path,
-            runtime_path: self.runtime_path,
-            runtime_env: self.runtime_env,
             managed_engine_dir: self.managed_engine_dir,
             voice_helper_path: self.voice_helper_path,
             system_credentials: self.system_credentials,
