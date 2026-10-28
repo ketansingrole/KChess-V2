@@ -1,10 +1,10 @@
-//! `LocalGame` (`gameSession.ts`): two people at one board. The rules run it
+//! `LocalGame` : two people at one board. The rules run it
 //! (`crates/kchess-domain/src/games/local.rs`); the page answers `now` and carries out the one
 //! effect, a flag falling.
 
 use serde_json::{Value, json};
 
-use super::{assign_written, rules, transition};
+use crate::{assign_written, rules, transition};
 
 pub struct LocalGame {
     /// The `LocalState` document: the saved session and its pause flag.

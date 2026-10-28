@@ -21,6 +21,7 @@ kchess-core = { path = "../../crates/kchess-core" }
 # The shared core: one core per profile for every KChess window (docs/shared-core.md).
 kchess-service = { path = "../../crates/kchess-service" }
 kchess-domain = { path = "../../crates/kchess-domain" }
+kchess-games = { path = "../../crates/kchess-games" }
 kchess-contracts = { path = "../../crates/kchess-contracts" }
 gpui-kit = "0.8"
 serde.workspace = true

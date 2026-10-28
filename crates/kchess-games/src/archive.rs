@@ -1,11 +1,11 @@
-//! `GameArchive` (`crates/kchess-wasm/js/gameArchive.ts`): a played game's place in Game history.
+//! `GameArchive` : a played game's place in Game history.
 //! The rules decide when the game is saved, replaced or dropped
 //! (`crates/kchess-domain/src/games/archive.rs`); the page answers the reads and writes what they
 //! say to the profile.
 
 use serde_json::{Value, json};
 
-use super::{assign_written, transition};
+use crate::{assign_written, transition};
 
 /// What the page tells the archive when a transition reads it.
 pub struct Host<'a> {
@@ -135,7 +135,7 @@ impl GameArchive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::computer::{ComputerGame, Host as GameHost};
+    use crate::computer::{ComputerGame, Host as GameHost};
 
     #[test]
     fn a_game_with_moves_is_saved_and_a_new_one_gets_its_own_identity() {

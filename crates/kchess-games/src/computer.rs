@@ -1,10 +1,10 @@
-//! `ComputerGame` (`gameSession.ts`): a game against the engine. The rules decide everything
+//! `ComputerGame` : a game against the engine. The rules decide everything
 //! (`crates/kchess-domain/src/games/computer.rs`); the page answers the reads (`now`, `allowed`,
 //! `ready`) and carries out the effects, in order.
 
 use serde_json::{Value, json};
 
-use super::{assign_written, rules, transition};
+use crate::{assign_written, rules, transition};
 
 /// What a transition asks the page to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -165,8 +165,8 @@ impl ComputerGame {
             return Ok(None);
         }
         Ok(Some(SearchRequest {
-            epoch: super::whole(&request["epoch"]),
-            count: super::whole(&request["count"]),
+            epoch: crate::whole(&request["epoch"]),
+            count: crate::whole(&request["count"]),
             moves: serde_json::from_value(request["moves"].clone()).unwrap_or_default(),
             level: request["level"].as_str().unwrap_or("beginner").to_string(),
             options: request["options"].clone(),

@@ -4108,6 +4108,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-cli"
+version = "0.1.0"
+dependencies = [
+ "kchess-contracts",
+ "kchess-core",
+ "kchess-domain",
+ "kchess-games",
+ "kchess-service",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "kchess-contracts"
 version = "0.1.0"
 dependencies = [
@@ -4178,6 +4192,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-games"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "kchess-domain",
+ "serde_json",
+]
+
+[[package]]
 name = "kchess-gpui"
 version = "0.1.0"
 dependencies = [
@@ -4194,6 +4217,7 @@ dependencies = [
  "kchess-contracts",
  "kchess-core",
  "kchess-domain",
+ "kchess-games",
  "kchess-service",
  "libc",
  "notify-rust",
