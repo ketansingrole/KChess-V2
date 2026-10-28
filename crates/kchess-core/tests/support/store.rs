@@ -185,11 +185,7 @@ impl Store {
     pub fn rows_with(&self, sql: &str, params: &[&str]) -> Vec<Value> {
         let connection = self.connection();
         let mut statement = connection.prepare(sql).expect("query compiles");
-        let names: Vec<String> = statement
-            .column_names()
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
+        let names: Vec<String> = statement.column_names().map(str::to_string).collect();
         let mut rows = statement
             .query(rusqlite::params_from_iter(params.iter().copied()))
             .expect("query runs");

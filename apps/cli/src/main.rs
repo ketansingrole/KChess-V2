@@ -281,9 +281,12 @@ mod tests {
 
     #[test]
     fn reads_options_anywhere_and_keeps_the_rest_in_order() {
+        // An absolute path on every platform (`/tmp/…` is relative on Windows).
+        let profile = std::env::temp_dir().join("profile");
+        let profile_text = profile.to_string_lossy().to_string();
         let cli = parse(&strings(&[
             "--data-dir",
-            "/tmp/profile",
+            &profile_text,
             "call",
             "--",
             "--no-credentials",
@@ -293,7 +296,7 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(cli.args, ["call", "library"]);
-        assert_eq!(cli.options.data_dir, PathBuf::from("/tmp/profile"));
+        assert_eq!(cli.options.data_dir, profile);
         assert!(!cli.options.credentials);
         assert_eq!(cli.options.browser, Browser::Print);
         assert!(!cli.options.embedded);

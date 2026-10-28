@@ -14,7 +14,7 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+use cbc::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7};
 use std::path::Path;
 
 use crate::{Result, error};
@@ -43,7 +43,7 @@ pub fn open_cbc(data: &[u8], version: &[u8], password: &[u8], rounds: u32) -> Re
     let mut key = [0u8; 16];
     pbkdf2::pbkdf2_hmac::<sha1::Sha1>(password, SALT, rounds, &mut key);
     cbc::Decryptor::<aes::Aes128>::new(&key.into(), &IV.into())
-        .decrypt_padded_vec_mut::<Pkcs7>(body)
+        .decrypt_padded_vec::<Pkcs7>(body)
         .map_err(|_| error(UNREADABLE))
 }
 
@@ -189,13 +189,13 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cbc::cipher::BlockEncryptMut;
+    use cbc::cipher::BlockModeEncrypt;
 
     fn seal_cbc(plain: &[u8], version: &[u8], password: &[u8], rounds: u32) -> Vec<u8> {
         let mut key = [0u8; 16];
         pbkdf2::pbkdf2_hmac::<sha1::Sha1>(password, SALT, rounds, &mut key);
         let body = cbc::Encryptor::<aes::Aes128>::new(&key.into(), &IV.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(plain);
+            .encrypt_padded_vec::<Pkcs7>(plain);
         [version, &body].concat()
     }
 
