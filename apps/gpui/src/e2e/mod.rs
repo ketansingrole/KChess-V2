@@ -85,9 +85,24 @@ impl Harness {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::menu::init(cx);
-            crate::core::start(dir, cx).expect("the core opens the profile");
-            crate::startup::start(cx);
         });
+        // A restart opens the profile in the same process, where the earlier core may still be
+        // letting it go (quit waits for it only so long); a relaunched app is a new process.
+        let started = Instant::now();
+        loop {
+            match cx.update(|cx| crate::core::start(dir.clone(), cx)) {
+                Ok(()) => break,
+                Err(cause)
+                    if owns_app
+                        && cause.contains("already running")
+                        && started.elapsed() < TIMEOUT =>
+                {
+                    std::thread::sleep(POLL * 10)
+                }
+                Err(cause) => panic!("the core opens the profile: {cause:?}"),
+            }
+        }
+        cx.update(crate::startup::start);
         cx.run_until_parked();
         let window = cx
             .update(|cx| cx.windows().first().copied())

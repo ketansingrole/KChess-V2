@@ -132,15 +132,16 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
     app.press("secondary-a");
     app.type_text("carol");
     app.click("players-lookup");
-    wait_until_enabled(&mut app, "players-lookup");
+    // Lookup spins while the request is out (a refused connection takes a while on Windows),
+    // so wait for the failure itself.
     use gpui_kit::test::TestWindowExt as _;
-    let error = app.with_window(|window, _| {
+    app.wait_for("the failed lookup's message", |window, _| {
         window
             .try_find("players-error")
-            .and_then(|e| e.label().map(str::to_string))
+            .and_then(|error| error.label().map(str::to_string))
+            .is_some_and(|error| !error.is_empty() && error != "Enter a Lichess username.")
     });
-    assert_ne!(error.as_deref(), Some("Enter a Lichess username."));
-    assert!(error.is_some_and(|error| !error.is_empty()));
+    assert!(app.enabled("players-lookup"));
 }
 
 #[gpui_kit::test]
