@@ -2,6 +2,7 @@
 //! computer and over the board, filtered by result, twenty to a page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -809,7 +810,8 @@ impl HistoryPage {
         let narrow = self.narrow();
         let columns = |row: Stateful<Div>, cells: [AnyElement; 5]| {
             let [result, players, game, date, actions] = cells;
-            row.gap(px(12.))
+            row.test_support()
+                .gap(px(12.))
                 .child(div().w(px(96.)).flex_none().child(result))
                 .child(div().flex_1().min_w_0().child(players))
                 .when(!narrow, |row| {

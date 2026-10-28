@@ -879,11 +879,22 @@ impl Render for GameDetails {
             .fields
             .iter()
             .map(|(_, label, input)| {
-                field(label, Input::new(input).into_any_element()).into_any_element()
+                field(
+                    label,
+                    Input::new(input).aria_label(*label).into_any_element(),
+                )
+                .into_any_element()
             })
             .collect();
-        cells
-            .push(field("Result", Select::new(&self.result).into_any_element()).into_any_element());
+        cells.push(
+            field(
+                "Result",
+                Select::new(&self.result)
+                    .accessibility_label("Result")
+                    .into_any_element(),
+            )
+            .into_any_element(),
+        );
         let mut rows = Vec::new();
         let mut cells = cells.into_iter().peekable();
         while cells.peek().is_some() {

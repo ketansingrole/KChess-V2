@@ -3,6 +3,7 @@
 //! pick a spare piece (or the bin) and click squares; choose the side to move, castling rights
 //! and en passant, or type a FEN. Then analyse the position or play it.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -442,6 +443,7 @@ impl EditorPage {
             let selected = self.tool == tool;
             div()
                 .id(SharedString::from(format!("{id}-{color:?}")))
+                .test_support()
                 .role(gpui_kit::Role::Button)
                 .aria_label(label)
                 .aria_selected(selected)
@@ -488,6 +490,7 @@ impl EditorPage {
             );
             div()
                 .id(SharedString::from(format!("spare-{color:?}-{role:?}")))
+                .test_support()
                 .flex_1()
                 .h(cell)
                 .flex()

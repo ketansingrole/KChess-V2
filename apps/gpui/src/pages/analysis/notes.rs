@@ -2,6 +2,7 @@
 //! under the move list (and shown in it), so annotating never means leaving the board. A game's
 //! clock times (`[%clk …]`) ride along in the comment unseen.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -152,6 +153,7 @@ impl AnalysisPage {
                     let on = current == Some(nag);
                     div()
                         .id(SharedString::from(format!("glyph-{nag}")))
+                        .test_support()
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
                         .aria_label(label)
@@ -217,6 +219,7 @@ impl AnalysisPage {
         } else {
             h_flex()
                 .id("add-comment")
+                .test_support()
                 .role(Role::Button)
                 .keyboard_focus(palette.primary)
                 .aria_label("Add a comment")

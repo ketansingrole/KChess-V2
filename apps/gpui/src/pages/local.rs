@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -1023,6 +1024,7 @@ impl LocalPage {
                 );
             div()
                 .id(("clock-face", index))
+                .test_support()
                 .role(Role::Button)
                 .keyboard_focus(palette.primary)
                 .flex_1()

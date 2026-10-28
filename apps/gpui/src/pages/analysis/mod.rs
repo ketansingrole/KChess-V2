@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use futures::FutureExt as _;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
@@ -1741,6 +1742,7 @@ impl TreeView<'_> {
         let (menu_page, menu_path) = (page.clone(), path.to_string());
         h_flex()
             .id(SharedString::from(format!("tree-{path}")))
+            .test_support()
             .role(Role::Button)
             .keyboard_focus(palette.primary)
             .aria_label(node.san.clone())
@@ -1843,6 +1845,7 @@ impl TreeView<'_> {
         let palette = &self.palette;
         div()
             .id(SharedString::from(format!("comment-{path}")))
+            .test_support()
             .role(Role::Button)
             .keyboard_focus(palette.primary)
             .aria_label(text.clone())
@@ -2354,6 +2357,7 @@ impl AnalysisPage {
                 let chosen = choice == tool;
                 h_flex()
                     .id(label)
+                    .test_support()
                     .role(Role::Tab)
                     .keyboard_focus(palette.primary)
                     .aria_label(label)

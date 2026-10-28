@@ -339,6 +339,8 @@ None.
       hardened runtime and notarizes (untried here: no certificate)
 - [x] CI: lint, test and package `kchess-gpui` on macOS, Windows and Linux (`gpui` job); Linux
       builds checked in CI's image (`pnpm run linux`)
-- [ ] End-to-end tests as broad as Electron's Playwright suite: startup, the sidebar, Play with
-      Computer, Settings and restarts so far (`src/e2e`, headless, in the `gpui` job)
+- [x] End-to-end tests as broad as Electron's Playwright suite (`src/e2e`, headless, in the `gpui`
+      job): startup, the sidebar, Settings and restarts; Play with Computer, over the board and the
+      clock; the analysis board and editor; history; studies; practice trainers; puzzles, openings,
+      the Lichess pages offline; Quick Pick and zoom. Not covered: GIF export, live Lichess play
 - [x] THIRD_PARTY_NOTICES.md rows for the app's own crates and its Stockfish

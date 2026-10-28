@@ -404,6 +404,12 @@ impl Render for KnightPaths {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let running = self.stage == Stage::Running;
+        let target = format!(
+            "Reach {} in {} {}",
+            self.goal,
+            self.best,
+            if self.best == 1 { "jump" } else { "jumps" }
+        );
         let board_size = self.layout.board_size(window);
         let frontend = cx
             .global::<SettingsHandle>()
@@ -476,19 +482,9 @@ impl Render for KnightPaths {
                             div()
                                 .id("knight-target")
                                 .test_support()
-                                .aria_label(format!(
-                                    "Reach {} in {} {}",
-                                    self.goal,
-                                    self.best,
-                                    if self.best == 1 { "jump" } else { "jumps" }
-                                ))
+                                .aria_label(target.clone())
                                 .font_weight(FontWeight::BOLD)
-                                .child(format!(
-                                    "Reach {} in {} {}",
-                                    self.goal,
-                                    self.best,
-                                    if self.best == 1 { "jump" } else { "jumps" }
-                                )),
+                                .child(target),
                         )
                         .child(
                             div()
