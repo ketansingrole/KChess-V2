@@ -1535,12 +1535,14 @@ impl Render for ChessBoard {
         div()
             .id("chess-board")
             .test_support()
-            // Pictures in a list are named by what holds them; a board to play on is a group.
+            // Pictures in a list are named by what holds them; a board to play on is a group, and
+            // says each move as it is played (`ChessBoard.vue`'s `aria-live` line).
             .when_some(description, |board, description| {
                 board
                     .role(gpui_kit::Role::Group)
                     .aria_label("Chess board")
-                    .aria_description(description)
+                    .aria_description(description.clone())
+                    .child(crate::widgets::live_region("board-live", description))
             })
             .relative()
             .w_full()

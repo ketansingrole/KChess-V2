@@ -1352,6 +1352,7 @@ impl Render for LocalPage {
                         None => "Draw".into(),
                     },
                 )
+                .announce()
                 .when_some(
                     result["reason"]
                         .as_str()

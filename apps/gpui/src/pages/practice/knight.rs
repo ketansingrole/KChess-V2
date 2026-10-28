@@ -519,6 +519,7 @@ impl Render for KnightPaths {
                         format!("{} shortest paths · {} reached", self.optimal, self.reached)
                             .into(),
                     )
+                    .announce()
                     .detail(
                         if self.clock.untimed {
                             format!("in {}", self.clock.text())

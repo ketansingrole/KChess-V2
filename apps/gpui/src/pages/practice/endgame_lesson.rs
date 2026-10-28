@@ -625,6 +625,7 @@ impl EndgameLesson {
                 )
             };
             widgets::StatusBanner::new(tone, glyph, title.into())
+                .announce()
                 .when_some(detail.map(SharedString::from), |banner, value| {
                     banner.detail(value)
                 })

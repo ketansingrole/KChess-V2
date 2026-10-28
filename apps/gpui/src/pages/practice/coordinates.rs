@@ -843,6 +843,7 @@ impl Render for Coordinates {
                         },
                         format!("{} correct · {}% accuracy", self.score, self.accuracy()).into(),
                     )
+                    .announce()
                     .detail(detail.into()),
                 );
             }

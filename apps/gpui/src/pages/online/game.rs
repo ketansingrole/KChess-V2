@@ -908,10 +908,12 @@ impl OnlinePage {
                     )),
             )
             .children(banner.map(|(glyph, title, detail)| {
-                widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into()).when_some(
-                    (!detail.is_empty()).then(|| detail.into()),
-                    |banner, value| banner.detail(value),
-                )
+                widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into())
+                    .announce()
+                    .when_some(
+                        (!detail.is_empty()).then(|| detail.into()),
+                        |banner, value| banner.detail(value),
+                    )
             }))
             .children(notices)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(

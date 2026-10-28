@@ -68,8 +68,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Every clickable element has a role and a name (moves, engine lines, explorer rows, game
       rows, cards, tabs, channels); the board is a "Chess board" group described by its last
       move and the side to move, and the promotion picker is a named dialog
-- [ ] Spoken announcements of moves as they happen (GPUI has no live regions; the board's
-      description is read when it is reached)
+- [x] Spoken announcements as they happen: each move and the side to move (the board's live
+      line), and results and trainer feedback in status banners; an AccessKit live region the app
+      writes itself, since GPUI's elements cannot be marked live (untried with a screen reader)
 - [x] Keyboard focus for the clickable elements that are not kit buttons: Tab reaches them,
       Enter and Space click them, a ring shows the keyboard's place, and a mouse click leaves the
       page's keys where they were; clock faces, explorer tiles, player and opening names gained the

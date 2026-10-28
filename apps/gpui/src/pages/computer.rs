@@ -1189,6 +1189,7 @@ impl ComputerPage {
                     .to_string()
                     .into(),
             )
+            .announce()
             .when_some(
                 result["detail"]
                     .as_str()

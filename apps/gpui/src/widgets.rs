@@ -40,6 +40,99 @@ pub trait KeyboardFocus: InteractiveElement {
 
 impl<E: InteractiveElement> KeyboardFocus for E {}
 
+/// `aria-live="polite"`: text a screen reader speaks whenever it changes, without moving the
+/// reader's place (a move just played, a game's result). GPUI's elements cannot mark themselves
+/// live, so this one writes AccessKit's `live` itself; each platform adapter announces a live
+/// node when its text changes (macOS reads the value, Windows and Linux the name). Unseen: a
+/// 1px box in its parent's corner (`.sr-only`), since a node with no area may be left out.
+pub struct LiveRegion {
+    id: ElementId,
+    text: SharedString,
+}
+
+/// A polite live region saying `text`; `id` keeps it the same node from frame to frame, so only
+/// a change of text is announced.
+pub fn live_region(id: impl Into<ElementId>, text: impl Into<SharedString>) -> LiveRegion {
+    LiveRegion {
+        id: id.into(),
+        text: text.into(),
+    }
+}
+
+impl IntoElement for LiveRegion {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for LiveRegion {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let style = Style {
+            position: Position::Absolute,
+            inset: Edges {
+                top: px(0.).into(),
+                left: px(0.).into(),
+                ..Default::default()
+            },
+            size: size(px(1.).into(), px(1.).into()),
+            ..Default::default()
+        };
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn a11y_role(&self) -> Option<Role> {
+        Some(Role::Status)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_label(self.text.to_string());
+        node.set_value(self.text.to_string());
+        node.set_live(accesskit::Live::Polite);
+    }
+}
+
 /// `.player-line` height.
 pub const PLAYER_LINE: Pixels = px(36.);
 /// The gap between the player lines and the board (`.board-stack`).
@@ -160,6 +253,7 @@ pub struct StatusBanner {
     title: SharedString,
     detail: Option<SharedString>,
     extra: Option<AnyElement>,
+    announce: bool,
 }
 
 impl StatusBanner {
@@ -170,7 +264,15 @@ impl StatusBanner {
             title,
             detail: None,
             extra: None,
+            announce: false,
         }
+    }
+
+    /// Say the title when it appears or changes (`role="status"` in Electron): results and
+    /// feedback, not a turn line the board already says.
+    pub fn announce(mut self) -> StatusBanner {
+        self.announce = true;
+        self
     }
 
     pub fn detail(mut self, detail: SharedString) -> StatusBanner {
@@ -210,6 +312,9 @@ impl RenderOnce for StatusBanner {
             .rounded(px(10.))
             .text_size(px(13.))
             .bg(background)
+            .when(self.announce, |banner| {
+                banner.child(live_region("status-live", self.title.clone()))
+            })
             .child(self.glyph.size(px(16.)).flex_none().text_color(icon_color))
             .child(
                 v_flex()
@@ -1287,16 +1392,34 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let palette = Palette::of(&colors("kchess", &[], false), false);
             let chosen = self.chosen.clone();
-            div().size_full().track_focus(&self.focus).child(super::moves_list(
-                "moves",
-                &["e4".into(), "e5".into()],
-                2,
-                false,
-                "No moves".into(),
-                move |ply, _, _| chosen.set(Some(ply)),
-                &palette,
-            ))
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .child(super::moves_list(
+                    "moves",
+                    &["e4".into(), "e5".into()],
+                    2,
+                    false,
+                    "No moves".into(),
+                    move |ply, _, _| chosen.set(Some(ply)),
+                    &palette,
+                ))
         }
+    }
+
+    /// GPUI announces nothing by itself: a move or a result was heard only when the reader went
+    /// back to the board. Each adapter speaks a live node's text when it changes: macOS its value,
+    /// Windows and Linux its name.
+    #[test]
+    fn a_live_region_is_spoken_on_every_platform() {
+        use gpui_kit::{Element as _, accesskit};
+        let region = super::live_region("live", "Last move e2–e4 · Black to move");
+        assert_eq!(region.a11y_role(), Some(gpui_kit::Role::Status));
+        let mut node = accesskit::Node::new(gpui_kit::Role::Status);
+        region.write_a11y_info(&mut node);
+        assert_eq!(node.live(), Some(accesskit::Live::Polite));
+        assert_eq!(node.value(), Some("Last move e2–e4 · Black to move"));
+        assert_eq!(node.label(), Some("Last move e2–e4 · Black to move"));
     }
 
     /// The moves were mouse-only: Tab skipped them, so a keyboard could not choose one.

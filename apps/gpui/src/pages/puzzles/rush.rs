@@ -838,6 +838,7 @@ impl PuzzleRush {
                         if best { icon("trophy") } else { icon("flag") },
                         over.into(),
                     )
+                    .announce()
                     .detail(detail.into()),
                 )
                 .child(
