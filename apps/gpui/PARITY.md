@@ -341,6 +341,7 @@ None.
       builds checked in CI's image (`pnpm run linux`)
 - [x] End-to-end tests as broad as Electron's Playwright suite (`src/e2e`, headless, in the `gpui`
       job): startup, the sidebar, Settings and restarts; Play with Computer, over the board and the
-      clock; the analysis board and editor; history; studies; practice trainers; puzzles, openings,
-      the Lichess pages offline; Quick Pick and zoom. Not covered: GIF export, live Lichess play
+      clock and GIF export; the analysis board and editor; history; studies; practice trainers;
+      puzzles, openings, the Lichess pages offline; Quick Pick and zoom. Not covered: live Lichess
+      play
 - [x] THIRD_PARTY_NOTICES.md rows for the app's own crates and its Stockfish

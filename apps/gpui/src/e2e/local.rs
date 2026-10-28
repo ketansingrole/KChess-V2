@@ -193,6 +193,38 @@ fn the_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestAppContext
 }
 
 #[gpui_kit::test]
+fn the_game_is_exported_as_an_animated_gif(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    assert!(
+        !app.enabled("local-export"),
+        "an empty game has nothing to export"
+    );
+    type_moves(&mut app, &SCHOLARS_MATE);
+    app.click("local-export");
+    app.click_label("Animated GIF of the game");
+
+    // The save dialog opens once the frames are drawn; the GIF goes where it is pointed.
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+        app.tick();
+    }
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let path = folder.path().join("game.gif");
+    let chosen = path.clone();
+    app.cx.simulate_new_path_selection(move |_| Some(chosen));
+    // The export is over once Export takes clicks again, the file written by then.
+    app.wait_for("Export to take clicks again", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("local-export")
+            .is_some_and(|button| button.disabled() != Some(true))
+    });
+    let gif = std::fs::read(&path).expect("the saved GIF");
+    assert_eq!(&gif[..6], b"GIF89a");
+}
+
+#[gpui_kit::test]
 fn the_clock_runs_after_a_player_presses_their_side(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);
     app.click(("local-mode", 1usize));
