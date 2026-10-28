@@ -1,4 +1,4 @@
-//! Sign-in through the loopback callback (`connectLichess`, `oauthPage.ts`) over local fixtures:
+//! Sign-in through the loopback callback (`connectLichess`) over local fixtures:
 //! PKCE (S256), the state check, the single-use callback, the callback deadline, a denied
 //! login and a login that a logout overtook. A fake browser reads the authorize URL the core
 //! opens and visits the callback the way a browser would.

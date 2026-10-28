@@ -1,4 +1,4 @@
-//! The Lichess HTTP client (the client half of `crates/kchess-node/js/lichess.ts`): the base URL,
+//! The Lichess HTTP client: the base URL,
 //! `authorize`, `urlencoded`, `unwrap` and the error mapping of `throwLichessErrors`, over the
 //! admission policy of `policy.rs`.
 //!
@@ -18,7 +18,7 @@ use super::policy::{Admitted, Policy, is_stream};
 use super::stream::{LineOptions, read_chunks, read_lines};
 use crate::error::{CoreError, Result as CoreResult};
 
-/// `BASE` of `lichess.ts`.
+/// The Lichess website and API.
 pub const BASE_URL: &str = "https://lichess.org";
 
 /// Shared transport configuration. Streams have no total response deadline; the policy bounds

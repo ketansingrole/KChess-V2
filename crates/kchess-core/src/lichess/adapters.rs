@@ -1,7 +1,7 @@
 //! The Lichess services' storage and credentials, over the core's one database
 //! (`store::Database::call`) and the host's secret store (`Capabilities`). Each trait method is a
-//! storage method of the same meaning the TypeScript service called (`store.ts`, `reviewStore.ts`,
-//! `setupPositionLookup.ts`), so the tables and their writes are unchanged.
+//! storage method of the same meaning the service calls, so the tables and their writes are
+//! unchanged.
 
 use std::sync::Arc;
 

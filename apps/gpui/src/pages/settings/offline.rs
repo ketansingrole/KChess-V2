@@ -1,4 +1,4 @@
-//! Settings → Offline downloads (`OfflineDownloads.vue`): what KChess keeps on this computer to
+//! Settings → Offline downloads: what KChess keeps on this computer to
 //! work without a connection — the chess engine, the puzzle database, and the games and studies
 //! saved in the profile, and the speech model for offline voice input.
 

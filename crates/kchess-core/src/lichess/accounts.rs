@@ -1,9 +1,9 @@
-//! Lichess accounts, profiles and game sync (the account half of `crates/kchess-node/js/lichess.ts`):
+//! Lichess accounts, profiles and game sync (the account half of the Lichess services):
 //! `asOwner`, `asAnyAccount`, `asAccount`, `cancelAccountSyncs`, `invalidateLogin`, the profile
 //! cache, `followedUsers`, `primeProfiles`, `profile`, `playerPerf`, `exportGame`, `recentGames`,
 //! `sendMessage`, `crosstable`, `ratingHistory` and `syncGames`.
 //!
-//! Storage goes through `LichessStore`, which mirrors the store calls `lichess.ts` makes, and
+//! Storage goes through `LichessStore`, which mirrors the store calls the sync makes, and
 //! tokens through `TokenSource` (`client.rs`). The sync also saves Lichess's analysis of each page
 //! (`review_from_lichess`, in `reviews.rs`) through the store's `save_reviews` and `mark_checked`,
 //! which default to no-ops until the store wiring implements them. Not in this module: online
@@ -28,7 +28,7 @@ use crate::error::{CoreError, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
 
-/// `MAX_GAMES` of `store.ts`: the most games one sync keeps walking back through.
+/// The most games one sync keeps walking back through.
 pub const MAX_GAMES: usize = 5000;
 /// Lichess returns at most this many games per page of a sync.
 const SYNC_PAGE: usize = 1000;
@@ -68,8 +68,8 @@ pub enum Reply<T> {
     NeedsReconnect,
 }
 
-/// The storage `lichess.ts` reads and writes, behind a trait so the wiring can plug the store in.
-/// Every method returns the TypeScript result; `current` is the caller's "still signed in"
+/// The storage the Lichess services read and write, behind a trait so the wiring can plug the store in.
+/// Every method returns the store's result; `current` is the caller's "still signed in"
 /// check, read again by the store right before it writes.
 ///
 /// Async since the store moved off the executor (`Database::call_async`): every method returns a
@@ -143,7 +143,7 @@ pub trait LichessStore: Send + Sync {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
 }
 
-/// A game as the store keeps it and the UI shows it (`LichessGame` of `contracts/types.ts`).
+/// A game as the store keeps it and the UI shows it (`LichessGame`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessGame {
@@ -1507,7 +1507,7 @@ pub struct FollowedRatings {
     pub classical: Option<i64>,
 }
 
-/// `FollowedUser` (`contracts/types.ts`).
+/// `FollowedUser`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowedUser {
@@ -1649,7 +1649,7 @@ pub struct Streak {
     pub best: i64,
 }
 
-/// `PerfStats` (`contracts/types.ts`).
+/// `PerfStats`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfStats {
@@ -1752,7 +1752,7 @@ struct CrosstableMatchupRaw {
     nb_games: i64,
 }
 
-/// `Crosstable` (`contracts/types.ts`); names are lowercase.
+/// `Crosstable`; names are lowercase.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Crosstable {

@@ -1,4 +1,4 @@
-//! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md); reached through `api::call`.
+//! Reached through `api::call` (see RUST_MIGRATION.md).
 //!
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
 //! client clock, engine levels and UCI `info` lines. Their constants are data shared with

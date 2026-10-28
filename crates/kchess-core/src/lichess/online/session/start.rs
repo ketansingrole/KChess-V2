@@ -173,8 +173,7 @@ impl OnlineSession {
             form.extend(game_body(options));
             let path = format!("/api/challenge/{}", path_segment(target));
             // Cancellation does not cut the creation short: Lichess may already have created the
-            // challenge, and its id is cancelled below once the answer arrives
-            // (`online-session.test.ts`, "cancels a late challenge creation").
+            // challenge, and its id is cancelled below once the answer arrives.
             let creation = CancellationToken::new();
             let reply = self
                 .post_form(&path, &refs(&form), &account, &token, &creation)

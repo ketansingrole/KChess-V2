@@ -1,4 +1,4 @@
-//! The local library (`crates/kchess-node/js/library.ts`): studies, played games, mistake drills,
+//! The local library: studies, played games, mistake drills,
 //! unfinished sessions, joined tournaments and repertoire notes, each a bounded, versioned
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 //!
@@ -756,7 +756,7 @@ mod tests {
         fn emit(&self, _: &str, _: Value) {}
     }
 
-    /// `library.test.ts`: an arena that has ended is dropped when the next one is remembered, and
+    /// An arena that has ended is dropped when the next one is remembered, and
     /// forgetting an account drops its tournaments whatever the case of its name.
     #[test]
     fn ended_tournaments_and_those_of_signed_out_accounts_are_forgotten() {

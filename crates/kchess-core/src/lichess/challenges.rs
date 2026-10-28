@@ -1,4 +1,4 @@
-//! Incoming and outgoing challenges (`crates/kchess-node/js/challenges.ts`): the reader of a
+//! Incoming and outgoing challenges: the reader of a
 //! challenge event from an account's event stream, and the inbox of pending challenges that
 //! emits `challenges:update` whenever it changes.
 //!
@@ -22,7 +22,7 @@ const CORRESPONDENCE_TTL_MS: i64 = 14 * 86_400_000;
 /// `MAX_CHALLENGES`: the inbox keeps this many; the oldest sighting goes first.
 pub const MAX_CHALLENGES: usize = 50;
 
-/// `GAME_ID` of `domain/patterns.ts`: `^[a-zA-Z0-9]{8,12}$`.
+/// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
 pub fn is_game_id(text: &str) -> bool {
     (8..=12).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }

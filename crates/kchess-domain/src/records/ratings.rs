@@ -1,4 +1,4 @@
-//! `crates/kchess-wasm/js/ratings.ts`: rating-history keys, display names, histories rebuilt from
+//! Rating-history keys, display names, histories rebuilt from
 //! games and the merge of Lichess's own histories with them.
 
 use std::cmp::Ordering;

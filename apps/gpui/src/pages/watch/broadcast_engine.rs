@@ -1,4 +1,4 @@
-//! The engine on broadcasts (`BroadcastPanel.vue`, `useBroadcastEvaluations`): Stockfish on the
+//! The engine on broadcasts: Stockfish on the
 //! board followed, with its lines, arrows and evaluation bar, and short sequential estimates for
 //! the grid's evaluation bars. One engine serves both, and none of it runs during the player's own
 //! Lichess game.

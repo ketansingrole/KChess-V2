@@ -1,4 +1,4 @@
-//! The study library as the core keeps it (`stores/studies.ts`): every change is a command the core
+//! The study library as the core keeps it: every change is a command the core
 //! makes (`studyCommand`), sent in order by one writer off the UI thread, so the app can wait for
 //! them while it quits. Each command's answer comes back to its caller; the library shows the
 //! studies the answers name. A command the core refuses shows its error and what the profile keeps.
@@ -30,7 +30,7 @@ enum Write {
 }
 
 /// The moves each chapter held when this window last opened or saved it, by study and chapter
-/// (`bases` in `stores/studies.ts`). Chapter saves are based on them (`basedOn`), so they never
+/// (`Bases`). Chapter saves are based on them (`basedOn`), so they never
 /// overwrite another window's newer moves; a library refresh leaves them.
 type Bases = Arc<Mutex<HashMap<(String, String), String>>>;
 

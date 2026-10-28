@@ -1,4 +1,4 @@
-//! Computer moves (`crates/kchess-node/js/engine.ts`'s `bestMove`, `stopEngine`, `resetEngine` and
+//! Computer moves (`bestMove`, `stopEngine`, `resetEngine` and
 //! `computerPlaying`). One warm engine process serves consecutive moves; a new search supersedes
 //! the one running (`SUPERSEDED`), and the process goes after two idle minutes.
 //!
@@ -79,7 +79,7 @@ struct Warm {
     uci: Arc<UciController>,
 }
 
-/// `serviceState` of `engine.ts`.
+/// The search service's state.
 #[derive(Default)]
 struct State {
     /// Bumped by every `stopEngine`; a search that sees a newer value was superseded.
@@ -189,7 +189,7 @@ impl Search {
         self.shared.ctx.scheduler.search_threads()
     }
 
-    /// `trustEnginePath`: an engine path the renderer may persist.
+    /// `trustEnginePath`: an engine path the frontends may persist.
     pub fn trust_engine_path(&self, path: &Path) {
         self.shared.trust.trust(path);
     }

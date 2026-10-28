@@ -1,4 +1,4 @@
-//! The analysis board's move tree (`crates/kchess-wasm/js/analysisTree.ts`).
+//! The analysis board's move tree.
 
 use serde::Serialize;
 use shakmaty::Position;
@@ -34,7 +34,7 @@ fn ply_of(pos: &VariantPosition) -> u32 {
     (pos.fullmoves().get() - 1) * 2 + u32::from(!pos.turn().is_white())
 }
 
-/// chessops `startingPosition(headers)`.
+/// `startingPosition(headers)`.
 fn starting_position(game: &Game) -> Option<VariantPosition> {
     let variant = rules::pgn_variant(game.header("Variant"))?;
     match game.header("FEN").filter(|fen| !fen.is_empty()) {

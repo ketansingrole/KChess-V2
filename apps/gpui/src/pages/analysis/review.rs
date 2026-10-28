@@ -1,5 +1,4 @@
-//! The analysis board's game review (`AnalysisReview.vue`, `EvalChart.vue` and the review parts of
-//! `stores/analysis.ts`): both sides' accuracy, labelled moves, centipawn loss and accuracy by
+//! The analysis board's game review: both sides' accuracy, labelled moves, centipawn loss and accuracy by
 //! phase, and the evaluation chart. Reviews are the core's (`reviewRequest`); the board shows the
 //! review of its main line, or of the game before moves were added to it.
 
@@ -778,7 +777,7 @@ impl AnalysisPage {
         }
     }
 
-    /// The Review tab (`AnalysisReview.vue`).
+    /// The Review tab.
     pub(super) fn render_review(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let key = self.mainline_key();
         let review = self.review(cx);
@@ -1164,7 +1163,7 @@ impl AnalysisPage {
     }
 }
 
-/// `EvalChart.vue`: the game's evaluation over time, Lichess-style. White's winning chances fill
+/// The game's evaluation over time, Lichess-style. White's winning chances fill
 /// from the bottom, the review's labels sit on the curve, and a click goes to that move.
 pub(super) fn eval_chart(
     points: Vec<Option<f64>>,
@@ -1289,7 +1288,7 @@ mod tests {
     use crate::game::rules;
     use serde_json::json;
 
-    /// A tried move is labelled as Electron labels it (`NAGS` in `stores/puzzleAnalysis.ts`), and
+    /// A tried move is labelled as the app labels it (`NAGS`), and
     /// the glyph the rules give that NAG is the one the move list shows.
     #[test]
     fn a_judged_tried_move_gets_its_glyph() {

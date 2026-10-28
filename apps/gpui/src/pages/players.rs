@@ -1,4 +1,4 @@
-//! Players (`pages/players.vue`): look up any Lichess player — their profile, whether they are
+//! Players: look up any Lichess player — their profile, whether they are
 //! online, your record against them, their rating history, their record in a speed, and their
 //! recent games — and follow, challenge, message or watch them.
 
@@ -1417,7 +1417,7 @@ pub fn open_exported(
         .detach();
 }
 
-/// `PlayerLink.vue`: a name that opens the player's profile; `ring` outlines it under the keyboard.
+/// A name that opens the player's profile; `ring` outlines it under the keyboard.
 pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Stateful<Div> {
     div()
         .id(id)

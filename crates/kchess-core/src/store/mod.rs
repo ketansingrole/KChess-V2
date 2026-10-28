@@ -1,6 +1,4 @@
-//! KChess's main database (`kchess.db`), the storage the TypeScript services used to own
-//! (`crates/kchess-node/js/{db,migrations,store,library,reviewStore,runs,insights,usage,voiceLog,
-//! setupPositionLookup}.ts`, now removed). The Rust core is its only owner: one connection, opened
+//! KChess's main database (`kchess.db`), the storage the services share. The Rust core is its only owner: one connection, opened
 //! and migrated on first use, with every storage method dispatched from here.
 
 pub mod debug;
@@ -253,7 +251,7 @@ pub struct StoreContext<'a> {
     pub cache: &'a StoreCache,
 }
 
-/// Open `kchess.db` as `db.ts` did: WAL, foreign keys, NORMAL sync, memory temp store, a 20 MB
+/// Open `kchess.db`: WAL, foreign keys, NORMAL sync, memory temp store, a 20 MB
 /// cache, migrations, then 0600 permissions.
 pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
     let db =

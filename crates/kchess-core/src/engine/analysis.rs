@@ -1,4 +1,4 @@
-//! Infinite and bounded analysis (`crates/kchess-node/js/analysis.ts`). A request streams
+//! Infinite and bounded analysis. A request streams
 //! `engine:analysis` updates as the engine's lines change (at most every 120 ms), and ends with
 //! exactly one final update: `completed` when the search finished, `interrupted` when it was
 //! superseded or stopped (never completed), or `failed` with the error.
@@ -68,7 +68,7 @@ pub struct EngineLine {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisUpdate {
-    /// The request this belongs to; the renderer drops updates of superseded ones.
+    /// The request this belongs to; the frontends drop updates of superseded ones.
     pub id: u64,
     pub fen: String,
     pub depth: f64,
@@ -114,7 +114,7 @@ struct Engine {
     uci: Arc<UciController>,
 }
 
-/// `serviceState` of `analysis.ts`.
+/// The analysis service's state.
 #[derive(Default)]
 struct State {
     engine: Option<Engine>,

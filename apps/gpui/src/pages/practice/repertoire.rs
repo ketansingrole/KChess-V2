@@ -1,4 +1,4 @@
-//! Repertoire (`OpeningTrainer.vue`, `useOpeningDrill.ts`): drill a repertoire. Any saved study is a
+//! Repertoire: drill a repertoire. Any saved study is a
 //! tree of moves; KChess plays the other side's moves from it (favouring the lines you get wrong)
 //! and you answer with one of yours. One chapter can be drilled, or all of them: chapters from the
 //! same starting position are one tree. An opening chosen on the Openings page is drilled without a

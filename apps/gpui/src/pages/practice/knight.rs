@@ -1,4 +1,4 @@
-//! Knight paths (`KnightPath.vue`): get the knight to the marked square in the fewest jumps. The
+//! Knight paths: get the knight to the marked square in the fewest jumps. The
 //! shortest path is worked out by the rules and told up front; a timed run keeps a best per
 //! difficulty and length, untimed practice none.
 

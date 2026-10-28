@@ -1,6 +1,5 @@
-//! The core's facade: every `CoreApi` method (`CORE_METHODS` in `crates/kchess-contracts/ts/core.ts`) and
-//! the `KChessCore` extras, answered by the Rust core. This is what `service.ts` decided before the
-//! migration: argument contracts (`kchess_domain::misc::validate_arguments`), assistance gating
+//! The core's facade: every `CoreApi` method and the `KChessCore` extras, answered by the Rust
+//! core. It decides argument contracts (`kchess_domain::misc::validate_arguments`), assistance gating
 //! during live games, account and login epochs, the settings that stop engines, the challenge and
 //! tournament bookkeeping, the projections of settings and data, and the close sequence.
 //!
@@ -173,7 +172,7 @@ pub const FACADE_METHODS: &[&str] = &[
 /// The error of a closed core (`The KChess core is closed.`).
 pub const CLOSED: &str = "The KChess core is closed.";
 
-/// The puzzle database `puzzleDbInstall` downloads (`PUZZLE_DB_URL`, `crates/kchess-node/js/puzzleDb.ts`).
+/// The puzzle database `puzzleDbInstall` downloads (`PUZZLE_DB_URL`).
 pub(crate) const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
 
 /// The profiles in use by a live core, by canonical data directory; each holds the claim's token,

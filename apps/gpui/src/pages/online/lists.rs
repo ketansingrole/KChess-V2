@@ -1,5 +1,5 @@
-//! Beside the form: the challenges to and from the connected accounts (`ChallengeList.vue`) and
-//! the games in progress (`OngoingGames.vue`).
+//! Beside the form: the challenges to and from the connected accounts and
+//! the games in progress.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};

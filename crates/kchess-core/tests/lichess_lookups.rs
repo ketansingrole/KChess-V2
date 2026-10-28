@@ -1,6 +1,5 @@
-//! Position explorer and cloud evaluation (`crates/kchess-node/js/positionLookup.ts` and `cloudEval.ts`)
-//! over local fixtures. Ports `tests/core/position-lookup.test.ts` and the explorer scenarios
-//! of `tests/core/watch-and-lookup.test.ts`, plus the cloud evaluation rules.
+//! Position explorer and cloud evaluation
+//! over local fixtures: the lookup scenarios, the explorer and the cloud evaluation rules.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;
@@ -664,8 +663,8 @@ impl kchess_core::lichess::lookups::ExplorerLogin for FixedLogin {
     }
 }
 
-/// The opening explorer is asked with the account's token; without one it is not asked at all
-/// (`setupPositionLookup.ts`), and the tablebase never carries a login.
+/// The opening explorer is asked with the account's token; without one it is not asked at all,
+/// and the tablebase never carries a login.
 #[tokio::test]
 async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_is() {
     let fixture = serve(|_| Reply::Json(200, opening_body().to_string())).await;

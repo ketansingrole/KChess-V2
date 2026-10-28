@@ -1,6 +1,6 @@
 //! Fetch the latest official Stockfish for this machine into a folder, verified exactly as the
 //! app's own download is (`install_managed_engine`), and print the executable's path. Packaging
-//! (`tooling/gpui-package.mjs`) ships it beside the GPUI app as its bundled engine. A folder
+//! ships it beside the GPUI app as its bundled engine. A folder
 //! that already holds the latest release downloads nothing. `GH_TOKEN` or `GITHUB_TOKEN`, when
 //! set, authenticates the release check (CI runners share GitHub's anonymous rate limit).
 //!

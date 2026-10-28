@@ -1,6 +1,4 @@
-//! Lichess studies over local fixtures (`crates/kchess-node/js/studies.ts`). Ports
-//! `tests/core/study-sync.test.ts` and the study splitting case of
-//! `tests/core/watch-and-lookup.test.ts`.
+//! Lichess studies over local fixtures: study sync and the splitting of a study into chapters.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;

@@ -1,4 +1,4 @@
-//! Home (`pages/index.vue`): where to start, the recent games played here, and connecting Lichess.
+//! Home: where to start, the recent games played here, and connecting Lichess.
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

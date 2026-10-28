@@ -1,4 +1,4 @@
-//! The arena schedule (`TournamentTimeline.vue`): one row per series, a bar per arena coloured by
+//! The arena schedule: one row per series, a bar per arena coloured by
 //! kind, the hours along the top and a line for now, scrolled to now when it opens.
 
 use gpui_kit::component::{h_flex, v_flex};

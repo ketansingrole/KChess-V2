@@ -1,4 +1,4 @@
-//! `ComputerGame` (`crates/kchess-wasm/js/gameSession.ts`): a game against the engine, its clock, the
+//! `ComputerGame`: a game against the engine, its clock, the
 //! engine's replies and the cancellation of work that is no longer wanted.
 
 use serde::{Deserialize, Serialize};

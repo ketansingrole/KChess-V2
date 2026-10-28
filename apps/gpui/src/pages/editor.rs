@@ -1,4 +1,4 @@
-//! The board editor (`pages/editor.vue`, `EditorBoard.vue`): set up any position, as on Lichess.
+//! The board editor: set up any position, as on Lichess.
 //! Drag pieces anywhere (off the board removes them), drag new ones in from the spare rows, or
 //! pick a spare piece (or the bin) and click squares; choose the side to move, castling rights
 //! and en passant, or type a FEN. Then analyse the position or play it.
@@ -592,7 +592,7 @@ impl Render for EditorPage {
             .child(self.render_spares(top, &set, board_size, cx, &palette))
             .child(crate::board::cached(&self.board))
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
-            // Voice sits at the end of its row, as in `BoardEditor.vue`.
+            // Voice sits at the end of its row.
             .child(h_flex().justify_end().child(self.voice.bar(
                 cx.entity().downgrade(),
                 |this: &mut Self| &mut this.voice,

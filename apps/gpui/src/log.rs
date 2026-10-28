@@ -1,6 +1,6 @@
 //! The app's log: core and app lines, `[scope] message`, to stderr and to the profile's bounded
-//! `logs/kchess.log` (`DiagnosticLog` in `crates/kchess-node/js/diagnosticLog.ts`, which Electron
-//! writes to the same files), for Settings → Data & storage → Export diagnostics. Lines are
+//! `logs/kchess.log` (the Electron app writes to the same
+//! files), for Settings → Data & storage → Export diagnostics. Lines are
 //! redacted as they are written: tokens, credentials and email addresses never reach the file.
 //! Debug lines appear only with `KCHESS_DEBUG=1`.
 

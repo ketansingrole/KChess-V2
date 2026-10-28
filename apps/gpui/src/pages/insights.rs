@@ -1,4 +1,4 @@
-//! Lichess insights (`pages/insights.vue`): an account's synced games broken down by colour,
+//! Lichess insights: an account's synced games broken down by colour,
 //! speed, opponent, length, day, time of day, ending and opening, filtered by speed, period and
 //! rated or casual.
 

@@ -1,4 +1,4 @@
-//! An in-memory `ReviewStorage` that follows `crates/kchess-node/js/reviewStore.ts` (which review
+//! An in-memory `ReviewStorage` that follows the review store (which review
 //! ranking, game links, account checks and the Lichess check marks), and a scripted `ReviewHost`.
 
 use std::collections::{BTreeSet, HashMap, HashSet};

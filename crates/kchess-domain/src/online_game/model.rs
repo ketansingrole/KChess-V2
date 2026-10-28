@@ -1,4 +1,4 @@
-//! The state of one online game as `OnlineGame` holds it (`crates/kchess-wasm/js/onlineGame.ts`), what a
+//! The state of one online game as `OnlineGame` holds it, what a
 //! transition reads from its host, and what it returns to the driver: the next state, the effects
 //! the host must see in order, and any network call the driver must make.
 
@@ -10,10 +10,10 @@ use crate::records;
 use crate::replay::replay_setup;
 use crate::rules::{default_position, lichess_variant, make_fen};
 
-/// The standard start (`STANDARD_SETUP` in `variant.ts`).
+/// The standard start.
 pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-/// The variants a Lichess key may name (`VARIANTS` in `variant.ts`).
+/// The variants a Lichess key may name.
 const VARIANTS: [&str; 8] = [
     "standard",
     "chess960",

@@ -1,6 +1,5 @@
-//! Engine status, identity and trust (formerly the status parts of `crates/kchess-node/js/engine.ts`):
-//! which engine would run, the command that starts it, a key that changes when the executable
-//! does, the engine paths the renderer may persist, and whether the computer is playing.
+//! Engine status, identity and trust: which engine would run, the command that starts it, a key that changes when the executable
+//! does, the engine paths the frontends may persist, and whether the computer is playing.
 //! Search orchestration (`bestMove`, `stopEngine`) belongs to the UCI controller port.
 
 use std::collections::{BTreeMap, HashSet};
@@ -16,7 +15,7 @@ use super::managed::{ManagedEngine, Target, can_download, executable_name, manag
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
-/// The bundled Stockfish UCI script, relative to the application: the `stockfish` npm package's
+/// The bundled Stockfish UCI script, relative to the application: the
 /// lite multi-threaded WASM build, run as a UCI process by the host's own Node runtime. The host
 /// resolves it to an absolute path for `EngineLocations::bundled_script`.
 pub const BUNDLED_ENGINE_SCRIPT: &str = "node_modules/stockfish/bin/stockfish-19-lite.js";
@@ -189,7 +188,7 @@ pub fn computer_playing(active: bool, last_move_at: i64, within_ms: i64, now: i6
     active || now.saturating_sub(last_move_at) < within_ms
 }
 
-/// The engine paths the renderer may persist: the managed engine, or one the user picked in the
+/// The engine paths the frontends may persist: the managed engine, or one the user picked in the
 /// native file dialog this session (or that is already saved).
 #[derive(Default)]
 pub struct EngineTrust {

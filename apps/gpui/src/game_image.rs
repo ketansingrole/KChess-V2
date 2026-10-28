@@ -1,4 +1,4 @@
-//! Pictures of a game (`utils/gameImage.ts`): a PNG of one position, or an animated GIF of the
+//! Pictures of a game: a PNG of one position, or an animated GIF of the
 //! whole game, on the player's board and pieces with the players' names above and below.
 
 use std::collections::HashMap;

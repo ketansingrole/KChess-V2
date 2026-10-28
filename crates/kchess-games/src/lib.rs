@@ -24,7 +24,7 @@ pub fn whole(value: &Value) -> u64 {
         .unwrap_or_default()
 }
 
-/// A rules method by name, as `rules()` calls it in the renderer.
+/// A rules method by name (`kchess_domain::api::call`), with its JSON answer.
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
     let text = kchess_domain::api::call(method, &Value::Array(args.to_vec()).to_string())?;
     serde_json::from_str(&text).map_err(|e| format!("{method} answered something unreadable: {e}"))

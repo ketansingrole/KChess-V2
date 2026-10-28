@@ -2,10 +2,9 @@
 //! a palette resolves to. The presets come from OpenChamber's built-in themes (MIT,
 //! <https://github.com/openchamber/openchamber>), reduced to the colors KChess uses, with alpha
 //! colors flattened over the theme's own background; names and palettes belong to their
-//! original authors (see `apps/desktop/app/assets/ATTRIBUTION.md`).
+//! original authors (see `THIRD_PARTY_NOTICES.md`).
 //!
-//! `colors` is what the Electron renderer sets as Nuxt UI's CSS variables and what the GPUI app
-//! paints with, so a theme looks the same in both. Colors a palette leaves out are mixed from
+//! `colors` is what the GPUI app paints with, so a theme looks the same in every frontend. Colors a palette leaves out are mixed from
 //! `bg`, `text` and `primary` as CSS `color-mix(in srgb, a p%, b)` would mix them.
 
 use serde_json::{Map, Value};
@@ -150,9 +149,8 @@ pub fn colors(palette: &Value, dark: bool) -> Option<Map<String, Value>> {
     )
 }
 
-/// The colors KChess ships with (the default theme, which has no palette): Nuxt UI's slate
-/// neutrals with the overrides of `apps/desktop/app/assets/css/main.css`, as `#rrggbb`. The
-/// Electron renderer gets them from its stylesheet; the GPUI app paints with these.
+/// The colors KChess ships with (the default theme, which has no palette): slate
+/// neutrals with KChess's overrides, as `#rrggbb`. The GPUI app paints with these.
 pub fn default_colors(dark: bool) -> Map<String, Value> {
     // Tailwind's slate, converted from its OKLCH values.
     const SLATE: [(u16, &str); 10] = [
@@ -192,7 +190,7 @@ pub fn default_colors(dark: bool) -> Map<String, Value> {
             slate(900),
             "#91af6a",
             "#62b57a",
-            // Nuxt UI's dark warning and info: yellow-400 and blue-400.
+            // The dark warning and info colors: yellow-400 and blue-400.
             "#fdc700",
             "#e07979",
             "#51a2ff",

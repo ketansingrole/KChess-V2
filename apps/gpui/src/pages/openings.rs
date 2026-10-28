@@ -1,6 +1,6 @@
-//! Openings (`pages/openings.vue`): the browser (`OpeningsBrowser.vue`) with a search, the
+//! Openings: the browser with a search, the
 //! openings opened lately, popular ones and every family by first move; and one opening
-//! (`OpeningsDetail.vue`) on a board to explore, with its moves, its Wikibooks description and
+//! on a board to explore, with its moves, its Wikibooks description and
 //! the ways to train it. The names and the tree are the shared rules' (`openingTree`).
 
 use std::collections::{HashMap, HashSet};
@@ -565,7 +565,7 @@ impl OpeningsPage {
         .into_any_element()
     }
 
-    /// `OpeningsTreeNode.vue`: one entry, with its variations below it once opened.
+    /// One entry, with its variations below it once opened.
     fn render_node(
         &self,
         node: &OpeningNode,

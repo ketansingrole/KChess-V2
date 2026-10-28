@@ -1,5 +1,5 @@
-//! Tables the validators check against, copied from `crates/kchess-contracts/ts/types.ts`,
-//! `contracts/settings.ts`, `domain/variant.ts` and `domain/library.ts`.
+//! Tables the validators check against: the contract types, settings, variants and library
+//! documents.
 
 pub const APPEARANCES: &[&str] = &["system", "light", "dark"];
 pub const COORDINATE_MODES: &[&str] = &["none", "inside", "outside"];
@@ -142,7 +142,7 @@ pub const EXPLORER_SPEEDS: &[&str] = &[
 pub const EXPLORER_RATINGS: &[f64] = &[
     400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
 ];
-/// Lichess variant keys KChess can play (`domain/variant.ts`).
+/// Lichess variant keys KChess can play.
 pub const VARIANTS: &[&str] = &[
     "standard",
     "chess960",
@@ -153,7 +153,7 @@ pub const VARIANTS: &[&str] = &[
     "horde",
     "racingKings",
 ];
-/// The settings the core keeps (`contracts/settings.ts`), in its order.
+/// The settings the core keeps, in its order.
 pub const CORE_SETTINGS_KEYS: &[&str] = &[
     "enginePath",
     "engineLevels",
@@ -173,7 +173,7 @@ pub const SESSION_KINDS: &[&str] = &[
     "archive:board",
     "archive:clock",
 ];
-/// Earlier releases' renderer storage keys (`domain/library.ts`), in its order.
+/// Earlier releases' storage keys, in its order.
 pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
     "kchess:studies:v1",
     "kchess:game-history:v1",
@@ -189,7 +189,7 @@ pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
 ];
 pub const TOURNAMENT_SYSTEMS: &[&str] = &["arena", "swiss"];
 
-/// The renderer pages diagnostics may name (`RENDERER_ROUTES`, `apps/desktop/contracts/rendererDiagnostics.ts`).
+/// The pages diagnostics may name (`RENDERER_ROUTES`).
 pub const RENDERER_ROUTES: &[&str] = &[
     "/",
     "/online",
@@ -209,7 +209,7 @@ pub const RENDERER_ROUTES: &[&str] = &[
     "/settings",
 ];
 
-/// The timings the renderer may record (`PERFORMANCE_NAMES`): fixed names, then one per route.
+/// The timings a frontend may record (`PERFORMANCE_NAMES`): fixed names, then one per route.
 pub fn performance_names() -> Vec<String> {
     ["app.ready", "board.frame", "voice.activation"]
         .into_iter()

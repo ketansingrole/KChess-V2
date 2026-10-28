@@ -1,5 +1,5 @@
 //! The engine's evaluation as the analysis board and the broadcast board show it: the bar beside
-//! the board (`EvalBar.vue`) and the lines under the score (`EngineLines.vue`).
+//! the board and the lines under the score.
 
 use std::rc::Rc;
 
@@ -21,7 +21,7 @@ const PV_ROW: Pixels = px(34.);
 /// Play an engine line's moves up to the one at an index.
 pub type PlayLine = Rc<dyn Fn(&[String], usize, &mut Window, &mut App)>;
 
-/// `EvalBar.vue`: White's share fills from White's side of the board; stripes until there is
+/// The evaluation bar: White's share fills from White's side of the board; stripes until there is
 /// something to show.
 pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) -> Canvas<()> {
     let known = line.is_some() || result.is_some();
@@ -84,7 +84,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
     .flex_none()
 }
 
-/// `EngineLines.vue`: each line's score and its moves from `fen`, a click playing the line
+/// Each line's score and its moves from `fen`, a click playing the line
 /// up to the move (`on_play`); `pending` rows wait for lines still to come.
 pub fn engine_lines(
     fen: &str,

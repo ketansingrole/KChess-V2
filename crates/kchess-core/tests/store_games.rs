@@ -1,6 +1,5 @@
 //! The SQLite game library (`store/games.rs`): paging and filters, aggregates, pending games,
 //! retention, indexes, and the removal of account data after logout, removal or clearing.
-//! Ports `tests/core/game-library.test.ts` case for case.
 
 mod support;
 

@@ -124,7 +124,7 @@ fn json<T: serde::Serialize>(value: T) -> Result<Value> {
 }
 
 /// Where a managed engine call works, for tests only: a directory and a release endpoint. The
-/// renderer never sends these; they are honoured only when the store's test switch is on
+/// frontends never send these; they are honoured only when the store's test switch is on
 /// (`KCHESS_STORE_DEBUG=1`), and otherwise refused.
 #[derive(Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,7 +213,7 @@ impl Core {
                 reviews.restart_review_engine();
             })
         };
-        // Usage events are counted in batches (`usage.ts`) before the services' host sees them.
+        // Usage events are counted in batches before the services' host sees them.
         let usage = UsageBatch::new(
             Arc::clone(&database),
             Arc::clone(&host),
@@ -567,7 +567,7 @@ impl Core {
         self.database.call(method, &args)
     }
 
-    /// The network accounting methods (`usage.ts`).
+    /// The network accounting methods.
     fn usage_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
             "usage.close" => {

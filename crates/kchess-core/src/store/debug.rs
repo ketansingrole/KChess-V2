@@ -11,9 +11,9 @@ use crate::error::{CoreError, Result};
 /// The debug methods run only when `KCHESS_STORE_DEBUG=1` is set in the process (tests set it);
 /// otherwise they are unknown methods, like any other name the core does not have.
 ///
-/// Intentionally runtime-gated, not `cfg(test/debug_assertions)`: desktop unit tests
-/// and e2e drive the *release-built* native module (`pnpm run build:native`), where
-/// `debug_assertions` is off, yet still need to seed historical rows and read dumps.
+/// Intentionally runtime-gated, not `cfg(test/debug_assertions)`: tests and end-to-end runs
+/// drive a *release build*, where `debug_assertions` is off, yet still need to seed historical
+/// rows and read dumps.
 /// Packaged builds never set the variable, and `core.rs` refuses the test-only
 /// Lichess/voice overrides unless it is set.
 pub fn enabled() -> bool {

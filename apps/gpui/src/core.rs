@@ -299,8 +299,8 @@ impl CoreBridge {
         async move { task.await.ok() }
     }
 
-    /// Run a core method and wait for it: only before the window opens, as the Electron renderer
-    /// waits for its library and preferences before it mounts.
+    /// Run a core method and wait for it: only before the window opens, as the app needs
+    /// its library and preferences before it draws.
     pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
         let answer = self.call(method, args);
         self.runtime.block_on(answer)
@@ -397,8 +397,7 @@ fn flush_all(cx: &mut App) -> Vec<BoxedSave> {
     pending
 }
 
-/// How long saving before quitting may take before the person is asked what to do, as the
-/// Electron app's `QuitPreparation` waits for its renderer.
+/// How long saving before quitting may take before the person is asked what to do.
 const SAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// What became of saves waited for until a deadline.

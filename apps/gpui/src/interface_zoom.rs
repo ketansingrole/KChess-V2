@@ -1,4 +1,4 @@
-//! Interface size (`electron/main/interfaceZoom.ts`, `contracts/interfaceZoom.ts`): the whole
+//! Interface size: the whole
 //! window scaled together, like a browser's page zoom, through the window zoom KChess adds to
 //! GPUI (vendor/gpui-pre/KCHESS-PATCH.md). `auto` follows the display; the setting is the
 //! profile's `interface-zoom.json`, which Electron keeps too. ⌘+ and ⌘− step it, ⌘0 returns to

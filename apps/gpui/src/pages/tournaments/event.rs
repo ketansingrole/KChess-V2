@@ -1,4 +1,4 @@
-//! One tournament (`TournamentEvent.vue`): joining, its details, the standings, the top game,
+//! One tournament: joining, its details, the standings, the top game,
 //! the games in progress and the totals.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

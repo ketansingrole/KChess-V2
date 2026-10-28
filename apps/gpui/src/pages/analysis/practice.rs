@@ -1,5 +1,4 @@
-//! Practising a reviewed game's mistakes on the analysis board (`stores/reviewPractice.ts`,
-//! `ReviewPractice.vue`), as Lichess's "learn from your mistakes" does: the game's positions in
+//! Practising a reviewed game's mistakes on the analysis board, as Lichess's "learn from your mistakes" does: the game's positions in
 //! practice, in move order, each with the game's moves and chart around it. Answers schedule the
 //! positions as Practice → Your mistakes does (`answerMistake`).
 
@@ -316,7 +315,7 @@ impl AnalysisPage {
         }
     }
 
-    /// The practice card (`ReviewPractice.vue`), in place of the engine's lines.
+    /// The practice card, in place of the engine's lines.
     pub(super) fn render_practice(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let Some(practice) = &self.practice else {
             return div().into_any_element();

@@ -1,4 +1,4 @@
-//! Studies (`pages/studies.vue`): the study library on this computer. Browse, search and open saved
+//! Studies: the study library on this computer. Browse, search and open saved
 //! studies on the analysis board, start or import one, and rename, copy, drill, upload or delete
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 

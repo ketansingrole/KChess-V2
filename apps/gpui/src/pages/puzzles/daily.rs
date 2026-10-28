@@ -1,4 +1,4 @@
-//! Puzzles → Daily (`PuzzleDaily.vue`, the store's `loadDaily`): Lichess's puzzle of the day on its
+//! Puzzles → Daily: Lichess's puzzle of the day on its
 //! own board, with the status panel the Train tab uses. A later UTC day brings the next one.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

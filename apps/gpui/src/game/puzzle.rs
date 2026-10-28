@@ -1,4 +1,4 @@
-//! Puzzle training (`crates/kchess-wasm/js/puzzleSession.ts` and `puzzle.ts`). The session's
+//! Puzzle training. The session's
 //! transitions are Rust (`kchess-domain/src/trainer/puzzle_session.rs`); this keeps its state and
 //! private state, and hands the page the host call a transition asks for (a puzzle to fetch, a
 //! result to send) and the attempt to log. A single puzzle on the board is `PuzzleState`, moved on

@@ -1,5 +1,4 @@
-//! Puzzles (`pages/puzzles.vue`): the Train tab (`PuzzleTrain.vue`, `PuzzleBoard.vue`,
-//! `PuzzleStatusPanel.vue`) with its three modes: Lichess practice, the downloaded database, and
+//! Puzzles: the Train tab with its three modes: Lichess practice, the downloaded database, and
 //! rated puzzles. The session's transitions are Rust (`game/puzzle.rs`); this page fetches what
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
@@ -677,7 +676,7 @@ impl PuzzlesPage {
     }
 }
 
-/// `PuzzleStatusPanel.vue`: what to do, how it went, and the buttons that help.
+/// What to do, how it went, and the buttons that help.
 /// What the status panel's Next button does.
 pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 

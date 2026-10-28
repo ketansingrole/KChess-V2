@@ -1,4 +1,4 @@
-//! Puzzles → History (`PuzzleHistory.vue`, `utils/puzzleAttempts.ts`): every attempt, the ones kept
+//! Puzzles → History: every attempt, the ones kept
 //! on this computer (with partial credit) and the ones Lichess recorded (only the result), in one
 //! list, each to try again or study on the analysis board; with today's and all-time totals.
 

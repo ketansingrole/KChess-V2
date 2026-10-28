@@ -1,5 +1,4 @@
-//! Queries over the offline puzzle database: the Rust port of `crates/kchess-node/js/puzzleQueries.ts`
-//! and the schema of `crates/kchess-node/js/puzzleWorker.ts`. Only the puzzle database's single owner
+//! Queries over the offline puzzle database: and its schema. Only the puzzle database's single owner
 //! calls these; they take the connection, never open one.
 //!
 //! Randomness: the TypeScript uses `Math.random()`. Here the caller supplies the generator as
@@ -14,7 +13,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use kchess_domain::{position, rules};
 
-/// A row of the puzzle table as the importer hands it over (`DbPuzzle` in `domain/puzzle.ts`).
+/// A row of the puzzle table as the importer hands it over.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbPuzzle {
@@ -33,7 +32,7 @@ pub struct DbPuzzle {
     pub game_id: String,
 }
 
-/// One puzzle, whichever source it came from (`Puzzle` in `contracts/types.ts`).
+/// One puzzle, whichever source it came from (`Puzzle`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Puzzle {
@@ -55,7 +54,7 @@ pub struct Puzzle {
     pub game_id: Option<String>,
 }
 
-/// `PuzzleDbStatus` in `contracts/types.ts`.
+/// `PuzzleDbStatus`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDbStatus {
@@ -69,7 +68,7 @@ pub struct PuzzleDbStatus {
     pub busy: bool,
 }
 
-/// `LocalPuzzleQuery` in `contracts/types.ts`.
+/// `LocalPuzzleQuery`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalPuzzleQuery {
@@ -83,7 +82,7 @@ pub struct LocalPuzzleQuery {
     pub count: f64,
 }
 
-/// `LocalLadderQuery` in `contracts/types.ts`.
+/// `LocalLadderQuery`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalLadderQuery {
@@ -121,7 +120,7 @@ const COLUMNS: &str =
 /// A row's angles, padded for whole-token `LIKE` matching: its themes and its opening keys.
 const ANGLES: &str = "(' ' || themes || ' ' || openings || ' ')";
 
-/// The `CREATE` statements and PRAGMAs of `puzzleWorker.ts`, run in the same order.
+/// The `CREATE` statements and PRAGMAs, run in this order.
 pub fn create_schema(db: &Connection) -> Result<(), String> {
     db.execute_batch(
         "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;

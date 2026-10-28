@@ -1,5 +1,4 @@
-//! Game history → Lichess (`pages/history.vue`'s Lichess tab, `stores/kchess/gameHistory.ts`,
-//! `GameRow.vue`): the synced games of the connected and followed accounts, a page at a time,
+//! Game history → Lichess: the synced games of the connected and followed accounts, a page at a time,
 //! filtered by account, result and rating; each with its review's accuracy; opened to go through
 //! move by move or to review on the analysis board.
 
@@ -657,7 +656,7 @@ impl HistoryPage {
             .into_any_element()
     }
 
-    /// `GameRow.vue detailed`: result, opponent and opening, mode, rating change, accuracy, date.
+    /// Result, opponent and opening, mode, rating change, accuracy, date.
     fn lichess_pager(
         &self,
         current: usize,
@@ -706,7 +705,7 @@ impl HistoryPage {
     }
 }
 
-/// How much a game row says (`GameRow.vue`'s `detailed` and `hide-accuracy`).
+/// How much a game row says (`detailed`, with or without accuracy).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RowDetail {
     /// Result, opponent, mode and date.
@@ -718,7 +717,7 @@ pub enum RowDetail {
     NoReview,
 }
 
-/// `GameRow.vue`: a game from its account's side, in as much detail as asked for.
+/// A game from its account's side, in as much detail as asked for.
 pub fn game_row(
     id: impl Into<ElementId>,
     game: &Value,

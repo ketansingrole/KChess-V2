@@ -1,4 +1,4 @@
-//! Interactive lessons (`crates/kchess-wasm/js/lessons.ts`): the checkmate and endgame courses
+//! Interactive lessons: the checkmate and endgame courses
 //! (`data/lessons.json`), and how a lesson step stands after a line of moves.
 //!
 //! A step is read, followed (`line`: your moves alternate with scripted replies), solved

@@ -1,4 +1,4 @@
-//! Practice → Endgames (`EndgameTraining.vue`): the checkmate and endgame courses, and the drills
+//! Practice → Endgames: the checkmate and endgame courses, and the drills
 //! against Stockfish. The courses and drills are the shared data the Rust rules check
 //! (`data/lessons.json`, `data/training.json`); finished chapters and drills are runs the core keeps.
 
@@ -124,7 +124,7 @@ pub enum TrainerEvent {
     Saved(Value),
 }
 
-/// Each course's card icon (`courseIcons.ts`).
+/// Each course's card icon.
 fn course_icon(id: &str) -> Icon {
     match id {
         "piece-checkmates-1" => icon("chess-queen"),

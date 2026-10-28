@@ -1,5 +1,5 @@
 //! KChess as a GPUI Kit application over the Rust core: the same profile, games, settings and
-//! accounts as the Electron app (`apps/desktop`), drawn natively.
+//! accounts as the Electron app, drawn natively.
 
 mod accounts;
 mod activity;

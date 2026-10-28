@@ -1,4 +1,4 @@
-//! A port of chessops' `PgnParser` (non-streaming, unbounded budget, as `parsePgn` runs it):
+//! The PGN parser (`PgnParser`, non-streaming, unbounded budget, as `parsePgn` runs it):
 //! the same headers, comments, NAGs, variations and game boundaries.
 // PGN is outside input: read it without indexing that can panic. Node ids are the one
 // exception, and only through `Game::node`.
@@ -112,7 +112,7 @@ impl Game {
         }
     }
 
-    /// A game with chessops's default headers and no moves (`defaultGame()`).
+    /// A game with the default headers and no moves (`defaultGame()`).
     pub fn empty() -> Game {
         Game::new()
     }
@@ -172,7 +172,7 @@ impl Game {
         self.headers.retain(|(k, _)| k != name);
     }
 
-    /// A parsed header: `Result` is normalized as chessops does.
+    /// A parsed header: `Result` is normalized.
     pub fn set_header(&mut self, name: &str, value: String) {
         let value = if name == "Result" {
             outcome(&value).to_string()
@@ -269,10 +269,10 @@ enum State {
     Comment,
 }
 
-/* ── Lexing: hand-written equivalents of chessops's two PGN regexes (checked against the
+/* ── Lexing: hand-written equivalents of the two PGN regexes (checked against the
 regexes themselves in the tests below) ── */
 
-/// chessops's header pattern, matched at the start of `line`:
+/// The header pattern, matched at the start of `line`:
 /// `^\s*\[([A-Za-z0-9][A-Za-z0-9_+#=:-]*)\s+"((?:[^"\\]|\\"|\\\\)*)"\]`.
 /// Returns the name, the raw (still escaped) value and where the match ends.
 fn match_header(line: &str) -> Option<(&str, &str, usize)> {
@@ -378,7 +378,7 @@ fn match_san(b: &[u8], p: usize) -> Option<usize> {
     None
 }
 
-/// The next move-text token at or after `pos`, as chessops's token regex finds it.
+/// The next move-text token at or after `pos`, as the token pattern finds it.
 fn next_token(line: &str, pos: usize) -> Option<(usize, usize)> {
     let b = line.as_bytes();
     let castle_letter = |i: usize| byte_in(b, i, b"O0o");
@@ -665,7 +665,7 @@ impl Parser {
     }
 }
 
-/* ── Writing (chessops `makePgn`) ── */
+/* ── Writing (`makePgn`) ── */
 
 /// Move text built token by token, joined by single spaces as `tokens.join(' ')` would.
 struct Tokens {
@@ -706,7 +706,7 @@ struct WriteFrame {
     in_variation: bool,
 }
 
-/// chessops `makePgn`: headers, comments, NAGs and variations exactly as chessops writes them.
+/// `makePgn`: headers, comments, NAGs and variations exactly as PGN is written.
 pub fn make_pgn(game: &Game) -> String {
     let mut out = String::with_capacity(64 + game.nodes.len() * 8);
     if !game.headers.is_empty() {
@@ -854,7 +854,7 @@ pub fn study_content(pgn: &str) -> String {
         .join("\n\n")
 }
 
-/// chessops `parsePgn`.
+/// `parsePgn`.
 pub fn parse_pgn(pgn: &str) -> Vec<Game> {
     let mut parser = Parser::new();
     let mut rest = pgn;
@@ -876,7 +876,7 @@ mod tests {
 
     const SPACE: &str = r"[\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]";
 
-    /// chessops's own patterns: the hand-written lexer must agree with them everywhere.
+    /// The reference patterns: the hand-written lexer must agree with them everywhere.
     fn header_regex() -> Regex {
         Regex::new(&format!(
             r#"^{SPACE}*\[([A-Za-z0-9][A-Za-z0-9_+#=:-]*){SPACE}+"((?:[^"\\]|\\"|\\\\)*)"\]"#

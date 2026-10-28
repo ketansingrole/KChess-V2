@@ -1,4 +1,4 @@
-//! The watched game beside what can be watched (`TvViewer.vue`, `useTvPosition.ts`): the live
+//! The watched game beside what can be watched: the live
 //! board with ticking clocks, the moves once Lichess's delayed export lines up, the head-to-head,
 //! a channel's earlier games, and Analyse.
 

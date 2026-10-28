@@ -1,4 +1,4 @@
-//! Replaying games (`replaySetup` in `variant.ts`, `replay` in `review.ts`).
+//! Replaying games (`replaySetup`, `replay`).
 
 use serde::Serialize;
 use shakmaty::variant::VariantPosition;

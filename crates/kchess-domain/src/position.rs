@@ -1,5 +1,5 @@
-//! Positions as the frontends hold them (`crates/kchess-wasm/js/position.ts`): a variant and a FEN,
-//! with every question about them answered here, as chessops answered it on its `Position`.
+//! Positions as the frontends hold them: a variant and a FEN,
+//! with every question about them answered here, as the original `Position` answered it.
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -10,7 +10,7 @@ use crate::js;
 use crate::pgn::{Game, make_pgn, parse_pgn};
 use crate::rules::{self, UciMove};
 
-/// chessops `isVariantEnd()`. Antichess ends only when the side to move has no pieces left.
+/// `isVariantEnd()`. Antichess ends only when the side to move has no pieces left.
 fn variant_end(pos: &VariantPosition) -> bool {
     match pos {
         VariantPosition::Antichess(_) => pos.us().is_empty(),
@@ -18,7 +18,7 @@ fn variant_end(pos: &VariantPosition) -> bool {
     }
 }
 
-/// chessops `allDests()`'s moves: none once the variant has ended.
+/// `allDests()`'s moves: none once the variant has ended.
 fn moves(pos: &VariantPosition) -> shakmaty::MoveList {
     if variant_end(pos) {
         shakmaty::MoveList::new()
@@ -27,7 +27,7 @@ fn moves(pos: &VariantPosition) -> shakmaty::MoveList {
     }
 }
 
-/// chessops `outcome()`: `Some(None)` is a draw.
+/// `outcome()`: `Some(None)` is a draw.
 fn outcome(pos: &VariantPosition, no_moves: bool) -> Option<Option<Color>> {
     let ended = variant_end(pos);
     if let VariantPosition::Antichess(_) = pos {
@@ -117,11 +117,11 @@ pub fn info(pos: &VariantPosition) -> Info {
 /// How destinations are listed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DestMode {
-    /// chessops `allDests()`: castling onto the rook only.
+    /// `allDests()`: castling onto the rook only.
     Rules,
-    /// chessops `chessgroundDests(pos)`: standard castling also onto the king's square.
+    /// `chessgroundDests(pos)`: standard castling also onto the king's square.
     Board,
-    /// chessops `chessgroundDests(pos, { chess960: true })`.
+    /// `chessgroundDests(pos, { chess960: true })`.
     Board960,
 }
 
@@ -223,7 +223,7 @@ pub fn legal_moves(pos: &VariantPosition) -> Vec<LegalMove> {
     out
 }
 
-/// A move played: chessops `makeUci` of the move (castling king-to-rook), its SAN and the result.
+/// A move played: `makeUci` of the move (castling king-to-rook), its SAN and the result.
 #[derive(Debug, Serialize)]
 pub struct Played {
     pub uci: String,
@@ -242,13 +242,13 @@ fn played(pos: &VariantPosition, m: shakmaty::Move) -> Played {
     }
 }
 
-/// `uci` played as chessops `normalizeMove` + `isLegal` + `play` would (castling either way).
+/// `uci` played as `normalizeMove` + `isLegal` + `play` would (castling either way).
 pub fn play_uci(pos: &VariantPosition, uci: &str) -> Option<Played> {
     let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(pos, u))?;
     Some(played(pos, m))
 }
 
-/// chessops `parseSan` then `play`.
+/// `parseSan` then `play`.
 pub fn play_san(pos: &VariantPosition, san: &str) -> Option<Played> {
     let m = rules::parse_san(pos, san)?;
     Some(played(pos, m))
@@ -295,7 +295,7 @@ pub fn line<S: AsRef<str>>(
 
 /* ── Typed positions (the board editor) ── */
 
-/// chessops `parseFen` without validation: the placement field and side to move as written.
+/// `parseFen` without validation: the placement field and side to move as written.
 pub fn fen_setup(fen: &str) -> Option<Value> {
     let setup = rules::parse_fen(fen)?;
     let written = rules::make_setup_fen(&setup);
@@ -303,7 +303,7 @@ pub fn fen_setup(fen: &str) -> Option<Value> {
     Some(json!({ "board": board, "turn": color_name(setup.turn) }))
 }
 
-/// Why chessops `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks:
+/// Why `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks:
 /// `fen` (unreadable), `empty`, `kings`, `oppositeCheck`, `pawnsOnBackrank` or `illegal`.
 pub fn fen_problem(fen: &str) -> Option<&'static str> {
     let Some(setup) = rules::parse_fen(fen) else {
@@ -337,7 +337,7 @@ pub fn fen_problem(fen: &str) -> Option<&'static str> {
 
 /* ── PGN games ── */
 
-/// chessops `startingPosition(headers)`.
+/// `startingPosition(headers)`.
 pub fn starting_position(game: &Game) -> Option<VariantPosition> {
     let variant = rules::pgn_variant(game.header("Variant"))?;
     match game.header("FEN").filter(|fen| !fen.is_empty()) {
@@ -370,7 +370,7 @@ fn headers(game: &Game) -> Value {
     Value::Array(game.headers.iter().map(|(k, v)| json!([k, v])).collect())
 }
 
-/// chessops `parsePgn`: each game's headers, its text as `makePgn` writes it, and why it cannot
+/// `parsePgn`: each game's headers, its text as `makePgn` writes it, and why it cannot
 /// be replayed (`game_problem`), if it cannot.
 pub fn pgn_games(text: &str) -> Value {
     Value::Array(
@@ -387,7 +387,7 @@ pub fn pgn_games(text: &str) -> Value {
     )
 }
 
-/// The value of the last `[%clk h:mm:ss]` in a comment, as chessops `parseComment` reads it.
+/// The value of the last `[%clk h:mm:ss]` in a comment, as `parseComment` reads it.
 pub fn comment_clock(comment: &str) -> Option<f64> {
     let mut clock = None;
     let mut rest = comment;
@@ -433,7 +433,7 @@ fn clock_value(text: &str) -> Option<f64> {
 
 /// The first game's main line, played from its start (the usual start when its own cannot be
 /// set up, so `start` is null) until a move is illegal, at most `limit` moves. `check` is
-/// chessops `isCheck()` after each move (`startCheck` before the first).
+/// `isCheck()` after each move (`startCheck` before the first).
 pub fn pgn_mainline(text: &str, limit: usize) -> Value {
     let games = parse_pgn(text);
     let Some(game) = games.first() else {

@@ -1,7 +1,6 @@
 //! End-to-end tests of the GPUI app: the whole app (embedded core, models, the workspace window)
 //! started in a headless GPUI window over a fresh profile, then driven by clicks and keys as a
-//! person would, and checked by what the window shows. The counterpart of the Electron app's
-//! Playwright suite (`apps/desktop/tests/e2e`).
+//! person would, and checked by what the window shows.
 //!
 //! Each test gets its own profile (`profile::TEST_DATA_DIR`), the scripted engine from
 //! `kchess-core` in place of Stockfish (`kchess-fake-uci` in `search` mode: it always answers

@@ -1,4 +1,4 @@
-//! Stockfish at full strength for practice positions (`useEngineMove.ts`): its replies and hints
+//! Stockfish at full strength for practice positions: its replies and hints
 //! from a start FEN and the moves played since. `cancel` (a restart, a takeback, another position)
 //! stops the search this helper started and drops its move.
 

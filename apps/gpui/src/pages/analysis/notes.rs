@@ -1,4 +1,4 @@
-//! Notes on the move shown (`MoveNotes.vue`): a comment and an annotation glyph, written right
+//! Notes on the move shown: a comment and an annotation glyph, written right
 //! under the move list (and shown in it), so annotating never means leaving the board. A game's
 //! clock times (`[%clk …]`) ride along in the comment unseen.
 

@@ -1,5 +1,5 @@
-//! `crates/kchess-wasm/js/lichessError.ts`: which failed Lichess response becomes which error. The
-//! `LichessError` class stays in TypeScript and builds the message from these fields.
+//! Which failed Lichess response becomes which error. The
+//! `LichessError` builds its message from these fields.
 
 use serde_json::{Map, Value, json};
 

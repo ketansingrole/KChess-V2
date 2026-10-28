@@ -1,4 +1,4 @@
-//! Frame benchmarks of the real app (`--features bench`, `tooling/gpui-render-benchmark.mjs`).
+//! Frame benchmarks of the real app (`--features bench`).
 //!
 //! `KCHESS_BENCH=<scenario>` drives the window through the pages' own methods (no synthetic
 //! input), records GPUI's foreground journal for `KCHESS_BENCH_SECONDS` after a warm-up, writes a

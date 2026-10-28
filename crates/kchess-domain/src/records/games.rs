@@ -1,4 +1,4 @@
-//! `crates/kchess-wasm/js/gameResult.ts` and `gameStatus.ts`: how a position ended a game, who won
+//! How a position ended a game, who won
 //! on time, PGN result tokens, whether a Lichess game is still being played, and how a game in
 //! Game history ended for its player.
 

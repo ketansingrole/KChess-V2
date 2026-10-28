@@ -1,4 +1,4 @@
-//! A game gone through move by move (`GameReview.vue`): the board as large as the page allows,
+//! A game gone through move by move: the board as large as the page allows,
 //! the players above and below it, and the move panel. It opens at the last move; the arrow keys
 //! step through the moves.
 

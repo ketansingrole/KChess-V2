@@ -1,10 +1,10 @@
-//! `crates/kchess-node/js/store.ts`: settings, accounts, the game library, the Lichess API cache and the
+//! Settings, accounts, the game library, the Lichess API cache and the
 //! account lifecycle, as `store.games.<name>` methods over `kchess.db`.
 //!
-//! Each method takes the TypeScript arguments as a JSON array and returns the TypeScript result as
+//! Each method takes its arguments as a JSON array and returns its result as
 //! JSON (`undefined` is `null` or an omitted key, as `JSON.stringify` writes it). Not mirrored yet:
 //! `saveLogin` and `getToken` (the host's credential encryption is not a core capability yet), the
-//! Lichess reviews that `saveGames`/`saveGamesPage` write (`reviewStore.ts`, `store/reviews.rs`),
+//! Lichess reviews that `saveGames`/`saveGamesPage` write (`store/reviews.rs`),
 //! the one-time JSON and legacy imports that run before the first read (they need the data
 //! directory and the legacy path, which the dispatch does not carry), and the in-memory caches
 //! (`snapshot`, `pageTotals`): they only save recounting, so results are the same.
@@ -23,7 +23,7 @@ use crate::host::{Host, Level};
 use kchess_domain::api;
 use kchess_domain::calendar::civil_from_days;
 
-/// Games kept per account (`MAX_GAMES` in `store.ts`).
+/// Games kept per account.
 pub const MAX_GAMES: i64 = 5000;
 
 /// Must match the indexed expression in `migrations.rs` verbatim, or SQLite falls back to a scan.
@@ -102,7 +102,7 @@ const LIST_COLUMNS: &str = "account, id, createdAt, lastMoveAt, rated, speed, pe
 const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
 const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
 
-/// `DEFAULT_SETTINGS` (`crates/kchess-contracts/ts/defaultSettings.ts`).
+/// `DEFAULT_SETTINGS`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -1416,7 +1416,7 @@ mod tests {
         db
     }
 
-    /// `game-library.test.ts`: result filters are served from the result indexes.
+    /// Result filters are served from the result indexes.
     #[test]
     fn result_filters_use_the_result_indexes() {
         let db = database();

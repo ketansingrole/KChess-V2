@@ -1,6 +1,6 @@
-//! The downloaded puzzle database (`stores/puzzles.ts`'s `db`): its state as the core reports it
+//! The downloaded puzzle database: its state as the core reports it
 //! (`puzzleDbStatus`, `puzzledb:progress`), downloading, cancelling and deleting it, and the card
-//! that shows it (`PuzzleDbCard.vue`) on Puzzles and in Offline downloads.
+//! that shows it on Puzzles and in Offline downloads.
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
@@ -152,7 +152,7 @@ impl PuzzleDb {
     }
 }
 
-/// `PuzzleDbCard.vue`: download, see and delete the puzzles Downloaded mode plays from; `compact`
+/// Download, see and delete the puzzles Downloaded mode plays from; `compact`
 /// leaves out its title and frame, for a page that names it already.
 pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + use<> {
     let handle = cx.global::<PuzzleDbHandle>().0.clone();

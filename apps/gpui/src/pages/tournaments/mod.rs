@@ -1,4 +1,4 @@
-//! Tournaments (`pages/tournaments.vue`, `stores/tournaments.ts`): Lichess's arena schedule as a
+//! Tournaments: Lichess's arena schedule as a
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 

@@ -1,4 +1,4 @@
-//! One line above the analysis board (`StudyBar.vue`, `StudyChapters.vue`): which study the board
+//! One line above the analysis board: which study the board
 //! is, saved as you go, with its chapters; or a way to keep the board as one. The library itself is
 //! the Studies page.
 

@@ -1,4 +1,4 @@
-//! Your mistakes (`MistakeTrainer.vue`): positions from your reviewed games where you went wrong,
+//! Your mistakes: positions from your reviewed games where you went wrong,
 //! solved again on a schedule the core keeps (a right answer doubles the wait, a wrong one brings
 //! it back in ten minutes), and the games they come from.
 

@@ -1,4 +1,4 @@
-//! Endgame drills (`crates/kchess-wasm/js/endgames.ts`): the drill positions, and where a drill stands
+//! Endgame drills: the drill positions, and where a drill stands
 //! after a line of moves.
 
 use serde::{Deserialize, Serialize};

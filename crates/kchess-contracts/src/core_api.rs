@@ -429,7 +429,7 @@ pub fn methods() -> Vec<Method> {
         ),
         method(
             "importLibrary",
-            "Take over the documents an earlier release kept in the renderer; runs once.",
+            "Take over the documents an earlier release kept in the Electron app's localStorage; runs once.",
             vec![req("documents")],
         ),
         method(

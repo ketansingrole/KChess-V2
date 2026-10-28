@@ -1,4 +1,4 @@
-//! Puzzles → Storm · Streak · Rush (`PuzzleRush.vue`, rules in `training/rush.rs` through
+//! Puzzles → Storm · Streak · Rush (rules in `training/rush.rs` through
 //! `rules()`): timed and survival runs over a ladder of puzzles from the database on this computer,
 //! scored and kept here; Lichess's own Storm and Streak results beside the menu.
 

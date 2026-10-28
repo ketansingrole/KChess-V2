@@ -336,7 +336,7 @@ pub const SESSION_KINDS: &[&str] = &[
     "archive:clock",
 ];
 
-/// Where earlier releases kept each document in the renderer's local storage.
+/// Where earlier releases kept each document in the Electron app's `localStorage`.
 pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
     "kchess:studies:v1",
     "kchess:game-history:v1",

@@ -1,4 +1,4 @@
-//! The puzzle database sampler (`crates/kchess-node/js/puzzleSampler.ts`): reads Lichess's puzzle
+//! The puzzle database sampler: reads Lichess's puzzle
 //! CSV as decompressed bytes and keeps a random sample spread over every rating, theme and opening.
 
 use serde::Serialize;
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn random_matches_the_typescript_generator() {
-        // rng(1) in tests/core/native-rules.test.ts
+        // The first values of the generator seeded with 1.
         let mut random = Random::new(1);
         let first = random.next_f64();
         assert!((0.0..1.0).contains(&first));

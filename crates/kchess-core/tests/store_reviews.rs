@@ -1,7 +1,6 @@
 //! Review associations in `kchess.db` (`store/reviews.rs`): a review is shared by every game that
 //! reaches its position, and each account's copy of a game is excluded from its review queue.
-//! Ports `tests/core/review-associations.test.ts`. The review request runs through the core with
-//! no engine (it never starts a search), as the TypeScript test did.
+//! The review request runs through the core with no engine (it never starts a search).
 
 mod support;
 

@@ -1,6 +1,5 @@
-//! `crates/kchess-node/js/migrations.ts`: the ordered, append-only schema migrations and `migrate`.
-//! The SQL below is the TypeScript list, byte for byte (generated from `MIGRATIONS` and checked by
-//! `tests/core/native-store-games.test.ts`); `PRAGMA user_version` counts how many have run.
+//! The ordered, append-only schema migrations and `migrate`. `PRAGMA user_version` counts how many
+//! have run.
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -311,7 +310,7 @@ mod tests {
         assert_eq!(schema, again);
     }
 
-    /// `migrations.test.ts`: the one-time backfill keeps completed games and resets cursors once.
+    /// The one-time backfill keeps completed games and resets cursors once.
     #[test]
     fn appends_a_one_time_backfill_migration_without_losing_completed_games() {
         let db = Connection::open_in_memory().unwrap();

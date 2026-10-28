@@ -1,4 +1,4 @@
-//! Voice input (`components/VoiceInput.vue`, `utils/voiceCapture.ts`): one recognizer for the
+//! Voice input: one recognizer for the
 //! whole app, owned by the control that turned voice on last. It downloads the offline model the
 //! first time, opens the microphone, sends its audio to the core's recognizer (`voiceStart`,
 //! `voiceAccept`, `voiceFinish`, `voiceStop`) in order, and hands each phrase heard to its owner.

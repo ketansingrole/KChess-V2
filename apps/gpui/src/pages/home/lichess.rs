@@ -1,5 +1,4 @@
-//! Home → Your Lichess activity (`pages/index.vue`, `stores/kchess/accountProfile.ts` and
-//! `gameHistory.ts`): the account's games and ratings, its rating history by mode and range, and
+//! Home → Your Lichess activity: the account's games and ratings, its rating history by mode and range, and
 //! its latest synced games. What was saved last time shows at once; Lichess's answer follows.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

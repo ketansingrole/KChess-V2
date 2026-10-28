@@ -1,4 +1,4 @@
-//! The `assert*` validators of `crates/kchess-wasm/js/validate.ts`: each decodes an untrusted IPC
+//! The `assert*` validators: each decodes an untrusted IPC
 //! value into a typed struct, checks it, and returns the normalized value or a message.
 //!
 //! A value of the wrong type takes the message its validator names for that place (the field, or
@@ -470,7 +470,7 @@ fn assert_boolean(value: J) -> Checked<bool> {
     decode(value, plain)
 }
 
-/// `setInterfaceZoom`: `auto` or one of the zoom steps (`ZOOM_PERCENTS` in `interfaceZoom.ts`).
+/// `setInterfaceZoom`: `auto` or one of the zoom steps (`ZOOM_PERCENTS`).
 fn assert_interface_zoom(value: J) -> Checked<Value> {
     const PERCENTS: [u64; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
     #[derive(Deserialize)]
@@ -519,7 +519,7 @@ fn assert_study_id(value: J) -> Checked<String> {
     assert_lichess_id(value)
 }
 
-/// `apps/desktop/contracts/apiContracts.ts` `completeQuit`: a request id (8-4-4-4-12 hexadecimal
+/// `completeQuit`: a request id (8-4-4-4-12 hexadecimal
 /// digits, in either case).
 fn assert_uuid(value: J) -> Checked<String> {
     let text: String = decode(value, plain)?;
@@ -533,7 +533,7 @@ fn assert_uuid(value: J) -> Checked<String> {
     Ok(text)
 }
 
-/// `recordPerformance` name: one of the renderer's timings (`PERFORMANCE_NAMES`).
+/// `recordPerformance` name: one of the frontend's timings (`PERFORMANCE_NAMES`).
 fn assert_performance_name(value: J) -> Checked<String> {
     let text: String = decode(value, plain)?;
     let known = performance_names().contains(&text);
@@ -923,7 +923,7 @@ struct CoreSettings {
     voice_history: bool,
 }
 
-/// Every setting, in the renderer's order.
+/// Every setting, in the frontends' order.
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
 #[serde(rename_all = "camelCase")]
@@ -1990,7 +1990,7 @@ fn assert_repertoire_key(value: J) -> Checked<String> {
 }
 
 /// A view preference's name: `kchess:` and lowercase letters, digits, `-` and `:`, as the Electron
-/// renderer named its `localStorage` keys; at most 100 characters.
+/// the Electron app named its `localStorage` keys; at most 100 characters.
 fn assert_view_preference_key(value: J) -> Checked<String> {
     let key: String = decode(value, plain)?;
     let valid = key.len() <= 100
@@ -2012,7 +2012,7 @@ fn assert_side(value: J) -> Checked<String> {
     picked(value, &["white", "black"], None)
 }
 
-/// An earlier release's renderer storage: each known key's document as text, and no other key.
+/// An earlier release's storage: each known key's document as text, and no other key.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, expecting = "an object")]
 struct LegacyDocuments {

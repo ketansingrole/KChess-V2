@@ -1,4 +1,4 @@
-//! Microphone access (`electron/main/microphone.ts`): whether the system lets KChess record, and
+//! Microphone access: whether the system lets KChess record, and
 //! the system's own request for it. On macOS this is AVCaptureDevice's authorization, one of the
 //! two places the app calls a platform API directly (and so an `unsafe` exception, below; the Dock
 //! icon in `dock_icon.rs` is the other).

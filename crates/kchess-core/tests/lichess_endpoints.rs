@@ -1,7 +1,7 @@
-//! The Lichess read endpoints the TypeScript services answered and the Rust core now answers
+//! The Lichess read endpoints the Rust core answers
 //! through `Lichess`: TV channels, a broadcast tournament, the daily puzzle, the puzzle dashboard
 //! and activity, and the Storm dashboard. Each test pins the request the endpoint sends and the
-//! shape it returns (`crates/kchess-node/js/{spectate,lichess}.ts`).
+//! shape it returns.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;

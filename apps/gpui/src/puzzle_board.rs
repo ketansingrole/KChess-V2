@@ -1,4 +1,4 @@
-//! One puzzle on a board (`PuzzleBoard.vue`): the player finds the moves, the board plays the
+//! One puzzle on a board: the player finds the moves, the board plays the
 //! opponent's replies. It reports what happened and leaves everything else (scores, Lichess, the
 //! next puzzle) to its page: Puzzles' Train tab and Practice's mistakes.
 
@@ -69,7 +69,7 @@ pub struct PuzzleBoard {
     /// No moves for now (a run between puzzles, or over).
     frozen: bool,
     reply_delay: Duration,
-    /// Spoken moves (`PuzzleVoice.vue`): kept with the board, which outlives each puzzle, so
+    /// Spoken moves: kept with the board, which outlives each puzzle, so
     /// the speech model is not reloaded for every one.
     voice: VoiceMoves,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.

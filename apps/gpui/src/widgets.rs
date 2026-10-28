@@ -574,7 +574,7 @@ pub fn section_title(
         }))
 }
 
-/// `MaterialDiff.vue`: the pieces one side has won over the other, as silhouettes in the text
+/// The pieces one side has won over the other, as silhouettes in the text
 /// colour, and its lead in pawns, as Lichess shows them.
 pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<AnyElement> {
     let diff = crate::game::rules("materialDiff", &[serde_json::json!(fen)]).ok()?;
@@ -623,7 +623,7 @@ pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<
     )
 }
 
-/// The blindfold and zen mode toggles every game page shows (`BoardViewToggles.vue`).
+/// The blindfold and zen mode toggles every game page shows.
 pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
     let toggle =
         |id: &'static str, glyph: gpui_kit::component::Icon, label: &'static str, on: bool| {
@@ -883,7 +883,7 @@ fn pill_row(
         }))
 }
 
-/// The typed-move box under a board (`.board-move-form` in `ChessBoard.vue`): the input, dimmed
+/// The typed-move box under a board: the input, dimmed
 /// while no move can be made, and its Return hint.
 pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) -> Div {
     h_flex()
@@ -1054,7 +1054,7 @@ impl Choice {
     }
 }
 
-/// What `StudyCard.vue` shows: a study or an opening as a card in a grid.
+/// What a study card shows: a study or an opening as a card in a grid.
 #[derive(IntoElement)]
 pub struct StudyCard {
     pub id: String,
@@ -1082,7 +1082,7 @@ impl RenderOnce for StudyCard {
     }
 }
 
-/// `StudyCard.vue`.
+/// A study or opening card.
 fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
     let (width, open) = (card.width, card.on_open.clone());
     let open_title = open.clone();
@@ -1277,7 +1277,7 @@ fn badge_box(look: Look, palette: &Palette) -> Div {
         .when_some(ring, |badge, ring| badge.border_1().border_color(ring))
 }
 
-/// `ResultBar.vue`: a label, the score (wins plus half the draws), the games, and a bar of won,
+/// A label, the score (wins plus half the draws), the games, and a bar of won,
 /// drawn and lost.
 pub fn result_row(
     label: impl Into<SharedString>,

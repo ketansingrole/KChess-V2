@@ -1,4 +1,4 @@
-//! Rules moved from `crates/kchess-wasm/js` (see RUST_MIGRATION.md); reached through `api::call`.
+//! Reached through `api::call` (see RUST_MIGRATION.md).
 //!
 //! Trainer: the puzzle training session's transitions (`puzzle_session`), what an attempt counts
 //! as and the day streak (`puzzle_progress`), and the analysis tree's

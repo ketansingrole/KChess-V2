@@ -1,9 +1,9 @@
-//! Chess rules with chessops semantics on top of shakmaty's move generation.
+//! Chess rules on top of shakmaty's move generation.
 //!
-//! The TypeScript core uses chessops; everything observable here (accepted FENs, UCI
-//! normalization, SAN spelling and suffixes, FEN output) matches it so both implementations
-//! produce identical documents. Positions are always built in Chess960 castling mode, as
-//! chessops represents castling generically as king-takes-rook.
+//! Everything observable here (accepted FENs, UCI normalization, SAN spelling and suffixes, FEN
+//! output) keeps the semantics earlier releases had, so stored documents stay identical.
+//! Positions are always built in Chess960 castling mode, as castling is represented generically
+//! as king-takes-rook.
 
 use shakmaty::variant::{Variant, VariantPosition};
 use shakmaty::{
@@ -15,7 +15,7 @@ use std::num::NonZeroU32;
 
 use crate::js;
 
-/// The Lichess variant keys KChess can play (`crates/kchess-wasm/js/variant.ts`).
+/// The Lichess variant keys KChess can play.
 pub fn lichess_variant(key: &str) -> Option<Variant> {
     Some(match key {
         "standard" | "chess960" => Variant::Chess,
@@ -29,7 +29,7 @@ pub fn lichess_variant(key: &str) -> Option<Variant> {
     })
 }
 
-/// chessops `parseVariant`, for the PGN `Variant` header.
+/// `parseVariant`, for the PGN `Variant` header.
 pub fn pgn_variant(name: Option<&str>) -> Option<Variant> {
     Some(match name.unwrap_or("chess").to_lowercase().as_str() {
         "chess" | "chess960" | "chess 960" | "standard" | "from position" | "classical"
@@ -48,7 +48,7 @@ pub fn pgn_variant(name: Option<&str>) -> Option<Variant> {
     })
 }
 
-/* ── FEN (chessops `parseFen` / `makeFen`) ── */
+/* ── FEN (`parseFen` / `makeFen`) ── */
 
 fn small_uint(s: &str) -> Option<u32> {
     (1..=4).contains(&s.len()).then_some(())?;
@@ -174,7 +174,7 @@ fn parse_remaining_checks(part: &str) -> Option<ByColor<RemainingChecks>> {
     })
 }
 
-/// chessops `parseFen`: lenient about missing fields, strict about everything present.
+/// `parseFen`: lenient about missing fields, strict about everything present.
 pub fn parse_fen(fen: &str) -> Option<Setup> {
     let mut parts = split_fen(fen).into_iter();
     let board_part = parts.next().unwrap_or("");
@@ -259,7 +259,7 @@ fn split_fen(fen: &str) -> Vec<&str> {
     parts
 }
 
-/// chessops `parseSquare`: exactly two characters, lowercase file.
+/// `parseSquare`: exactly two characters, lowercase file.
 pub fn parse_square(s: &str) -> Option<Square> {
     let b = s.as_bytes();
     if s.chars().count() != 2 || b.len() != 2 {
@@ -271,17 +271,17 @@ pub fn parse_square(s: &str) -> Option<Square> {
         .then(|| Square::from_coords(File::new(file.into()), Rank::new(rank.into())))
 }
 
-/// chessops `setupPosition` under the given rules: the position, or None when not legal.
+/// `setupPosition` under the given rules: the position, or None when not legal.
 pub fn setup_position(variant: Variant, setup: Setup) -> Option<VariantPosition> {
     let ep = setup.ep_square;
     let mut setup = setup;
-    // chessops silently drops an en passant square that no pawn could have just passed.
+    // An en passant square that no pawn could have just passed is silently dropped.
     setup.ep_square = ep.filter(|&sq| valid_ep_square(&setup, sq));
     if variant != Variant::ThreeCheck {
         setup.remaining_checks = None;
     }
     if variant == Variant::Crazyhouse {
-        // chessops keeps promoted markers only on pieces that can have been promoted.
+        // Promoted markers are kept only on pieces that can have been promoted.
         let board = &setup.board;
         setup.promoted = setup.promoted
             & board.occupied()
@@ -301,7 +301,7 @@ pub fn setup_position(variant: Variant, setup: Setup) -> Option<VariantPosition>
         .filter(chessops_valid)
 }
 
-/// chessops `validate()` for each variant, which shakmaty does not always share.
+/// The `validate()` rules of each variant, which shakmaty does not always share.
 fn chessops_valid(pos: &VariantPosition) -> bool {
     let board = pos.board();
     let turn = pos.turn();
@@ -393,12 +393,12 @@ pub fn setup_start(variant: &str, fen: &str) -> Option<VariantPosition> {
     setup_position(lichess_variant(variant)?, parse_fen(fen)?)
 }
 
-/// chessops `Chess.fromSetup(parseFen(fen))`: standard rules.
+/// `Chess.fromSetup(parseFen(fen))`: standard rules.
 pub fn standard_from_fen(fen: &str) -> Option<VariantPosition> {
     setup_position(Variant::Chess, parse_fen(fen)?)
 }
 
-/// chessops `makeFen(pos.toSetup())`: the legal en passant square and at most 150 halfmoves.
+/// `makeFen(pos.toSetup())`: the legal en passant square and at most 150 halfmoves.
 pub fn make_fen(pos: &VariantPosition) -> String {
     write_fen(&FenParts {
         board: pos.board(),
@@ -413,7 +413,7 @@ pub fn make_fen(pos: &VariantPosition) -> String {
     })
 }
 
-/// chessops `makeFen(setup)` for a parsed, not yet validated, setup: everything as written.
+/// `makeFen(setup)` for a parsed, not yet validated, setup: everything as written.
 pub fn make_setup_fen(setup: &Setup) -> String {
     write_fen(&FenParts {
         board: &setup.board,
@@ -511,9 +511,9 @@ fn write_fen(parts: &FenParts) -> String {
     fen
 }
 
-/* ── Moves (chessops `parseUci`, `normalizeMove`, `isLegal`, SAN) ── */
+/* ── Moves (`parseUci`, `normalizeMove`, `isLegal`, SAN) ── */
 
-/// A move as chessops writes it: castling is king-to-rook.
+/// A move in KChess's form: castling is king-to-rook.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UciMove {
     Normal {
@@ -527,7 +527,7 @@ pub enum UciMove {
     },
 }
 
-/// chessops `parseUci`.
+/// `parseUci`.
 pub fn parse_uci(s: &str) -> Option<UciMove> {
     let chars: Vec<char> = s.chars().collect();
     let len = utf16_len_chars(&chars);
@@ -557,7 +557,7 @@ fn utf16_len_chars(chars: &[char]) -> usize {
     chars.iter().map(|c| c.len_utf16()).sum()
 }
 
-/// Where chessops's `dests` puts a legal move: castling lands on the rook.
+/// Where `dests` puts a legal move: castling lands on the rook.
 pub(crate) fn dest(m: &Move) -> Option<Square> {
     match *m {
         Move::Castle { rook, .. } => Some(rook),
@@ -566,7 +566,7 @@ pub(crate) fn dest(m: &Move) -> Option<Square> {
     }
 }
 
-/// chessops `makeUci` for a legal move.
+/// `makeUci` for a legal move.
 pub fn make_uci(m: &Move) -> String {
     let mut s = String::with_capacity(5);
     if let Move::Put { role, to } = *m {
@@ -589,7 +589,7 @@ fn backranks() -> Bitboard {
     Bitboard::from_rank(Rank::First) | Bitboard::from_rank(Rank::Eighth)
 }
 
-/// The legal moves that chessops's `dests` would list as reaching `to` with a piece of `role`:
+/// The legal moves that `dests` would list as reaching `to` with a piece of `role`:
 /// moves and drops onto `to`, plus castling with the rook on `to` for the king.
 /// Generating only these is much cheaper than every legal move.
 fn reaching(pos: &VariantPosition, role: Role, to: Square) -> MoveList {
@@ -604,7 +604,7 @@ fn reaching(pos: &VariantPosition, role: Role, to: Square) -> MoveList {
     moves
 }
 
-/// The legal move chessops would play for `normalizeMove(pos, uci)` when `isLegal` accepts it.
+/// The legal move to play for `normalizeMove(pos, uci)` when `isLegal` accepts it.
 pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
     let (from, to, promotion) = match uci {
         UciMove::Drop { role, to } => return legal_drop(pos, role, to),
@@ -644,7 +644,7 @@ pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
         .find(|m| m.from() == Some(from) && m.promotion() == promotion)
 }
 
-/// chessops `isLegal` for a drop: in the pocket, no pawn on a back rank, an allowed square.
+/// `isLegal` for a drop: in the pocket, no pawn on a back rank, an allowed square.
 fn legal_drop(pos: &VariantPosition, role: Role, to: Square) -> Option<Move> {
     let pockets = pos.pockets()?;
     if *pockets.get(pos.turn()).get(role) == 0 || (role == Role::Pawn && backranks().contains(to)) {
@@ -655,7 +655,7 @@ fn legal_drop(pos: &VariantPosition, role: Role, to: Square) -> Option<Move> {
         .find(|m| *m == Move::Put { role, to })
 }
 
-/// chessops `makeSanWithoutSuffix`.
+/// `makeSanWithoutSuffix`.
 fn san_without_suffix(pos: &VariantPosition, m: &Move) -> String {
     let board = pos.board();
     if let Move::Put { role, to } = *m {
@@ -734,7 +734,7 @@ fn san_without_suffix(pos: &VariantPosition, m: &Move) -> String {
     san
 }
 
-/// chessops `makeSanAndPlay`: plays the move and returns its SAN with `+`/`#`.
+/// `makeSanAndPlay`: plays the move and returns its SAN with `+`/`#`.
 pub fn san_and_play(pos: &mut VariantPosition, m: Move) -> String {
     let mut san = san_without_suffix(pos, &m);
     pos.play_unchecked(m);
@@ -755,7 +755,7 @@ pub fn san_and_play(pos: &mut VariantPosition, m: Move) -> String {
     san
 }
 
-/// chessops `parseSan`.
+/// `parseSan`.
 pub fn parse_san(pos: &VariantPosition, san: &str) -> Option<Move> {
     let Some(parsed) = SanPattern::parse(san) else {
         let side = match san {

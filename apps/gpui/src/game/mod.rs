@@ -1,6 +1,5 @@
-//! Game sessions as the Electron renderer drives them (`crates/kchess-wasm/js/gameSession.ts`):
-//! every decision is a Rust transition in `kchess-domain`; these drivers only answer the reads a
-//! transition asks for, keep the state it wrote and hand its effects to the page, in order.
+//! The app's game helpers: the shared session drivers (`kchess-games`), and the replay, tree,
+//! puzzle and view helpers the pages use.
 
 pub mod history;
 pub mod puzzle;

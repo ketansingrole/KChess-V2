@@ -1,4 +1,4 @@
-//! A player's rating history in every speed at once (`RatingHistoryChart.vue`, on Players): a
+//! A player's rating history in every speed at once (on Players): a
 //! line per speed in its own colour, chips that show or hide each with its current rating, and a
 //! range. Lichess's history comes first; speeds it has no points for are filled from games.
 

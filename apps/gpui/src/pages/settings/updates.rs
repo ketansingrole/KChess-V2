@@ -1,4 +1,4 @@
-//! Settings → Updates (`AppUpdateSettings.vue`): this version, whether a newer one is out, its
+//! Settings → Updates: this version, whether a newer one is out, its
 //! download and installation, and the update preferences.
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};

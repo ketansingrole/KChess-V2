@@ -1,4 +1,4 @@
-//! The compact voice bar (`VoiceInput.vue`, `compact`): the Voice toggle, the level meter, one line
+//! The compact voice bar: the Voice toggle, the level meter, one line
 //! saying the most urgent thing (an error, what is being heard, the page's answer, what was heard),
 //! the page's choices, and Hold to speak with push to talk.
 

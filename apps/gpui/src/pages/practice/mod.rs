@@ -1,4 +1,4 @@
-//! Practice (`pages/practice.vue`): the board-vision drills and the trainers, one tab at a time,
+//! Practice: the board-vision drills and the trainers, one tab at a time,
 //! each made the first time it is shown and kept, as the Electron page keeps its stores.
 
 mod coordinates;

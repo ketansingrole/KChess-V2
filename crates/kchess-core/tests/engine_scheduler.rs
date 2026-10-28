@@ -1,4 +1,4 @@
-//! Port of the shared-budget cases in `tests/core/uci-lifecycle.test.ts`.
+//! The shared engine budget: one lease at a time, in order.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

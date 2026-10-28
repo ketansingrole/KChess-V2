@@ -1,4 +1,4 @@
-//! Game review (`crates/kchess-node/js/review.ts`): Stockfish scores every position of a game, one
+//! Game review: Stockfish scores every position of a game, one
 //! after another, in its own process (the analysis board and the computer opponent keep theirs).
 //! Reviews someone asks for run at once, first a quick pass so labels show within seconds and
 //! then a deeper one that refines them. Automatic reviews of synced games run one at a time on a
@@ -182,8 +182,7 @@ pub struct GameToReview {
     pub checked: bool,
 }
 
-/// The store the review reads and writes (`reviewStore.ts`'s functions, as the review calls
-/// them). Implementations must be safe to call from any thread.
+/// The store the review reads and writes (the functions the review calls). Implementations must be safe to call from any thread.
 ///
 /// Async since the store moved off the executor (`Database::call_async`): every method returns a
 /// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
@@ -293,7 +292,7 @@ struct ReviewEngine {
     uci: Arc<UciController>,
 }
 
-/// `serviceState` of `review.ts`.
+/// The review service's state.
 #[derive(Default)]
 struct State {
     host: Option<Arc<dyn ReviewHost>>,

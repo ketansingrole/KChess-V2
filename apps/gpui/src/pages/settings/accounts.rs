@@ -1,4 +1,4 @@
-//! Settings → My accounts (`SettingsAccounts.vue`, `AccountRow.vue`): the Lichess accounts on this
+//! Settings → My accounts: the Lichess accounts on this
 //! computer, connecting another, which one plays online, syncing, and disconnecting.
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
@@ -49,7 +49,7 @@ fn ask_remove(username: String, connected: bool, window: &mut Window, cx: &mut A
     });
 }
 
-/// `AccountRow.vue`: an account, what it keeps and downloaded, and what can be done with it.
+/// An account, what it keeps and downloaded, and what can be done with it.
 fn account_row(
     account: &Value,
     accounts: &Accounts,

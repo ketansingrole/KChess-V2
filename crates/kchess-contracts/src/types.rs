@@ -378,7 +378,7 @@ pub struct FrontendPreferences {
     pub light_theme: String,
     /// The same for dark mode; the two are chosen independently.
     pub dark_theme: String,
-    /// One of the piece sets shipped in `apps/desktop/app/assets/pieces`.
+    /// One of the piece sets shipped in `apps/gpui/assets/pieces`.
     pub piece_set: String,
     pub piece_animation: PieceAnimation,
     pub coordinates: CoordinateMode,
@@ -1882,7 +1882,7 @@ pub struct EngineLine {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisUpdate {
-    /// The request this belongs to; the renderer drops updates of superseded ones.
+    /// The request this belongs to; a frontend drops updates of superseded ones.
     pub id: f64,
     pub fen: String,
     pub depth: f64,

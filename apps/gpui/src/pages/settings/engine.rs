@@ -1,4 +1,4 @@
-//! Settings → Chess engine (`EngineSettings.vue`, `stores/kchess/engineSettings.ts`): which
+//! Settings → Chess engine: which
 //! Stockfish is in use (the bundled one, the one KChess downloaded, or a file chosen), downloading
 //! and deleting it, and the background game review.
 
@@ -289,7 +289,7 @@ impl SettingsPage {
         .detach();
     }
 
-    /// `EngineOption.vue`: one engine, whether it is in use, and its buttons.
+    /// One engine, whether it is in use, and its buttons.
     fn engine_option(
         &self,
         title: &'static str,

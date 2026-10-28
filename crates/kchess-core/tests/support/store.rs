@@ -1,6 +1,4 @@
-//! A temporary profile's `kchess.db` driven through the storage methods (`store.*`), as the
-//! TypeScript test fixture (`tests/fixtures/nativeGames.ts`) drove them before these tests moved
-//! to Rust. The fixture's own duties are here too: the one-time import of an earlier profile runs
+//! A temporary profile's `kchess.db` driven through the storage methods (`store.*`). The fixture's own duties are here too: the one-time import of an earlier profile runs
 //! before each call, its plaintext tokens are encrypted with the fake secret store, and login
 //! and token calls check the OS encryption and the logout race. The fake store "encrypts" by
 //! prefixing `enc:`, so a test can see the stored ciphertext without a keychain.

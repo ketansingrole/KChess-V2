@@ -1,6 +1,6 @@
 //! Time the stages of library decoding on benchmark fixtures:
 //! `cargo run --release -p kchess-domain --example profile -- <fixtures dir>`
-//! (`pnpm run benchmark:core` writes fixtures to test-results/benchmark-fixtures).
+//! (the core benchmark writes fixtures to test-results/benchmark-fixtures).
 
 use std::time::Instant;
 

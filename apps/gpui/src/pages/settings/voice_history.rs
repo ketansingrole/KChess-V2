@@ -1,4 +1,4 @@
-//! Settings → Voice input → Voice history (`VoiceHistory.vue`): what voice input heard, how it
+//! Settings → Voice input → Voice history: what voice input heard, how it
 //! was read and what the player meant. The point is to find what gets misheard: the weakest
 //! words, and the phrases that stood for another move.
 

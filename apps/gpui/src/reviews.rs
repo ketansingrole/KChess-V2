@@ -1,4 +1,4 @@
-//! Game reviews, as the core works them out (`stores/review.ts`): the reviews seen lately, kept in
+//! Game reviews, as the core works them out: the reviews seen lately, kept in
 //! memory, and the review queue's progress. Updates stream in as core events (`review:update`,
 //! `review:status`).
 

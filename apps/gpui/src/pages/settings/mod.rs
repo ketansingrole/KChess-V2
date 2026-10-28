@@ -1,4 +1,4 @@
-//! Settings (`pages/settings.vue`): one category at a time, picked in the sidebar while Settings is
+//! Settings: one category at a time, picked in the sidebar while Settings is
 //! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
 
 mod accounts;

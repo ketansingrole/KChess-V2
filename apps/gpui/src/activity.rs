@@ -1,4 +1,4 @@
-//! Lines of Lichess activity under day headings (`ActivityList.vue`, `utils/activity.ts`): a
+//! Lines of Lichess activity under day headings: a
 //! player's activity on Players, and the online account's timeline on Following.
 
 use gpui_kit::component::{h_flex, v_flex};

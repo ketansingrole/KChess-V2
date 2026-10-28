@@ -1,4 +1,4 @@
-//! A page's voice switch (`VoiceInput.vue`'s props and model): whether voice is on for it, what
+//! A page's voice switch: whether voice is on for it, what
 //! it answered to the last phrase, and its bar. Boards build spoken moves on it (`moves`); the
 //! board editor and the drills use it as it is.
 

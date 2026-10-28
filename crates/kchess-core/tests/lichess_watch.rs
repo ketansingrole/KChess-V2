@@ -1,6 +1,5 @@
-//! Watching Lichess (`crates/kchess-node/js/spectate.ts`) over local fixtures. Ports
-//! `tests/core/spectator-lifecycle.test.ts` and the spectate cases of
-//! `tests/core/watch-and-lookup.test.ts` (broadcasts, game details, TV alignment, validation).
+//! Watching Lichess over local fixtures: the spectator lifecycle, broadcasts, game details, TV
+//! alignment and validation.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;

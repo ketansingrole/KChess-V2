@@ -1,6 +1,6 @@
 //! The profile's settings as the app holds them: the core's and the desktop's together
 //! (`desktopSettings`), shared with the Electron app. Views read `AppSettings` and save through it;
-//! saves wait for a pause in editing and are written one at a time (`settingsPersistence.ts`).
+//! saves wait for a pause in editing and are written one at a time.
 
 use std::time::Duration;
 
@@ -56,7 +56,7 @@ pub struct SettingsHandle(pub Entity<AppSettings>);
 
 impl Global for SettingsHandle {}
 
-/// What a fresh profile stores (the contract defaults, `defaultSettings.ts`).
+/// What a fresh profile stores (the contract defaults).
 fn defaults() -> Settings {
     match kchess_contracts::defaults::default_settings() {
         Ok(settings) => settings,

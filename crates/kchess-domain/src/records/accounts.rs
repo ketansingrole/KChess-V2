@@ -1,4 +1,4 @@
-//! `crates/kchess-wasm/js/accounts.ts`: choosing which connected Lichess account plays online.
+//! Choosing which connected Lichess account plays online.
 
 use serde_json::{Value, json};
 

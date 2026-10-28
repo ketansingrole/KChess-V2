@@ -1,6 +1,5 @@
-//! Lichess's cloud evaluation (`crates/kchess-node/js/cloudEval.ts`) and the explicit position lookups
-//! of the opening explorer, masters, player and tablebase databases
-//! (`crates/kchess-node/js/positionLookup.ts`).
+//! Lichess's cloud evaluation and the explicit position lookups
+//! of the opening explorer, masters, player and tablebase databases.
 //!
 //! The saved lookups live behind `LookupCache` (the `store::lookups` table in production). Legal
 //! moves and SAN come from `kchess_domain::replay`, and every remote answer is validated before it
@@ -468,7 +467,7 @@ impl Drop for PendingLookup<'_> {
 }
 
 /// The login the opening explorer and master games are asked with: the account the explorer is set
-/// to use, and its token (`setupPositionLookup.ts`). Tablebase lookups never carry it.
+/// to use, and its token. Tablebase lookups never carry it.
 pub trait ExplorerLogin: Send + Sync {
     /// The token of the explorer's account, or None when no account is set or it has no login.
     fn token(&self) -> BoxFuture<'_, CoreResult<Option<String>>>;

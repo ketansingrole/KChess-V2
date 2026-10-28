@@ -1,4 +1,4 @@
-//! Quick-pick search (`utils/quickPick.ts`): prefix modes and a VS Code-style fuzzy matcher with
+//! Quick-pick search: prefix modes and a VS Code-style fuzzy matcher with
 //! the ranges to highlight.
 
 /// What the palette searches, from the typed text's first character.

@@ -1,4 +1,4 @@
-//! The Lichess accounts (`stores/kchess.ts`'s accounts, `stores/usage.ts`): who is connected,
+//! The Lichess accounts: who is connected,
 //! which account plays online, connecting, syncing, logging out and removing, and what each
 //! account downloaded and keeps. Pages read it; the sidebar's account menu and Settings → My
 //! accounts act on it.

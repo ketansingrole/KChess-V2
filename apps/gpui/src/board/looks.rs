@@ -18,7 +18,7 @@ const LOOKS_JSON: &str = include_str!("../../../../crates/kchess-domain/data/loo
 pub struct BoardLook {
     pub id: String,
     pub name: String,
-    /// The image in `apps/desktop/app/assets/boards`.
+    /// The image in `apps/gpui/assets/boards`.
     pub image: String,
     /// Coordinate labels on dark squares.
     pub coord_white: String,

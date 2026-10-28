@@ -1,4 +1,4 @@
-//! The startup screen (`StartupScreen.vue`). The app's models start from the settings and library
+//! The startup screen. The app's models start from the settings and library
 //! the core reads from the profile; when the core cannot read them, starting with defaults would
 //! write them over the profile at the next save, so the window says why instead, with Try again.
 

@@ -1,4 +1,4 @@
-//! Following (`pages/friends.vue`, `stores/friends.ts`, `FriendRow.vue`, `FriendImportDialog.vue`):
+//! Following:
 //! the players followed in KChess — their ratings, whether they are online or playing, how the
 //! connected accounts have fared against them, and their synced games — with follow, import
 //! from Lichess, sync, clear and remove.
@@ -352,7 +352,7 @@ impl FriendsPage {
         });
     }
 
-    /// `FriendRow.vue`.
+    /// One followed player's row.
     fn row(
         &self,
         friend: &Value,
@@ -795,7 +795,7 @@ impl FriendsPage {
     }
 }
 
-/// `FriendImportDialog.vue`: the players the connected accounts follow on Lichess, to add.
+/// The players the connected accounts follow on Lichess, to add.
 pub struct ImportDialog {
     report: Option<Value>,
     loading: bool,

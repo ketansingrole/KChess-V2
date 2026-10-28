@@ -1,4 +1,4 @@
-//! What the practice drills share (`useRunLength.ts`, `RunLengthPicker.vue`, `utils/countdown.ts`):
+//! What the practice drills share:
 //! the length of a run and its clock, a countdown that ends it or a stopwatch for untimed practice,
 //! and the best scores the core keeps for each drill (`runSummary`, `saveRun`).
 
@@ -184,7 +184,7 @@ pub fn field(
         .child(control)
 }
 
-/// `RunLengthPicker.vue`.
+/// The run-length picker.
 pub fn length_picker(
     id: &'static str,
     seconds: u32,
@@ -262,7 +262,7 @@ pub fn hud(
         )
 }
 
-/// A row of `TrainingList.vue`: an endgame drill or a lesson chapter.
+/// A row of the training list: an endgame drill or a lesson chapter.
 pub struct TrainingItem {
     pub id: String,
     pub title: String,
@@ -271,7 +271,7 @@ pub struct TrainingItem {
     pub aside: Option<String>,
 }
 
-/// `TrainingList.vue`: grouped practice items with a tick for each finished one.
+/// Grouped practice items with a tick for each finished one.
 pub fn training_list(
     groups: Vec<(Option<&'static str>, Vec<TrainingItem>)>,
     active: &str,
@@ -342,7 +342,7 @@ pub fn training_list(
         }))
 }
 
-/// `ScoreSparkline.vue`: recent scores, oldest first, as a small area with headroom above the best.
+/// Recent scores, oldest first, as a small area with headroom above the best.
 pub fn sparkline(scores: Vec<f64>, palette: &Palette) -> impl IntoElement {
     let color = palette.primary;
     canvas(

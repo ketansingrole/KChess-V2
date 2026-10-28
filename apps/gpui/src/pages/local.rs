@@ -1,4 +1,4 @@
-//! Over the board (`pages/local.vue`, `stores/local.ts`, `stores/clock.ts`): two people at one
+//! Over the board: two people at one
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 

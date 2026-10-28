@@ -1,4 +1,4 @@
-//! Library documents (`crates/kchess-wasm/js/library.ts`): the session decoders and the session
+//! Library documents: the session decoders and the session
 //! checks a frontend's library calls pass through; the other document checks are in
 //! `validate.rs`. Each decoder accepts and rejects what the TypeScript decoder does, and returns
 //! the same normalized value.

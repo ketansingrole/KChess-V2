@@ -1,4 +1,4 @@
-//! The analysis board (`pages/analysis.vue`, `stores/analysis.ts`): a move tree explored on the
+//! The analysis board: a move tree explored on the
 //! board, Stockfish's lines and arrows for the position shown, Lichess's cloud evaluation, and the
 //! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
 
@@ -1880,7 +1880,7 @@ impl TreeView<'_> {
             .into_any_element()
     }
 
-    /// `AnalysisLine.vue`: a line's moves run on, the alternatives to a move follow it in
+    /// A line's moves run on, the alternatives to a move follow it in
     /// brackets before the line resumes. Off the main line everything stays inline.
     fn line(
         &self,

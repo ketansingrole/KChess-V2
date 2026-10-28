@@ -1,4 +1,4 @@
-//! Audio for voice input (`utils/voiceCapture.ts` and `public/voice/processor.js`): the default
+//! Audio for voice input: the default
 //! microphone, mono, in chunks of about 100 ms. Under the store's test switch a WAV file named by
 //! `KCHESS_TEST_VOICE_AUDIO` is played in its place, in real time, so the app can be driven
 //! without opening a microphone.

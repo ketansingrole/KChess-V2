@@ -1,5 +1,5 @@
 //! The app's colors: KChess's default look or the theme chosen in Settings, resolved by
-//! `kchess_domain::theme` exactly as the Electron renderer resolves them, then given to GPUI Kit's
+//! `kchess_domain::theme` exactly as the Electron app resolved them, then given to GPUI Kit's
 //! theme so every component paints with them. Follows the system appearance when Settings says so.
 
 use std::rc::Rc;
@@ -45,7 +45,7 @@ const KEYS: &[(&str, &str)] = &[
     ("popover.background", "--ui-bg"),
     ("popover.foreground", "--ui-text"),
     ("sidebar.background", "--ui-bg"),
-    // Nuxt UI's navigation: muted items, the current one in the primary color.
+    // Navigation: muted items, the current one in the primary color.
     ("sidebar.foreground", "--ui-text-muted"),
     ("sidebar.border", "--ui-border"),
     ("sidebar.accent.background", "--ui-bg-elevated"),
@@ -69,7 +69,7 @@ const KEYS: &[(&str, &str)] = &[
     ("base.yellow", "--ui-warning"),
 ];
 
-/// KChess's own colors, by their Nuxt UI names, for what GPUI Kit's theme has no slot for
+/// KChess's own colors, by name, for what GPUI Kit's theme has no slot for
 /// (accented backgrounds, toned and dimmed text, wins and losses): `cx.global::<Palette>()`.
 #[derive(Clone, Copy)]
 // The whole palette, as the stylesheet defines it; each view reads what it paints with.
@@ -216,7 +216,7 @@ pub fn apply(window: &mut Window, cx: &mut App) {
             keys.insert((*key).to_string(), value.clone());
         }
     }
-    // Nuxt UI's controls: 6px corners (`rounded-md` over a 0.25rem radius), 8px for dialogs.
+    // Controls: 6px corners (`rounded-md` over a 0.25rem radius), 8px for dialogs.
     let config: Option<ThemeConfig> = serde_json::from_value(json!({
         "name": "KChess",
         "mode": if dark { "dark" } else { "light" },

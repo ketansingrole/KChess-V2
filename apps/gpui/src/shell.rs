@@ -1,4 +1,4 @@
-//! The window's frame, as the Electron app draws it (`AppWorkspace.vue`): a sidebar that collapses
+//! The window's frame, as the Electron app draws it: a sidebar that collapses
 //! to icons, a top bar, and the current page.
 
 use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
@@ -72,7 +72,7 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
         })
 }
 
-/// The sidebar's pages, in the Electron app's order (`stores/kchess.ts`, `nav`).
+/// The sidebar's pages, in the Electron app's order.
 pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
     [
         (Page::Dashboard, "Home", icon("house")),
@@ -659,7 +659,7 @@ impl Workspace {
         App::notify(cx, page);
     }
 
-    /// Push to talk: Space held on the page speaks (`VoiceInput.vue`'s keys), while voice waits
+    /// Push to talk: Space held on the page speaks, while voice waits
     /// for it.
     fn talk_key(keystroke: &Keystroke, held: bool, cx: &mut Context<Self>) {
         if keystroke.key != "space" || keystroke.modifiers.modified() {
@@ -1223,7 +1223,7 @@ fn game_mark(cx: &App) -> Option<GameMark> {
     }
 }
 
-/// The Electron app's neutral ghost button (`app.config.ts`): the text color, the accented
+/// The Electron app's neutral ghost button: the text color, the accented
 /// background on hover and while pressed.
 fn ghost_neutral(cx: &App) -> ButtonCustomVariant {
     let palette = cx.global::<Palette>();
@@ -1257,8 +1257,8 @@ fn footer_button(
         .when(!open, |button| button.px(px(6.)).tooltip(label))
 }
 
-/// Marks a debug build (`cargo run -p kchess-gpui`) above Settings, as `DevBuildBadge.vue` does in
-/// Electron's `pnpm run dev`. Release builds compile none of it; packaging checks the binary for
+/// Marks a debug build (`cargo run -p kchess-gpui`) above Settings, as the Electron app marked
+/// its dev builds. Release builds compile none of it; packaging checks the binary for
 /// its id.
 #[cfg(debug_assertions)]
 fn dev_build_badge(open: bool, cx: &App) -> Option<AnyElement> {
@@ -1430,7 +1430,7 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// `AppUpdateButton.vue`: a newer KChess, its download, or the restart that installs it.
+/// A newer KChess, its download, or the restart that installs it.
 fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
     use crate::updates::{Phase, UpdatesHandle};
     let handle = cx.global::<UpdatesHandle>().0.clone();

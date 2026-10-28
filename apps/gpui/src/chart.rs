@@ -1,6 +1,6 @@
-//! The app's line chart (`LineChart.vue`): values over time with their axes, and a crosshair with
-//! the values and date under the pointer. One series is drawn as `RatingChart.vue` draws it, with
-//! the area under it; several (`RatingHistoryChart.vue`) as lines in their own colours, each with
+//! The app's line chart: values over time with their axes, and a crosshair with
+//! the values and date under the pointer. One series is drawn with
+//! the area under it; several as lines in their own colours, each with
 //! gaps where it has no value.
 
 use gpui_kit::component::{h_flex, v_flex};

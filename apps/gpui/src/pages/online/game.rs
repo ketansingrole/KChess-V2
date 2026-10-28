@@ -1,4 +1,4 @@
-//! The live game (`pages/online.vue`'s board and `MovePanel`): players with clocks and how their
+//! The live game: players with clocks and how their
 //! connections look, the board, offers and the opponent leaving, the moves, and the actions for a
 //! game on and over.
 
@@ -106,7 +106,7 @@ fn connection_row(label: &'static str, value: String, palette: &Palette) -> Div 
         .child(div().font_weight(FontWeight::SEMIBOLD).child(value))
 }
 
-/// Your connection, shown when your connection line is pointed at (`ConnectionPanel.vue`).
+/// Your connection, shown when your connection line is pointed at.
 fn own_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
     let online = crate::online::handle(cx).read(cx);
     let stats = ping_stats(&online.latency);
@@ -257,8 +257,7 @@ fn opponent_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
         )
 }
 
-/// "Online · 84 ms", or how the opponent's connection looks, with its panel when pointed at
-/// (`ConnectionPanel.vue`).
+/// "Online · 84 ms", or how the opponent's connection looks, with its panel when pointed at.
 fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<AnyElement> {
     if online.phase != Phase::Playing || online.correspondence() {
         return None;

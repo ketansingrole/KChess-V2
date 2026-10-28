@@ -101,7 +101,7 @@ fn castling_letter(b: u8) -> bool {
     matches!(b, b'K' | b'Q' | b'k' | b'q' | b'A'..=b'H' | b'a'..=b'h')
 }
 
-/// The loose FEN shape of `patterns.ts` (`FEN`): placement, side, castling, en passant and the
+/// The loose FEN shape: placement, side, castling, en passant and the
 /// optional counters.
 pub fn fen(s: &str) -> bool {
     let parts: Vec<&str> = s.split(' ').collect();

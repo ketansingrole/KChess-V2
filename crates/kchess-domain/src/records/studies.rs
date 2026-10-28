@@ -1,5 +1,5 @@
-//! `crates/kchess-wasm/js/studies.ts`: what a study's card shows (`summarizeStudy`). The TypeScript
-//! side remembers results per PGN; the summary itself is worked out here.
+//! What a study's card shows (`summarizeStudy`). The
+//! frontends remember results per PGN; the summary itself is worked out here.
 
 use serde_json::{Value, json};
 

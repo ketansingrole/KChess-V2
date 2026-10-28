@@ -39,9 +39,8 @@ pub trait Host: Send + Sync + 'static {
 }
 
 /// Where the core keeps its files, and where the host keeps the engines.
-/// Field names stay host-agnostic on purpose: the Node/Electron mapping
-/// (`process.execPath`, `CorePlatform.nodeEnv`) lives only in the N-API
-/// binding (`kchess-node/src/core.rs`), not in the headless core.
+/// Field names stay host-agnostic on purpose: each host maps its own environment onto them, and
+/// the headless core knows none.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// KChess's data directory; it exists.

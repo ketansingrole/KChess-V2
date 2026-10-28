@@ -1,4 +1,4 @@
-//! New game against Stockfish (`ComputerGameOptions.vue`): where the game starts (the standard
+//! New game against Stockfish: where the game starts (the standard
 //! position, a Chess960 start or a FEN), the clock, the side the player takes and Stockfish's
 //! strength. It opens on the current game's options.
 

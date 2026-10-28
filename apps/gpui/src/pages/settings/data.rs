@@ -1,4 +1,4 @@
-//! Settings → Data & storage (`SettingsData.vue`): what KChess downloaded from Lichess for each
+//! Settings → Data & storage: what KChess downloaded from Lichess for each
 //! account and keeps on this computer, clearing the local scores, and the diagnostics export.
 
 use gpui_kit::component::button::{Button, ButtonVariant};

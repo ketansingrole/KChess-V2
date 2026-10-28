@@ -1,6 +1,6 @@
-//! App updates (`appUpdates.ts`, `AppUpdateSettings.vue`): the GPUI app checks the release feed
+//! App updates: the GPUI app checks the release feed
 //! the Electron app reads (GitHub releases of KChess), downloads the package it was installed from
-//! (`tooling/gpui-package.mjs` makes them in Electron's formats), checks it against the release's
+//! (packaged in Electron's formats), checks it against the release's
 //! `SHA256SUMS.txt` and against the running app's signature, and installs it on restart or when
 //! KChess quits: a new bundle on macOS, the installer run silently on Windows (as Electron's
 //! updater does), a new AppImage, or the .deb through the package manager.
@@ -31,7 +31,7 @@ const IDLE: Duration = if cfg!(test) {
 };
 /// `checkAutomatically`: on startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-/// The name this identity's packages carry, which `gpui-package.mjs` builds in: the preview
+/// The name this identity's packages carry, which the packaging builds in: the preview
 /// beside Electron, or (`--final`) the app replacing it.
 const PREFIX: &str = match option_env!("KCHESS_PACKAGE_PREFIX") {
     Some(prefix) => prefix,

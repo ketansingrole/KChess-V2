@@ -1,4 +1,4 @@
-//! Watching Lichess games (`crates/kchess-node/js/spectate.ts`): TV channels and the games they show,
+//! Watching Lichess games: TV channels and the games they show,
 //! a game by id, broadcast rounds and the broadcast listings.
 //!
 //! One watch runs at a time. Starting another stops the last, and frames or states of a stopped
@@ -25,7 +25,7 @@ pub use feed::{
 pub use listings::{broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
 
-/// `TV_CHANNELS` of `crates/kchess-wasm/js/tvChannels.ts`: key and label, in display order.
+/// The TV channels: key and label, in display order.
 pub const TV_CHANNELS: [(&str, &str); 16] = [
     ("best", "Top rated"),
     ("bullet", "Bullet"),

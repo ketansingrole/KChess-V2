@@ -1,8 +1,7 @@
 //! The stand-alone chess clock for a real board: two faces, top (the player across the table) and
 //! bottom, each with its own minutes and a shared increment. Times are milliseconds; `at` is the
-//! host's monotonic clock. The GPUI app holds an `OtbClock`; the Electron renderer
-//! (`useOtbClock` in `stores/clock.ts`) keeps its state as JSON and moves it through the
-//! `otbClock*` rules below.
+//! host's monotonic clock. The GPUI app holds an `OtbClock`; other hosts keep its state
+//! as JSON and move it through the `otbClock*` rules below.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

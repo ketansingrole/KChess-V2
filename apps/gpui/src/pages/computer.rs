@@ -1,4 +1,4 @@
-//! Play with Computer (`pages/computer.vue`, `stores/kchess/computerGame.ts`): a game against
+//! Play with Computer: a game against
 //! Stockfish at a chosen level. The rules run the game (`game::computer`); this page answers their
 //! reads, runs the engine searches the game asks for, keeps the clocks moving and saves the
 //! unfinished game in the profile, where the Electron app resumes it too.

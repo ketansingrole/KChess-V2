@@ -1,5 +1,5 @@
-//! Chess engines, migrating from `crates/kchess-node/js/{uci,engineScheduler,engine,managedEngine,
-//! stockfishAsset,analysis,review}.ts` (see RUST_MIGRATION.md).
+//! Chess engines: UCI processes, the scheduler, search, the managed engine, analysis and review
+//! (see RUST_MIGRATION.md).
 //!
 //! `search`, `analysis` and `review` each own their engine processes and their state (the
 //! TypeScript module-level `serviceState`, one per core instance). They share an `EngineContext`:

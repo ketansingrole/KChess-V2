@@ -10,7 +10,7 @@ use serde_json::{Map, Number, Value};
 
 use super::{Out, arg};
 
-/// `GAME_ID` of `domain/patterns.ts`: `^[a-zA-Z0-9]{8,12}$`.
+/// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
 fn is_game_id(text: &str) -> bool {
     (8..=12).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }

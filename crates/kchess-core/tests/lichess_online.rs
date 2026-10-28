@@ -1,7 +1,5 @@
-//! The online-play session (`crates/kchess-node/js/lichess.ts`'s `OnlineSession`) over local fixtures.
-//! Ports `tests/core/online-session.test.ts` (recovery, protection, attachments, cancellation)
-//! and `tests/core/online-actions.test.ts` (actions, chat, lobby, challenges, seeks), plus the
-//! scenarios the brief names that the TypeScript suites do not cover in full: a move is sent once,
+//! The online-play session over local fixtures: recovery, protection, attachments and
+//! cancellation; actions, chat, lobby, challenges and seeks; and that a move is sent once,
 //! a dropped game stream reconnects, and a tournament join and withdrawal use the account's login.
 
 #[path = "support/lichess_http.rs"]
@@ -255,7 +253,7 @@ fn field(seen: &Seen, name: &str) -> Option<String> {
         .map(|(_, value)| value)
 }
 
-/* ── online-session.test.ts ───────────────────────────────────────────── */
+/* ── session ───────────────────────────────────────────────── */
 
 #[tokio::test]
 async fn keeps_assistance_blocked_after_a_failed_game_stream_and_cancellation_until_the_server_confirms_no_game()
@@ -768,7 +766,7 @@ async fn treats_a_late_credential_failure_for_a_cancelled_attachment_as_cancella
     online.close();
 }
 
-/* ── online-actions.test.ts ───────────────────────────────────────────── */
+/* ── actions ───────────────────────────────────────────────── */
 
 /// A session attached to game AbCd1234 of Alice (a correspondence game of the same account is
 /// listed first and must not be picked).
@@ -1267,8 +1265,8 @@ async fn a_tournament_join_and_withdrawal_use_the_accounts_login() {
 }
 
 /// A malformed record on the idle event stream is reported as it arrives: the stream counts as
-/// interrupted and the lobby says so while the stream is still open, as the TypeScript event stream
-/// did when its line callback threw (`crates/kchess-node/js/lichess.ts`).
+/// interrupted and the lobby says so while the stream is still open, as the event stream
+/// did when its line callback failed.
 #[tokio::test]
 async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
     let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();

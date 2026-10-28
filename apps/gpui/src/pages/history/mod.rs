@@ -1,4 +1,4 @@
-//! Game history (`pages/history.vue`, `LocalGameHistory.vue`): the games played against the
+//! Game history: the games played against the
 //! computer and over the board, filtered by result, twenty to a page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
@@ -97,7 +97,7 @@ fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
     }
 }
 
-/// `ResultBadge.vue`.
+/// A game's result as a badge.
 pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
     let (label, look, side) = badge_of(outcome);
     widgets::badge(label, look, palette)
@@ -154,7 +154,7 @@ fn details(game: &Value) -> String {
     }
 }
 
-/// The game as PGN, with the headers Electron writes (`LocalGameHistory.vue`, `pgn`).
+/// The game as PGN, with the headers the app writes.
 fn pgn(game: &Value) -> Option<String> {
     let clocks: Vec<&str> = text(game, "timeControl").split(" / ").collect();
     let split = clocks.len() > 1 && clocks[0] != clocks[1];

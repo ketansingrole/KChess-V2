@@ -1,5 +1,5 @@
 //! Accounts, tokens, played games, settings and the API cache in `kchess.db` (`store/games.rs`).
-//! Ports `tests/core/store-accounts.test.ts` case for case; the token encryption is the fake
+//! The token encryption is the fake
 //! secret store of `support/store.rs`.
 
 mod support;

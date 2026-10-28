@@ -1,4 +1,4 @@
-//! Puzzles → Lichess stats (`PuzzleStats.vue`, `StormStats.vue`, the store's `loadStats`): the
+//! Puzzles → Lichess stats: the
 //! account's puzzle numbers as Lichess reports them — rating, games, the dashboard's first-try
 //! share and performance by theme over a period, the rating history, and the Storm and Streak
 //! results. Read-only.
@@ -380,7 +380,7 @@ fn stat(label: &str, value: String, sub: Option<AnyElement>, palette: &Palette) 
         }))
 }
 
-/// `StormStats.vue`: Storm high scores, the best Storm and Streak, and recent Storm days.
+/// Storm high scores, the best Storm and Streak, and recent Storm days.
 pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
     let label = |text: &str| {
         div()
@@ -762,7 +762,7 @@ impl Render for PuzzleStats {
 }
 
 impl PuzzleStats {
-    /// `StormStats.vue` for the Rush tab: Connect without an account, then the results.
+    /// Storm stats for the Rush tab: Connect without an account, then the results.
     pub fn storm_panel(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         if self.account.is_empty() {
             return widgets::card(palette)

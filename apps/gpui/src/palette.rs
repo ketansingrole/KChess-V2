@@ -1,4 +1,4 @@
-//! The top bar's search box and command palette (`AppCommandPalette.vue`, `useQuickPick.ts`):
+//! The top bar's search box and command palette:
 //! ⌘K searches pages and commands, `>` runs commands, `@` finds players, `#` changes settings,
 //! `?` explains the prefixes. Results show under the box; ↑/↓ choose, Return runs, Esc closes.
 

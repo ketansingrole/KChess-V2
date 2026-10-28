@@ -1,4 +1,4 @@
-//! Play on Lichess (`pages/online.vue`): find a game (a seek, a challenge, correspondence), the
+//! Play on Lichess: find a game (a seek, a challenge, correspondence), the
 //! challenges and games in progress beside it, and the live game on the board with its offers,
 //! actions and chat. The game itself is `crate::online`'s, shared by the whole app.
 

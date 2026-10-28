@@ -1,4 +1,4 @@
-//! The chessboard, as Chessground draws it in the Electron app (`ChessBoard.vue`): the chosen board
+//! The chessboard, as Chessground draws it in the Electron app: the chosen board
 //! and pieces, the last move, check, the selected piece and where it can go, coordinates,
 //! click-to-move and drag-and-drop, and the promotion picker. Squares, highlights and pieces are
 //! painted in one pass; the page gives the board its position and hears its moves.
@@ -61,7 +61,7 @@ pub struct BoardState {
     pub square_names: bool,
     /// The board editor's tool: pieces move anywhere, are put down or taken off.
     pub edit: Option<EditTool>,
-    /// A review's label on the move just played (`BoardMoveFeedback.vue`).
+    /// A review's label on the move just played.
     pub badge: Option<Badge>,
     /// The side that may queue a move for its next turn while the other side is to move.
     pub premove: Option<Color>,
@@ -1196,7 +1196,7 @@ fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
     );
 }
 
-/// The puzzle hint (`PuzzleBoard.vue`, `HINT_MARK`): a thick green ring on a soft white halo,
+/// The puzzle hint (`HINT_MARK`): a thick green ring on a soft white halo,
 /// over a faint green tint, in a square's 100 units: radius 42, halo 14 wide, ring 9 wide.
 fn paint_hint(cell: Bounds<Pixels>, window: &mut Window) {
     let unit = cell.size.width / 100.;
@@ -1334,7 +1334,7 @@ pub fn cached(board: &Entity<ChessBoard>) -> AnyElement {
     board.clone().cached(style).into_any_element()
 }
 
-/// What a screen reader says of the board (`ChessBoard.vue`'s status line): the last move and
+/// What a screen reader says of the board: the last move and
 /// the side to move.
 fn describe(state: &BoardState) -> String {
     let to_move = if state.fen.split_whitespace().nth(1) == Some("b") {
@@ -1544,7 +1544,7 @@ impl Render for ChessBoard {
             .id("chess-board")
             .test_support()
             // Pictures in a list are named by what holds them; a board to play on is a group, and
-            // says each move as it is played (`ChessBoard.vue`'s `aria-live` line).
+            // says each move as it is played (an `aria-live` line).
             .when_some(description, |board, description| {
                 board
                     .role(gpui_kit::Role::Group)

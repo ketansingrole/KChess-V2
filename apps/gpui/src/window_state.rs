@@ -1,4 +1,4 @@
-//! Where the window opens (`electron/main/windowState.ts`): as it was left, in the profile's
+//! Where the window opens: as it was left, in the profile's
 //! `window-state.json` that Electron keeps too, unless no connected display can still show it.
 
 use std::path::{Path, PathBuf};

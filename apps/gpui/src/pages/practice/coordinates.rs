@@ -1,4 +1,4 @@
-//! Board coordinates (`CoordinatesTrainer.vue`), the way Lichess trains them: find a square that is
+//! Board coordinates, the way Lichess trains them: find a square that is
 //! named, or name one shown on the board. A timed run keeps a best score per mode and length; untimed
 //! practice, or practising only some files and ranks, keeps none.
 

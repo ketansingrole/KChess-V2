@@ -1,4 +1,4 @@
-//! Arena and Swiss tournaments (`crates/kchess-node/js/tournaments.ts`): the list the timeline shows,
+//! Arena and Swiss tournaments: the list the timeline shows,
 //! one tournament with its leaderboard, joining and leaving, and creating an arena.
 //!
 //! Lichess's answers are read into typed shapes (`decode`): a required key must be present and
@@ -522,7 +522,7 @@ struct RawExtras {
 
 /* ── Eligibility and dates ─────────────────────────────────────────────── */
 
-/// The Board API rules of `timeControl.ts`, read through the domain.
+/// The Board API time-control rules, read through the domain.
 fn board_rule(method: &str, minutes: f64, increment: f64) -> bool {
     matches!(
         kchess_domain::records::call(method, &[json!(minutes), json!(increment)]),

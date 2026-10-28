@@ -1,4 +1,4 @@
-//! Exporting a game (`ExportGame.vue`): the Export menu under a game's moves, for an animated GIF
+//! Exporting a game: the Export menu under a game's moves, for an animated GIF
 //! of the game, a PNG of the position shown or a PGN file; and saving an export (`saveExport`),
 //! where the person picks the place, starting in Downloads.
 

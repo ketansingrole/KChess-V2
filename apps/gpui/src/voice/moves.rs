@@ -1,4 +1,4 @@
-//! Spoken moves on a board (`VoiceMoveInput.vue`): a clear move is played (unless Settings ask to
+//! Spoken moves on a board: a clear move is played (unless Settings ask to
 //! confirm moves), an unsure or ambiguous one waits for “confirm”, its number, or the move said
 //! again. A page's own commands (“take back”, “back”) are tried first. Each phrase goes to the
 //! voice history with what came of it, and once a move is made where it was said, the move that was
@@ -482,8 +482,7 @@ impl<V> Clone for Access<V> {
 
 impl<V> Copy for Access<V> {}
 
-/// A board page's voice bar: its toggle, the numbered choices and Cancel (`VoiceMoveInput.vue`'s
-/// template).
+/// A board page's voice bar: its toggle, the numbered choices and Cancel.
 /// `state` is the page's voice state, read here as the page renders.
 pub fn board_bar<V: 'static>(
     state: &VoiceMoves,

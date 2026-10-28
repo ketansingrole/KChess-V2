@@ -1,4 +1,4 @@
-//! UCI `info` lines (`crates/kchess-wasm/js/uciInfo.ts`): the scored principal variation a search
+//! UCI `info` lines: the scored principal variation a search
 //! reports, turned to White's point of view.
 // Engine output is outside input: read it without indexing that can panic.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]

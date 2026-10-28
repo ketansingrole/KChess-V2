@@ -1,5 +1,4 @@
-//! The Stockfish KChess downloads and owns (formerly `crates/kchess-node/js/managedEngine.ts` and
-//! `stockfishAsset.ts`): install state, the verified download of the latest official release,
+//! The Stockfish KChess downloads and owns: install state, the verified download of the latest official release,
 //! and the atomic replacement of the working engine.
 //!
 //! Replacement goes through an `EngineHandoff`: the host stops the engine owners and waits until

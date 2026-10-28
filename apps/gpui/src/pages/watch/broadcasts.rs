@@ -1,4 +1,4 @@
-//! Watch → Broadcasts (`BroadcastPanel.vue`, `BroadcastCard.vue`): the tournaments Lichess
+//! Watch → Broadcasts: the tournaments Lichess
 //! relays, searchable; a tournament's rounds and boards with their clocks; one board followed
 //! move by move, and Analyse.
 

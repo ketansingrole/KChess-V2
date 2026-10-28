@@ -1,4 +1,4 @@
-//! Square colours (`SquareColorTrainer.vue`): is this square light or dark? Answer with the buttons
+//! Square colours: is this square light or dark? Answer with the buttons
 //! L and D, or by voice, for thirty seconds; the best score stays on this computer.
 
 use std::time::Duration;

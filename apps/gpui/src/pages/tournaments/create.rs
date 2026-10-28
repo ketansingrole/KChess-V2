@@ -1,4 +1,4 @@
-//! Create an arena (`CreateArenaDialog.vue`): a Lichess arena run by the active account.
+//! Create an arena: a Lichess arena run by the active account.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};

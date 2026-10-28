@@ -1,4 +1,4 @@
-//! The game chat (`OnlineChat.vue`): docked at the bottom right like a messenger window, so it
+//! The game chat: docked at the bottom right like a messenger window, so it
 //! never pushes the game around; the opponent's room, and spectators' when asked for.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

@@ -1,5 +1,4 @@
-//! Game review through the scripted engine (`tests/core/review-engine.test.ts`,
-//! `review-queue.test.ts` and `review-associations.test.ts`): the quick and deep passes, automatic
+//! Game review through the scripted engine: the quick and deep passes, automatic
 //! reviews that ask Lichess first, pauses, queue order, discarding an account's reviews,
 //! cancellation keeping finished work, battery throttling, game links, and a computer move
 //! taking the engine from a running review.

@@ -1,4 +1,4 @@
-//! Puzzles (`crates/kchess-wasm/js/puzzle.ts`): turning Lichess puzzles from the API or the database
+//! Puzzles: turning Lichess puzzles from the API or the database
 //! into one shape, and the move rules of solving them.
 
 use serde::{Deserialize, Serialize};
@@ -152,7 +152,7 @@ fn from_db(row: &Value) -> Option<Value> {
     Some(Value::Object(out))
 }
 
-/// The squares of a UCI move as chessops `parseUci` reads it (`uciSquares`).
+/// The squares of a UCI move as UCI notation gives them.
 fn uci_squares(uci: &str) -> Option<(&str, &str)> {
     let b = uci.as_bytes();
     let square_ok =

@@ -5,7 +5,7 @@
 //! takes the desktop's check.
 //!
 //! The tables are the single source. `kchess-contracts` generates their arities for TypeScript
-//! (`ts/generated/arity.ts`), and the frontends check calls through `validateCoreArguments` and
+//! frontends, which check calls through `validateCoreArguments` and
 //! `validateIpcArguments` on the rules binding. A JSON `null` stands for `undefined` where the
 //! facade passes JSON arguments, since JSON cannot carry `undefined`.
 
@@ -46,7 +46,7 @@ pub enum Scope {
 /// Methods refused during a live human game (engine, review and explorer assistance),
 /// gated by the facade's `assistance_allowed` (`crates/kchess-core/src/facade.rs`). The single
 /// source for the gate and the CLI's pre-call `resumeOnline`: when a facade arm gains the gate,
-/// add its method here and regenerate `ts/generated/arity.ts`.
+/// add its method here and regenerate the arities.
 pub const ASSISTANCE_METHODS: &[&str] = &[
     "bestMove",
     "startAnalysis",
@@ -58,7 +58,7 @@ pub const ASSISTANCE_METHODS: &[&str] = &[
     "openingPopularity",
     "cloudEval",
 ];
-/// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`, `crates/kchess-wasm/js/tvChannels.ts`).
+/// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`).
 pub const TV_CHANNEL_KEYS: &[&str] = &[
     "best",
     "bullet",

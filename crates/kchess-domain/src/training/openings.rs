@@ -1,5 +1,5 @@
-//! Opening names (`crates/kchess-wasm/js/openings.ts`): Lichess's CC0 named lines, as the table
-//! `tooling/make-openings.mjs` writes. Each position takes the name of the shortest line reaching it
+//! Opening names: Lichess's CC0 named lines, as the generated table
+//! lists them. Each position takes the name of the shortest line reaching it
 //! (the first on a tie, like Lichess), and the names form the family tree the openings page browses.
 
 use serde::{Deserialize, Serialize};

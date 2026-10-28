@@ -1,5 +1,5 @@
-//! Move and game sounds, as the Electron app plays them (`utils/sound.ts`): the move, capture,
-//! low-time and notification clips in `apps/desktop/app/assets/sounds`. A sound thread owns the
+//! Move and game sounds, as the Electron app plays them: the move, capture,
+//! low-time and notification clips. A sound thread owns the
 //! output device, opened at the first sound, and decodes each clip once.
 
 use std::collections::HashMap;

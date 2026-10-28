@@ -1,4 +1,4 @@
-//! Lichess sign-in (`connectLichess` and `crates/kchess-node/js/oauthPage.ts`): PKCE with S256, a
+//! Lichess sign-in (`connectLichess`): PKCE with S256, a
 //! random state, a loopback callback server on 127.0.0.1 that serves only `/callback` with the
 //! right `state` and only once, the page the browser lands on, the token exchange, the account
 //! check and the save of the login.
@@ -19,7 +19,7 @@ use super::client::authorize;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 
-/// `OAUTH_CLIENT_ID` of `lichess.ts`.
+/// The OAuth client id KChess sends to Lichess.
 pub const OAUTH_CLIENT_ID: &str = "kchess-desktop";
 
 /// Permissions asked for at login. Studies, tournaments, team Swiss events and messages need

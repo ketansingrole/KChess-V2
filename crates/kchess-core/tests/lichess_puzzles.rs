@@ -1,6 +1,6 @@
-//! Lichess puzzle endpoints (the puzzle functions of `crates/kchess-node/js/lichess.ts`) over local
+//! Lichess puzzle endpoints over local
 //! fixtures: reporting a solved puzzle, the next puzzle, and the reconnect and unreadable-answer
-//! rules. The TypeScript suite has no direct puzzle test, so these cover the endpoint contract.
+//! rules. These cover the endpoint contract.
 
 #[path = "support/lichess_http.rs"]
 mod fixtures;

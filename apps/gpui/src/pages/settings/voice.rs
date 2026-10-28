@@ -1,4 +1,4 @@
-//! Settings → Voice input (`SettingsVoice.vue`): the microphone's privacy settings, a short level
+//! Settings → Voice input: the microphone's privacy settings, a short level
 //! test, and how spoken moves are taken; the voice history follows (`voice_history`).
 
 use futures::StreamExt as _;

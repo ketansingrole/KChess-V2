@@ -1,4 +1,4 @@
-//! Watch (`pages/watch.vue`, `stores/watch.ts`): Lichess TV by channel, the games followed
+//! Watch: Lichess TV by channel, the games followed
 //! players are playing, and tournament broadcasts. One feed streams at a time, and only while the
 //! page is shown: leaving it stops the stream.
 

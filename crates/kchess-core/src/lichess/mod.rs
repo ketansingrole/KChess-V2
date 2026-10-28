@@ -1,5 +1,5 @@
-//! Lichess, migrating from `crates/kchess-node/js/{lichess,requestPolicy,ndjson,oauthPage,usage,
-//! challenges,tournaments,spectate,studies,cloudEval,positionLookup}.ts` (see RUST_MIGRATION.md).
+//! Lichess: accounts, online play, challenges, tournaments, studies, spectating and lookups (see
+//! RUST_MIGRATION.md).
 
 pub mod accounts;
 pub mod adapters;

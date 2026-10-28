@@ -1,5 +1,4 @@
-//! Lichess analysis as a review (`reviewFromLichess` in `crates/kchess-node/js/lichess.ts`). Ports
-//! `tests/core/lichess-review.test.ts`.
+//! Lichess analysis as a review (`reviewFromLichess`).
 
 use kchess_core::lichess::reviews::review_from_lichess;
 use kchess_domain::review::analyse_review;

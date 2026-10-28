@@ -1,4 +1,4 @@
-//! `crates/kchess-wasm/js/onlineEvent.ts`: validation of Lichess board-API events. The schema is the
+//! Validation of Lichess board-API events. The schema is the
 //! one valibot applied: an object is anything with the keys (arrays included, as valibot reads
 //! them), unknown keys pass through, an optional key may be absent but not null, and the event
 //! type picks the schema like valibot's `variant`.

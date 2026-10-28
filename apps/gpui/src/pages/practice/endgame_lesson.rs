@@ -1,4 +1,4 @@
-//! One endgame course (`EndgameLesson.vue`): its chapters, each a few steps to read, follow or
+//! One endgame course: its chapters, each a few steps to read, follow or
 //! solve, against scripted replies or Stockfish. A finished chapter is saved as a `lesson` run.
 
 use std::time::Duration;

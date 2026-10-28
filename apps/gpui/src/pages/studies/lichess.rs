@@ -1,4 +1,4 @@
-//! Studies → Lichess (`LichessStudies.vue`, `stores/lichessStudies.ts`): the studies on a connected
+//! Studies → Lichess: the studies on a connected
 //! account, opened (kept offline first) or kept offline to open later, and the analysis board sent
 //! to one of them or to a new private study.
 

@@ -1,8 +1,7 @@
-//! The live Lichess game, app-wide (`stores/kchess/onlineGame.ts` over `OnlineGame` in
-//! `crates/kchess-wasm/js/onlineGame.ts`): every decision is the rules' (`onlineGame*`); this
+//! The live Lichess game, app-wide (over `OnlineGame`): every decision is the rules' (`onlineGame*`); this
 //! keeps their state, makes the calls they ask for, and runs their effects (clock, sounds,
-//! notices). Beside it: the challenges, the lobby stream and the games in progress
-//! (`stores/challenges.ts`). Engine help stays off while a game is live or being looked for, and
+//! notices). Beside it: the challenges, the lobby stream and the games in progress.
+//! Engine help stays off while a game is live or being looked for, and
 //! until the core has said whether one was left running (`assistanceAllowed`).
 
 use std::sync::OnceLock;
@@ -644,7 +643,7 @@ impl OnlineState {
         .detach();
     }
 
-    /* ── Challenges and games in progress (`stores/challenges.ts`) ── */
+    /* ── Challenges and games in progress ── */
 
     pub fn refresh_ongoing(&mut self, cx: &mut Context<Self>) {
         if crate::accounts::handle(cx).read(cx).connected().is_empty() {

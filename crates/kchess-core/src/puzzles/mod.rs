@@ -1,5 +1,5 @@
-//! The offline puzzle database (`puzzles.db`), which this service alone owns
-//! (formerly `crates/kchess-node/js/puzzleWorker.ts`). Lichess publishes every rated puzzle as one
+//! The offline puzzle database (`puzzles.db`), which this service alone owns.
+//! Lichess publishes every rated puzzle as one
 //! CC0 file; the service streams it once, keeps a sample (`kchess_domain::puzzle::Sampler`) and
 //! stores it, so Storm, Streak, Rush and offline practice work without the original.
 

@@ -1,4 +1,4 @@
-//! The analysis board's move tree (`crates/kchess-wasm/js/analysisTree.ts`): every position keeps
+//! The analysis board's move tree: every position keeps
 //! the moves tried from it, the first child being the main line. A node is addressed by its path,
 //! the UCI moves from the root joined with spaces. The rules decide what a path means, whether a
 //! move is new, where a node goes and how it is written; this walks the tree and applies them.
@@ -47,7 +47,7 @@ pub fn moves_of(path: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A path one move longer: its parent's path and the move (as `AnalysisLine.vue` joins them).
+/// A path one move longer: its parent's path and the move.
 pub fn child_path(parent: &str, uci: &str) -> String {
     if parent.is_empty() {
         uci.to_string()

@@ -1,4 +1,4 @@
-//! Two-finger swipe between pages (`utils/pageSwipe.ts`): a horizontal swipe on the trackpad goes
+//! Two-finger swipe between pages: a horizontal swipe on the trackpad goes
 //! back or forward through the pages visited, with an arrow at the edge that fills as the swipe
 //! nears the distance that commits it. The trackpad says when the fingers land and lift, so the
 //! release is known rather than guessed.

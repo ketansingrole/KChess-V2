@@ -1,5 +1,4 @@
-//! Pictures Lichess serves for the app to show, such as a broadcast's cover (`BroadcastCard.vue`'s
-//! `<img>`). Only Lichess's own image hosts are asked, as Electron's content policy allows
+//! Pictures Lichess serves for the app to show, such as a broadcast's cover. Only Lichess's own image hosts are asked, as Electron's content policy allows
 //! (`img-src https://lichess.org https://image.lichess1.org`); each picture is bounded in size,
 //! read once and kept for the session. A picture that cannot be had leaves its placeholder.
 

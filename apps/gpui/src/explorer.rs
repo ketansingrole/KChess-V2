@@ -1,4 +1,4 @@
-//! The opening explorer and tablebases (`PositionExplorer.vue`): the Lichess, Masters and Player
+//! The opening explorer and tablebases: the Lichess, Masters and Player
 //! databases and the tablebase for a position, as the core looks them up (`positionLookup`), as a
 //! list on the analysis board or as a grid of boards beside an opening's line. Its settings are
 //! the view preference both apps keep (`kchess:explorer`).
@@ -153,7 +153,7 @@ fn games(entry: &Value) -> u64 {
     count(&entry["white"]) + count(&entry["draws"]) + count(&entry["black"])
 }
 
-/// `ExplorerBar.vue`: how the games from a position ended, White, draws and Black; a share is
+/// How the games from a position ended, White, draws and Black; a share is
 /// labelled once it is wider than `min_label` percent.
 pub fn result_bar(entry: &Value, min_label: u64, palette: &Palette) -> impl IntoElement {
     let counts = [

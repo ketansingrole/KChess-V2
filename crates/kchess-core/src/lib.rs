@@ -1,5 +1,5 @@
-//! The KChess headless core's services, migrating from `crates/kchess-node/js` (see
-//! `RUST_MIGRATION.md`). Hosts drive it through `kchess-node`'s `NativeCore`.
+//! The KChess headless core's services (see `RUST_MIGRATION.md`). Hosts drive it through
+//! `Core`.
 
 /// How KChess names itself to the services it calls (Lichess refuses a request that names no
 /// program with a 403 page; GitHub asks every API caller for one).

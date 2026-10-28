@@ -1,6 +1,5 @@
 //! One entry point for every host: `call(method, args)` with a JSON array of arguments and a
-//! JSON result. The Node module and the renderer's WebAssembly module both expose it, and
-//! `crates/kchess-wasm/js/engine.ts` gives it typed TypeScript wrappers.
+//! JSON result. Every host binds this one function.
 
 use serde_json::{Map, Value, json};
 use shakmaty::Position;
@@ -122,7 +121,7 @@ fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
     })
 }
 
-/// The renderer's module has no threads; its own stack (`.cargo/config.toml`) is large enough.
+/// The WebAssembly build has no threads; its own stack (`.cargo/config.toml`) is large enough.
 #[cfg(target_arch = "wasm32")]
 fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
     call_inner(method, args).map_err(|e| e.to_string())
@@ -517,7 +516,7 @@ fn setup_pgn(
         );
     }
     if variant != "standard" {
-        // chessops `makeVariant`: the names other PGN readers know, not the Lichess keys.
+        // The PGN `Variant` header takes the names other PGN readers know, not the Lichess keys.
         let name = match variant {
             "chess960" => "Chess960",
             "kingOfTheHill" => "King of the Hill",

@@ -1,4 +1,4 @@
-//! Alerts for the player (`electron/main/notify.ts`, `utils/gameAlerts.ts`), when Settings allow
+//! Alerts for the player, when Settings allow
 //! them: inside the window while KChess is in front (macOS shows no banner for the app in front),
 //! a system notification in the background. An alert about the board being looked at is dropped.
 
@@ -70,7 +70,7 @@ pub fn decide(settings: &Settings, kind: &str, away: bool, page: Page) -> Outcom
 }
 
 /// Who sends a notification on macOS: a packaged app's own bundle, or for a bare `cargo run`
-/// binary (no bundle) the branded development app `pnpm run dev` builds. Without one the
+/// binary (no bundle) the branded development app. Without one the
 /// notification library asks macOS for an app named "use_default", which opens a Choose
 /// Application dialog.
 #[cfg(target_os = "macos")]
@@ -81,7 +81,7 @@ fn sender() -> String {
         .unwrap_or_else(|| DEV_SENDER.to_string())
 }
 
-/// `.dev/KChess.app`'s bundle identifier (`tooling/with-branded-electron.mjs`).
+/// `.dev/KChess.app`'s bundle identifier.
 #[cfg(target_os = "macos")]
 const DEV_SENDER: &str = "com.kchess.app.dev";
 

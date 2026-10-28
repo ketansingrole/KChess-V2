@@ -1,5 +1,4 @@
-//! The offline voice model that voice input loads (formerly `crates/kchess-node/js/voiceModel.ts`
-//! and `voiceModelWorker.ts`). The model is downloaded once, verified against its published
+//! The offline voice model that voice input loads. The model is downloaded once, verified against its published
 //! SHA-256, unpacked as the `model` folder in the profile's voice folder, and recorded with a
 //! marker (`model.json`) listing every file's size and SHA-256. A cache is trusted only while the
 //! marker and the files still match; a damaged cache is replaced by the next `ensure`. The
@@ -99,8 +98,8 @@ fn active_model_with(
     (Archive::Url(model.url.clone()), model)
 }
 
-/// Where the zip comes from: the model's URL, or a local file (the e2e fixture, which
-/// `tooling/prepare-voice-model.mjs` supplies so the tests need no network).
+/// Where the zip comes from: the model's URL, or a local file (a test fixture, so the tests need
+/// no network).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Archive {
     Url(String),

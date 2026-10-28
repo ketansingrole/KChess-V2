@@ -1,6 +1,5 @@
-//! Lichess request admission (`crates/kchess-node/js/requestPolicy.ts`) and the request accounting of
-//! `crates/kchess-node/js/usage.ts` (`withUsage`, `attributeTo`, `meteredFetch`, `recordUsage`,
-//! `forgetUsage`).
+//! Lichess request admission and the request accounting (`withUsage`, `attributeTo`,
+//! `meteredFetch`, `recordUsage`, `forgetUsage`).
 //!
 //! Admission: at most two requests are in flight, interactive requests (game moves and their
 //! resign/abort/draw/takeback family) go before the rest, a 429 starts a cooldown that the next
@@ -54,7 +53,7 @@ pub struct UsageContext {
 type UsageCell = Arc<Mutex<Option<UsageContext>>>;
 
 tokio::task_local! {
-    /// The `AsyncLocalStorage` of `usage.ts`: the context of the task that is running.
+    /// The usage context of the task that is running.
     static USAGE: UsageCell;
 }
 
@@ -153,8 +152,7 @@ struct Accounting {
     epochs: HashMap<String, u64>,
 }
 
-/// The shared admission state of one Lichess client (`serviceState` of `requestPolicy.ts` and
-/// `usage.ts`). One per process; every client shares its cooldown and lanes.
+/// The shared admission state of one Lichess client. One per process; every client shares its cooldown and lanes.
 pub struct Policy {
     host: Arc<dyn Host>,
     http: reqwest::Client,
@@ -181,7 +179,7 @@ pub fn is_bulk_export(url: &str) -> bool {
 }
 
 /// Whether `url` answers with a long-lived stream, which owns its own lifetime: the header
-/// deadline does not apply to it (`requestPolicy.ts`'s stream list), nor does the body deadline.
+/// deadline does not apply to it, nor does the body deadline.
 pub fn is_stream(url: &str, content_type: Option<&str>) -> bool {
     if content_type.is_some_and(|value| value.contains("ndjson")) {
         return true;

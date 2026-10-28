@@ -1,4 +1,4 @@
-//! Endgame drills (`EndgameDrills.vue`): endgames you must convert (or hold) against Stockfish at
+//! Endgame drills: endgames you must convert (or hold) against Stockfish at
 //! full strength, from positions checked to be won or drawn. Results are runs the core keeps.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

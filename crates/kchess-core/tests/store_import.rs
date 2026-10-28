@@ -1,6 +1,6 @@
 //! The one-time import into an empty profile (`store/import.rs`): the JSON backup with its token
 //! file, and an earlier release's main database, whose plaintext tokens are encrypted with the
-//! fake secret store. Ports `tests/core/store-import.test.ts` case for case.
+//! fake secret store.
 
 mod support;
 
