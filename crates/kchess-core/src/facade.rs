@@ -170,19 +170,6 @@ pub const FACADE_METHODS: &[&str] = &[
     "close",
 ];
 
-/// The `CORE_SETTINGS_KEYS` a headless client sees (`crates/kchess-contracts/ts/settings.ts`).
-const CORE_SETTINGS_KEYS: &[&str] = &[
-    "enginePath",
-    "engineLevels",
-    "reviewAuto",
-    "reviewOnBattery",
-    "receiveChallenges",
-    "onlineChat",
-    "correspondencePoll",
-    "cloudEval",
-    "voiceHistory",
-];
-
 /// The error of a closed core (`The KChess core is closed.`).
 pub const CLOSED: &str = "The KChess core is closed.";
 
@@ -305,7 +292,7 @@ pub fn is_facade_method(method: &str) -> bool {
 /// The core's settings as a headless client sees them (`coreSettings`).
 pub fn core_settings(settings: &Value) -> Value {
     let mut picked = Map::new();
-    for key in CORE_SETTINGS_KEYS {
+    for key in kchess_domain::misc::constants::CORE_SETTINGS_KEYS {
         if let Some(value) = settings.get(*key) {
             picked.insert((*key).to_string(), value.clone());
         }
