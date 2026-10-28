@@ -4164,11 +4164,13 @@ dependencies = [
 name = "kchess-domain"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "memchr",
  "regex",
  "regex-syntax",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "shakmaty",
  "thiserror 2.0.21",
 ]

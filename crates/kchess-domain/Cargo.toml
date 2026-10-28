@@ -17,6 +17,9 @@ memchr.workspace = true
 regex = { version = "1" }
 # Regenerates and checks src/misc/unicode_tables.rs (patterns.rs tests).
 regex-syntax = "0.8"
+# Reads the rules corpus (tests/rules_corpus.rs).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+sha2 = { version = "0.11", default-features = false }
 
 [lints]
 workspace = true
