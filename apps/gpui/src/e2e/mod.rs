@@ -10,9 +10,18 @@
 //! Elements are found by their GPUI `ElementId` among those registered with `.test_support()`
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
 
+mod analysis;
 mod computer;
+mod history;
+mod local;
+mod online;
+mod openings;
+mod palette;
+mod practice;
+mod puzzles;
 mod settings;
 mod shell;
+mod studies;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
