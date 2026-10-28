@@ -76,3 +76,5 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 [dev-dependencies]
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
 gpui-kit = { version = "0.8", features = ["test-support"] }
+# A fresh profile per end-to-end test (`src/e2e`).
+tempfile = "3"

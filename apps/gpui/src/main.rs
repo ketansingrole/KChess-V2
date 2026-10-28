@@ -10,6 +10,8 @@ mod board;
 mod chart;
 mod core;
 mod dock_icon;
+#[cfg(test)]
+mod e2e;
 mod engine_view;
 mod explorer;
 mod export;

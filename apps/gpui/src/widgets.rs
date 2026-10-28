@@ -1,6 +1,7 @@
 //! Pieces the board pages share, drawn as the Electron app draws them (`main.css`): the player
 //! line above and below a board, the status banner and the move list panel.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::tooltip::Tooltip;
@@ -169,7 +170,15 @@ impl RenderOnce for StatusBanner {
             Tone::Loss => (tint(palette.loss, 16.), palette.loss),
             Tone::Alert => (tint(palette.warning, 16.), palette.text),
         };
+        // Read as a status: its title names it, its detail describes it.
         h_flex()
+            .id("status-banner")
+            .test_support()
+            .role(Role::Status)
+            .aria_label(self.title.clone())
+            .when_some(self.detail.clone(), |banner, detail| {
+                banner.aria_description(detail)
+            })
             .items_center()
             .gap(px(10.))
             .min_h(px(58.))
@@ -263,6 +272,7 @@ pub fn moves_list(
         row.push(
             div()
                 .id(("move", index))
+                .test_support()
                 .role(Role::Button)
                 .aria_label(san.clone())
                 .aria_selected(active)

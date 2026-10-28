@@ -16,11 +16,27 @@ fn home() -> PathBuf {
 
 /// Whether `KCHESS_USER_DATA_DIR` chose the profile.
 pub fn isolated() -> bool {
+    #[cfg(test)]
+    if TEST_DATA_DIR.with_borrow(Option::is_some) {
+        return true;
+    }
     std::env::var_os("KCHESS_USER_DATA_DIR").is_some_and(|dir| !dir.is_empty())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The test's own profile (`e2e::Harness`): tests run in parallel on their own threads, so the
+    /// process-wide `KCHESS_USER_DATA_DIR` cannot give each its own.
+    pub static TEST_DATA_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Electron's `app.getPath('userData')` for this app, created if it is missing.
 pub fn data_dir() -> std::io::Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(dir) = TEST_DATA_DIR.with_borrow(Clone::clone) {
+        std::fs::create_dir_all(&dir)?;
+        return Ok(dir);
+    }
     let dir = match std::env::var_os("KCHESS_USER_DATA_DIR").filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => default_dir(),

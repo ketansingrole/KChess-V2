@@ -73,7 +73,7 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
 }
 
 /// The sidebar's pages, in the Electron app's order (`stores/kchess.ts`, `nav`).
-fn nav() -> [(Page, &'static str, Icon); 16] {
+pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
     [
         (Page::Dashboard, "Home", icon("house")),
         (Page::Computer, "Play with Computer", icon("monitor")),

@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -1533,6 +1534,7 @@ impl Render for ChessBoard {
         let description = (!self.state.preview).then(|| describe(&self.state));
         div()
             .id("chess-board")
+            .test_support()
             // Pictures in a list are named by what holds them; a board to play on is a group.
             .when_some(description, |board, description| {
                 board
