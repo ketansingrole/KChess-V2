@@ -1,5 +1,9 @@
 # AGENTS.md — instructions for AI coding agents working in this repo
 
+KChess is Rust: the app (`apps/gpui`, GPUI Kit), the command line (`apps/cli`), the headless core
+(`crates/`) and the tooling (`tooling/xtask`, run as `cargo xtask <command>`). There is no
+JavaScript, TypeScript or Node in the repository; do not add any.
+
 ## Releases and tags
 
 Creating a release means preparing a **draft**. Publish it only when the user asks to
@@ -8,21 +12,21 @@ creating/pushing a tag or publishing a release.
 
 - Versions are `YEAR.MONTH.COUNTER`, using the **UTC release month**. Start a new month
   at `0`; otherwise use one more than the highest existing tag's counter for that month.
-  No zero padding: package version `2026.10.1`, Git tag `v2026.10.1`.
+  No zero padding: workspace version `2026.10.1`, Git tag `v2026.10.1`.
   Do not use ordinary `v1.2.3`, date/day tags, prerelease suffixes, or guess a counter.
-- Use `pnpm run release:version`. It must successfully fetch tags from `origin` first.
+- Use `cargo xtask release-version`. It must successfully fetch tags from `origin` first.
   If fetching fails, restore access and retry; do not select a version from stale tags.
-  Commit all workspace `package.json` manifests and `pnpm-lock.yaml`; the lockfile must match the declared dependencies.
+  Commit `Cargo.toml` and `Cargo.lock`; the lockfile must match the workspace version.
 - Changes may land on `main` directly or through a pull request; a PR is optional. Before
-  pushing to `main`, run `pnpm run check` locally (the `.githooks/pre-push` hook, installed by
-  `pnpm install`, runs it and refuses a dirty tree; skip it only on purpose with
+  pushing to `main`, run `cargo xtask check` locally (the `.githooks/pre-push` hook, installed by
+  `cargo xtask install-hooks`, runs it and refuses a dirty tree; skip it only on purpose with
   `KCHESS_SKIP_PRE_PUSH=1`), and after pushing, confirm CI is green and
   fix any failure with a follow-up commit (never force-push `main`).
 - Release only a commit on `origin/main` whose CI is green. Include every intended file,
   including new/untracked files; explicitly stage the files instead of relying on
   `git commit -am`. Keep the working tree clean before tagging and verify CI is green
   for the intended release commit.
-- Run `pnpm run release:verify` and `pnpm run check`. Verify the release commit and tag
+- Run `cargo xtask release-verify` and `cargo xtask check`. Verify the release commit and tag
   before creating an annotated tag. Push **only that tag**, not `--tags` or an arbitrary
   `HEAD` branch. Never force-push, move, reuse, or delete an existing release tag.
 - Tag pushes run the Release workflow and create a draft after all platform packages
@@ -31,21 +35,21 @@ creating/pushing a tag or publishing a release.
   tag-push workflow; do not recreate the tag.
 - Replacing assets is allowed only while the release is a draft. A published release
   is permanent: ship fixes with the next version and a new tag. Never bypass the
-  workflow's published-release guard with a direct `gh release upload --clobber`.
+  `attach-draft-release` guard with a direct `gh release upload --clobber`.
 - Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
-  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), for the Electron app and the GPUI preview
-  (`KChess-Preview-*`, which must never ship `latest*.yml`). `KCHESS_RELEASE_APP` in
-  `release.yml` names the app shipped as KChess (`electron`, or `gpui` for the GPUI app under
-  Electron's identity); only that app writes `latest*.yml`. Changing it is a release decision the
-  user makes, never part of another task (docs/releasing.md). Keep updater manifests, blockmaps,
-  and `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
+  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*` (the final
+  identity, which writes `latest*.yml`) and `KChess-Preview-*` (which must never ship
+  `latest*.yml`). Every Electron installation ever released updates itself to the final build
+  through those manifests: keep their names, the Windows GUID, install folder, executable and
+  uninstaller names, and the `.deb` package and `/opt/KChess` layout (`tooling/xtask/src/package`).
+  Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
   publishing; macOS ZIPs are required for the update feed.
 
-Before an authorized tag push, derive its name from the committed package version,
+Before an authorized tag push, derive its name from the committed workspace version,
 confirm the named commit is the intended release, and inspect the exact local tag:
 
 ```bash
-release_tag="v$(node -p "require('./package.json').version")"
+release_tag="v$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
 release_commit="$(git rev-parse HEAD)"
 git status --short                          # must be empty
 git merge-base --is-ancestor "$release_commit" origin/main  # must succeed
@@ -55,51 +59,23 @@ git show --no-patch "$release_tag"           # verify version and target commit
 git push origin "refs/tags/$release_tag"
 ```
 
-## Dev server: reuse, don't duplicate
+## Running the app
 
-`pnpm run dev` starts Nuxt on `http://127.0.0.1:3000` plus Electron
-(`electron-vite dev` with `KCHESS_NUXT_URL` set) via
-`tooling/with-branded-electron.mjs`. Running it twice causes port conflicts
-and confusing behavior.
-
-**Before starting anything, check whether it is already running:**
-
-```bash
-curl -sf http://127.0.0.1:3000 >/dev/null && echo NUXT-UP || echo NUXT-DOWN
-pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOWN
-```
-
-- If both are up, **use the running instance** (open/preview against port 3000,
-  verify Electron via its window). Do not start another one.
-- If either side is down, that dev session is unhealthy: kill leftovers
-  (`pkill -f "nuxt dev"; pkill -f "electron-vite dev"`) and start one fresh
-  instance with `pnpm run dev` in the background.
-- Only ever have **one** dev session at a time. If you started it yourself for
-  verification, kill it when done. If it was already running (the user's),
-  leave it running.
-
-## Related rules
-
-- Launch Electron only through `tooling/with-branded-electron.mjs`
-  (`pnpm run dev` / `pnpm run app` / `pnpm start` already do). Never invoke the
-  stock `electron` binary or `electron-vite dev` directly — the menu-bar name
-  and Dock icon depend on the branded copy in `.dev/`.
-- `pnpm run app` / `pnpm start` (`electron .`) require a fresh build first:
-  `pnpm run build` (typecheck + `nuxt generate` + `electron-vite build`).
-  Stale `.output/` means stale UI.
-- Verify with `pnpm run typecheck` (`nuxt typecheck` + Electron `tsc`). The
-  chess engine smoke test is `pnpm run test:chess`.
-- Do not edit generated output: `.dev/`, `out/`, `.output/`, `dist/`, `.nuxt/`, `target/`,
-  `crates/kchess-node/*.node`, `crates/kchess-node/THIRD_PARTY_LICENSES.txt` and
-  `apps/desktop/app/assets/rules/`.
-  App icons live in `apps/desktop/build/` + `apps/desktop/public/` (see `apps/desktop/electron/main/index.ts` icon paths)
-  and are generated by `python3 tooling/make-icons.py` — change the script and
-  re-run it rather than editing the images. Only original or clearly
-  open-licensed artwork may go in this repo (see `THIRD_PARTY_NOTICES.md`).
-- `screencapture` triggers a macOS screen-recording permission prompt for the
-  host on first use — prefer AppleScript process checks
-  (`tell application "System Events" to get short name of ...`) and reserve
-  screenshots for visual layout verification only.
+- `cargo run -p kchess-gpui` builds and starts the app (`tooling/macos-dev-runner.sh` signs it
+  on macOS with a stable identity, so the keychain remembers it). Never point a development run
+  at the real profile (`~/Library/Application Support/KChess`): set `KCHESS_USER_DATA_DIR` to a
+  scratch folder, and `KCHESS_ENGINE_PATH` to a native Stockfish.
+- `cargo xtask voice-runtime debug` stages the speech helper with libvosk for a debug build.
+- `cargo run -p kchess-cli -- --help` is the command line; it shares the profile's core with a
+  running app through the core service (`docs/shared-core.md`).
+- Driving the app with synthetic input: start it by PID and check that PID is frontmost before
+  every click or keystroke; stop it with `kill <pid>`, never by binary path.
+- `screencapture` triggers a macOS screen-recording permission prompt for the host on first use
+  — prefer AppleScript process checks and reserve screenshots for visual layout verification.
+- Do not edit generated output: `target/`, `apps/gpui/dist/`. App icons live in
+  `apps/gpui/build/` and are generated by `python3 tooling/make-icons.py` — change the script and
+  re-run it rather than editing the images. Only original or clearly open-licensed artwork may go
+  in this repo (see `THIRD_PARTY_NOTICES.md`).
 
 ## UI copy and information density
 
@@ -117,14 +93,15 @@ pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOW
   instructions in tooltips or expandable help instead of permanent body text.
 - Settings labels and choices should stand on their own. Remove hints that merely
   paraphrase them; retain concise hints for non-obvious effects or tradeoffs.
-- Remove unnecessary copy from the source, not by hiding it with CSS. Preserve accessible
-  names, semantic headings, labels, and live status/error announcements. Update affected
-  UI tests to verify actions and state rather than require discarded explanatory copy.
+- Remove unnecessary copy from the source rather than hiding it. Preserve accessible
+  names, roles, labels, and live status/error announcements. Update affected
+  tests to verify actions and state rather than require discarded explanatory copy.
+- Never send people to a website to finish something KChess can do itself.
 
 ## Reuse existing UI and behavior
 
-- Before building a new UI or interaction, inspect existing components and equivalent
-  screens. Reuse their components, composables, styles, and behavior wherever possible.
+- Before building a new UI or interaction, inspect existing views and equivalent
+  screens. Reuse their components, widgets and behavior wherever possible.
 - If an existing implementation is page-local, extract it into a shared component and
   migrate both uses. Improve the shared component to support the new use case before
   introducing a separate implementation. Keep related surfaces consistent in density,
@@ -135,30 +112,50 @@ pgrep -f "electron-vite dev" >/dev/null && echo ELECTRON-UP || echo ELECTRON-DOW
 
 ## Architecture and regression ownership
 
-- Renderer stores own view state and mirror core data. View preferences (tabs, sort order, layout) go through `useViewPreference`, which the core keeps (`viewPreferences`), so the Electron and GPUI apps open a page as it was left; neither preferences nor documents go in renderer storage. The headless core (`crates/kchess-node/js`) owns credentials, networking, privileged files and engine processes, and never imports Electron or the desktop shell; host capabilities go through `CorePlatform`. Main (`apps/desktop/electron/main`) is the Electron shell over the core. Desktop code imports the core only by its public names: `@kchess/native` and `@kchess/native/logger` (main only), plus `@kchess/rules/*` and `@kchess/contracts/*`; never relative paths into another package's source, or other `crates/kchess-node/js` modules. Pure chess and training rules live in `crates/kchess-wasm/js`, shared by the core and every frontend. A headless method belongs in `CoreApi`/`CORE_METHODS` and the core service (which validates its input); a desktop-only one extends `DesktopApi`. Both need the shared IPC channel map, contracts and preload. IPC must authenticate the owned top-level frame as well as validate input.
-- The core is migrating to Rust (`crates/`). Native rules must stay indistinguishable from the TypeScript domain they replace: change both together and keep `tests/core/native-rules.test.ts` green (run it with `KCHESS_FUZZ_SCALE=20` after rule changes; preserve any failing seed as a regression). Services reach native code only through `crates/kchess-node/js/rules.ts`; the core requires `@kchess/native` and has no TypeScript fallback. Domain rules call `rules()` (`crates/kchess-wasm/js/engine.ts`), which the core binds to the Node module and the renderer to the WebAssembly module; add new rules to `crates/kchess-domain/src/api.rs`, not to TypeScript. Rules that exist only in Rust are pinned to `tests/core/native-golden.json`; rewrite it (`KCHESS_WRITE_GOLDEN=1`) only for an intended behaviour change. The renderer never loads the Node module. Do not add chess rules to TypeScript. Frontends hold positions as `Position` values (`crates/kchess-wasm/js/position.ts`, a variant and a FEN answered by the rules), never as objects of a chess library.
-- `UciController` (`crates/kchess-core/src/engine/uci.rs`) owns UCI deadlines and pipes; acquire the shared engine scheduler (`EngineContext::lease`, `engine/mod.rs`) before configuring search threads and release in `finally`. Cancellation must reach the search, not merely discard its result. Infinite analysis has no runtime deadline, but startup/readiness/stop remain bounded.
-- Preserve root FEN plus move history for repetition context. Analysis caches distinguish completed/interrupted/failed output and engine/context/client identity. Do not mark interrupted output as complete.
-- The Rust puzzle service (`crates/kchess-core/src/puzzles`) is the only owner of `puzzles.db`. Main and renderer must use its async service. Failed or cancelled replacements retain the previous transaction and metadata; migrations are append-only.
-- The core's library (`crates/kchess-core/src/store/library.rs`, decoders in `crates/kchess-wasm/js/library.ts`) owns studies, played games, mistake drills, unfinished sessions, joined tournaments and repertoire notes as bounded, versioned documents with semantic move validation; earlier releases' renderer copies are imported once. PGN edits must preserve headers, results, variations, comments and NAGs.
-- Lichess stream events are authoritative. Connection recovery must retain the playing account and reject stale epochs. Never retry an ambiguous move mutation automatically, and never expose engine/review/explorer assistance during a live human game.
-- Use deterministic local HTTP/stream fixtures and the isolated branded Electron launcher. `pnpm run check` covers formatting, lint, types, smoke and unit regressions; `pnpm run build && pnpm run test:e2e` verifies the production protocol, worker, startup, engine and UI. Package changes also need `pnpm run pack` and `pnpm run test:packaged`.
-- Current upstream advisories without patched releases are documented in `docs/reviews/2026-10-03-implementation.md`. Never downgrade frameworks or use forced audit fixes solely to change a vulnerability count.
+- The headless core (`crates/kchess-core`) owns credentials, networking, privileged files,
+  documents and engine processes; it never depends on a frontend. Frontends (the app, the CLI)
+  call it by `CoreApi` method name and subscribe to its events, usually through the profile's
+  shared core service (`crates/kchess-service`, `docs/shared-core.md`); host capabilities they
+  answer go through `host:request`. A new method belongs in `kchess-contracts` (`core_api.rs`),
+  the facade and its validator (`kchess-domain/src/misc/contracts.rs`).
+- Pure chess and training rules live in `crates/kchess-domain` (`api.rs` is their one entry);
+  game sessions as frontends drive them in `crates/kchess-games`. View preferences (tabs, sort
+  orders, layout) are the core's (`viewPreferences`), so every frontend opens a page as it was
+  left.
+- `tests/rules_corpus.rs` (kchess-domain) pins every rules method to answers recorded from the
+  former TypeScript suites; rewrite it (`KCHESS_WRITE_CORPUS=1`) only for an intended behaviour
+  change.
+- What the Electron app left in a profile (its `localStorage` documents and preferences, logins
+  its `safeStorage` sealed) is taken over by the core itself (`crates/kchess-electron-legacy`);
+  keep that working for profiles from any Electron release.
+- `UciController` (`crates/kchess-core/src/engine/uci.rs`) owns UCI deadlines and pipes; acquire
+  the shared engine scheduler (`EngineContext::lease`, `engine/mod.rs`) before configuring search
+  threads and release it on every path. Cancellation must reach the search, not merely discard
+  its result. Infinite analysis has no runtime deadline, but startup/readiness/stop remain bounded.
+- Preserve root FEN plus move history for repetition context. Analysis caches distinguish
+  completed/interrupted/failed output and engine/context/client identity. Do not mark
+  interrupted output as complete.
+- The Rust puzzle service (`crates/kchess-core/src/puzzles`) is the only owner of `puzzles.db`.
+  Failed or cancelled replacements retain the previous transaction and metadata; migrations are
+  append-only.
+- The core's library (`crates/kchess-core/src/store/library.rs`) owns studies, played games,
+  mistake drills, unfinished sessions, joined tournaments and repertoire notes as bounded,
+  versioned documents with semantic move validation. PGN edits must preserve headers, results,
+  variations, comments and NAGs.
+- Lichess stream events are authoritative. Connection recovery must retain the playing account
+  and reject stale epochs. Never retry an ambiguous move mutation automatically, and never expose
+  engine/review/explorer assistance during a live human game.
+- Use deterministic local HTTP/stream fixtures. The app's end-to-end tests (`apps/gpui/src/e2e`)
+  drive the whole app headless.
 
 ## Executable guardrails
 
-- Read GUARDRAILS.md for the verification ladder and lifecycle helpers.
-- Test in tiers. While editing, run `pnpm run check:fast` (changed-file format, lint and
-  related unit tests) and, after a build, only the affected desktop tests with
-  `pnpm run test:e2e --grep <tag or title>`. Before pushing to `main`, run the full
-  `pnpm run check` (the pre-push hook enforces it). Releases and CI run everything,
-  including `pnpm run build && pnpm run test:e2e` and packaged tests. `check:fast` never
-  replaces full merge checks.
-- New IPC invocations require an IPC_CONTRACTS validator tuple and main registration.
-  Startup checks registration completeness before opening the window.
-- Use RequestScope / SubscriptionScope for replaceable requests and listener ownership,
-  and `EngineContext::lease` (the Rust `withEngineLease`) for scheduler ownership. Keep cancellation wired to actual work.
+- Read GUARDRAILS.md for the verification ladder.
+- Test in tiers. While editing, run `cargo xtask check-fast` (format, lints and the tests of the
+  packages changed since main). Before pushing to `main`, run the full `cargo xtask check` (the
+  pre-push hook enforces it). Packaging changes also need `cargo xtask package` on the platform
+  they touch, and the Windows upgrade workflow for installer changes.
 - Bug fixes must retain a regression for the concrete failure sequence. When generated
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
-- Keep structural performance budgets passing; inspect timing and flake reports with
-  `pnpm run check:report`. Do not hide regressions by raising budgets without evidence.
+- Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that
+  explains the drop.

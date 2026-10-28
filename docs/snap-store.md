@@ -21,11 +21,10 @@ The sandbox needs network access, a localhost listener for Lichess OAuth, deskto
 interfaces, and home access for PGNs. Microphone and password-manager interfaces may need
 manual connection or Store approval.
 
-The Snap omits `browser-support`'s `allow-sandbox` attribute because the Store sends it to
-manual review (2026.10.10's upload was held). Electron Builder therefore launches KChess
-with `--no-sandbox` and drops `chrome-sandbox`: Chromium's inner sandbox is off, while
-strict confinement still applies to the whole app. Renderer windows keep Electron's
-`sandbox: true` preload restrictions and context isolation.
+From 2026.10.16 the Snap is the Rust app, built by `cargo xtask package --final --snap` with the
+GNOME extension and Mesa's Vulkan drivers. It keeps the store name, strict confinement and the
+Electron Snap's plugs (it no longer needs `browser-support`), and its profile is the same folder
+(`$SNAP_USER_DATA/.config/KChess`), so the store's update replaces the Electron Snap in place.
 
 ```sh
 sudo snap connect kchess:audio-record
@@ -36,15 +35,6 @@ Test on a Linux desktop before the first stable migration: launch the installed 
 Stockfish, log in to Lichess, restart with saved credentials, import/export a PGN, and test
 voice input. Existing users should back up important PGNs before the first V2 update; this
 project does not promise migration of the legacy 2020 application's data format.
-
-## Electron Builder desktop-entry patch
-
-`patches/app-builder-lib@26.17.0.patch` removes the core24 generator's premature
-`desktop: meta/gui/kchess.desktop` field. Snapcraft discovers the desktop file that
-Electron Builder writes to `snap/gui` and creates `meta/gui` while packing. Without
-this patch, Snapcraft 9 fails after priming because that output path does not exist
-yet. The installed-generator regression test covers the generated descriptor. Recheck
-this patch when upgrading Electron Builder and remove it once upstream handles the path.
 
 ## One-time publishing credential
 

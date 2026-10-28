@@ -1,6 +1,7 @@
 # Shared core: one core per profile, any number of KChess windows
 
-Status: built, 2026-10-26. Stages 1–5 have shipped, except that both apps still accept
+Status: built, 2026-10-26. Since 2026-10-29 its clients are the app and the CLI (`kchess-cli`); the
+Electron client described below is history. Stages 1–5 have shipped, except that both apps still accept
 `KCHESS_CORE_MODE=embedded`; stage 6 is later. Open findings are in the
 [26 October review](reviews/2026-10-26-code-review.md).
 

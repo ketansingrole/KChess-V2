@@ -1,5 +1,9 @@
 # Migrating the core to Rust — complete
 
+**Complete (2026-10-29).** KChess is Rust only: the GPUI app replaced the Electron app on every
+platform, the CLI and tooling are Rust, and no JavaScript, TypeScript or Node remains. What follows
+is the record of how the core got there.
+
 > Status (2026-10-13): complete. Phases 0–6 are done and `core/` is deleted. This file keeps the
 > end state and the rules that still hold; the phase procedures and checklists are in Git history
 > (`git log -- RUST_MIGRATION.md`).

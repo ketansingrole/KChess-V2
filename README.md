@@ -3,88 +3,30 @@
 [![CI](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml/badge.svg)](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-KChess is a TypeScript desktop chess app built with Electron, Nuxt 4, Nuxt UI, and Tailwind CSS. Chess rules run in Rust (`crates/kchess-domain`, on [`shakmaty`](https://github.com/niklasf/shakmaty), with the semantics of [`chessops`](https://github.com/niklasf/chessops)), the board is [`@lichess-org/chessground`](https://github.com/lichess-org/chessground), game review is a custom PGN replay on the same board, and the Lichess API client is typed with Lichess's official [`@lichess-org/types`](https://github.com/lichess-org/api) OpenAPI types through `openapi-fetch`. Sounds and board themes are the Lichess assets. IPC input is validated by the same Rust rules. A headless Node core handles Stockfish, Lichess, local storage, and OAuth; Electron supplies the desktop shell.
+KChess is a desktop chess app written in Rust: play Stockfish, play on Lichess, follow friends, review games, solve puzzles and train. The window is [GPUI](https://github.com/zed-industries/zed) with [GPUI Kit](https://github.com/longbridge/gpui-kit); chess rules run on [`shakmaty`](https://github.com/niklasf/shakmaty) (`crates/kchess-domain`); a headless core (`crates/kchess-core`) handles Stockfish, Lichess, the local library, puzzles and OAuth. Sounds and board themes are the Lichess assets.
 
 ## Apps
 
-| App                             | Where          | Run in development         | Package                         |
-| ------------------------------- | -------------- | -------------------------- | ------------------------------- |
-| Electron desktop app (released) | `apps/desktop` | `pnpm run dev`             | `pnpm run pack` / `pack:mac`    |
-| GPUI app (native Rust, preview) | `apps/gpui`    | `cargo run -p kchess-gpui` | `node tooling/gpui-package.mjs` |
-| CLI                             | `apps/cli`     | `pnpm run cli -- --help`   | `pnpm run build:packages`       |
-
-All three use the same core (`crates/`). See [ARCHITECTURE.md](ARCHITECTURE.md) for the workspace
-layout and [CORE_FRONTENDS.md](CORE_FRONTENDS.md) for host contracts.
+| App          | Where       | Run in development                    | Package              |
+| ------------ | ----------- | ------------------------------------- | -------------------- |
+| KChess       | `apps/gpui` | `cargo run -p kchess-gpui`            | `cargo xtask package` |
+| Command line | `apps/cli`  | `cargo run -p kchess-cli -- --help`   | ships with the app    |
 
 ## Run
 
 ### Prerequisites
 
-- Node.js **24.21.0**, pinned in `.nvmrc` and `.node-version` (`nvm install && nvm use`).
-- pnpm **11.19.0**.
-- [Rust](https://rustup.rs) through rustup. `rust-toolchain.toml` pins the toolchain (1.98.0 with
-  the `wasm32-unknown-unknown` target), which rustup installs on first use.
-- macOS: Xcode Command Line Tools (`xcode-select --install`).
+- Rust through [rustup](https://rustup.rs); the toolchain is pinned in `rust-toolchain.toml`.
+- On Linux, the libraries the app builds against:
+  `sudo apt-get install libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev`.
 
-```bash
-npm install --global pnpm@11.19.0
-pnpm install --frozen-lockfile
-```
+`cargo xtask install-hooks` installs the Git pre-push hook (see [GUARDRAILS.md](GUARDRAILS.md)).
 
-`pnpm install` also downloads Electron and installs the Git pre-push hook (see
-[GUARDRAILS.md](GUARDRAILS.md)).
+### The app
 
-### Development mode
-
-Development sessions mark themselves with a moon badge above Settings in the sidebar, so a
-development window never looks like a release:
-
-| App      | Development (badge shown)  | Badge              |
-| -------- | -------------------------- | ------------------ |
-| Electron | `pnpm run dev`             | **Dev · Electron** |
-| GPUI     | `cargo run -p kchess-gpui` | **Dev · GPUI**     |
-
-```bash
-pnpm run dev
-```
-
-```bash
-KCHESS_USER_DATA_DIR=.data/gpui-profile cargo run -p kchess-gpui
-```
-
-Builds made for users never show it: `pnpm run build`, `pnpm start`, `pnpm run app`, every
-`pnpm run pack`/release package, `cargo run --release` and `node tooling/gpui-package.mjs`. The
-badge is compiled out of them (Electron imports it only under `import.meta.dev`, GPUI only with
-`debug_assertions`), and the build fails if a production renderer or GPUI release binary contains
-it. See the sections below for each app's full setup.
-
-### Electron desktop app
-
-Development (Nuxt on `http://127.0.0.1:3000` plus Electron, with reload):
-
-```bash
-pnpm run dev
-```
-
-`pnpm run dev` reuses a healthy existing session and starts one supervised Nuxt + Electron session otherwise. It recovers stale processes belonging to this checkout, prevents duplicate launches with a session lock, and stops its children on exit. An unrelated server occupying port 3000 produces an actionable error. Run only one dev session at a time.
-
-Production build:
-
-```bash
-pnpm run build   # type-check, generate the renderer, build main and preload
-pnpm start       # open the latest build
-pnpm run app     # build, then open
-```
-
-`pnpm run build` type-checks the renderer, Electron, and tests, generates the static renderer, and builds the main and preload bundles. Renderer assets and every packaged app are checked for nested apps/installers, redundant renderer dependencies, unused engine builds, and a 32 MiB app-payload budget (excluding Electron). `pnpm start` without a fresh build shows a stale UI.
-
-Always launch Electron through these scripts, never the stock `electron` binary. On macOS, dev and local runs launch through `tooling/with-branded-electron.mjs`, which keeps a `KChess.app` copy of Electron in `.dev/` (gitignored). It is renamed the way a packaged app is (bundle, executable, helper apps) and given the KChess icon, so the menu bar, Dock, Cmd-Tab, and Mission Control show "KChess" and its icon instead of Electron's. It is rebuilt automatically when Electron, the script, or `apps/desktop/build/icon.icns` changes; quit any running dev session first.
-
-### GPUI app
-
-The GPUI app opens the Electron app's profile by default, so it sees your real games, settings and
-accounts. For development, point it at a separate profile and at a native Stockfish (development
-builds ship none):
+KChess opens your real profile by default, with your games, settings and accounts. For
+development, point it at a separate profile and at a native Stockfish (development builds ship
+none):
 
 ```bash
 KCHESS_ENGINE_PATH="$(cargo run -q --release -p kchess-core --example fetch_stockfish -- .data/stockfish)"
@@ -93,85 +35,60 @@ KCHESS_USER_DATA_DIR=.data/gpui-profile cargo run -p kchess-gpui
 ```
 
 `fetch_stockfish` downloads and verifies the latest official Stockfish into the folder once and
-prints its path. Add `--release` to `cargo run` for a fast build; a release build is a final build
-and shows no development badge. What the GPUI app does and does
-not match yet is tracked in [apps/gpui/PARITY.md](apps/gpui/PARITY.md).
+prints its path. Add `--release` to `cargo run` for a fast build; development builds show a
+**Dev** badge in the sidebar, release builds never do. `cargo xtask voice-runtime debug` stages the
+speech helper and libvosk for voice input in a debug build.
 
-Several KChess windows can share one profile through its core service
-([docs/shared-core.md](docs/shared-core.md)). The GPUI app uses it when `kchess-service` is built
-beside it (`cargo build -p kchess-service`); `KCHESS_CORE_MODE=embedded` or `service` chooses
-explicitly.
+Several KChess windows, and the command line, share one profile through its core service
+([docs/shared-core.md](docs/shared-core.md)). The app uses it when `kchess-service` is built beside
+it (`cargo build -p kchess-service`); `KCHESS_CORE_MODE=embedded` or `service` chooses explicitly.
 
 On macOS, `cargo run` re-signs the app with your Apple Development identity and a fixed
 identifier (`tooling/macos-dev-runner.sh`), so the keychain's "Always Allow" for the profile's
 credential key lasts across rebuilds. Choose another identity with `KCHESS_DEV_SIGNING_IDENTITY`,
 or `-` to skip signing.
 
-`KCHESS_USER_DATA_DIR` selects an isolated profile for the Electron app too.
+A profile last used by the Electron app that KChess once was (any release up to 2026.10.15) is
+taken over as it is: its studies, games and sessions, page settings, and Lichess logins
+(`crates/kchess-electron-legacy`).
 
-### CLI
+### Command line
 
 ```bash
-pnpm run cli -- --help
-pnpm run cli -- library
-pnpm run cli -- play beginner
-pnpm run cli -- local
-pnpm run cli -- call studyCommand '[{"op":"save","name":"Opening","pgn":"1. e4 e5 *"}]'
+cargo run -p kchess-cli -- --help
+cargo run -p kchess-cli -- library
+cargo run -p kchess-cli -- play beginner
+cargo run -p kchess-cli -- local
+cargo run -p kchess-cli -- call studyCommand '[{"op":"save","name":"Opening","pgn":"1. e4 e5 *"}]'
 ```
 
-`pnpm run cli` builds the native module and the Node packages, then runs `apps/cli/dist/cli.js`.
-The CLI uses a separate profile at `~/.kchess/node`. Select another with `--data-dir`.
-`login` opens Lichess OAuth; `--browser print` prints the URL for a headless host.
-Credentials use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows DPAPI.
-`--no-credentials` disables credential storage. Desktop and Node ciphertext formats differ,
-so use separate profiles rather than pointing the CLI at Electron's profile.
-The Node host runs each profile in an isolated worker, allowing several independent clients in the
-same process.
+`kchess-cli` uses the app's profile (or `--data-dir`) through the profile's core service, so it
+works while the app is open; `--embedded` runs a core in its own process instead. Packages ship
+it beside the app (`/usr/bin/kchess-cli` from the `.deb`).
 
 ### Packaging
 
 ```bash
-pnpm run pack                   # Electron, unpacked, for this platform (dist/)
-pnpm run pack:mac               # Electron, unsigned Apple Silicon .app in dist/mac-arm64/
-node tooling/gpui-package.mjs   # GPUI, with its Stockfish and voice runtime (apps/gpui/dist/)
-pnpm run build:packages         # Node host and CLI under their dist/ folders
+cargo xtask package             # "KChess Preview" for this platform (apps/gpui/dist/)
+cargo xtask package --final     # KChess itself, with the update manifests
 ```
 
-`gpui-package.mjs` builds a "KChess Preview" that installs beside the Electron app; `--final` uses
-the Electron app's identity and `--skip-build` reuses the release binary already built. Release
-installers come from CI; see [Releasing](docs/releasing.md).
+macOS makes a `.dmg` and `.zip` (Apple Silicon), Windows a per-user NSIS installer, Linux an
+AppImage and a `.deb` (`--snap` makes the Snap). Each carries the app's own Stockfish, the core
+service, the command line, the voice runtime and `THIRD_PARTY_LICENSES.txt`. `--skip-build`
+reuses the release binaries already built. Release packages come from the Release workflow.
 
 ### Tests and checks
 
-| Command                                            | Purpose                                                                              |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `pnpm run check:fast`                              | Changed-file formatting, lint and related unit tests, while editing                  |
-| `pnpm run check`                                   | Formatting, ESLint, all type checks, smoke and unit tests (runs before every push)   |
-| `pnpm run check:rust`                              | `cargo fmt`, Clippy and `cargo test` for the Rust workspace                          |
-| `pnpm test`                                        | Chess, puzzle/database and main-process smoke tests, plus Vitest                     |
-| `pnpm run test:unit`                               | Mounted Vue components, real Pinia stores, lifecycle and diagnostic regression tests |
-| `pnpm run test:watch`                              | Vitest watch mode                                                                    |
-| `pnpm run test:core`                               | Direct core, concurrent Node hosts and CLI in temporary profiles                     |
-| `pnpm run lint:fix` / `pnpm run format`            | Apply lint fixes / formatting                                                        |
-| `pnpm run build && pnpm run test:e2e`              | Playwright against the built Electron app (`--grep <tag>` for a subset)              |
-| `pnpm run pack && pnpm run test:packaged`          | Package for this platform and verify the packaged app                                |
-| `pnpm run check:linux` / `pnpm run test:e2e:linux` | CI's Linux jobs in Docker (see [CONTRIBUTING.md](CONTRIBUTING.md))                   |
+| Command                  | What it does                                                              |
+| ------------------------ | ------------------------------------------------------------------------- |
+| `cargo xtask check-fast` | Format, lints and the tests of the packages changed since main            |
+| `cargo xtask check`      | Everything a push to main must pass (runs from the pre-push hook)         |
+| `cargo test -p kchess-gpui e2e::` | The app's end-to-end tests, headless over a fresh profile        |
+| `cargo xtask help`       | The rest: release versions, notices, licenses, the voice runtime          |
 
-[GUARDRAILS.md](GUARDRAILS.md) describes the verification ladder; `pnpm run check:report` shows
-timing and flake reports.
-
-UI tests launch through the branded wrapper, use a separate `.dev/automation` copy on macOS and a temporary profile, and never import legacy accounts or use your saved tokens. They cover SQLite and preload startup, bundled Stockfish, board moves, navigation, puzzle remounting, promotion and settings persistence. On headless Linux, run Electron checks through `xvfb-run --auto-servernum`. Failure traces and screenshots are written to `test-results/`.
-
-CI runs `pnpm run check` and a desktop matrix on macOS, Windows and Linux that builds, exercises the UI, packages, and launches the packaged app. Dependabot checks npm dependencies weekly and GitHub Actions monthly.
-
-### Benchmarks
-
-- [perf/README.md](perf/README.md): core, rules, renderer, network and library harnesses
-  (`node perf/bench-rules.mjs --label=<name>`); `pnpm run benchmark:library` and
-  `pnpm run check:performance` for the library budget.
-- `tooling/benchmarks/gpui-electron/`: packaged Electron versus GPUI launch and engine timings
-  (macOS); commands and results in
-  [docs/benchmarks/2026-10-26-gpui-vs-electron.md](docs/benchmarks/2026-10-26-gpui-vs-electron.md).
+[GUARDRAILS.md](GUARDRAILS.md) describes the verification ladder. CI runs `cargo xtask check`,
+`cargo deny`, and the app's tests and a package on macOS, Windows and Linux.
 
 ### Voice input
 
@@ -196,7 +113,7 @@ Audio is processed locally by the Vosk library in a separate helper process, and
 KChess. Microphone tracks stop between runs/turns, when voice is disabled, and when leaving the
 page. Disabling voice also releases the model. The implementation currently recognizes English;
 accent/noise accuracy still needs evaluation with real speakers. Tests cover command parsing,
-stale-result cancellation, microphone cleanup, and actual worker/model startup in Electron.
+stale-result cancellation, microphone cleanup, and the helper and model starting for real.
 
 **Settings → Voice input** shows the microphone permission, has a live mic level test, and holds
 the _Confirm spoken moves_, _Hold to speak_ and _Keep voice history_ preferences. The **voice
@@ -204,23 +121,20 @@ history** below them logs each phrase as text (never audio): what was heard with
 confidence, how it was read, what you meant (the square asked for, or the move you then played),
 and the outcome. It lists the least certain words and the most common “heard → meant” mistakes,
 and can be exported as JSON or cleared. On macOS, KChess asks the system for
-microphone access the first time voice starts (Electron doesn't do this on its own). If access is
+microphone access the first time voice starts. If access is
 blocked, the voice panel offers **Open privacy settings** and resumes automatically once you allow
-it. In a dev build started from a terminal (`pnpm run dev`), macOS attributes the microphone to the
+it. In a dev build started from a terminal (`cargo run`), macOS attributes the microphone to the
 app that launched KChess (your terminal or editor), so allow _that_ app under
 Privacy & Security → Microphone.
 
 Voice input downloads the 40 MB Apache-2.0 English Vosk model from `alphacephei.com`
 on first use, verifies its pinned SHA-256 digest, and caches it in the app's user-data
 folder. Subsequent use works offline. Download progress and retry errors appear in the
-voice control. Dev/build no longer downloads or bundles the model.
-`pnpm run prepare:voice` prepares a verified test fixture in `.data/voice/cache/`;
-voice e2e tests copy this fixture into their isolated profile to run offline.
-These generated files are ignored by Git.
+voice control. Builds never download or bundle the model.
 
 ### Diagnostics
 
-Settings → Data & storage → **Export diagnostics** saves a JSON report containing apps/desktop/app/runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
+Settings → Data & storage → **Export diagnostics** saves a report containing the app and runtime versions and up to three bounded local log files. Tokens and OAuth fields are redacted; account and game databases are excluded. Logs live in the user-data directory's `logs/` folder. `KCHESS_USER_DATA_DIR` selects an isolated profile for testing or development and disables importing the previous Rust installation.
 
 ### Releasing
 
@@ -236,7 +150,7 @@ Installers come from `.github/workflows/release.yml` as a draft GitHub Release, 
 - Puzzles, with every screen labelled by where its data lives (see below): rated training on any theme and difficulty (the result changes your Lichess puzzle rating), practice and offline training that send nothing, the daily puzzle, your Lichess puzzle rating, history and per-theme strengths, and Storm, Streak and Rush played locally.
 - Practice drills, all local: board coordinates (find or name the square), square colours, knight paths, endgame drills against Stockfish from positions checked to be won or drawn, and puzzle themes such as checkmate patterns.
 - Synced Lichess history reviewed in a built-in PGN replay (move list, keyboard navigation).
-- Lichess board themes and 11 open-licensed piece sets with adjustable piece animation, 22 app color themes with separate choices for light and dark mode, plus your own themes as JSON files in a themes folder, alerts for game events (opponent moves, low time, game start and result, computer moves) shown in the app while you use it and as system notifications while it is in the background, each switchable, board coordinates (inside / outside / hidden), Lichess move sounds, appearance settings, account management, and a choice of Stockfish in Settings: the bundled Stockfish 19 (the [`stockfish`](https://www.npmjs.com/package/stockfish) npm package's lite multi-threaded WASM build, run as a UCI process by Electron's Node runtime, so it works offline on every platform), a native build you can download (macOS; verified against the SHA-256 digest GitHub publishes for the release) and delete again from Settings, or any executable you pick yourself.
+- Lichess board themes and 11 open-licensed piece sets with adjustable piece animation, 22 app color themes with separate choices for light and dark mode, plus your own themes as JSON files in a themes folder, alerts for game events (opponent moves, low time, game start and result, computer moves) shown in the app while you use it and as system notifications while it is in the background, each switchable, board coordinates (inside / outside / hidden), Lichess move sounds, appearance settings, account management, and a choice of Stockfish in Settings: the official native Stockfish that ships beside the app (so it works offline on every platform), a newer official build you can download (verified against the SHA-256 digest GitHub publishes for the release) and delete again from Settings, or any executable you pick yourself.
 - Friends: follow other players (add by name, or import who your connected accounts follow on Lichess), see their ratings and whether they are online, and keep their games for offline browsing. Each friend shows exactly how much data was downloaded and stored for them, and can be cleared or removed; removals are remembered.
 - Data transparency: every request to Lichess is counted per account and purpose, and Settings → Data & storage shows what was downloaded and what is kept on disk.
 - Board niceties: premoves, optional auto-queen, optional legal-move dots, drawing arrows with right-click drag, and arrow-key move navigation in every game.
@@ -265,26 +179,31 @@ Puzzle access needs the `puzzle:read` and `puzzle:write` permissions. Accounts c
 
 Storm, Streak, Rush and offline puzzles play from Lichess's public puzzle database (CC0). It is an opt-in download of about 300 MB from `database.lichess.org` (Settings → Data & storage, or the Rush tab). The file is streamed and decompressed without being saved: KChess keeps a random sample of around a hundred thousand well-tested puzzles, spread evenly over ratings and themes, in `kchess.db` (a few tens of MB), and can delete it again at any time. Local scores live in the same file and can be cleared separately.
 
-On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. New app data is stored in SQLite (`kchess.db` in Electron's user-data directory, via Node's built-in `node:sqlite`; schema changes are ordered migrations in `crates/kchess-core/src/store/migrations.rs`, tracked with `PRAGMA user_version`); existing `kchess-data.json` / `lichess-tokens.json` files are imported once and archived as `.bak`. OAuth tokens are encrypted with Electron `safeStorage`.
+On first launch on macOS, the app imports accounts, game history, settings, and available tokens from a previous Rust KChess installation at `~/.kchess/kchess.db`, when present. The old database is left untouched. App data is stored in SQLite (`kchess.db` in the profile folder; schema changes are ordered migrations in `crates/kchess-core/src/store/migrations.rs`, tracked with `PRAGMA user_version`); existing `kchess-data.json` / `lichess-tokens.json` files are imported once and archived as `.bak`. Lichess tokens are sealed with AES-256-GCM under a key the system's credential store keeps (Keychain, Credential Manager, Secret Service).
 
 ## Structure
 
-- `apps/desktop/app/pages/` contains separate Dashboard, Online, Computer, Puzzles, Practice, History, Friends, and Settings routes (Settings shows one category at a time, chosen from the sidebar).
-- `apps/desktop/app/stores/` holds the Pinia stores that keep game and account state alive while navigating: `kchess.ts` (navigation, accounts, settings), with `kchess/computerGame.ts`, `onlineGame.ts` and `gameHistory.ts` owning their respective game state, `friends.ts` (followed players), `puzzles.ts` (puzzle training, Lichess puzzle data, the local puzzle database), and `usage.ts` (data downloaded and stored). `apps/desktop/app/components/` holds reusable board, game row, and page header components.
-- `apps/desktop/app/assets/` and `apps/desktop/app/utils/` hold styles, media and presentation helpers (board pieces, sounds, image export, swipe navigation), and `utils/library.ts`, which loads the core's library before the app mounts.
-- `crates/kchess-node/js/` is the headless core: chess engine, Lichess, puzzles, review and the local library (studies, played games, mistake drills, unfinished sessions). `createKChessCore(platform)` implements `CoreApi` and emits `CoreEvents`; it never imports Electron. The host supplies a `CorePlatform` with its data directory, token encryption, browser opening and power state. `pnpm run build:packages` builds it, with the CLI, into `hosts/node/dist` and `apps/cli/dist`.
-- `apps/desktop/electron/main/` and `apps/desktop/electron/preload/` are the Electron desktop shell. Main configures the core with an Electron platform, serves every `CoreApi` method and event over IPC, and adds the window, updater, dialogs, notifications, themes, microphone access and the `kchess://` route that serves the core's voice model.
-- `crates/kchess-wasm/js/` contains pure chess, training and document rules. `crates/kchess-contracts/ts/` owns the headless API, events, types and validation tuples. Desktop IPC and diagnostics contracts live in `apps/desktop/contracts/`.
-- `apps/desktop/nuxt.config.ts` enables client rendering and hash routing, so the generated app works from Electron's local file URL without a running server. Nuxt's generated files live in `apps/desktop/.output/public/` and are included in the macOS package.
-
-Nuxt UI is loaded as a Nuxt module. Desktop APIs remain exposed through Electron's preload bridge at `window.kchess`.
+- `apps/gpui/` is the app: its pages (`src/pages`), the board (`src/board`), the shell, settings,
+  voice input, the updater and its end-to-end tests (`src/e2e`).
+- `apps/cli/` is the command line.
+- `crates/kchess-core/` is the headless core: chess engines, Lichess, puzzles, reviews and the
+  local library (studies, played games, mistake drills, unfinished sessions), behind `CoreApi`
+  (`crates/kchess-contracts`) and its events. `crates/kchess-service/` serves one core per profile
+  to every KChess window and the command line.
+- `crates/kchess-domain/` holds the pure chess, training and document rules; `crates/kchess-games/`
+  the computer, over-the-board and Game history sessions as frontends drive them;
+  `crates/kchess-voice/` the speech recognition helper; `crates/kchess-electron-legacy/` reads what
+  the Electron app left in a profile.
+- `tooling/xtask/` is the repository's tooling (`cargo xtask`); `fuzz/` the cargo-fuzz targets.
 
 ## Security notes
 
-- The renderer is sandboxed with context isolation; the main process validates all IPC input and never lets the renderer choose which executable to run: an engine path must come from the native file picker or be the copy KChess downloaded (the bundled engine needs no path). Deleting only ever removes KChess's own download folder.
-- The puzzle database is downloaded from a fixed URL only, and only after a click; the renderer supplies no URL or path for it.
+- The app never lets typed or downloaded data choose which executable runs: an engine path comes
+  from the file picker or is the copy KChess downloaded. Deleting only ever removes KChess's own
+  download folder.
+- The puzzle database is downloaded from a fixed URL only, and only after a click.
 - The Lichess OAuth loopback server only accepts the `/callback` request that carries the expected `state`.
-- The window cannot navigate away from the app's own pages.
+- The core service's socket admits only clients of the same user with the profile's token.
 
 ## License
 

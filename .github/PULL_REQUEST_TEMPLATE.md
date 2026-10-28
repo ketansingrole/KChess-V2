@@ -4,7 +4,7 @@
 
 ## How I checked it
 
-- [ ] `pnpm run check` passes
+- [ ] `cargo xtask check` passes
 - [ ] Bug fixes include a regression for the failure sequence
 - [ ] I tried it in the running app (screenshots for UI changes)
 

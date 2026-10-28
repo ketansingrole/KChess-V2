@@ -1,15 +1,8 @@
 # GPUI app parity with the Electron app
 
-The GPUI app (`apps/gpui`) replaces the Electron app once every page here matches it and users
-can switch without noticing. Compare a page by opening the same profile in both apps:
-
-```sh
-pnpm run build
-node tooling/with-branded-electron.mjs node tooling/parity-screens.mjs <dir> light <profile>
-KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -p kchess-gpui -- -NSRequiresAquaSystemAppearance YES
-```
-
-`KCHESS_ENGINE_PATH` stands in for the Stockfish the packaged app will ship beside itself.
+The GPUI app (`apps/gpui`) replaced the Electron app once every page here matched it, so people
+switch without noticing. The Electron app is gone from the repository (2026-10-29); this list
+records what the switch kept.
 
 ## Shared with Electron (one profile, either app)
 
@@ -320,28 +313,25 @@ None.
 
 ## Packaging
 
-- [x] Packages in Electron's formats, made by electron-builder from the staged app: macOS
-      (.dmg, .zip), Windows (NSIS .exe) and Linux (.AppImage, .deb), with the official native
-      Stockfish and the voice runtime (helper, libvosk, notices) beside the app
-      (`tooling/gpui-package.mjs`; the preview installs beside Electron as "KChess Preview",
-      `--final` takes Electron's identity, NSIS GUID and .deb name and writes `latest*.yml`)
+- [x] Packages in the formats KChess has always shipped, made by `cargo xtask package`: macOS
+      (.dmg, .zip), Windows (NSIS .exe) and Linux (.AppImage, .deb, Snap), with the official native
+      Stockfish, the core service, the command line and the voice runtime beside the app
+      (`--final` takes the Electron app's identity, NSIS GUID and .deb name and writes
+      `latest*.yml`; the preview installs apart as "KChess Preview")
 - [x] Rust updater on the same GitHub release feed: check, background download checked against
       `SHA256SUMS.txt` and the running app's signature, then the new bundle, the installer run
       silently, the new AppImage or the .deb (`pkexec`); restart to install or install on quit,
       the top bar's button and Settings
-- [x] The Release workflow publishes the preview packages beside Electron's (`gpui` job)
-- [x] The switch from Electron: `KCHESS_RELEASE_APP: gpui` in the Release workflow builds
-      `--final` in place of Electron's packages, so Electron's updater installs the GPUI app (the
-      preview keeps shipping; the Snap stays Electron); the Windows executable carries Electron's
-      icon and version, and the Windows upgrade workflow upgrades Electron installs to it
-- [ ] Flip `KCHESS_RELEASE_APP` to `gpui` once the upgrade checks in docs/releasing.md pass
+- [x] The switch from Electron: the Release workflow ships the final app on every platform, so
+      Electron's updater installs it over itself, and the Snap is the app; the Windows upgrade
+      workflow upgrades Electron installs to it
+- [x] What only the Electron app could read moves over in the core: its `localStorage` documents
+      and preferences, and logins sealed with `safeStorage` (`crates/kchess-electron-legacy`)
 - [x] Signing: ad hoc without credentials; a Developer ID (`KCHESS_SIGN_IDENTITY`) signs with the
       hardened runtime and notarizes (untried here: no certificate)
-- [x] CI: lint, test and package `kchess-gpui` on macOS, Windows and Linux (`gpui` job); Linux
-      builds checked in CI's image (`pnpm run linux`)
-- [x] End-to-end tests as broad as Electron's Playwright suite (`src/e2e`, headless, in the `gpui`
-      job): startup, the sidebar, Settings and restarts; Play with Computer, over the board and the
-      clock and GIF export; the analysis board and editor; history; studies; practice trainers;
-      puzzles, openings, the Lichess pages offline; Quick Pick and zoom. Not covered: live Lichess
-      play
-- [x] THIRD_PARTY_NOTICES.md rows for the app's own crates and its Stockfish
+- [x] CI: lint, test and package the app on macOS, Windows and Linux (`gpui` job)
+- [x] End-to-end tests (`src/e2e`, headless, in the `gpui` job): startup, the sidebar, Settings
+      and restarts; Play with Computer, over the board and the clock and GIF export; the analysis
+      board and editor; history; studies; practice trainers; puzzles, openings, the Lichess pages
+      offline; Quick Pick and zoom. Not covered: live Lichess play
+- [x] THIRD_PARTY_NOTICES.md rows for every crate the app ships and its Stockfish

@@ -4,52 +4,45 @@ Thanks for helping! Bug reports, fixes, and ideas are all welcome.
 
 ## Getting started
 
-Requires Node.js 24.21.0 (pinned in `.nvmrc`), pnpm 11.19.0 and Rust through rustup (pinned in `rust-toolchain.toml`); see the [README](README.md#run) for details.
+KChess is Rust. Install Rust through rustup (the toolchain is pinned in `rust-toolchain.toml`);
+on Linux, also the libraries the app builds against:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm run dev        # Nuxt + Electron together, with hot reload
+sudo apt-get install libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
 ```
 
-While editing, `pnpm run check:fast` checks only what changed, and
-`pnpm run test:e2e --grep <tag or title>` runs selected desktop tests after a build.
-Pushing to `main` runs `pnpm run check` through the pre-push hook that `pnpm install` sets up.
-
-Before opening a pull request, run the same checks CI runs:
+Then:
 
 ```bash
-pnpm run check
-pnpm run build
-pnpm run test:e2e
+cargo xtask install-hooks
+KCHESS_USER_DATA_DIR=/tmp/kchess-dev cargo run -p kchess-gpui
 ```
 
-To reproduce CI's Linux jobs locally, start Docker (on macOS, `brew install colima docker` and
-`colima start`) and run them in a container built from the repository pins
-(`tooling/linux/Dockerfile`). The working tree, including uncommitted changes, is synced into
-a cached volume; results are copied to `test-results/linux/`.
+While editing, `cargo xtask check-fast` checks only what changed. Pushing to `main` runs
+`cargo xtask check` through the pre-push hook. Before opening a pull request, run the same check
+CI runs:
 
 ```bash
-pnpm run check:linux          # CI's check job
-pnpm run test:e2e:linux       # build, e2e and packaged tests under Xvfb
-pnpm run linux -- <command>   # any command; --amd64 matches CI's x86-64 runners (slower)
+cargo xtask check
 ```
+
+To reproduce CI's Linux build locally, start Docker (on macOS, `brew install colima docker` and
+`colima start`) and use the image built from the repository pins (`tooling/linux/Dockerfile`).
 
 ## Guidelines
 
 - Keep changes focused; one topic per pull request. Describe what changed and why, and
   how you checked it (screenshots help for UI changes).
-- Match the surrounding code: naming, comment density, and idiom. Prettier settings are in
-  `.prettierrc.json`.
-- Add lifecycle regression cases under the owning package’s `tests/unit/` using Vitest, real Pinia stores and mounted Vue components. Put actual Electron integration checks under `apps/desktop/tests/e2e/`; these use temporary profiles and the branded launcher.
-- Put headless features in `crates/kchess-node/js` behind `CoreApi`, and pure chess or training rules in `crates/kchess-wasm/js`; desktop-only features extend `DesktopApi`. Documents a user keeps belong in the core's library, not in renderer storage. Keep request channels in `apps/desktop/contracts/ipc.ts`. IPC handlers accept unknown inputs and must validate them before use.
-- Anything that crosses the Electron IPC boundary must be validated in
-  `crates/kchess-wasm/js/validate.ts`. The renderer is sandboxed and must never choose what the main
-  process executes.
+- Match the surrounding code: naming, comment density, and idiom. `cargo fmt` formats it.
+- Put headless features in the core (`crates/kchess-core`) behind `CoreApi` (`kchess-contracts`),
+  pure chess or training rules in `crates/kchess-domain`, and views in `apps/gpui`. Documents a
+  user keeps belong in the core's library. Every core method validates its arguments
+  (`crates/kchess-domain/src/misc/contracts.rs`).
 - New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
   `crates/kchess-core/src/store/mod.rs`, and a new entry at the end of `MIGRATIONS` in
   `crates/kchess-core/src/store/migrations.rs` (never edit an earlier migration).
 - Be gentle with Lichess. Bulk downloads run one request at a time, and requests should be
-  attributed for the data-usage counters (`withUsage` in `crates/kchess-core/src/store/usage.rs`).
+  attributed for the data-usage counters (`with_usage` in `crates/kchess-core/src/lichess`).
 
 ## Licensing of contributions
 
