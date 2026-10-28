@@ -15,6 +15,7 @@ env:
   GPUI_LINUX_LIBS: >-
     libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
     libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+    desktop-file-utils
 
 jobs:
   # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
