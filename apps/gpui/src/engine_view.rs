@@ -119,6 +119,8 @@ pub fn engine_lines(
                     .child(
                         div()
                             .id(("pv-eval", index))
+                            .role(Role::Button)
+                            .aria_label(format!("Play line {}", format_eval(Some(line))))
                             .w(px(55.))
                             .flex_none()
                             .px(px(6.))
@@ -140,6 +142,8 @@ pub fn engine_lines(
                             let (pv, on_play) = (pv.clone(), on_play.clone());
                             div()
                                 .id(SharedString::from(format!("pv-{index}-{at}")))
+                                .role(Role::Button)
+                                .aria_label(played.label.clone())
                                 .flex_none()
                                 .px(px(2.))
                                 .py(px(1.))

@@ -151,6 +151,9 @@ impl AnalysisPage {
                     let on = current == Some(nag);
                     div()
                         .id(SharedString::from(format!("glyph-{nag}")))
+                        .role(Role::Button)
+                        .aria_label(label)
+                        .aria_toggled(if on { Toggled::True } else { Toggled::False })
                         .min_w(px(26.))
                         .h(px(24.))
                         .px(px(4.))
@@ -212,6 +215,8 @@ impl AnalysisPage {
         } else {
             h_flex()
                 .id("add-comment")
+                .role(Role::Button)
+                .aria_label("Add a comment")
                 .w_full()
                 .gap(px(6.))
                 .px(px(10.))

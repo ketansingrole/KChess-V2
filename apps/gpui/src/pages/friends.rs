@@ -443,6 +443,8 @@ impl FriendsPage {
                                     .child(
                                         div()
                                             .id(("friend-name", index))
+                                            .role(Role::Link)
+                                            .aria_label(format!("@{name}"))
                                             .font_weight(FontWeight::BOLD)
                                             .truncate()
                                             .cursor_pointer()
@@ -1031,6 +1033,11 @@ impl Render for ImportDialog {
                             row.child(
                                 div()
                                     .id("import-removed")
+                                    .role(Role::Button)
+                                    .aria_label(format!(
+                                        "{} {removed} you removed earlier",
+                                        if self.show_removed { "Hide" } else { "Show" }
+                                    ))
                                     .underline()
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {

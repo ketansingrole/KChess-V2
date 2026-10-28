@@ -1070,6 +1070,8 @@ impl AnalysisPage {
                     cell(
                         div()
                             .id(SharedString::from(format!("count-{kind}-{side:?}")))
+                            .role(Role::Button)
+                            .aria_label(format!("Next {title}: {count}"))
                             .min_w(px(30.))
                             .px(px(6.))
                             .py(px(1.))
@@ -1175,6 +1177,8 @@ pub(super) fn eval_chart(
     let measured = bounds_cell.clone();
     div()
         .id("eval-chart")
+        .role(Role::Image)
+        .aria_label("Evaluation chart")
         .w_full()
         .h(px(64.))
         .rounded(px(6.))

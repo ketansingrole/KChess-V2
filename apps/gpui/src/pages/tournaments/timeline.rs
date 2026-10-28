@@ -322,6 +322,8 @@ impl TournamentsPage {
                         let pinned = (scrolled - left).max(0.).min((right - left - 40.).max(0.));
                         h_flex()
                             .id(("arena", index))
+                            .role(Role::Button)
+                            .aria_label(describe(arena))
                             .absolute()
                             .left(px(left))
                             .top(px(AXIS + 8. + row as f32 * (ROW + ROW_GAP)))

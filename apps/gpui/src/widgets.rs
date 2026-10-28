@@ -263,6 +263,9 @@ pub fn moves_list(
         row.push(
             div()
                 .id(("move", index))
+                .role(Role::Button)
+                .aria_label(san.clone())
+                .aria_selected(active)
                 .flex_1()
                 .min_w_0()
                 .px(px(10.))
@@ -694,6 +697,9 @@ fn pill_row(
             let choose = choose.clone();
             h_flex()
                 .id((id, index))
+                .role(Role::Tab)
+                .aria_label(tab.label.clone())
+                .aria_selected(chosen)
                 .when(fill && !wrap, |tab| tab.flex_1())
                 .when(wrap, |tab| tab.flex_grow(1.))
                 .justify_center()
@@ -964,6 +970,8 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
         .child(
             div()
                 .id(SharedString::from(format!("card-picture-{}", card.id)))
+                .role(Role::Button)
+                .aria_label(format!("Open {}", card.name))
                 .w_full()
                 .aspect_ratio(1.)
                 .flex()
@@ -1001,6 +1009,8 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                         .child(
                             div()
                                 .id(SharedString::from(format!("card-name-{}", card.id)))
+                                .role(Role::Button)
+                                .aria_label(card.name.clone())
                                 .flex_1()
                                 .min_w_0()
                                 .min_h(px(44.))

@@ -71,6 +71,9 @@ impl OnlinePage {
         let typed = !self.chat_input.read(cx).value().trim().is_empty();
         let head = h_flex()
             .id("chat-toggle")
+            .role(Role::Button)
+            .aria_label("Chat")
+            .aria_expanded(open)
             .gap(px(8.))
             .px(px(12.))
             .py(px(8.))

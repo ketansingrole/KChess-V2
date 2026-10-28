@@ -1165,7 +1165,8 @@ impl PuzzlesPage {
                         .p_0()
                         .border_1()
                         .border_color(tint(fg, 40.))
-                        .tooltip(label)
+                        .tooltip(label.clone())
+                        .accessibility_label(label)
                         .child(glyph.size(px(14.)))
                         .dropdown_menu(move |menu, _, _| {
                             let (puzzle, wrong, page) =

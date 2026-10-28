@@ -442,6 +442,9 @@ impl EditorPage {
             let selected = self.tool == tool;
             div()
                 .id(SharedString::from(format!("{id}-{color:?}")))
+                .role(gpui_kit::Role::Button)
+                .aria_label(label)
+                .aria_selected(selected)
                 .flex_1()
                 .h(cell)
                 .flex()

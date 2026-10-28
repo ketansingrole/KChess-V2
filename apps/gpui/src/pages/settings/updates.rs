@@ -185,6 +185,8 @@ impl SettingsPage {
             let page = page.clone();
             div()
                 .id("update-notes")
+                .role(Role::Link)
+                .aria_label(label)
                 .flex()
                 .items_center()
                 .gap(px(2.))

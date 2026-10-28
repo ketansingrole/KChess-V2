@@ -232,6 +232,8 @@ impl Endgames {
         let view = view.to_string();
         h_flex()
             .id(SharedString::from(format!("card-{view}")))
+            .role(Role::Button)
+            .aria_label(title.clone())
             .w(width)
             .gap(px(14.))
             .px(px(16.))

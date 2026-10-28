@@ -1740,6 +1740,9 @@ impl TreeView<'_> {
         let (menu_page, menu_path) = (page.clone(), path.to_string());
         h_flex()
             .id(SharedString::from(format!("tree-{path}")))
+            .role(Role::Button)
+            .aria_label(node.san.clone())
+            .aria_selected(active)
             .px(px(4.))
             .py(px(2.))
             .mx(px(1.))
@@ -1838,6 +1841,8 @@ impl TreeView<'_> {
         let palette = &self.palette;
         div()
             .id(SharedString::from(format!("comment-{path}")))
+            .role(Role::Button)
+            .aria_label(text.clone())
             .text_size(px(12.5))
             .italic()
             .line_height(relative(1.5))
@@ -2246,6 +2251,8 @@ impl AnalysisPage {
                         .child(
                             div()
                                 .id("cloud-play")
+                                .role(Role::Button)
+                                .aria_label(format!("Play {first}"))
                                 .underline()
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -2281,6 +2288,8 @@ impl AnalysisPage {
                     .child(
                         div()
                             .id("setup-stockfish")
+                            .role(Role::Link)
+                            .aria_label("Set up Stockfish")
                             .underline()
                             .cursor_pointer()
                             .on_click(|_, window, cx| {
@@ -2340,6 +2349,9 @@ impl AnalysisPage {
                 let chosen = choice == tool;
                 h_flex()
                     .id(label)
+                    .role(Role::Tab)
+                    .aria_label(label)
+                    .aria_selected(chosen)
                     .flex_1()
                     .justify_center()
                     .gap(px(6.))

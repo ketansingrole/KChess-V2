@@ -788,6 +788,8 @@ impl PositionExplorer {
                     .child(
                         div()
                             .id(("explorer-move", index))
+                            .role(Role::Button)
+                            .aria_label(format!("Play {san}"))
                             .w(px(56.))
                             .text_size(px(13.))
                             .font_weight(FontWeight::SEMIBOLD)
@@ -865,6 +867,8 @@ impl PositionExplorer {
                     let chosen = game.clone();
                     h_flex()
                         .id(("explorer-game", index))
+                        .role(Role::Button)
+                        .aria_label("Open game")
                         .justify_between()
                         .gap(px(8.))
                         .px(px(4.))

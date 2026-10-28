@@ -436,6 +436,9 @@ impl OnlinePage {
                 // `.tc-option`.
                 v_flex()
                     .id(("time-control", index))
+                    .role(Role::Button)
+                    .aria_label(label.to_string())
+                    .aria_selected(chosen)
                     .flex_1()
                     .min_w_0()
                     .items_start()

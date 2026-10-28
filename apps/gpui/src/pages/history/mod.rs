@@ -941,6 +941,12 @@ impl HistoryPage {
                 columns(
                     h_flex()
                         .id(("history-row", index))
+                        .role(Role::Button)
+                        .aria_label(format!(
+                            "{} vs {}",
+                            text(&game, "white"),
+                            text(&game, "black")
+                        ))
                         .pl(px(12.))
                         .pr(px(8.))
                         .py(px(11.))

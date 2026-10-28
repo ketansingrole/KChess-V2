@@ -966,6 +966,7 @@ impl PlayersPage {
                                     .ghost()
                                     .icon(icon("ellipsis"))
                                     .tooltip("More actions")
+                                    .accessibility_label("More actions")
                                     .disabled(!crate::network::online(cx))
                                     .dropdown_menu(move |menu, _, _| {
                                         let page = page.clone();

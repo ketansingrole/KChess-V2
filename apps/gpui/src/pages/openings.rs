@@ -763,6 +763,8 @@ impl OpeningsPage {
                     let moves = recent.moves.clone();
                     h_flex()
                         .id(SharedString::from(format!("recent-{}", recent.name)))
+                        .role(Role::Button)
+                        .aria_label(recent.name.clone())
                         .w(item)
                         .gap(px(10.))
                         .pl(px(6.))
@@ -909,6 +911,8 @@ impl OpeningsPage {
                     .child(
                         div()
                             .id(("opening-move", index))
+                            .role(Role::Button)
+                            .aria_label(san.clone())
                             .px(px(3.))
                             .rounded(px(4.))
                             .cursor_pointer()
@@ -977,6 +981,8 @@ impl OpeningsPage {
                         .child(
                             div()
                                 .id("wikibooks")
+                                .role(Role::Link)
+                                .aria_label("Wikibooks")
                                 .underline()
                                 .cursor_pointer()
                                 .on_click(move |_, _, cx| cx.open_url(&url))
@@ -986,6 +992,8 @@ impl OpeningsPage {
                         .child(
                             div()
                                 .id("cc-by-sa")
+                                .role(Role::Link)
+                                .aria_label("CC BY-SA 4.0")
                                 .underline()
                                 .cursor_pointer()
                                 .on_click(|_, _, cx| {

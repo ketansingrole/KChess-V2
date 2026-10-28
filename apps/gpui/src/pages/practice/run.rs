@@ -293,6 +293,9 @@ pub fn training_list(
                     let id = item.id.clone();
                     h_flex()
                         .id(SharedString::from(format!("training-{}", item.id)))
+                        .role(Role::Button)
+                        .aria_label(item.title.clone())
+                        .aria_selected(current)
                         .gap(px(8.))
                         .px(px(10.))
                         .py(px(7.))

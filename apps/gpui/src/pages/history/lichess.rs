@@ -767,6 +767,8 @@ pub fn game_row(
     // `.game-row`: 11px by 12px, 13px text.
     h_flex()
         .id(id)
+        .role(Role::Button)
+        .aria_label(format!("Game against {opponent}"))
         .px(px(12.))
         .py(px(11.))
         .gap(px(12.))

@@ -504,6 +504,9 @@ impl WatchPage {
                     };
                     h_flex()
                         .id(("watch-channel", index))
+                        .role(Role::Button)
+                        .aria_label(channel["label"].as_str().unwrap_or_default().to_string())
+                        .aria_selected(chosen)
                         .gap(px(12.))
                         .p(px(8.))
                         .rounded(px(8.))

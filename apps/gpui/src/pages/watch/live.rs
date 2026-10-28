@@ -493,6 +493,8 @@ impl Live {
                     .child(
                         div()
                             .id(("watch-past-board", index))
+                            .role(Role::Button)
+                            .aria_label("Open game on the analysis board")
                             .cursor_pointer()
                             .on_click(move |_, window, cx| {
                                 crate::pages::players::open_exported(
@@ -599,6 +601,8 @@ impl WatchPage {
                     let link = name.clone();
                     div()
                         .id(("watch-player", index))
+                        .role(Role::Link)
+                        .aria_label(name.clone())
                         .cursor_pointer()
                         .hover(|name| name.underline())
                         .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))

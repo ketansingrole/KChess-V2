@@ -134,6 +134,8 @@ fn tile(
 ) -> impl IntoElement {
     h_flex()
         .id(id)
+        .role(Role::Button)
+        .aria_label(label)
         .flex_1()
         .min_w_0()
         .min_h(px(72.))
@@ -341,6 +343,12 @@ impl Render for HomePage {
                         let computer = game["source"] == "computer";
                         h_flex()
                             .id(("home-game", index))
+                            .role(Role::Button)
+                            .aria_label(format!(
+                                "{} vs {}",
+                                game["white"].as_str().unwrap_or_default(),
+                                game["black"].as_str().unwrap_or_default()
+                            ))
                             .gap(px(12.))
                             .px(px(8.))
                             .py(px(9.))

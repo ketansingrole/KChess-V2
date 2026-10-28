@@ -700,6 +700,12 @@ impl WatchPage {
                 };
                 v_flex()
                     .id(("broadcast-cell", index))
+                    .role(Role::Button)
+                    .aria_label(format!(
+                        "{} – {}",
+                        label(&game["white"]),
+                        label(&game["black"])
+                    ))
                     .gap(px(4.))
                     .p(px(8.))
                     .w(px(190.))
@@ -900,6 +906,10 @@ impl WatchPage {
                                 });
                                 v_flex()
                                     .id(("broadcast-card", index))
+                                    .role(Role::Button)
+                                    .aria_label(
+                                        item["tourName"].as_str().unwrap_or_default().to_string(),
+                                    )
                                     .w(px(260.))
                                     .rounded(px(12.))
                                     .overflow_hidden()

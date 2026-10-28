@@ -988,6 +988,8 @@ impl ChessBoard {
                 .child(
                     div()
                         .id("promotion-choices")
+                        .role(gpui_kit::Role::Dialog)
+                        .aria_label("Choose promotion piece")
                         .flex()
                         .gap(px(6.))
                         .p(px(8.))
@@ -999,6 +1001,8 @@ impl ChessBoard {
                         .children(choices.into_iter().map(|(role, label)| {
                             div()
                                 .id(label)
+                                .role(gpui_kit::Role::Button)
+                                .aria_label(label)
                                 .size(px(60.))
                                 .p(px(4.))
                                 .rounded(px(8.))
@@ -1321,6 +1325,20 @@ pub fn cached(board: &Entity<ChessBoard>) -> AnyElement {
     board.clone().cached(style).into_any_element()
 }
 
+/// What a screen reader says of the board (`ChessBoard.vue`'s status line): the last move and
+/// the side to move.
+fn describe(state: &BoardState) -> String {
+    let to_move = if state.fen.split_whitespace().nth(1) == Some("b") {
+        "Black to move"
+    } else {
+        "White to move"
+    };
+    match state.last_move {
+        Some((from, to)) => format!("Last move {from}–{to} · {to_move}"),
+        None => to_move.to_string(),
+    }
+}
+
 impl Render for ChessBoard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frontend = cx
@@ -1512,8 +1530,16 @@ impl Render for ChessBoard {
                     .child(badge.glyph)
             });
 
+        let description = (!self.state.preview).then(|| describe(&self.state));
         div()
             .id("chess-board")
+            // Pictures in a list are named by what holds them; a board to play on is a group.
+            .when_some(description, |board, description| {
+                board
+                    .role(gpui_kit::Role::Group)
+                    .aria_label("Chess board")
+                    .aria_description(description)
+            })
             .relative()
             .w_full()
             .aspect_ratio(1.)
@@ -1689,5 +1715,30 @@ mod premove_tests {
         assert_eq!(slides(&castle, &castled).len(), 2);
         let empty = board_of("8/8/8/8/8/8/8/8 w - - 0 1");
         assert!(slides(&empty, &before).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod description_tests {
+    use super::{BoardState, describe};
+    use shakmaty::Color;
+
+    /// A screen reader hears the last move and whose turn it is, as Electron's status line says.
+    #[test]
+    fn the_board_says_the_last_move_and_whose_turn_it_is() {
+        let start = BoardState::shown(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "standard",
+            Color::White,
+            None,
+        );
+        assert_eq!(describe(&start), "White to move");
+        let after = BoardState::shown(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "standard",
+            Color::White,
+            Some("e2e4"),
+        );
+        assert_eq!(describe(&after), "Last move e2–e4 · Black to move");
     }
 }

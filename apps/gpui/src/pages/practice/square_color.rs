@@ -321,6 +321,8 @@ impl Render for SquareColors {
                 let color: &'static str = if light { "light" } else { "dark" };
                 h_flex()
                     .id(id)
+                    .role(Role::Button)
+                    .aria_label(label)
                     .flex_1()
                     .h(px(44.))
                     .justify_center()

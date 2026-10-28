@@ -475,6 +475,9 @@ impl PuzzleRush {
                 let key_clicked = key.clone();
                 v_flex()
                     .id(SharedString::from(format!("rush-{key}")))
+                    .role(Role::Button)
+                    .aria_label(self.title_of(key))
+                    .aria_selected(chosen)
                     .min_w(px(150.))
                     .flex_1()
                     .gap(px(2.))

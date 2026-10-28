@@ -524,6 +524,8 @@ impl TournamentsPage {
                 .child(
                     div()
                         .id("featured-board")
+                        .role(Role::Button)
+                        .aria_label("Watch the top game")
                         .w_full()
                         .h(px(298.))
                         .cursor_pointer()

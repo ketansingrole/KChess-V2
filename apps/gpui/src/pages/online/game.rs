@@ -378,6 +378,8 @@ impl OnlinePage {
                 let link = opponent.clone();
                 div()
                     .id("online-opponent-name")
+                    .role(Role::Link)
+                    .aria_label(link.clone())
                     .cursor_pointer()
                     .hover(|name| name.underline())
                     .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))

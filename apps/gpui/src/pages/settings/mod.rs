@@ -561,6 +561,9 @@ fn option(
     let name = name.into();
     v_flex()
         .id(id)
+        .role(gpui_kit::Role::Button)
+        .aria_label(name.clone())
+        .aria_selected(chosen)
         .w(width)
         .items_center()
         .gap(px(5.))

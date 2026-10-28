@@ -63,6 +63,15 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       page following the fingers (Settings' swipe switches); the schedule keeps its sideways scroll
 - [x] Z turns zen mode on and off on the game pages; the arrows step through moves
 
+## Accessibility
+
+- [x] Every clickable element has a role and a name (moves, engine lines, explorer rows, game
+      rows, cards, tabs, channels); the board is a "Chess board" group described by its last
+      move and the side to move, and the promotion picker is a named dialog
+- [ ] Spoken announcements of moves as they happen (GPUI has no live regions; the board's
+      description is read when it is reached)
+- [ ] Keyboard focus for the clickable elements that are not kit buttons
+
 ## Play with Computer
 
 - [x] Board: board and piece looks, coordinates, last move, check, legal moves, captures
