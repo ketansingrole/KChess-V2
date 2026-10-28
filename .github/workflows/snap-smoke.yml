@@ -1,0 +1,35 @@
+name: Snap smoke
+
+# Installs KChess from a Snap Store channel and checks it starts: still running after 30 seconds on
+# a virtual display (Mesa's software Vulkan) and its start logged. Run it from the Actions tab
+# after a Snap reaches a channel.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: The channel to install from
+        default: latest/stable
+
+permissions:
+  contents: read
+
+jobs:
+  start:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install and start the Snap
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          sudo snap install kchess --channel="$CHANNEL"
+          snap list kchess
+          set +e
+          xvfb-run -a timeout 30 snap run kchess > snap-run.log 2>&1
+          code=$?
+          set -e
+          tail -40 snap-run.log
+          log=$(find "$HOME/snap/kchess" -path '*KChess/logs/kchess.log' 2>/dev/null | head -n 1)
+          test -n "$log" && tail -20 "$log"
+          test "$code" = 124 || { echo "::error::The Snap exited (code $code) before 30 seconds."; exit 1; }
+          test -n "$log" && grep -q "KChess started" "$log" || { echo "::error::The Snap did not log its start."; exit 1; }
