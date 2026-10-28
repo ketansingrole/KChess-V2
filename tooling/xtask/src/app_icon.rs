@@ -488,7 +488,10 @@ mod tests {
 
     #[test]
     fn the_svg_matches_the_committed_one() {
-        let committed = std::fs::read_to_string(root().join("apps/gpui/build/icon.svg")).unwrap();
+        // A Windows checkout may end its lines with CRLF.
+        let committed = std::fs::read_to_string(root().join("apps/gpui/build/icon.svg"))
+            .unwrap()
+            .replace("\r\n", "\n");
         assert_eq!(committed, svg());
     }
 }
