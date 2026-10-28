@@ -41,6 +41,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The workspace includes the GPUI app, which builds against these system headers; without
+      # them `check` passes only while the Rust cache below still holds their build output.
+      - name: Install GPUI build libraries
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - name: Verify release metadata
         run: pnpm run release:verify
       - name: Verify the release commit belongs to main
