@@ -40,10 +40,10 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "m
 # Game history's dates in local time, and the Downloads folder exports start in (already in
 # Cargo.lock through GPUI Kit).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-dirs = "6"
+dirs = "7"
 # Exported pictures of a game: the board and pieces drawn (resvg), encoded as PNG or GIF (image);
 # both already in Cargo.lock through GPUI.
-resvg = "0.46"
+resvg = "0.49"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 # App updates: the release feed and its packages (the core's HTTP client), checked against the
 # release's SHA-256 sums; both already in Cargo.lock through the core.
@@ -54,7 +54,7 @@ notify-rust = "4.18"
 # Voice input: the microphone (cpal, already in Cargo.lock through rodio) and the PCM the core's
 # recognizer takes, as base64 (already in Cargo.lock through the core).
 cpal = "0.18"
-base64 = "0.22"
+base64 = "0.23"
 # Redacting the diagnostic log (already in Cargo.lock through the core's dependencies).
 regex = "1"
 
