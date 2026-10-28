@@ -1603,6 +1603,12 @@ mod tests {
             ..ad_hoc.clone()
         };
         assert!(signed_alike(&ad_hoc, &other_app).is_err());
+        // The way off ad hoc signing: a Developer ID build of the same app.
+        let ad_hoc_preview = Signer {
+            app: developer.app.clone(),
+            ..ad_hoc.clone()
+        };
+        assert_eq!(signed_alike(&ad_hoc_preview, &developer), Ok(()));
         // Unsigned (Linux, or Windows without a certificate): the checksum is the check.
         assert_eq!(signed_alike(&Signer::default(), &Signer::default()), Ok(()));
     }

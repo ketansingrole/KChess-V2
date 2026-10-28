@@ -177,13 +177,16 @@ jobs:
           retention-days: 14
 
   # The GPUI preview ("KChess Preview", beside the Electron app) in the same formats, which its
-  # updater installs from the release (apps/gpui/src/updates.rs). Ad hoc signed on macOS.
+  # updater installs from the release (apps/gpui/src/updates.rs). Signed and notarized on macOS
+  # with the Electron app's Developer ID when its secrets are set, ad hoc otherwise.
   gpui:
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    env:
+      KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3
@@ -202,11 +205,57 @@ jobs:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # gpui-package.mjs signs with codesign directly, so the certificate goes into a keychain of
+      # this job's own, and the identity is named by its hash.
+      - name: Import the Developer ID certificate
+        id: mac-signing
+        if: runner.os == 'macOS' && env.KCHESS_MAC_SIGNING == 'true'
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/kchess-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          certificate="$RUNNER_TEMP/kchess-signing.p12"
+          printf '%s' "$MAC_CSC_LINK" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          rm -f "$certificate"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application:/ { print $2; exit }')"
+          test -n "$identity" || { echo "::error::No Developer ID Application identity in MAC_CSC_LINK."; exit 1; }
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
       - run: node tooling/gpui-package.mjs
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
-          KCHESS_SIGN_IDENTITY: ''
+          KCHESS_SIGN_IDENTITY: ${{ steps.mac-signing.outputs.identity }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+      - name: Verify Mac signing and notarization
+        if: runner.os == 'macOS' && env.KCHESS_MAC_SIGNING == 'true'
+        shell: bash
+        env:
+          EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # The app as the updater and a download receive it: from the zip that ships.
+          unpacked="$RUNNER_TEMP/kchess-preview-zip"
+          rm -rf "$unpacked" && mkdir -p "$unpacked"
+          ditto -x -k apps/gpui/dist/KChess-Preview-*-mac-arm64.zip "$unpacked"
+          mac_app="$unpacked/KChess Preview.app"
+          codesign --verify --deep --strict --verbose=2 "$mac_app"
+          signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
+            echo "::error::The preview's signing team does not match APPLE_TEAM_ID."
+            exit 1
+          fi
+          spctl --assess --type execute --verbose=2 "$mac_app"
+          xcrun stapler validate "$mac_app"
       - name: Verify every supported package exists
         shell: bash
         run: |
