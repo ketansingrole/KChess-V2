@@ -41,7 +41,11 @@ import { verifyNoDevBuild } from './dev-build-marker.mjs'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const args = new Set(process.argv.slice(2))
 const final = args.has('--final')
-const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+// KCHESS_PACKAGE_VERSION builds a test installer above every release (windows-upgrade.yml); the
+// app reads the same variable (apps/gpui/build.rs).
+const version =
+  process.env.KCHESS_PACKAGE_VERSION ||
+  JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 const desktop = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'), 'utf8')).build
 const name = final ? desktop.productName : `${desktop.productName} Preview`
 const appId = final ? desktop.appId : `${desktop.appId}.preview`

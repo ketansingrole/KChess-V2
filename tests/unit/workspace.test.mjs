@@ -60,10 +60,11 @@ it('installs the Rust coverage prerequisites before every workflow check run', (
   }
 })
 
-it('installs dependencies before every release job that runs a command', () => {
+it('installs dependencies before every release job that runs pnpm or node', () => {
   const workflow = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'))
+  const needsDependencies = /^(?:pnpm|node)\b/m
   for (const [name, job] of Object.entries(workflow.jobs)) {
-    if (!(job.steps ?? []).some((step) => typeof step.run === 'string')) continue
+    if (!(job.steps ?? []).some((step) => needsDependencies.test(String(step.run ?? '')))) continue
     expect(
       job.steps.some((step) => String(step.run ?? '').startsWith('pnpm install')),
       `release job ${name} must install dependencies before running commands`,
@@ -87,6 +88,24 @@ it('restores the Rust build cache before every workflow step that compiles Rust'
       expect(cache.with?.['save-if']).toBe("${{ github.ref == 'refs/heads/main' }}")
     }
   }
+})
+
+it('ships one app as KChess, chosen in one place, with the preview beside it either way', () => {
+  const workflow = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'))
+  expect(['electron', 'gpui']).toContain(workflow.env.KCHESS_RELEASE_APP)
+  const plan = workflow.jobs.plan.steps.find((step) => step.id === 'plan').run
+  expect(plan).toMatch(/electron\)[\s\S]*identities='\["preview"\]'/)
+  expect(plan).toMatch(/gpui\)[\s\S]*snap_only[\s\S]*identities='\["preview","final"\]'/)
+  for (const job of ['package', 'gpui', 'release'])
+    expect([workflow.jobs[job].needs].flat()).toContain('plan')
+  // Only the identity replacing Electron may write the manifests Electron's updater reads.
+  const gpui = workflow.jobs.gpui.steps
+  expect(
+    gpui.find((step) => String(step.run ?? '').startsWith('node tooling/gpui-package.mjs')).run,
+  ).toContain("matrix.identity == 'final' && '--final'")
+  const verify = gpui.find((step) => step.name === 'Verify every supported package exists').run
+  expect(verify).toContain('The preview wrote update manifests')
+  expect(verify).toContain('Missing update metadata')
 })
 
 it('creates the draft release only after the full check passes', () => {

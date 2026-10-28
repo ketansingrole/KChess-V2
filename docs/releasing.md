@@ -44,6 +44,23 @@ name, install folder, NSIS GUID and `.deb` package, and writes no `latest*.yml`,
 updater never reads it as its own. On macOS the `gpui` job signs and notarizes it with the same
 Developer ID secrets as the Electron app, and verifies it as the `package` job does.
 
+### Switching KChess to the GPUI app
+
+`KCHESS_RELEASE_APP` at the top of `release.yml` names the app that ships as KChess. With `gpui`,
+the `gpui` job also builds `gpui-package.mjs --final`: the GPUI app under Electron's app ID,
+product name, NSIS GUID and `.deb` package, with the `latest*.yml` manifests, so Electron's updater
+installs it over the Electron app and its profile carries on. The Electron job then builds only the
+Snap, which stays the Electron app; the preview keeps shipping so its installations keep updating.
+The switch is a reviewed commit like any other, released with the next tag; a published release
+cannot be taken back, so before flipping it:
+
+- run **Windows upgrade** from the Actions tab: it upgrades published Electron installs (per user,
+  custom folder, all users) with the GPUI installer as well as Electron's, and checks Apps &
+  features, shortcuts, the old copy and user data;
+- on a Mac with a Developer ID signed Electron install, check that its updater installs a signed
+  `--final` build (Squirrel.Mac accepts only the same team and bundle identifier);
+- check that an AppImage and a `.deb` Electron install update to the GPUI app and keep the profile.
+
 Without signing credentials, Windows releases are unsigned and macOS builds are ad-hoc signed (`tooling/release-config.cjs`), so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy & Security**
 and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info → Run anyway**).

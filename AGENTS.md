@@ -34,7 +34,10 @@ creating/pushing a tag or publishing a release.
   workflow's published-release guard with a direct `gh release upload --clobber`.
 - Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
   x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), for the Electron app and the GPUI preview
-  (`KChess-Preview-*`, which must never ship `latest*.yml`). Keep updater manifests, blockmaps,
+  (`KChess-Preview-*`, which must never ship `latest*.yml`). `KCHESS_RELEASE_APP` in
+  `release.yml` names the app shipped as KChess (`electron`, or `gpui` for the GPUI app under
+  Electron's identity); only that app writes `latest*.yml`. Changing it is a release decision the
+  user makes, never part of another task (docs/releasing.md). Keep updater manifests, blockmaps,
   and `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
   publishing; macOS ZIPs are required for the update feed.
 

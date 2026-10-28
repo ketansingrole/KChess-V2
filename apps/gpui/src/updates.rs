@@ -31,8 +31,6 @@ const IDLE: Duration = if cfg!(test) {
 };
 /// `checkAutomatically`: on startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-/// The release's own version (`package.json`), the one releases are tagged with.
-const PACKAGE_JSON: &str = include_str!("../../../package.json");
 /// The name this identity's packages carry, which `gpui-package.mjs` builds in: the preview
 /// beside Electron, or (`--final`) the app replacing it.
 const PREFIX: &str = match option_env!("KCHESS_PACKAGE_PREFIX") {
@@ -156,11 +154,9 @@ pub fn client_version(version: &str) -> String {
     format!("{version} · {CLIENT}")
 }
 
+/// The release's own version (`package.json`, the one releases are tagged with; `build.rs`).
 pub fn current_version() -> String {
-    serde_json::from_str::<serde_json::Value>(PACKAGE_JSON)
-        .ok()
-        .and_then(|package| package["version"].as_str().map(str::to_string))
-        .unwrap_or_default()
+    env!("KCHESS_VERSION").to_string()
 }
 
 /// This platform's `package` of a release, named as electron-builder names Electron's

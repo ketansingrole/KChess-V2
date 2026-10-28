@@ -330,8 +330,11 @@ None.
       silently, the new AppImage or the .deb (`pkexec`); restart to install or install on quit,
       the top bar's button and Settings
 - [x] The Release workflow publishes the preview packages beside Electron's (`gpui` job)
-- [ ] The switch from Electron: the Release workflow building `--final` in place of Electron's
-      packages, so Electron's updater installs the GPUI app
+- [x] The switch from Electron: `KCHESS_RELEASE_APP: gpui` in the Release workflow builds
+      `--final` in place of Electron's packages, so Electron's updater installs the GPUI app (the
+      preview keeps shipping; the Snap stays Electron); the Windows executable carries Electron's
+      icon and version, and the Windows upgrade workflow upgrades Electron installs to it
+- [ ] Flip `KCHESS_RELEASE_APP` to `gpui` once the upgrade checks in docs/releasing.md pass
 - [x] Signing: ad hoc without credentials; a Developer ID (`KCHESS_SIGN_IDENTITY`) signs with the
       hardened runtime and notarizes (untried here: no certificate)
 - [x] CI: lint, test and package `kchess-gpui` on macOS, Windows and Linux (`gpui` job); Linux

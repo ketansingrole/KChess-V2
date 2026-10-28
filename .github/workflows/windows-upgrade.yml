@@ -3,8 +3,10 @@ name: Windows upgrade
 # Installs a published Windows release three ways (per user, in a custom folder, for all users),
 # upgrades it with this commit's installer the way electron-updater does (`--updated /S`)
 # and checks Apps & features, shortcuts, the old copy and user data. A fresh install checks the
-# default folder. Run it from the Actions tab after changing the NSIS installer; pull requests that
-# change the test or apps/desktop/build/installer.nsh run it too.
+# default folder. Each runs with the Electron app's installer and with the GPUI app's under
+# Electron's identity (`gpui-package.mjs --final`), which is how the switch to the GPUI app reaches
+# Windows. Run it from the Actions tab after changing the NSIS installer; pull requests that
+# change the test, apps/desktop/build/installer.nsh or the GPUI app's packaging run it too.
 on:
   workflow_dispatch:
   pull_request:
@@ -12,6 +14,8 @@ on:
       - .github/workflows/windows-upgrade.yml
       - tooling/windows-upgrade-test.ps1
       - apps/desktop/build/installer.nsh
+      - tooling/gpui-package.mjs
+      - apps/gpui/build.rs
 
 permissions:
   contents: read
@@ -60,18 +64,49 @@ jobs:
           pnpm exec electron-builder --projectDir apps/desktop --win --config "$config" --publish never
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-installer
+          name: windows-installer-electron
           path: dist/KChess-*-win-x64.exe
           if-no-files-found: error
           retention-days: 3
 
+  build-gpui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gpui
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      # The app and its installer take the test version from KCHESS_PACKAGE_VERSION.
+      - run: node tooling/gpui-package.mjs --final
+        env:
+          KCHESS_PACKAGE_VERSION: ${{ env.KCHESS_TEST_VERSION }}
+          # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-gpui
+          path: apps/gpui/dist/KChess-*-win-x64.exe
+          if-no-files-found: error
+          retention-days: 3
+
   upgrade:
-    name: Upgrade (${{ matrix.mode }})
-    needs: build
+    name: Upgrade to ${{ matrix.app }} (${{ matrix.mode }})
+    needs: [build, build-gpui]
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
+        app: [electron, gpui]
         mode: [fresh, default, custom, allusers]
         include:
           # Releases from 2026.10.12 install per user even with /allusers, so the all-users copy
@@ -85,7 +120,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v8
         with:
-          name: windows-installer
+          name: windows-installer-${{ matrix.app }}
           path: new
       - name: Download the published installer
         shell: pwsh

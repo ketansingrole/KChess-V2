@@ -17,11 +17,37 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # The app that ships as KChess. `electron`: the Electron app, with the GPUI preview beside it.
+  # `gpui`: the GPUI app built under Electron's identity (`gpui-package.mjs --final`) with the
+  # update manifests, so Electron's updater installs it over the Electron app; the preview still
+  # ships, so its installations keep updating, and the Snap stays the Electron app.
+  KCHESS_RELEASE_APP: electron
   GPUI_LINUX_LIBS: >-
     libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
     libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
 
 jobs:
+  # The switch above as the packaging jobs' matrices, which cannot read `env`.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      electron: ${{ steps.plan.outputs.electron }}
+      gpui: ${{ steps.plan.outputs.gpui }}
+    steps:
+      - id: plan
+        run: |
+          case "$KCHESS_RELEASE_APP" in
+            electron)
+              electron='[{"os":"macos-latest","platform":"--mac --arm64"},{"os":"windows-latest","platform":"--win"},{"os":"ubuntu-24.04","platform":"--linux"}]'
+              identities='["preview"]' ;;
+            gpui)
+              electron='[{"os":"ubuntu-24.04","platform":"--linux","snap_only":true}]'
+              identities='["preview","final"]' ;;
+            *) echo "::error::KCHESS_RELEASE_APP must be electron or gpui."; exit 1 ;;
+          esac
+          echo "electron=$electron" >> "$GITHUB_OUTPUT"
+          echo "gpui={\"os\":[\"macos-latest\",\"windows-latest\",\"ubuntu-24.04\"],\"identity\":$identities}" >> "$GITHUB_OUTPUT"
+
   validate:
     runs-on: ubuntu-latest
     # Unpackaged test builds use thin LTO and parallel codegen: the same code, compiled faster.
@@ -64,18 +90,14 @@ jobs:
 
   # Packaging runs alongside validation rather than after it; the draft release waits for both,
   # so a failing check still stops it.
+  # The Electron app's installers (macOS releases support Apple Silicon only), and its Snap; when
+  # the GPUI app ships as KChess, only the Snap (`snap_only`).
   package:
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # macOS releases support Apple Silicon only.
-          - os: macos-latest
-            platform: --mac --arm64
-          - os: windows-latest
-            platform: --win
-          - os: ubuntu-24.04
-            platform: --linux
+        include: ${{ fromJSON(needs.plan.outputs.electron) }}
     runs-on: ${{ matrix.os }}
     env:
       # Certificates are imported explicitly; never use an unrelated keychain identity.
@@ -101,6 +123,7 @@ jobs:
       - run: pnpm run build
       # afterPack rejects nested installers/apps, redundant dependencies, and oversized payloads.
       - name: Build installers and verify package contents
+        if: ${{ !matrix.snap_only }}
         run: pnpm exec electron-builder --projectDir apps/desktop ${{ matrix.platform }} --config ../../tooling/release-config.cjs --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
@@ -150,6 +173,7 @@ jobs:
           spctl --assess --type execute --verbose=2 "$mac_app"
           xcrun stapler validate "$mac_app"
       - name: Verify update metadata and every supported package exist
+        if: ${{ !matrix.snap_only }}
         shell: bash
         run: |
           # upload-artifact fails only when no pattern matches at all; check each package.
@@ -180,17 +204,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The GPUI preview ("KChess Preview", beside the Electron app) in the same formats, which its
-  # updater installs from the release (apps/gpui/src/updates.rs). Signed and notarized on macOS
-  # with the Electron app's Developer ID when its secrets are set, ad hoc otherwise.
+  # The GPUI app in the same formats, which its updater installs from the release
+  # (apps/gpui/src/updates.rs): the preview ("KChess Preview", beside the Electron app), and when
+  # it ships as KChess the `final` identity too. Signed and notarized on macOS with the Electron
+  # app's Developer ID when its secrets are set, ad hoc otherwise.
   gpui:
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-24.04]
+      matrix: ${{ fromJSON(needs.plan.outputs.gpui) }}
     runs-on: ${{ matrix.os }}
     env:
       KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
+      # The packages' name, and the Mac app's.
+      PACKAGE_PREFIX: ${{ matrix.identity == 'final' && 'KChess' || 'KChess-Preview' }}
+      APP_NAME: ${{ matrix.identity == 'final' && 'KChess' || 'KChess Preview' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3
@@ -233,7 +261,7 @@ jobs:
           identity="$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application:/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::No Developer ID Application identity in MAC_CSC_LINK."; exit 1; }
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
-      - run: node tooling/gpui-package.mjs
+      - run: node tooling/gpui-package.mjs ${{ matrix.identity == 'final' && '--final' || '' }}
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
@@ -248,14 +276,14 @@ jobs:
           EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           # The app as the updater and a download receive it: from the zip that ships.
-          unpacked="$RUNNER_TEMP/kchess-preview-zip"
+          unpacked="$RUNNER_TEMP/kchess-gpui-zip"
           rm -rf "$unpacked" && mkdir -p "$unpacked"
-          ditto -x -k apps/gpui/dist/KChess-Preview-*-mac-arm64.zip "$unpacked"
-          mac_app="$unpacked/KChess Preview.app"
+          ditto -x -k apps/gpui/dist/"$PACKAGE_PREFIX"-*-mac-arm64.zip "$unpacked"
+          mac_app="$unpacked/$APP_NAME.app"
           codesign --verify --deep --strict --verbose=2 "$mac_app"
           signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
           if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
-            echo "::error::The preview's signing team does not match APPLE_TEAM_ID."
+            echo "::error::$APP_NAME's signing team does not match APPLE_TEAM_ID."
             exit 1
           fi
           spctl --assess --type execute --verbose=2 "$mac_app"
@@ -264,22 +292,25 @@ jobs:
         shell: bash
         run: |
           case "${{ runner.os }}" in
-            macOS) packages="KChess-Preview-*-mac-arm64.dmg KChess-Preview-*-mac-arm64.zip" ;;
-            Windows) packages="KChess-Preview-*-win-x64.exe" ;;
-            Linux) packages="KChess-Preview-*-linux-x86_64.AppImage KChess-Preview-*-linux-amd64.deb" ;;
+            macOS) manifest=latest-mac.yml; packages="$PACKAGE_PREFIX-*-mac-arm64.dmg $PACKAGE_PREFIX-*-mac-arm64.zip" ;;
+            Windows) manifest=latest.yml; packages="$PACKAGE_PREFIX-*-win-x64.exe" ;;
+            Linux) manifest=latest-linux.yml; packages="$PACKAGE_PREFIX-*-linux-x86_64.AppImage $PACKAGE_PREFIX-*-linux-amd64.deb" ;;
           esac
           for pattern in $packages; do
             found=$(find apps/gpui/dist -maxdepth 1 -name "$pattern" -size +0 | head -n 1)
             test -n "$found" || { echo "::error::Missing package: $pattern"; exit 1; }
           done
-          # The preview must never carry manifests Electron's updater would read as its own.
-          if ls apps/gpui/dist/latest*.yml >/dev/null 2>&1; then
+          if [ "${{ matrix.identity }}" = final ]; then
+            # Electron's updater finds the app replacing it through these.
+            test -s "apps/gpui/dist/$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
+          elif ls apps/gpui/dist/latest*.yml >/dev/null 2>&1; then
+            # The preview must never carry manifests Electron's updater would read as its own.
             echo "::error::The preview wrote update manifests."; exit 1
           fi
       # The release job writes one SHA256SUMS.txt for every package.
       - uses: actions/upload-artifact@v7
         with:
-          name: gpui-${{ runner.os }}
+          name: gpui-${{ runner.os }}-${{ matrix.identity }}
           path: |
             apps/gpui/dist/*
             !apps/gpui/dist/SHA256SUMS.txt
@@ -287,7 +318,7 @@ jobs:
           retention-days: 14
 
   release:
-    needs: [validate, package, gpui]
+    needs: [validate, plan, package, gpui]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
