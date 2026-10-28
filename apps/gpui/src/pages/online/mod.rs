@@ -18,7 +18,7 @@ use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::Palette;
-use crate::widgets::{self, Choice, Pill};
+use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 mod chat;
 mod game;
@@ -437,6 +437,7 @@ impl OnlinePage {
                 v_flex()
                     .id(("time-control", index))
                     .role(Role::Button)
+                    .keyboard_focus(palette.primary)
                     .aria_label(label.to_string())
                     .aria_selected(chosen)
                     .flex_1()

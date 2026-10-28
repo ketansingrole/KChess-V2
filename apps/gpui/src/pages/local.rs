@@ -29,7 +29,7 @@ use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
-use crate::widgets::{self, Side as PieceSide, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
 
 /// Clocks are checked this often while one runs (`useIntervalFn(…, 100)`).
 const TICK: Duration = Duration::from_millis(100);
@@ -1023,6 +1023,8 @@ impl LocalPage {
                 );
             div()
                 .id(("clock-face", index))
+                .role(Role::Button)
+                .keyboard_focus(palette.primary)
                 .flex_1()
                 .min_w_0()
                 .min_h_0()

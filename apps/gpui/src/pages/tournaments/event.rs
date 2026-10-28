@@ -15,7 +15,7 @@ use crate::board::{BoardState, ChessBoard};
 use crate::game::rules;
 use crate::pages::players::player_link;
 use crate::theme::Palette;
-use crate::widgets::{self, Look};
+use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// "Starts in 5 min", "12 min left", "Next round in 2 min", "Finished".
 pub fn status_line(detail: &Value) -> String {
@@ -370,6 +370,7 @@ impl TournamentsPage {
                                         player_link(
                                             ("podium", index),
                                             entry["name"].as_str().unwrap_or("?").to_string(),
+                                            palette.primary,
                                         )
                                         .font_weight(FontWeight::SEMIBOLD),
                                     )
@@ -412,7 +413,7 @@ impl TournamentsPage {
                                     .text_color(palette.primary)
                                     .child(title.to_string())
                             }))
-                            .child(player_link(("standing", index), name))
+                            .child(player_link(("standing", index), name, palette.primary))
                             .children(row["rating"].as_f64().map(|rating| {
                                 div()
                                     .text_color(palette.text_muted)
@@ -506,6 +507,7 @@ impl TournamentsPage {
                         .child(player_link(
                             ("featured-player", index),
                             entry["name"].as_str().unwrap_or("?").to_string(),
+                            palette.primary,
                         ))
                         .children(entry["rating"].as_f64().map(|rating| {
                             div()
@@ -525,6 +527,7 @@ impl TournamentsPage {
                     div()
                         .id("featured-board")
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label("Watch the top game")
                         .w_full()
                         .h(px(298.))
@@ -561,6 +564,7 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
                         .child(player_link(
                             ("duel-player", index * 2 + slot),
                             duel[key]["name"].as_str().unwrap_or("?").to_string(),
+                            palette.primary,
                         ))
                 };
                 h_flex()

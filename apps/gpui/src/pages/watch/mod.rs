@@ -15,7 +15,7 @@ use crate::core::{AppCore, CoreEvent};
 use crate::online::OnlineHandle;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::Palette;
-use crate::widgets::{self, Look, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
 
 mod broadcast_engine;
 mod broadcasts;
@@ -505,6 +505,7 @@ impl WatchPage {
                     h_flex()
                         .id(("watch-channel", index))
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label(channel["label"].as_str().unwrap_or_default().to_string())
                         .aria_selected(chosen)
                         .gap(px(12.))
@@ -643,6 +644,7 @@ impl WatchPage {
                                         crate::pages::players::player_link(
                                             ("watch-friend", index),
                                             name,
+                                            palette.primary,
                                         )
                                         .text_size(px(14.))
                                         .font_weight(FontWeight::SEMIBOLD),

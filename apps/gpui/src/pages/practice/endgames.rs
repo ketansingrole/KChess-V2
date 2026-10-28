@@ -18,6 +18,7 @@ use crate::core::AppCore;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::{Palette, tint};
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 const VIEW: &str = "kchess:endgame-view";
 const COURSES: &str = "courses";
@@ -233,6 +234,7 @@ impl Endgames {
         h_flex()
             .id(SharedString::from(format!("card-{view}")))
             .role(Role::Button)
+            .keyboard_focus(palette.primary)
             .aria_label(title.clone())
             .w(width)
             .gap(px(14.))

@@ -21,7 +21,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
-use crate::widgets::{self, Look};
+use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// Presence is asked for this many players at a time, and again this often.
 const PRESENCE_CHUNK: usize = 50;
@@ -444,6 +444,7 @@ impl FriendsPage {
                                         div()
                                             .id(("friend-name", index))
                                             .role(Role::Link)
+                                            .keyboard_focus(palette.primary)
                                             .aria_label(format!("@{name}"))
                                             .font_weight(FontWeight::BOLD)
                                             .truncate()
@@ -1034,6 +1035,7 @@ impl Render for ImportDialog {
                                 div()
                                     .id("import-removed")
                                     .role(Role::Button)
+                                    .keyboard_focus(palette.primary)
                                     .aria_label(format!(
                                         "{} {removed} you removed earlier",
                                         if self.show_removed { "Hide" } else { "Show" }

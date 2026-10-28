@@ -17,6 +17,29 @@ pub type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// What opening a card does; shared by its picture and its name.
 pub type OpenHandler = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
+/// Keyboard access for a clickable element that is not a kit button: a Tab stop that Enter and
+/// Space click (GPUI clicks the focused element), outlined in `ring` while the keyboard has it, as
+/// the kit outlines its buttons. A mouse press leaves the focus where it was, as a native button's
+/// does, so a page keeps its keys (the arrows, Space) after a move or a row is clicked.
+pub trait KeyboardFocus: InteractiveElement {
+    fn keyboard_focus(self, ring: Hsla) -> Self {
+        self.tab_index(0)
+            // Runs before GPUI's own focus-on-press for this element, which then stands down.
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .focus_visible(move |style| {
+                style.shadow(vec![BoxShadow {
+                    color: ring,
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: false,
+                }])
+            })
+    }
+}
+
+impl<E: InteractiveElement> KeyboardFocus for E {}
+
 /// `.player-line` height.
 pub const PLAYER_LINE: Pixels = px(36.);
 /// The gap between the player lines and the board (`.board-stack`).
@@ -274,6 +297,7 @@ pub fn moves_list(
                 .id(("move", index))
                 .test_support()
                 .role(Role::Button)
+                .keyboard_focus(palette.primary)
                 .aria_label(san.clone())
                 .aria_selected(active)
                 .flex_1()
@@ -709,6 +733,7 @@ fn pill_row(
                 .id((id, index))
                 .test_support()
                 .role(Role::Tab)
+                .keyboard_focus(palette.primary)
                 .aria_label(tab.label.clone())
                 .aria_selected(chosen)
                 .when(fill && !wrap, |tab| tab.flex_1())
@@ -982,6 +1007,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
             div()
                 .id(SharedString::from(format!("card-picture-{}", card.id)))
                 .role(Role::Button)
+                .keyboard_focus(palette.primary)
                 .aria_label(format!("Open {}", card.name))
                 .w_full()
                 .aspect_ratio(1.)
@@ -1021,6 +1047,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                             div()
                                 .id(SharedString::from(format!("card-name-{}", card.id)))
                                 .role(Role::Button)
+                                .keyboard_focus(palette.primary)
                                 .aria_label(card.name.clone())
                                 .flex_1()
                                 .min_w_0()
@@ -1235,4 +1262,76 @@ pub fn result_row(
                     },
                 )),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        App, AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, Styled as _, TestAppContext, Window, div,
+    };
+
+    use crate::theme::{Palette, colors};
+
+    /// A move list in a window whose page holds the keys, as a game page's does.
+    struct Page {
+        focus: FocusHandle,
+        chosen: Rc<Cell<Option<usize>>>,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let palette = Palette::of(&colors("kchess", &[], false), false);
+            let chosen = self.chosen.clone();
+            div().size_full().track_focus(&self.focus).child(super::moves_list(
+                "moves",
+                &["e4".into(), "e5".into()],
+                2,
+                false,
+                "No moves".into(),
+                move |ply, _, _| chosen.set(Some(ply)),
+                &palette,
+            ))
+        }
+    }
+
+    /// The moves were mouse-only: Tab skipped them, so a keyboard could not choose one.
+    #[gpui_kit::test]
+    fn moves_take_the_keyboard_and_leave_a_click_to_the_page(cx: &mut TestAppContext) {
+        let chosen = Rc::new(Cell::new(None));
+        let window = cx.add_window(|_, cx| Page {
+            focus: cx.focus_handle(),
+            chosen: chosen.clone(),
+        });
+        let page_focus = window.update(cx, |page, _, _| page.focus.clone()).unwrap();
+        let mut step = |f: &mut dyn FnMut(&mut Window, &mut App)| {
+            cx.run_until_parked();
+            cx.update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                f(window, cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+        };
+
+        // A click chooses the move and leaves the keys with the page.
+        step(&mut |window, cx| window.focus(&page_focus, cx));
+        step(&mut |window, cx| window.click(("move", 1usize), cx));
+        assert_eq!(chosen.take(), Some(2), "the ply after the second move");
+        step(&mut |window, _| assert!(page_focus.is_focused(window)));
+
+        // Tab reaches the first move, and Enter chooses it.
+        step(&mut |window, cx| window.focus_next(cx));
+        step(&mut |window, _| assert!(!page_focus.is_focused(window)));
+        step(&mut |window, cx| window.press("enter", cx));
+        assert_eq!(chosen.take(), Some(1));
+        // Space chooses the next one.
+        step(&mut |window, cx| window.focus_next(cx));
+        step(&mut |window, cx| window.press("space", cx));
+        assert_eq!(chosen.take(), Some(2));
+    }
 }

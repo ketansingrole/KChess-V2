@@ -18,7 +18,7 @@ use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, tint};
-use crate::widgets::{self, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Tone};
 
 const TICK: Duration = Duration::from_millis(100);
 /// The opponent replies faster in a run.
@@ -476,6 +476,7 @@ impl PuzzleRush {
                 v_flex()
                     .id(SharedString::from(format!("rush-{key}")))
                     .role(Role::Button)
+                    .keyboard_focus(palette.primary)
                     .aria_label(self.title_of(key))
                     .aria_selected(chosen)
                     .min_w(px(150.))

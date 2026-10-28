@@ -20,7 +20,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::rating_history::{Retry, has_points};
 use crate::rating_speeds::RatingSpeeds;
 use crate::theme::Palette;
-use crate::widgets::{self, Choice, Look};
+use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
 
 /// Recent lookups kept (`kchess:players-recent`), and names offered under the search.
 const RECENT_KEY: &str = "kchess:players-recent";
@@ -1150,7 +1150,7 @@ impl PlayersPage {
                         h_flex()
                             .justify_between()
                             .gap(px(12.))
-                            .child(player_link((id, index), name))
+                            .child(player_link((id, index), name, palette.primary))
                             .child(
                                 div().text_color(palette.text_muted).child(
                                     entry["opponentRating"]
@@ -1235,7 +1235,11 @@ impl PlayersPage {
                                         .text_color(palette.warning)
                                         .child(title.to_string())
                                 }))
-                                .child(player_link(("players-board-name", index), name)),
+                                .child(player_link(
+                                    ("players-board-name", index),
+                                    name,
+                                    palette.primary,
+                                )),
                         )
                         .child(
                             div().w(px(64.)).child(
@@ -1365,10 +1369,13 @@ pub fn open_exported(
         .detach();
 }
 
-/// `PlayerLink.vue`: a name that opens the player's profile.
-pub fn player_link(id: impl Into<ElementId>, name: String) -> Stateful<Div> {
+/// `PlayerLink.vue`: a name that opens the player's profile; `ring` outlines it under the keyboard.
+pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Link)
+        .keyboard_focus(ring)
+        .aria_label(name.clone())
         .truncate()
         .cursor_pointer()
         .hover(|link| link.underline())

@@ -12,7 +12,7 @@ use super::{Rows, SettingsPage};
 use crate::assets::icon;
 use crate::theme::Palette;
 use crate::updates::{Phase, Updates, UpdatesHandle};
-use crate::widgets::{self, Look};
+use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// `RESTART_UPDATE_DESCRIPTION`.
 pub const RESTART_DESCRIPTION: &str = "KChess will close and reopen. Finish any game or timed puzzle run first; an unfinished local game or run will be lost, and an online game's clock will keep running.";
@@ -186,6 +186,7 @@ impl SettingsPage {
             div()
                 .id("update-notes")
                 .role(Role::Link)
+                .keyboard_focus(palette.primary)
                 .aria_label(label)
                 .flex()
                 .items_center()

@@ -223,6 +223,7 @@ impl OnlinePage {
                                         .child(player_link(
                                             ("challenge-from", index),
                                             opponent["name"].as_str().unwrap_or("?").to_string(),
+                                            palette.primary,
                                         ))
                                         .children(opponent["rating"].as_f64().map(|rating| {
                                             div().text_color(palette.text_muted).child(format!(
@@ -321,6 +322,7 @@ impl OnlinePage {
                                                     .as_str()
                                                     .unwrap_or("?")
                                                     .to_string(),
+                                                palette.primary,
                                             )),
                                     )
                                     .child(
@@ -449,6 +451,7 @@ impl OnlinePage {
                                             .as_str()
                                             .unwrap_or("?")
                                             .to_string(),
+                                        palette.primary,
                                     ))
                                     .children(game["opponent"]["rating"].as_f64().map(|rating| {
                                         div()

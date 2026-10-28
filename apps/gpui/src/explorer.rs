@@ -27,7 +27,7 @@ use crate::core::AppCore;
 use crate::game::{STANDARD_FEN, rules};
 use crate::play_layout::Measured;
 use crate::theme::Palette;
-use crate::widgets::{self, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const PREFS: &str = "kchess:explorer";
 /// Following moves waits for the board to settle.
@@ -722,6 +722,8 @@ impl PositionExplorer {
                     };
                     v_flex()
                         .id(("explorer-tile", index))
+                        .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .w(tile)
                         .gap(px(4.))
                         .p(px(6.))
@@ -789,6 +791,7 @@ impl PositionExplorer {
                         div()
                             .id(("explorer-move", index))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label(format!("Play {san}"))
                             .w(px(56.))
                             .text_size(px(13.))
@@ -868,6 +871,7 @@ impl PositionExplorer {
                     h_flex()
                         .id(("explorer-game", index))
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label("Open game")
                         .justify_between()
                         .gap(px(8.))

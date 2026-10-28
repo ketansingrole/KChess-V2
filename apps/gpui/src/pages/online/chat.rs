@@ -12,7 +12,7 @@ use super::OnlinePage;
 use crate::assets::icon;
 use crate::online::{OnlineHandle, Phase};
 use crate::theme::Palette;
-use crate::widgets::{self, Look};
+use crate::widgets::{self, KeyboardFocus as _, Look};
 
 const OPEN_KEY: &str = "kchess:chat-open";
 const SPECTATORS_KEY: &str = "kchess:chat-spectators";
@@ -72,6 +72,7 @@ impl OnlinePage {
         let head = h_flex()
             .id("chat-toggle")
             .role(Role::Button)
+            .keyboard_focus(palette.primary)
             .aria_label("Chat")
             .aria_expanded(open)
             .gap(px(8.))

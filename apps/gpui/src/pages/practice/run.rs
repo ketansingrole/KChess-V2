@@ -15,7 +15,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
 use crate::theme::{Palette, tint};
-use crate::widgets::{self, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 /// Run lengths in seconds; 0 is untimed practice.
 pub const LENGTHS: [(u32, &str); 5] = [
@@ -294,6 +294,7 @@ pub fn training_list(
                     h_flex()
                         .id(SharedString::from(format!("training-{}", item.id)))
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label(item.title.clone())
                         .aria_selected(current)
                         .gap(px(8.))

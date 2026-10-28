@@ -100,7 +100,7 @@ pub struct Palette {
 impl Global for Palette {}
 
 impl Palette {
-    fn of(colors: &Map<String, Value>, dark: bool) -> Palette {
+    pub(crate) fn of(colors: &Map<String, Value>, dark: bool) -> Palette {
         let c = |name: &str| {
             colors
                 .get(name)

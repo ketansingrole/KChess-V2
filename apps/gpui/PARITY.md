@@ -70,7 +70,10 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       move and the side to move, and the promotion picker is a named dialog
 - [ ] Spoken announcements of moves as they happen (GPUI has no live regions; the board's
       description is read when it is reached)
-- [ ] Keyboard focus for the clickable elements that are not kit buttons
+- [x] Keyboard focus for the clickable elements that are not kit buttons: Tab reaches them,
+      Enter and Space click them, a ring shows the keyboard's place, and a mouse click leaves the
+      page's keys where they were; clock faces, explorer tiles, player and opening names gained the
+      roles they lacked
 
 ## Play with Computer
 

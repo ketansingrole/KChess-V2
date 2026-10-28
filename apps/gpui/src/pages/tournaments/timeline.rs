@@ -10,6 +10,7 @@ use super::{TournamentsPage, control};
 use crate::assets::icon;
 use crate::theme::Palette;
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 const MINUTE: f64 = 60_000.;
 /// About this much of the schedule fits across the box, so the scale follows the window.
@@ -323,6 +324,7 @@ impl TournamentsPage {
                         h_flex()
                             .id(("arena", index))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label(describe(arena))
                             .absolute()
                             .left(px(left))

@@ -20,7 +20,7 @@ use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
-use crate::widgets::{self, Side, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// `ENDINGS`: how a game ended, as Lichess names its status.
 fn ending(status: &str) -> &str {
@@ -471,6 +471,7 @@ impl Live {
                             crate::pages::players::player_link(
                                 ("watch-past-player", index * 2 + slot),
                                 entry[side]["name"].as_str().unwrap_or("?").to_string(),
+                                palette.primary,
                             )
                             .child(""),
                         )
@@ -494,6 +495,7 @@ impl Live {
                         div()
                             .id(("watch-past-board", index))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label("Open game on the analysis board")
                             .cursor_pointer()
                             .on_click(move |_, window, cx| {
@@ -602,6 +604,7 @@ impl WatchPage {
                     div()
                         .id(("watch-player", index))
                         .role(Role::Link)
+                        .keyboard_focus(palette.primary)
                         .aria_label(name.clone())
                         .cursor_pointer()
                         .hover(|name| name.underline())
@@ -703,9 +706,17 @@ impl WatchPage {
                     h_flex()
                         .gap(px(4.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(crate::pages::players::player_link("watch-h2h-white", white))
+                        .child(crate::pages::players::player_link(
+                            "watch-h2h-white",
+                            white,
+                            palette.primary,
+                        ))
                         .child("–")
-                        .child(crate::pages::players::player_link("watch-h2h-black", black)),
+                        .child(crate::pages::players::player_link(
+                            "watch-h2h-black",
+                            black,
+                            palette.primary,
+                        )),
                 )
                 .children(scores.into_iter().map(|(label, score, games)| {
                     h_flex()

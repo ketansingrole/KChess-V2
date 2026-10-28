@@ -25,7 +25,7 @@ use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
-use crate::widgets::{self, Choice, Side, Tone};
+use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
 
 /// Typing pauses this long before a search is sent.
 const SEARCH_DELAY: Duration = Duration::from_millis(350);
@@ -701,6 +701,7 @@ impl WatchPage {
                 v_flex()
                     .id(("broadcast-cell", index))
                     .role(Role::Button)
+                    .keyboard_focus(palette.primary)
                     .aria_label(format!(
                         "{} – {}",
                         label(&game["white"]),
@@ -907,6 +908,7 @@ impl WatchPage {
                                 v_flex()
                                     .id(("broadcast-card", index))
                                     .role(Role::Button)
+                                    .keyboard_focus(palette.primary)
                                     .aria_label(
                                         item["tourName"].as_str().unwrap_or_default().to_string(),
                                     )

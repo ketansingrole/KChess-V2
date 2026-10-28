@@ -27,7 +27,7 @@ use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
 };
 use crate::theme::Palette;
-use crate::widgets::{self, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const GROUP: &str = "kchess:openings-group";
 const RECENT: &str = "kchess:recent-openings";
@@ -612,6 +612,9 @@ impl OpeningsPage {
             .child({
                 let link = div()
                     .id(SharedString::from(format!("open-{name}")))
+                    .role(Role::Link)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(node.label.clone())
                     .min_w_0()
                     .truncate()
                     .cursor_pointer()
@@ -764,6 +767,7 @@ impl OpeningsPage {
                     h_flex()
                         .id(SharedString::from(format!("recent-{}", recent.name)))
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label(recent.name.clone())
                         .w(item)
                         .gap(px(10.))
@@ -912,6 +916,7 @@ impl OpeningsPage {
                         div()
                             .id(("opening-move", index))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label(san.clone())
                             .px(px(3.))
                             .rounded(px(4.))
@@ -982,6 +987,7 @@ impl OpeningsPage {
                             div()
                                 .id("wikibooks")
                                 .role(Role::Link)
+                                .keyboard_focus(palette.primary)
                                 .aria_label("Wikibooks")
                                 .underline()
                                 .cursor_pointer()
@@ -993,6 +999,7 @@ impl OpeningsPage {
                             div()
                                 .id("cc-by-sa")
                                 .role(Role::Link)
+                                .keyboard_focus(palette.primary)
                                 .aria_label("CC BY-SA 4.0")
                                 .underline()
                                 .cursor_pointer()

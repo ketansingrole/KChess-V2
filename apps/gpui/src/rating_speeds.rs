@@ -18,6 +18,7 @@ use crate::rating_history::{
 };
 use crate::theme::Palette;
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 /// Colour follows the speed, never its rank: each keeps its slot when others are hidden. One
 /// variant, the most played, takes the last slot.
@@ -333,6 +334,7 @@ impl RatingSpeeds {
             .when(hidden, |chip| chip.opacity(0.5))
             .hover(|chip| chip.border_color(palette.border_accented))
             .role(Role::Button)
+            .keyboard_focus(palette.primary)
             .aria_label(speed.name.clone())
             .aria_toggled(if hidden {
                 Toggled::False

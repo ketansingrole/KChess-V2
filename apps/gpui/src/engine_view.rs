@@ -11,6 +11,7 @@ use shakmaty::Color;
 
 use crate::game::tree::{format_eval, pv_san, winning_chances};
 use crate::theme::{Palette, tint};
+use crate::widgets::KeyboardFocus as _;
 
 /// The evaluation bar's width.
 pub const EVAL_BAR: Pixels = px(14.);
@@ -120,6 +121,7 @@ pub fn engine_lines(
                         div()
                             .id(("pv-eval", index))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label(format!("Play line {}", format_eval(Some(line))))
                             .w(px(55.))
                             .flex_none()
@@ -143,6 +145,7 @@ pub fn engine_lines(
                             div()
                                 .id(SharedString::from(format!("pv-{index}-{at}")))
                                 .role(Role::Button)
+                                .keyboard_focus(palette.primary)
                                 .aria_label(played.label.clone())
                                 .flex_none()
                                 .px(px(2.))

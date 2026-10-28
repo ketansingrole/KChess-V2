@@ -19,7 +19,7 @@ use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
-use crate::widgets::{self, Side, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// The player may touch pieces: the game is on, at its last move, in a variant shown here.
 pub fn can_play(online: &OnlineState) -> bool {
@@ -379,6 +379,7 @@ impl OnlinePage {
                 div()
                     .id("online-opponent-name")
                     .role(Role::Link)
+                    .keyboard_focus(palette.primary)
                     .aria_label(link.clone())
                     .cursor_pointer()
                     .hover(|name| name.underline())

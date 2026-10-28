@@ -85,7 +85,7 @@ fn line(id: (&'static str, usize), item: &Value, palette: &Palette) -> Div {
             h_flex()
                 .flex_wrap()
                 .child(text[..at].to_string())
-                .child(player_link(id, name.clone()).text_color(palette.primary))
+                .child(player_link(id, name.clone(), palette.primary).text_color(palette.primary))
                 .child(text[at + name.len()..].to_string()),
         ),
         None => row.child(text),

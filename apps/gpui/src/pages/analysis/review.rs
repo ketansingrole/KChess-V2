@@ -22,6 +22,7 @@ use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
 use crate::theme::{Palette, judgment_color};
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 /// What a move's label looks like (`MOVE_CLASSIFICATIONS`): its name, glyph and colour.
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
@@ -1071,6 +1072,7 @@ impl AnalysisPage {
                         div()
                             .id(SharedString::from(format!("count-{kind}-{side:?}")))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label(format!("Next {title}: {count}"))
                             .min_w(px(30.))
                             .px(px(6.))

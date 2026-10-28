@@ -18,7 +18,7 @@ use crate::game::tree::TreeNode;
 use crate::pages::Page;
 use crate::replay::GameReplay;
 use crate::theme::Palette;
-use crate::widgets::{self, Choice, Pill};
+use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 const RESULTS: [(&str, &str); 4] = [
     ("all", "All"),
@@ -768,6 +768,7 @@ pub fn game_row(
     h_flex()
         .id(id)
         .role(Role::Button)
+        .keyboard_focus(palette.primary)
         .aria_label(format!("Game against {opponent}"))
         .px(px(12.))
         .py(px(11.))

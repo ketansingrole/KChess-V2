@@ -18,6 +18,7 @@ use crate::theme::{Palette, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 const FLASH: Duration = Duration::from_millis(300);
 const COLOR_GRAMMAR: [&str; 3] = ["light", "dark", "[unk]"];
@@ -322,6 +323,7 @@ impl Render for SquareColors {
                 h_flex()
                     .id(id)
                     .role(Role::Button)
+                    .keyboard_focus(palette.primary)
                     .aria_label(label)
                     .flex_1()
                     .h(px(44.))

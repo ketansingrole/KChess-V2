@@ -51,6 +51,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, tint};
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 /// Why the board left its study: another window changed the chapter it was saving to.
 const STALE_COPY: &str = "This study was changed in another KChess window. Your board is kept as an unsaved copy; save it under a new name or reopen the study.";
@@ -1741,6 +1742,7 @@ impl TreeView<'_> {
         h_flex()
             .id(SharedString::from(format!("tree-{path}")))
             .role(Role::Button)
+            .keyboard_focus(palette.primary)
             .aria_label(node.san.clone())
             .aria_selected(active)
             .px(px(4.))
@@ -1842,6 +1844,7 @@ impl TreeView<'_> {
         div()
             .id(SharedString::from(format!("comment-{path}")))
             .role(Role::Button)
+            .keyboard_focus(palette.primary)
             .aria_label(text.clone())
             .text_size(px(12.5))
             .italic()
@@ -2252,6 +2255,7 @@ impl AnalysisPage {
                             div()
                                 .id("cloud-play")
                                 .role(Role::Button)
+                                .keyboard_focus(palette.primary)
                                 .aria_label(format!("Play {first}"))
                                 .underline()
                                 .cursor_pointer()
@@ -2289,6 +2293,7 @@ impl AnalysisPage {
                         div()
                             .id("setup-stockfish")
                             .role(Role::Link)
+                            .keyboard_focus(palette.primary)
                             .aria_label("Set up Stockfish")
                             .underline()
                             .cursor_pointer()
@@ -2350,6 +2355,7 @@ impl AnalysisPage {
                 h_flex()
                     .id(label)
                     .role(Role::Tab)
+                    .keyboard_focus(palette.primary)
                     .aria_label(label)
                     .aria_selected(chosen)
                     .flex_1()

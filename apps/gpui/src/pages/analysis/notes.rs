@@ -13,6 +13,7 @@ use crate::assets::icon;
 use crate::game::rules;
 use crate::game::tree::{comment_text, move_number};
 use crate::theme::{Palette, tint};
+use crate::widgets::KeyboardFocus as _;
 
 /// `MOVE_GLYPHS`: the annotations a move can carry, by NAG.
 pub const MOVE_GLYPHS: [(i64, &str, &str); 6] = [
@@ -152,6 +153,7 @@ impl AnalysisPage {
                     div()
                         .id(SharedString::from(format!("glyph-{nag}")))
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label(label)
                         .aria_toggled(if on { Toggled::True } else { Toggled::False })
                         .min_w(px(26.))
@@ -216,6 +218,7 @@ impl AnalysisPage {
             h_flex()
                 .id("add-comment")
                 .role(Role::Button)
+                .keyboard_focus(palette.primary)
                 .aria_label("Add a comment")
                 .w_full()
                 .gap(px(6.))

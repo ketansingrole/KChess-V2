@@ -16,6 +16,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
 use crate::theme::Palette;
 use crate::widgets;
+use crate::widgets::KeyboardFocus as _;
 
 mod lichess;
 
@@ -135,6 +136,7 @@ fn tile(
     h_flex()
         .id(id)
         .role(Role::Button)
+        .keyboard_focus(palette.primary)
         .aria_label(label)
         .flex_1()
         .min_w_0()
@@ -344,6 +346,7 @@ impl Render for HomePage {
                         h_flex()
                             .id(("home-game", index))
                             .role(Role::Button)
+                            .keyboard_focus(palette.primary)
                             .aria_label(format!(
                                 "{} vs {}",
                                 game["white"].as_str().unwrap_or_default(),

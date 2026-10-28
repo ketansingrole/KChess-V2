@@ -20,7 +20,7 @@ use crate::replay::GameReplay;
 
 pub(crate) mod lichess;
 use crate::theme::Palette;
-use crate::widgets::{self, Look, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
 
 const PAGE_SIZE: usize = 20;
 /// Below this page width the list keeps only the result and the players.
@@ -942,6 +942,7 @@ impl HistoryPage {
                     h_flex()
                         .id(("history-row", index))
                         .role(Role::Button)
+                        .keyboard_focus(palette.primary)
                         .aria_label(format!(
                             "{} vs {}",
                             text(&game, "white"),
