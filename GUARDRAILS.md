@@ -12,6 +12,10 @@ After `pnpm run build`, run only the affected desktop tests: arguments after
 `test:e2e` go to Playwright, e.g. `pnpm run test:e2e --grep @seed:reviewed-game` or
 `--grep "study"`. The full desktop suite runs in CI and before releases.
 
+The GPUI app's end-to-end tests (`apps/gpui/src/e2e`) run the whole app headless over a fresh
+profile with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with
+`e2e::computer`. They run with the GPUI unit tests in CI's `gpui` job.
+
 `pnpm install` points Git at `.githooks`. Its pre-push hook runs the full `pnpm run check`
 when a push updates `main`, and refuses if the pushed commit is not HEAD or the working
 tree has uncommitted or untracked files, since `check` would test those instead. Other

@@ -19,6 +19,8 @@
 //! - `stall`: a deep search (depth 18 and up) reports one scored line and then waits for `stop`;
 //!   shallower searches answer at once.
 //!
+//! With no arguments, `KCHESS_FAKE_UCI_MODE` names the mode (default `handshake`).
+//!
 //! When a log path is given, every received line is appended to it before any reply, so a test
 //! that has read a reply knows the command was received.
 // Test scaffolding: the only unsafe left in this crate (`libc::signal` for `ignore-term`).
@@ -185,7 +187,12 @@ fn lock(state: &Mutex<Search>) -> std::sync::MutexGuard<'_, Search> {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let mode = args.next().unwrap_or_else(|| "handshake".to_string());
+    // Started as an app starts its engine, with no arguments, the mode comes from
+    // `KCHESS_FAKE_UCI_MODE` (the GPUI app's end-to-end tests, `apps/gpui/src/e2e`).
+    let mode = args
+        .next()
+        .or_else(|| std::env::var("KCHESS_FAKE_UCI_MODE").ok())
+        .unwrap_or_else(|| "handshake".to_string());
     // `slow-review`: the review script, taking 20 ms per search so reviews overlap in tests.
     let slow = mode == "slow-review";
     let mode = if slow { "review".to_string() } else { mode };

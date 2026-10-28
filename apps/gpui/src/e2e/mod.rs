@@ -1,11 +1,11 @@
 //! End-to-end tests of the GPUI app: the whole app (embedded core, models, the workspace window)
 //! started in a headless GPUI window over a fresh profile, then driven by clicks and keys as a
 //! person would, and checked by what the window shows. The counterpart of the Electron app's
-//! Playwright suite (`tests/e2e`).
+//! Playwright suite (`apps/desktop/tests/e2e`).
 //!
 //! Each test gets its own profile (`profile::TEST_DATA_DIR`), the scripted engine from
-//! `kchess-core` in place of Stockfish (`kchess-fake-uci search`: it always answers `e2e4`), and a
-//! Lichess origin nobody listens on, so nothing leaves the machine.
+//! `kchess-core` in place of Stockfish (`kchess-fake-uci` in `search` mode: it always answers
+//! `e2e4`), and a Lichess origin nobody listens on, so nothing leaves the machine.
 //!
 //! Elements are found by their GPUI `ElementId` among those registered with `.test_support()`
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
@@ -368,6 +368,9 @@ fn environment() {
         unsafe {
             std::env::set_var("KCHESS_CORE_MODE", "embedded");
             std::env::set_var("KCHESS_ENGINE_PATH", engine);
+            std::env::set_var("KCHESS_FAKE_UCI_MODE", "search");
+            // The core's test switch: credentials in a key file in the profile, never the OS
+            // credential store, and the test Lichess origin below honoured.
             std::env::set_var("KCHESS_STORE_DEBUG", "1");
             // Lichess at a port nothing listens on: online features fail fast and offline.
             std::env::set_var("KCHESS_TEST_LICHESS_BASE", "http://127.0.0.1:9");
@@ -375,7 +378,8 @@ fn environment() {
     });
 }
 
-/// `kchess-fake-uci search` as an executable the core can start without arguments.
+/// `kchess-fake-uci`, built if this checkout has not built it yet; `environment` starts it in
+/// its `search` mode.
 fn engine() -> PathBuf {
     let target = std::env::current_exe()
         .ok()
@@ -388,6 +392,7 @@ fn engine() -> PathBuf {
         build.args([
             "build",
             "-q",
+            "--locked",
             "-p",
             "kchess-core",
             "--bin",
@@ -399,26 +404,5 @@ fn engine() -> PathBuf {
         let status = build.status().expect("cargo runs");
         assert!(status.success(), "the scripted engine builds");
     }
-    let dir = std::env::temp_dir().join(format!("kchess-gpui-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("a folder for the engine wrapper");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let wrapper = dir.join("stockfish");
-        std::fs::write(
-            &wrapper,
-            format!("#!/bin/sh\nexec '{}' search \"$@\"\n", fake.display()),
-        )
-        .expect("the engine wrapper is written");
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
-            .expect("the engine wrapper is executable");
-        wrapper
-    }
-    #[cfg(windows)]
-    {
-        let wrapper = dir.join("stockfish.cmd");
-        std::fs::write(&wrapper, format!("@\"{}\" search %*\r\n", fake.display()))
-            .expect("the engine wrapper is written");
-        wrapper
-    }
+    fake
 }
