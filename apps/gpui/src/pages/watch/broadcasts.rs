@@ -8,16 +8,19 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
+use super::broadcast_engine::{BroadcastEngine, GRID_EVALUATIONS};
 use super::{Pending, WatchPage, label};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
+use crate::game::tree::format_eval;
 use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
@@ -107,11 +110,11 @@ fn result_text(game: &Value) -> String {
     }
 }
 
-fn setup_of(game: &Value) -> Value {
+pub(super) fn setup_of(game: &Value) -> Value {
     json!({ "variant": "standard", "fen": game["startFen"] })
 }
 
-fn moves_of(game: &Value) -> Vec<String> {
+pub(super) fn moves_of(game: &Value) -> Vec<String> {
     serde_json::from_value(game["moves"].clone()).unwrap_or_default()
 }
 
@@ -124,11 +127,11 @@ pub struct Broadcasts {
     searching: bool,
     search_error: Option<SharedString>,
     search_epoch: u64,
-    tour: Option<Value>,
+    pub(super) tour: Option<Value>,
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
     /// The round's boards in the order they first came, by id.
-    games: Vec<Value>,
+    pub(super) games: Vec<Value>,
     clocks: HashMap<String, Clocks>,
     pub selected: String,
     /// The tournament and board the last swipe back left (no board: the tournament itself), to
@@ -136,8 +139,10 @@ pub struct Broadcasts {
     redo: Option<(String, String)>,
     ended: bool,
     ply: Option<usize>,
-    orientation: Color,
+    pub(super) orientation: Color,
     board: Entity<ChessBoard>,
+    /// Stockfish on the board followed and the grid's estimates.
+    pub(super) engine: BroadcastEngine,
     previews: HashMap<String, Entity<ChessBoard>>,
     _search: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -193,6 +198,7 @@ impl Broadcasts {
                 ))
             }),
             previews: HashMap::new(),
+            engine: BroadcastEngine::new(window, cx),
             _search: None,
             _subscriptions: subscriptions,
         }
@@ -214,7 +220,7 @@ impl Broadcasts {
         (self.tour.is_some() && !self.round.is_empty()).then(|| self.round.clone())
     }
 
-    fn current(&self) -> Option<&Value> {
+    pub(super) fn current(&self) -> Option<&Value> {
         self.games
             .iter()
             .find(|game| game["id"].as_str() == Some(self.selected.as_str()))
@@ -269,18 +275,27 @@ impl Broadcasts {
         None
     }
 
-    fn shown_ply(&self) -> usize {
+    pub(super) fn shown_ply(&self) -> usize {
         let count = self.current().map_or(0, |game| moves_of(game).len());
         self.ply.unwrap_or(count).min(count)
     }
 
-    fn redraw(&mut self, cx: &mut App) {
+    pub(super) fn redraw(&mut self, cx: &mut App) {
         let Some(game) = self.current().cloned() else {
             return;
         };
         let moves = moves_of(&game);
         let ply = self.shown_ply();
-        let state = if ply < moves.len() {
+        let mut state = if self.engine.variation_base.is_some() {
+            let history = self.history();
+            view::board_state(
+                &setup_of(&game),
+                &history,
+                history.len(),
+                self.orientation,
+                None,
+            )
+        } else if ply < moves.len() {
             view::board_state(&setup_of(&game), &moves, ply, self.orientation, None)
         } else {
             BoardState::shown(
@@ -290,6 +305,7 @@ impl Broadcasts {
                 game["lastMove"].as_str(),
             )
         };
+        state.arrows = self.engine_arrows(cx);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
     }
@@ -303,6 +319,7 @@ impl Broadcasts {
         if key == "f" {
             self.orientation = !self.orientation;
         } else if let Some(ply) = view::navigate(key, self.shown_ply(), count) {
+            self.return_to_game();
             self.ply = (ply < count).then_some(ply);
         } else {
             return false;
@@ -313,6 +330,7 @@ impl Broadcasts {
 
     fn select_game(&mut self, id: String, cx: &mut App) {
         self.redo = None;
+        self.return_to_game();
         self.selected = id;
         self.ply = None;
         self.redraw(cx);
@@ -606,6 +624,30 @@ impl WatchPage {
                         .text_color(palette.highlighted)
                         .child(tour["name"].as_str().unwrap_or_default().to_string()),
                 )
+                .when(self.broadcasts.current().is_none(), |bar| {
+                    let allowed = cx
+                        .global::<crate::online::OnlineHandle>()
+                        .0
+                        .read(cx)
+                        .assistance_allowed();
+                    bar.child(
+                        h_flex()
+                            .gap(px(6.))
+                            .text_size(px(13.))
+                            .child(
+                                Switch::new("broadcast-grid-evaluations")
+                                    .small()
+                                    .checked(crate::prefs::get(cx, GRID_EVALUATIONS, true))
+                                    .disabled(!self.broadcasts.engine_ready() || !allowed)
+                                    .accessibility_label("Evaluation bars")
+                                    .on_click(cx.listener(|this, on: &bool, _, cx| {
+                                        crate::prefs::set(cx, GRID_EVALUATIONS, *on);
+                                        this.engine_changed(cx);
+                                    })),
+                            )
+                            .child("Evaluation bars"),
+                    )
+                })
                 .child(
                     div().w(px(190.)).child(
                         Select::new(&self.broadcasts.round_select)
@@ -634,12 +676,22 @@ impl WatchPage {
             return self.broadcast_game(window, cx, palette);
         }
         let games = self.broadcasts.games.clone();
+        let grid_evaluations = crate::prefs::get(cx, GRID_EVALUATIONS, true)
+            && cx
+                .global::<crate::online::OnlineHandle>()
+                .0
+                .read(cx)
+                .assistance_allowed();
         let cells: Vec<AnyElement> = games
             .iter()
             .enumerate()
             .map(|(index, game)| {
                 let board = self.broadcasts.preview(game, cx);
                 let id = game["id"].as_str().unwrap_or_default().to_string();
+                let ongoing = game["ongoing"] == json!(true);
+                let result = game["result"].as_str().unwrap_or_default().to_string();
+                // The grid's estimates, while they are wanted and allowed.
+                let estimate = grid_evaluations.then(|| self.broadcasts.grid_evaluation(game));
                 let name = |side: &str| {
                     div()
                         .text_size(px(12.))
@@ -659,20 +711,78 @@ impl WatchPage {
                     .hover(|cell| cell.border_color(palette.border_accented))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.broadcasts.select_game(id.clone(), cx);
-                        cx.notify();
+                        this.engine_changed(cx);
                     }))
                     .child(name("black"))
-                    .child(div().w_full().h(px(174.)).child(board))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(174.))
+                            .gap(px(6.))
+                            .when_some(estimate.clone(), |row, (line, _)| {
+                                row.child(
+                                    crate::engine_view::eval_bar(
+                                        line.as_ref(),
+                                        Color::White,
+                                        (!ongoing).then_some(result.as_str()),
+                                    )
+                                    .w(px(8.)),
+                                )
+                            })
+                            .child(div().flex_1().h_full().child(board)),
+                    )
                     .child(name("white"))
                     .child(
-                        div()
+                        h_flex()
+                            .justify_between()
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
-                            .child(if game["ongoing"] == json!(true) {
+                            .child(if ongoing {
                                 "Live".to_string()
                             } else {
-                                game["result"].as_str().unwrap_or_default().to_string()
-                            }),
+                                result.clone()
+                            })
+                            .when_some(
+                                estimate.filter(|_| ongoing),
+                                |status, (line, unavailable)| {
+                                    let (text, tip) = match (&line, unavailable) {
+                                        (_, true) => {
+                                            ("—".to_string(), "Evaluation unavailable".to_string())
+                                        }
+                                        (Some(line), _) => (
+                                            format_eval(Some(line)),
+                                            format!(
+                                                "Stockfish · depth {}",
+                                                line["depth"]
+                                                    .as_f64()
+                                                    .or(self
+                                                        .broadcasts
+                                                        .engine
+                                                        .engine
+                                                        .update
+                                                        .as_ref()
+                                                        .and_then(|u| u["depth"].as_f64()))
+                                                    .unwrap_or_default()
+                                            ),
+                                        ),
+                                        (None, _) => (
+                                            format_eval(None),
+                                            "Waiting for evaluation".to_string(),
+                                        ),
+                                    };
+                                    status.child(
+                                        div()
+                                            .id(("broadcast-cell-eval", index))
+                                            .tooltip(move |window, cx| {
+                                                gpui_kit::component::tooltip::Tooltip::new(
+                                                    tip.clone(),
+                                                )
+                                                .build(window, cx)
+                                            })
+                                            .child(text),
+                                    )
+                                },
+                            ),
                     )
                     .into_any_element()
             })
@@ -783,6 +893,11 @@ impl WatchPage {
                                 index += 1;
                                 let tour = item["tourId"].as_str().unwrap_or_default().to_string();
                                 let live = item["ongoing"] == json!(true);
+                                // The cover, once it has arrived; the placeholder until then.
+                                let cover = item["image"].as_str().and_then(|url| {
+                                    crate::remote_image::handle(cx)
+                                        .update(cx, |images, cx| images.get(url, cx))
+                                });
                                 v_flex()
                                     .id(("broadcast-card", index))
                                     .w(px(260.))
@@ -803,16 +918,24 @@ impl WatchPage {
                                     })
                                     .child(
                                         div()
-                                            .h(px(90.))
+                                            .h(px(130.))
                                             .flex()
                                             .items_center()
                                             .justify_center()
+                                            .overflow_hidden()
                                             .bg(palette.accented)
-                                            .child(
-                                                icon("radio")
-                                                    .size(px(28.))
-                                                    .text_color(palette.text_muted),
-                                            ),
+                                            .map(|area| match cover {
+                                                Some(cover) => area.child(
+                                                    img(cover)
+                                                        .size_full()
+                                                        .object_fit(ObjectFit::Cover),
+                                                ),
+                                                None => area.child(
+                                                    icon("radio")
+                                                        .size(px(28.))
+                                                        .text_color(palette.text_muted),
+                                                ),
+                                            }),
                                     )
                                     .child(
                                         v_flex()
@@ -940,14 +1063,30 @@ impl WatchPage {
                 clock.map(|text| widgets::clock(text.into(), running, palette).into_any_element()),
             )
         };
-        let board_size = self.layout.board_size_in(px(0.), super::HEADER, window);
+        // The bar's room is kept beside the board whether or not it shows, as Electron's padding.
+        let bar_room = crate::engine_view::EVAL_BAR + px(8.);
+        let board_size = self.layout.board_size_in(bar_room, super::HEADER, window);
+        let eval_bar = self.broadcast_eval_bar(cx);
         let board_column = v_flex()
-            .w(board_size)
+            .w(board_size + bar_room)
             .flex_none()
             .gap(widgets::STACK_GAP)
-            .child(line(!orientation))
-            .child(crate::board::cached(&broadcasts.board))
-            .child(line(orientation));
+            .child(div().pl(bar_room).child(line(!orientation)))
+            .child(
+                h_flex()
+                    .h(board_size)
+                    .gap(px(8.))
+                    .map(|row| match eval_bar {
+                        Some(bar) => row.child(bar),
+                        None => row.pl(bar_room),
+                    })
+                    .child(
+                        div()
+                            .size(board_size)
+                            .child(crate::board::cached(&broadcasts.board)),
+                    ),
+            )
+            .child(div().pl(bar_room).child(line(orientation)));
         let sans = view::sans(&setup, &moves);
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
@@ -956,9 +1095,9 @@ impl WatchPage {
                     .broadcasts
                     .current()
                     .map_or(0, |game| moves_of(game).len());
+                page.broadcasts.return_to_game();
                 page.broadcasts.ply = (ply < count).then_some(ply);
-                page.broadcasts.redraw(cx);
-                cx.notify();
+                page.engine_changed(cx);
             });
         };
         let flip_page = cx.entity().downgrade();
@@ -985,6 +1124,7 @@ impl WatchPage {
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
+            .child(self.broadcast_engine_panel(cx, palette))
             .child(banner)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "broadcast-moves",
@@ -1015,7 +1155,8 @@ impl WatchPage {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.broadcasts.selected.clear();
                                 this.broadcasts.redo = None;
-                                cx.notify();
+                                this.broadcasts.return_to_game();
+                                this.engine_changed(cx);
                             })),
                     )
                     .child(

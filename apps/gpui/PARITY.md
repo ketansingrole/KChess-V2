@@ -257,8 +257,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Following: followed players playing now, and Watch (also from Players and Following)
 - [x] Broadcasts: live, coming up and finished tournaments, search, a tournament's rounds and
       boards with clocks, one board followed move by move (←/→, F), All boards and Analyse
-- [ ] Broadcast engine analysis (the board's engine panel and the grid's evaluation bars)
-- [ ] Broadcast cover images
+- [x] Broadcast engine analysis: the board's engine panel (lines, Explore, arrows, bar, L), and
+      the grid's evaluation bars, estimated one board at a time; paused during your own game
+- [x] Broadcast cover images, from Lichess's image hosts only (`src/remote_image.rs`)
 - [x] Swipe back through a broadcast's game and tournament, and forward again
 
 ## Tournaments

@@ -35,11 +35,12 @@ use shakmaty::{Color, Position as _, Square};
 use crate::assets::icon;
 use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::{AppCore, BoxedSave, CoreEvent};
+use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::{Exporter, GameExport};
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
-    moves_of, path_of, pv_san, winning_chances,
+    moves_of, path_of, pv_san,
 };
 use crate::game::{STANDARD_FEN, rules, view};
 use crate::online::OnlineHandle;
@@ -64,12 +65,8 @@ const CACHE_SIZE: usize = 600;
 const SAVE_DELAY: Duration = Duration::from_millis(150);
 /// Stepping quickly through a game should not send every position on the way to Lichess.
 const CLOUD_DELAY: Duration = Duration::from_millis(300);
-/// The evaluation bar's width and its gap to the board; without it the board keeps its place.
-const EVAL_BAR: Pixels = px(14.);
+/// The evaluation bar's gap to the board; without the bar the board keeps its place.
 const EVAL_GAP: Pixels = px(8.);
-/// One engine line's row.
-const PV_ROW: Pixels = px(34.);
-
 const ENGINE_ON: &str = "kchess:analysis-engine";
 const ENGINE_LINES: &str = "kchess:analysis-lines";
 const INFINITE: &str = "kchess:analysis-infinite";
@@ -1975,69 +1972,6 @@ fn flow(pieces: Vec<Piece>) -> Div {
     column
 }
 
-/// `EvalBar.vue`: White's share fills from White's side of the board; stripes until there is
-/// something to show.
-fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) -> impl IntoElement {
-    let known = line.is_some() || result.is_some();
-    let white = match result {
-        Some("1-0") => 1.,
-        Some("0-1") => 0.,
-        Some(_) => 0.5,
-        None => 0.5 + 0.5 * winning_chances(line),
-    };
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, _| {
-            let dark = rgb(0x403d39);
-            window.paint_quad(fill(bounds, dark).corner_radii(px(4.)));
-            if !known {
-                // `repeating-linear-gradient(135deg, …)`: light stripes over the dark bar.
-                let step = 8.;
-                let height = bounds.size.height.as_f32();
-                let width = bounds.size.width.as_f32();
-                let mut offset = -width;
-                while offset < height {
-                    let mut stripe = PathBuilder::fill();
-                    let at = |x: f32, y: f32| {
-                        point(
-                            bounds.origin.x + px(x),
-                            bounds.origin.y + px(y.clamp(0., height)),
-                        )
-                    };
-                    stripe.move_to(at(0., offset + 4.));
-                    stripe.line_to(at(0., offset + step));
-                    stripe.line_to(at(width, offset + step - width));
-                    stripe.line_to(at(width, offset + 4. - width));
-                    stripe.close();
-                    if let Ok(path) = stripe.build() {
-                        window.paint_path(path, rgb(0x68645e));
-                    }
-                    offset += step;
-                }
-                return;
-            }
-            let fill_height = bounds.size.height * white;
-            let white_part = if orientation == Color::White {
-                Bounds::new(
-                    point(bounds.origin.x, bounds.bottom() - fill_height),
-                    size(bounds.size.width, fill_height),
-                )
-            } else {
-                Bounds::new(bounds.origin, size(bounds.size.width, fill_height))
-            };
-            window.paint_quad(fill(white_part, rgb(0xf2f0ea)).corner_radii(px(4.)));
-            let middle = Bounds::new(
-                point(bounds.origin.x, bounds.center().y - px(1.)),
-                size(bounds.size.width, px(2.)),
-            );
-            window.paint_quad(fill(middle, rgba(0xd64f008c)));
-        },
-    )
-    .w(EVAL_BAR)
-    .h_full()
-    .flex_none()
-}
-
 impl AnalysisPage {
     fn engine_status(&self, cx: &App) -> String {
         if self.using_cloud(cx)
@@ -2363,13 +2297,19 @@ impl AnalysisPage {
             )
         } else if allowed && (engine_on || using_cloud) {
             Some(
-                self.render_lines(
-                    &lines,
-                    if using_cloud { 0 } else { prefs_lines(cx) },
-                    over.map(|_| "Nothing to analyse."),
-                    cx,
-                    palette,
-                )
+                {
+                    let page = cx.entity().downgrade();
+                    crate::engine_view::engine_lines(
+                        &self.node().fen,
+                        &lines,
+                        if using_cloud { 0 } else { prefs_lines(cx) },
+                        over.map(|_| "Nothing to analyse."),
+                        std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
+                            let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
+                        }),
+                        palette,
+                    )
+                }
                 .into_any_element(),
             )
         } else {
@@ -2381,109 +2321,6 @@ impl AnalysisPage {
             .child(head)
             .children(cloud_line)
             .children(body)
-    }
-
-    /// `EngineLines.vue`: each line's score and its moves, a click playing up to the move.
-    fn render_lines(
-        &self,
-        lines: &[Value],
-        pending: usize,
-        ended: Option<&'static str>,
-        cx: &mut Context<Self>,
-        palette: &Palette,
-    ) -> impl IntoElement {
-        let fen = self.node().fen.clone();
-        let mut rows: Vec<AnyElement> = Vec::new();
-        if let Some(ended) = ended {
-            rows.push(
-                h_flex()
-                    .h(PV_ROW * pending.max(1) as f32)
-                    .justify_center()
-                    .text_color(palette.text_muted)
-                    .child(ended)
-                    .into_any_element(),
-            );
-        } else {
-            for (index, line) in lines.iter().enumerate() {
-                let pv: Vec<String> =
-                    serde_json::from_value(line["pv"].clone()).unwrap_or_default();
-                let moves = pv_san(&fen, &pv, 12);
-                let eval_pv = pv.clone();
-                rows.push(
-                    h_flex()
-                        .h(PV_ROW)
-                        .gap(px(8.))
-                        .px(px(8.))
-                        .when(index > 0, |row| {
-                            row.border_t_1().border_color(palette.border)
-                        })
-                        .child(
-                            div()
-                                .id(("pv-eval", index))
-                                .w(px(55.))
-                                .flex_none()
-                                .px(px(6.))
-                                .py(px(1.))
-                                .rounded(px(6.))
-                                .bg(palette.accented)
-                                .font_weight(FontWeight::BOLD)
-                                .text_center()
-                                .cursor_pointer()
-                                .hover(|eval| eval.bg(tint(palette.primary, 24.)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.play_line(&eval_pv, 0, cx)
-                                }))
-                                .child(format_eval(Some(line))),
-                        )
-                        .child(h_flex().min_w_0().overflow_hidden().children(
-                            moves.into_iter().enumerate().map(|(at, played)| {
-                                let pv = pv.clone();
-                                div()
-                                    .id(SharedString::from(format!("pv-{index}-{at}")))
-                                    .flex_none()
-                                    .px(px(2.))
-                                    .py(px(1.))
-                                    .rounded(px(4.))
-                                    .text_color(palette.toned)
-                                    .cursor_pointer()
-                                    .hover(|chip| chip.bg(tint(palette.primary, 24.)))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.play_line(&pv, at, cx)
-                                    }))
-                                    .child(played.label)
-                            }),
-                        ))
-                        .into_any_element(),
-                );
-            }
-            for index in lines.len()..pending {
-                rows.push(
-                    h_flex()
-                        .h(PV_ROW)
-                        .px(px(8.))
-                        .when(index > 0, |row| {
-                            row.border_t_1().border_color(palette.border)
-                        })
-                        .child(
-                            div()
-                                .w(px(55.))
-                                .text_center()
-                                .text_color(palette.dimmed)
-                                .child("…"),
-                        )
-                        .into_any_element(),
-                );
-            }
-        }
-        v_flex()
-            .flex_none()
-            .text_size(px(12.5))
-            .border_1()
-            .border_color(palette.border)
-            .rounded(px(10.))
-            .bg(palette.bg)
-            .overflow_hidden()
-            .children(rows)
     }
 
     /// `.panel-tabs`: the tool under the engine, one at a time.
@@ -2785,7 +2622,11 @@ impl Render for AnalysisPage {
                     .items_stretch()
                     .gap(EVAL_GAP)
                     .when(show_bar, |row| {
-                        row.child(eval_bar(lines.first(), self.orientation, result))
+                        row.child(crate::engine_view::eval_bar(
+                            lines.first(),
+                            self.orientation,
+                            result,
+                        ))
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))
                     .child(

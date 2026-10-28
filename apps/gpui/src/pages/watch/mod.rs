@@ -17,6 +17,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Look, Pill};
 
+mod broadcast_engine;
 mod broadcasts;
 mod live;
 
@@ -153,17 +154,29 @@ impl WatchPage {
         let events = cx.global::<AppCore>().events.clone();
         let online = cx.global::<OnlineHandle>().0.clone();
         let accounts = crate::accounts::handle(cx);
+        let covers = crate::remote_image::handle(cx);
         let subscriptions = vec![
             cx.subscribe_in(&events, window, |this, _, event: &CoreEvent, window, cx| {
                 if event.name.starts_with("watch:") {
                     this.receive(event.clone(), cx);
                 }
+                if event.name == "engine:analysis" {
+                    this.engine_update(&event.payload, cx);
+                }
                 if event.name == crate::core::RECONNECTED {
                     this.reconnected(window, cx);
                 }
             }),
-            cx.observe(&online, |_, _, cx| cx.notify()),
+            // The player's own game pauses the engine and leaves an explored line.
+            cx.observe(&online, |this, online, cx| {
+                if !online.read(cx).assistance_allowed() {
+                    this.broadcasts.return_to_game();
+                }
+                this.engine_changed(cx);
+            }),
             cx.observe(&accounts, |_, _, cx| cx.notify()),
+            // A broadcast's cover arrived.
+            cx.observe(&covers, |_, _, cx| cx.notify()),
         ];
         let tab = Tab::of(&crate::prefs::get::<String>(cx, TAB_KEY, "tv".into()));
         WatchPage {
@@ -201,6 +214,7 @@ impl WatchPage {
         self.load_broadcasts(cx);
         self.resume(window, cx);
         self.start_ticking(cx);
+        self.read_engine_status(cx);
     }
 
     /// The page was left: nothing downloads for a board no one sees.
@@ -208,6 +222,7 @@ impl WatchPage {
         self.shown = false;
         self._tick = None;
         self.stop(cx);
+        self.engine_changed(cx);
     }
 
     fn start_ticking(&mut self, cx: &mut Context<Self>) {
@@ -230,6 +245,13 @@ impl WatchPage {
 
     /// The stream on a lost connection ended with it: what is watched streams again.
     fn reconnected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The engine's search ended with the connection too.
+        let request = self.broadcasts.engine.engine.wanted().cloned();
+        self.broadcasts.engine.engine.restart(
+            request,
+            |page: &mut WatchPage| &mut page.broadcasts.engine.engine,
+            cx,
+        );
         if let (Some(target), Some(_)) = (self.target.clone(), self.session) {
             self.watch(target, cx);
         } else if self.round_session.is_some()
@@ -270,6 +292,7 @@ impl WatchPage {
         crate::prefs::set(cx, TAB_KEY, tab.key());
         self.stop(cx);
         self.resume(window, cx);
+        self.engine_changed(cx);
         cx.notify();
     }
 
@@ -411,6 +434,7 @@ impl WatchPage {
                 if let Some(error) = self.broadcasts.update(&event.payload) {
                     self.error = Some(error.into());
                 }
+                self.engine_games_changed(cx);
             }
             _ => return,
         }
@@ -781,9 +805,17 @@ impl WatchPage {
         if event.keystroke.modifiers.modified() {
             return;
         }
+        let key = event.keystroke.key.as_str();
         let handled = match self.tab {
-            Tab::Broadcasts => self.broadcasts.key(&event.keystroke.key, cx),
-            _ => self.live.key(&event.keystroke.key, cx),
+            Tab::Broadcasts if key == "l" => self.toggle_broadcast_engine(cx),
+            Tab::Broadcasts => {
+                let handled = self.broadcasts.key(key, cx);
+                if handled {
+                    self.engine_changed(cx);
+                }
+                handled
+            }
+            _ => self.live.key(key, cx),
         };
         if handled {
             cx.stop_propagation();
