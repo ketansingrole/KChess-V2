@@ -217,7 +217,7 @@ This is required, not just chosen: the app builds on copyleft code and assets fr
 - Lichess board themes, sound effects and some piece sets — AGPLv3+ (other piece sets are GPL, MIT, Apache-2.0 or CC0; see the attribution file)
 - The rest are permissively licensed (MIT, ISC, Apache-2.0, BlueOak).
 
-The full list, with what each part is used for, is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); asset credits are in [`apps/desktop/app/assets/ATTRIBUTION.md`](apps/desktop/app/assets/ATTRIBUTION.md). The app icon is original artwork drawn by [`tooling/make-icons.py`](tooling/make-icons.py) and covered by the same license.
+The full list, with what each part is used for, is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); asset credits are in [`apps/gpui/assets/ATTRIBUTION.md`](apps/gpui/assets/ATTRIBUTION.md). The app icon is original artwork drawn by `cargo xtask app-icon` ([`tooling/xtask/src/app_icon.rs`](tooling/xtask/src/app_icon.rs)) and covered by the same license.
 
 ## Not affiliated
 

@@ -4,7 +4,7 @@
 apps/
   gpui/                  The app: GPUI Kit views, the board, shell, settings, voice, updater
     assets/              Boards, pieces, sounds and icons embedded in the app
-    build/               App icons (written by tooling/make-icons.py)
+    build/               App icons (written by `cargo xtask app-icon`)
     src/e2e/             End-to-end tests that drive the whole app headless
   cli/                   `kchess-cli`, the command line
 crates/
