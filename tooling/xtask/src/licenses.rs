@@ -137,8 +137,12 @@ fn license_text(package: &Value) -> Result<String> {
             gpl.trim()
         ));
     }
-    // `MIT OR …`: the MIT option is elected, so its text is the license that applies.
-    if license == "MIT" || license.starts_with("MIT OR ") {
+    // `MIT OR …` (or the older `…/MIT`): the MIT option is elected, so its text applies.
+    if license
+        .split(" OR ")
+        .flat_map(|choice| choice.split('/'))
+        .any(|choice| choice.trim_matches(['(', ')', ' ']) == "MIT")
+    {
         let authors: Vec<&str> = package["authors"]
             .as_array()
             .into_iter()
@@ -151,6 +155,25 @@ fn license_text(package: &Value) -> Result<String> {
             authors.join(", ")
         };
         return Ok(format!("--- MIT ---\nCopyright (c) {holders}\n\n{MIT}\n"));
+    }
+    // A crate published without its license file: the standard text of a license it offers.
+    for (id, text) in [
+        ("Apache-2.0", include_str!("../licenses/Apache-2.0.txt")),
+        ("MPL-2.0", include_str!("../licenses/MPL-2.0.txt")),
+        ("BSD-3-Clause", include_str!("../licenses/BSD-3-Clause.txt")),
+        ("ISC", include_str!("../licenses/ISC.txt")),
+        ("Zlib", include_str!("../licenses/Zlib.txt")),
+        ("BSL-1.0", include_str!("../licenses/BSL-1.0.txt")),
+        ("Unicode-3.0", include_str!("../licenses/Unicode-3.0.txt")),
+        ("CC0-1.0", include_str!("../licenses/CC0-1.0.txt")),
+    ] {
+        if license
+            .split(" OR ")
+            .flat_map(|choice| choice.split('/'))
+            .any(|choice| choice.trim_matches(['(', ')', ' ']) == id)
+        {
+            return Ok(format!("--- {id} ---\n{}\n", text.trim()));
+        }
     }
     Err(format!(
         "{name} {} ships no license file for {license}.",

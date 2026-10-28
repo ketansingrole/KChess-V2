@@ -138,6 +138,7 @@ fn coverage() -> Result {
 pub fn full() -> Result {
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
+    step("icons", crate::icons::check)?;
     step("release metadata", crate::release::verify)?;
     step("tests", tests)?;
     say("`check` passed.");

@@ -102,7 +102,20 @@ fn config(options: &Options) -> Config {
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .or_else(|| beside(&executable("stockfish"))),
-        voice_helper_path: beside(&format!("voice/{}", executable("kchess-voice"))),
+        // Beside the executable, or in a Mac bundle's Resources, as the app finds it: the first
+        // client to start the profile's core chooses it for every client.
+        voice_helper_path: beside(&format!("voice/{}", executable("kchess-voice"))).or_else(|| {
+            beside(&format!(
+                "../Resources/voice/{}",
+                executable("kchess-voice")
+            ))
+        }),
+        // Earlier macOS releases kept their database outside the profile; only the app's own
+        // profile imports it, as the app does (`apps/gpui/src/profile.rs`).
+        legacy_database_path: (cfg!(target_os = "macos")
+            && std::env::var_os("KCHESS_USER_DATA_DIR").is_none()
+            && options.data_dir == default_data_dir())
+        .then(|| home.join(".kchess/kchess.db")),
         system_credentials: options.credentials,
         ..Config::new(options.data_dir.clone())
     }

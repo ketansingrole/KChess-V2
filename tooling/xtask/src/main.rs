@@ -1,6 +1,7 @@
 //! `cargo xtask <command>`: KChess's own tooling, in Rust like the rest of the repository.
 
 mod check;
+mod icons;
 mod licenses;
 mod package;
 mod release;
@@ -23,6 +24,7 @@ const HELP: &str = "cargo xtask <command>
                         Attach a tag build's packages to its draft release (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
   notices               Check THIRD_PARTY_NOTICES.md names every shipped dependency
+  icons [--check]       Write the Lucide icons the app names (or check they match)
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
   package [--final] [--skip-build] [--snap]
@@ -45,6 +47,8 @@ fn main() -> ExitCode {
         )),
         Some("download-release-snap") => release::download_snap(),
         Some("notices") => licenses::check_notices(),
+        Some("icons") if rest.iter().any(|arg| arg == "--check") => icons::check(),
+        Some("icons") => icons::write(),
         Some("licenses") => match rest.first() {
             Some(path) => licenses::write(std::path::Path::new(path)),
             None => Err("licenses needs the file to write.".into()),
