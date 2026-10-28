@@ -17,7 +17,8 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
-use crate::rating_history::{RatingHistory, Retry, has_points};
+use crate::rating_history::{Retry, has_points};
+use crate::rating_speeds::RatingSpeeds;
 use crate::theme::Palette;
 use crate::widgets::{self, Choice, Look};
 
@@ -133,7 +134,7 @@ pub struct PlayersPage {
     extras_failed: Vec<&'static str>,
     games: Option<Vec<Value>>,
     games_error: bool,
-    history: Entity<RatingHistory>,
+    history: Entity<RatingSpeeds>,
     /// `ActivityDay`s, once Lichess sent them.
     days: Option<Vec<Value>>,
     days_error: bool,
@@ -167,8 +168,7 @@ impl PlayersPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> PlayersPage {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
         let perf_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
-        let history =
-            cx.new(|cx| RatingHistory::new("Built from the last 200 rated games.", window, cx));
+        let history = cx.new(|cx| RatingSpeeds::new("Built from the last 200 rated games.", cx));
         let accounts = crate::accounts::handle(cx);
         let board_perf: String = crate::prefs::get(cx, BOARD_PERF_KEY, "blitz".to_string());
         let board_items: Vec<Choice> = BOARD_PERFS
@@ -405,6 +405,9 @@ impl PlayersPage {
         recent.insert(0, username.clone());
         recent.truncate(RECENT_KEPT);
         crate::prefs::set(cx, RECENT_KEY, recent);
+        let current = found["perfs"].clone();
+        self.history
+            .update(cx, |history, cx| history.set_current(current, cx));
         let perfs = played_perfs(&found);
         self.perf = perfs.first().map_or("blitz", |(key, _)| key).to_string();
         let items: Vec<Choice> = perfs

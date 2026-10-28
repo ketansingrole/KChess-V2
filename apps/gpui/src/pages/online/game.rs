@@ -4,6 +4,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -58,7 +59,206 @@ fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &
         .children(buttons)
 }
 
-/// "Online · 84 ms", or how the opponent's connection looks (`ConnectionPanel.vue`).
+/// Connection quality from a round trip, in the bands Lichess uses for its signal bars
+/// (`signalFromLatency`).
+fn signal_from_latency(ms: f64) -> usize {
+    match ms {
+        ms if ms < 150. => 4,
+        ms if ms < 300. => 3,
+        ms if ms < 500. => 2,
+        _ => 1,
+    }
+}
+
+const QUALITY: [&str; 5] = ["", "Poor", "Fair", "Good", "Great"];
+
+/// The recent round trips to Lichess: the last, the average and the worst (`pingStats`).
+fn ping_stats(samples: &[f64]) -> Option<(f64, f64, f64)> {
+    let current = *samples.last()?;
+    let average = (samples.iter().sum::<f64>() / samples.len() as f64).round();
+    let worst = samples.iter().copied().fold(f64::MIN, f64::max);
+    Some((current, average, worst))
+}
+
+/// The graph's points, 0 to 1 across and down from the top, against at least 200 ms.
+fn ping_points(samples: &[f64]) -> Vec<(f32, f32)> {
+    if samples.len() < 2 {
+        return Vec::new();
+    }
+    let ceiling = samples.iter().copied().fold(200., f64::max);
+    samples
+        .iter()
+        .enumerate()
+        .map(|(index, ms)| {
+            let x = index as f32 / (samples.len() - 1) as f32;
+            let y = 1. - (ms.min(ceiling) / ceiling) as f32;
+            (x, y)
+        })
+        .collect()
+}
+
+/// A label and its value in a connection panel's rows.
+fn connection_row(label: &'static str, value: String, palette: &Palette) -> Div {
+    h_flex()
+        .justify_between()
+        .gap(px(16.))
+        .child(div().text_color(palette.text_muted).child(label))
+        .child(div().font_weight(FontWeight::SEMIBOLD).child(value))
+}
+
+/// Your connection, shown when your connection line is pointed at (`ConnectionPanel.vue`).
+fn own_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
+    let online = crate::online::handle(cx).read(cx);
+    let stats = ping_stats(&online.latency);
+    let points = ping_points(&online.latency);
+    let downloaded = crate::accounts::handle(cx)
+        .read(cx)
+        .downloaded(online.account());
+    let line = palette.primary;
+    v_flex()
+        .id("own-connection-panel")
+        .w(px(240.))
+        .gap(px(8.))
+        .text_size(px(12.))
+        .aria_label("Your connection")
+        .child(
+            h_flex()
+                .justify_between()
+                .child(match stats {
+                    Some((current, _, _)) => h_flex()
+                        .items_baseline()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .text_size(px(18.))
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!("{}", current.round())),
+                        )
+                        .child(div().text_color(palette.text_muted).child("ms ping")),
+                    None => h_flex()
+                        .text_color(palette.text_muted)
+                        .child("Measuring ping…"),
+                })
+                .children(stats.map(|(current, _, _)| {
+                    div()
+                        .text_color(palette.success)
+                        .child(QUALITY[signal_from_latency(current)])
+                })),
+        )
+        .when(!points.is_empty(), |panel| {
+            panel.child(
+                div()
+                    .id("ping-graph")
+                    .role(Role::Image)
+                    .aria_label("Recent ping")
+                    .w_full()
+                    .h(px(36.))
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, (), window, _| {
+                                let (width, height) =
+                                    (bounds.size.width.as_f32(), bounds.size.height.as_f32());
+                                let at = |(x, y): (f32, f32)| {
+                                    point(
+                                        bounds.origin.x + px(x * width),
+                                        bounds.origin.y + px(1. + y * (height - 2.)),
+                                    )
+                                };
+                                let mut path = PathBuilder::stroke(px(1.5));
+                                path.move_to(at(points[0]));
+                                for point in &points[1..] {
+                                    path.line_to(at(*point));
+                                }
+                                if let Ok(path) = path.build() {
+                                    window.paint_path(path, line);
+                                }
+                            },
+                        )
+                        .size_full(),
+                    ),
+            )
+        })
+        .child(connection_row(
+            "Average / worst",
+            stats.map_or("—".into(), |(_, average, worst)| {
+                format!("{average} / {} ms", worst.round())
+            }),
+            palette,
+        ))
+        .child(connection_row(
+            "Last move accepted in",
+            online
+                .move_ack
+                .map_or("—".into(), |ms| format!("{} ms", ms.round())),
+            palette,
+        ))
+        .child(connection_row(
+            "Downloaded this account",
+            widgets::format_bytes(downloaded),
+            palette,
+        ))
+        .child(div().text_color(palette.text_muted).child(format!(
+            "Measured against lichess.org every {} s.",
+            crate::online::PRESENCE_EVERY.as_secs()
+        )))
+}
+
+/// The opponent's connection as Lichess reports it.
+fn opponent_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
+    let online = crate::online::handle(cx).read(cx);
+    let model = online.model();
+    let name = model["onlineOpponent"]
+        .as_str()
+        .or(model["opponentId"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    let them = model["opponentId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    let entry = online
+        .presence
+        .as_ref()
+        .map(|report| &report["users"][&them]);
+    let (status, signal) = if model["opponentGone"] == json!(true) {
+        ("Disconnected".to_string(), "—".to_string())
+    } else {
+        match entry.filter(|entry| entry.is_object()) {
+            None => ("Checking…".to_string(), "—".to_string()),
+            Some(entry) => (
+                if entry["online"] == json!(true) {
+                    "Online".to_string()
+                } else {
+                    "Offline".to_string()
+                },
+                entry["signal"]
+                    .as_u64()
+                    .filter(|signal| (1..=4).contains(signal))
+                    .map_or("—".into(), |signal| {
+                        format!("{} · {signal} of 4", QUALITY[signal as usize])
+                    }),
+            ),
+        }
+    };
+    v_flex()
+        .id("opponent-connection-panel")
+        .w(px(220.))
+        .gap(px(8.))
+        .text_size(px(12.))
+        .aria_label(format!("{name}'s connection"))
+        .child(div().font_weight(FontWeight::BOLD).child(name))
+        .child(connection_row("Status", status, palette))
+        .child(connection_row("Signal", signal, palette))
+        .child(
+            div()
+                .text_color(palette.text_muted)
+                .child("As reported by Lichess."),
+        )
+}
+
+/// "Online · 84 ms", or how the opponent's connection looks, with its panel when pointed at
+/// (`ConnectionPanel.vue`).
 fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<AnyElement> {
     if online.phase != Phase::Playing || online.correspondence() {
         return None;
@@ -102,15 +302,31 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
             _ => ("Checking…".to_string(), palette.text_muted),
         }
     };
+    let palette = *palette;
     Some(
-        h_flex()
-            .gap(px(6.))
-            .text_size(px(12.))
-            .font_weight(FontWeight::NORMAL)
-            .text_color(color)
-            .child(div().size(px(8.)).rounded_full().bg(color))
-            .child(text)
-            .into_any_element(),
+        HoverCard::new(if mine {
+            "own-connection"
+        } else {
+            "opponent-connection"
+        })
+        .open_delay(std::time::Duration::from_millis(200))
+        .trigger(
+            h_flex()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::NORMAL)
+                .text_color(color)
+                .child(div().size(px(8.)).rounded_full().bg(color))
+                .child(text),
+        )
+        .content(move |_, _, cx| {
+            if mine {
+                own_connection_panel(cx, &palette)
+            } else {
+                opponent_connection_panel(cx, &palette)
+            }
+        })
+        .into_any_element(),
     )
 }
 
@@ -779,4 +995,27 @@ fn analyse(window: &mut Window, cx: &mut App) {
     crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
         analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ping_points, ping_stats, signal_from_latency};
+
+    #[test]
+    fn the_ping_summary_reads_as_electrons() {
+        assert_eq!(ping_stats(&[]), None);
+        assert_eq!(ping_stats(&[80., 120., 101.]), Some((101., 100., 120.)));
+        let quality: Vec<usize> = [149., 150., 299., 300., 499., 500.]
+            .into_iter()
+            .map(signal_from_latency)
+            .collect();
+        assert_eq!(quality, vec![4, 3, 3, 2, 2, 1]);
+    }
+
+    #[test]
+    fn the_graph_needs_two_round_trips_and_scales_to_at_least_200_ms() {
+        assert!(ping_points(&[50.]).is_empty());
+        assert_eq!(ping_points(&[0., 100.]), vec![(0., 1.), (1., 0.5)]);
+        assert_eq!(ping_points(&[400., 200.]), vec![(0., 0.), (1., 0.5)]);
+    }
 }

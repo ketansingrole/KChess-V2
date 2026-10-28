@@ -245,8 +245,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       sends none, with Retry), their record in each speed they play (results, streaks, best wins
       and worst losses, each a player link), recent games opened on the analysis board
 - [x] Follow player, Message (with Reconnect when the login lacks the permission)
-- [ ] Rating history as one chart of every speed with toggles (one speed at a time here, as on
-      Home)
+- [x] Rating history as one chart of every speed, each shown or hidden by its chip with its
+      rating now (`src/rating_speeds.rs`)
 - [x] Watch and Challenge
 
 ## Watch
@@ -296,7 +296,9 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Desktop notifications with Electron's Settings rules (in-app while KChess is in front)
 - [x] Premoves on this board (not in correspondence)
 - [x] Blindfold play on this board
-- [ ] The connection panel's ping graph (the line shows the latest round trip)
+- [x] The connection panels when a connection line is pointed at: your ping, its quality and
+      graph, average and worst, the last move's acknowledgement and data downloaded; the
+      opponent's status and signal
 
 ## Pages not started
 

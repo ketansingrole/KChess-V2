@@ -3,7 +3,6 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -31,11 +30,11 @@ const RANGES: [&str; 6] = ["1M", "3M", "6M", "YTD", "1Y", "All"];
 fn fit_select(label: &str) -> Pixels {
     px(label.chars().count() as f32 * 7. + 40.)
 }
-const DAY_MS: f64 = 86_400_000.;
+pub(crate) const DAY_MS: f64 = 86_400_000.;
 /// Ratings are padded by this much above and below (`ratingYDomain`).
-const RATING_PAD: f64 = 15.;
+pub(crate) const RATING_PAD: f64 = 15.;
 /// Longer than this, dates read as month and year (`spansRatingYears`).
-const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
+pub(crate) const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
 
 pub type Retry = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -50,13 +49,11 @@ pub struct RatingHistory {
     range_select: Entity<SelectState<Vec<Choice>>>,
     /// Said under a chart drawn from games.
     games_hint: SharedString,
-    /// Said, with a way to ask again, when Lichess sent nothing to chart.
-    withheld: Option<(SharedString, Retry)>,
     _subscriptions: Vec<Subscription>,
 }
 
 /// `[year, month0, day, rating]` as a UTC time and a rating (`toRatingPoint`).
-fn point_of(raw: &Value) -> Option<(f64, f64)> {
+pub(crate) fn point_of(raw: &Value) -> Option<(f64, f64)> {
     let parts = raw.as_array()?;
     let number = |index: usize| parts.get(index)?.as_f64().filter(|n| n.is_finite());
     let date = chrono::NaiveDate::from_ymd_opt(
@@ -116,7 +113,7 @@ fn choices(items: impl IntoIterator<Item = (String, String)>) -> Vec<Choice> {
         .collect()
 }
 
-fn array_or_empty(value: &Value) -> Value {
+pub(crate) fn array_or_empty(value: &Value) -> Value {
     if value.is_array() {
         value.clone()
     } else {
@@ -185,7 +182,6 @@ impl RatingHistory {
             mode_select,
             range_select,
             games_hint: games_hint.into(),
-            withheld: None,
             _subscriptions: subscriptions,
         }
     }
@@ -205,16 +201,6 @@ impl RatingHistory {
     pub fn set_fallback(&mut self, fallback: Value, cx: &mut Context<Self>) {
         self.fallback = fallback;
         self.draw(cx);
-    }
-
-    /// What to say, and how to ask again, when there is nothing to chart though there should be.
-    pub fn set_withheld(
-        &mut self,
-        withheld: Option<(SharedString, Retry)>,
-        cx: &mut Context<Self>,
-    ) {
-        self.withheld = withheld;
-        cx.notify();
     }
 
     /// `mergeRatingHistories`: Lichess's own wins; games fill modes it has no points for.
@@ -307,7 +293,6 @@ impl Render for RatingHistory {
         let palette = *cx.global::<Palette>();
         let values = self.values();
         let change = (values.len() >= 2).then(|| values[values.len() - 1] - values[0]);
-        let empty_anywhere = !has_points(&self.history());
         v_flex()
             .gap(px(10.))
             .child(
@@ -365,31 +350,13 @@ impl Render for RatingHistory {
             .when(values.len() >= 2 && self.chart_from_games(), |card| {
                 card.child(widgets::hint(self.games_hint.clone(), &palette))
             })
-            .when(values.len() < 2, |card| match &self.withheld {
-                Some((text, retry)) if empty_anywhere => {
-                    let retry = retry.clone();
-                    card.child(
-                        h_flex()
-                            .gap(px(6.))
-                            .text_size(px(13.))
-                            .text_color(palette.text_muted)
-                            .child(text.clone())
-                            .child(
-                                Button::new("rating-history-retry")
-                                    .text()
-                                    .xsmall()
-                                    .icon(icon("rotate-cw"))
-                                    .label("Retry")
-                                    .on_click(move |_, window, cx| retry(window, cx)),
-                            ),
-                    )
-                }
-                _ => card.child(widgets::empty_state(
+            .when(values.len() < 2, |card| {
+                card.child(widgets::empty_state(
                     icon("chart-line"),
                     "No rating points",
                     Some("Try another mode or date range.".into()),
                     &palette,
-                )),
+                ))
             })
     }
 }

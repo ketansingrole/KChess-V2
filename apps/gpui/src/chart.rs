@@ -1,7 +1,9 @@
-//! The app's line chart (`LineChart.vue` as `RatingChart.vue` draws it): a value over time with its
-//! axes, the area under it, and a crosshair with the value and date under the pointer.
+//! The app's line chart (`LineChart.vue`): values over time with their axes, and a crosshair with
+//! the values and date under the pointer. One series is drawn as `RatingChart.vue` draws it, with
+//! the area under it; several (`RatingHistoryChart.vue`) as lines in their own colours, each with
+//! gaps where it has no value.
 
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::theme::{Palette, tint};
@@ -42,8 +44,26 @@ pub fn nice_ticks((lo, hi): (f64, f64), count: usize) -> Vec<f64> {
         .collect()
 }
 
+/// One line: its name and colour (the theme's primary when none), a value or a gap per date, and
+/// whether the area under it is filled.
+#[derive(Clone)]
+pub struct Series {
+    pub name: SharedString,
+    pub color: Option<Hsla>,
+    pub values: Vec<Option<f64>>,
+    pub area: bool,
+}
+
+/// A date along the bottom, short (an axis label) and long (the tooltip).
+#[derive(Clone)]
+pub struct ChartDate {
+    pub short: SharedString,
+    pub long: SharedString,
+}
+
 pub struct LineChart {
-    points: Vec<ChartPoint>,
+    dates: Vec<ChartDate>,
+    series: Vec<Series>,
     domain: (f64, f64),
     height: Pixels,
     format: fn(f64) -> String,
@@ -56,7 +76,8 @@ pub struct LineChart {
 impl LineChart {
     pub fn new(height: Pixels, format: fn(f64) -> String) -> LineChart {
         LineChart {
-            points: Vec::new(),
+            dates: Vec::new(),
+            series: Vec::new(),
             domain: (0., 1.),
             height,
             format,
@@ -66,6 +87,7 @@ impl LineChart {
         }
     }
 
+    /// One series, the area under it filled.
     pub fn set(
         &mut self,
         points: Vec<ChartPoint>,
@@ -73,7 +95,33 @@ impl LineChart {
         summary: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        self.points = points;
+        let series = Series {
+            name: SharedString::default(),
+            color: None,
+            values: points.iter().map(|point| Some(point.value)).collect(),
+            area: true,
+        };
+        let dates = points
+            .into_iter()
+            .map(|point| ChartDate {
+                short: point.short,
+                long: point.long,
+            })
+            .collect();
+        self.set_series(dates, vec![series], domain, summary, cx);
+    }
+
+    /// Several series over the same dates.
+    pub fn set_series(
+        &mut self,
+        dates: Vec<ChartDate>,
+        series: Vec<Series>,
+        domain: (f64, f64),
+        summary: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.dates = dates;
+        self.series = series;
         self.domain = domain;
         self.summary = summary.into();
         self.hovered = None;
@@ -82,10 +130,10 @@ impl LineChart {
 
     fn x(&self, index: usize, width: f32) -> f32 {
         let span = (width - LEFT - RIGHT).max(1.);
-        if self.points.len() < 2 {
+        if self.dates.len() < 2 {
             return LEFT + span / 2.;
         }
-        LEFT + span * index as f32 / (self.points.len() - 1) as f32
+        LEFT + span * index as f32 / (self.dates.len() - 1) as f32
     }
 
     fn y(&self, value: f64, height: f32) -> f32 {
@@ -99,7 +147,7 @@ impl LineChart {
 
     /// About five dates along the bottom, evenly spaced.
     fn date_ticks(&self) -> Vec<usize> {
-        let count = self.points.len();
+        let count = self.dates.len();
         if count == 0 {
             return Vec::new();
         }
@@ -123,15 +171,24 @@ impl Render for LineChart {
         let palette = *cx.global::<Palette>();
         let (width, height) = (self.bounds.size.width.as_f32(), self.height.as_f32());
         let entity = cx.entity().downgrade();
-        let values: Vec<f64> = self.points.iter().map(|point| point.value).collect();
-        let xs: Vec<f32> = (0..values.len())
-            .map(|index| self.x(index, width))
+        let count = self.dates.len();
+        let xs: Vec<f32> = (0..count).map(|index| self.x(index, width)).collect();
+        let lines: Vec<(Hsla, bool, Vec<Option<f32>>)> = self
+            .series
+            .iter()
+            .map(|series| {
+                let ys = series
+                    .values
+                    .iter()
+                    .map(|value| value.map(|value| self.y(value, height)))
+                    .collect();
+                (series.color.unwrap_or(palette.primary), series.area, ys)
+            })
             .collect();
-        let ys: Vec<f32> = values.iter().map(|value| self.y(*value, height)).collect();
         let ticks = nice_ticks(self.domain, 4);
         let tick_ys: Vec<f32> = ticks.iter().map(|tick| self.y(*tick, height)).collect();
-        let hovered = self.hovered.filter(|index| *index < values.len());
-        let (primary, border) = (palette.primary, palette.border);
+        let hovered = self.hovered.filter(|index| *index < count);
+        let border = palette.border;
         let label = |text: String| {
             div()
                 .absolute()
@@ -151,7 +208,7 @@ impl Render for LineChart {
         // The first and last dates end at the plot's edges; the others are centred.
         let x_labels = ticks_x.into_iter().map(|index| {
             let x = self.x(index, width);
-            let text = label(self.points[index].short.to_string())
+            let text = label(self.dates[index].short.to_string())
                 .w(px(60.))
                 .top(px(height - BOTTOM + 4.))
                 .flex();
@@ -163,33 +220,57 @@ impl Render for LineChart {
                 text.left(px(x - 30.)).justify_center()
             }
         });
+        let single = self.series.len() == 1 && self.series[0].name.is_empty();
         let tooltip = hovered.map(|index| {
-            let point = &self.points[index];
+            let date = self.dates[index].long.clone();
             let at = xs[index];
             let flip = at > (LEFT + width - RIGHT) / 2.;
-            v_flex()
+            let tip = v_flex()
                 .absolute()
                 .top(px(TOP))
                 .when_flip(flip, at, width)
+                .gap(px(2.))
                 .px(px(8.))
                 .py(px(4.))
                 .rounded(px(6.))
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)
-                .text_size(px(12.))
-                .child(
-                    div()
-                        .font_weight(FontWeight::BOLD)
-                        .child((self.format)(point.value)),
-                )
-                .child(
-                    div()
-                        .text_color(palette.text_muted)
-                        .child(point.long.clone()),
-                )
+                .text_size(px(12.));
+            if single {
+                let value = self.series[0].values[index].unwrap_or_default();
+                return tip
+                    .child(
+                        div()
+                            .font_weight(FontWeight::BOLD)
+                            .child((self.format)(value)),
+                    )
+                    .child(div().text_color(palette.text_muted).child(date));
+            }
+            // The date, then each series with a value that day.
+            tip.min_w(px(140.))
+                .child(div().text_color(palette.text_muted).child(date))
+                .children(self.series.iter().filter_map(|series| {
+                    let value = series.values.get(index).copied().flatten()?;
+                    Some(
+                        h_flex()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .size(px(10.))
+                                    .rounded(px(3.))
+                                    .bg(series.color.unwrap_or(palette.primary)),
+                            )
+                            .child(div().flex_1().child(series.name.clone()))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child((self.format)(value)),
+                            ),
+                    )
+                }))
         });
-        let painted = (xs.clone(), ys.clone(), tick_ys.clone(), hovered);
+        let painted = (xs.clone(), lines, tick_ys.clone(), hovered);
         div()
             .id("line-chart")
             .relative()
@@ -197,7 +278,7 @@ impl Render for LineChart {
             .h(self.height)
             .aria_label(self.summary.clone())
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                let count = this.points.len();
+                let count = this.dates.len();
                 let width = this.bounds.size.width.as_f32();
                 if count == 0 || width <= LEFT + RIGHT {
                     return;
@@ -237,7 +318,7 @@ impl Render for LineChart {
                         }
                     },
                     move |bounds, (), window, _| {
-                        let (xs, ys, tick_ys, hovered) = &painted;
+                        let (xs, lines, tick_ys, hovered) = &painted;
                         let origin = bounds.origin;
                         let at = |x: f32, y: f32| point(origin.x + px(x), origin.y + px(y));
                         let right = bounds.size.width.as_f32() - RIGHT;
@@ -252,43 +333,55 @@ impl Render for LineChart {
                             Bounds::new(at(LEFT, bottom), size(px(right - LEFT), px(1.))),
                             border,
                         ));
-                        if xs.len() >= 2 {
-                            let mut area = PathBuilder::fill();
-                            area.move_to(at(xs[0], bottom));
-                            for (x, y) in xs.iter().zip(ys) {
-                                area.line_to(at(*x, *y));
-                            }
-                            area.line_to(at(xs[xs.len() - 1], bottom));
-                            area.close();
-                            if let Ok(path) = area.build() {
-                                window.paint_path(path, primary.opacity(0.14));
-                            }
-                            let mut line = PathBuilder::stroke(px(2.));
-                            line.move_to(at(xs[0], ys[0]));
-                            for (x, y) in xs.iter().zip(ys).skip(1) {
-                                line.line_to(at(*x, *y));
-                            }
-                            if let Ok(path) = line.build() {
-                                window.paint_path(path, primary);
+                        for (color, area, ys) in lines {
+                            for run in runs(ys) {
+                                if run.len() < 2 {
+                                    continue;
+                                }
+                                if *area {
+                                    let mut path = PathBuilder::fill();
+                                    path.move_to(at(xs[run[0].0], bottom));
+                                    for (index, y) in &run {
+                                        path.line_to(at(xs[*index], *y));
+                                    }
+                                    path.line_to(at(xs[run[run.len() - 1].0], bottom));
+                                    path.close();
+                                    if let Ok(path) = path.build() {
+                                        window.paint_path(path, color.opacity(0.14));
+                                    }
+                                }
+                                let mut line = PathBuilder::stroke(px(2.));
+                                line.move_to(at(xs[run[0].0], run[0].1));
+                                for (index, y) in run.iter().skip(1) {
+                                    line.line_to(at(xs[*index], *y));
+                                }
+                                if let Ok(path) = line.build() {
+                                    window.paint_path(path, *color);
+                                }
                             }
                         }
                         if let Some(index) = hovered {
-                            let (x, y) = (xs[*index], ys[*index]);
+                            let x = xs[*index];
                             window.paint_quad(fill(
                                 Bounds::new(at(x, TOP), size(px(1.), px(bottom - TOP))),
                                 border,
                             ));
                             let radius = 4.;
-                            window.paint_quad(
-                                fill(
-                                    Bounds::new(
-                                        at(x - radius, y - radius),
-                                        size(px(radius * 2.), px(radius * 2.)),
-                                    ),
-                                    primary,
-                                )
-                                .corner_radii(px(radius)),
-                            );
+                            for (color, _, ys) in lines {
+                                let Some(Some(y)) = ys.get(*index) else {
+                                    continue;
+                                };
+                                window.paint_quad(
+                                    fill(
+                                        Bounds::new(
+                                            at(x - radius, y - radius),
+                                            size(px(radius * 2.), px(radius * 2.)),
+                                        ),
+                                        *color,
+                                    )
+                                    .corner_radii(px(radius)),
+                                );
+                            }
                         }
                     },
                 )
@@ -299,6 +392,20 @@ impl Render for LineChart {
             .children(x_labels)
             .children(tooltip)
     }
+}
+
+/// The runs of values without a gap, each value with its index.
+fn runs(values: &[Option<f32>]) -> Vec<Vec<(usize, f32)>> {
+    let mut runs = vec![Vec::new()];
+    for (index, value) in values.iter().enumerate() {
+        match value {
+            Some(value) => runs.last_mut().unwrap().push((index, *value)),
+            None if !runs.last().unwrap().is_empty() => runs.push(Vec::new()),
+            None => {}
+        }
+    }
+    runs.retain(|run| !run.is_empty());
+    runs
 }
 
 /// Places the tooltip right of the crosshair, or left of it past the middle.
@@ -316,7 +423,14 @@ impl<E: Styled> FlipPlacement for E {}
 
 #[cfg(test)]
 mod tests {
-    use super::nice_ticks;
+    use super::{nice_ticks, runs};
+
+    #[test]
+    fn a_series_breaks_where_it_has_no_value() {
+        let values = [None, Some(1.), Some(2.), None, None, Some(3.)];
+        assert_eq!(runs(&values), vec![vec![(1, 1.), (2, 2.)], vec![(5, 3.)]]);
+        assert!(runs(&[None, None]).is_empty());
+    }
 
     #[test]
     fn ticks_are_round_values_inside_the_domain() {

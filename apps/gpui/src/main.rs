@@ -33,6 +33,7 @@ mod puzzle_board;
 mod puzzle_db;
 mod quick_pick;
 mod rating_history;
+mod rating_speeds;
 mod replay;
 mod reviews;
 mod settings;
