@@ -1339,6 +1339,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// Only macOS exchanges two paths in one step; elsewhere a bundle is never replaced.
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_new_bundle_takes_the_old_ones_place() {
         let folder = scratch("replace");
