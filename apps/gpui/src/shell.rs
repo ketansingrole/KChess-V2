@@ -29,6 +29,7 @@ use crate::pages::practice::PracticePage;
 use crate::pages::puzzles::PuzzlesPage;
 use crate::pages::settings::{Section, sections};
 use crate::pages::studies::StudiesPage;
+use crate::pages::watch::WatchPage;
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
@@ -769,13 +770,46 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Back (-1) or forward (1) through the pages visited.
+    /// The open page has a level to step out of going `direction` (`activeSwipeBackStep`): a
+    /// game in Game history, a broadcast's game or tournament.
+    fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
+        match self.pages.current() {
+            Page::History => self
+                .pages
+                .view_of::<HistoryPage>(Page::History)
+                .is_some_and(|page| page.read(cx).can_step(direction, cx)),
+            Page::Watch => self
+                .pages
+                .view_of::<WatchPage>(Page::Watch)
+                .is_some_and(|page| page.read(cx).can_step(direction)),
+            _ => false,
+        }
+    }
+
+    /// Back (-1) or forward (1): out of or into the page's inner level first, then through the
+    /// pages visited.
     fn go(
         &mut self,
         direction: crate::swipe::Direction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.can_step(direction, cx) {
+            match self.pages.current() {
+                Page::History => {
+                    if let Some(page) = self.pages.view_of::<HistoryPage>(Page::History) {
+                        page.update(cx, |page, cx| page.step(direction, window, cx));
+                    }
+                }
+                Page::Watch => {
+                    if let Some(page) = self.pages.view_of::<WatchPage>(Page::Watch) {
+                        page.update(cx, |page, cx| page.step(direction, window, cx));
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         let current = self.pages.current();
         if let Some(page) = self.history.go(direction, current) {
             self.navigating = true;
@@ -793,12 +827,15 @@ impl Workspace {
             return;
         }
         let delta = event.delta.pixel_delta(px(16.));
-        let history = &self.history;
+        let can_go: Vec<bool> = [-1, 1]
+            .into_iter()
+            .map(|direction| self.can_step(direction, cx) || self.history.can_go(direction))
+            .collect();
         let outcome = self.swipe.event(
             event.touch_phase,
             delta.x.as_f32(),
             delta.y.as_f32(),
-            |direction| history.can_go(direction),
+            |direction| can_go[usize::from(direction > 0)],
         );
         match outcome {
             crate::swipe::Outcome::Nothing => return,

@@ -131,6 +131,9 @@ pub struct Broadcasts {
     games: Vec<Value>,
     clocks: HashMap<String, Clocks>,
     pub selected: String,
+    /// The tournament and board the last swipe back left (no board: the tournament itself), to
+    /// return to going forward while nothing else changed since.
+    redo: Option<(String, String)>,
     ended: bool,
     ply: Option<usize>,
     orientation: Color,
@@ -177,6 +180,7 @@ impl Broadcasts {
             games: Vec::new(),
             clocks: HashMap::new(),
             selected: String::new(),
+            redo: None,
             ended: false,
             ply: None,
             orientation: Color::White,
@@ -308,6 +312,7 @@ impl Broadcasts {
     }
 
     fn select_game(&mut self, id: String, cx: &mut App) {
+        self.redo = None;
         self.selected = id;
         self.ply = None;
         self.redraw(cx);
@@ -391,6 +396,7 @@ impl WatchPage {
 
     /// `openTour`: the tournament, at its default round (or the live one, or the last).
     fn open_tour(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.broadcasts.redo = None;
         self.stop(cx);
         let epoch = self.epoch;
         let call = cx
@@ -504,6 +510,7 @@ impl WatchPage {
 
     fn leave_tour(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
+        broadcasts.redo = None;
         broadcasts.tour = None;
         broadcasts.round.clear();
         // No board stays selected: its keys belong to the tour just left.
@@ -512,6 +519,63 @@ impl WatchPage {
         broadcasts.clocks.clear();
         broadcasts.ended = false;
         self.stop(cx);
+    }
+
+    /// A swipe steps out of a broadcast's board, then its tournament, before leaving the page
+    /// (`useBroadcastNav`); forward returns to what it left while that is still there.
+    pub fn can_step(&self, direction: crate::swipe::Direction) -> bool {
+        if self.tab != super::Tab::Broadcasts {
+            return false;
+        }
+        let broadcasts = &self.broadcasts;
+        if direction < 0 {
+            return !broadcasts.selected.is_empty() || broadcasts.tour.is_some();
+        }
+        match &broadcasts.redo {
+            Some((tour, game)) if !game.is_empty() => {
+                broadcasts.tour.as_ref().and_then(|t| t["id"].as_str()) == Some(tour.as_str())
+                    && broadcasts.selected.is_empty()
+                    && broadcasts
+                        .games
+                        .iter()
+                        .any(|g| g["id"].as_str() == Some(game))
+            }
+            Some(_) => broadcasts.tour.is_none(),
+            None => false,
+        }
+    }
+
+    pub fn step(
+        &mut self,
+        direction: crate::swipe::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tour_id = |broadcasts: &Broadcasts| {
+            broadcasts
+                .tour
+                .as_ref()
+                .and_then(|tour| tour["id"].as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if direction < 0 {
+            let tour = tour_id(&self.broadcasts);
+            if !self.broadcasts.selected.is_empty() {
+                let game = std::mem::take(&mut self.broadcasts.selected);
+                self.broadcasts.redo = Some((tour, game));
+            } else if self.broadcasts.tour.is_some() {
+                self.leave_tour(cx);
+                self.broadcasts.redo = Some((tour, String::new()));
+            }
+        } else if let Some((tour, game)) = self.broadcasts.redo.take() {
+            if game.is_empty() {
+                self.open_tour(tour, window, cx);
+            } else {
+                self.broadcasts.select_game(game, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// Back, the tournament's name and its round, beside the tabs while a tournament is open.
@@ -950,6 +1014,7 @@ impl WatchPage {
                             .label("All boards")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.broadcasts.selected.clear();
+                                this.broadcasts.redo = None;
                                 cx.notify();
                             })),
                     )

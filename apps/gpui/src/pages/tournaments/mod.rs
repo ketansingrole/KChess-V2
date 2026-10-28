@@ -76,7 +76,11 @@ impl Focusable for TournamentsPage {
 
 impl TournamentsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> TournamentsPage {
-        let password = cx.new(|cx| InputState::new(window, cx).placeholder("Entry code (if any)"));
+        let password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("Entry code (if any)")
+        });
         let accounts = crate::accounts::handle(cx);
         let subscriptions = vec![cx.observe(&accounts, |_, _, cx| cx.notify())];
         let refresh = cx.spawn(async move |this, cx| {

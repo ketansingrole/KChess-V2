@@ -300,6 +300,7 @@ impl HistoryPage {
                 game["pgn"] = json!(pgn);
                 this.lichess.open = Some((game, replay));
                 this.message = None;
+                this.redo = None;
                 cx.notify();
             });
         })
@@ -308,6 +309,7 @@ impl HistoryPage {
 
     pub(super) fn close_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.lichess.open = None;
+        self.redo = None;
         window.focus(&self.focus, cx);
         cx.notify();
     }

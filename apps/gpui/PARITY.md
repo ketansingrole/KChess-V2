@@ -21,7 +21,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       their Game history entries; chess clock sessions in Game history
 - [x] Window size, position and mode remembered in the profile's `window-state.json` (shared with
       Electron), back on a display that can show it
-- [ ] Interface zoom (see Settings)
+- [x] Interface zoom (`interface-zoom.json`, see Settings)
 
 ## Shell
 
@@ -127,8 +127,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
 - [x] Open analysis
 - [x] Lichess tab: synced games a page at a time, filtered by account, result and rating, with
       their reviews; a game gone through move by move, or reviewed on the analysis board
-- [ ] Swipe back and forward
-- [ ] Export copy inside the delete dialog
+- [x] Swipe back out of the open game, and forward into it again
+- [x] Export copy (or Copy summary) inside the delete dialog
 
 ## Home
 
@@ -257,7 +257,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       boards with clocks, one board followed move by move (←/→, F), All boards and Analyse
 - [ ] Broadcast engine analysis (the board's engine panel and the grid's evaluation bars)
 - [ ] Broadcast cover images
-- [ ] Swipe back through a broadcast's game and tournament
+- [x] Swipe back through a broadcast's game and tournament, and forward again
 
 ## Tournaments
 
@@ -268,7 +268,7 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       totals; refreshed every 15 seconds while it runs
 - [x] Create arena, and Connect when no account is connected
 - [x] Go to your game
-- [ ] A masked entry code field (the kit has no masked input)
+- [x] Masked entry code fields, with a button to show the code
 
 ## Lichess insights
 

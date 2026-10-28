@@ -2,7 +2,7 @@
 //! computer and over the board, filtered by result, twenty to a page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
@@ -193,6 +193,12 @@ fn date_header(millis: f64) -> String {
         .unwrap_or_else(|| "????.??.??".into())
 }
 
+/// The game the last swipe back closed, to open again going forward while nothing changed since.
+enum Redo {
+    Played(Value),
+    Lichess(Value),
+}
+
 pub struct HistoryPage {
     source: Source,
     filter: Filter,
@@ -201,6 +207,7 @@ pub struct HistoryPage {
     /// The game being gone through, and its board.
     open: Option<(Value, Entity<GameReplay>)>,
     message: Option<SharedString>,
+    redo: Option<Redo>,
     /// The Lichess tab: synced games, their filters and the game open.
     lichess: lichess::LichessTab,
     /// The Bookmarks tab: the games, once read, or why they are not.
@@ -238,6 +245,7 @@ impl HistoryPage {
             page: 0,
             open: None,
             message: None,
+            redo: None,
             lichess,
             bookmarks: None,
             bookmarks_error: None,
@@ -296,6 +304,7 @@ impl HistoryPage {
         self.filter = Filter::All;
         self.page = 0;
         self.open = None;
+        self.redo = None;
         if source == Source::Lichess {
             self.lichess.open = None;
             self.load_lichess(cx);
@@ -429,6 +438,7 @@ impl HistoryPage {
         window.focus(&replay.read(cx).focus_handle(cx), cx);
         self.open = Some((game, replay));
         self.message = None;
+        self.redo = None;
         cx.notify();
     }
 
@@ -459,6 +469,7 @@ impl HistoryPage {
 
     fn close_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = None;
+        self.redo = None;
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -502,25 +513,105 @@ impl HistoryPage {
         .detach();
     }
 
+    /// Delete a game, with a copy exported or its summary copied first if wanted (Electron's
+    /// delete dialog).
     fn ask_delete(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let id = text(&game, "id").to_string();
+        let page = cx.entity().downgrade();
+        let game = std::rc::Rc::new(game);
+        let export_label = if text(&game, "source") == "clock" {
+            "Copy summary"
+        } else {
+            "Export copy"
+        };
         window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
-            let id = id.clone();
+            let (export_page, export_game) = (page.clone(), game.clone());
+            let id = text(&game, "id").to_string();
             dialog
                 .title("Delete saved game?")
                 .description(
                     "This removes the game from this device. Export a copy first if you want to keep it.",
                 )
-                .ok_text("Delete game")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let played = cx.global::<PlayedHandle>().0.clone();
-                    played.update(cx, |played: &mut PlayedGames, cx| played.remove(&id, cx));
-                    true
-                })
+                .footer(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            Button::new("delete-export")
+                                .outline()
+                                .label(export_label)
+                                .on_click(move |_, _, cx| {
+                                    let _ = export_page.update(cx, |page, cx| {
+                                        page.export(&export_game, cx)
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("delete-game")
+                                .danger()
+                                .label("Delete game")
+                                .on_click(move |_, window, cx| {
+                                    let played = cx.global::<PlayedHandle>().0.clone();
+                                    played.update(cx, |played: &mut PlayedGames, cx| {
+                                        played.remove(&id, cx)
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("delete-cancel")
+                                .ghost()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        ),
+                )
         });
+    }
+
+    /// A swipe steps out of the open game before leaving the page, and forward opens the game it
+    /// closed again while that game is still listed and nothing else was opened.
+    pub fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
+        if direction < 0 {
+            return self.open.is_some() || self.lichess.open.is_some();
+        }
+        match &self.redo {
+            Some(Redo::Played(game)) => {
+                self.open.is_none() && self.games(cx).iter().any(|entry| entry["id"] == game["id"])
+            }
+            Some(Redo::Lichess(game)) => {
+                self.source == Source::Lichess
+                    && self.lichess.open.is_none()
+                    && self
+                        .lichess
+                        .games
+                        .iter()
+                        .any(|entry| entry["id"] == game["id"])
+            }
+            None => false,
+        }
+    }
+
+    pub fn step(
+        &mut self,
+        direction: crate::swipe::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if direction < 0 {
+            if let Some((game, _)) = self.open.clone() {
+                self.close_game(window, cx);
+                self.redo = Some(Redo::Played(game));
+            } else if let Some((game, _)) = self.lichess.open.clone() {
+                self.close_lichess(window, cx);
+                self.redo = Some(Redo::Lichess(game));
+            }
+            return;
+        }
+        match self.redo.take() {
+            Some(Redo::Played(game)) => self.open_game(game, window, cx),
+            Some(Redo::Lichess(game)) => self.open_lichess(game, window, cx),
+            None => {}
+        }
     }
 
     fn narrow(&self) -> bool {

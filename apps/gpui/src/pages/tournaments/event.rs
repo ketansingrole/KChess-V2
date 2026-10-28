@@ -150,6 +150,7 @@ impl TournamentsPage {
                         row.child(
                             div().w(px(180.)).child(
                                 Input::new(&self.password)
+                                    .mask_toggle()
                                     .small()
                                     .aria_label("Tournament entry code"),
                             ),

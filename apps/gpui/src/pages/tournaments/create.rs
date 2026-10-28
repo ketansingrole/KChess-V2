@@ -188,8 +188,11 @@ impl CreateArena {
             variant,
             start,
             start_at,
-            password: cx
-                .new(|cx| InputState::new(window, cx).placeholder("Players need it to join")),
+            password: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .masked(true)
+                    .placeholder("Players need it to join")
+            }),
             description: cx.new(|cx| TextareaState::new(window, cx).rows(2)),
             rated: true,
             busy: false,
@@ -336,7 +339,7 @@ impl Render for CreateArena {
             })
             .child(widgets::field(
                 "Entry code",
-                Input::new(&self.password),
+                Input::new(&self.password).mask_toggle(),
                 None,
                 &palette,
             ))
