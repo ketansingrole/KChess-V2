@@ -70,6 +70,7 @@ RequestExecutionLevel user
 
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
+!include "x64.nsh"
 
 Name "${{PRODUCT}}"
 OutFile "{out_file}"
@@ -92,6 +93,10 @@ Page instfiles
 UninstPage instfiles
 
 Function .onInit
+  ; The app is 64-bit: its keys, and the ones every earlier installer wrote, are in the 64-bit view.
+  ${{If}} ${{RunningX64}}
+    SetRegView 64
+  ${{EndIf}}
   ; An installation's own folder, unless /D= names another.
   ReadRegStr $R0 HKCU "${{INSTALL_KEY}}" InstallLocation
   ClearErrors
@@ -116,6 +121,9 @@ Section "Install"
   ${{EndIf}}
   ; Releases up to 2026.10.11 could install for all users; this per-user installation replaces it.
   ReadRegStr $R0 HKLM "${{INSTALL_KEY}}" InstallLocation
+  ${{If}} $R0 == ""
+    ReadRegStr $R0 HKLM "${{UNINSTALL_KEY}}" InstallLocation
+  ${{EndIf}}
   ${{If}} $R0 != ""
   ${{AndIf}} ${{FileExists}} "$R0\${{UNINSTALLER}}"
     CopyFiles /SILENT /FILESONLY "$R0\${{UNINSTALLER}}" "$PLUGINSDIR\all-users-uninstaller.exe"
@@ -155,6 +163,12 @@ Section "Install"
     Exec '"$INSTDIR\${{EXE}}"'
   ${{EndIf}}
 SectionEnd
+
+Function un.onInit
+  ${{If}} ${{RunningX64}}
+    SetRegView 64
+  ${{EndIf}}
+FunctionEnd
 
 Section "Uninstall"
   nsExec::Exec 'taskkill /F /IM "${{EXE}}"'
@@ -244,6 +258,8 @@ mod tests {
         assert!(text.contains("VIProductVersion \"2026.10.16.0\""));
         assert!(text.contains("EstimatedSize 1234"));
         assert!(!text.contains("{{"), "no unexpanded braces");
+        // A 32-bit installer reads the 64-bit registry view, where earlier installers wrote.
+        assert_eq!(text.matches("SetRegView 64").count(), 2);
     }
 
     #[test]
