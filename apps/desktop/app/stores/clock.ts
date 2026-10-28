@@ -1,69 +1,87 @@
-import { ref, watch, onScopeDispose } from 'vue'
+import { ref, shallowRef, watch, onScopeDispose } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { STANDARD_SETUP } from '@kchess/rules/variant'
+import {
+  otbClockArchive,
+  otbClockConfigure,
+  otbClockExpire,
+  otbClockLeft,
+  otbClockNew,
+  otbClockPause,
+  otbClockPress,
+  otbClockReset,
+  otbClockStart,
+  type OtbClockState,
+  type OtbConfig,
+  type OtbSide,
+} from '@kchess/rules/otbClock'
 import { play } from '../utils/sound'
 import { useGameArchive } from './gameArchive'
 
+/** A typed time as the rules take it: a cleared field counts as no time. */
+const minutes = (value: unknown): number => (Number.isFinite(Number(value)) ? Number(value) : 0)
+const configOf = (config: OtbConfig): OtbConfig => ({
+  minutes: minutes(config.minutes),
+  bottomMinutes: minutes(config.bottomMinutes),
+  increment: minutes(config.increment),
+})
+
 /**
  * Stand-alone chess clock for a real board, extracted from `stores/local.ts`.
- * `top` is the player across the table. Owns its ticker, expiry, archive and
- * unload flush; the game store only re-exports it so existing callers keep working.
+ * `top` is the player across the table. The Rust rules (`games/otb_clock.rs`, which the GPUI app
+ * uses too) make every decision; this keeps their state, owns its ticker, expiry, archive and
+ * unload flush. The game store only re-exports it so existing callers keep working.
  */
 export function useOtbClock(now: { value: number }) {
-  const otb = ref<{ top: number; bottom: number }>({ top: 300_000, bottom: 300_000 })
-  const otbConfig = ref({ minutes: 5, increment: 3, bottomMinutes: 5 })
-  const otbRunning = ref<'top' | 'bottom' | null>(null)
-  const otbFlagged = ref<'top' | 'bottom' | null>(null)
+  const otbConfig = ref<OtbConfig>({ minutes: 5, increment: 3, bottomMinutes: 5 })
+  const clock = shallowRef<OtbClockState>(otbClockNew(configOf(otbConfig.value)))
+  const otbRunning = ref<OtbSide | null>(null)
+  const otbFlagged = ref<OtbSide | null>(null)
   const otbMoves = ref({ top: 0, bottom: 0 })
-  let otbStarted = performance.now()
-  /** Whose clock a pause stopped: Resume restarts that side, not the bottom's. */
-  let otbPaused: 'top' | 'bottom' | null = null
+  /** Keep the rules' answer and show it. */
+  function keep(next: OtbClockState): void {
+    clock.value = next
+    otbRunning.value = next.running
+    otbFlagged.value = next.flagged
+    otbMoves.value = { ...next.moves }
+  }
   const clockArchive = useGameArchive(
-    () => ({
-      source: 'clock',
-      setup: STANDARD_SETUP,
-      moves: [],
-      white: 'Bottom player',
-      black: 'Top player',
-      result: '*',
-      reason: otbFlagged.value
-        ? `${otbFlagged.value === 'top' ? 'Top' : 'Bottom'} player ran out of time`
-        : 'Clock session',
-      timeControl: `${otbConfig.value.bottomMinutes * 60}+${otbConfig.value.increment} / ${otbConfig.value.minutes * 60}+${otbConfig.value.increment}`,
-      clockSummary: `Bottom: ${otbMoves.value.bottom} moves · ${Math.ceil(otb.value.bottom / 1000)}s left; Top: ${otbMoves.value.top} moves · ${Math.ceil(otb.value.top / 1000)}s left`,
-    }),
-    () => otbMoves.value.top + otbMoves.value.bottom > 0 || Boolean(otbFlagged.value),
+    () => {
+      const archive = otbClockArchive(clock.value)
+      return {
+        source: 'clock',
+        setup: STANDARD_SETUP,
+        moves: [],
+        white: 'Bottom player',
+        black: 'Top player',
+        result: '*',
+        reason: archive.reason,
+        timeControl: archive.timeControl,
+        clockSummary: archive.clockSummary,
+      }
+    },
+    () => otbClockArchive(clock.value).hasPlay,
     false,
   )
   watch(otbFlagged, (flag) => {
     if (flag) clockArchive.save(true)
   })
   // A clock nobody has started yet shows the times as they are typed; a started one keeps its time.
-  const otbShownStart = { top: otb.value.top, bottom: otb.value.bottom }
-  watch(
-    () => ({ top: otbConfig.value.minutes, bottom: otbConfig.value.bottomMinutes }),
-    (minutes) => {
-      if (otbRunning.value || otbFlagged.value) return
-      for (const side of ['top', 'bottom'] as const) {
-        const value = Number(minutes[side])
-        const untouched = otbMoves.value[side] === 0 && otb.value[side] === otbShownStart[side]
-        if (value > 0 && untouched) otb.value[side] = otbShownStart[side] = value * 60_000
-      }
-    },
-  )
-  function otbLeft(side: 'top' | 'bottom', at = performance.now()): number {
+  watch(otbConfig, (config) => keep(otbClockConfigure(clock.value, configOf(config))), {
+    deep: true,
+  })
+  function otbLeft(side: OtbSide, at = performance.now()): number {
     void now.value
-    if (otbRunning.value !== side) return otb.value[side]
-    return Math.max(0, otb.value[side] - (at - otbStarted))
+    return otbClockLeft(clock.value, side, at)
+  }
+  /** A transition's state, with the low-time sound when a flag fell. */
+  function moved(result: { clock: OtbClockState; flagFell: boolean }): boolean {
+    keep(result.clock)
+    if (result.flagFell) void play('lowTime')
+    return result.flagFell
   }
   function expireOtb(at = performance.now()): boolean {
-    const side = otbRunning.value
-    if (!side || otbLeft(side, at) > 0) return false
-    otb.value = { ...otb.value, [side]: 0 }
-    otbFlagged.value = side
-    otbRunning.value = null
-    void play('lowTime')
-    return true
+    return moved(otbClockExpire(clock.value, at))
   }
   const otbTicker = useIntervalFn(
     () => {
@@ -75,28 +93,11 @@ export function useOtbClock(now: { value: number }) {
   )
   watch(otbRunning, (side) => (side ? otbTicker.resume() : otbTicker.pause()))
   /** A player pressed their clock: theirs stops (plus increment), the other side's starts. */
-  function otbPress(side: 'top' | 'bottom'): void {
-    const at = performance.now()
-    if (otbFlagged.value || expireOtb(at)) return
-    if (otbRunning.value && otbRunning.value !== side) return
-    const other = side === 'top' ? 'bottom' : 'top'
-    if (otbRunning.value === side) {
-      const left = otbLeft(side, at) + otbConfig.value.increment * 1000
-      otb.value = { ...otb.value, [side]: left }
-      otbMoves.value = { ...otbMoves.value, [side]: otbMoves.value[side] + 1 }
-    }
-    otbStarted = at
-    otbPaused = null
-    otbRunning.value = other
+  function otbPress(side: OtbSide): void {
+    moved(otbClockPress(clock.value, side, performance.now()))
   }
   function otbPause(): void {
-    const at = performance.now()
-    if (expireOtb(at)) return
-    const side = otbRunning.value
-    if (!side) return
-    otb.value = { ...otb.value, [side]: otbLeft(side, at) }
-    otbPaused = side
-    otbRunning.value = null
+    moved(otbClockPause(clock.value, performance.now()))
   }
   function saveClockSession(): void {
     otbPause()
@@ -109,27 +110,13 @@ export function useOtbClock(now: { value: number }) {
   })
   function otbReset(): void {
     clockArchive.reset()
-    otbPaused = null
-    otbRunning.value = null
-    otbFlagged.value = null
-    otbMoves.value = { top: 0, bottom: 0 }
-    otb.value = {
-      top: otbConfig.value.minutes * 60_000,
-      bottom: otbConfig.value.bottomMinutes * 60_000,
-    }
-    Object.assign(otbShownStart, otb.value)
+    keep(otbClockReset(clock.value))
   }
   /** Start (or resume) the clock; after a flag, Start begins a fresh session at the set times. */
   function otbStart(): void {
-    if (otbFlagged.value) otbReset()
-    if (otbRunning.value) return
-    if (otbPaused) {
-      otbStarted = performance.now()
-      otbRunning.value = otbPaused
-      otbPaused = null
-      return
-    }
-    otbPress('top')
+    // A fresh session after a flag is a new Game history entry.
+    if (otbFlagged.value) clockArchive.reset()
+    moved(otbClockStart(clock.value, performance.now()))
   }
   return {
     otbConfig,

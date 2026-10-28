@@ -574,7 +574,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
         "archiveInit" => archive::init(args),
         "archiveSave" => archive::save(args),
         "archiveReset" => archive::reset(args),
-        _ => return None,
+        _ => return otb_clock::call(method, args),
     })
 }
 

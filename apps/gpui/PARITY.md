@@ -96,8 +96,8 @@ KCHESS_USER_DATA_DIR=<profile> KCHESS_ENGINE_PATH=<native stockfish> cargo run -
       is drawn as a picture of its text, since GPUI cannot rotate text
 - [x] Export (GIF, PNG, PGN) and Analyse
 - [x] Voice input for either player
-- [ ] Electron's chess clock (`stores/clock.ts`) still keeps its own copy of the rules now in
-      `kchess-domain/src/games/otb_clock.rs`
+- [x] One set of chess clock rules for both apps (`kchess-domain/src/games/otb_clock.rs`; Electron's
+      `stores/clock.ts` moves its state through the `otbClock*` rules)
 
 ## Settings
 
