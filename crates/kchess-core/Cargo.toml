@@ -37,6 +37,8 @@ base64 = "0.23"
 # (`keyring`: Keychain, Credential Manager, Secret Service; MIT/Apache-2.0), so the Electron and
 # GPUI apps open the same tokens. Electron's `safeStorage` format only Electron can read.
 aes-gcm = "0.10"
+# What the Electron app left in a profile: its localStorage and the logins its safeStorage sealed.
+kchess-electron-legacy = { path = "../kchess-electron-legacy" }
 keyring = { version = "4", default-features = false, features = ["v1"] }
 
 # `CancellationToken`: the AbortSignal of the engine controllers and scheduler. Already in

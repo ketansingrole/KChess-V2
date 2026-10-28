@@ -12,6 +12,8 @@ use crate::error::{CoreError, Result};
 
 /// The document holding every preference, as `{ key: value }`.
 const VIEW_PREFERENCES: &str = "view:preferences";
+/// `true` once the Electron renderer's `localStorage` preferences were taken over.
+const IMPORTED: &str = "view:preferences-imported";
 /// One preference's largest JSON text: lists of recent items stay well below it.
 const MAX_VALUE: usize = 16 * 1024;
 /// The most keys kept; the app names fewer than a hundred.
@@ -37,6 +39,12 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             let key = args.first().and_then(Value::as_str).unwrap_or_default();
             set(ctx, db, key, args.get(1).unwrap_or(&Value::Null)).map(|()| Value::Null)
         }
+        "store.viewPreferences.imported" => read_document(ctx.host, db, IMPORTED)
+            .map(|done| Value::Bool(done == Some(Value::Bool(true)))),
+        "store.viewPreferences.importLegacy" => {
+            let texts = args.first().and_then(Value::as_object);
+            import_legacy(ctx, db, texts).map(Value::Object)
+        }
         _ => return None,
     })
 }
@@ -46,6 +54,42 @@ fn all(ctx: &StoreContext, db: &Connection) -> Result<Map<String, Value>> {
         Some(Value::Object(preferences)) => preferences,
         _ => Map::new(),
     })
+}
+
+/// Take over the preferences an Electron renderer left in `localStorage` (`texts`, its text by
+/// name), once: a name saved here already keeps its value, and a name or value this would refuse
+/// is passed over. `useLocalStorage` kept strings as they are and everything else as JSON, so text
+/// that is not JSON is a string. Answers every preference.
+fn import_legacy(
+    ctx: &StoreContext,
+    db: &Connection,
+    texts: Option<&Map<String, Value>>,
+) -> Result<Map<String, Value>> {
+    if read_document(ctx.host, db, IMPORTED)? == Some(Value::Bool(true)) {
+        return all(ctx, db);
+    }
+    let mut preferences = all(ctx, db)?;
+    for (key, text) in texts.into_iter().flatten() {
+        let Some(text) = text.as_str() else {
+            continue;
+        };
+        if !valid_key(key) || preferences.contains_key(key) || preferences.len() >= MAX_KEYS {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(text).unwrap_or_else(|_| Value::from(text));
+        if value.is_null() || utf16_len(&js_json(&value)) > MAX_VALUE {
+            continue;
+        }
+        preferences.insert(key.clone(), value);
+    }
+    write_document(
+        db,
+        VIEW_PREFERENCES,
+        &Value::Object(preferences.clone()),
+        "Too many view preferences are saved.",
+    )?;
+    write_document(db, IMPORTED, &Value::Bool(true), "")?;
+    Ok(preferences)
 }
 
 /// Save one preference; `null` forgets it, so the page's default applies again.
@@ -184,5 +228,47 @@ mod tests {
             .message,
             "This view preference is too large to save."
         );
+    }
+
+    /// The Electron renderer kept these in `localStorage`; the first read takes them over once,
+    /// keeping any value this profile saved since.
+    #[test]
+    fn takes_over_electrons_preferences_once() {
+        let db = database();
+        run(
+            &db,
+            "store.viewPreferences.set",
+            &[json!("kchess:studies-sort"), json!("name")],
+        )
+        .unwrap();
+        let texts = json!({
+            "kchess:studies-sort": "updated",
+            "kchess:sidebar-open": "false",
+            "kchess:puzzle-angle": "{\"theme\":\"fork\"}",
+            "kchess:studies-tab": "lichess",
+            "kchess:studies:v1": "[]",
+            "Not a preference": "x",
+        });
+        let all = run(&db, "store.viewPreferences.importLegacy", &[texts]).unwrap();
+        assert_eq!(
+            all["kchess:studies-sort"],
+            json!("name"),
+            "saved here since"
+        );
+        assert_eq!(all["kchess:sidebar-open"], json!(false));
+        assert_eq!(all["kchess:puzzle-angle"], json!({ "theme": "fork" }));
+        assert_eq!(all["kchess:studies-tab"], json!("lichess"));
+        assert!(all.get("Not a preference").is_none());
+
+        run(
+            &db,
+            "store.viewPreferences.set",
+            &[json!("kchess:studies-tab"), Value::Null],
+        )
+        .unwrap();
+        let again = json!({ "kchess:studies-tab": "lichess", "kchess:chat-open": "true" });
+        let all = run(&db, "store.viewPreferences.importLegacy", &[again]).unwrap();
+        assert!(all.get("kchess:studies-tab").is_none(), "only once");
+        assert!(all.get("kchess:chat-open").is_none());
     }
 }

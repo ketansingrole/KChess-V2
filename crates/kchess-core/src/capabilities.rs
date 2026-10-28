@@ -28,6 +28,9 @@ pub struct Capabilities {
     pending: Pending,
     /// The profile's credentials, when the host uses them instead of sealing tokens itself.
     credentials: Option<Arc<Credentials>>,
+    /// The profile, whose logins an Electron release may have sealed with `safeStorage`: the core
+    /// opens those itself (`kchess-electron-legacy`) and reseals them.
+    electron_profile: Option<std::path::PathBuf>,
     /// The core's clients: a request goes to one that can answer it (`Connections::route`).
     /// Without them (tests), requests go to the host as any event.
     connections: Option<Arc<Connections>>,
@@ -57,6 +60,7 @@ impl Capabilities {
             next: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             credentials,
+            electron_profile: None,
             connections: None,
         }
     }
@@ -137,6 +141,15 @@ impl Capabilities {
         let _ = send.send(result);
     }
 
+    /// Open logins Electron's `safeStorage` sealed in `profile` without asking a client. Not
+    /// under the test switch, so automated runs never read the user's credential store.
+    pub fn with_electron_profile(mut self, profile: std::path::PathBuf) -> Capabilities {
+        if !crate::store::debug::enabled() {
+            self.electron_profile = Some(profile);
+        }
+        self
+    }
+
     /// Fail every unanswered request (the core is closing).
     pub fn close(&self) {
         if let Ok(mut pending) = self.pending.lock() {
@@ -167,7 +180,8 @@ impl Capabilities {
     }
 
     /// Open a token. One the profile's credentials sealed opens here; any other was sealed by
-    /// the host (`SecretStore.decrypt(base64)`), possibly in an earlier release.
+    /// Electron's `safeStorage` in an earlier release, which opens here too, or else by a host
+    /// that still can (`SecretStore.decrypt(base64)`).
     pub async fn decrypt(&self, ciphertext: &str) -> Result<String> {
         if secrets::is_sealed(ciphertext) {
             let Some(credentials) = &self.credentials else {
@@ -177,6 +191,21 @@ impl Capabilities {
             };
             let (credentials, sealed) = (Arc::clone(credentials), ciphertext.to_string());
             return blocking(move || credentials.open(&sealed)).await;
+        }
+        if let Some(profile) = &self.electron_profile {
+            let (profile, sealed) = (profile.clone(), ciphertext.to_string());
+            let opened = blocking(move || {
+                kchess_electron_legacy::safe_storage::open(&profile, &sealed)
+                    .map_err(|cause| CoreError::new(cause.0))
+            })
+            .await;
+            return match opened {
+                Ok(token) => Ok(token),
+                Err(cause) => match self.request("secrets.decrypt", json!(ciphertext)).await {
+                    Ok(value) => text(value),
+                    Err(_) => Err(cause),
+                },
+            };
         }
         text(self.request("secrets.decrypt", json!(ciphertext)).await?)
     }

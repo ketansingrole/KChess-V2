@@ -89,7 +89,7 @@ pub struct Core {
     /// This core's claim on its profile directory, released when it closes.
     pub(crate) claim: ProfileClaim,
     /// The profile directory (`Config::data_dir`).
-    data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
     /// Its clients: the embedding app, or the shared service's connections.
     pub(crate) connections: Arc<Connections>,
     /// The alert owner last reported (`alerts:owner`); `u64::MAX` none, `APP` at first.
@@ -184,6 +184,7 @@ impl Core {
             .then(|| Arc::new(Credentials::for_profile(&config.data_dir)));
         let capabilities = Arc::new(
             Capabilities::with_credentials(Arc::clone(&host), credentials)
+                .with_electron_profile(config.data_dir.clone())
                 .with_connections(Arc::clone(&connections)),
         );
         let battery = Battery::new(Arc::clone(&host));
