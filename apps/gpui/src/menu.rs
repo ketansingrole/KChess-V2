@@ -78,15 +78,16 @@ pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-q", Quit, None),
+        // Cmd on macOS and Ctrl elsewhere, as Electron's `CmdOrCtrl`; the others are macOS's own.
+        KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("secondary-w", CloseWindow, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-        KeyBinding::new("cmd-k", Search, None),
-        KeyBinding::new("shift-cmd-p", Commands, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("secondary-k", Search, None),
+        KeyBinding::new("shift-secondary-p", Commands, None),
+        KeyBinding::new("secondary-,", OpenSettings, None),
         // Interface size, as Electron takes them: with or without Shift, and the keypad's.
         KeyBinding::new("secondary-=", ZoomIn, None),
         KeyBinding::new("secondary-+", ZoomIn, None),

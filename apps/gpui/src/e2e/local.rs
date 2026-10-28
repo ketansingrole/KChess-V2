@@ -69,7 +69,7 @@ fn an_illegal_typed_move_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(app.moves().is_empty());
     assert_eq!(app.status(), "White to move");
     // The refused text stays in the box to correct.
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text("e4");
     app.press("enter");
     app.wait_for_moves(&["e4"]);

@@ -129,7 +129,7 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
 
     // A real name goes out, fails and leaves the lookup ready for another try.
     app.click_label("Lichess username");
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text("carol");
     app.click("players-lookup");
     wait_until_enabled(&mut app, "players-lookup");

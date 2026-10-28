@@ -68,6 +68,6 @@ fn back_returns_to_the_page_open_before(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn the_settings_shortcut_opens_settings(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.press("cmd-,");
+    app.press("secondary-,");
     app.find("2-0");
 }

@@ -229,7 +229,11 @@ fn places(cx: &App) -> Vec<Command> {
             go(Page::Settings),
         )
         .keywords("preferences options")
-        .kbds("⌘ ,")
+        .kbds(if cfg!(target_os = "macos") {
+            "⌘ ,"
+        } else {
+            "Ctrl ,"
+        })
         .hint(current(Page::Settings, cx)),
     );
     let puzzles: [(&str, &str, Icon, &'static str); 5] = [
@@ -693,11 +697,23 @@ fn resume(cx: &App) -> Vec<Command> {
     list
 }
 
+/// The palette's shortcuts as the keyboard has them: ⌘ on macOS, Ctrl elsewhere.
+const SEARCH_KEYS: &str = if cfg!(target_os = "macos") {
+    "⌘ K"
+} else {
+    "Ctrl K"
+};
+const COMMAND_KEYS: &str = if cfg!(target_os = "macos") {
+    "⇧ ⌘ P"
+} else {
+    "Ctrl ⇧ P"
+};
+
 /// The prefixes, as rows that switch the mode (`MODE_ROWS`).
 fn modes(include_go: bool) -> Vec<Command> {
     let rows: [(&'static str, &str, Icon, &'static str); 5] = [
-        ("", "Go to page", icon("arrow-right"), "⌘ K"),
-        (">", "Run a command", icon("terminal"), "⇧ ⌘ P"),
+        ("", "Go to page", icon("arrow-right"), SEARCH_KEYS),
+        (">", "Run a command", icon("terminal"), COMMAND_KEYS),
         ("@", "Find a player", icon("at-sign"), ""),
         ("#", "Change a setting", icon("sliders-horizontal"), ""),
         ("?", "Help", icon("circle-help"), ""),
@@ -1204,16 +1220,7 @@ impl Render for CommandPalette {
                     .text_size(px(13.))
                     .aria_label("Search pages and commands"),
             )
-            .when(shortcut, |field| {
-                field.child(kbd(
-                    if cfg!(target_os = "macos") {
-                        "⌘ K"
-                    } else {
-                        "Ctrl K"
-                    },
-                    &palette,
-                ))
-            });
+            .when(shortcut, |field| field.child(kbd(SEARCH_KEYS, &palette)));
         // `.quickpick-panel`: one bordered box, the input on top; open, it grows down over the
         // page with the results and keys beneath, up to 560px.
         let tall = (window.viewport_size().height - px(16.)).min(px(560.));

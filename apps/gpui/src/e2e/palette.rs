@@ -41,7 +41,7 @@ fn wait_until_closed(app: &mut Harness) {
 fn quick_pick_opens_with_its_modes_and_closes_on_escape(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     assert!(!lists(&mut app, "Run a command"));
-    app.press("cmd-k");
+    app.press("secondary-k");
     for mode in ["Run a command", "Find a player", "Change a setting"] {
         app.click_label(mode);
         // A mode row switches the mode and leaves the palette open.
@@ -54,7 +54,7 @@ fn quick_pick_opens_with_its_modes_and_closes_on_escape(cx: &mut gpui_kit::TestA
 #[gpui_kit::test]
 fn a_page_is_found_by_name_and_opened(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.press("cmd-k");
+    app.press("secondary-k");
     app.type_text("puzzles");
     wait_for_first(&mut app, "Puzzles");
     app.press("enter");
@@ -65,14 +65,14 @@ fn a_page_is_found_by_name_and_opened(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn acronyms_and_several_words_find_pages_and_commands(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.press("cmd-k");
+    app.press("secondary-k");
     app.type_text("otb");
     wait_for_first(&mut app, "Over the board");
     app.press("enter");
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Local));
 
-    app.press("cmd-k");
+    app.press("secondary-k");
     app.type_text("stockfish black");
     app.wait_for("a Stockfish game as the first result", |window, _| {
         window.try_find(("palette-item", 0usize)).and_then(|item| {
@@ -85,7 +85,7 @@ fn acronyms_and_several_words_find_pages_and_commands(cx: &mut gpui_kit::TestApp
 #[gpui_kit::test]
 fn commands_are_run_from_the_command_mode(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.press("cmd-k");
+    app.press("secondary-k");
     app.click_label("Run a command");
     wait_until_listed(&mut app, "New analysis board");
     app.type_text(" new analysis");
@@ -95,7 +95,7 @@ fn commands_are_run_from_the_command_mode(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(page(&mut app), Some(Page::Analysis));
 
     // The shortcut opens straight into the commands; Backspace goes back to searching pages.
-    app.press("shift-cmd-p");
+    app.press("shift-secondary-p");
     wait_until_listed(&mut app, "New analysis board");
     assert!(!lists(&mut app, "Home"));
     app.press("backspace");
@@ -106,7 +106,7 @@ fn commands_are_run_from_the_command_mode(cx: &mut gpui_kit::TestAppContext) {
 fn a_setting_is_changed_from_the_palette_and_saved(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     assert_eq!(app.saved_settings()["soundEnabled"], json!(true));
-    app.press("cmd-k");
+    app.press("secondary-k");
     app.type_text("#sound");
     wait_for_first(&mut app, "Sound");
     app.click(("palette-item", 0usize));
@@ -117,25 +117,25 @@ fn a_setting_is_changed_from_the_palette_and_saved(cx: &mut gpui_kit::TestAppCon
 #[gpui_kit::test]
 fn the_commands_used_last_are_offered_first_and_kept(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.press("cmd-k");
+    app.press("secondary-k");
     assert!(!lists(&mut app, "New analysis board"));
     app.press("escape");
     wait_until_closed(&mut app);
 
-    app.press("shift-cmd-p");
+    app.press("shift-secondary-p");
     app.type_text(" new analysis");
     wait_for_first(&mut app, "New analysis board");
     app.press("enter");
     wait_until_closed(&mut app);
 
-    app.press("cmd-k");
+    app.press("secondary-k");
     wait_until_listed(&mut app, "New analysis board");
     app.press("escape");
     wait_until_closed(&mut app);
 
     // A restart keeps it.
     let mut app = app.restart();
-    app.press("cmd-k");
+    app.press("secondary-k");
     wait_until_listed(&mut app, "New analysis board");
 }
 
@@ -162,13 +162,13 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
     assert_eq!(setting(&mut app), Setting::Auto);
     let start = app.with_window(|window, cx| crate::interface_zoom::percent(window, cx));
 
-    app.press("cmd-=");
+    app.press("secondary-=");
     let larger = crate::interface_zoom::step(start, 1);
     wait_for_setting(&mut app, Setting::Percent(larger));
     assert_eq!(saved(&app)["zoom"], json!(larger));
 
-    app.press("cmd--");
-    app.press("cmd--");
+    app.press("secondary--");
+    app.press("secondary--");
     let smaller = crate::interface_zoom::step(start, -1);
     wait_for_setting(&mut app, Setting::Percent(smaller));
     assert_eq!(saved(&app)["zoom"], json!(smaller));
@@ -176,7 +176,7 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
     // The choice is there again after a restart, and ⌘0 goes back to Auto.
     let mut app = app.restart();
     assert_eq!(setting(&mut app), Setting::Percent(smaller));
-    app.press("cmd-0");
+    app.press("secondary-0");
     wait_for_setting(&mut app, Setting::Auto);
     assert_eq!(saved(&app)["zoom"], json!("auto"));
 }

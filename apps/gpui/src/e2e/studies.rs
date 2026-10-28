@@ -23,7 +23,7 @@ fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
         still
     });
     app.click_label(label);
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text(text);
 }
 
@@ -72,7 +72,7 @@ fn name_in_dialog(app: &mut Harness, name: &str) {
         last = bounds;
         still
     });
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text(name);
     app.click("name-confirm");
 }

@@ -292,7 +292,7 @@ impl Harness {
         })
     }
 
-    /// Press a key, as GPUI parses it ("escape", "cmd-,").
+    /// Press a key, as GPUI parses it ("escape", "secondary-,").
     pub fn press(&mut self, key: &str) {
         self.with_window(|window, cx| window.press(key, cx));
         self.cx.run_until_parked();

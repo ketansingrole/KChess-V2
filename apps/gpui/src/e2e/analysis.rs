@@ -31,7 +31,7 @@ fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
         still
     });
     app.click_label(label);
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text(text);
 }
 
@@ -392,20 +392,20 @@ fn a_typed_fen_sets_the_board_and_one_that_is_not_legal_is_not_analysed(
 ) {
     let mut app = editor(cx);
     app.click_label("FEN");
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text("bad-fen");
     app.press("enter");
     // Nothing changed behind the refused text.
     assert_eq!(app.status(), "Ready to analyse");
 
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text("4k3/8/8/8/8/8/4P3/4K3 b - - 0 1");
     app.press("enter");
     wait_for_fen(&mut app, "4k3/8/8/8/8/8/4P3/4K3 b - - 0 1");
     assert_eq!(app.find(("editor-turn", 1usize)).selected(), Some(true));
 
     // Seventeen pieces to a side is more than Stockfish will take.
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text("rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     app.press("enter");
     wait_for_fen(
@@ -420,7 +420,7 @@ fn a_typed_fen_sets_the_board_and_one_that_is_not_legal_is_not_analysed(
 fn the_position_can_be_played_over_the_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
     app.click_label("FEN");
-    app.press("cmd-a");
+    app.press("secondary-a");
     app.type_text("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     app.press("enter");
     wait_for_fen(&mut app, "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
