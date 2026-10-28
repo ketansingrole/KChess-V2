@@ -1,9 +1,9 @@
 name: Release
 
-# Versions are YEAR.MONTH.COUNTER (v2026.10.0, v2026.10.1, … v2026.11.0); `pnpm run release:version`
-# sets the next one in package.json. Push the matching tag to build installers for macOS,
-# Windows and Linux and attach them to a draft GitHub Release, which you then publish by hand.
-# "Run workflow" in the Actions tab builds the same installers as downloads, without a release.
+# Versions are YEAR.MONTH.COUNTER (v2026.10.0, v2026.10.1, … v2026.11.0); `cargo xtask
+# release-version` sets the next one in Cargo.toml. Push the matching tag to build installers for
+# macOS, Windows and Linux and attach them to a draft GitHub Release, which you then publish by
+# hand. "Run workflow" in the Actions tab builds the same installers as downloads, without a release.
 on:
   push:
     tags: ['v*']
@@ -17,202 +17,44 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The app that ships as KChess. `electron`: the Electron app, with the GPUI preview beside it.
-  # `gpui`: the GPUI app built under Electron's identity (`gpui-package.mjs --final`) with the
-  # update manifests, so Electron's updater installs it over the Electron app; the preview still
-  # ships, so its installations keep updating, and the Snap stays the Electron app.
-  KCHESS_RELEASE_APP: electron
   GPUI_LINUX_LIBS: >-
     libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
     libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
 
 jobs:
-  # The switch above as the packaging jobs' matrices, which cannot read `env`.
-  plan:
-    runs-on: ubuntu-latest
-    outputs:
-      electron: ${{ steps.plan.outputs.electron }}
-      gpui: ${{ steps.plan.outputs.gpui }}
-    steps:
-      - id: plan
-        run: |
-          case "$KCHESS_RELEASE_APP" in
-            electron)
-              electron='[{"os":"macos-latest","platform":"--mac --arm64"},{"os":"windows-latest","platform":"--win"},{"os":"ubuntu-24.04","platform":"--linux"}]'
-              identities='["preview"]' ;;
-            gpui)
-              electron='[{"os":"ubuntu-24.04","platform":"--linux","snap_only":true}]'
-              identities='["preview","final"]' ;;
-            *) echo "::error::KCHESS_RELEASE_APP must be electron or gpui."; exit 1 ;;
-          esac
-          echo "electron=$electron" >> "$GITHUB_OUTPUT"
-          echo "gpui={\"os\":[\"macos-latest\",\"windows-latest\",\"ubuntu-24.04\"],\"identity\":$identities}" >> "$GITHUB_OUTPUT"
-
   validate:
     runs-on: ubuntu-latest
-    # Unpackaged test builds use thin LTO and parallel codegen: the same code, compiled faster.
-    # Jobs that package (desktop, release package) keep Cargo.toml's profile for real sizes.
-    env:
-      CARGO_PROFILE_RELEASE_LTO: thin
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # The workspace includes the GPUI app, which builds against these system headers; without
-      # them `check` passes only while the Rust cache below still holds their build output.
+      # The workspace includes the app, which builds against these system headers.
       - name: Install GPUI build libraries
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - name: Verify release metadata
-        run: pnpm run release:verify
+        run: cargo xtask release-verify
       - name: Verify the release commit belongs to main
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor HEAD origin/main
-      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
-      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The Rust coverage gate (`check:rust-coverage`) runs inside `pnpm run check`.
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: rustup component add llvm-tools-preview
-      - run: pnpm run check
+      - run: cargo xtask check
 
-  # Packaging runs alongside validation rather than after it; the draft release waits for both,
-  # so a failing check still stops it.
-  # The Electron app's installers (macOS releases support Apple Silicon only), and its Snap; when
-  # the GPUI app ships as KChess, only the Snap (`snap_only`).
+  # KChess for every platform in both identities: `final` is the app every KChess installation
+  # runs, with the update manifests the Electron app's updater reads (`latest*.yml`), so it installs
+  # this over itself; `preview` keeps "KChess Preview" installations updating. Signed and notarized
+  # on macOS with the Developer ID when its secrets are set, ad hoc otherwise.
   package:
-    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.electron) }}
-    runs-on: ${{ matrix.os }}
-    env:
-      # Certificates are imported explicitly; never use an unrelated keychain identity.
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
-      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: desktop
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: pnpm run build
-      # afterPack rejects nested installers/apps, redundant dependencies, and oversized payloads.
-      - name: Build installers and verify package contents
-        if: ${{ !matrix.snap_only }}
-        run: pnpm exec electron-builder --projectDir apps/desktop ${{ matrix.platform }} --config ../../tooling/release-config.cjs --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      - name: Prepare isolated Snap build environment
-        if: runner.os == 'Linux'
-        run: |
-          sudo snap install snapcraft --classic
-          sudo snap install lxd
-          sudo lxd init --auto
-          sudo usermod -aG lxd "$USER"
-          # Docker's forwarding policy on hosted runners can block the LXD bridge.
-          # Permit build-container egress and established replies on that bridge only.
-          if sudo iptables -nL DOCKER-USER >/dev/null 2>&1; then
-            sudo iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
-            sudo iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-          fi
-      - name: Build Snap package
-        if: runner.os == 'Linux'
-        run: sg lxd -c 'pnpm exec electron-builder --projectDir apps/desktop --linux snap --x64 --config ../../tooling/snap-config.cjs --publish never'
-      - name: Retain Snap build diagnostics
-        if: failure() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          name: snap-build-diagnostics
-          path: |
-            ~/.local/state/snapcraft/log/
-            dist/__snap-amd64/snap/snapcraft.yaml
-          retention-days: 7
-      - name: Verify Mac signing and notarization
-        if: runner.os == 'macOS' && env.KCHESS_MAC_SIGNING == 'true'
-        shell: bash
-        env:
-          EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          mac_app=dist/mac-arm64/KChess.app
-          codesign --verify --deep --strict --verbose=2 "$mac_app"
-          signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
-          if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
-            echo "::error::The app's signing team does not match APPLE_TEAM_ID."
-            exit 1
-          fi
-          spctl --assess --type execute --verbose=2 "$mac_app"
-          xcrun stapler validate "$mac_app"
-      - name: Verify update metadata and every supported package exist
-        if: ${{ !matrix.snap_only }}
-        shell: bash
-        run: |
-          # upload-artifact fails only when no pattern matches at all; check each package.
-          case "${{ runner.os }}" in
-            macOS) manifest=dist/latest-mac.yml; packages="*-mac-arm64.dmg *-mac-arm64.zip" ;;
-            Windows) manifest=dist/latest.yml; packages="*-win-x64.exe" ;;
-            Linux) manifest=dist/latest-linux.yml; packages="*.AppImage *.deb" ;;
-          esac
-          test -s "$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
-          for pattern in $packages; do
-            found=$(find dist -maxdepth 1 -name "$pattern" -size +0 | head -n 1)
-            test -n "$found" || { echo "::error::Missing package: dist/$pattern"; exit 1; }
-          done
-      - uses: actions/upload-artifact@v7
-        with:
-          name: kchess-${{ runner.os }}
-          path: |
-            dist/*-mac-arm64.dmg
-            dist/*-mac-arm64.zip
-            dist/*.exe
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.snap
-            dist/latest*.yml
-            dist/*-mac-arm64.*.blockmap
-            dist/*.exe.blockmap
-            dist/*.AppImage.blockmap
-          if-no-files-found: error
-          retention-days: 14
-
-  # The GPUI app in the same formats, which its updater installs from the release
-  # (apps/gpui/src/updates.rs): the preview ("KChess Preview", beside the Electron app), and when
-  # it ships as KChess the `final` identity too. Signed and notarized on macOS with the Electron
-  # app's Developer ID when its secrets are set, ad hoc otherwise.
-  gpui:
-    needs: plan
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.gpui) }}
+        os: [macos-latest, windows-latest, ubuntu-24.04]
+        identity: [final, preview]
     runs-on: ${{ matrix.os }}
     env:
       KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
@@ -221,24 +63,20 @@ jobs:
       APP_NAME: ${{ matrix.identity == 'final' && 'KChess' || 'KChess Preview' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # gpui-package.mjs signs with codesign directly, so the certificate goes into a keychain of
-      # this job's own, and the identity is named by its hash.
+      # The packager signs with codesign directly, so the certificate goes into a keychain of this
+      # job's own, and the identity is named by its hash.
       - name: Import the Developer ID certificate
         id: mac-signing
         if: runner.os == 'macOS' && env.KCHESS_MAC_SIGNING == 'true'
@@ -261,7 +99,7 @@ jobs:
           identity="$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application:/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::No Developer ID Application identity in MAC_CSC_LINK."; exit 1; }
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
-      - run: node tooling/gpui-package.mjs ${{ matrix.identity == 'final' && '--final' || '' }}
+      - run: cargo xtask package ${{ matrix.identity == 'final' && '--final' || '' }}
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
@@ -276,7 +114,7 @@ jobs:
           EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           # The app as the updater and a download receive it: from the zip that ships.
-          unpacked="$RUNNER_TEMP/kchess-gpui-zip"
+          unpacked="$RUNNER_TEMP/kchess-zip"
           rm -rf "$unpacked" && mkdir -p "$unpacked"
           ditto -x -k apps/gpui/dist/"$PACKAGE_PREFIX"-*-mac-arm64.zip "$unpacked"
           mac_app="$unpacked/$APP_NAME.app"
@@ -301,38 +139,76 @@ jobs:
             test -n "$found" || { echo "::error::Missing package: $pattern"; exit 1; }
           done
           if [ "${{ matrix.identity }}" = final ]; then
-            # Electron's updater finds the app replacing it through these.
+            # The Electron app's updater finds the app replacing it through these.
             test -s "apps/gpui/dist/$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
           elif ls apps/gpui/dist/latest*.yml >/dev/null 2>&1; then
-            # The preview must never carry manifests Electron's updater would read as its own.
+            # The preview must never carry manifests an installed KChess would read as its own.
             echo "::error::The preview wrote update manifests."; exit 1
           fi
       # The release job writes one SHA256SUMS.txt for every package.
       - uses: actions/upload-artifact@v7
         with:
-          name: gpui-${{ runner.os }}-${{ matrix.identity }}
+          name: kchess-${{ runner.os }}-${{ matrix.identity }}
           path: |
             apps/gpui/dist/*
             !apps/gpui/dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
 
+  # The Snap Store's KChess, built in LXD from the same app; the store publishes it from the
+  # published release (snap-publish.yml).
+  snap:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI build libraries
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gpui
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      - name: Prepare isolated Snap build environment
+        run: |
+          sudo snap install snapcraft --classic
+          sudo snap install lxd
+          sudo lxd init --auto
+          sudo usermod -aG lxd "$USER"
+          # Docker's forwarding policy on hosted runners can block the LXD bridge.
+          # Permit build-container egress and established replies on that bridge only.
+          if sudo iptables -nL DOCKER-USER >/dev/null 2>&1; then
+            sudo iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
+            sudo iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          fi
+      - name: Build the Snap
+        run: sg lxd -c 'cargo xtask package --final --snap'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KCHESS_SNAP_LXD: '1'
+      - name: Retain Snap build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snap-build-diagnostics
+          path: |
+            ~/.local/state/snapcraft/log/
+            target/package/stage/snap/snap/snapcraft.yaml
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kchess-snap
+          path: apps/gpui/dist/*.snap
+          if-no-files-found: error
+          retention-days: 14
+
   release:
-    needs: [validate, plan, package, gpui]
+    needs: [validate, package, snap]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
           path: packages
@@ -344,4 +220,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: node tooling/attach-draft-release.mjs packages
+        run: cargo xtask attach-draft-release packages

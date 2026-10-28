@@ -1,34 +1,31 @@
-//! `crates/kchess-contracts/ts/types.ts`: the shapes every frontend exchanges with the core.
+//! The shapes every frontend exchanges with the core.
 //!
-//! Conventions (they reproduce the TypeScript exactly):
-//! - Field names are camelCase on the wire. `Option` fields are optional (`?:`); a field that is
-//!   `T | null` is `#[ts(optional = nullable)]` when optional, or a `#[ts(type = ...)]` override.
-//! - A string-literal union is a Rust enum. `wire_enum!` also emits the `as const` array that
-//!   the TypeScript exports under the same name (`APPEARANCES`, ...); `union!` does not.
-//! - `interface X extends Y` is `#[serde(flatten)] #[ts(flatten)]`.
-//! - Numeric unions and `typeof` / indexed / generic forms are raw declarations (`raw.rs`).
+//! Conventions:
+//! - Field names are camelCase on the wire. `Option` fields are omitted when absent unless a
+//!   field says otherwise with its serde attributes.
+//! - A string-literal union is a Rust enum. `wire_enum!` also emits the array of wire values
+//!   under the constant's name (`APPEARANCES`, ...); `union!` does not.
+//! - A flattened parent is `#[serde(flatten)]`.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ts_rs::{Config, TS};
 
-use crate::generate::Item;
 use crate::variant::Variant;
 
-/// A string-literal union that the TypeScript exports only as a type.
+/// A string-literal union.
 macro_rules! union {
     ($(#[$meta:meta])* $name:ident { $($variant:ident = $wire:literal),+ $(,)? }) => {
         $(#[$meta])*
-        #[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum $name {
             $(#[serde(rename = $wire)] $variant,)+
         }
     };
 }
 
-/// A string-literal union with its runtime array (`export const NAME = [...] as const`).
+/// A string-literal union with the array of its wire values.
 macro_rules! wire_enum {
     ($(#[$meta:meta])* $name:ident, $konst:ident { $($variant:ident = $wire:literal),+ $(,)? }) => {
         union!($(#[$meta])* $name { $($variant = $wire),+ });
@@ -283,9 +280,8 @@ union!(#[doc = "Progress stage of the puzzle database download."] PuzzleDbPhase 
 union!(#[doc = "Progress stage of the voice model download."] VoiceModelPhase { Checking = "checking", Downloading = "downloading", Preparing = "preparing" });
 
 /// Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ThemePalette {
     /// Page background.
     pub bg: String,
@@ -308,9 +304,8 @@ pub struct ThemePalette {
 }
 
 /// A color theme for the whole app. A theme with only one variant uses it in both light and dark mode.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct AppTheme {
     pub id: String,
     pub name: String,
@@ -321,7 +316,7 @@ pub struct AppTheme {
 }
 
 /// Resolved CSS colors the browser's Lichess sign-in page uses to match the app.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthPageColors {
     pub bg: String,
@@ -332,7 +327,7 @@ pub struct OAuthPageColors {
     pub border: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthPageLook {
     pub appearance: Appearance,
@@ -340,7 +335,7 @@ pub struct OAuthPageLook {
     pub dark: OAuthPageColors,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomThemeReport {
     pub themes: Vec<AppTheme>,
@@ -351,7 +346,7 @@ pub struct CustomThemeReport {
 }
 
 /// Preferences consumed by headless services.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CoreSettings {
     pub engine_path: String,
@@ -374,7 +369,7 @@ pub struct CoreSettings {
 }
 
 /// Presentation and desktop host preferences, preserved separately from the core API.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendPreferences {
     pub appearance: Appearance,
@@ -437,18 +432,16 @@ pub struct FrontendPreferences {
 }
 
 /// Every setting: the core's preferences and the desktop's.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub core: CoreSettings,
     #[serde(flatten)]
-    #[ts(flatten)]
     pub frontend: FrontendPreferences,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppUpdateProgress {
     pub percent: f64,
@@ -457,9 +450,8 @@ pub struct AppUpdateProgress {
     pub bytes_per_second: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct AppUpdateStatus {
     pub phase: AppUpdatePhase,
     pub current_version: String,
@@ -475,7 +467,7 @@ pub struct AppUpdateStatus {
 }
 
 /// The operating system's microphone permission for KChess (`granted` where the OS has none).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MicrophoneAccess {
     pub status: MicrophoneStatus,
@@ -485,7 +477,7 @@ pub struct MicrophoneAccess {
     pub launched_from_terminal: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationRequest {
     pub kind: NotificationKind,
@@ -494,9 +486,8 @@ pub struct NotificationRequest {
 }
 
 /// Why a notification was not shown, when it was not.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct NotificationResult {
     pub shown: bool,
     /// `system` is an operating-system notification; `in-app` is an alert inside the window.
@@ -506,18 +497,16 @@ pub struct NotificationResult {
     pub error: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LichessAccount {
     pub username: String,
     pub connected: bool,
     pub last_synced_at: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LichessGame {
     pub id: String,
     pub account: String,
@@ -538,9 +527,8 @@ pub struct LichessGame {
     pub pgn: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct GamePageQuery {
     pub account: Option<String>,
     pub result: Option<GameResultFilter>,
@@ -549,14 +537,14 @@ pub struct GamePageQuery {
     pub limit: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GamePage {
     pub games: Vec<LichessGame>,
     pub total: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GameRecord {
     pub total: f64,
@@ -565,9 +553,8 @@ pub struct GameRecord {
     pub draw: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct InsightsQuery {
     pub account: String,
     pub speed: Option<String>,
@@ -576,21 +563,21 @@ pub struct InsightsQuery {
     pub days: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorRecords {
     pub white: GameRecord,
     pub black: GameRecord,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeedRecord {
     pub speed: String,
     pub record: GameRecord,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OpeningRecord {
     pub name: String,
@@ -598,21 +585,21 @@ pub struct OpeningRecord {
     pub as_white: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LabeledRecord {
     pub label: String,
     pub record: GameRecord,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EndingRecord {
     pub status: String,
     pub record: GameRecord,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Streaks {
     pub longest_win: f64,
@@ -620,7 +607,7 @@ pub struct Streaks {
     pub current: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GamePerfAverages {
     pub inaccuracy: f64,
@@ -628,9 +615,8 @@ pub struct GamePerfAverages {
     pub blunder: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct InsightsAccuracy {
     pub games: f64,
     pub average: Option<f64>,
@@ -639,9 +625,8 @@ pub struct InsightsAccuracy {
 }
 
 /// Patterns in one account's synced games (worked out locally).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct InsightsReport {
     pub account: String,
     pub total: f64,
@@ -663,7 +648,7 @@ pub struct InsightsReport {
     pub accuracy: Option<InsightsAccuracy>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GameLibraryOverview {
     pub by_account: BTreeMap<String, GameRecord>,
@@ -671,9 +656,8 @@ pub struct GameLibraryOverview {
 }
 
 /// One player's side of a review.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewSide {
     pub accuracy: Option<f64>,
     /// Average centipawn loss.
@@ -683,9 +667,8 @@ pub struct ReviewSide {
     pub blunder: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct OnlineConnection {
     pub session: f64,
     pub account: String,
@@ -696,9 +679,8 @@ pub struct OnlineConnection {
 }
 
 /// A player as a challenge or ongoing game names them.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PlayerRef {
     pub name: String,
     pub rating: Option<f64>,
@@ -708,7 +690,7 @@ pub struct PlayerRef {
 }
 
 /// Time control of a challenge.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ChallengeTimeControl {
     #[serde(rename = "clock")]
@@ -720,9 +702,8 @@ pub enum ChallengeTimeControl {
 }
 
 /// A pending challenge to or from one of the connected accounts.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ChallengeInfo {
     pub id: String,
     /// The connected account it was sent to (incoming) or from (outgoing).
@@ -749,16 +730,15 @@ pub struct ChallengeInfo {
 }
 
 /// Health of the idle event stream that waits for challenges and pairings.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LobbyState {
     pub account: String,
     pub phase: OnlinePhase,
     pub message: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatLine {
     pub user: String,
@@ -767,9 +747,8 @@ pub struct ChatLine {
 }
 
 /// A game a connected account is playing, real-time or correspondence.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct OngoingGame {
     pub game_id: String,
     pub account: String,
@@ -786,7 +765,7 @@ pub struct OngoingGame {
     pub tournament_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentClock {
     /// Seconds and seconds per move.
@@ -794,7 +773,7 @@ pub struct TournamentClock {
     pub increment: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentTeam {
     pub id: String,
@@ -802,9 +781,8 @@ pub struct TournamentTeam {
 }
 
 /// An arena or Swiss tournament in a list.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentSummary {
     pub id: String,
     pub system: TournamentSystem,
@@ -834,20 +812,15 @@ pub struct TournamentSummary {
 }
 
 /// An arena to create on Lichess.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct NewArena {
     /// Empty for a random Grandmaster name.
     pub name: Option<String>,
-    #[ts(type = "(typeof ARENA_CLOCK_MINUTES)[number]")]
     pub clock_time: f64,
-    #[ts(type = "(typeof ARENA_INCREMENTS)[number]")]
     pub clock_increment: f64,
-    #[ts(type = "(typeof ARENA_DURATIONS)[number]")]
     pub minutes: f64,
     /// Minutes from now, unless `startDate` is set.
-    #[ts(type = "(typeof ARENA_WAIT_MINUTES)[number]", optional)]
     pub wait_minutes: Option<f64>,
     pub start_date: Option<f64>,
     pub variant: String,
@@ -857,9 +830,8 @@ pub struct NewArena {
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentStanding {
     pub rank: f64,
     pub name: String,
@@ -871,9 +843,8 @@ pub struct TournamentStanding {
     pub fire: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentPlayer {
     pub name: String,
     pub rating: Option<f64>,
@@ -881,7 +852,7 @@ pub struct TournamentPlayer {
 }
 
 /// A game between two tournament players, with their current ranks.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentGame {
     pub id: String,
@@ -889,30 +860,29 @@ pub struct TournamentGame {
     pub black: TournamentPlayer,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentMe {
     pub rank: Option<f64>,
     pub withdraw: Option<bool>,
     pub game_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentCondition {
     pub condition: String,
     pub verdict: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentVerdicts {
     pub accepted: bool,
     pub list: Vec<TournamentCondition>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentClocks {
     pub white: f64,
@@ -920,12 +890,10 @@ pub struct TournamentClocks {
 }
 
 /// The top game being played now in an arena.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentFeatured {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub game: TournamentGame,
     pub fen: String,
     pub orientation: PlayerColor,
@@ -934,9 +902,8 @@ pub struct TournamentFeatured {
     pub clocks: Option<TournamentClocks>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentPodium {
     pub name: String,
     pub rank: f64,
@@ -945,7 +912,7 @@ pub struct TournamentPodium {
     pub performance: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentStats {
     pub games: f64,
@@ -957,12 +924,10 @@ pub struct TournamentStats {
 }
 
 /// One tournament, with the leaderboard, the games being played and (when finished) its results.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TournamentDetail {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub summary: TournamentSummary,
     pub description: Option<String>,
     pub seconds_to_start: Option<f64>,
@@ -987,7 +952,7 @@ pub struct TournamentDetail {
     pub stats: Option<TournamentStats>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TournamentList {
     pub arenas: Vec<TournamentSummary>,
@@ -998,7 +963,7 @@ pub struct TournamentList {
 
 /* ── Players ──────────────────────────────────────────────────────────── */
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfResult {
     pub opponent: String,
@@ -1007,7 +972,7 @@ pub struct PerfResult {
     pub game_id: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfMark {
     pub rating: f64,
@@ -1015,14 +980,14 @@ pub struct PerfMark {
     pub game_id: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfStreak {
     pub current: f64,
     pub best: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfCount {
     pub all: f64,
@@ -1038,9 +1003,8 @@ pub struct PerfCount {
 }
 
 /// One player's record in one rating category, as Lichess's perf page shows it.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PerfStats {
     pub perf: PerfType,
     pub rating: Option<f64>,
@@ -1060,7 +1024,7 @@ pub struct PerfStats {
     pub loss_streak: PerfStreak,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CrosstableMatchup {
     pub users: BTreeMap<String, f64>,
@@ -1068,9 +1032,8 @@ pub struct CrosstableMatchup {
 }
 
 /// Two players' lifetime score against each other (and in their current match, if any).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct Crosstable {
     /// Lower-cased username → points (wins plus half-points for draws).
     pub users: BTreeMap<String, f64>,
@@ -1079,7 +1042,7 @@ pub struct Crosstable {
 }
 
 /// Whether a connected account follows or blocks a player on Lichess.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessRelation {
     pub following: bool,
@@ -1087,9 +1050,8 @@ pub struct LichessRelation {
 }
 
 /// One place on a Lichess leaderboard.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LeaderboardEntry {
     pub username: String,
     pub title: Option<String>,
@@ -1100,9 +1062,8 @@ pub struct LeaderboardEntry {
 }
 
 /// A player whose name starts with what was typed.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PlayerSuggestion {
     pub username: String,
     pub title: Option<String>,
@@ -1112,9 +1073,8 @@ pub struct PlayerSuggestion {
 /// One line of a player's activity or of a timeline, ready to show: `kind` picks the icon
 /// (`games`, `puzzles`, `tournament`, `follow`, `study`, `team`, `post`, `simul`, `patron`,
 /// `stream`, `correspondence`, `other`).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ActivityItem {
     pub kind: String,
     pub text: String,
@@ -1125,7 +1085,7 @@ pub struct ActivityItem {
 }
 
 /// A day of a player's Lichess activity, newest first.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityDay {
     /// Start of the day, epoch milliseconds.
@@ -1134,7 +1094,7 @@ pub struct ActivityDay {
 }
 
 /// One entry of an account's Lichess timeline (what followed players did), newest first.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineEntry {
     /// Epoch milliseconds.
@@ -1143,7 +1103,7 @@ pub struct TimelineEntry {
 }
 
 /// A game uploaded to Lichess, with the address of its page.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedGame {
     pub id: String,
@@ -1152,9 +1112,8 @@ pub struct ImportedGame {
 
 /* ── Watching games ─────────────────────────────────────────────────── */
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct WatchPlayer {
     pub name: String,
     pub title: Option<String>,
@@ -1162,16 +1121,15 @@ pub struct WatchPlayer {
 }
 
 /// Connection health of the TV/game feed, scoped to its watch session.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct WatchState {
     pub session: f64,
     pub phase: WatchPhase,
     pub message: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WatchClock {
     pub initial: f64,
@@ -1179,9 +1137,8 @@ pub struct WatchClock {
 }
 
 /// A game a TV channel showed before the current one, with its result once Lichess has it.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TvPastGame {
     pub game_id: String,
     pub white: WatchPlayer,
@@ -1195,9 +1152,8 @@ pub struct TvPastGame {
 }
 
 /// One position of a game being watched (TV or a game by id).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct WatchFrame {
     /// Which `watch` call it belongs to; frames of an earlier one are stale.
     pub session: f64,
@@ -1230,9 +1186,8 @@ pub struct WatchFrame {
     pub previous: Option<Vec<TvPastGame>>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct TvChannel {
     pub key: String,
     pub label: String,
@@ -1240,9 +1195,8 @@ pub struct TvChannel {
     pub player: Option<WatchPlayer>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct BroadcastSummary {
     pub players: Option<String>,
     pub tour_id: String,
@@ -1256,9 +1210,8 @@ pub struct BroadcastSummary {
     pub section: BroadcastSection,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct BroadcastRoundRef {
     pub id: String,
     pub name: String,
@@ -1267,9 +1220,8 @@ pub struct BroadcastRoundRef {
     pub starts_at: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct BroadcastTourDetail {
     pub id: String,
     pub name: String,
@@ -1279,9 +1231,8 @@ pub struct BroadcastTourDetail {
 }
 
 /// One board of a broadcast round, as the live PGN feed last described it.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct BroadcastGame {
     /// The study chapter id.
     pub id: String,
@@ -1302,9 +1253,8 @@ pub struct BroadcastGame {
     pub pgn: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct BroadcastUpdate {
     pub session: f64,
     pub round_id: String,
@@ -1315,18 +1265,16 @@ pub struct BroadcastUpdate {
     pub error: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct EngineManaged {
     pub installed: bool,
     pub path: String,
     pub version: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct EngineStatus {
     /// Identity of the executable currently selected, including native file changes.
     pub identity: Option<String>,
@@ -1340,15 +1288,13 @@ pub struct EngineStatus {
     pub can_download: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct OnlineOptions {
     /// Ignored for correspondence games (`days`).
     pub minutes: f64,
     pub increment: f64,
     /// Correspondence: days per move instead of a clock.
-    #[ts(type = "CorrespondenceDays", optional)]
     pub days: Option<f64>,
     /// Lichess variant; standard when omitted.
     pub variant: Option<Variant>,
@@ -1362,9 +1308,8 @@ pub struct OnlineOptions {
     pub account: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct FollowedRatings {
     pub bullet: Option<f64>,
     pub blitz: Option<f64>,
@@ -1373,9 +1318,8 @@ pub struct FollowedRatings {
 }
 
 /// A player one of the connected accounts follows on Lichess.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct FollowedUser {
     pub username: String,
     pub title: Option<String>,
@@ -1388,7 +1332,7 @@ pub struct FollowedUser {
     pub dismissed: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowingProblem {
     pub account: String,
@@ -1397,14 +1341,14 @@ pub struct FollowingProblem {
     pub needs_reconnect: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowingReport {
     pub users: Vec<FollowedUser>,
     pub problems: Vec<FollowingProblem>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageCell {
     pub requests: f64,
@@ -1412,15 +1356,14 @@ pub struct UsageCell {
     pub bytes_in: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountUsage {
     pub total: UsageCell,
-    #[ts(type = "Partial<Record<UsageKind, UsageCell>>")]
     pub by_kind: BTreeMap<UsageKind, UsageCell>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountStorage {
     pub games: f64,
@@ -1430,9 +1373,8 @@ pub struct AccountStorage {
     pub cache_bytes: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct UsageReport {
     /// When counting started; undefined when nothing has been counted.
     pub since: Option<f64>,
@@ -1445,9 +1387,8 @@ pub struct UsageReport {
 }
 
 /// Lichess's view of one user's connection. `signal` runs 1 (poor, lag > 500 ms) to 4 (great, lag < 150 ms).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct UserPresence {
     pub online: bool,
     pub playing: bool,
@@ -1456,7 +1397,7 @@ pub struct UserPresence {
     pub playing_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PresenceReport {
     /// Lower-cased username → status; users Lichess did not report are absent.
@@ -1466,9 +1407,8 @@ pub struct PresenceReport {
 }
 
 /// One puzzle, whichever source it came from.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct Puzzle {
     pub id: String,
     /// The position the player starts from: it is the player's move, after the opponent's `lastMove`.
@@ -1484,18 +1424,16 @@ pub struct Puzzle {
     pub game_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleGlicko {
     pub rating: Option<f64>,
     pub deviation: Option<f64>,
     pub provisional: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleRequest {
     /// Connected account to train as; empty trains anonymously (no rating, nothing recorded).
     pub account: String,
@@ -1505,9 +1443,8 @@ pub struct PuzzleRequest {
     pub color: Option<PlayerColor>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleDraw {
     /// Absent when Lichess has no puzzle left for this theme and difficulty.
     pub puzzle: Option<Puzzle>,
@@ -1515,7 +1452,7 @@ pub struct PuzzleDraw {
     pub glicko: Option<PuzzleGlicko>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleSolveRequest {
     pub account: String,
@@ -1526,23 +1463,21 @@ pub struct PuzzleSolveRequest {
     pub rated: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleSolveResult {
     /// Rating change Lichess applied; absent for unrated results.
     pub rating_diff: Option<f64>,
 }
 
 /// Returned instead of data when the account's Lichess login lacks (or lost) the puzzle permission.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NeedsReconnect {
-    #[ts(type = "true")]
     pub needs_reconnect: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzlePerformance {
     pub first_wins: f64,
@@ -1552,14 +1487,14 @@ pub struct PuzzlePerformance {
     pub replay_wins: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleThemeResult {
     pub theme: String,
     pub results: PuzzlePerformance,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDashboard {
     pub days: f64,
@@ -1567,7 +1502,7 @@ pub struct PuzzleDashboard {
     pub themes: BTreeMap<String, PuzzleThemeResult>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleActivityEntry {
     /// When it was played, in ms since the epoch.
@@ -1577,7 +1512,7 @@ pub struct PuzzleActivityEntry {
 }
 
 /// A move the player tried first at one of their moves of a puzzle, instead of the solution's.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleWrongMove {
     /// The index in the solution of the move it was played instead of.
@@ -1586,9 +1521,8 @@ pub struct PuzzleWrongMove {
 }
 
 /// A training attempt as the board saw it at its first verdict, for the local log (`puzzles.db`).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleAttemptInput {
     pub puzzle: Puzzle,
     pub mode: PuzzleTrainMode,
@@ -1610,9 +1544,8 @@ pub struct PuzzleAttemptInput {
     pub wrong_moves: Option<Vec<PuzzleWrongMove>>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleAttempt {
     pub id: f64,
     /// When it was played, in ms since the epoch.
@@ -1634,7 +1567,7 @@ pub struct PuzzleAttempt {
 }
 
 /// Attempts by outcome, and player moves found of those tried (found plus each ending wrong move).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleTotals {
     pub attempts: f64,
@@ -1648,7 +1581,7 @@ pub struct PuzzleTotals {
 }
 
 /// The local attempt log, summarized. Retries are listed but not counted.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleProgress {
     /// Newest first.
@@ -1661,14 +1594,14 @@ pub struct PuzzleProgress {
 }
 
 /// Which local day is today, and how many recent attempts to list.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleProgressQuery {
     pub today: String,
     pub limit: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StormHigh {
     pub all_time: f64,
@@ -1677,7 +1610,7 @@ pub struct StormHigh {
     pub week: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StormDay {
     /// `YYYY/M/D` (Lichess's own key).
@@ -1692,7 +1625,7 @@ pub struct StormDay {
     pub time: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StormDashboard {
     pub high: StormHigh,
@@ -1701,7 +1634,7 @@ pub struct StormDashboard {
 
 /// A puzzle-database download or import in progress (or finished), streamed to the window.
 /// What part of the profile a write changed (`profile:changed`), so other windows refetch it.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ProfileArea {
     Studies,
@@ -1722,15 +1655,14 @@ pub enum ProfileArea {
 
 /// `alerts:owner`: the connection whose window raises system notifications now (the window
 /// focused last), or none. Every other window updates silently (`docs/shared-core.md`).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct AlertOwner {
     pub connection: Option<f64>,
 }
 
 /// `profile:changed`: a write to the profile, from connection `origin` (`docs/shared-core.md`).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileChange {
     pub areas: Vec<ProfileArea>,
@@ -1738,9 +1670,8 @@ pub struct ProfileChange {
     pub origin: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleDbProgress {
     pub phase: PuzzleDbPhase,
     /// Compressed bytes received so far.
@@ -1752,9 +1683,8 @@ pub struct PuzzleDbProgress {
     pub message: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PuzzleDbStatus {
     pub installed: bool,
     pub count: f64,
@@ -1765,9 +1695,8 @@ pub struct PuzzleDbStatus {
     pub busy: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LocalPuzzleQuery {
     pub theme: Option<String>,
     pub min_rating: Option<f64>,
@@ -1775,7 +1704,7 @@ pub struct LocalPuzzleQuery {
     pub count: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalLadderQuery {
     pub from: f64,
@@ -1784,7 +1713,7 @@ pub struct LocalLadderQuery {
 }
 
 /// A run's score and details, as the game saves it.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunInput {
     pub kind: RunKind,
@@ -1792,28 +1721,26 @@ pub struct RunInput {
     pub variant: String,
     pub score: f64,
     /// Extra numbers and words shown with the score (accuracy, combo, …).
-    #[ts(type = "Record<string, string | number | boolean>")]
     pub detail: BTreeMap<String, Value>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRecord {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub input: RunInput,
     pub id: f64,
     pub played_at: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunBest {
     pub score: f64,
     pub played_at: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSummary {
     pub kind: RunKind,
@@ -1825,7 +1752,7 @@ pub struct RunSummary {
     pub total: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSaved {
     pub summary: RunSummary,
@@ -1834,7 +1761,7 @@ pub struct RunSaved {
 }
 
 /// One recognized word and the recognizer's confidence in it (0–1).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceWord {
     pub word: String,
@@ -1842,7 +1769,7 @@ pub struct VoiceWord {
 }
 
 /// A finished utterance: its text and each word heard.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceRecognized {
     pub text: String,
@@ -1850,26 +1777,23 @@ pub struct VoiceRecognized {
 }
 
 /// What a chunk of audio produced: the words heard so far, or a finished utterance.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct VoiceHeard {
     pub partial: Option<String>,
     pub result: Option<VoiceRecognized>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct VoiceModelProgress {
     pub phase: VoiceModelPhase,
     pub received: f64,
     pub total: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct VoiceModelStatus {
     pub installed: bool,
     pub bytes: f64,
@@ -1877,9 +1801,8 @@ pub struct VoiceModelStatus {
     pub progress: Option<VoiceModelProgress>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct VoiceAttemptInput {
     pub source: VoiceSource,
     /// The recognizer's text, as heard.
@@ -1898,28 +1821,25 @@ pub struct VoiceAttemptInput {
     pub retry_of: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceAttempt {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub input: VoiceAttemptInput,
     pub id: f64,
     pub at: f64,
 }
 
 /// What is learned about an attempt after it was logged.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct VoiceAttemptUpdate {
     pub outcome: Option<VoiceOutcome>,
     pub expected: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct BestMoveOptions {
     /// Start from this position instead of the standard one.
     pub fen: Option<String>,
@@ -1930,9 +1850,8 @@ pub struct BestMoveOptions {
 }
 
 /// Ask the analysis engine to study one position until stopped or a limit is reached.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct AnalysisRequest {
     pub fen: String,
     /// Repetition context: root plus moves must produce fen.
@@ -1946,9 +1865,8 @@ pub struct AnalysisRequest {
 }
 
 /// One engine line. Scores are from White's point of view, like Lichess shows them.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct EngineLine {
     /// 1 for the best line, 2 for the next best…
     pub rank: f64,
@@ -1961,9 +1879,8 @@ pub struct EngineLine {
     pub pv: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct AnalysisUpdate {
     /// The request this belongs to; the renderer drops updates of superseded ones.
     pub id: f64,
@@ -1985,9 +1902,8 @@ pub struct AnalysisUpdate {
 
 /// One position of a reviewed game: its score from White's side and the engine's choice there.
 /// A checkmated position is `mate: 0` (the side to move has lost).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewEval {
     pub cp: Option<f64>,
     pub mate: Option<f64>,
@@ -1997,18 +1913,16 @@ pub struct ReviewEval {
     pub depth: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewAccuracy {
     pub white: Option<f64>,
     pub black: Option<f64>,
 }
 
 /// A game's review as stored: the raw scores; labels and accuracy are worked out from them.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct StoredReview {
     /// `reviewKey(fen, moves)`: the same moves from the same start share one review.
     pub key: String,
@@ -2032,9 +1946,8 @@ pub struct StoredReview {
 }
 
 /// What the game list shows for a reviewed game.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewSummary {
     pub key: String,
     pub source: ReviewSource,
@@ -2044,9 +1957,8 @@ pub struct ReviewSummary {
     pub black: ReviewSide,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewRequest {
     pub fen: String,
     pub moves: Vec<String>,
@@ -2055,9 +1967,8 @@ pub struct ReviewRequest {
     pub account: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewCurrent {
     pub key: String,
     pub game_id: Option<String>,
@@ -2066,7 +1977,7 @@ pub struct ReviewCurrent {
     pub background: bool,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewFailure {
     pub key: String,
@@ -2074,9 +1985,8 @@ pub struct ReviewFailure {
 }
 
 /// Progress of the review queue, sent whenever it changes.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ReviewStatus {
     /// The review being worked on, with how many positions are done.
     pub current: Option<ReviewCurrent>,
@@ -2088,7 +1998,7 @@ pub struct ReviewStatus {
     pub failed: Option<ReviewFailure>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewUpdate {
     pub review: StoredReview,
@@ -2096,14 +2006,12 @@ pub struct ReviewUpdate {
 }
 
 /// Filters of the opening explorer; each database uses the ones it understands.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LookupOptions {
     /// Lichess and player databases.
     pub speeds: Option<Vec<ExplorerSpeed>>,
     /// Lichess database: rating groups (each is the lower bound of its band).
-    #[ts(type = "number[]", optional)]
     pub ratings: Option<Vec<f64>>,
     /// Player database: whose games, and with which colour.
     pub player: Option<String>,
@@ -2115,9 +2023,8 @@ pub struct LookupOptions {
 }
 
 /// A game the explorer lists as notable for the position.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ExplorerGame {
     pub id: String,
     pub white: String,
@@ -2131,9 +2038,8 @@ pub struct ExplorerGame {
     pub san: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LookupMove {
     pub uci: String,
     pub san: String,
@@ -2141,13 +2047,11 @@ pub struct LookupMove {
     pub draws: Option<f64>,
     pub black: Option<f64>,
     pub category: Option<String>,
-    #[ts(optional = nullable)]
     pub dtz: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct PositionLookup {
     pub kind: PositionLookupKind,
     pub fen: String,
@@ -2160,12 +2064,11 @@ pub struct PositionLookup {
     pub message: Option<String>,
     pub opening: Option<String>,
     pub category: Option<String>,
-    #[ts(optional = nullable)]
     pub dtz: Option<f64>,
     pub moves: Vec<LookupMove>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessStudy {
     pub id: String,
@@ -2173,7 +2076,7 @@ pub struct LichessStudy {
     pub updated_at: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StudySyncRequest {
     pub account: String,
@@ -2182,25 +2085,24 @@ pub struct StudySyncRequest {
     pub pgn: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessStudyChapter {
     pub name: String,
     pub pgn: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportRequest {
     /// File name without extension.
     pub name: String,
     pub kind: ExportKind,
-    #[ts(type = "Uint8Array | string")]
     pub data: Value,
 }
 
 /// A cloud evaluation: lines from White's point of view, like the local engine's.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudEval {
     pub fen: String,
@@ -2210,9 +2112,8 @@ pub struct CloudEval {
 }
 
 /// A paragraph, or a section heading, of an opening description.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct DescriptionBlock {
     pub heading: Option<bool>,
     pub text: String,
@@ -2220,7 +2121,7 @@ pub struct DescriptionBlock {
 
 /// A line's Wikibooks “Chess Opening Theory” page as plain text (CC BY-SA 4.0): shown with its
 /// title, a link to `url` and the licence.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OpeningDescription {
     pub title: String,
@@ -2231,255 +2132,10 @@ pub struct OpeningDescription {
 
 /// One month of a line's popularity: of the Lichess games at the position before its last move,
 /// the share (0–1) that went on with it, and how many games that was.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PopularityMonth {
     /// `YYYY-MM`.
     pub month: String,
     pub share: f64,
     pub games: f64,
-}
-
-/// Every declaration and `as const` array of `types.ts`, in the file's order.
-pub fn items(cfg: &Config) -> Vec<Item> {
-    use crate::strs;
-    let mut out = Vec::new();
-    macro_rules! decl {
-        ($($t:ty),+ $(,)?) => { $(out.push(Item::of::<$t>(cfg));)+ };
-    }
-    macro_rules! konst {
-        ($($name:ident),+ $(,)?) => {
-            $(out.push(Item::Const {
-                name: stringify!($name).to_string(),
-                values: strs($name),
-                suffix: String::new(),
-            });)+
-        };
-    }
-    konst!(
-        APPEARANCES,
-        COORDINATE_MODES,
-        ENGINE_LEVELS,
-        PROMOTION_MODES,
-        PIECE_ANIMATIONS,
-        NOTIFICATION_KINDS,
-        ONLINE_ACTIONS,
-        DECLINE_REASONS,
-        CHAT_ROOMS,
-        CHALLENGE_COLORS,
-        PUZZLE_DIFFICULTIES,
-        RUN_KINDS,
-        PUZZLE_TRAIN_MODES,
-        PUZZLE_ATTEMPT_OUTCOMES,
-        VOICE_SOURCES,
-        VOICE_OUTCOMES,
-        JUDGMENTS,
-        REVIEW_AUTO,
-        POSITION_LOOKUP_KINDS,
-        EXPLORER_SPEEDS,
-        PERF_TYPES,
-        EXPORT_KINDS,
-    );
-    decl!(
-        Appearance,
-        CoordinateMode,
-        EngineLevel,
-        PromotionMode,
-        PieceAnimation,
-        NotificationKind,
-        OnlineAction,
-        DeclineReason,
-        ChatRoom,
-        ChallengeColor,
-        PuzzleDifficulty,
-        RunKind,
-        PuzzleTrainMode,
-        PuzzleAttemptOutcome,
-        VoiceSource,
-        VoiceOutcome,
-        Judgment,
-        ReviewAuto,
-        PositionLookupKind,
-        ExplorerSpeed,
-        PerfType,
-        ExportKind,
-        PlayerColor,
-        TournamentSystem,
-        LookupMode,
-        GameResultFilter,
-        ChallengeDirection,
-        Lane,
-        OnlinePhase,
-        TournamentStatus,
-        UsageKind,
-        ReviewSource,
-        WatchPhase,
-        WatchSource,
-        BroadcastSection,
-        AnalysisReason,
-        ReviewPause,
-        AppUpdatePhase,
-        MicrophoneStatus,
-        NotificationSkip,
-        NotificationVia,
-        PuzzleDbPhase,
-        VoiceModelPhase,
-        ThemePalette,
-        AppTheme,
-        OAuthPageColors,
-        OAuthPageLook,
-        CustomThemeReport,
-        CoreSettings,
-        FrontendPreferences,
-        Settings,
-        AppUpdateProgress,
-        AppUpdateStatus,
-        MicrophoneAccess,
-        NotificationRequest,
-        NotificationResult,
-        LichessAccount,
-        LichessGame,
-        GamePageQuery,
-        GamePage,
-        GameRecord,
-        InsightsQuery,
-        ColorRecords,
-        SpeedRecord,
-        OpeningRecord,
-        LabeledRecord,
-        EndingRecord,
-        Streaks,
-        GamePerfAverages,
-        InsightsAccuracy,
-        InsightsReport,
-        GameLibraryOverview,
-        ReviewSide,
-        OnlineConnection,
-        PlayerRef,
-        ChallengeTimeControl,
-        ChallengeInfo,
-        LobbyState,
-        ChatLine,
-        OngoingGame,
-        TournamentClock,
-        TournamentTeam,
-        TournamentSummary,
-        NewArena,
-        TournamentStanding,
-        TournamentPlayer,
-        TournamentGame,
-        TournamentMe,
-        TournamentCondition,
-        TournamentVerdicts,
-        TournamentClocks,
-        TournamentFeatured,
-        TournamentPodium,
-        TournamentStats,
-        TournamentDetail,
-        TournamentList,
-        PerfResult,
-        PerfMark,
-        PerfStreak,
-        PerfCount,
-        PerfStats,
-        CrosstableMatchup,
-        Crosstable,
-        LichessRelation,
-        LeaderboardEntry,
-        PlayerSuggestion,
-        ActivityItem,
-        ActivityDay,
-        TimelineEntry,
-        ImportedGame,
-        WatchPlayer,
-        WatchState,
-        WatchClock,
-        TvPastGame,
-        WatchFrame,
-        TvChannel,
-        BroadcastSummary,
-        BroadcastRoundRef,
-        BroadcastTourDetail,
-        BroadcastGame,
-        BroadcastUpdate,
-        EngineManaged,
-        EngineStatus,
-        OnlineOptions,
-        FollowedRatings,
-        FollowedUser,
-        FollowingProblem,
-        FollowingReport,
-        UsageCell,
-        AccountUsage,
-        AccountStorage,
-        UsageReport,
-        UserPresence,
-        PresenceReport,
-        Puzzle,
-        PuzzleGlicko,
-        PuzzleRequest,
-        PuzzleDraw,
-        PuzzleSolveRequest,
-        PuzzleSolveResult,
-        NeedsReconnect,
-        PuzzlePerformance,
-        PuzzleThemeResult,
-        PuzzleDashboard,
-        PuzzleActivityEntry,
-        PuzzleWrongMove,
-        PuzzleAttemptInput,
-        PuzzleAttempt,
-        PuzzleTotals,
-        PuzzleProgress,
-        PuzzleProgressQuery,
-        StormHigh,
-        StormDay,
-        StormDashboard,
-        ProfileArea,
-        AlertOwner,
-        ProfileChange,
-        PuzzleDbProgress,
-        PuzzleDbStatus,
-        LocalPuzzleQuery,
-        LocalLadderQuery,
-        RunInput,
-        RunRecord,
-        RunBest,
-        RunSummary,
-        RunSaved,
-        VoiceWord,
-        VoiceRecognized,
-        VoiceHeard,
-        VoiceModelProgress,
-        VoiceModelStatus,
-        VoiceAttemptInput,
-        VoiceAttempt,
-        VoiceAttemptUpdate,
-        BestMoveOptions,
-        AnalysisRequest,
-        EngineLine,
-        AnalysisUpdate,
-        ReviewEval,
-        ReviewAccuracy,
-        StoredReview,
-        ReviewSummary,
-        ReviewRequest,
-        ReviewCurrent,
-        ReviewFailure,
-        ReviewStatus,
-        ReviewUpdate,
-        LookupOptions,
-        ExplorerGame,
-        LookupMove,
-        PositionLookup,
-        LichessStudy,
-        StudySyncRequest,
-        LichessStudyChapter,
-        ExportRequest,
-        CloudEval,
-        DescriptionBlock,
-        OpeningDescription,
-        PopularityMonth,
-    );
-    out.extend(crate::raw::types_items());
-    out
 }

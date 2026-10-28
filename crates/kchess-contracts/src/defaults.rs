@@ -1,13 +1,10 @@
-//! `crates/kchess-contracts/ts/defaultSettings.ts`: the default preferences, as data.
+//! The default preferences, as data.
 
-use kchess_domain::training;
-use ts_rs::Config;
-
-use crate::generate::Item;
 use crate::types::{
     Appearance, CoordinateMode, CoreSettings, EngineLevel, FrontendPreferences, PieceAnimation,
     PromotionMode, ReviewAuto, Settings,
 };
+use kchess_domain::training;
 
 /// Minutes between correspondence-game polls.
 const DEFAULT_CORRESPONDENCE_POLL_MINUTES: f64 = 5.0;
@@ -75,14 +72,4 @@ pub fn default_settings() -> Result<Settings, String> {
             puzzle_auto_next: true,
         },
     })
-}
-
-pub fn items(_cfg: &Config) -> Result<Vec<Item>, String> {
-    let settings = default_settings()?;
-    let json = serde_json::to_string_pretty(&settings)
-        .map_err(|cause| format!("the default settings do not serialize: {cause}"))?;
-    Ok(vec![Item::Raw {
-        name: "DEFAULT_SETTINGS".into(),
-        text: format!("export const DEFAULT_SETTINGS: Settings = {json};"),
-    }])
 }

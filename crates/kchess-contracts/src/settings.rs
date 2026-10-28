@@ -1,11 +1,6 @@
-//! `crates/kchess-contracts/ts/settings.ts`: the preference keys the core owns.
+//! The preference keys the core owns.
 
-use ts_rs::Config;
-
-use crate::generate::Item;
-use crate::strs;
-
-/// The keys of `CoreSettings`, in `coreSettings` order.
+/// The keys of `CoreSettings`, in declaration order.
 pub const CORE_SETTINGS_KEYS: &[&str] = &[
     "enginePath",
     "engineLevels",
@@ -17,11 +12,3 @@ pub const CORE_SETTINGS_KEYS: &[&str] = &[
     "cloudEval",
     "voiceHistory",
 ];
-
-pub fn items(_cfg: &Config) -> Vec<Item> {
-    vec![Item::Const {
-        name: "CORE_SETTINGS_KEYS".into(),
-        values: strs(CORE_SETTINGS_KEYS),
-        suffix: " satisfies readonly (keyof CoreSettings)[]".into(),
-    }]
-}

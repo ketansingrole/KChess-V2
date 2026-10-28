@@ -1,19 +1,14 @@
-//! `crates/kchess-wasm/js/library.ts`: the local library's documents, as the core keeps them.
-//!
-//! Bounds and decoders stay in TypeScript (`domain/library.ts`); only the shapes live here.
+//! The local library's documents, as the core keeps them. Only the shapes live here.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ts_rs::{Config, TS};
 
-use crate::generate::Item;
-use crate::strs;
 use crate::types::{EngineLevel, TournamentSystem};
 use crate::variant::GameSetup;
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum Color {
     #[serde(rename = "white")]
     White,
@@ -21,7 +16,7 @@ pub enum Color {
     Black,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StudyChapter {
     pub id: String,
@@ -29,9 +24,8 @@ pub struct StudyChapter {
     pub pgn: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct StudyCloud {
     pub account: String,
     pub id: String,
@@ -39,9 +33,8 @@ pub struct StudyCloud {
     pub structure_changed: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct SavedStudy {
     pub id: String,
     pub name: String,
@@ -52,7 +45,7 @@ pub struct SavedStudy {
     pub cloud: Option<StudyCloud>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ArchivedSource {
     Computer,
@@ -60,7 +53,7 @@ pub enum ArchivedSource {
     Clock,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum ArchivedResult {
     #[serde(rename = "*")]
     Unfinished,
@@ -72,9 +65,8 @@ pub enum ArchivedResult {
     Draw,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ArchivedGame {
     pub id: String,
     pub source: ArchivedSource,
@@ -91,7 +83,7 @@ pub struct ArchivedGame {
     pub clock_summary: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MistakeExercise {
     pub id: String,
@@ -104,9 +96,8 @@ pub struct MistakeExercise {
 }
 
 /// A reviewed game that has positions in practice, and where it came from when that is known.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct MistakeGame {
     /// The review's key: its positions' ids start with it.
     pub key: String,
@@ -125,7 +116,7 @@ pub struct MistakeGame {
 }
 
 /// A tournament joined from KChess; its pairings arrive on the account's event stream.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinedTournament {
     pub system: TournamentSystem,
@@ -136,7 +127,7 @@ pub struct JoinedTournament {
     pub until: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClockSide {
     pub minutes: f64,
@@ -144,14 +135,14 @@ pub struct ClockSide {
 }
 
 /// Each side's clock: minutes and seconds added after every move (sides may differ, for odds).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalClock {
     pub white: ClockSide,
     pub black: ClockSide,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisSession {
     pub pgn: String,
@@ -161,43 +152,39 @@ pub struct AnalysisSession {
     pub chapter: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Times {
     pub white: f64,
     pub black: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct LocalResult {
     pub winner: Option<Color>,
     pub reason: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSession {
     pub setup: GameSetup,
     pub moves: Vec<String>,
     /// `null` when the game has no clock.
-    #[ts(optional = false)]
     pub clock: Option<LocalClock>,
-    #[ts(optional = false)]
     pub times: Option<Times>,
-    #[ts(optional = false)]
     pub result: Option<LocalResult>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputerClock {
     pub minutes: f64,
     pub increment: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputerSession {
     pub moves: Vec<String>,
@@ -206,24 +193,21 @@ pub struct ComputerSession {
     pub color: Color,
     pub resigned: bool,
     pub setup: GameSetup,
-    #[ts(optional = false)]
     pub clock: Option<ComputerClock>,
-    #[ts(optional = false)]
     pub times: Option<Times>,
-    #[ts(optional = false)]
     pub flagged: Option<Color>,
 }
 
 /// Which archive entry an unfinished game updates, across reloads.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchiveIdentity {
     pub id: String,
     pub started_at: f64,
 }
 
-/// One unfinished document per session kind (`SessionKind` is `keyof SessionDocuments`).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+/// One unfinished document per session kind (the fields are the session kinds).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SessionDocuments {
     pub analysis: AnalysisSession,
     pub local: LocalSession,
@@ -236,21 +220,18 @@ pub struct SessionDocuments {
     pub archive_clock: ArchiveIdentity,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibrarySnapshot {
     pub studies: Vec<SavedStudy>,
     /// Stored studies could not be decoded; other library documents still load normally.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
     pub study_error: Option<String>,
     pub games: Vec<ArchivedGame>,
     pub mistakes: Vec<MistakeExercise>,
-    /// `Partial<SessionDocuments>`: a session kind is present only when one was saved.
-    #[ts(type = "Partial<SessionDocuments>")]
+    /// A session kind is present only when one was saved.
     pub sessions: SessionDocuments,
     pub joined_tournaments: Vec<JoinedTournament>,
-    #[ts(type = "RepertoireMisses")]
     pub repertoire_misses: BTreeMap<String, BTreeMap<String, f64>>,
     /// False until documents saved by an earlier release have been offered for import.
     pub imported: bool,
@@ -259,8 +240,8 @@ pub struct LibrarySnapshot {
 /* ── Study commands a frontend sends to the core ── */
 
 /// A study command's shape, as a frontend sends it. A study to restore is checked by the core
-/// service, whose rules replay every chapter (`assertStudyCommand` in `services/rules.ts`).
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+/// service, whose rules replay every chapter.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "op")]
 pub enum StudyCommandInput {
     #[serde(rename = "save")]
@@ -268,9 +249,7 @@ pub enum StudyCommandInput {
     Save {
         name: String,
         pgn: String,
-        #[ts(optional)]
         id: Option<String>,
-        #[ts(optional)]
         chapter_id: Option<String>,
     },
     #[serde(rename = "saveChapters")]
@@ -278,7 +257,6 @@ pub enum StudyCommandInput {
     SaveChapters {
         name: String,
         chapters: Vec<StudyChapterDraft>,
-        #[ts(optional)]
         id: Option<String>,
     },
     #[serde(rename = "addChapter")]
@@ -314,31 +292,27 @@ pub enum StudyCommandInput {
     #[serde(rename = "remove")]
     Remove { id: String },
     #[serde(rename = "restore")]
-    Restore {
-        #[ts(type = "unknown")]
-        study: Value,
-    },
+    Restore { study: Value },
     #[serde(rename = "rename")]
     Rename { id: String, name: String },
     #[serde(rename = "duplicate")]
     Duplicate { id: String },
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StudyChapterDraft {
     pub name: String,
     pub pgn: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StudyRemote {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct StudyCommandResult {
     pub studies: Vec<SavedStudy>,
     /// Incremental responses contain only changed studies; order lists every remaining study ID.
@@ -376,46 +350,3 @@ pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
     "kchess:tournaments-joined",
     "kchess:repertoire-misses",
 ];
-
-pub fn items(cfg: &Config) -> Vec<Item> {
-    let mut out = vec![
-        Item::Const { name: "SESSION_KINDS".into(), values: strs(SESSION_KINDS), suffix: " satisfies readonly SessionKind[]".into() },
-        Item::Const { name: "LEGACY_DOCUMENT_KEYS".into(), values: strs(LEGACY_DOCUMENT_KEYS), suffix: String::new() },
-        Item::Raw { name: "SessionKind".into(), text: "export type SessionKind = keyof SessionDocuments;".into() },
-        Item::Raw { name: "RepertoireMisses".into(), text: "export type RepertoireMisses = Record<string, Record<string, number>>;".into() },
-        Item::Raw { name: "LegacyDocuments".into(), text: "export type LegacyDocuments = Partial<Record<(typeof LEGACY_DOCUMENT_KEYS)[number], string>>;".into() },
-        Item::Raw { name: "GameSnapshot".into(), text: "export type GameSnapshot = Omit<ArchivedGame, 'id' | 'startedAt' | 'updatedAt' | 'finished'>;".into() },
-        Item::Raw { name: "StudyCommand".into(), text: "export type StudyCommand =\n  Exclude<StudyCommandInput, { op: 'restore' }> | { op: 'restore'; study: SavedStudy };".into() },
-    ];
-    macro_rules! decl {
-        ($($t:ty),+ $(,)?) => { $(out.push(Item::of::<$t>(cfg));)+ };
-    }
-    decl!(
-        Color,
-        StudyChapter,
-        StudyCloud,
-        SavedStudy,
-        ArchivedSource,
-        ArchivedResult,
-        ArchivedGame,
-        MistakeExercise,
-        MistakeGame,
-        JoinedTournament,
-        ClockSide,
-        LocalClock,
-        AnalysisSession,
-        Times,
-        LocalResult,
-        LocalSession,
-        ComputerClock,
-        ComputerSession,
-        ArchiveIdentity,
-        SessionDocuments,
-        LibrarySnapshot,
-        StudyCommandInput,
-        StudyChapterDraft,
-        StudyRemote,
-        StudyCommandResult,
-    );
-    out
-}

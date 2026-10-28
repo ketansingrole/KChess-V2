@@ -1,12 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-electron-legacy", "crates/kchess-games", "crates/kchess-node", "crates/kchess-wasm", "crates/kchess-contracts", "crates/kchess-voice", "crates/kchess-service", "apps/gpui", "apps/cli"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-electron-legacy", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-voice", "crates/kchess-service", "apps/gpui", "apps/cli", "tooling/xtask"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
 # their own manifests and lints.
 exclude = ["fuzz", "vendor/gpui-pre"]
 
 [workspace.package]
-version = "0.1.0"
+# The KChess release: `YEAR.MONTH.COUNTER` (`cargo xtask release-version`), the version every
+# binary reports and every package is named with.
+version = "2026.10.15"
 edition = "2024"
 # Matches rust-toolchain.toml so `cargo` warns on older toolchains.
 rust-version = "1.98.0"
@@ -14,8 +16,8 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [workspace.lints.rust]
-# deny, not forbid: napi-derive expands to #[allow(unsafe_code)], which is
-# E0453-incompatible with forbid. deny still fails the build on direct unsafe.
+# deny, not forbid: the few modules that must call the OS (the Dock icon, the microphone, Windows'
+# DPAPI) allow it locally with SAFETY comments.
 unsafe_code = "deny"
 # warn breaks `cargo clippy -- -D warnings` (fires on build.rs and many
 # undocumented items); keep allow until docs are added.
@@ -25,11 +27,11 @@ missing_docs = "allow"
 # Verified zero hits on green code; existing unsafe blocks carry SAFETY comments.
 undocumented_unsafe_blocks = "deny"
 # None of these entries changes a build: `-D warnings` only promotes lints that already fire,
-# and nothing in `check:rust-lint` enables these. They document what switching one on would
-# cost. Shipped Rust is library targets (the N-API cdylib included) and the `kchess-voice` bin;
+# and nothing in `cargo xtask check` enables these. They document what switching one on would
+# cost. Shipped Rust is the app, the core service, the CLI and the `kchess-voice` bin;
 # `kchess-core`'s `kchess-fake-uci` and `kchess-fake-voice` bins are test scaffolding.
 # unwrap_used/expect_used are enforced for shipped targets by the second clippy pass in
-# `check:rust-lint`; test targets keep this exemption, because a panicking test is a failing
+# `cargo xtask check`; test targets keep this exemption, because a panicking test is a failing
 # test rather than a shipped panic path.
 # Measured 2026-10-17: cast_possible_truncation 38 hits over 40 files, none with more than 7.
 cast_possible_truncation = "allow"
@@ -54,14 +56,6 @@ codegen-units = 1
 panic = "unwind"
 # Not "symbols": see .cargo/config.toml for platform-specific linker stripping.
 strip = "none"
-
-# WebAssembly cannot unwind; a panic traps and the host reports it.
-[profile.wasm]
-inherits = "release"
-panic = "abort"
-# The renderer never reads DWARF or the `name` section (a trap reaches the log as its message
-# only); development builds use `dev` and keep both.
-strip = "symbols"
 
 # GPUI with a window zoom (Settings → Interface size, as Electron's page zoom): see
 # vendor/gpui-pre/KCHESS-PATCH.md for what differs from the published 0.3.9.

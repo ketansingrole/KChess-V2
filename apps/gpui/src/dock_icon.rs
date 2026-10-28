@@ -37,9 +37,9 @@ fn set(dark: bool) -> bool {
     use objc2_foundation::NSData;
 
     let png: &[u8] = if dark {
-        include_bytes!("../../desktop/build/icon-dark.png")
+        include_bytes!("../build/icon-dark.png")
     } else {
-        include_bytes!("../../desktop/build/icon-light.png")
+        include_bytes!("../build/icon-light.png")
     };
     let Some(main) = MainThreadMarker::new() else {
         return false;

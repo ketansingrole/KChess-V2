@@ -1,4 +1,4 @@
-//! `kchess`: the KChess command line, over the same profile and core as the app.
+//! `kchess-cli`: the KChess command line, over the same profile and core as the app.
 
 mod core;
 mod play;
@@ -12,7 +12,7 @@ use crate::core::{Browser, CoreClient, Options};
 
 const HELP: &str = "KChess CLI
 
-Usage: kchess [options] <command>
+Usage: kchess-cli [options] <command>
 
 Commands:
   library                          Print the library as JSON

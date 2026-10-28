@@ -77,7 +77,6 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # The release version, and on Windows the executable's icon and version (`build.rs`); both
 # already in Cargo.lock.
 [build-dependencies]
-serde_json.workspace = true
 embed-resource = "3"
 
 [dev-dependencies]

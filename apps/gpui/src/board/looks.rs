@@ -152,35 +152,6 @@ pub fn piece_image(set: &str, piece: Piece, pixels: u32, cx: &mut App) -> Option
 mod tests {
     use super::*;
 
-    /// The Electron renderer draws boards from `main.css`; both must name the same image and
-    /// coordinate colors for every board.
-    #[test]
-    fn every_board_matches_the_electron_stylesheet() {
-        // A Windows checkout may end its lines with CRLF.
-        let css = include_str!("../../../desktop/app/assets/css/main.css").replace("\r\n", "\n");
-        for board in &LOOKS.boards {
-            let rule = format!(
-                ".board-theme-{} {{\n  --board-coord-white: {};\n  --board-coord-black: {};\n}}",
-                board.id, board.coord_white, board.coord_black
-            );
-            assert!(
-                css.contains(&rule),
-                "{} coordinates differ from main.css",
-                board.id
-            );
-            let image = format!("url('../boards/{}')", board.image);
-            let swatch = format!(
-                ".board-theme-{} .board-swatch {{\n  background-image: {image};",
-                board.id
-            );
-            assert!(
-                css.contains(&swatch),
-                "{} image differs from main.css",
-                board.id
-            );
-        }
-    }
-
     #[test]
     fn every_piece_image_is_embedded() {
         for set in &LOOKS.piece_sets {

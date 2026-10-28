@@ -1,28 +1,26 @@
-//! What the app draws and plays: the Lucide icons it names, GPUI Kit's component icons, and the
-//! Electron app's own boards, piece sets and sounds (`apps/desktop/app/assets`), embedded once so
-//! both apps look and sound the same.
+//! What the app draws and plays: the Lucide icons it names, GPUI Kit's component icons, and its
+//! boards, piece sets and sounds (`apps/gpui/assets`, the Electron app's own), embedded once.
 
 use std::borrow::Cow;
 
 use gpui_kit::component::Icon;
 use gpui_kit::{AssetSource, Result, SharedString};
 
-/// The Lucide icons the app names (`icon`), written by `tooling/gpui-icons.mjs` from the
-/// Electron renderer's own icon set.
+/// The Lucide icons the app names (`icon`), written by `cargo xtask icons`.
 #[derive(rust_embed::RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/*.svg"]
 struct Icons;
 
-/// A Lucide icon by its Electron name (`i-lucide-<name>`). `tooling/gpui-icons.mjs` finds every
-/// `icon("…")` in the sources, so the name must be written here as a literal.
+/// A Lucide icon by its name (`circle-dot`). `cargo xtask icons` finds every `icon("…")` in the
+/// sources, so the name must be written here as a literal.
 pub fn icon(name: &'static str) -> Icon {
     Icon::empty().path(format!("icons/{name}.svg"))
 }
 
-/// The Electron renderer's boards, pieces, sounds, app icon and startup logo.
+/// The boards, pieces, sounds, app icon and startup logo.
 #[derive(rust_embed::RustEmbed)]
-#[folder = "../desktop/app/assets"]
+#[folder = "assets"]
 #[include = "boards/*"]
 #[include = "pieces/**/*.svg"]
 #[include = "sounds/*.mp3"]
@@ -30,7 +28,7 @@ pub fn icon(name: &'static str) -> Icon {
 #[include = "icon-splash.png"]
 struct Shared;
 
-/// A board image or piece of the Electron renderer's, by its path (`boards/brown.png`).
+/// A board image or piece, by its path (`boards/brown.png`).
 pub fn shared(path: &str) -> Option<Cow<'static, [u8]>> {
     Shared::get(path).map(|file| file.data)
 }

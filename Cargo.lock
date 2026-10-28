@@ -1148,15 +1148,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "convert_case"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1af709f1f33454bf52eadfc8c78b3b9ef9cb26fb54d16dc9cd9a7299f899fd1b"
-dependencies = [
- "unicode-segmentation",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4109,7 +4100,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-cli"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "kchess-contracts",
  "kchess-core",
@@ -4123,17 +4114,16 @@ dependencies = [
 
 [[package]]
 name = "kchess-contracts"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "kchess-domain",
  "serde",
  "serde_json",
- "ts-rs",
 ]
 
 [[package]]
 name = "kchess-core"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -4162,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-domain"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "flate2",
  "memchr",
@@ -4177,7 +4167,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-electron-legacy"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -4195,7 +4185,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-games"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-domain",
@@ -4204,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-gpui"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "base64 0.22.1",
  "block2 0.6.2",
@@ -4241,21 +4231,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "kchess-node"
-version = "0.1.0"
-dependencies = [
- "kchess-core",
- "kchess-domain",
- "napi",
- "napi-build",
- "napi-derive",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "kchess-service"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-core",
@@ -4269,18 +4246,11 @@ dependencies = [
 
 [[package]]
 name = "kchess-voice"
-version = "0.1.0"
+version = "2026.10.15"
 dependencies = [
  "libloading 0.9.0",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "kchess-wasm"
-version = "0.1.0"
-dependencies = [
- "kchess-domain",
 ]
 
 [[package]]
@@ -4828,65 +4798,6 @@ dependencies = [
  "indexmap",
  "rustc-hash 1.1.0",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "napi"
-version = "3.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4e2cf85c02d9b057898c485b824c3c416b65193689e2b7f517efc94b86ed24c"
-dependencies = [
- "bitflags 2.13.2",
- "ctor",
- "futures",
- "libc",
- "napi-build",
- "napi-sys",
- "nohash-hasher",
- "rustc-hash 2.1.3",
- "tokio",
-]
-
-[[package]]
-name = "napi-build"
-version = "2.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b899b545d3aa6dca985939059f258c5488d34e4ecf39c274e20009748f4b846d"
-
-[[package]]
-name = "napi-derive"
-version = "3.6.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92cec6048ac04041ac8055bdce1ec4f353416cd443ba9222bf73af790c3d4495"
-dependencies = [
- "convert_case 0.12.0",
- "ctor",
- "napi-derive-backend",
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "napi-derive-backend"
-version = "6.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fae2444f4ba7333754bb73414ff8059dec2cb23b83a95bd1a0bf08169eed1be0"
-dependencies = [
- "convert_case 0.12.0",
- "proc-macro2",
- "quote",
- "semver",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "napi-sys"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e22a4f25c16a5c5411d987cd6fbd48313522ae1789ade2d6dd3efdc6d40a0fc8"
-dependencies = [
- "libloading 0.9.0",
 ]
 
 [[package]]
@@ -8173,29 +8084,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "ts-rs"
-version = "12.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "756050066659291d47a554a9f558125db17428b073c5ffce1daf5dcb0f7231d8"
-dependencies = [
- "serde_json",
- "thiserror 2.0.21",
- "ts-rs-macros",
-]
-
-[[package]]
-name = "ts-rs-macros"
-version = "12.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38d90eea51bc7988ef9e674bf80a85ba6804739e535e9cab48e4bb34a8b652aa"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "termcolor",
-]
-
-[[package]]
 name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9885,6 +9773,19 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xtask"
+version = "2026.10.15"
+dependencies = [
+ "base64 0.23.1",
+ "flate2",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tempfile",
+ "zip",
+]
 
 [[package]]
 name = "y4m"

@@ -14,14 +14,13 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 /// Raised when the framing itself changes; part of the protocol fingerprint.
 const FRAMING: &str = "kchess-frames-1";
 
-/// The generated contracts both sides are built from: every method and event, with their types.
-const CONTRACTS: [&str; 2] = [
-    include_str!("../../kchess-contracts/ts/generated/core.ts"),
-    include_str!("../../kchess-contracts/ts/generated/types.ts"),
+/// The contracts both sides are built from: every method and event, with their types.
+const CONTRACTS: [&str; 4] = [
+    include_str!("../../kchess-contracts/src/core_api.rs"),
+    include_str!("../../kchess-contracts/src/types.rs"),
+    include_str!("../../kchess-contracts/src/library.rs"),
+    include_str!("../../kchess-contracts/src/lichess.rs"),
 ];
-
-/// The root `package.json`: the KChess release this build belongs to.
-const PACKAGE_JSON: &str = include_str!("../../../package.json");
 
 /// What a client can do for the core when it asks (`host:request`), by name.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,12 +108,10 @@ pub enum Frame {
     Focus { focused: bool },
 }
 
-/// The KChess release this build belongs to (`package.json`'s version).
+/// The KChess release this build belongs to: the workspace version, or `KCHESS_PACKAGE_VERSION`
+/// when a test installer is built above every release (`build.rs`).
 pub fn release() -> String {
-    serde_json::from_str::<Value>(PACKAGE_JSON)
-        .ok()
-        .and_then(|package| package["version"].as_str().map(str::to_string))
-        .unwrap_or_default()
+    env!("KCHESS_RELEASE").to_string()
 }
 
 /// The protocol fingerprint: the framing and the contracts this build speaks. Two builds share a

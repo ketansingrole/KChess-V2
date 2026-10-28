@@ -1,21 +1,18 @@
-//! `crates/kchess-contracts/ts/lichessApi.ts`: the Lichess API shapes KChess reads, copied from
-//! `@lichess-org/types` 2.0.176. Only the schemas the contracts and services reference are kept.
+//! The Lichess API shapes KChess reads, copied from the Lichess OpenAPI schemas. Only the schemas
+//! the contracts and services reference are kept.
 //!
-//! The TypeScript exposes them as `components['schemas'][...]` and `paths[...]`. Here each
-//! schema is a named `Api*` type (so none collides with a KChess name in `types.ts`), and
+//! Each schema is a named `Api*` type (so none collides with a KChess name in `types`), and
 //! `ApiSchemas` / `ApiPaths` give the same indexed structure under the names `components` and
 //! `paths`. Shared literal unions (`PlayerColor`, `PerfType`, `ChallengeColor`, `ChatRoom`,
 //! `ChallengeDirection`) are KChess's own enums with the same wire values.
 
 use serde::{Deserialize, Serialize};
-use ts_rs::{Config, TS};
 
-use crate::generate::Item;
 use crate::types::{ChallengeColor, ChallengeDirection, ChatRoom, PerfType, PlayerColor};
 
 /* ── Literal unions ─────────────────────────────────────────────────── */
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiTitle {
     #[serde(rename = "GM")]
     Gm,
@@ -43,7 +40,7 @@ pub enum ApiTitle {
     Bot,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiSpeed {
     #[serde(rename = "ultraBullet")]
     UltraBullet,
@@ -59,7 +56,7 @@ pub enum ApiSpeed {
     Correspondence,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiVariantKey {
     #[serde(rename = "standard")]
     Standard,
@@ -83,7 +80,7 @@ pub enum ApiVariantKey {
     FromPosition,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiGameStatusName {
     #[serde(rename = "created")]
     Created,
@@ -115,7 +112,7 @@ pub enum ApiGameStatusName {
     VariantEnd,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiGameSource {
     #[serde(rename = "lobby")]
     Lobby,
@@ -145,7 +142,7 @@ pub enum ApiGameSource {
     Swiss,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiChallengeStatus {
     #[serde(rename = "created")]
     Created,
@@ -159,7 +156,7 @@ pub enum ApiChallengeStatus {
     Accepted,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiDeclineReasonKey {
     #[serde(rename = "generic")]
     Generic,
@@ -187,9 +184,8 @@ pub enum ApiDeclineReasonKey {
 
 /* ── Users ──────────────────────────────────────────────────────────── */
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiPerf {
     pub games: f64,
     pub rating: f64,
@@ -200,16 +196,15 @@ pub struct ApiPerf {
     pub rank: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiPuzzleModePerf {
     pub runs: f64,
     pub score: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiPerfs {
     pub chess960: Option<ApiPerf>,
     pub atomic: Option<ApiPerf>,
@@ -231,9 +226,8 @@ pub struct ApiPerfs {
     pub streak: Option<ApiPuzzleModePerf>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiProfile {
     pub flag: Option<String>,
     pub location: Option<String>,
@@ -248,18 +242,16 @@ pub struct ApiProfile {
     pub links: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiPlayTime {
     pub total: f64,
     pub tv: f64,
     pub human: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiUser {
     pub id: String,
     pub username: String,
@@ -280,9 +272,8 @@ pub struct ApiUser {
     pub verified: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiCount {
     pub all: f64,
     pub rated: f64,
@@ -300,27 +291,23 @@ pub struct ApiCount {
     pub me: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiStreamChannel {
     pub channel: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiUserStreamer {
     pub twitch: Option<ApiStreamChannel>,
     pub youtube: Option<ApiStreamChannel>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiUserExtended {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub user: ApiUser,
     pub url: String,
     pub playing: Option<String>,
@@ -336,35 +323,31 @@ pub struct ApiUserExtended {
     pub fide_id: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiRatingHistoryEntry {
-    #[ts(type = "'puzzle' | PerfType", optional)]
     pub name: Option<String>,
     pub points: Option<Vec<Vec<f64>>>,
 }
 
 /* ── Games ──────────────────────────────────────────────────────────── */
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiVariant {
     pub key: ApiVariantKey,
     pub name: String,
     pub short: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiGameStatus {
-    #[ts(type = "10 | 20 | 25 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 60")]
     pub id: f64,
     pub name: ApiGameStatusName,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ApiGameEventOpponent {
     #[serde(rename_all = "camelCase")]
@@ -372,7 +355,6 @@ pub enum ApiGameEventOpponent {
         id: String,
         username: String,
         rating: f64,
-        #[ts(optional)]
         rating_diff: Option<f64>,
     },
     #[serde(rename_all = "camelCase")]
@@ -384,9 +366,8 @@ pub enum ApiGameEventOpponent {
     },
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiGameCompat {
     /// Compatible with Bot API
     pub bot: Option<bool>,
@@ -394,9 +375,8 @@ pub struct ApiGameCompat {
     pub board: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiGameEventInfo {
     pub full_id: String,
     pub game_id: String,
@@ -421,27 +401,24 @@ pub struct ApiGameEventInfo {
     pub tournament_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiGameStartEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'gameStart'")]
     pub kind: String,
     pub game: ApiGameEventInfo,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiGameFinishEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'gameFinish'")]
     pub kind: String,
     pub game: ApiGameEventInfo,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiChallengeUser {
     pub id: String,
     pub name: String,
@@ -455,45 +432,36 @@ pub struct ApiChallengeUser {
     pub lag: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum ApiTimeControl {
     #[serde(rename = "clock")]
     Clock {
-        #[ts(optional)]
         limit: Option<f64>,
-        #[ts(optional)]
         increment: Option<f64>,
-        #[ts(optional)]
         show: Option<String>,
     },
     #[serde(rename = "correspondence")]
     #[serde(rename_all = "camelCase")]
-    Correspondence {
-        #[ts(optional)]
-        days_per_turn: Option<f64>,
-    },
+    Correspondence { days_per_turn: Option<f64> },
     #[serde(rename = "unlimited")]
     Unlimited,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiChallengePerf {
     pub icon: String,
     pub name: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiChallengeJson {
     pub id: String,
     pub url: String,
     pub status: ApiChallengeStatus,
     pub challenger: ApiChallengeUser,
-    #[ts(optional = false)]
     pub dest_user: Option<ApiChallengeUser>,
     pub variant: ApiVariant,
     pub rated: bool,
@@ -507,31 +475,27 @@ pub struct ApiChallengeJson {
     pub rematch_of: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiChallengeEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'challenge'")]
     pub kind: String,
     pub challenge: ApiChallengeJson,
     pub compat: Option<ApiGameCompat>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiChallengeCanceledEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'challengeCanceled'")]
     pub kind: String,
     pub challenge: ApiChallengeJson,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiChallengeDeclinedJson {
     #[serde(flatten)]
-    #[ts(flatten)]
     pub challenge: ApiChallengeJson,
     /// Human readable, possibly translated reason why the challenge was declined.
     pub decline_reason: String,
@@ -539,30 +503,27 @@ pub struct ApiChallengeDeclinedJson {
     pub decline_reason_key: ApiDeclineReasonKey,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiChallengeDeclinedEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'challengeDeclined'")]
     pub kind: String,
     pub challenge: ApiChallengeDeclinedJson,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiGameEventPlayer {
     pub ai_level: Option<f64>,
     pub id: String,
     pub name: String,
-    #[ts(optional = nullable)]
     pub title: Option<ApiTitle>,
     pub rating: Option<f64>,
     pub rating_diff: Option<f64>,
     pub provisional: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiExpiration {
     /// Milliseconds since the last move was played, or since the game started
@@ -571,12 +532,10 @@ pub struct ApiExpiration {
     pub millis_to_move: f64,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiGameStateEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'gameState'")]
     pub kind: String,
     /// Current moves in UCI format (King to rook for Chess690-compatible castling notation)
     pub moves: String,
@@ -603,9 +562,8 @@ pub struct ApiGameStateEvent {
     pub expiration: Option<ApiExpiration>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiGameClock {
     /// Initial time in milliseconds
     pub initial: Option<f64>,
@@ -613,20 +571,17 @@ pub struct ApiGameClock {
     pub increment: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiPerfName {
     /// Translated perf name (e.g. "Classical" or "Blitz")
     pub name: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiGameFullEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'gameFull'")]
     pub kind: String,
     pub id: String,
     pub variant: ApiVariant,
@@ -645,30 +600,27 @@ pub struct ApiGameFullEvent {
     pub tournament_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiChatLineEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'chatLine'")]
     pub kind: String,
     pub room: ChatRoom,
     pub username: String,
     pub text: String,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiOpponentGoneEvent {
     #[serde(rename = "type")]
-    #[ts(type = "'opponentGone'")]
     pub kind: String,
     pub gone: bool,
     pub claim_win_in_seconds: Option<f64>,
 }
 
 /// `components['schemas']`: the schemas by their Lichess names.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiSchemas {
     #[serde(rename = "Flair")]
@@ -712,7 +664,6 @@ pub struct ApiSchemas {
     #[serde(rename = "GameStatusName")]
     pub game_status_name: ApiGameStatusName,
     #[serde(rename = "GameStatusId")]
-    #[ts(type = "10 | 20 | 25 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 60")]
     pub game_status_id: f64,
     #[serde(rename = "GameSource")]
     pub game_source: ApiGameSource,
@@ -761,17 +712,15 @@ pub struct ApiSchemas {
 }
 
 /// `components`: the Lichess schemas KChess reads.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
-#[ts(rename = "components")]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[allow(non_camel_case_types)]
 pub struct ApiComponents {
     pub schemas: ApiSchemas,
 }
 
 /// The account's now-playing response, the only path KChess reads.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
 pub struct ApiNowPlayingGame {
     pub full_id: String,
     pub game_id: String,
@@ -795,16 +744,14 @@ pub struct ApiNowPlayingGame {
     pub rating_diff: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ApiNowPlayingOpponent {
     #[serde(rename_all = "camelCase")]
     Human {
         id: String,
         username: String,
-        #[ts(optional)]
         rating: Option<f64>,
-        #[ts(optional)]
         rating_diff: Option<f64>,
     },
     Anonymous {
@@ -820,7 +767,7 @@ pub enum ApiNowPlayingOpponent {
     },
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiNowPlaying {
     /// Number of games where it is my turn to play
@@ -829,102 +776,38 @@ pub struct ApiNowPlaying {
     pub now_playing: Vec<ApiNowPlayingGame>,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiPlayingContent {
     #[serde(rename = "application/json")]
     pub json: ApiNowPlaying,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ApiPlayingResponses {
     #[serde(rename = "200")]
     pub ok: ApiPlayingContentResponse,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ApiPlayingContentResponse {
     pub content: ApiPlayingContent,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ApiPlayingGet {
     pub responses: ApiPlayingResponses,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ApiPlayingPath {
     pub get: ApiPlayingGet,
 }
 
 /// `paths`: the Lichess endpoints KChess reads.
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
-#[ts(rename = "paths")]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[allow(non_camel_case_types)]
 pub struct ApiPaths {
     #[serde(rename = "/api/account/playing")]
     pub account_playing: ApiPlayingPath,
-}
-
-/// The Lichess schema and path types, in declaration order.
-pub fn items(cfg: &Config) -> Vec<Item> {
-    let mut out = Vec::new();
-    macro_rules! decl {
-        ($($t:ty),+ $(,)?) => { $(out.push(Item::of::<$t>(cfg));)+ };
-    }
-    decl!(
-        ApiTitle,
-        ApiSpeed,
-        ApiVariantKey,
-        ApiGameStatusName,
-        ApiGameSource,
-        ApiChallengeStatus,
-        ApiDeclineReasonKey,
-        ApiPerf,
-        ApiPuzzleModePerf,
-        ApiPerfs,
-        ApiProfile,
-        ApiPlayTime,
-        ApiUser,
-        ApiCount,
-        ApiStreamChannel,
-        ApiUserStreamer,
-        ApiUserExtended,
-        ApiRatingHistoryEntry,
-        ApiVariant,
-        ApiGameStatus,
-        ApiGameEventOpponent,
-        ApiGameCompat,
-        ApiGameEventInfo,
-        ApiGameStartEvent,
-        ApiGameFinishEvent,
-        ApiChallengeUser,
-        ApiTimeControl,
-        ApiChallengePerf,
-        ApiChallengeJson,
-        ApiChallengeEvent,
-        ApiChallengeCanceledEvent,
-        ApiChallengeDeclinedJson,
-        ApiChallengeDeclinedEvent,
-        ApiGameEventPlayer,
-        ApiExpiration,
-        ApiGameStateEvent,
-        ApiGameClock,
-        ApiPerfName,
-        ApiGameFullEvent,
-        ApiChatLineEvent,
-        ApiOpponentGoneEvent,
-        ApiSchemas,
-        ApiComponents,
-        ApiNowPlayingGame,
-        ApiNowPlayingOpponent,
-        ApiNowPlaying,
-        ApiPlayingContent,
-        ApiPlayingResponses,
-        ApiPlayingContentResponse,
-        ApiPlayingGet,
-        ApiPlayingPath,
-        ApiPaths,
-    );
-    out
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kchess-contracts"
-description = "The core's contract types: serde shapes and the TypeScript types generated from them."
+description = "The core's contract types: serde shapes shared by the core, the GPUI app and the CLI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,11 +10,6 @@ publish.workspace = true
 kchess-domain = { path = "../kchess-domain" }
 serde.workspace = true
 serde_json.workspace = true
-ts-rs = { version = "12", features = ["serde-compat", "serde-json-impl"] }
-
-[[bin]]
-name = "export-types"
-path = "src/bin/export-types.rs"
 
 [lints]
 workspace = true

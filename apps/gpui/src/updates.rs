@@ -154,7 +154,7 @@ pub fn client_version(version: &str) -> String {
     format!("{version} · {CLIENT}")
 }
 
-/// The release's own version (`package.json`, the one releases are tagged with; `build.rs`).
+/// The release's own version (the workspace version, the one releases are tagged with; `build.rs`).
 pub fn current_version() -> String {
     env!("KCHESS_VERSION").to_string()
 }

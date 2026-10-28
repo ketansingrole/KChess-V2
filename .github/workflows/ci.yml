@@ -6,38 +6,23 @@ on:
 
 permissions:
   contents: read
-  issues: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# The headers the GPUI app (apps/gpui) builds against on Linux: X11/XCB, Wayland, xkbcommon,
-# fontconfig, Vulkan and ALSA. tooling/linux/Dockerfile installs the same for `pnpm run linux`.
 env:
   GPUI_LINUX_LIBS: >-
     libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
     libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
 
 jobs:
+  # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
+  # gate, as the pre-push hook runs them.
   check:
     runs-on: ubuntu-latest
-    # Unpackaged test builds use thin LTO and parallel codegen: the same code, compiled faster.
-    # Jobs that package (desktop, release package) keep Cargo.toml's profile for real sizes.
-    env:
-      CARGO_PROFILE_RELEASE_LTO: thin
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # The workspace includes the GPUI app, which builds against these system headers.
       - name: Install GPUI build libraries
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
@@ -47,96 +32,16 @@ jobs:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The Rust coverage gate (`check:rust-coverage`) runs inside `pnpm run check`.
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: rustup component add llvm-tools-preview
-      - run: pnpm run check
-      - name: Report guardrail measurements
-        if: always()
-        run: pnpm run check:report
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - run: cargo xtask check
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: check-measurements
-          path: |
-            test-results/guardrails/
-            test-results/unit.xml
-            test-results/coverage/coverage-summary.json
-            test-results/rust-coverage/summary.json
+          path: test-results/rust-coverage/summary.json
           if-no-files-found: ignore
           retention-days: 30
-
-  fuzz:
-    runs-on: ubuntu-latest
-    # Unpackaged test builds use thin LTO and parallel codegen: the same code, compiled faster.
-    # Jobs that package (desktop, release package) keep Cargo.toml's profile for real sizes.
-    env:
-      CARGO_PROFILE_RELEASE_LTO: thin
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
-      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: fuzz
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: pnpm run build:native
-      # Deep parity search beyond the recorded golden scale; golden pins apply
-      # at SCALE=1 in `pnpm run check`, this job exercises the extra cases.
-      - run: KCHESS_FUZZ_SCALE=20 pnpm exec vitest run tests/core/native-rules.test.ts
-      # A normal run must never rewrite the golden file without --update-golden.
-      - run: git diff --exit-code tests/core/native-golden.json
-
-  # Undefined-behaviour check of the renderer module's C ABI (kc_alloc/kc_free/kc_invoke), the
-  # workspace's only hand-written unsafe, on the nightly pinned for fuzzing.
-  miri:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install the pinned nightly with Miri
-        run: |
-          nightly=$(sed -n 's/^channel = "\(.*\)"$/\1/p' fuzz/rust-toolchain.toml)
-          rustup toolchain install "$nightly" --profile minimal --component miri,rust-src
-          echo "NIGHTLY=$nightly" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: miri
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The host rebuilds result pointers from integers, as the WebAssembly host does.
-      - run: cargo +"$NIGHTLY" miri test -p kchess-wasm --lib --locked
-        env:
-          MIRIFLAGS: -Zmiri-permissive-provenance
-
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Advisory-only: several flagged packages have no patched release upstream
-      # (tracked in docs/reviews/2026-10-03-implementation.md), so a blocking
-      # audit would fail every build. Revisit once patches are published.
-      - name: Dependency audit (informational)
-        continue-on-error: true
-        run: pnpm audit --audit-level moderate
 
   deny:
     runs-on: ubuntu-latest
@@ -145,85 +50,8 @@ jobs:
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
 
-  desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    # Packages the app and verifies its sizes, so it builds exactly as the release does: no
-    # CARGO_PROFILE overrides here (thin LTO grows the native module past the file budget).
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
-      # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: desktop
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: pnpm run build
-      - run: pnpm run test:puzzle-worker
-      # Windows Server runners deny microphone access in privacy settings, which the app
-      # (correctly) reports as "denied". Allow it so the voice e2e test can run.
-      - name: Allow microphone access (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $paths = @(
-            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone',
-            'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone',
-            'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged'
-          )
-          foreach ($p in $paths) {
-            New-Item -Path $p -Force | Out-Null
-            Set-ItemProperty -Path $p -Name Value -Value Allow
-          }
-      - run: pnpm run test:e2e
-        if: runner.os != 'Linux'
-      - run: xvfb-run --auto-servernum pnpm run test:e2e
-        if: runner.os == 'Linux'
-      - name: Package and verify contents
-        run: pnpm exec electron-builder --projectDir apps/desktop --dir --publish never
-      - run: pnpm run test:packaged
-        if: runner.os != 'Linux'
-      - run: xvfb-run --auto-servernum pnpm run test:packaged
-        if: runner.os == 'Linux'
-      - name: Report guardrail measurements
-        if: always()
-        run: pnpm run check:report
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: desktop-measurements-${{ matrix.os }}
-          path: |
-            test-results/guardrails/
-            test-results/desktop*.json
-          if-no-files-found: ignore
-          retention-days: 30
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: desktop-failure-${{ matrix.os }}
-          path: |
-            test-results/
-            playwright-report/
-          retention-days: 7
-
-  # The GPUI app on every platform it ships for: lint, unit tests, and a package with its own
-  # Stockfish (tooling/gpui-package.mjs), kept as an artifact to try.
+  # The app on each platform: its lints, its unit and end-to-end tests (`src/e2e`, headless), and
+  # a preview package as the Release workflow makes them (ad hoc signed on macOS).
   gpui:
     strategy:
       fail-fast: false
@@ -232,26 +60,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      # electron-builder makes the GPUI installers from the staged app.
-      - run: pnpm install --frozen-lockfile
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy -p kchess-gpui --all-targets --locked -- -D warnings
-      - run: cargo test -p kchess-gpui --locked
-      - run: node tooling/gpui-package.mjs
+      - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
+      - run: cargo test -p kchess-gpui -p kchess-cli -p xtask --locked
+      - run: cargo xtask package
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}

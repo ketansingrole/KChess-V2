@@ -1,20 +1,17 @@
 name: Windows upgrade
 
 # Installs a published Windows release three ways (per user, in a custom folder, for all users),
-# upgrades it with this commit's installer the way electron-updater does (`--updated /S`)
-# and checks Apps & features, shortcuts, the old copy and user data. A fresh install checks the
-# default folder. Each runs with the Electron app's installer and with the GPUI app's under
-# Electron's identity (`gpui-package.mjs --final`), which is how the switch to the GPUI app reaches
-# Windows. Run it from the Actions tab after changing the NSIS installer; pull requests that
-# change the test, apps/desktop/build/installer.nsh or the GPUI app's packaging run it too.
+# upgrades it with this commit's installer the way an installed KChess runs it (`--updated /S`,
+# which every Electron release's updater does too) and checks Apps & features, shortcuts, the old
+# copy and user data. A fresh install checks the default folder. Run it from the Actions tab after
+# changing the installer; pull requests that change it or this test run it too.
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/windows-upgrade.yml
       - tooling/windows-upgrade-test.ps1
-      - apps/desktop/build/installer.nsh
-      - tooling/gpui-package.mjs
+      - tooling/xtask/src/package/**
       - apps/gpui/build.rs
 
 permissions:
@@ -31,82 +28,36 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: desktop
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: false
-      - run: pnpm run build
-      - name: Build the installer
-        shell: bash
-        run: |
-          # Overrides the version without editing package.json, which pnpm would reject.
-          config="$(cygpath -m "$RUNNER_TEMP")/upgrade-config.cjs"
-          cat > "$config" <<EOF
-          const release = require('$(cygpath -m "$PWD")/tooling/release-config.cjs')
-          module.exports = {
-            ...release,
-            extraMetadata: { ...release.extraMetadata, version: process.env.KCHESS_TEST_VERSION },
-          }
-          EOF
-          pnpm exec electron-builder --projectDir apps/desktop --win --config "$config" --publish never
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-installer-electron
-          path: dist/KChess-*-win-x64.exe
-          if-no-files-found: error
-          retention-days: 3
-
-  build-gpui:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v3
-        with:
-          install: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Install NSIS
+        shell: pwsh
+        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       # The app and its installer take the test version from KCHESS_PACKAGE_VERSION.
-      - run: node tooling/gpui-package.mjs --final
+      - run: cargo xtask package --final
         env:
           KCHESS_PACKAGE_VERSION: ${{ env.KCHESS_TEST_VERSION }}
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-installer-gpui
+          name: windows-installer
           path: apps/gpui/dist/KChess-*-win-x64.exe
           if-no-files-found: error
           retention-days: 3
 
   upgrade:
-    name: Upgrade to ${{ matrix.app }} (${{ matrix.mode }})
-    needs: [build, build-gpui]
+    name: Upgrade (${{ matrix.mode }})
+    needs: build
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        app: [electron, gpui]
         mode: [fresh, default, custom, allusers]
         include:
           # Releases from 2026.10.12 install per user even with /allusers, so the all-users copy
@@ -120,7 +71,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v8
         with:
-          name: windows-installer-${{ matrix.app }}
+          name: windows-installer
           path: new
       - name: Download the published installer
         shell: pwsh

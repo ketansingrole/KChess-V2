@@ -1,40 +1,32 @@
 //! The release version every part of the app reports (`KCHESS_VERSION`), and on Windows the
-//! executable's own resources: Electron's icon, which Start menu and desktop shortcuts show, and
-//! the version Windows reads from the file, as electron-builder writes them into Electron's.
+//! executable's own resources: the icon Start menu and desktop shortcuts show, and the version
+//! Windows reads from the file, as electron-builder wrote them into the Electron app's.
 
 use std::path::Path;
 
+/// The name Windows shows for the executable, the Electron app's `productName`.
+const PRODUCT: &str = "KChess";
+const AUTHOR: &str = "Ketan Singrole";
+const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
+
 fn main() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let package = root.join("package.json");
-    println!("cargo:rerun-if-changed={}", package.display());
-    // Test installers are built above every release (`windows-upgrade.yml`) without editing
-    // package.json, which the lockfile check would reject.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // The workspace version is the release; test installers are built above every release
+    // (`windows-upgrade.yml`) without editing it.
     println!("cargo:rerun-if-env-changed=KCHESS_PACKAGE_VERSION");
     let version = std::env::var("KCHESS_PACKAGE_VERSION")
         .ok()
         .filter(|version| !version.is_empty())
-        .unwrap_or_else(|| {
-            let text = std::fs::read_to_string(&package).expect("the root package.json");
-            let json: serde_json::Value = serde_json::from_str(&text).expect("package.json");
-            json["version"].as_str().expect("its version").to_string()
-        });
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     println!("cargo:rustc-env=KCHESS_VERSION={version}");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        windows_resources(&root, &version);
+        windows_resources(root, &version);
     }
 }
 
 fn windows_resources(root: &Path, version: &str) {
-    let desktop: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("apps/desktop/package.json"))
-            .expect("apps/desktop/package.json"),
-    )
-    .expect("apps/desktop/package.json");
-    let build = &desktop["build"];
-    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().replace('"', "\"\"");
-    let icon = root.join("apps/desktop/build/icon.ico");
+    let icon = root.join("build/icon.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     // 2026.10.14 → 2026,10,14,0.
     let mut parts: Vec<u16> = version
@@ -47,7 +39,7 @@ fn windows_resources(root: &Path, version: &str) {
         .map(u16::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let product = text(&build["productName"]);
+    let product = PRODUCT;
     let rc = format!(
         // Numbers, not <winver.h>'s names, so no SDK include path is needed: VS_VERSION_INFO is
         // 1, VOS_NT_WINDOWS32 0x40004 and VFT_APP 1.
@@ -79,8 +71,8 @@ BEGIN
 END
 "#,
         icon = icon.display().to_string().replace('\\', "/"),
-        company = text(&desktop["author"]),
-        copyright = text(&build["copyright"]),
+        company = AUTHOR,
+        copyright = COPYRIGHT,
     );
     let out = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("kchess.rc");
     std::fs::write(&out, rc).expect("the resource script");

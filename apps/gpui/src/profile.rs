@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-/// Matches `build.productName` in `apps/desktop/package.json`, which names Electron's profile.
+/// The Electron app's product name, which named the profile folder both apps use.
 pub const APP_NAME: &str = "KChess";
 
 fn home() -> PathBuf {
@@ -79,7 +79,7 @@ pub fn legacy_database(_data_dir: &std::path::Path) -> Option<PathBuf> {
 
 /// The `kchess-voice` speech helper, libvosk beside it: `KCHESS_VOICE_HELPER`, else the package's
 /// `voice` folder beside the app (in `Contents/Resources` in the macOS bundle), else (a build in
-/// this repository) the helper `build:native` stages in `crates/kchess-node/voice`.
+/// this repository) the helper `cargo xtask voice-runtime` stages in `target/voice-runtime`.
 pub fn voice_helper() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("KCHESS_VOICE_HELPER").filter(|path| !path.is_empty()) {
         return Some(PathBuf::from(path));
@@ -101,7 +101,7 @@ pub fn voice_helper() -> Option<PathBuf> {
         }
     }
     let staged = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/kchess-node/voice")
+        .join("../../target/voice-runtime")
         .join(name);
     staged.exists().then_some(staged)
 }

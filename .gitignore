@@ -1,23 +1,16 @@
-# Dependencies and build output
-node_modules/
-.pnpm-store/
-out/
+# Build output and local caches (engines, voice models, test profiles)
 **/dist
-.dev/
-.nuxt/
-.output/
 .data/
-apps/desktop/public/voice/model.tar.gz*
-*.tsbuildinfo
-.eslintcache
+.dev/
 
 # OS
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Logs
+# Logs (an Electron-written LevelDB log is a test fixture)
 *.log
+!crates/kchess-electron-legacy/tests/fixtures/**/*.log
 
 # Env (Lichess tokens etc.)
 .env
@@ -32,7 +25,7 @@ Desktop.ini
 *.sqlite-wal
 *.sqlite-shm
 
-# Electron-builder installers that can land outside **/dist
+# Installers that can land outside **/dist
 *.dmg
 *.exe
 *.AppImage
@@ -67,7 +60,6 @@ skills.json
 
 # Test artifacts
 coverage/
-playwright-report/
 test-results/
 
 # Generated report output (curated *.md stays tracked)
@@ -78,11 +70,3 @@ docs/benchmarks/raw/
 
 # Rust build output
 target/
-*.node
-crates/kchess-node/THIRD_PARTY_LICENSES.txt
-crates/kchess-node/voice/
-crates/kchess-node/service/
-apps/desktop/app/assets/rules/
-
-# Benchmark output (perf/README.md)
-perf/results/

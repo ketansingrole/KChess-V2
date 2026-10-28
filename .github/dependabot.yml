@@ -1,32 +1,5 @@
 version: 2
 updates:
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: daily
-    # Electron patches carry Chromium security fixes; skip the default 3-day cooldown for them.
-    cooldown:
-      default-days: 3
-      exclude: [electron]
-    open-pull-requests-limit: 5
-    groups:
-      development-tools:
-        dependency-type: development
-        exclude-patterns: [electron]
-    ignore:
-      # electron-vite has no stable release that supports Vite 8 (vitest 5 needs it too).
-      - dependency-name: vite
-        update-types: [version-update:semver-major]
-      - dependency-name: vitest
-        update-types: [version-update:semver-major]
-      - dependency-name: '@vitest/coverage-v8'
-        update-types: [version-update:semver-major]
-      # Wait for vue-tsc / nuxt typecheck to support TypeScript 7.
-      - dependency-name: typescript
-        update-types: [version-update:semver-major]
-      # Keep Node types on the runtime major in .nvmrc.
-      - dependency-name: '@types/node'
-        update-types: [version-update:semver-major]
   - package-ecosystem: cargo
     directory: /
     schedule:
