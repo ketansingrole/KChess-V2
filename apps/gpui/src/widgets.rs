@@ -707,6 +707,7 @@ fn pill_row(
             let choose = choose.clone();
             h_flex()
                 .id((id, index))
+                .test_support()
                 .role(Role::Tab)
                 .aria_label(tab.label.clone())
                 .aria_selected(chosen)

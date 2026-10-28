@@ -113,3 +113,16 @@ fn moves_can_be_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     app.click("skip-forward");
     assert_eq!(app.find(("move", 1usize)).selected(), Some(true));
 }
+
+#[gpui_kit::test]
+fn an_unfinished_game_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click("flip");
+    app.wait_for_moves(&["e4"]);
+    app.click_square("e7", false);
+    app.click_square("e5", false);
+    app.wait_for_moves(&["e4", "e5"]);
+    let mut app = app.restart();
+    app.open("Play with Computer");
+    app.wait_for_moves(&["e4", "e5"]);
+}

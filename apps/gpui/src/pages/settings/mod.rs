@@ -12,6 +12,7 @@ mod voice_history;
 use std::path::Path;
 use std::rc::Rc;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -561,6 +562,7 @@ fn option(
     let name = name.into();
     v_flex()
         .id(id)
+        .test_support()
         .role(gpui_kit::Role::Button)
         .aria_label(name.clone())
         .aria_selected(chosen)

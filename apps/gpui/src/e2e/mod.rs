@@ -11,6 +11,7 @@
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
 
 mod computer;
+mod settings;
 mod shell;
 
 use std::path::{Path, PathBuf};
@@ -26,11 +27,22 @@ use gpui_kit::{
 /// How long a step may take to show: real time, since the core answers on its own threads.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+thread_local! {
+    /// Apps a test started again (`Harness::restart`), held until the test's thread ends.
+    static KEPT_APPS: std::cell::RefCell<Vec<TestAppContext>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How often a wait looks again.
+const POLL: Duration = Duration::from_millis(5);
+
 /// The app, started over its own profile in a headless window.
 pub struct Harness {
     pub cx: TestAppContext,
     pub window: AnyWindowHandle,
-    profile: tempfile::TempDir,
+    /// Kept by `restart`, removed with the harness.
+    profile: Option<tempfile::TempDir>,
+    /// Whether this harness made the app (`restart`) rather than `#[gpui_kit::test]`.
+    owns_app: bool,
 }
 
 impl Harness {
@@ -44,6 +56,19 @@ impl Harness {
         environment();
         let profile = tempfile::tempdir().expect("a temporary profile");
         prepare(profile.path());
+        Self::boot(cx.clone(), profile, false)
+    }
+
+    /// Quit the app as a person would (its saves flushed, the core closed), then start it again
+    /// over the same profile.
+    pub fn restart(mut self) -> Harness {
+        let profile = self.profile.take().expect("the profile");
+        let cx = self.cx.new_app();
+        drop(self);
+        Self::boot(cx, profile, true)
+    }
+
+    fn boot(mut cx: TestAppContext, profile: tempfile::TempDir, owns_app: bool) -> Harness {
         crate::profile::TEST_DATA_DIR.set(Some(profile.path().to_path_buf()));
         // The core answers on its Tokio threads; the test waits for them in real time.
         cx.executor().allow_parking();
@@ -58,17 +83,25 @@ impl Harness {
         let window = cx
             .update(|cx| cx.windows().first().copied())
             .expect("the main window opened");
+        // In front, as a launched app's window is: menu shortcuts act on the active window.
+        cx.update_window(window, |_, window, _| window.activate_window())
+            .expect("the main window is open");
         let mut harness = Harness {
-            cx: cx.clone(),
+            cx,
             window,
-            profile,
+            profile: Some(profile),
+            owns_app,
         };
         harness.find("settings");
         harness
     }
 
-    pub fn profile(&self) -> &Path {
-        self.profile.path()
+    /// Let time pass as it would for a running app: the core's threads in real time, and the
+    /// app's own timers (a save 400 ms after a change, animations) on GPUI's test clock.
+    fn tick(&mut self) {
+        std::thread::sleep(POLL);
+        self.cx.executor().advance_clock(POLL);
+        self.cx.run_until_parked();
     }
 
     /// Run `f` on the window after a fresh frame.
@@ -93,7 +126,7 @@ impl Harness {
                 let paths = self.paths();
                 panic!("timed out after {TIMEOUT:?} waiting for {what}. Registered: {paths}");
             }
-            std::thread::sleep(Duration::from_millis(5));
+            self.tick();
         }
     }
 
@@ -139,15 +172,6 @@ impl Harness {
         let id = id.into();
         self.settled(&id);
         self.with_window(|window, cx| window.click(id, cx));
-        self.cx.run_until_parked();
-    }
-
-    /// Drag from one element's centre to another's.
-    pub fn drag(&mut self, from: impl Into<ElementId>, to: impl Into<ElementId>) {
-        let (from, to) = (from.into(), to.into());
-        self.find(from.clone());
-        self.find(to.clone());
-        self.with_window(|window, cx| window.drag_to(from, to, cx));
         self.cx.run_until_parked();
     }
 
@@ -229,10 +253,9 @@ impl Harness {
 
     /// Wait until the move list shows exactly these moves.
     pub fn wait_for_moves(&mut self, expected: &[&str]) {
-        let mut shown = Vec::new();
         let started = Instant::now();
         loop {
-            shown = self.moves();
+            let shown = self.moves();
             if shown == expected {
                 return;
             }
@@ -240,7 +263,7 @@ impl Harness {
                 started.elapsed() < TIMEOUT,
                 "the moves stayed {shown:?}, expected {expected:?}"
             );
-            std::thread::sleep(Duration::from_millis(5));
+            self.tick();
         }
     }
 
@@ -281,13 +304,43 @@ impl Harness {
             .unwrap_or_default()
     }
 
-    /// Wait until the settings the app saves (after 400 ms) are on disk, and return them.
+    /// The settings as the core has them (the app saves a change after 400 ms).
     pub fn saved_settings(&mut self) -> serde_json::Value {
         let core = self
             .cx
             .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
         core.call_now("desktopSettings", Vec::new())
             .expect("the core reads the settings")
+    }
+
+    /// Wait until the core has saved `key` as `value`.
+    pub fn wait_for_saved(&mut self, key: &str, value: serde_json::Value) {
+        let started = Instant::now();
+        loop {
+            self.cx.run_until_parked();
+            let saved = self.saved_settings();
+            if saved[key] == value {
+                return;
+            }
+            assert!(
+                started.elapsed() < TIMEOUT,
+                "{key} stayed {} instead of {value}",
+                saved[key]
+            );
+            self.tick();
+        }
+    }
+
+    /// Open a category of Settings from its sidebar ("Sound").
+    pub fn open_settings(&mut self, label: &str) {
+        if !self.shows("2-0") {
+            self.click("settings");
+        }
+        let index = crate::pages::settings::sections()
+            .iter()
+            .position(|(_, name, _)| *name == label)
+            .unwrap_or_else(|| panic!("no Settings category {label:?}"));
+        self.click(format!("2-{index}"));
     }
 }
 
@@ -296,6 +349,11 @@ impl Drop for Harness {
         // Saves are flushed and the core closed as at quit, before the profile is removed.
         let quit = self.cx.update(crate::core::quit);
         self.cx.foreground_executor().block_test(quit);
+        if self.owns_app {
+            // `#[gpui_kit::test]` drains the shared scheduler after the test, which runs this
+            // app's tasks too: they need it alive until the test's thread ends.
+            KEPT_APPS.with_borrow_mut(|kept| kept.push(self.cx.clone()));
+        }
         crate::profile::TEST_DATA_DIR.set(None);
     }
 }

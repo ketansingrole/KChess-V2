@@ -21,6 +21,10 @@ in pixels, so scaling `rem` alone could not do this.
   point lookups (`character_index_for_point`) in `src/platform.rs`.
 - `bounds_changed` keeps the zoom when the window is resized or moves to another display.
 
+A second, test-only patch makes the test platform's `show_window_menu` and `start_window_move`
+(`src/platform/test/window.rs`) do nothing instead of panicking, so the app's end-to-end tests
+(`apps/gpui/src/e2e`) can click controls drawn over its title bar.
+
 The app sets the zoom (`apps/gpui/src/interface_zoom.rs`) and moves the macOS traffic lights to
 stay centred on its top bar.
 

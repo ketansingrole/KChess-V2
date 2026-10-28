@@ -581,13 +581,11 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn show_window_menu(&self, _position: Point<Pixels>) {
-        unimplemented!()
-    }
+    // KChess patch: a test window cannot be moved, so a press on a title bar does nothing,
+    // rather than panicking the end-to-end tests that click controls drawn over it.
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
 
-    fn start_window_move(&self) {
-        unimplemented!()
-    }
+    fn start_window_move(&self) {}
 
     fn can_start_external_drag(&self) -> bool {
         true
