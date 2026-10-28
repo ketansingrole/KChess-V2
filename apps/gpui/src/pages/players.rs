@@ -140,6 +140,11 @@ pub struct PlayersPage {
     days_error: bool,
     /// `LichessRelation` of the online account with the player; None without one to ask.
     relation: Option<Value>,
+    /// The online account `record` and `relation` were read as, so switching accounts reads them
+    /// again rather than showing another account's.
+    extras_account: Option<String>,
+    /// Each read of `record` and `relation`; answers to an older one are dropped.
+    account_epoch: u64,
     /// The leaderboard shown while no player is open.
     board: Option<Vec<Value>>,
     board_error: Option<SharedString>,
@@ -219,7 +224,10 @@ impl PlayersPage {
                         }
                     },
                 ),
-                cx.observe(&accounts, |_, _, cx| cx.notify()),
+                cx.observe(&accounts, |this, _, cx| {
+                    this.account_changed(cx);
+                    cx.notify();
+                }),
             ];
         PlayersPage {
             input,
@@ -237,6 +245,8 @@ impl PlayersPage {
             days: None,
             days_error: false,
             relation: None,
+            extras_account: None,
+            account_epoch: 0,
             board: None,
             board_error: None,
             board_perf,
@@ -363,6 +373,7 @@ impl PlayersPage {
         self.days = None;
         self.days_error = false;
         self.relation = None;
+        self.account_epoch += 1;
         self.matches.clear();
         self.history.update(cx, |history, cx| {
             history.set(Value::Null, Value::Null, cx);
@@ -454,6 +465,7 @@ impl PlayersPage {
             return;
         };
         let blocking = relation["blocking"] != json!(true);
+        let account_epoch = self.account_epoch;
         let page = cx.entity().downgrade();
         let apply = move |window: &mut Window, cx: &mut App| {
             let (page, relation) = (page.clone(), relation.clone());
@@ -466,6 +478,10 @@ impl PlayersPage {
                     move |took, _, cx| {
                         if took {
                             let _ = page.update(cx, |page, cx| {
+                                // Another account or player since: its relation is read anew.
+                                if page.account_epoch != account_epoch {
+                                    return;
+                                }
                                 let following = !blocking && relation["following"] == json!(true);
                                 page.relation =
                                     Some(json!({ "following": following, "blocking": blocking }));
@@ -508,39 +524,7 @@ impl PlayersPage {
     fn load_extras(&mut self, username: &str, cx: &mut Context<Self>) {
         let epoch = self.epoch;
         let core = cx.global::<AppCore>().clone();
-        if let Some(me) = Self::active_account(cx)
-            && !me.eq_ignore_ascii_case(username)
-        {
-            let relation = core.call("relation", vec![json!(me), json!(username)]);
-            cx.spawn(async move |this, cx| {
-                let answer = relation.await;
-                let _ = this.update(cx, |this, cx| {
-                    if this.epoch == epoch
-                        && let Ok(relation) = answer
-                        && relation.get("needsReconnect").is_none()
-                    {
-                        this.relation = Some(relation);
-                        cx.notify();
-                    }
-                });
-            })
-            .detach();
-            let crosstable = core.call("crosstable", vec![json!(me), json!(username)]);
-            cx.spawn(async move |this, cx| {
-                let answer = crosstable.await;
-                let _ = this.update(cx, |this, cx| {
-                    if this.epoch != epoch {
-                        return;
-                    }
-                    match answer {
-                        Ok(record) => this.record = Some(record),
-                        Err(_) => this.extras_failed.push("your record"),
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
+        self.load_account_extras(username, cx);
         let presence = core.call("presence", vec![json!([username])]);
         let key = username.to_lowercase();
         cx.spawn(async move |this, cx| {
@@ -554,6 +538,70 @@ impl PlayersPage {
                         this.status = Some(report["users"][&key].clone()).filter(Value::is_object)
                     }
                     Err(_) => this.extras_failed.push("online status"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The online account changed while a player is open: their record and relation were the
+    /// other account's, so read them again as this one.
+    fn account_changed(&mut self, cx: &mut Context<Self>) {
+        let Some(username) = self.username() else {
+            return;
+        };
+        let now = Self::active_account(cx);
+        let same = match (&now, &self.extras_account) {
+            (Some(now), Some(before)) => now.eq_ignore_ascii_case(before),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            self.load_account_extras(&username, cx);
+        }
+    }
+
+    /// The online account's record against the player and how it stands with them on Lichess.
+    fn load_account_extras(&mut self, username: &str, cx: &mut Context<Self>) {
+        self.account_epoch += 1;
+        let account_epoch = self.account_epoch;
+        self.record = None;
+        self.relation = None;
+        self.extras_failed.retain(|failed| *failed != "your record");
+        self.extras_account = Self::active_account(cx);
+        let Some(me) = self
+            .extras_account
+            .clone()
+            .filter(|me| !me.eq_ignore_ascii_case(username))
+        else {
+            return;
+        };
+        let core = cx.global::<AppCore>().clone();
+        let relation = core.call("relation", vec![json!(me), json!(username)]);
+        cx.spawn(async move |this, cx| {
+            let answer = relation.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.account_epoch == account_epoch
+                    && let Ok(relation) = answer
+                    && relation.get("needsReconnect").is_none()
+                {
+                    this.relation = Some(relation);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        let crosstable = core.call("crosstable", vec![json!(me), json!(username)]);
+        cx.spawn(async move |this, cx| {
+            let answer = crosstable.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.account_epoch != account_epoch {
+                    return;
+                }
+                match answer {
+                    Ok(record) => this.record = Some(record),
+                    Err(_) => this.extras_failed.push("your record"),
                 }
                 cx.notify();
             });
