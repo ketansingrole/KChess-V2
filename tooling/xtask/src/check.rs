@@ -56,24 +56,25 @@ fn lints() -> Result {
             "clippy::expect_used",
         ],
     )?;
+    run("cargo", &shipped_bins_args())
+}
+
+/// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
+fn shipped_bins_args() -> Vec<&'static str> {
+    let mut args = vec!["clippy"];
     for bin in SHIPPED_BINS {
-        run(
-            "cargo",
-            &[
-                "clippy",
-                "-p",
-                bin,
-                "--bins",
-                "--locked",
-                "--",
-                "-D",
-                "clippy::unwrap_used",
-                "-D",
-                "clippy::expect_used",
-            ],
-        )?;
+        args.extend(["-p", bin]);
     }
-    Ok(())
+    args.extend([
+        "--bins",
+        "--locked",
+        "--",
+        "-D",
+        "clippy::unwrap_used",
+        "-D",
+        "clippy::expect_used",
+    ]);
+    args
 }
 
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
@@ -330,6 +331,16 @@ mod tests {
                 .unwrap()
                 .contains("untracked")
         );
+    }
+
+    #[test]
+    fn one_run_checks_every_shipped_binary() {
+        let args = shipped_bins_args();
+        for bin in SHIPPED_BINS {
+            assert!(args.windows(2).any(|pair| pair == ["-p", bin]), "{bin}");
+        }
+        assert!(args.contains(&"--bins"));
+        assert!(args.ends_with(&["-D", "clippy::expect_used"]));
     }
 
     #[test]
