@@ -832,3 +832,303 @@ fn finish_studies(
     }
     Ok(Value::Object(out))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().expect("database");
+        super::super::migrations::migrate(&db).expect("migrate");
+        db
+    }
+
+    fn run(db: &Connection, command: Value) -> Result<Value> {
+        study_command(db, &command, 5.0, true)
+    }
+
+    /// Every stored study, read whole.
+    fn all(db: &Connection) -> Vec<Value> {
+        study_command(db, &json!({ "op": "list" }), 0.0, false).expect("list")["studies"]
+            .as_array()
+            .expect("studies")
+            .clone()
+    }
+
+    fn study(db: &Connection, id: &str) -> Value {
+        all(db)
+            .into_iter()
+            .find(|study| id_of(study) == Some(id))
+            .expect("study")
+    }
+
+    fn chapter_names(study: &Value) -> Vec<String> {
+        study["chapters"]
+            .as_array()
+            .expect("chapters")
+            .iter()
+            .map(|c| c["name"].as_str().expect("name").to_string())
+            .collect()
+    }
+
+    fn create(db: &Connection, name: &str, pgn: &str) -> String {
+        run(db, json!({ "op": "save", "name": name, "pgn": pgn })).expect("create")["id"]
+            .as_str()
+            .expect("id")
+            .to_string()
+    }
+
+    #[test]
+    fn saving_creates_then_updates_the_chosen_chapter() {
+        let db = database();
+        let id = create(&db, "  Openings  ", "1. e4 *");
+        let saved = study(&db, &id);
+        assert_eq!(saved["name"], json!("Openings"));
+        assert_eq!(saved["pgn"], json!("1. e4 *"));
+        let second = run(
+            &db,
+            json!({ "op": "addChapter", "id": id, "name": " Sicilian " }),
+        )
+        .expect("add")["id"]
+            .clone();
+        run(
+            &db,
+            json!({ "op": "save", "id": id, "name": "Repertoire", "chapterId": second, "pgn": "1. e4 c5 *" }),
+        )
+        .expect("save the second chapter");
+        let saved = study(&db, &id);
+        assert_eq!(saved["name"], json!("Repertoire"));
+        assert_eq!(chapter_names(&saved), ["Openings", "Sicilian"]);
+        assert_eq!(saved["chapters"][1]["pgn"], json!("1. e4 c5 *"));
+        // The study's own PGN is its first chapter's.
+        assert_eq!(saved["pgn"], json!("1. e4 *"));
+        assert_eq!(saved["updatedAt"].as_f64(), Some(5.0));
+
+        for (command, message) in [
+            (
+                json!({ "op": "save", "id": id, "name": "  " }),
+                "Name the study.",
+            ),
+            (
+                json!({ "op": "save", "id": id, "name": "R", "chapterId": "missing", "pgn": "*" }),
+                "That chapter cannot be saved.",
+            ),
+            (
+                json!({ "op": "save", "id": id, "name": "R", "pgn": "1. e5 *" }),
+                "That chapter cannot be saved.",
+            ),
+            (
+                json!({ "op": "save", "id": id }),
+                "Cannot read properties of undefined (reading 'trim')",
+            ),
+            (
+                json!({ "op": "save", "id": id, "name": null }),
+                "Cannot read properties of null (reading 'trim')",
+            ),
+            (
+                json!({ "op": "save", "id": id, "name": 3 }),
+                "command.name.trim is not a function",
+            ),
+            (
+                json!({ "op": "addChapter", "id": "missing", "name": "X" }),
+                "Name the new chapter.",
+            ),
+            (
+                json!({ "op": "addChapter", "id": id, "name": "  " }),
+                "Name the new chapter.",
+            ),
+        ] {
+            assert_eq!(run(&db, command).expect_err("refused").message, message);
+        }
+        assert!(run(&db, json!("not a command")).is_err());
+    }
+
+    #[test]
+    fn chapters_are_renamed_duplicated_and_removed() {
+        let db = database();
+        let id = create(&db, "Endgames", "1. e4 *");
+        let first = study(&db, &id)["chapters"][0]["id"].clone();
+        let copy = run(
+            &db,
+            json!({ "op": "duplicateChapter", "id": id, "chapterId": first }),
+        )
+        .expect("duplicate")["id"]
+            .clone();
+        run(
+            &db,
+            json!({ "op": "renameChapter", "id": id, "chapterId": copy, "name": " Rook endings " }),
+        )
+        .expect("rename");
+        // An empty name changes nothing.
+        run(
+            &db,
+            json!({ "op": "renameChapter", "id": id, "chapterId": copy, "name": " " }),
+        )
+        .expect("empty rename");
+        let saved = study(&db, &id);
+        assert_eq!(chapter_names(&saved), ["Endgames", "Rook endings"]);
+        assert_eq!(saved["chapters"][1]["pgn"], json!("1. e4 *"));
+
+        // Removing the first chapter selects the one now in its place, and the study's PGN follows.
+        let next = run(
+            &db,
+            json!({ "op": "removeChapter", "id": id, "chapterId": first }),
+        )
+        .expect("remove")["id"]
+            .clone();
+        assert_eq!(next, copy);
+        assert_eq!(chapter_names(&study(&db, &id)), ["Rook endings"]);
+        for (command, message) in [
+            (
+                json!({ "op": "removeChapter", "id": id, "chapterId": copy }),
+                "A study must keep at least one chapter.",
+            ),
+            (
+                json!({ "op": "removeChapter", "id": id, "chapterId": "gone" }),
+                "That chapter no longer exists.",
+            ),
+            (
+                json!({ "op": "duplicateChapter", "id": id, "chapterId": "gone" }),
+                "That chapter no longer exists.",
+            ),
+        ] {
+            assert_eq!(run(&db, command).expect_err("refused").message, message);
+        }
+    }
+
+    #[test]
+    fn a_study_holds_at_most_its_chapter_limit() {
+        let db = database();
+        let chapters: Vec<Value> = (0..MAX_CHAPTERS)
+            .map(|i| json!({ "name": format!("C{i}"), "pgn": "*" }))
+            .collect();
+        let id = run(
+            &db,
+            json!({ "op": "saveChapters", "name": "Full", "chapters": chapters }),
+        )
+        .expect("save chapters")["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
+        let first = study(&db, &id)["chapters"][0]["id"].clone();
+        assert_eq!(
+            run(
+                &db,
+                json!({ "op": "duplicateChapter", "id": id, "chapterId": first })
+            )
+            .expect_err("full")
+            .message,
+            "A study can contain up to 64 chapters."
+        );
+    }
+
+    #[test]
+    fn studies_are_renamed_duplicated_removed_and_restored() {
+        let db = database();
+        let a = create(&db, "A", "1. e4 *");
+        let b = create(&db, "B", "1. d4 *");
+        run(&db, json!({ "op": "rename", "id": a, "name": " Alpha " })).expect("rename");
+        run(&db, json!({ "op": "rename", "id": a, "name": "" })).expect("empty rename");
+        run(&db, json!({ "op": "rename", "id": "missing", "name": "X" })).expect("missing");
+        assert_eq!(study(&db, &a)["name"], json!("Alpha"));
+
+        let copy = run(&db, json!({ "op": "duplicate", "id": b })).expect("duplicate")["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
+        assert_eq!(study(&db, &copy)["name"], json!("B (copy)"));
+        assert_eq!(study(&db, &copy)["pgn"], json!("1. d4 *"));
+        assert!(
+            run(&db, json!({ "op": "duplicate", "id": "missing" }))
+                .expect("missing")
+                .get("id")
+                .is_none()
+        );
+
+        let removed =
+            run(&db, json!({ "op": "remove", "id": b })).expect("remove")["removed"].clone();
+        assert_eq!(removed["name"], json!("B"));
+        assert_eq!(all(&db).len(), 2);
+        // Restoring brings it back; restoring a study that is present changes nothing.
+        run(&db, json!({ "op": "restore", "study": removed })).expect("restore");
+        run(&db, json!({ "op": "restore", "study": study(&db, &a) })).expect("present");
+        let ids: Vec<Value> = all(&db).iter().map(|s| s["id"].clone()).collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&json!(b)));
+
+        // An incremental answer carries only what changed, and the whole order.
+        let answer = run(&db, json!({ "op": "rename", "id": a, "name": "Again" })).expect("rename");
+        assert_eq!(answer["studies"].as_array().map(Vec::len), Some(1));
+        assert_eq!(answer["order"].as_array().map(Vec::len), Some(3));
+        let unchanged = run(&db, json!({ "op": "nothing" })).expect("unknown op");
+        assert_eq!(unchanged["studies"], json!([]));
+    }
+
+    #[test]
+    fn a_cloud_copy_replaces_an_unchanged_study_and_sits_beside_a_changed_one() {
+        let db = database();
+        let chapters = json!([{ "name": "One", "pgn": "1. e4 *" }]);
+        let remote = json!({ "id": "abcdEFGH", "name": "Cloud" });
+        let first = run(
+            &db,
+            json!({ "op": "offline", "account": "Alice", "remote": remote, "chapters": chapters }),
+        )
+        .expect("offline");
+        assert_eq!(first["conflict"], json!(false));
+        let id = first["id"].as_str().expect("id").to_string();
+        let stored = study(&db, &id);
+        assert_eq!(stored["cloud"]["account"], json!("Alice"));
+        assert_eq!(stored["cloud"]["downloadedPgn"], json!("1. e4 *"));
+
+        // Unchanged since the download: the next download replaces it in place.
+        let newer = json!([{ "name": "One", "pgn": "1. e4 e5 *" }]);
+        let again = run(
+            &db,
+            json!({ "op": "offline", "account": "alice", "remote": remote, "chapters": newer }),
+        )
+        .expect("offline again");
+        assert_eq!(
+            (again["id"].as_str(), again["conflict"].clone()),
+            (Some(id.as_str()), json!(false))
+        );
+
+        // Changed locally: the download is kept as a copy beside it.
+        run(
+            &db,
+            json!({ "op": "save", "id": id, "name": "Cloud", "pgn": "1. d4 *" }),
+        )
+        .expect("edit");
+        let conflict = run(
+            &db,
+            json!({ "op": "offline", "account": "Alice", "remote": remote, "chapters": newer }),
+        )
+        .expect("offline conflict");
+        assert_eq!(conflict["conflict"], json!(true));
+        assert_ne!(conflict["id"], json!(id));
+        assert_eq!(
+            study(&db, conflict["id"].as_str().expect("id"))["name"],
+            json!("Cloud (cloud copy)")
+        );
+
+        // Marking a local study links it to a cloud study; removing a chapter flags the change.
+        let local = create(&db, "Local", "1. c4 *");
+        run(
+            &db,
+            json!({ "op": "markCloud", "id": local, "account": "Alice", "remoteId": "wxyzWXYZ", "baseline": "1. c4 *" }),
+        )
+        .expect("mark");
+        assert_eq!(study(&db, &local)["cloud"]["id"], json!("wxyzWXYZ"));
+        run(
+            &db,
+            json!({ "op": "addChapter", "id": local, "name": "Two" }),
+        )
+        .expect("add");
+        let first_chapter = study(&db, &local)["chapters"][0]["id"].clone();
+        run(
+            &db,
+            json!({ "op": "removeChapter", "id": local, "chapterId": first_chapter }),
+        )
+        .expect("remove");
+        assert_eq!(study(&db, &local)["cloud"]["structureChanged"], json!(true));
+    }
+}
