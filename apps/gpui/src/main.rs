@@ -31,6 +31,7 @@ mod notifications;
 mod online;
 mod pages;
 mod palette;
+mod part;
 mod play_layout;
 mod played;
 mod position_engine;

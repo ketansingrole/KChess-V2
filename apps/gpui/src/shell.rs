@@ -17,6 +17,7 @@ use gpui_kit::*;
 use std::time::Duration;
 
 use crate::assets::icon;
+use crate::part::Part;
 
 use crate::pages::analysis::AnalysisPage;
 use crate::pages::computer::ComputerPage;
@@ -42,6 +43,8 @@ const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
 
 /// `USidebar`'s `--sidebar-width`, and `--sidebar-width-icon` collapsed to icons.
 const SIDEBAR_WIDTH: Pixels = px(256.);
+/// How long the sidebar's width eases when it opens or closes.
+const SIDEBAR_EASE: Duration = Duration::from_millis(200);
 const SIDEBAR_RAIL: Pixels = px(64.);
 
 fn sidebar_width(open: bool) -> Pixels {
@@ -159,6 +162,15 @@ fn page_style() -> StyleRefinement {
     let mut style = StyleRefinement::default();
     style.size.width = Some(relative(1.).into());
     style.size.height = Some(relative(1.).into());
+    style
+}
+
+/// The top bar as its `Part`: the window's width, `TOPBAR_HEIGHT` high.
+fn topbar_style() -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.size.width = Some(relative(1.).into());
+    style.size.height = Some(TOPBAR_HEIGHT.into());
+    style.flex_shrink = Some(0.);
     style
 }
 
@@ -552,6 +564,11 @@ pub struct Workspace {
     sidebar_open: bool,
     /// The width the sidebar's last open or close started from.
     sidebar_width_from: Pixels,
+    /// When the sidebar last opened or closed: it is drawn in the shell, not as its `Part`,
+    /// while its width eases.
+    sidebar_toggled: Option<std::time::Instant>,
+    sidebar: Entity<Part<Workspace>>,
+    topbar: Entity<Part<Workspace>>,
     history: crate::swipe::History<Page>,
     swipe: crate::swipe::Swipe,
     swipe_feedback: Option<SwipeFeedback>,
@@ -639,6 +656,15 @@ impl Workspace {
         Workspace {
             sidebar_open,
             sidebar_width_from: sidebar_width(sidebar_open),
+            sidebar_toggled: None,
+            sidebar: Part::new(
+                |this, window, cx| this.render_sidebar(window, cx).into_any_element(),
+                cx,
+            ),
+            topbar: Part::new(
+                |this, window, cx| this.render_topbar(window, cx).into_any_element(),
+                cx,
+            ),
             history: crate::swipe::History::default(),
             swipe: crate::swipe::Swipe::default(),
             swipe_feedback: None,
@@ -986,6 +1012,7 @@ impl Workspace {
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_width_from = sidebar_width(self.sidebar_open);
         self.sidebar_open = !self.sidebar_open;
+        self.sidebar_toggled = Some(std::time::Instant::now());
         crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
         cx.notify();
     }
@@ -1071,10 +1098,10 @@ impl Workspace {
             .overflow_hidden()
             .child(sidebar);
         let from = self.sidebar_width_from;
-        if from == width {
+        if from == width || self.sidebar_settled() {
             return frame.w(width).into_any_element();
         }
-        EffectTransition::new(Duration::from_millis(200))
+        EffectTransition::new(SIDEBAR_EASE)
             .ease(ease_out_cubic)
             .width(from, width)
             .apply(
@@ -1082,6 +1109,24 @@ impl Workspace {
                 SharedString::from(format!("sidebar-{}-{}", f32::from(from), f32::from(width))),
             )
             .into_any_element()
+    }
+
+    /// Whether the sidebar's width has finished easing since it last opened or closed.
+    fn sidebar_settled(&self) -> bool {
+        self.sidebar_toggled
+            .is_none_or(|toggled| toggled.elapsed() > SIDEBAR_EASE + Duration::from_millis(50))
+    }
+
+    /// The sidebar as its `Part` once settled, at its width; while it eases, drawn here.
+    fn sidebar_element(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if !self.sidebar_settled() {
+            return self.render_sidebar(window, cx).into_any_element();
+        }
+        let mut style = StyleRefinement::default();
+        style.size.width = Some(sidebar_width(self.sidebar_open).into());
+        style.size.height = Some(relative(1.).into());
+        style.flex_shrink = Some(0.);
+        self.sidebar.clone().cached(style).into_any_element()
     }
 
     /// The sidebar toggle (`.sidebar-toggle-wrap`): one button at the same place in the window
@@ -1521,13 +1566,13 @@ impl Render for Workspace {
             .relative()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .when(!zen, |shell| shell.child(self.render_sidebar(window, cx)))
+            .when(!zen, |shell| shell.child(self.sidebar_element(window, cx)))
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.render_topbar(window, cx))
+                    .child(self.topbar.clone().cached(topbar_style()))
                     .child(
                         div()
                             .id("page-area")

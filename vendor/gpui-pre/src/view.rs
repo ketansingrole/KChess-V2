@@ -544,7 +544,10 @@ fn prepaint_view(
                     return (None, element_state);
                 }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
+                // KChess patch: a cached view drawn again because it (or a view inside it)
+                // changed reuses the cached views inside it that did not, as the window's root
+                // does; upstream drew them all again (`window.refreshing = true` here). A window
+                // refresh still draws every view.
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
@@ -554,7 +557,6 @@ fn prepaint_view(
                 });
 
                 let prepaint_end = window.prepaint_index();
-                window.refreshing = refreshing;
 
                 (
                     Some(element),

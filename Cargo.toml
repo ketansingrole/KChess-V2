@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-electron-legacy", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-voice", "crates/kchess-service", "apps/gpui", "apps/cli", "apps/electron-bridge", "tooling/xtask"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
 # their own manifests and lints.
-exclude = ["fuzz", "vendor/gpui-pre"]
+exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-macos"]
 
 [workspace.package]
 # The KChess release: `YEAR.MONTH.COUNTER` (`cargo xtask release-version`), the version every
@@ -71,3 +71,4 @@ strip = "none"
 # vendor/gpui-pre/KCHESS-PATCH.md for what differs from the published 0.3.9.
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }

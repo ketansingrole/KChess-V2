@@ -2,7 +2,8 @@
 //!
 //! `KCHESS_BENCH=<scenario>` drives the window through the pages' own methods (no synthetic
 //! input), records GPUI's foreground journal for `KCHESS_BENCH_SECONDS` after a warm-up, writes a
-//! JSON summary to `KCHESS_BENCH_OUT`, then quits. Run it on a throwaway profile
+//! JSON summary to `KCHESS_BENCH_OUT`, then quits. A run whose `visible_fraction` is below 1 had
+//! its window covered for a while and is not comparable. Run it on a throwaway profile
 //! (`KCHESS_USER_DATA_DIR`).
 
 use std::collections::BTreeMap;
@@ -92,6 +93,10 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
                 let _ = window.update(cx, |_, window, cx| step(scenario, &mut ply, window, cx));
             }
             totals.add(collector.collect_unseen().entries);
+            totals.checks += 1;
+            if window.update(cx, |_, window, _| window.is_visible()) == Ok(true) {
+                totals.visible += 1;
+            }
         }
         totals.add(collector.collect_unseen().entries);
         totals.cpu = cpu_time()
@@ -187,6 +192,10 @@ struct Totals {
     paint: Duration,
     busy: Duration,
     lost: u64,
+    /// How many of the run's checks found the window shown on screen: a covered or minimized
+    /// window draws no frames, and its run is not comparable.
+    checks: u64,
+    visible: u64,
     /// The process's CPU time (user and system, every thread) over the measured window.
     cpu: Option<Duration>,
     views: BTreeMap<&'static str, ViewTotals>,
@@ -271,6 +280,7 @@ impl Totals {
             "process_cpu_fraction": self.cpu.map(|cpu| cpu.as_secs_f64() / seconds),
             "max_rss_mib": max_rss_mib(),
             "journal_entries_lost": self.lost,
+            "visible_fraction": self.visible as f64 / self.checks.max(1) as f64,
             "views": views,
         })
     }
