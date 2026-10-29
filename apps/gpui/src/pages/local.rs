@@ -250,7 +250,7 @@ impl LocalPage {
             ticked: None,
             layout: PlayLayout::default(),
             panel_area: Measured::default(),
-            panel: Part::new(|this, window, cx| this.render_panel(window, cx), cx),
+            panel: Part::panel(|this, window, cx| this.render_panel(window, cx), cx),
             faces: [
                 Part::new(|this, _, cx| this.render_clock_face(Color::White, cx), cx),
                 Part::new(|this, _, cx| this.render_clock_face(Color::Black, cx), cx),

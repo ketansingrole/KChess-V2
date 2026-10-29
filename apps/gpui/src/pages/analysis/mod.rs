@@ -412,7 +412,7 @@ impl AnalysisPage {
             reveal_move: std::rc::Rc::new(std::cell::Cell::new(true)),
             explorer,
             explorer_open: false,
-            panel: Part::new(|this, window, cx| this.render_panel(window, cx), cx),
+            panel: Part::panel(|this, window, cx| this.render_panel(window, cx), cx),
             exporter: cx.new(|_| Exporter::default()),
             board,
             layout: PlayLayout::default(),
