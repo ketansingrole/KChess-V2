@@ -1,5 +1,6 @@
 //! `cargo xtask <command>`: KChess's own tooling, in Rust like the rest of the repository.
 
+mod app;
 mod app_icon;
 mod check;
 mod icons;
@@ -13,6 +14,9 @@ use std::process::ExitCode;
 
 const HELP: &str = "cargo xtask <command>
 
+  app [--profile <dir>] [--stop] [-- <app arguments>]
+                        Build and start the app in the background on a scratch profile
+                        (.data/gpui-profile) with a native Stockfish; print its pid
   check                 Everything a push to main must pass: format, lints, notices, release
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
@@ -39,6 +43,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
+        Some("app") => app::run(rest),
         Some("check") => check::full(),
         Some("check-fast") => check::fast(),
         Some("pre-push") => check::pre_push(),
