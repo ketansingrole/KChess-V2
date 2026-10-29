@@ -137,6 +137,97 @@ pub fn verify() -> Result {
     Ok(())
 }
 
+/// `release-verify`: the metadata, and CI green for the commit with every job run. The packages,
+/// the Snap and the Windows upgrade run only when packaging may have changed since the last
+/// release (ci.yml), which a version bump always is, so a release commit has had them all; before,
+/// each of them first failed after a tag. A manual Release build (downloads only) skips this.
+pub fn verify_release() -> Result {
+    verify()?;
+    let on_tag =
+        std::env::var("GITHUB_REF").is_ok_and(|reference| reference.starts_with("refs/tags/"));
+    if std::env::var_os("GITHUB_ACTIONS").is_some() && !on_tag {
+        say("Not a tag: CI is not required for a manual Release build.");
+        return Ok(());
+    }
+    let commit = output("git", &["rev-parse", "HEAD"])?.trim().to_string();
+    let run = output(
+        "gh",
+        &[
+            "run",
+            "list",
+            "--workflow",
+            "ci.yml",
+            "--commit",
+            &commit,
+            "--event",
+            "push",
+            "--limit",
+            "1",
+            "--json",
+            "databaseId,status,conclusion",
+            "-q",
+            ".[]|\"\\(.databaseId)\\t\\(.status)\\t\\(.conclusion)\"",
+        ],
+    )?;
+    let id = run
+        .split('\t')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let jobs = if id.is_empty() {
+        String::new()
+    } else {
+        output(
+            "gh",
+            &[
+                "run",
+                "view",
+                &id,
+                "--json",
+                "jobs",
+                "-q",
+                ".jobs[]|\"\\(.conclusion)\\t\\(.name)\"",
+            ],
+        )?
+    };
+    ci_verdict(&commit, &run, &jobs)?;
+    say(&format!("CI passed every job for {commit}."));
+    Ok(())
+}
+
+/// Whether CI's push run (`id\tstatus\tconclusion`) and its jobs (`conclusion\tname` lines) clear
+/// `commit` for release.
+pub fn ci_verdict(commit: &str, run: &str, jobs: &str) -> Result {
+    let fields: Vec<&str> = run.trim().split('\t').collect();
+    let [_, status, conclusion] = fields.as_slice() else {
+        return Err(format!(
+            "CI has not run for {commit}: push it to main and wait for CI."
+        ));
+    };
+    if *status != "completed" {
+        return Err(format!("CI for {commit} is still {status}."));
+    }
+    if *conclusion != "success" {
+        return Err(format!(
+            "CI for {commit} ended {conclusion}; a later push cancels it, so re-run it."
+        ));
+    }
+    let not_run: Vec<&str> = jobs
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(conclusion, _)| *conclusion != "success")
+        .map(|(_, name)| name)
+        .collect();
+    if !not_run.is_empty() {
+        return Err(format!(
+            "CI for {commit} did not run and pass: {}. A release commit changes Cargo.toml, which runs them.",
+            not_run.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 /// `attach-draft-release <dir>`: a tag-push build attaches every file in `dir` to the tag's
 /// draft release, creating it as a draft. A published release is never changed: its assets are
 /// permanent, so a fix ships as the next version.
@@ -329,6 +420,23 @@ mod tests {
         assert!(verify_snap("v2026.10.16", &sums, "fff").is_err());
         assert!(verify_snap("v2026.10.16", &format!("{sums}abc  {name}\n"), "abc").is_err());
         assert!(verify_snap("2026.10.16", &sums, "abc").is_err());
+    }
+
+    #[test]
+    fn a_release_needs_every_ci_job_run_and_passed() {
+        let jobs = "success\tcheck\nsuccess\tsnap\nsuccess\twindows-upgrade / Upgrade (allusers)\n";
+        assert!(ci_verdict("abc", "1\tcompleted\tsuccess\n", jobs).is_ok());
+        // Never pushed, still running, or cancelled by a later push.
+        assert!(ci_verdict("abc", "", "").is_err());
+        assert!(ci_verdict("abc", "1\tin_progress\t", "").is_err());
+        assert!(ci_verdict("abc", "1\tcompleted\tcancelled", jobs).is_err());
+        // Green, but the packaging jobs were skipped: nothing packaging-related changed.
+        let skipped = "success\tcheck\nskipped\tsnap\nskipped\tpackage (macos-latest)\n";
+        let refused = ci_verdict("abc", "1\tcompleted\tsuccess", skipped).unwrap_err();
+        assert!(
+            refused.contains("snap, package (macos-latest)"),
+            "{refused}"
+        );
     }
 
     #[test]

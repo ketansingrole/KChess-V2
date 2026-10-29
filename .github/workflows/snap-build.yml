@@ -1,0 +1,61 @@
+name: Snap build
+
+# The Snap Store's KChess, built in LXD from the same app: by CI when packaging may have changed,
+# and by the Release workflow, which attaches it to the draft; the store publishes it from the
+# published release (snap-publish.yml).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  GPUI_LINUX_LIBS: >-
+    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+    desktop-file-utils
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI build libraries
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: package
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      - name: Prepare isolated Snap build environment
+        run: |
+          sudo snap install snapcraft --classic
+          sudo snap install lxd
+          sudo lxd init --auto
+          sudo usermod -aG lxd "$USER"
+          # Docker's forwarding policy on hosted runners can block the LXD bridge.
+          # Permit build-container egress and established replies on that bridge only.
+          if sudo iptables -nL DOCKER-USER >/dev/null 2>&1; then
+            sudo iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
+            sudo iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          fi
+      - name: Build the Snap
+        run: sg lxd -c 'cargo xtask package --snap'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KCHESS_SNAP_LXD: '1'
+      - name: Retain Snap build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snap-build-diagnostics
+          path: |
+            ~/.local/state/snapcraft/log/
+            target/package/stage/snap/snap/snapcraft.yaml
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kchess-snap
+          path: apps/gpui/dist/*.snap
+          if-no-files-found: error
+          retention-days: 14

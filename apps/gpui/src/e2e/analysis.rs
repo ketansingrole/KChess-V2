@@ -160,8 +160,8 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     // A valid position closes it, and play goes on from there: only this king can reach d2.
     fill_in_dialog(&mut app, "FEN or PGN", "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     app.click("import-run");
-    settle(&mut app);
-    assert!(!app.shows("import-run"));
+    // The dialog closes on the core's answer, which a loaded runner gives after any fixed wait.
+    app.wait_gone("import-run");
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("Kd2");
     app.press("enter");

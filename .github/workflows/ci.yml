@@ -7,9 +7,11 @@ on:
 permissions:
   contents: read
 
+# A pull request's newer push replaces its run; every push to main runs to the end, so each
+# commit has a result (`cargo xtask release-verify` needs its release commit's).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GPUI_LINUX_LIBS: >-
@@ -18,6 +20,32 @@ env:
     desktop-file-utils
 
 jobs:
+  # Whether packaging may have changed since the last release (a pull request: since its base).
+  # The packages, the Snap and the Windows upgrade take most of CI's time, so they run only then.
+  # A release commit changes Cargo.toml, so it always runs them. Measured from the last release
+  # rather than the previous push, so a change keeps running them until it ships.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      packaging: ${{ steps.diff.outputs.packaging }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|apps/electron-bridge/|crates/kchess-voice/|tooling/xtask/src/(package/|voice\.rs$|licenses\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
+        run: |
+          base="${BASE:-$(git describe --tags --abbrev=0 --match 'v2*' HEAD 2>/dev/null || true)}"
+          if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE "$PACKAGING"; then
+            packaging=true
+          else
+            packaging=false
+          fi
+          echo "Packaging changed since ${base:-the start}: $packaging"
+          echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
+
   # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
   # gate, as the pre-push hook runs them.
   check:
@@ -56,9 +84,31 @@ jobs:
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
 
-  # The app on each platform: its lints, its unit and end-to-end tests (`src/e2e`, headless), and
-  # its packages as the Release workflow makes them (ad hoc signed on macOS).
+  # The app on each platform: its lints and its unit and end-to-end tests (`src/e2e`, headless).
   gpui:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gpui
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
+      - run: cargo test -p kchess-gpui -p kchess-cli -p xtask --locked
+
+  # The packages as the Release workflow makes them (ad hoc signed on macOS), with the release
+  # profile's dependencies cached apart from the tests' debug ones.
+  package:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -75,11 +125,9 @@ jobs:
         run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: gpui
+          shared-key: package
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
-      - run: cargo test -p kchess-gpui -p kchess-cli -p xtask --locked
       - run: cargo xtask package
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
@@ -91,3 +139,15 @@ jobs:
           name: gpui-${{ matrix.os }}
           path: apps/gpui/dist/
           retention-days: 14
+
+  # The Snap as the Release workflow builds it, before a tag rather than after one (2026.10.16).
+  snap:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    uses: ./.github/workflows/snap-build.yml
+
+  # Every way a Windows installation upgrades to this commit's installer.
+  windows-upgrade:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    uses: ./.github/workflows/windows-upgrade.yml

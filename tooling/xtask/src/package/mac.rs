@@ -270,7 +270,67 @@ pub fn package(
             &text(&dmg),
         ],
     )?;
+    verify_zip(identity, &zip)?;
     Ok(vec![zip, dmg])
+}
+
+/// The value of `key` in a plist written by `plist`.
+fn plist_value<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
+    let after = plist.split_once(&format!("<key>{key}</key>"))?.1;
+    let value = after.trim_start().strip_prefix("<string>")?;
+    value.split_once("</string>").map(|(value, _)| value)
+}
+
+/// What every Mac install updates from must be in the zip: this KChess, and the bridge an
+/// Electron release before 2026.10.12 installs (with its identifier, and its executable named so
+/// ShipIt installs it as `KChess.app`), each signed. `entry` reads one file of the zip.
+fn check_zip(identity: &Identity, mut entry: impl FnMut(&str) -> Option<Vec<u8>>) -> Result {
+    let app = format!("{}.app/Contents", identity.name);
+    let bundles = [
+        (app.clone(), identity.app_id, "kchess"),
+        (format!("legacy/{app}"), ELECTRON_APP_ID, identity.name),
+    ];
+    for (contents, app_id, executable) in bundles {
+        let plist = entry(&format!("{contents}/Info.plist"))
+            .ok_or_else(|| format!("The zip has no {contents}/Info.plist."))?;
+        let plist = String::from_utf8_lossy(&plist);
+        let expected = [
+            ("CFBundleIdentifier", app_id),
+            ("CFBundleExecutable", executable),
+            ("CFBundleShortVersionString", identity.version.as_str()),
+        ];
+        for (key, value) in expected {
+            if plist_value(&plist, key) != Some(value) {
+                return Err(format!(
+                    "{contents}/Info.plist has {key} {:?}, not {value:?}.",
+                    plist_value(&plist, key)
+                ));
+            }
+        }
+        for file in [
+            format!("MacOS/{executable}"),
+            "_CodeSignature/CodeResources".into(),
+        ] {
+            if entry(&format!("{contents}/{file}")).is_none() {
+                return Err(format!("The zip has no {contents}/{file}."));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_zip(identity: &Identity, zip: &Path) -> Result {
+    let file = std::fs::File::open(zip).map_err(|cause| cause.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|cause| cause.to_string())?;
+    check_zip(identity, |name| {
+        use std::io::Read as _;
+        let mut file = archive.by_name(name).ok()?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).ok()?;
+        Some(bytes)
+    })?;
+    say("The zip holds KChess and the Electron bridge.");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -285,5 +345,40 @@ mod tests {
         let plist = bridge_plist(&identity);
         assert!(plist.contains("<key>CFBundleExecutable</key>\n  <string>KChess</string>"));
         assert!(plist.contains("<string>com.kchess.electron</string>"));
+    }
+
+    fn zip_of(identity: &Identity, bridge: String) -> std::collections::HashMap<String, Vec<u8>> {
+        let mut files = std::collections::HashMap::new();
+        for (dir, plist, executable) in [
+            ("KChess.app", info_plist(identity), "kchess"),
+            ("legacy/KChess.app", bridge, "KChess"),
+        ] {
+            files.insert(format!("{dir}/Contents/Info.plist"), plist.into_bytes());
+            files.insert(format!("{dir}/Contents/MacOS/{executable}"), vec![0]);
+            files.insert(
+                format!("{dir}/Contents/_CodeSignature/CodeResources"),
+                vec![0],
+            );
+        }
+        files
+    }
+
+    #[test]
+    fn the_zip_must_carry_the_bridge_as_electron_installs_it() {
+        let identity = Identity::new("2026.10.19".into());
+        let good = zip_of(&identity, bridge_plist(&identity));
+        assert_eq!(check_zip(&identity, |name| good.get(name).cloned()), Ok(()));
+
+        // 2026.10.18's bridge, whose executable ShipIt installed as kchess-electron-bridge.app.
+        let renamed = bridge_plist(&identity).replace(
+            "<key>CFBundleExecutable</key>\n  <string>KChess</string>",
+            "<key>CFBundleExecutable</key>\n  <string>kchess-electron-bridge</string>",
+        );
+        let bad = zip_of(&identity, renamed);
+        assert!(check_zip(&identity, |name| bad.get(name).cloned()).is_err());
+
+        let mut missing = zip_of(&identity, bridge_plist(&identity));
+        missing.retain(|name, _| !name.starts_with("legacy/"));
+        assert!(check_zip(&identity, |name| missing.get(name).cloned()).is_err());
     }
 }

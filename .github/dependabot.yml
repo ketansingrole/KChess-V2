@@ -1,10 +1,18 @@
 version: 2
 updates:
+  # One pull request a week for every crate update, rather than one each that CI builds apart and
+  # that each needs the same follow-up.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    groups:
+      crates:
+        patterns: ['*']
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
