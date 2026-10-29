@@ -1013,7 +1013,8 @@ impl ChessBoard {
                                 .aria_label(label)
                                 .size(px(60.))
                                 .p(px(4.))
-                                .rounded(radii::MD)
+                                // Concentric with the picker's corners, 8px further out.
+                                .rounded(radii::SM)
                                 .bg(background)
                                 .border_1()
                                 .border_color(border)

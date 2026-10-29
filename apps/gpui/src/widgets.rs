@@ -424,14 +424,10 @@ pub fn moves_list(
     if !row.is_empty() {
         rows.push(row);
     }
-    div()
+    let list = div()
         .id(id)
         .size_full()
         .overflow_y_scroll()
-        .border_1()
-        .border_color(palette.border)
-        .rounded(radii::LG)
-        .bg(palette.bg)
         .text_size(px(13.))
         .when(sans.is_empty(), |list| {
             list.child(
@@ -455,7 +451,58 @@ pub fn moves_list(
                     }
                 }))
                 .when(filled == 2, |row| row.child(div().flex_1()))
-        }))
+        }));
+    // A side panel's list: its rows scroll under corners in the panel's color.
+    div()
+        .relative()
+        .size_full()
+        .border_1()
+        .border_color(palette.border)
+        .rounded(radii::LG)
+        .bg(palette.bg)
+        .child(list)
+        .child(corner_caps(radii::LG, palette.elevated))
+}
+
+/// The outside of a box's rounded corners, painted in the color around the box (`outside`) over
+/// its content: GPUI clips a box's children to its rectangle, not to its rounded corners, so
+/// rows scrolling in a rounded list would otherwise show square corners. Lies over the whole
+/// box, under its border.
+pub fn corner_caps(radius: Pixels, outside: Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let (left, top, right, bottom) = (
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.right(),
+                bounds.bottom(),
+            );
+            for (corner, dx, dy) in [
+                (point(left, top), 1., 1.),
+                (point(right, top), -1., 1.),
+                (point(right, bottom), -1., -1.),
+                (point(left, bottom), 1., -1.),
+            ] {
+                let mut cap = PathBuilder::fill();
+                cap.move_to(corner);
+                cap.line_to(point(corner.x + radius * dx, corner.y));
+                cap.arc_to(
+                    point(radius, radius),
+                    px(0.),
+                    false,
+                    (dx * dy) < 0.,
+                    point(corner.x, corner.y + radius * dy),
+                );
+                cap.close();
+                if let Ok(path) = cap.build() {
+                    window.paint_path(path, outside);
+                }
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 /// `.move-controls`: first, previous, next and last move, and a board flip.
