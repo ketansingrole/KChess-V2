@@ -9,8 +9,8 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex,
-    v_flex,
+    ActiveTheme as _, Collapsible, Disableable as _, Icon, Sizable as _, TitleBar, WindowExt as _,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -1110,15 +1110,29 @@ impl Workspace {
             )
     }
 
+    /// The top bar inside GPUI Kit's title bar, which ends it with the window's minimize,
+    /// maximize and close buttons on Windows, and on Linux when the window draws its own
+    /// decorations; macOS keeps its traffic lights.
     fn render_topbar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        TitleBar::new()
+            .h(TOPBAR_HEIGHT)
+            .pl_0()
+            .bg(cx.theme().background)
+            .border_color(cx.theme().border)
+            .on_close_window(|_, window, cx| crate::menu::close_window(window.window_handle(), cx))
+            .child(self.render_topbar_content(window, cx))
+    }
+
+    fn render_topbar_content(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Room for the toggle floating over the topbar beside the macOS rail
         // (`.mac-toggle-spacer`): its 28px and 8px clear of it, less the rail and the padding.
         let spacer = (toggle_left(window) + px(36.) - SIDEBAR_RAIL - px(20.)).max(px(0.));
         title_bar("topbar")
             .flex()
+            .flex_1()
+            .min_w_0()
             .items_center()
-            .h(TOPBAR_HEIGHT)
-            .flex_none()
+            .h_full()
             // `.topbar`: `minmax(40px, 1fr) minmax(0, 600px) minmax(40px, 1fr)`, the search
             // centred between equal sides; 12px padding below 560px.
             .px(if window.viewport_size().width < px(560.) {
@@ -1127,8 +1141,6 @@ impl Workspace {
                 px(20.)
             })
             .gap(px(8.))
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(
                 h_flex()
                     .flex_1()
