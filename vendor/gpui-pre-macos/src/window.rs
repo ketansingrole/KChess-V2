@@ -83,22 +83,29 @@ use std::{
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
-/// KChess patch: how long the display link keeps running after a frame was asked for (three
-/// refreshes at 120 Hz), so an animation's frames, a 16 ms timer's included, do not stop and
-/// restart it between frames, while a redraw ten times a second lets it rest in between.
+/// KChess patch: how long the display link keeps running after a frame was asked for while it
+/// runs: an animation's frames keep it going, and it stops soon after the last (three refreshes at
+/// 120 Hz).
 const FRAME_DEMAND_GRACE: Duration = Duration::from_millis(25);
 /// KChess patch: how long it keeps running after input, as long as GPUI keeps presenting after
 /// high-rate input so the display is not underclocked (`InputRateTracker`).
 const INPUT_DEMAND_GRACE: Duration = Duration::from_secs(1);
+/// KChess patch: frames asked for closer together than this (about a refresh at 120 Hz) are an
+/// animation, which the display link paces; further apart, each is drawn as soon as it is asked
+/// for.
+const CONTINUOUS_DEMAND: Duration = Duration::from_millis(12);
 
-/// KChess patch: when the window last asked for frames. The display link wakes the main
-/// thread on every refresh (120 times a second on a ProMotion display) even when there is
-/// nothing to draw; GPUI supports platforms that stop asking for frames while a window is idle
-/// (`PlatformWindow::frame_waker`), so the link stops once the demand runs out and the frame
-/// waker or the next input starts it again.
+/// KChess patch: when the window wants frames. The display link wakes the main thread on every
+/// refresh (120 times a second on a ProMotion display) even when there is nothing to draw, and
+/// each start of it spawns a thread. GPUI supports platforms that stop asking for frames while a
+/// window is idle (`PlatformWindow::frame_waker`), so the link runs only while input arrives or
+/// an animation asks for frame after frame, and stops once that demand runs out; a change on its
+/// own (a clock tick, an engine line) is drawn as soon as it is asked for.
 #[derive(Default)]
 struct FrameDemand {
     until: std::sync::Mutex<Option<std::time::Instant>>,
+    /// When a frame was last asked for while the link was stopped.
+    asked: std::sync::Mutex<Option<std::time::Instant>>,
     /// The link was stopped for want of demand (not for occlusion).
     paused: AtomicBool,
 }
@@ -118,25 +125,50 @@ impl FrameDemand {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_none_or(|until| std::time::Instant::now() >= until)
     }
+
+    /// A frame asked for while the link is stopped: whether it follows the last one closely
+    /// enough to be an animation's.
+    fn asked_again(&self) -> bool {
+        let now = std::time::Instant::now();
+        let last = self
+            .asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(now);
+        last.is_some_and(|last| now.duration_since(last) < CONTINUOUS_DEMAND)
+    }
 }
 
-/// KChess patch: records demand for frames and restarts a paused display link.
-fn wake_frames(state: &Weak<Mutex<MacWindowState>>, demand: &FrameDemand, grace: Duration) {
-    demand.extend(grace);
+/// KChess patch: records demand for frames; while the display link is stopped, draws the frame
+/// at once, or for input and animations starts the link again.
+fn wake_frames(state: &Weak<Mutex<MacWindowState>>, demand: &FrameDemand, input: bool) {
+    demand.extend(if input {
+        INPUT_DEMAND_GRACE
+    } else {
+        FRAME_DEMAND_GRACE
+    });
     if !demand.paused.load(Ordering::Acquire) {
         return;
     }
+    let paced = demand.asked_again() || input;
+    let wake = move |state: &mut MacWindowState| {
+        if paced {
+            state.resume_display_link();
+        } else {
+            state.request_frame();
+        }
+    };
     let Some(state) = state.upgrade() else {
         return;
     };
     if let Some(mut lock) = state.try_lock() {
-        lock.resume_display_link();
+        wake(&mut lock);
     } else {
-        // Woken while the window's state is locked: restart once it is released.
+        // Woken while the window's state is locked: wake it once it is released.
         let state = Arc::downgrade(&state);
         DispatchQueue::main().exec_async(move || {
             if let Some(state) = state.upgrade() {
-                state.lock().resume_display_link();
+                wake(&mut state.lock());
             }
         });
     }
@@ -926,6 +958,21 @@ impl MacWindowState {
     fn stop_display_link(&mut self) {
         if let Some(frame_source) = self.frame_source.as_mut() {
             frame_source.stop();
+        }
+    }
+
+    /// KChess patch: one frame, drawn as soon as the main thread is free, as a refresh of the
+    /// display would draw it; the display link starts if it never has.
+    fn request_frame(&mut self) {
+        let visible = unsafe {
+            self.native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+        };
+        match self.frame_source.as_ref() {
+            Some(frame_source) if visible => frame_source.request_frame(),
+            Some(_) => {}
+            None => self.resume_display_link(),
         }
     }
 
@@ -2109,7 +2156,7 @@ impl PlatformWindow for MacWindow {
         let state = Arc::downgrade(&self.0);
         let demand = self.0.as_ref().lock().frame_demand.clone();
         Some(Rc::new(move || {
-            wake_frames(&state, &demand, FRAME_DEMAND_GRACE)
+            wake_frames(&state, &demand, false)
         }))
     }
 
@@ -2122,7 +2169,7 @@ impl PlatformWindow for MacWindow {
         let state = Arc::downgrade(&self.0);
         let demand = self.0.as_ref().lock().frame_demand.clone();
         self.0.as_ref().lock().event_callback = Some(Box::new(move |input| {
-            wake_frames(&state, &demand, INPUT_DEMAND_GRACE);
+            wake_frames(&state, &demand, true);
             callback(input)
         }));
     }
