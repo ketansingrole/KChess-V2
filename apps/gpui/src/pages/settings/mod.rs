@@ -438,7 +438,8 @@ impl Rows {
             h_flex()
                 .gap(px(40.))
                 .child(info.w(px(420.)).min_w(px(200.)).flex_shrink(1.))
-                .child(div().flex_1().min_w_0().child(control))
+                // Wide enough for a row of choices on one line; the title column gives way first.
+                .child(div().flex_1().min_w(px(320.)).child(control))
                 .into_any_element()
         };
         self.rows.push(row);

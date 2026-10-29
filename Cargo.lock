@@ -4253,6 +4253,7 @@ dependencies = [
  "futures",
  "getrandom 0.4.3",
  "gpui-kit",
+ "gpui-pre-apple",
  "image",
  "kchess-contracts",
  "kchess-core",
