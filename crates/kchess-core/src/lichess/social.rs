@@ -743,4 +743,148 @@ mod tests {
         assert_eq!(entries[1].item.text, "Won a game against Bob (Rapid)");
         assert_eq!(entries[1].item.game_id.as_deref(), Some("AbCd1234"));
     }
+
+    #[test]
+    fn writes_every_kind_of_activity() {
+        let body = json!([{
+            "interval": { "start": 5000 },
+            "games": { "chess960": { "win": 1 }, "bullet": { "draw": 1, "rp": { "before": 1500.4 } } },
+            "puzzles": { "score": { "win": 1, "loss": 0, "rp": { "before": 1500, "after": 1510 } } },
+            "storm": { "runs": 2, "score": 31 },
+            "racer": { "runs": 1, "score": 20 },
+            "streak": { "runs": 0, "score": 9 },
+            "tournaments": { "best": [{ "tournament": {}, "rank": 1 }, { "tournament": { "name": "Swiss" }, "rank": 2, "nbGames": 1 }] },
+            "correspondenceMoves": { "nb": 1, "games": [{ "id": "a" }] },
+            "correspondenceEnds": { "correspondence": { "score": { "win": 1, "loss": 2 } }, "empty": { "score": {} } },
+            "follows": { "in": { "nb": 1 }, "out": { "ids": ["", 3] } },
+            "studies": [{ "name": "Openings" }, { "id": "unnamed" }],
+            "teams": [{ "name": "Club" }],
+            "posts": [{ "topicName": "Hello" }],
+            "simuls": [{ "name": "Simul" }],
+            "practice": [{ "name": "Checkmates" }],
+            "patron": { "months": 1 },
+            "stream": true,
+        }, { "games": { "blitz": { "win": 1 } } }]);
+        let days = read_activity(&body);
+        // A day without its start is left out.
+        assert_eq!(days.len(), 1);
+        let lines: Vec<(&str, &str)> = days[0]
+            .items
+            .iter()
+            .map(|item| (item.kind.as_str(), item.text.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                // In the order Lichess lists them.
+                ("games", "Played 1 Chess960 game: 1 win"),
+                ("games", "Played 1 Bullet game: 1 draw"),
+                ("puzzles", "Solved 1 puzzle · 1500 → 1510"),
+                ("puzzles", "Puzzle Storm: 2 runs, best 31"),
+                ("puzzles", "Puzzle Racer: 1 run, best 20"),
+                ("tournament", "Ranked #2 in Swiss · 1 game"),
+                ("correspondence", "Played 1 move in 1 correspondence game"),
+                (
+                    "correspondence",
+                    "Finished correspondence games: 1 win, 2 losses"
+                ),
+                ("follow", "Gained 1 follower"),
+                ("study", "Created the study Openings"),
+                ("team", "Joined the team Club"),
+                ("post", "Posted in Hello"),
+                ("simul", "Took part in the simul Simul"),
+                ("puzzles", "Practised Checkmates"),
+                ("patron", "Supported Lichess for 1 month"),
+                ("stream", "Streamed on Lichess"),
+            ]
+        );
+    }
+
+    #[test]
+    fn writes_every_kind_of_timeline_entry() {
+        let entry = |kind: &str, data: Value| json!({ "type": kind, "data": data, "date": 1 });
+        let body = json!({
+            "users": { "alice": { "name": "Alice" } },
+            "entries": [
+                entry("game-end", json!({ "fullId": "AbCd1234wxyz" })),
+                entry("game-end", json!({ "fullId": "AbCd1234wxyz", "opponent": "zed", "win": false, "perf": "unknownPerf" })),
+                entry("game-end", json!({ "opponent": "alice" })),
+                entry("tour-join", json!({ "userId": "alice", "tourName": "Arena" })),
+                entry("simul-create", json!({ "userId": "alice", "simulName": "S1" })),
+                entry("simul-join", json!({ "userId": "alice", "simulName": "S2" })),
+                entry("study-like", json!({ "userId": "alice", "studyName": "Endgames" })),
+                entry("forum-post", json!({ "userId": "alice", "topicName": "Hi" })),
+                entry("ublog-post", json!({ "userId": "alice", "title": "Blog" })),
+                entry("ublog-post-like", json!({ "userId": "alice", "title": "Blog" })),
+                entry("team-join", json!({ "userId": "alice", "teamId": "club" })),
+                entry("team-create", json!({ "userId": "alice", "teamId": "club" })),
+                entry("plan-start", json!({ "userId": "alice" })),
+                entry("plan-renew", json!({ "userId": "alice", "months": 2 })),
+                entry("stream-start", json!({ "id": "alice" })),
+                entry("stream-start", json!({ "name": "Streamer" })),
+                entry("tour-join", json!({ "tourName": "No user" })),
+                entry("follow", json!({ "u1": "alice" })),
+                json!({ "type": "follow", "data": { "u1": "alice", "u2": "bob" } }),
+            ],
+        });
+        let lines: Vec<(String, String, Option<String>)> = read_timeline(&body)
+            .into_iter()
+            .map(|entry| (entry.item.kind, entry.item.text, entry.item.username))
+            .collect();
+        let alice = Some("Alice".to_string());
+        let expected: Vec<(&str, &str, Option<String>)> = vec![
+            ("games", "Drew a game", None),
+            (
+                "games",
+                "Lost a game against zed (unknownPerf)",
+                Some("zed".into()),
+            ),
+            ("tournament", "Alice joined Arena", alice.clone()),
+            ("simul", "Alice is hosting S1", alice.clone()),
+            ("simul", "Alice joined S2", alice.clone()),
+            ("study", "Alice liked the study Endgames", alice.clone()),
+            ("post", "Alice posted in Hi", alice.clone()),
+            ("post", "Alice published Blog", alice.clone()),
+            ("post", "Alice liked Blog", alice.clone()),
+            ("team", "Alice joined the team club", alice.clone()),
+            ("team", "Alice created the team club", alice.clone()),
+            ("patron", "Alice became a Lichess patron", alice.clone()),
+            (
+                "patron",
+                "Alice has supported Lichess for 2 months",
+                alice.clone(),
+            ),
+            ("stream", "Alice started streaming", alice.clone()),
+            (
+                "stream",
+                "Streamer started streaming",
+                Some("Streamer".into()),
+            ),
+        ];
+        let expected: Vec<(String, String, Option<String>)> = expected
+            .into_iter()
+            .map(|(kind, text, user)| (kind.to_string(), text.to_string(), user))
+            .collect();
+        assert_eq!(lines, expected);
+    }
+
+    #[test]
+    fn suggests_players_by_name_or_id() {
+        let body = json!({ "result": [
+            { "name": "Alice", "title": "IM", "online": true },
+            { "id": "bob" },
+            { "title": "GM" },
+        ] });
+        let names: Vec<(String, Option<String>)> = read_suggestions(&body)
+            .into_iter()
+            .map(|user| (user.username, user.title))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Alice".to_string(), Some("IM".to_string())),
+                ("bob".to_string(), None)
+            ]
+        );
+    }
 }
