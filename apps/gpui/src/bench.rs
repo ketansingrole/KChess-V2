@@ -38,6 +38,8 @@ enum Scenario {
     BoardAnimation,
     /// The analysis board with the engine running on one position.
     AnalysisEngine,
+    /// The analysis board stepping through a line with the engine on, as a game is reviewed.
+    AnalysisStepping,
     /// The openings grid while the shell redraws ten times a second (its network, account and
     /// update observers).
     OpeningsShell,
@@ -50,6 +52,7 @@ impl Scenario {
             "local-clock" => Scenario::LocalClock,
             "board-animation" => Scenario::BoardAnimation,
             "analysis-engine" => Scenario::AnalysisEngine,
+            "analysis-stepping" => Scenario::AnalysisStepping,
             "openings-shell" => Scenario::OpeningsShell,
             _ => return None,
         })
@@ -116,7 +119,7 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
 
 fn step_every(scenario: Scenario) -> Duration {
     match scenario {
-        Scenario::BoardAnimation => Duration::from_millis(400),
+        Scenario::BoardAnimation | Scenario::AnalysisStepping => Duration::from_millis(400),
         Scenario::OpeningsShell => Duration::from_millis(100),
         _ => Duration::from_secs(3600),
     }
@@ -139,10 +142,10 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
                 });
             }
         }
-        Scenario::BoardAnimation | Scenario::AnalysisEngine => {
+        Scenario::BoardAnimation | Scenario::AnalysisEngine | Scenario::AnalysisStepping => {
             shell::open(Page::Analysis, window, cx);
             if let Some(analysis) = shell::view_of::<AnalysisPage>(Page::Analysis, cx) {
-                let engine = scenario == Scenario::AnalysisEngine;
+                let engine = scenario != Scenario::BoardAnimation;
                 // A search that never finishes, so the lines keep streaming for the whole run.
                 crate::prefs::set(cx, "kchess:analysis-infinite", engine);
                 analysis.update(cx, |analysis, cx| {
@@ -161,7 +164,7 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
 
 fn step(scenario: Scenario, ply: &mut usize, _: &mut Window, cx: &mut App) {
     match scenario {
-        Scenario::BoardAnimation => {
+        Scenario::BoardAnimation | Scenario::AnalysisStepping => {
             if let Some(analysis) = shell::view_of::<AnalysisPage>(Page::Analysis, cx) {
                 analysis.update(cx, |analysis, cx| {
                     if *ply == LINE.len() {

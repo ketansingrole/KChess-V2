@@ -235,6 +235,18 @@ impl TopbarInputs {
     }
 }
 
+/// The sidebar toggle as its `Part` (`.sidebar-toggle-wrap`): its 28px button, `TOPBAR_HEIGHT`
+/// high, over the top bar's left end.
+fn toggle_style(window: &Window) -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.position = Some(Position::Absolute);
+    style.inset.top = Some(px(0.).into());
+    style.inset.left = Some(toggle_left(window).into());
+    style.size.width = Some(px(28.).into());
+    style.size.height = Some(TOPBAR_HEIGHT.into());
+    style
+}
+
 /// The top bar as its `Part`: the window's width, `TOPBAR_HEIGHT` high.
 fn topbar_style() -> StyleRefinement {
     let mut style = StyleRefinement::default();
@@ -639,6 +651,8 @@ pub struct Workspace {
     sidebar_toggled: Option<std::time::Instant>,
     sidebar: Entity<Part<Workspace>>,
     topbar: Entity<Part<Workspace>>,
+    /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
+    toggle: Entity<Part<Workspace>>,
     history: crate::swipe::History<Page>,
     swipe: crate::swipe::Swipe,
     swipe_feedback: Option<SwipeFeedback>,
@@ -735,6 +749,11 @@ impl Workspace {
             topbar: Part::keyed(
                 |this, window, cx| this.render_topbar(window, cx).into_any_element(),
                 TopbarInputs::of,
+                cx,
+            ),
+            toggle: Part::keyed(
+                |this, _, cx| this.render_sidebar_toggle(cx).into_any_element(),
+                |this, _| this.sidebar_open,
                 cx,
             ),
             history: crate::swipe::History::default(),
@@ -1204,27 +1223,21 @@ impl Workspace {
     /// The sidebar toggle (`.sidebar-toggle-wrap`): one button at the same place in the window
     /// whether the sidebar is open or a rail, beside the macOS traffic lights (which ignore the
     /// interface size, so its offset does too), else at the window's edge.
-    fn render_sidebar_toggle(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let label = if self.sidebar_open {
             "Hide sidebar"
         } else {
             "Show sidebar"
         };
-        h_flex()
-            .id("sidebar-toggle-wrap")
-            .absolute()
-            .top_0()
-            .left(toggle_left(window))
-            .h(TOPBAR_HEIGHT)
-            .child(
-                Button::new("sidebar-toggle")
-                    .custom(ghost_neutral(cx))
-                    .icon(icon("panel-left"))
-                    .size(px(28.))
-                    .tooltip(label)
-                    .accessibility_label(label)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-            )
+        h_flex().id("sidebar-toggle-wrap").size_full().child(
+            Button::new("sidebar-toggle")
+                .custom(ghost_neutral(cx))
+                .icon(icon("panel-left"))
+                .size(px(28.))
+                .tooltip(label)
+                .accessibility_label(label)
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+        )
     }
 
     /// The top bar inside GPUI Kit's title bar, which ends it with the window's minimize,
@@ -1672,7 +1685,7 @@ impl Render for Workspace {
                     ),
             )
             .when(!zen, |shell| {
-                shell.child(self.render_sidebar_toggle(window, cx))
+                shell.child(self.toggle.clone().cached(toggle_style(window)))
             })
     }
 }
