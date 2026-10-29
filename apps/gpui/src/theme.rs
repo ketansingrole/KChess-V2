@@ -296,7 +296,7 @@ mod tests {
             let text = std::fs::read_to_string(&file).unwrap();
             let preview = text
                 .find("fn theme_preview(")
-                .map(|start| (start, start + text[start..].find("\n}\n").unwrap_or(0)));
+                .map(|start| (start, start + text[start..].find("\n}").unwrap_or(0)));
             for (at, _) in text.match_indices(".rounded") {
                 let call = &text[at..];
                 let literal = call.find('(').is_some_and(|open| {
