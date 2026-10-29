@@ -550,7 +550,7 @@ impl WatchPage {
         let Some(frame) = self.live.frame.clone() else {
             return div().into_any_element();
         };
-        let palette = &cx.global::<Palette>().clone();
+        let palette = &{ *cx.global::<Palette>() };
         let crazyhouse = frame["variant"] == json!("crazyhouse");
         let finished = frame["finished"] == json!(true);
         let board_size = self
@@ -743,7 +743,7 @@ impl WatchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let palette = cx.global::<Palette>().clone();
+        let palette = *cx.global::<Palette>();
         let list = if self.tab == super::Tab::Friends {
             self.friends_list(cx, &palette)
         } else {
@@ -761,7 +761,7 @@ impl WatchPage {
 
     /// A player's clock beside their name: its own `Part`, which a tick redraws.
     pub(super) fn render_live_face(&mut self, color: Color, cx: &mut Context<Self>) -> AnyElement {
-        let palette = cx.global::<Palette>().clone();
+        let palette = *cx.global::<Palette>();
         let connected = self.phase.as_deref() == Some("connected");
         let shown = self.live.clock(color, connected);
         let ix = usize::from(color == Color::Black);
