@@ -337,12 +337,18 @@ impl Render for RatingHistory {
                                             .find(|(value, _)| *value == self.mode)
                                             .map_or("", |(_, label)| label),
                                     ))
-                                    .child(Select::new(&self.mode_select).small()),
+                                    .child(
+                                        Select::new(&self.mode_select)
+                                            .small()
+                                            .accessibility_label("Speed"),
+                                    ),
                             )
                             .child(
-                                div()
-                                    .w(fit_select(self.range))
-                                    .child(Select::new(&self.range_select).small()),
+                                div().w(fit_select(self.range)).child(
+                                    Select::new(&self.range_select)
+                                        .small()
+                                        .accessibility_label("Period"),
+                                ),
                             ),
                     ),
             )

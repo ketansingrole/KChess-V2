@@ -1110,10 +1110,11 @@ impl PlayersPage {
                         })),
                 )
                 .child(
-                    div()
-                        .w(px(150.))
-                        .flex_none()
-                        .child(Select::new(&self.perf_select).small()),
+                    div().w(px(150.)).flex_none().child(
+                        Select::new(&self.perf_select)
+                            .small()
+                            .accessibility_label("Rating speed"),
+                    ),
                 ),
         );
         if let Some(error) = &self.stats_error {
@@ -1236,9 +1237,11 @@ impl PlayersPage {
                 .items_center()
                 .child(widgets::heading("Leaderboard", palette))
                 .child(
-                    div()
-                        .w(px(160.))
-                        .child(Select::new(&self.board_select).small()),
+                    div().w(px(160.)).child(
+                        Select::new(&self.board_select)
+                            .small()
+                            .accessibility_label("Leaderboard speed"),
+                    ),
                 ),
         );
         if let Some(error) = &self.board_error {

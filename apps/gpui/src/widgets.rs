@@ -824,7 +824,8 @@ fn pill_row(
     h_flex()
         .id(id)
         .when(fill, |row| row.w_full())
-        .when(wrap, |row| row.flex_wrap())
+        // Pills too wide for one row take another rather than run past the edge.
+        .flex_wrap()
         .p(px(2.))
         .gap(px(4.))
         .rounded(px(8.))

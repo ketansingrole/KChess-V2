@@ -10,6 +10,13 @@ with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with `e
 They run with the app's unit tests in `cargo xtask check` and in CI's `gpui` job on macOS,
 Windows and Linux.
 
+`e2e::audit` opens every page at the minimum, a mid and the default window size and fails when a
+control has no accessible name, runs past the window's side or overlaps another control, or when
+more controls fall under 24 px than its ratchet allows (lower it as they grow). For UI changes,
+compare pictures of every page before and after: on macOS,
+`KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens -- --ignored` renders them
+offscreen into `<dir>/<width>x<height>/<page>.png`.
+
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
 the working tree has uncommitted or untracked files, since `check` would test those instead. Other

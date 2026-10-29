@@ -10,6 +10,7 @@
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
 
 mod analysis;
+mod audit;
 mod computer;
 mod history;
 mod local;
@@ -18,6 +19,8 @@ mod openings;
 mod palette;
 mod practice;
 mod puzzles;
+#[cfg(target_os = "macos")]
+mod screens;
 mod settings;
 mod shell;
 mod studies;
@@ -40,6 +43,10 @@ thread_local! {
     /// Apps a test started again (`Harness::restart`), held until the test's thread ends.
     static KEPT_APPS: std::cell::RefCell<Vec<TestAppContext>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// The window sizes the audit and the screenshots look at: the minimum, a small laptop's and the
+/// default (`window_state`).
+const SIZES: [(f32, f32); 3] = [(640., 620.), (1024., 768.), (1320., 880.)];
 
 /// How often a wait looks again.
 const POLL: Duration = Duration::from_millis(5);

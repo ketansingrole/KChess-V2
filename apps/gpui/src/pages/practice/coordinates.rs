@@ -690,6 +690,8 @@ impl Render for Coordinates {
         let limited = crate::prefs::get(cx, LIMITED, false);
         let length = Self::length(cx);
         let mut panel = widgets::side_panel(&palette)
+            .id("coordinates-panel")
+            .overflow_y_scroll()
             .h(self.layout.fixed(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
