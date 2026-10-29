@@ -52,6 +52,30 @@ fn quick_pick_opens_with_its_modes_and_closes_on_escape(cx: &mut gpui_kit::TestA
 }
 
 #[gpui_kit::test]
+fn a_press_beside_the_open_box_closes_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("puzzles");
+    wait_for_first(&mut app, "Puzzles");
+    // The title bar's empty side, left of the box (its icon and padding are 32px): nothing
+    // there takes the focus.
+    let field = app.with_window(|window, _| {
+        window
+            .try_find_by_label("Search pages and commands")
+            .expect("the search field")
+            .bounds()
+    });
+    app.click_point(gpui_kit::point(
+        field.origin.x - gpui_kit::px(52.),
+        field.center().y,
+    ));
+    wait_until_closed(&mut app);
+    // It gave up the focus too: typing does not reopen it.
+    app.type_text("p");
+    assert!(!lists(&mut app, "Puzzles"));
+}
+
+#[gpui_kit::test]
 fn a_page_is_found_by_name_and_opened(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.press("secondary-k");
