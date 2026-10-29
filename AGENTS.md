@@ -26,8 +26,9 @@ creating/pushing a tag or publishing a release.
   including new/untracked files; explicitly stage the files instead of relying on
   `git commit -am`. Keep the working tree clean before tagging and verify CI is green
   for the intended release commit.
-- Run `cargo xtask release-verify` and `cargo xtask check`. Verify the release commit and tag
-  before creating an annotated tag. Push **only that tag**, not `--tags` or an arbitrary
+- Run `cargo xtask release-verify` (it needs the release commit's CI to have run and passed every
+  job, including the packages, Snap and Windows upgrade) and `cargo xtask check`. Verify the
+  release commit and tag before creating an annotated tag. Push **only that tag**, not `--tags` or an arbitrary
   `HEAD` branch. Never force-push, move, reuse, or delete an existing release tag.
 - Tag pushes run the Release workflow and create a draft after all platform packages
   succeed. Manual `workflow_dispatch` builds produce downloadable artifacts only,
@@ -154,7 +155,7 @@ git push origin "refs/tags/$release_tag"
 - Test in tiers. While editing, run `cargo xtask check-fast` (format, lints and the tests of the
   packages changed since main). Before pushing to `main`, run the full `cargo xtask check` (the
   pre-push hook enforces it). Packaging changes also need `cargo xtask package` on the platform
-  they touch, and the Windows upgrade workflow for installer changes.
+  they touch; CI then packages, builds the Snap and runs the Windows upgrade (`ci.yml` `changes`).
 - Bug fixes must retain a regression for the concrete failure sequence. When generated
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
 - Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that

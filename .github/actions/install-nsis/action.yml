@@ -1,0 +1,17 @@
+name: Install NSIS
+description: makensis for the Windows installer, or a failed step before the build rather than after it
+
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+        # Chocolatey's feed answers 504 at times; choco then installs nothing and the build ran
+        # 13 minutes before the installer step found no makensis (2026-10-29).
+        foreach ($try in 1..3) {
+          if (Test-Path $makensis) { break }
+          choco install nsis -y --no-progress
+          if (-not (Test-Path $makensis)) { Start-Sleep -Seconds (30 * $try) }
+        }
+        if (-not (Test-Path $makensis)) { throw "NSIS is not installed: $makensis" }

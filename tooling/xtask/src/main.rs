@@ -20,7 +20,8 @@ const HELP: &str = "cargo xtask <command>
   pre-push              The Git pre-push hook (.githooks/pre-push)
   install-hooks         Point Git at .githooks
   release-version       Set the next YEAR.MONTH.COUNTER release in Cargo.toml (fetches tags)
-  release-verify        Check the release version (and, on a tag build, the tag)
+  release-verify        Check the release version (and, on a tag build, the tag), and that CI
+                        ran and passed every job for HEAD
   attach-draft-release <dir>
                         Attach a tag build's packages to its draft release (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
@@ -43,7 +44,7 @@ fn main() -> ExitCode {
         Some("pre-push") => check::pre_push(),
         Some("install-hooks") => check::install_hooks(),
         Some("release-version") => release::next(),
-        Some("release-verify") => release::verify(),
+        Some("release-verify") => release::verify_release(),
         Some("attach-draft-release") => release::attach_draft(std::path::Path::new(
             rest.first().map_or("packages", String::as_str),
         )),

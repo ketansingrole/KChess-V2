@@ -18,9 +18,11 @@ branches push without it. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git p
 Before merging, run `cargo xtask check`: `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
-installed. Packaging changes also need `cargo xtask package` on the platform they touch; installer
-changes need the Windows upgrade workflow. CI runs `check`, `cargo deny`, and the app's tests and
-a package on macOS, Windows and Linux.
+installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
+`check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
+changed since the last release (a version bump always has), it also packages on each platform,
+builds the Snap and runs the Windows upgrade workflow. `cargo xtask release-verify` refuses a commit
+whose CI did not run and pass every job, and every push to `main` runs CI to the end.
 
 ## Ownership
 

@@ -32,8 +32,9 @@ use gpui_kit::{
     MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, Window,
 };
 
-/// How long a step may take to show: real time, since the core answers on its own threads.
-const TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a step may take to show: real time, since the core answers on its own threads. A
+/// loaded CI runner took over 10 s for an import (2026.10.15); a passing step never waits this out.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 thread_local! {
     /// Apps a test started again (`Harness::restart`), held until the test's thread ends.
@@ -188,6 +189,14 @@ impl Harness {
     pub fn shows(&mut self, id: impl Into<ElementId>) -> bool {
         let id = id.into();
         self.with_window(|window, _| window.try_find(id).is_some_and(|e| e.visible()))
+    }
+
+    /// Wait until the element is no longer shown, as a dialog that closes on the core's answer.
+    pub fn wait_gone(&mut self, id: impl Into<ElementId>) {
+        let id = id.into();
+        self.wait_for(&format!("{id:?} to go"), |window, _| {
+            !window.try_find(id.clone()).is_some_and(|e| e.visible())
+        });
     }
 
     /// Click the element once it is shown.

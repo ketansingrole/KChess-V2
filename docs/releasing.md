@@ -11,15 +11,16 @@ the version change:
 
 ```bash
 cargo xtask release-version   # fetches origin's tags; updates Cargo.toml and Cargo.lock
-cargo xtask release-verify
 cargo xtask check
 git add Cargo.toml Cargo.lock
 git commit -m "Release <version>"
 ```
 
-Merge the reviewed version commit into `main` and wait for green CI. From a clean checkout of that
-commit, create an annotated tag derived from its version and push only that tag, as shown in
-`AGENTS.md`. Never reuse or move a release tag. The version helper stops if it cannot refresh remote
+Merge the reviewed version commit into `main` and wait for green CI. The version change runs CI's
+packages, Snap build and Windows upgrade, which otherwise run only when packaging may have changed
+since the last release; from a clean checkout of that commit, `cargo xtask release-verify` checks
+the metadata and that its CI ran and passed every job. Then create an annotated tag derived from
+its version and push only that tag, as shown in `AGENTS.md`. Never reuse or move a release tag. The version helper stops if it cannot refresh remote
 tags; it does not guess using a stale local list.
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, the Snap,
@@ -52,8 +53,8 @@ reaches every Electron installation as an ordinary update, from any earlier vers
   `6bb66f38-a1a5-5ec8-b24f-c899466885ca`, `%LOCALAPPDATA%\Programs\KChess` or the existing folder,
   `KChess.exe`, `Uninstall KChess.exe`, the Start menu and desktop shortcuts), runs the Electron
   installation's own uninstaller in place, keeping user data, and removes an all-users copy from
-  releases up to 2026.10.11. The **Windows upgrade** workflow checks per-user, custom-folder,
-  all-users and fresh installs.
+  releases up to 2026.10.11. The **Windows upgrade** workflow, which CI runs with the packages,
+  checks per-user, custom-folder, all-users and fresh installs.
 - **macOS**: Squirrel.Mac installs a bundle from the `.zip` only when it has the running app's
   bundle identifier and meets its Developer ID requirement. Electron releases from 2026.10.12 were
   `com.kchess.app`, as KChess is; earlier ones were `com.kchess.electron`, so the zip also holds

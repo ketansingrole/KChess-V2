@@ -3,16 +3,11 @@ name: Windows upgrade
 # Installs a published Windows release three ways (per user, in a custom folder, for all users),
 # upgrades it with this commit's installer the way an installed KChess runs it (`--updated /S`,
 # which every Electron release's updater does too) and checks Apps & features, shortcuts, the old
-# copy and user data. A fresh install checks the default folder. Run it from the Actions tab after
-# changing the installer; pull requests that change it or this test run it too.
+# copy and user data. A fresh install checks the default folder. CI runs it whenever packaging may
+# have changed since the last release (ci.yml); run it from the Actions tab any time.
 on:
+  workflow_call:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/windows-upgrade.yml
-      - tooling/windows-upgrade-test.ps1
-      - tooling/xtask/src/package/**
-      - apps/gpui/build.rs
 
 permissions:
   contents: read
@@ -21,21 +16,16 @@ env:
   # Above every release, so the new installer is always an upgrade.
   KCHESS_TEST_VERSION: 9999.0.${{ github.run_number }}
 
-concurrency:
-  group: windows-upgrade-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
       - name: Install NSIS
-        shell: pwsh
-        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
+        uses: ./.github/actions/install-nsis
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: gpui
+          shared-key: package
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       # The app and its installer take the test version from KCHESS_PACKAGE_VERSION.
