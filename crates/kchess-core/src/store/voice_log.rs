@@ -261,4 +261,187 @@ mod tests {
         write_pretty(&value, 0, &mut out);
         assert_eq!(out, "{\n  \"a\": [\n    1,\n    {}\n  ],\n  \"b\": []\n}");
     }
+
+    struct Logged(std::sync::Mutex<Vec<String>>);
+    impl Host for Logged {
+        fn log(&self, _: Level, scope: &str, message: &str) {
+            self.0
+                .lock()
+                .expect("log")
+                .push(format!("{scope}: {message}"));
+        }
+        fn emit(&self, _: &str, _: Value) {}
+    }
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().expect("database");
+        crate::store::migrations::migrate(&db).expect("migrate");
+        db
+    }
+
+    fn run(db: &Connection, host: &Logged, method: &str, args: &[Value]) -> Result<Value> {
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = StoreContext {
+            db,
+            host,
+            config: &config,
+            cache: &cache,
+        };
+        call(&ctx, method, args).expect("a voice log method")
+    }
+
+    #[test]
+    fn attempts_are_saved_corrected_and_listed_newest_first() {
+        let db = database();
+        let host = Logged(Default::default());
+        let first = run(
+            &db,
+            &host,
+            "store.voiceLog.saveVoiceAttempt",
+            &[json!({
+                "source": "vosk",
+                "heard": "night f three",
+                "confidence": 0.75,
+                "words": [{ "word": "night", "conf": 0.5 }],
+                "outcome": "played",
+                "parsed": "Nf3",
+                "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+                "expected": null,
+            })],
+        )
+        .expect("save");
+        let retry = run(
+            &db,
+            &host,
+            "store.voiceLog.saveVoiceAttempt",
+            &[json!({ "source": "vosk", "heard": "knight", "confidence": 1, "outcome": "unclear", "retryOf": first })],
+        )
+        .expect("save");
+        assert_eq!(retry.as_i64(), first.as_i64().map(|id| id + 1));
+        run(
+            &db,
+            &host,
+            "store.voiceLog.updateVoiceAttempt",
+            &[
+                first.clone(),
+                json!({ "outcome": "wrong", "expected": "Nc3" }),
+            ],
+        )
+        .expect("update");
+        // Empty fields leave the entry as it was.
+        run(
+            &db,
+            &host,
+            "store.voiceLog.updateVoiceAttempt",
+            &[first.clone(), json!({ "outcome": "", "expected": "" })],
+        )
+        .expect("update");
+
+        let history =
+            run(&db, &host, "store.voiceLog.voiceHistory", &[json!(10)]).expect("history");
+        let entries = history.as_array().expect("entries");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["id"], retry);
+        assert_eq!(entries[0]["retryOf"], first);
+        assert_eq!(entries[0]["words"], json!(null));
+        assert!(entries[0].get("parsed").is_none());
+        assert_eq!(entries[1]["outcome"], json!("wrong"));
+        assert_eq!(entries[1]["expected"], json!("Nc3"));
+        assert_eq!(entries[1]["parsed"], json!("Nf3"));
+        assert_eq!(entries[1]["confidence"], json!(0.75));
+        assert_eq!(
+            entries[1]["words"],
+            json!([{ "word": "night", "conf": 0.5 }])
+        );
+        assert!(entries[1].get("retryOf").is_none());
+
+        let limited = run(&db, &host, "store.voiceLog.voiceHistory", &[json!(1)]).expect("history");
+        assert_eq!(limited.as_array().map(Vec::len), Some(1));
+
+        run(&db, &host, "store.voiceLog.clearVoiceHistory", &[]).expect("clear");
+        assert_eq!(
+            run(&db, &host, "store.voiceLog.voiceHistory", &[json!(10)]).expect("history"),
+            json!([])
+        );
+    }
+
+    #[test]
+    fn the_log_keeps_only_the_newest_entries() {
+        let db = database();
+        let host = Logged(Default::default());
+        db.execute_batch(&format!(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {MAX_ENTRIES})
+             INSERT INTO voice_log (at, source, heard, confidence, words, outcome)
+             SELECT i, 'vosk', 'e4', 1, '[]', 'played' FROM n"
+        ))
+        .expect("seed");
+        let id = run(
+            &db,
+            &host,
+            "store.voiceLog.saveVoiceAttempt",
+            &[json!({ "heard": "e5", "confidence": 1 })],
+        )
+        .expect("save");
+        let (count, oldest): (i64, i64) = db
+            .query_row("SELECT COUNT(*), MIN(id) FROM voice_log", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .expect("count");
+        assert_eq!(count, MAX_ENTRIES);
+        assert_eq!(oldest, 2);
+        assert_eq!(id, json!(MAX_ENTRIES + 1));
+    }
+
+    #[test]
+    fn the_export_dates_every_entry_and_reads_bad_words_as_none() {
+        let db = database();
+        let host = Logged(Default::default());
+        db.execute(
+            "INSERT INTO voice_log (at, source, heard, confidence, words, outcome)
+             VALUES (1700000000123, 'vosk', 'e4', 0.5, 'not json', 'played')",
+            [],
+        )
+        .expect("seed");
+        let document =
+            run(&db, &host, "store.voiceLog.voiceHistoryDocument", &[]).expect("document");
+        let text = document.as_str().expect("text");
+        assert!(text.ends_with("}\n"));
+        assert!(text.contains("\n  \"entries\": [\n    {\n"));
+        let parsed: Value = serde_json::from_str(text).expect("json");
+        assert_eq!(
+            parsed["entries"][0]["time"],
+            json!("2023-11-14T22:13:20.123Z")
+        );
+        assert_eq!(parsed["entries"][0]["words"], json!([]));
+        assert!(parsed["exportedAt"].as_f64().is_some());
+        let logged = host.0.lock().expect("log");
+        assert!(logged[0].starts_with("voice: Voice log row has invalid words JSON"));
+    }
+
+    #[test]
+    fn bad_arguments_are_refused_and_other_methods_are_not_this_modules() {
+        let db = database();
+        let host = Logged(Default::default());
+        assert!(run(&db, &host, "store.voiceLog.saveVoiceAttempt", &[]).is_err());
+        assert!(
+            run(
+                &db,
+                &host,
+                "store.voiceLog.updateVoiceAttempt",
+                &[json!("1")]
+            )
+            .is_err()
+        );
+        assert!(run(&db, &host, "store.voiceLog.voiceHistory", &[]).is_err());
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = StoreContext {
+            db: &db,
+            host: &host,
+            config: &config,
+            cache: &cache,
+        };
+        assert!(call(&ctx, "store.runs.runSummary", &[]).is_none());
+    }
 }

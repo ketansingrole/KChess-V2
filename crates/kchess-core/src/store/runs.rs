@@ -145,3 +145,186 @@ fn clear_runs(db: &Connection, kind: Option<&str>) -> Result<()> {
     .map(|_| ())
     .map_err(db_err)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::Config;
+    use crate::store::StoreCache;
+
+    struct Logged(std::sync::Mutex<Vec<String>>);
+    impl Host for Logged {
+        fn log(&self, _: Level, scope: &str, message: &str) {
+            self.0.lock().unwrap().push(format!("{scope}: {message}"));
+        }
+        fn emit(&self, _: &str, _: Value) {}
+    }
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        crate::store::migrations::migrate(&db).unwrap();
+        db
+    }
+
+    fn run(db: &Connection, host: &Logged, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let config = Config::new(std::path::PathBuf::new());
+        let cache = StoreCache::default();
+        let ctx = StoreContext {
+            db,
+            host,
+            config: &config,
+            cache: &cache,
+        };
+        call(&ctx, method, args)
+    }
+
+    fn save(db: &Connection, host: &Logged, run_value: Value) -> Value {
+        run(db, host, "store.runs.saveRun", &[run_value])
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_empty_kind_summarises_to_nothing() {
+        let db = database();
+        let host = Logged(Default::default());
+        assert_eq!(
+            run(&db, &host, "store.runs.runSummary", &[json!("storm")])
+                .unwrap()
+                .unwrap(),
+            json!({ "kind": "storm", "best": {}, "recent": [], "total": 0 })
+        );
+    }
+
+    #[test]
+    fn saving_reports_a_new_best_only_when_it_beats_the_variant() {
+        let db = database();
+        let host = Logged(Default::default());
+        let first = save(
+            &db,
+            &host,
+            json!({ "kind": "storm", "variant": "3m", "score": 20, "detail": { "errors": 2 } }),
+        );
+        assert_eq!(first["isBest"], json!(true));
+        let lower = save(
+            &db,
+            &host,
+            json!({ "kind": "storm", "variant": "3m", "score": 12 }),
+        );
+        assert_eq!(lower["isBest"], json!(false));
+        let tie = save(
+            &db,
+            &host,
+            json!({ "kind": "storm", "variant": "3m", "score": 20 }),
+        );
+        assert_eq!(tie["isBest"], json!(false));
+        // Another variant keeps its own best, and a fractional score keeps its fraction.
+        let other = save(
+            &db,
+            &host,
+            json!({ "kind": "storm", "variant": "5m", "score": 7.5 }),
+        );
+        assert_eq!(other["isBest"], json!(true));
+        // A zero score is never a best, even as a variant's first run.
+        let zero = save(&db, &host, json!({ "kind": "streak", "score": 0 }));
+        assert_eq!(zero["isBest"], json!(false));
+
+        let summary = &other["summary"];
+        assert_eq!(summary["total"], json!(4));
+        assert_eq!(summary["best"]["3m"]["score"], json!(20));
+        assert_eq!(summary["best"]["5m"]["score"], json!(7.5));
+        let recent = summary["recent"].as_array().unwrap();
+        assert_eq!(recent.len(), 4);
+        // Newest first; ties on playedAt fall back to the later id.
+        assert_eq!(recent[0]["variant"], json!("5m"));
+        assert_eq!(recent[3]["detail"], json!({ "errors": 2 }));
+        // The earliest run reaching the best score is the one dated.
+        assert_eq!(summary["best"]["3m"]["playedAt"], recent[3]["playedAt"]);
+    }
+
+    #[test]
+    fn the_summary_lists_only_the_most_recent_runs() {
+        let db = database();
+        let host = Logged(Default::default());
+        for score in 1..=(RECENT + 5) {
+            save(
+                &db,
+                &host,
+                json!({ "kind": "rush", "variant": "5m", "score": score }),
+            );
+        }
+        let summary = run(&db, &host, "store.runs.runSummary", &[json!("rush")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary["total"], json!(RECENT + 5));
+        assert_eq!(summary["recent"].as_array().unwrap().len(), RECENT as usize);
+        assert_eq!(summary["recent"][0]["score"], json!(RECENT + 5));
+        assert_eq!(summary["best"]["5m"]["score"], json!(RECENT + 5));
+    }
+
+    #[test]
+    fn a_detail_that_is_not_json_reads_as_empty_and_is_logged() {
+        let db = database();
+        let host = Logged(Default::default());
+        db.execute(
+            "INSERT INTO runs (kind, variant, score, detail, playedAt) VALUES ('storm', '3m', 5, 'not json', 1)",
+            [],
+        )
+        .unwrap();
+        let summary = run(&db, &host, "store.runs.runSummary", &[json!("storm")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary["recent"][0]["detail"], json!({}));
+        let logged = host.0.lock().unwrap();
+        assert_eq!(logged.len(), 1);
+        assert!(logged[0].starts_with("runs: Run row has invalid detail JSON"));
+    }
+
+    #[test]
+    fn clearing_forgets_one_kind_or_every_kind() {
+        let db = database();
+        let host = Logged(Default::default());
+        for kind in ["storm", "streak", "rush"] {
+            save(&db, &host, json!({ "kind": kind, "score": 3 }));
+        }
+        let total = |kind: &str| {
+            run(&db, &host, "store.runs.runSummary", &[json!(kind)])
+                .unwrap()
+                .unwrap()["total"]
+                .clone()
+        };
+        run(&db, &host, "store.runs.clearRuns", &[json!("storm")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(total("storm"), json!(0));
+        assert_eq!(total("streak"), json!(1));
+        // An empty kind clears everything, as no kind does.
+        run(&db, &host, "store.runs.clearRuns", &[json!("")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(total("streak"), json!(0));
+        save(&db, &host, json!({ "kind": "rush", "score": 3 }));
+        run(&db, &host, "store.runs.clearRuns", &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(total("rush"), json!(0));
+    }
+
+    #[test]
+    fn bad_arguments_are_refused_and_other_methods_are_not_this_modules() {
+        let db = database();
+        let host = Logged(Default::default());
+        assert!(
+            run(&db, &host, "store.runs.runSummary", &[json!(3)])
+                .unwrap()
+                .is_err()
+        );
+        assert!(run(&db, &host, "store.runs.saveRun", &[]).unwrap().is_err());
+        assert!(
+            run(&db, &host, "store.runs.saveRun", &[json!("storm")])
+                .unwrap()
+                .is_err()
+        );
+        assert!(run(&db, &host, "store.games.loadData", &[]).is_none());
+    }
+}
