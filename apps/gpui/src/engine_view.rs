@@ -44,10 +44,12 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
                 let mut offset = -width;
                 while offset < height {
                     let mut stripe = PathBuilder::fill();
+                    // Clear of the rounded ends, which GPUI does not clip to.
+                    let end = radii::XS.as_f32();
                     let at = |x: f32, y: f32| {
                         point(
                             bounds.origin.x + px(x),
-                            bounds.origin.y + px(y.clamp(0., height)),
+                            bounds.origin.y + px(y.clamp(end, height - end)),
                         )
                     };
                     stripe.move_to(at(0., offset + 4.));
@@ -63,15 +65,30 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
                 return;
             }
             let fill_height = bounds.size.height * white;
-            let white_part = if orientation == Color::White {
-                Bounds::new(
-                    point(bounds.origin.x, bounds.bottom() - fill_height),
-                    size(bounds.size.width, fill_height),
+            // Rounded at the bar's end only: square where it meets the dark part.
+            let (white_part, ends) = if orientation == Color::White {
+                (
+                    Bounds::new(
+                        point(bounds.origin.x, bounds.bottom() - fill_height),
+                        size(bounds.size.width, fill_height),
+                    ),
+                    Corners {
+                        bottom_left: radii::XS,
+                        bottom_right: radii::XS,
+                        ..Corners::default()
+                    },
                 )
             } else {
-                Bounds::new(bounds.origin, size(bounds.size.width, fill_height))
+                (
+                    Bounds::new(bounds.origin, size(bounds.size.width, fill_height)),
+                    Corners {
+                        top_left: radii::XS,
+                        top_right: radii::XS,
+                        ..Corners::default()
+                    },
+                )
             };
-            window.paint_quad(fill(white_part, rgb(0xf2f0ea)).corner_radii(radii::XS));
+            window.paint_quad(fill(white_part, rgb(0xf2f0ea)).corner_radii(ends));
             let middle = Bounds::new(
                 point(bounds.origin.x, bounds.center().y - px(1.)),
                 size(bounds.size.width, px(2.)),

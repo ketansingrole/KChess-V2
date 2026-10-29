@@ -929,17 +929,21 @@ impl WatchPage {
                                             }))
                                     })
                                     .child(
+                                        // Inside the card's border; GPUI does not clip
+                                        // to the card's rounded corners.
                                         div()
                                             .h(px(130.))
                                             .flex()
                                             .items_center()
                                             .justify_center()
                                             .overflow_hidden()
+                                            .rounded_t(radii::XL - px(1.))
                                             .bg(palette.accented)
                                             .map(|area| match cover {
                                                 Some(cover) => area.child(
                                                     img(cover)
                                                         .size_full()
+                                                        .rounded_t(radii::XL - px(1.))
                                                         .object_fit(ObjectFit::Cover),
                                                 ),
                                                 None => area.child(

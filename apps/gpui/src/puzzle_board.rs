@@ -530,8 +530,9 @@ impl Render for PuzzleBoard {
             },
             cx,
         );
+        // The wrong-move frame hugs the board, its corners concentric with the board's.
         let board = div()
-            .rounded(radii::SM)
+            .rounded(radii::XL + px(3.))
             .border_3()
             .border_color(if self.flash {
                 tint(palette.loss, 55.)

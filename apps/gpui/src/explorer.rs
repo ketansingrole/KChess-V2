@@ -167,6 +167,8 @@ pub fn result_bar(entry: &Value, min_label: u64, palette: &Palette) -> impl Into
         (rgb(0x9e9e9e), rgb(0xffffff)),
         (rgb(0x333333), rgb(0xeeeeee)),
     ];
+    let first = counts.iter().position(|&part| part > 0);
+    let last = counts.iter().rposition(|&part| part > 0);
     let title = SharedString::from(format!(
         "White {} · Draw {} · Black {}",
         counts[0], counts[1], counts[2]
@@ -186,22 +188,25 @@ pub fn result_bar(entry: &Value, min_label: u64, palette: &Palette) -> impl Into
         .text_size(px(10.))
         .line_height(px(14.))
         .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
-        .children(counts.into_iter().zip(looks).map(move |(part, (bg, fg))| {
-            let pct = if total == 0 {
-                0
-            } else {
-                (100. * part as f64 / total as f64).round() as u64
-            };
-            div()
-                .h_full()
-                .w(relative(pct as f32 / 100.))
-                .overflow_hidden()
-                .bg(bg)
-                .text_color(fg)
-                .flex()
-                .justify_center()
-                .when(pct > min_label, |part| part.child(format!("{pct}%")))
-        }))
+        .children(counts.into_iter().zip(looks).enumerate().map(
+            move |(index, (part, (bg, fg)))| {
+                let pct = if total == 0 {
+                    0
+                } else {
+                    (100. * part as f64 / total as f64).round() as u64
+                };
+                let ends = (Some(index) == first, Some(index) == last);
+                widgets::bar_segment(div(), ends, radii::XS - px(1.))
+                    .h_full()
+                    .w(relative(pct as f32 / 100.))
+                    .overflow_hidden()
+                    .bg(bg)
+                    .text_color(fg)
+                    .flex()
+                    .justify_center()
+                    .when(pct > min_label, |part| part.child(format!("{pct}%")))
+            },
+        ))
 }
 
 pub enum ExplorerEvent {

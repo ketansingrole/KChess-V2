@@ -234,25 +234,45 @@ pub fn apply(window: &mut Window, cx: &mut App) {
             keys.insert((*key).to_string(), value.clone());
         }
     }
-    // Controls take `radii::SM`, dialogs `radii::MD`.
-    let config: Option<ThemeConfig> = serde_json::from_value(json!({
+    match kit_config(dark, keys) {
+        Ok(config) => {
+            Theme::global_mut(cx).apply_config(&Rc::new(config));
+            window.refresh();
+        }
+        Err(error) => crate::log::write(
+            kchess_core::Level::Error,
+            "theme",
+            &format!("GPUI Kit refused the theme: {error}"),
+        ),
+    }
+}
+
+/// GPUI Kit's theme: the colors, controls rounded to `radii::SM` and dialogs to `radii::MD`
+/// (whole pixels, as the kit reads them).
+fn kit_config(dark: bool, colors: Map<String, Value>) -> serde_json::Result<ThemeConfig> {
+    serde_json::from_value(json!({
         "name": "KChess",
         "mode": if dark { "dark" } else { "light" },
-        "radius": f32::from(radii::SM),
-        "radius.lg": f32::from(radii::MD),
+        "radius": f32::from(radii::SM) as usize,
+        "radius.lg": f32::from(radii::MD) as usize,
         "shadow": false,
-        "colors": keys,
+        "colors": colors,
     }))
-    .ok();
-    if let Some(config) = config {
-        Theme::global_mut(cx).apply_config(&Rc::new(config));
-        window.refresh();
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A theme GPUI Kit cannot read leaves its components in the kit's own colors and corners.
+    #[test]
+    fn the_kit_reads_the_theme() {
+        for dark in [false, true] {
+            let config = kit_config(dark, Map::new()).unwrap();
+            assert_eq!(config.radius, Some(6));
+            assert_eq!(config.radius_lg, Some(8));
+        }
+    }
 
     /// Every rounded box takes its corners from `radii`; only Settings' theme preview, a scale
     /// model of a page, rounds its own.

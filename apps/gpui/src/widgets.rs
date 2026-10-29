@@ -688,6 +688,15 @@ pub fn columns(width: Pixels, min: Pixels, gap: Pixels) -> (usize, Pixels) {
     (count, item)
 }
 
+/// A share of a rounded bar, rounded at the bar's (`first`, `last`) ends: GPUI clips a child to
+/// its parent's rectangle, not to the parent's rounded corners. `radius` is the bar's, less any
+/// border.
+pub fn bar_segment(segment: Div, (first, last): (bool, bool), radius: Pixels) -> Div {
+    segment
+        .when(first, |segment| segment.rounded_l(radius))
+        .when(last, |segment| segment.rounded_r(radius))
+}
+
 /// `.card`: a bordered, raised box with the page's standard padding.
 pub fn card(palette: &Palette) -> Div {
     v_flex()
@@ -1119,6 +1128,8 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                 .flex()
                 .items_center()
                 .justify_center()
+                // Inside the card's border; GPUI does not clip to the card's rounded corners.
+                .rounded_t(radii::XL - px(1.))
                 .bg(palette.bg)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| open(window, cx))
@@ -1361,11 +1372,19 @@ pub fn result_row(
                 .when(total > 0., |bar| {
                     bar.tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
                 })
-                .children(parts.into_iter().filter(|(part, _)| *part > 0.).map(
-                    move |(part, color)| {
-                        div().h_full().w(relative((part / total) as f32)).bg(color)
-                    },
-                )),
+                .children({
+                    let shown: Vec<_> = parts.into_iter().filter(|(part, _)| *part > 0.).collect();
+                    let count = shown.len();
+                    shown
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(index, (part, color))| {
+                            bar_segment(div(), (index == 0, index + 1 == count), radii::XS)
+                                .h_full()
+                                .w(relative((part / total) as f32))
+                                .bg(color)
+                        })
+                }),
         )
 }
 

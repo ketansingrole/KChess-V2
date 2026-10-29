@@ -630,12 +630,16 @@ fn picture_width(width: Pixels) -> Pixels {
 
 fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
     let side = picture_width(width) / 2.;
-    let square = |piece: Piece, color: u32| {
-        div().size(side).bg(rgb(color)).child(
-            img(SharedString::from(looks::piece_path(set, piece)))
-                .size(side)
-                .object_fit(ObjectFit::Cover),
-        )
+    // Each square takes the preview's outer corners: GPUI clips to rectangles, not rounded ones.
+    let square = |piece: Piece, color: u32, first: bool| {
+        crate::widgets::bar_segment(div(), (first, !first), radii::SM)
+            .size(side)
+            .bg(rgb(color))
+            .child(
+                img(SharedString::from(looks::piece_path(set, piece)))
+                    .size(side)
+                    .object_fit(ObjectFit::Cover),
+            )
     };
     h_flex()
         .rounded(radii::SM)
@@ -646,6 +650,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
                 role: Role::Knight,
             },
             0xf0d9b5,
+            true,
         ))
         .child(square(
             Piece {
@@ -653,6 +658,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
                 role: Role::Queen,
             },
             0xb58863,
+            false,
         ))
 }
 
