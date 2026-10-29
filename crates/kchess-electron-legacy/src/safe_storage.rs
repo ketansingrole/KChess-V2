@@ -56,7 +56,10 @@ pub fn open_gcm(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     let (nonce, ciphertext) = body.split_at(NONCE);
     aes_gcm::Aes256Gcm::new_from_slice(key)
         .map_err(|_| error(UNREADABLE))?
-        .decrypt(aes_gcm::Nonce::from_slice(nonce), ciphertext)
+        .decrypt(
+            &aes_gcm::Nonce::try_from(nonce).map_err(|_| error(UNREADABLE))?,
+            ciphertext,
+        )
         .map_err(|_| error(UNREADABLE))
 }
 
@@ -230,7 +233,7 @@ mod tests {
         let nonce = [9u8; NONCE];
         let body = aes_gcm::Aes256Gcm::new_from_slice(&key)
             .unwrap()
-            .encrypt(aes_gcm::Nonce::from_slice(&nonce), b"lip_token".as_slice())
+            .encrypt(&nonce.into(), b"lip_token".as_slice())
             .unwrap();
         let sealed = [b"v10".as_slice(), &nonce, &body].concat();
         assert_eq!(open_gcm(&sealed, &key).unwrap(), b"lip_token");

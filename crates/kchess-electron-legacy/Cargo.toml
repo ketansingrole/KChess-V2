@@ -18,7 +18,7 @@ aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 sha1 = { version = "0.11", default-features = false }
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -90,7 +90,7 @@ impl Credentials {
         let mut nonce = [0u8; NONCE];
         getrandom::fill(&mut nonce).map_err(|e| CoreError::wrap("credential nonce", e))?;
         let sealed = cipher(&key)
-            .encrypt(Nonce::from_slice(&nonce), plain.as_bytes())
+            .encrypt(&nonce.into(), plain.as_bytes())
             .map_err(|_| CoreError::new("The credential could not be encrypted."))?;
         let mut data = nonce.to_vec();
         data.extend_from_slice(&sealed);
@@ -110,7 +110,10 @@ impl Credentials {
         }
         let key = self.key(false)?;
         let plain = cipher(&key)
-            .decrypt(Nonce::from_slice(&data[..NONCE]), &data[NONCE..])
+            .decrypt(
+                &Nonce::try_from(&data[..NONCE]).map_err(|_| invalid())?,
+                &data[NONCE..],
+            )
             .map_err(|_| {
                 CoreError::new("A saved credential could not be read. Reconnect your account.")
             })?;
@@ -153,7 +156,7 @@ impl Credentials {
 }
 
 fn cipher(key: &[u8; 32]) -> Aes256Gcm {
-    Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key))
+    Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
 }
 
 fn hex(bytes: &[u8]) -> String {
