@@ -25,7 +25,7 @@ use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 mod daily;
 mod history;
 mod rush;
@@ -775,7 +775,7 @@ pub(crate) fn status_panel(
                                     div()
                                         .px(px(6.))
                                         .py(px(1.))
-                                        .rounded(px(6.))
+                                        .rounded(radii::SM)
                                         .border_1()
                                         .border_color(palette.border_accented)
                                         .bg(palette.elevated)
@@ -1226,7 +1226,7 @@ impl PuzzlesPage {
                 .p(px(24.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(px(14.))
+                .rounded(radii::XL)
                 .bg(palette.elevated)
                 .child(self.render_placeholder(cx, palette))
                 .into_any_element()

@@ -19,7 +19,7 @@ use crate::core::AppCore;
 use crate::game::rules;
 use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
-use crate::theme::{Palette, judgment_color};
+use crate::theme::{Palette, judgment_color, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -1076,7 +1076,7 @@ impl AnalysisPage {
                             .min_w(px(30.))
                             .px(px(6.))
                             .py(px(1.))
-                            .rounded(px(5.))
+                            .rounded(radii::XS)
                             .flex()
                             .justify_center()
                             .when(count > 0, |button| {
@@ -1182,7 +1182,7 @@ pub(super) fn eval_chart(
         .aria_label("Evaluation chart")
         .w_full()
         .h(px(64.))
-        .rounded(px(6.))
+        .rounded(radii::SM)
         .overflow_hidden()
         .cursor_pointer()
         .on_click(move |event, _, cx| {

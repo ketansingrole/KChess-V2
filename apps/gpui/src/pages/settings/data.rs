@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Section, SettingsPage};
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Look, format_bytes, format_count};
 
 /// One account's line: what it keeps here and what it downloaded.
@@ -269,7 +269,7 @@ impl SettingsPage {
                 .gap(px(2.))
                 .px(px(16.))
                 .py(px(14.))
-                .rounded(px(10.))
+                .rounded(radii::LG)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.bg)

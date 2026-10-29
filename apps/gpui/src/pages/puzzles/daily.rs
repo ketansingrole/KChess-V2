@@ -12,7 +12,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::PuzzleBoard;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets;
 
 /// The page's way out when the daily puzzle cannot be fetched.
@@ -150,7 +150,7 @@ impl Render for DailyPuzzle {
                 .p(px(24.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(px(14.))
+                .rounded(radii::XL)
                 .bg(palette.elevated)
                 .child(content)
                 .into_any_element()

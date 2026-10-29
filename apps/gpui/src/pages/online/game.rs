@@ -18,7 +18,7 @@ use crate::game::view;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// The player may touch pieces: the game is on, at its last move, in a variant shown here.
@@ -49,7 +49,7 @@ fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &
         .flex_wrap()
         .px(px(12.))
         .py(px(8.))
-        .rounded(px(10.))
+        .rounded(radii::LG)
         .border_1()
         .border_color(palette.border)
         .bg(palette.elevated)

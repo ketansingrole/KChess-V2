@@ -18,6 +18,7 @@ use shakmaty::variant::VariantPosition;
 use shakmaty::{Board, Color, File, Piece, Position as _, Rank, Role, Square};
 
 use crate::settings::SettingsHandle;
+use crate::theme::radii;
 
 /// Chessground's square colors (`chessground.brown.css`).
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
@@ -28,8 +29,6 @@ const DEST_HOVER: u32 = 0x14551e4d; // rgba(20, 85, 30, 0.3)
 /// Chessground's queued premove and its targets (`current-premove`, `premove-dest`).
 const PREMOVE: u32 = 0x141e5580; // rgba(20, 30, 85, 0.5)
 const PREMOVE_DOT: u32 = 0x141e5580;
-/// `--board-radius`.
-const BOARD_RADIUS: Pixels = px(14.);
 /// A press moves this far before it is a drag rather than a click.
 const DRAG_THRESHOLD: Pixels = px(4.);
 
@@ -988,7 +987,7 @@ impl ChessBoard {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(BOARD_RADIUS)
+                .rounded(radii::XL)
                 .bg(hsla(0., 0., 0., 0.5))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -1002,7 +1001,7 @@ impl ChessBoard {
                         .flex()
                         .gap(px(6.))
                         .p(px(8.))
-                        .rounded(px(12.))
+                        .rounded(radii::XL)
                         .bg(elevated)
                         .border_1()
                         .border_color(border)
@@ -1014,7 +1013,7 @@ impl ChessBoard {
                                 .aria_label(label)
                                 .size(px(60.))
                                 .p(px(4.))
-                                .rounded(px(8.))
+                                .rounded(radii::MD)
                                 .bg(background)
                                 .border_1()
                                 .border_color(border)
@@ -1560,7 +1559,7 @@ impl Render for ChessBoard {
                     .absolute()
                     .size_full()
                     .object_fit(ObjectFit::Fill)
-                    .rounded(BOARD_RADIUS),
+                    .rounded(radii::XL),
             )
             .children(check)
             .child(

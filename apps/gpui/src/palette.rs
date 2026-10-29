@@ -17,7 +17,7 @@ use crate::pages::Page;
 use crate::pages::settings::Section;
 use crate::quick_pick::{self, Mode};
 use crate::settings::SettingsHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 
 const RECENT_KEY: &str = "kchess:palette-recent";
 const RECENT_KEPT: usize = 8;
@@ -1069,7 +1069,7 @@ impl Render for CommandPalette {
                                 .gap(px(10.))
                                 .px(px(10.))
                                 .py(px(6.))
-                                .rounded(px(6.))
+                                .rounded(radii::SM)
                                 .text_size(px(13.))
                                 .when(chosen, |row| {
                                     row.bg(crate::theme::tint(palette.primary, 12.))
@@ -1230,7 +1230,7 @@ impl Render for CommandPalette {
             .top_0()
             .left_0()
             .right_0()
-            .rounded(px(8.))
+            .rounded(radii::MD)
             .border_1()
             .border_color(palette.border_accented)
             .bg(if open && palette.dark {
@@ -1276,7 +1276,7 @@ fn kbd(keys: &'static str, palette: &Palette) -> impl IntoElement {
                 .min_w(px(20.))
                 .px(px(4.))
                 .justify_center()
-                .rounded(px(4.))
+                .rounded(radii::XS)
                 .border_1()
                 .border_color(palette.border_accented)
                 .bg(palette.bg)

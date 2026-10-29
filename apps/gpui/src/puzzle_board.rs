@@ -14,7 +14,7 @@ use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::game::puzzle::OnBoard;
 use crate::game::{STANDARD_FEN, view};
 use crate::settings::SettingsHandle;
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
 use crate::widgets;
 
@@ -531,7 +531,7 @@ impl Render for PuzzleBoard {
             cx,
         );
         let board = div()
-            .rounded(px(6.))
+            .rounded(radii::SM)
             .border_3()
             .border_color(if self.flash {
                 tint(palette.loss, 55.)

@@ -26,7 +26,7 @@ use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::{STANDARD_FEN, rules};
 use crate::play_layout::Measured;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const PREFS: &str = "kchess:explorer";
@@ -179,7 +179,7 @@ pub fn result_bar(entry: &Value, min_label: u64, palette: &Palette) -> impl Into
         .flex_1()
         .min_w(px(40.))
         .h(px(16.))
-        .rounded(px(4.))
+        .rounded(radii::XS)
         .overflow_hidden()
         .border_1()
         .border_color(palette.border)
@@ -729,7 +729,7 @@ impl PositionExplorer {
                         .p(px(6.))
                         .border_1()
                         .border_color(palette.border)
-                        .rounded(px(8.))
+                        .rounded(radii::MD)
                         .text_size(px(13.))
                         .cursor_pointer()
                         .hover(|tile| tile.bg(palette.accented))
@@ -877,7 +877,7 @@ impl PositionExplorer {
                         .gap(px(8.))
                         .px(px(4.))
                         .py(px(2.))
-                        .rounded(px(6.))
+                        .rounded(radii::SM)
                         .text_size(px(12.))
                         .cursor_pointer()
                         .hover(|row| row.bg(palette.accented))

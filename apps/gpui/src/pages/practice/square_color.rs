@@ -14,7 +14,7 @@ use super::run::{self, RunClock};
 use crate::assets::icon;
 use crate::game::rules;
 use crate::play_layout::{PAGE_BOTTOM, side_padding};
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets;
@@ -311,7 +311,7 @@ impl Render for SquareColors {
             div()
                 .ml(px(6.))
                 .px(px(5.))
-                .rounded(px(4.))
+                .rounded(radii::XS)
                 .border_1()
                 .border_color(palette.border_accented)
                 .text_size(px(11.))
@@ -337,7 +337,7 @@ impl Render for SquareColors {
                     .h(px(44.))
                     .justify_center()
                     .gap(px(6.))
-                    .rounded(px(8.))
+                    .rounded(radii::MD)
                     .border_1()
                     .border_color(if light { palette.border_accented } else { bg })
                     .bg(bg)
@@ -386,7 +386,7 @@ impl Render for SquareColors {
                     .gap(px(6.))
                     .min_h(px(220.))
                     .my(px(16.))
-                    .rounded(px(14.))
+                    .rounded(radii::XL)
                     .when(self.flash == Some(true), |stage| {
                         stage.bg(tint(palette.win, 22.))
                     })

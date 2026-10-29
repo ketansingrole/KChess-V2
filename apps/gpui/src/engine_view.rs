@@ -10,7 +10,7 @@ use serde_json::Value;
 use shakmaty::Color;
 
 use crate::game::tree::{format_eval, pv_san, winning_chances};
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
 
 /// The evaluation bar's width.
@@ -35,7 +35,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
         |_, _, _| {},
         move |bounds, (), window, _| {
             let dark = rgb(0x403d39);
-            window.paint_quad(fill(bounds, dark).corner_radii(px(4.)));
+            window.paint_quad(fill(bounds, dark).corner_radii(radii::XS));
             if !known {
                 // `repeating-linear-gradient(135deg, …)`: light stripes over the dark bar.
                 let step = 8.;
@@ -71,7 +71,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
             } else {
                 Bounds::new(bounds.origin, size(bounds.size.width, fill_height))
             };
-            window.paint_quad(fill(white_part, rgb(0xf2f0ea)).corner_radii(px(4.)));
+            window.paint_quad(fill(white_part, rgb(0xf2f0ea)).corner_radii(radii::XS));
             let middle = Bounds::new(
                 point(bounds.origin.x, bounds.center().y - px(1.)),
                 size(bounds.size.width, px(2.)),
@@ -127,7 +127,7 @@ pub fn engine_lines(
                             .flex_none()
                             .px(px(6.))
                             .py(px(1.))
-                            .rounded(px(6.))
+                            .rounded(radii::SM)
                             .bg(palette.accented)
                             .font_weight(FontWeight::BOLD)
                             .text_center()
@@ -150,7 +150,7 @@ pub fn engine_lines(
                                 .flex_none()
                                 .px(px(2.))
                                 .py(px(1.))
-                                .rounded(px(4.))
+                                .rounded(radii::XS)
                                 .text_color(palette.toned)
                                 .cursor_pointer()
                                 .hover(|chip| chip.bg(tint(palette.primary, 24.)))
@@ -185,7 +185,7 @@ pub fn engine_lines(
         .text_size(px(12.5))
         .border_1()
         .border_color(palette.border)
-        .rounded(px(10.))
+        .rounded(radii::LG)
         .bg(palette.bg)
         .overflow_hidden()
         .children(rows)

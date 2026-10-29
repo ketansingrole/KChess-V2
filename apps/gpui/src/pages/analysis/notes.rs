@@ -13,7 +13,7 @@ use super::AnalysisPage;
 use crate::assets::icon;
 use crate::game::rules;
 use crate::game::tree::{comment_text, move_number};
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
 
 /// `MOVE_GLYPHS`: the annotations a move can carry, by NAG.
@@ -165,7 +165,7 @@ impl AnalysisPage {
                         .items_center()
                         .justify_center()
                         .border_1()
-                        .rounded(px(6.))
+                        .rounded(radii::SM)
                         .text_size(px(12.))
                         .font_weight(FontWeight::BOLD)
                         .cursor_pointer()
@@ -230,7 +230,7 @@ impl AnalysisPage {
                 .border_1()
                 .border_dashed()
                 .border_color(palette.border_accented)
-                .rounded(px(8.))
+                .rounded(radii::MD)
                 .text_size(px(13.))
                 .text_color(palette.text_muted)
                 .cursor_text()
@@ -246,7 +246,7 @@ impl AnalysisPage {
                 .child(
                     div()
                         .px(px(5.))
-                        .rounded(px(4.))
+                        .rounded(radii::XS)
                         .border_1()
                         .border_color(palette.border_accented)
                         .text_size(px(11.))

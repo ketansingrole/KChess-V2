@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 /// Run lengths in seconds; 0 is untimed practice.
@@ -305,7 +305,7 @@ pub fn training_list(
                         .px(px(10.))
                         .py(px(7.))
                         .border_1()
-                        .rounded(px(8.))
+                        .rounded(radii::MD)
                         .text_size(px(13.))
                         .cursor_pointer()
                         .border_color(if current {

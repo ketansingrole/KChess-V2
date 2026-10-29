@@ -10,7 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::assets::icon;
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 
 /// What a button runs when it is clicked.
 pub type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -151,7 +151,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         .relative()
         .flex_none()
         .size(px(30.))
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .bg(palette.accented)
         .text_color(palette.toned)
         .flex()
@@ -165,7 +165,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                     .top(px(-2.))
                     .left(px(-2.))
                     .size(px(34.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_2()
                     .border_color(palette.primary),
             )
@@ -199,7 +199,7 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> impl IntoEl
         .min_w(px(72.))
         .px(px(10.))
         .py(px(4.))
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .text_right()
         .text_size(px(16.))
         .font_weight(FontWeight::BOLD)
@@ -309,7 +309,7 @@ impl RenderOnce for StatusBanner {
             .min_h(px(58.))
             .px(px(12.))
             .py(px(10.))
-            .rounded(px(10.))
+            .rounded(radii::LG)
             .text_size(px(13.))
             .bg(background)
             .when(self.announce, |banner| {
@@ -430,7 +430,7 @@ pub fn moves_list(
         .overflow_y_scroll()
         .border_1()
         .border_color(palette.border)
-        .rounded(px(10.))
+        .rounded(radii::LG)
         .bg(palette.bg)
         .text_size(px(13.))
         .when(sans.is_empty(), |list| {
@@ -527,7 +527,7 @@ pub fn side_panel(palette: &Palette) -> Div {
         .gap(px(14.))
         .border_1()
         .border_color(palette.border)
-        .rounded(px(14.))
+        .rounded(radii::XL)
         .bg(palette.elevated)
 }
 
@@ -692,7 +692,7 @@ pub fn columns(width: Pixels, min: Pixels, gap: Pixels) -> (usize, Pixels) {
 pub fn card(palette: &Palette) -> Div {
     v_flex()
         .p(px(20.))
-        .rounded(px(14.))
+        .rounded(radii::XL)
         .border_1()
         .border_color(palette.border)
         .bg(palette.elevated)
@@ -827,7 +827,7 @@ fn pill_row(
         .when(wrap, |row| row.flex_wrap())
         .p(px(2.))
         .gap(px(4.))
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .border_1()
         .border_color(palette.border)
         .bg(palette.bg)
@@ -847,7 +847,7 @@ fn pill_row(
                 .gap(px(if compact { 6. } else { 8. }))
                 .h(px(if compact { 20. } else { 26. }))
                 .px(px(if compact { 8. } else { 12. }))
-                .rounded(px(6.))
+                .rounded(radii::SM)
                 .text_size(px(if compact { 12. } else { 14. }))
                 .font_weight(FontWeight::MEDIUM)
                 .when(chosen, |tab| {
@@ -869,7 +869,7 @@ fn pill_row(
                 .children(tab.badge.map(|badge| {
                     div()
                         .px(px(5.))
-                        .rounded(px(4.))
+                        .rounded(radii::XS)
                         .text_size(px(10.))
                         .line_height(px(16.))
                         .when(chosen, |badge| {
@@ -889,7 +889,7 @@ pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) 
     h_flex()
         .border_1()
         .border_color(palette.border)
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .bg(palette.bg)
         .when(!enabled, |entry| entry.opacity(0.55))
         .child(
@@ -1106,7 +1106,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
         .overflow_hidden()
         .border_1()
         .border_color(palette.border)
-        .rounded(px(12.))
+        .rounded(radii::XL)
         .bg(palette.elevated)
         .child(
             div()
@@ -1268,7 +1268,7 @@ fn badge_box(look: Look, palette: &Palette) -> Div {
         .gap(px(6.))
         .px(px(8.))
         .py(px(4.))
-        .rounded(px(6.))
+        .rounded(radii::SM)
         .bg(bg)
         .text_color(fg)
         .text_size(px(12.))
@@ -1355,7 +1355,7 @@ pub fn result_row(
             h_flex()
                 .id(SharedString::from(format!("result-row-{label}")))
                 .h(px(8.))
-                .rounded(px(4.))
+                .rounded(radii::XS)
                 .overflow_hidden()
                 .bg(palette.elevated)
                 .when(total > 0., |bar| {

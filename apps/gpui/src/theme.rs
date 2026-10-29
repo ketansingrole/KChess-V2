@@ -12,6 +12,24 @@ use serde_json::{Map, Value, json};
 
 use crate::settings::SettingsHandle;
 
+/// Corner radii: one scale for every rounded box, so neighbouring surfaces agree. A box nested in
+/// another takes a step down the scale (about the outer radius less the gap between them), so
+/// their corners stay concentric.
+pub mod radii {
+    use gpui_kit::{Pixels, px};
+
+    /// Badges, swatches, small chips such as a move in the tree.
+    pub const XS: Pixels = px(4.);
+    /// Controls: buttons, tabs in a segmented row, tags, tooltips (GPUI Kit's `radius`).
+    pub const SM: Pixels = px(6.);
+    /// Inputs, list rows, segmented rows, menus and dialogs (GPUI Kit's `radius.lg`).
+    pub const MD: Pixels = px(8.);
+    /// Boxes inside a card: lists, banners, icon tiles.
+    pub const LG: Pixels = px(10.);
+    /// Cards, side panels, page tiles and the board.
+    pub const XL: Pixels = px(14.);
+}
+
 /// The default theme's id: no palette, KChess's own colors.
 const DEFAULT_THEME: &str = "kchess";
 
@@ -216,12 +234,12 @@ pub fn apply(window: &mut Window, cx: &mut App) {
             keys.insert((*key).to_string(), value.clone());
         }
     }
-    // Controls: 6px corners (`rounded-md` over a 0.25rem radius), 8px for dialogs.
+    // Controls take `radii::SM`, dialogs `radii::MD`.
     let config: Option<ThemeConfig> = serde_json::from_value(json!({
         "name": "KChess",
         "mode": if dark { "dark" } else { "light" },
-        "radius": 6,
-        "radius.lg": 8,
+        "radius": f32::from(radii::SM),
+        "radius.lg": f32::from(radii::MD),
         "shadow": false,
         "colors": keys,
     }))
@@ -235,6 +253,47 @@ pub fn apply(window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every rounded box takes its corners from `radii`; only Settings' theme preview, a scale
+    /// model of a page, rounds its own.
+    #[test]
+    fn corners_come_from_the_radius_scale() {
+        fn sources(folder: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(folder).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        sources(&root, &mut files);
+        let mut stray = Vec::new();
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let preview = text
+                .find("fn theme_preview(")
+                .map(|start| (start, start + text[start..].find("\n}\n").unwrap_or(0)));
+            for (at, _) in text.match_indices(".rounded") {
+                let call = &text[at..];
+                let literal = call.find('(').is_some_and(|open| {
+                    call[open + 1..].starts_with("px(") && !call[..open].contains('\n')
+                });
+                let in_preview = preview.is_some_and(|(start, end)| (start..end).contains(&at));
+                if literal && !in_preview {
+                    let line = text[..at].lines().count();
+                    stray.push(format!(
+                        "{}:{line}",
+                        file.strip_prefix(&root).unwrap().display()
+                    ));
+                }
+            }
+        }
+        assert!(stray.is_empty(), "corners outside `radii`: {stray:?}");
+    }
 
     #[test]
     fn the_default_look_is_used_for_an_unknown_theme() {

@@ -17,7 +17,7 @@ use crate::game::rules;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 mod chat;
@@ -446,7 +446,7 @@ impl OnlinePage {
                     .gap(px(2.))
                     .px(px(12.))
                     .py(px(10.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_1()
                     .border_color(if chosen {
                         palette.primary
