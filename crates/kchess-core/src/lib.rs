@@ -15,6 +15,7 @@ pub mod facade;
 pub mod host;
 pub mod lichess;
 mod panics;
+mod process;
 pub mod puzzles;
 pub mod secrets;
 pub mod store;

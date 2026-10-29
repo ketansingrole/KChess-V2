@@ -157,7 +157,7 @@ impl VoiceRecognizer {
         {
             return Err(CoreError::new(NOT_INSTALLED));
         }
-        let mut child = Command::new(path)
+        let mut child = crate::process::no_window(&mut Command::new(path))
             .arg(&self.model_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

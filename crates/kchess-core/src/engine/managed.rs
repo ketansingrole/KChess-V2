@@ -774,7 +774,7 @@ async fn probe_engine(path: &Path) -> Result<()> {
 async fn spawn_probe(path: &Path) -> Result<tokio::process::Child> {
     let mut delay = Duration::from_millis(5);
     loop {
-        let spawned = tokio::process::Command::new(path)
+        let spawned = crate::process::no_window(&mut tokio::process::Command::new(path))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
