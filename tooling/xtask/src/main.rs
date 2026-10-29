@@ -2,6 +2,7 @@
 
 mod app;
 mod app_icon;
+mod bench;
 mod check;
 mod icons;
 mod licenses;
@@ -17,6 +18,10 @@ const HELP: &str = "cargo xtask <command>
   app [--profile <dir>] [--stop] [-- <app arguments>]
                         Build and start the app in the background on a scratch profile
                         (.data/gpui-profile) with a native Stockfish; print its pid
+  bench --build <label>=<binary> [--build …] [--runs 5] [--seconds 30] [--scenarios a,b]
+        [--out <file>]  The app's frame benchmarks for builds made with
+                        `cargo build --release -p kchess-gpui --features bench`, alternating
+                        run by run on fresh profiles; prints each scenario's medians
   check                 Everything a push to main must pass: format, lints, notices, release
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
@@ -44,6 +49,7 @@ fn main() -> ExitCode {
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
         Some("app") => app::run(rest),
+        Some("bench") => bench::run(rest),
         Some("check") => check::full(),
         Some("check-fast") => check::fast(),
         Some("pre-push") => check::pre_push(),

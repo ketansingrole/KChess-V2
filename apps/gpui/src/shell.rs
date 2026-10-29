@@ -208,13 +208,17 @@ struct TopbarInputs {
     sidebar_open: bool,
     online: bool,
     working: bool,
-    update: (
-        crate::updates::Phase,
-        Option<String>,
-        String,
-        Option<(u64, u64)>,
-        Option<String>,
-    ),
+    update: UpdateInputs,
+}
+
+/// What the update button shows (`update_button`).
+#[derive(PartialEq)]
+struct UpdateInputs {
+    phase: crate::updates::Phase,
+    version: Option<String>,
+    current: String,
+    progress: Option<(u64, u64)>,
+    error: Option<String>,
 }
 
 impl TopbarInputs {
@@ -224,13 +228,13 @@ impl TopbarInputs {
             sidebar_open: workspace.sidebar_open,
             online: crate::network::online(cx),
             working: working(cx),
-            update: (
-                updates.phase,
-                updates.version.clone(),
-                updates.current.clone(),
-                updates.progress,
-                updates.error.clone(),
-            ),
+            update: UpdateInputs {
+                phase: updates.phase,
+                version: updates.version.clone(),
+                current: updates.current.clone(),
+                progress: updates.progress,
+                error: updates.error.clone(),
+            },
         }
     }
 }
@@ -238,8 +242,10 @@ impl TopbarInputs {
 /// The sidebar toggle as its `Part` (`.sidebar-toggle-wrap`): its 28px button, `TOPBAR_HEIGHT`
 /// high, over the top bar's left end.
 fn toggle_style(window: &Window) -> StyleRefinement {
-    let mut style = StyleRefinement::default();
-    style.position = Some(Position::Absolute);
+    let mut style = StyleRefinement {
+        position: Some(Position::Absolute),
+        ..Default::default()
+    };
     style.inset.top = Some(px(0.).into());
     style.inset.left = Some(toggle_left(window).into());
     style.size.width = Some(px(28.).into());

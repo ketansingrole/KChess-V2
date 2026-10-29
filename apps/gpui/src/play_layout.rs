@@ -23,10 +23,12 @@ pub const LAYOUT_GAP: Pixels = px(24.);
 /// The panel beside the board drawn as a cached view (`crate::part::Part`): sized in the row as
 /// `widgets::side_panel` sizes itself there, `height` high and at most `max_width` wide.
 pub fn panel_style(height: Pixels, max_width: Pixels) -> StyleRefinement {
-    let mut style = StyleRefinement::default();
-    style.flex_grow = Some(1.);
-    style.flex_shrink = Some(1.);
-    style.flex_basis = Some(relative(0.).into());
+    let mut style = StyleRefinement {
+        flex_grow: Some(1.),
+        flex_shrink: Some(1.),
+        flex_basis: Some(relative(0.).into()),
+        ..Default::default()
+    };
     style.min_size.width = Some(PANEL_MIN.into());
     style.max_size.width = Some(max_width.into());
     style.size.height = Some(height.into());

@@ -44,7 +44,7 @@ fn is_real_profile(profile: &Path, real: &[PathBuf]) -> bool {
 }
 
 /// `KCHESS_ENGINE_PATH`, else the Stockfish in `.data/stockfish`, fetched there when missing.
-fn engine() -> Result<PathBuf> {
+pub fn engine() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("KCHESS_ENGINE_PATH") {
         return Ok(PathBuf::from(path));
     }

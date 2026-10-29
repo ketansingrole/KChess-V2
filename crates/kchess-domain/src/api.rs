@@ -184,33 +184,33 @@ fn deeper_than(args: &[Value], limit: usize) -> bool {
 /// Dispatch one call. Unknown methods and malformed arguments are errors.
 fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
     let result = match method {
-        "treeFromPgn" => to_value(tree_from_pgn(text(&args, 0, "pgn")?))?,
+        "treeFromPgn" => to_value(tree_from_pgn(text(args, 0, "pgn")?))?,
         "treeToPgn" => Value::String(tree_to_pgn(
-            arg(&args, 0).ok_or_else(|| DomainError::Message("root".to_string()))?,
-            arg(&args, 1),
+            arg(args, 0).ok_or_else(|| DomainError::Message("root".to_string()))?,
+            arg(args, 1),
         )?),
         "replay" => to_value(replay_positions(
-            text(&args, 0, "fen")?,
-            &texts(&args, 1, "moves")?,
+            text(args, 0, "fen")?,
+            &texts(args, 1, "moves")?,
         ))?,
         "setupReplay" => {
-            let (variant, fen) = setup(&args, 0)?;
-            to_value(replay_setup(variant, fen, &texts(&args, 1, "moves")?))?
+            let (variant, fen) = setup(args, 0)?;
+            to_value(replay_setup(variant, fen, &texts(args, 1, "moves")?))?
         }
         "reviewClassifications" => crate::review::review_classifications(
-            arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
+            arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
         )
         .unwrap_or(Value::Null),
         "reviewPhases" => crate::review::review_phases(
-            arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
+            arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
         )
         .unwrap_or(Value::Null),
         "analyseReview" => {
-            analyse_review(arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
+            analyse_review(arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
                 .unwrap_or(Value::Null)
         }
         "studyDocumentPgn" => {
-            let chapters = arg(&args, 0)
+            let chapters = arg(args, 0)
                 .and_then(Value::as_array)
                 .ok_or_else(|| DomainError::Message("chapters".to_string()))?;
             let pairs: Vec<(&str, &str)> = chapters
@@ -223,37 +223,32 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
             study_document_pgn(&pairs).map_or(Value::Null, Value::String)
         }
         "pvSan" => {
-            let max = arg(&args, 2).and_then(Value::as_u64).unwrap_or(12) as usize;
-            pv_san(text(&args, 0, "fen")?, &texts(&args, 1, "pv")?, max)
+            let max = arg(args, 2).and_then(Value::as_u64).unwrap_or(12) as usize;
+            pv_san(text(args, 0, "fen")?, &texts(args, 1, "pv")?, max)
         }
-        "playMove" => play_move(text(&args, 0, "fen")?, text(&args, 1, "uci")?),
-        "startNode" => start_node(text(&args, 0, "fen")?),
-        "sanHistory" => to_value(san_history(&texts(&args, 0, "moves")?))?,
-        "pgnFromSan" => Value::String(pgn_from_san(&texts(&args, 0, "sans")?)),
-        "pgnFromUci" => Value::String(pgn_from_san(&san_history(&texts(&args, 0, "moves")?))),
-        "pgnFromMoves" => Value::String(pgn_from_moves(&texts(&args, 0, "tokens")?)),
+        "playMove" => play_move(text(args, 0, "fen")?, text(args, 1, "uci")?),
+        "startNode" => start_node(text(args, 0, "fen")?),
+        "sanHistory" => to_value(san_history(&texts(args, 0, "moves")?))?,
+        "pgnFromSan" => Value::String(pgn_from_san(&texts(args, 0, "sans")?)),
+        "pgnFromUci" => Value::String(pgn_from_san(&san_history(&texts(args, 0, "moves")?))),
+        "pgnFromMoves" => Value::String(pgn_from_moves(&texts(args, 0, "tokens")?)),
         "setupPgn" => {
-            let (variant, fen) = setup(&args, 0)?;
-            let headers = arg(&args, 2).and_then(Value::as_object);
-            Value::String(setup_pgn(
-                variant,
-                fen,
-                &texts(&args, 1, "moves")?,
-                headers,
-            )?)
+            let (variant, fen) = setup(args, 0)?;
+            let headers = arg(args, 2).and_then(Value::as_object);
+            Value::String(setup_pgn(variant, fen, &texts(args, 1, "moves")?, headers)?)
         }
-        "drawReason" => to_value(draw_reason(&texts(&args, 0, "moves")?))?,
+        "drawReason" => to_value(draw_reason(&texts(args, 0, "moves")?))?,
         "setupDrawReason" => {
-            let (variant, fen) = setup(&args, 0)?;
-            to_value(setup_draw_reason(variant, fen, &texts(&args, 1, "moves")?))?
+            let (variant, fen) = setup(args, 0)?;
+            to_value(setup_draw_reason(variant, fen, &texts(args, 1, "moves")?))?
         }
         "position" => {
-            let (variant, fen) = setup(&args, 0)?;
+            let (variant, fen) = setup(args, 0)?;
             to_value(rules::setup_start(variant, fen).map(|pos| position::info(&pos)))?
         }
         "dests" => {
-            let pos = setup_position(&args)?;
-            let mode = match arg(&args, 1).and_then(Value::as_str) {
+            let pos = setup_position(args)?;
+            let mode = match arg(args, 1).and_then(Value::as_str) {
                 Some("board") => DestMode::Board,
                 Some("board960") => DestMode::Board960,
                 _ => DestMode::Rules,
@@ -270,19 +265,19 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
                     .collect(),
             )
         }
-        "legalMoves" => to_value(position::legal_moves(&setup_position(&args)?))?,
+        "legalMoves" => to_value(position::legal_moves(&setup_position(args)?))?,
         "play" => to_value(position::play_uci(
-            &setup_position(&args)?,
-            text(&args, 1, "uci")?,
+            &setup_position(args)?,
+            text(args, 1, "uci")?,
         ))?,
         "playSan" => to_value(position::play_san(
-            &setup_position(&args)?,
-            text(&args, 1, "san")?,
+            &setup_position(args)?,
+            text(args, 1, "san")?,
         ))?,
         "line" => {
-            let (variant, fen) = setup(&args, 0)?;
-            let moves = texts(&args, 1, "moves")?;
-            let options = arg(&args, 2);
+            let (variant, fen) = setup(args, 0)?;
+            let moves = texts(args, 1, "moves")?;
+            let options = arg(args, 2);
             let flag = |key| {
                 options
                     .and_then(|o| o.get(key))
@@ -299,22 +294,22 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
             }
         }
         "chess960Fen" => {
-            let n = arg(&args, 0)
+            let n = arg(args, 0)
                 .and_then(Value::as_f64)
                 .ok_or_else(|| DomainError::Message("n must be a number".to_string()))?;
             Value::String(rules::chess960_fen(n.floor() as i64))
         }
         "defaultFen" => {
-            let variant = rules::lichess_variant(text(&args, 0, "variant")?)
+            let variant = rules::lichess_variant(text(args, 0, "variant")?)
                 .ok_or_else(|| DomainError::Message("variant".to_string()))?;
             Value::String(rules::make_fen(&rules::default_position(variant)))
         }
-        "fenSetup" => position::fen_setup(text(&args, 0, "fen")?).unwrap_or(Value::Null),
-        "fenProblem" => to_value(position::fen_problem(text(&args, 0, "fen")?))?,
-        "pgnGames" => position::pgn_games(text(&args, 0, "pgn")?),
+        "fenSetup" => position::fen_setup(text(args, 0, "fen")?).unwrap_or(Value::Null),
+        "fenProblem" => to_value(position::fen_problem(text(args, 0, "fen")?))?,
+        "pgnGames" => position::pgn_games(text(args, 0, "pgn")?),
         "pgnMainline" => {
-            let limit = arg(&args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);
-            position::pgn_mainline(text(&args, 0, "pgn")?, limit as usize)
+            let limit = arg(args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);
+            position::pgn_mainline(text(args, 0, "pgn")?, limit as usize)
         }
         _ => {
             // Each group of moved rules dispatches its own methods.
