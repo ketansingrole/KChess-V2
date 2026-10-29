@@ -36,7 +36,7 @@ base64 = "0.23"
 # MIT/Apache-2.0; its `aes` is already in Cargo.lock) under a key the OS credential store keeps
 # (`keyring`: Keychain, Credential Manager, Secret Service; MIT/Apache-2.0), so the Electron and
 # GPUI apps open the same tokens. Electron's `safeStorage` format only Electron can read.
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 # What the Electron app left in a profile: its localStorage and the logins its safeStorage sealed.
 kchess-electron-legacy = { path = "../kchess-electron-legacy" }
 keyring = { version = "4", default-features = false, features = ["v1"] }
