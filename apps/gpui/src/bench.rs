@@ -94,7 +94,10 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
             }
             totals.add(collector.collect_unseen().entries);
             totals.checks += 1;
-            if window.update(cx, |_, window, _| window.is_visible()) == Ok(true) {
+            if window
+                .update(cx, |_, window, _| window.is_visible())
+                .unwrap_or(false)
+            {
                 totals.visible += 1;
             }
         }

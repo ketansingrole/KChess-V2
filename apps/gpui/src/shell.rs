@@ -165,6 +165,76 @@ fn page_style() -> StyleRefinement {
     style
 }
 
+/// What the sidebar shows (`render_sidebar`): it is drawn again when one of these changes.
+#[derive(PartialEq)]
+struct SidebarInputs {
+    open: bool,
+    width_from: Pixels,
+    current: Page,
+    section: Option<Section>,
+    back: Page,
+    game_mark: Option<GameMark>,
+    online: bool,
+    accounts_busy: bool,
+    active: Option<String>,
+    connected: Vec<String>,
+}
+
+impl SidebarInputs {
+    fn of(workspace: &Workspace, cx: &App) -> SidebarInputs {
+        let accounts = crate::accounts::handle(cx).read(cx);
+        SidebarInputs {
+            open: workspace.sidebar_open,
+            width_from: workspace.sidebar_width_from,
+            current: workspace.pages.current(),
+            section: workspace
+                .pages
+                .settings()
+                .map(|page| page.read(cx).section()),
+            back: workspace.back,
+            game_mark: game_mark(cx),
+            online: crate::network::online(cx),
+            accounts_busy: accounts.busy,
+            active: accounts.active(cx),
+            connected: accounts.connected(),
+        }
+    }
+}
+
+/// What the top bar shows besides the command palette, a view of its own
+/// (`render_topbar_content`): it is drawn again when one of these changes.
+#[derive(PartialEq)]
+struct TopbarInputs {
+    sidebar_open: bool,
+    online: bool,
+    working: bool,
+    update: (
+        crate::updates::Phase,
+        Option<String>,
+        String,
+        Option<(u64, u64)>,
+        Option<String>,
+    ),
+}
+
+impl TopbarInputs {
+    fn of(workspace: &Workspace, cx: &App) -> TopbarInputs {
+        let updates = cx.global::<crate::updates::UpdatesHandle>().0.read(cx);
+        TopbarInputs {
+            sidebar_open: workspace.sidebar_open,
+            online: crate::network::online(cx),
+            working: working(cx),
+            update: (
+                updates.phase,
+                updates.version.clone(),
+                updates.current.clone(),
+                updates.progress,
+                updates.error.clone(),
+            ),
+        }
+    }
+}
+
 /// The top bar as its `Part`: the window's width, `TOPBAR_HEIGHT` high.
 fn topbar_style() -> StyleRefinement {
     let mut style = StyleRefinement::default();
@@ -387,15 +457,15 @@ pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
     let _ = workspace.update(cx, |workspace, cx| workspace.choose_section(section, cx));
 }
 
-/// A page's view, once it has been shown.
 /// Redraw the shell, as its network, account and update observers do.
-#[cfg(feature = "bench")]
+#[cfg(any(test, feature = "bench"))]
 pub fn notify_shell(cx: &mut App) {
     if let Some(workspace) = cx.try_global::<Navigator>().and_then(|nav| nav.0.upgrade()) {
         workspace.update(cx, |_, cx| cx.notify());
     }
 }
 
+/// A page's view, once it has been shown.
 pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
     workspace.read(cx).pages.view_of::<V>(page)
@@ -657,12 +727,14 @@ impl Workspace {
             sidebar_open,
             sidebar_width_from: sidebar_width(sidebar_open),
             sidebar_toggled: None,
-            sidebar: Part::new(
+            sidebar: Part::keyed(
                 |this, window, cx| this.render_sidebar(window, cx).into_any_element(),
+                SidebarInputs::of,
                 cx,
             ),
-            topbar: Part::new(
+            topbar: Part::keyed(
                 |this, window, cx| this.render_topbar(window, cx).into_any_element(),
+                TopbarInputs::of,
                 cx,
             ),
             history: crate::swipe::History::default(),

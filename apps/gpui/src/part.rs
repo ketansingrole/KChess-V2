@@ -19,13 +19,41 @@ pub struct Part<V: 'static> {
 }
 
 impl<V: 'static> Part<V> {
-    /// A part of the view `cx` belongs to, drawn by `render`.
+    /// A part of the view `cx` belongs to, drawn by `render`, drawn again whenever its owner is
+    /// notified.
     pub fn new(render: RenderPart<V>, cx: &mut Context<V>) -> Entity<Self> {
         let owner = cx.entity();
         cx.new(|cx| Part {
             owner: owner.downgrade(),
             render,
             _owner_changed: cx.observe(&owner, |_, _, cx| cx.notify()),
+        })
+    }
+
+    /// A part drawn again when its owner is notified only if `inputs`, everything `render`
+    /// shows of the owner and the models it reads, changed. A notification that changes none of
+    /// them (a model only the page shows, a redraw of the owner for another part) reuses the
+    /// part's last frame. `inputs` must cover all of `render`'s reads that are not settings or
+    /// the window's size, which refresh the window.
+    pub fn keyed<K: PartialEq + 'static>(
+        render: RenderPart<V>,
+        inputs: fn(&V, &App) -> K,
+        cx: &mut Context<V>,
+    ) -> Entity<Self> {
+        let owner = cx.entity();
+        cx.new(|cx| {
+            let mut shown: Option<K> = None;
+            Part {
+                owner: owner.downgrade(),
+                render,
+                _owner_changed: cx.observe(&owner, move |_, owner, cx| {
+                    let now = inputs(owner.read(cx), cx);
+                    if shown.as_ref() != Some(&now) {
+                        shown = Some(now);
+                        cx.notify();
+                    }
+                }),
+            }
         })
     }
 }
