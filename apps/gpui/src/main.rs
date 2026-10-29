@@ -1,6 +1,10 @@
 //! KChess as a GPUI Kit application over the Rust core: the same profile, games, settings and
 //! accounts as the Electron app, drawn natively.
 
+// A Windows GUI program: release builds open no console window beside the app (logs go to the
+// profile's log file). Debug builds keep the console for `cargo run` output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod accounts;
 mod activity;
 mod assets;

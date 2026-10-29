@@ -10,6 +10,13 @@ with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with `e
 They run with the app's unit tests in `cargo xtask check` and in CI's `gpui` job on macOS,
 Windows and Linux.
 
+`e2e::audit` opens every page at the minimum, a mid and the default window size and fails when a
+control has no accessible name, runs past the window's side or overlaps another control, or when
+more controls fall under 24 px than its ratchet allows (lower it as they grow). For UI changes,
+compare pictures of every page before and after: on macOS,
+`KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens -- --ignored` renders them
+offscreen into `<dir>/<width>x<height>/<page>.png`.
+
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
 the working tree has uncommitted or untracked files, since `check` would test those instead. Other
@@ -20,7 +27,7 @@ warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries)
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
 `check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
-changed since the last release (a version bump always has), it also packages on each platform,
+changed since `main` last packaged successfully (a version bump always has), it also packages on each platform,
 builds the Snap and runs the Windows upgrade workflow. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.
 
@@ -56,6 +63,10 @@ deadlines and UCI pipes.
 For each escaped regression, preserve the reproducer and test its sequence: late replies,
 overlapping requests, cancellation, lost credentials, interrupted writes and recovery. When a
 generated or fuzzed case finds a defect, keep its seed and a focused reproducer.
+
+Timing races in the app's tests show up under load: `cargo test -p kchess-gpui -- --test-threads=40`
+runs the suite oversubscribed and should pass as reliably as a plain run. The harness runs with
+reduced motion, so dialogs and popovers are at rest when a test clicks them.
 
 ## Coverage and corpora
 

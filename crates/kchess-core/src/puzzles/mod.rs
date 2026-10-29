@@ -80,6 +80,7 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     // Earlier releases kept the puzzles in `kchess.db`, the main database. It stays an intact
     // fallback; all later puzzle writes have one owner.
     let legacy = config.data_dir.join("kchess.db");
+    let mut deferred = false;
     if !migrated && legacy.exists() {
         db.execute(
             "ATTACH DATABASE ?1 AS legacy",
@@ -110,11 +111,14 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
                 Err(rollback) => CoreError::new(e.to_string()).with_rollback_failure(rollback),
             })?;
         }
+        deferred = !has_tables;
         db.execute_batch("DETACH DATABASE legacy")
             .map_err(|e| CoreError::new(e.to_string()))?;
     }
-    db.execute_batch("INSERT OR IGNORE INTO worker_meta VALUES (1)")
-        .map_err(|e| CoreError::new(e.to_string()))?;
+    if !deferred {
+        db.execute_batch("INSERT OR IGNORE INTO worker_meta VALUES (1)")
+            .map_err(|e| CoreError::new(e.to_string()))?;
+    }
     Ok(db)
 }
 
@@ -510,5 +514,273 @@ impl Progress {
             payload["message"] = json!(message);
         }
         self.host.emit("puzzledb:progress", payload);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    #[derive(Default)]
+    struct Events(Mutex<Vec<(String, Value)>>, Mutex<Vec<String>>);
+    impl Host for Events {
+        fn log(&self, _: Level, scope: &str, message: &str) {
+            self.1.lock().unwrap().push(format!("{scope}: {message}"));
+        }
+        fn emit(&self, event: &str, payload: Value) {
+            self.0.lock().unwrap().push((event.to_string(), payload));
+        }
+    }
+
+    impl Events {
+        fn phases(&self) -> Vec<String> {
+            self.of("puzzledb:progress")
+                .iter()
+                .map(|payload| payload["phase"].as_str().unwrap().to_string())
+                .collect()
+        }
+        fn of(&self, event: &str) -> Vec<Value> {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, _)| name == event)
+                .map(|(_, payload)| payload.clone())
+                .collect()
+        }
+    }
+
+    fn csv(rows: &[(&str, u32, &str)]) -> Vec<u8> {
+        let mut text = String::from(
+            "PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags\n",
+        );
+        for (id, rating, themes) in rows {
+            text.push_str(&format!(
+                "{id},{START},e2e4 e7e5 g1f3,{rating},75,95,1000,{themes},https://lichess.org/abcdefgh#1,\n"
+            ));
+        }
+        ruzstd::encoding::compress_to_vec(
+            text.as_bytes(),
+            ruzstd::encoding::CompressionLevel::Fastest,
+        )
+    }
+
+    /// Answers every request with `status` and `body`, or holds it open when `body` is None.
+    async fn serve(status: u16, body: Option<Vec<u8>>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/puzzles.csv.zst", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut request = [0u8; 4096];
+                    let _ = socket.read(&mut request).await;
+                    let Some(body) = body else {
+                        // Headers, then a body that never comes.
+                        let _ = socket
+                            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\n\r\n")
+                            .await;
+                        std::future::pending::<()>().await;
+                        return;
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status} X\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(&body).await;
+                });
+            }
+        });
+        url
+    }
+
+    fn service(dir: &Path) -> (PuzzleService, Arc<Events>) {
+        let host = Arc::new(Events::default());
+        let config = Config::new(dir.to_path_buf());
+        (
+            PuzzleService::new(config, Arc::clone(&host) as Arc<dyn Host>),
+            host,
+        )
+    }
+
+    #[tokio::test]
+    async fn installs_a_download_then_answers_queries_until_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, host) = service(dir.path());
+        assert!(!puzzles.status().await.unwrap().installed);
+        let url = serve(
+            200,
+            Some(csv(&[
+                ("aaa", 1200, "fork short"),
+                ("bbb", 1500, "pin middlegame"),
+                ("ccc", 1800, "fork long"),
+            ])),
+        )
+        .await;
+        let status = puzzles.install(url).await.unwrap();
+        assert!(status.installed);
+        assert_eq!(status.count, 3);
+        assert!(!status.busy);
+        assert!(status.imported_at.is_some());
+        let phases = host.phases();
+        assert_eq!(phases.first().map(String::as_str), Some("downloading"));
+        assert_eq!(&phases[phases.len() - 2..], ["importing", "done"]);
+        let done = host.of("puzzledb:progress").pop().unwrap();
+        assert_eq!(done["kept"], json!(3));
+        assert!(done["total"].as_u64().is_some_and(|total| total > 0));
+        // One request, then the bytes it brought.
+        let usage = host.of("host:usage");
+        assert_eq!(usage[0]["requests"], json!(1));
+        assert_eq!(usage[1]["bytes"], done["received"]);
+
+        let forks = puzzles
+            .query(LocalPuzzleQuery {
+                theme: Some("fork".into()),
+                min_rating: None,
+                max_rating: Some(1600.0),
+                count: 10.0,
+            })
+            .await
+            .unwrap();
+        assert_eq!(forks.len(), 1);
+        assert_eq!(forks[0].id, "aaa");
+        assert_eq!(forks[0].last_move.as_deref(), Some("e2e4"));
+        assert_eq!(forks[0].solution, ["e7e5", "g1f3"]);
+        let ladder = puzzles
+            .ladder(LocalLadderQuery {
+                from: 1000.0,
+                to: 2000.0,
+                count: 3.0,
+            })
+            .await
+            .unwrap();
+        assert_eq!(ladder.len(), 3);
+
+        let deleted = puzzles.delete().await.unwrap();
+        assert!(!deleted.installed);
+        assert_eq!(deleted.count, 0);
+        puzzles.close().await;
+        let closed = puzzles.status().await.unwrap_err();
+        assert_eq!(closed.message, "Puzzle service closed.");
+    }
+
+    #[tokio::test]
+    async fn a_refused_download_fails_and_keeps_the_stored_puzzles() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, host) = service(dir.path());
+        let good = serve(200, Some(csv(&[("aaa", 1200, "fork")]))).await;
+        puzzles.install(good).await.unwrap();
+        let refused = serve(404, Some(b"gone".to_vec())).await;
+        let error = puzzles.install(refused).await.unwrap_err();
+        assert_eq!(
+            error.message,
+            "Lichess answered 404 for the puzzle database."
+        );
+        let failed = host.of("puzzledb:progress").pop().unwrap();
+        assert_eq!(failed["phase"], json!("failed"));
+        assert_eq!(failed["message"], json!(error.message));
+        // Not zstd: the sampler's error is the download's.
+        let garbage = serve(200, Some(b"definitely not zstd".to_vec())).await;
+        assert!(puzzles.install(garbage).await.is_err());
+        assert_eq!(puzzles.status().await.unwrap().count, 1);
+        assert!(
+            host.1
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.starts_with("puzzles: Puzzle operation install failed"))
+        );
+        puzzles.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_running_download_blocks_another_and_deletion_until_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, host) = service(dir.path());
+        let puzzles = Arc::new(puzzles);
+        let stalled = serve(200, None).await;
+        let first = tokio::spawn({
+            let puzzles = Arc::clone(&puzzles);
+            async move { puzzles.install(stalled).await }
+        });
+        while !puzzles.status().await.unwrap().busy {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let again = puzzles.install("http://127.0.0.1:9/".into()).await;
+        assert_eq!(
+            again.unwrap_err().message,
+            "The puzzle database is already downloading."
+        );
+        assert_eq!(
+            puzzles.delete().await.unwrap_err().message,
+            "Cancel the download before deleting puzzles."
+        );
+        puzzles.cancel();
+        // Cancelling resolves with the current status; the phase tells it from completion.
+        let status = first.await.unwrap().unwrap();
+        assert!(!status.installed && !status.busy);
+        assert_eq!(host.phases().last().map(String::as_str), Some("cancelled"));
+        assert!(
+            host.of("puzzledb:progress")
+                .last()
+                .unwrap()
+                .get("message")
+                .is_none()
+        );
+        puzzles.close().await;
+    }
+
+    #[tokio::test]
+    async fn the_first_open_takes_over_the_puzzles_of_the_main_database_once() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let main = Connection::open(dir.path().join("kchess.db")).unwrap();
+            crate::store::migrations::migrate(&main).unwrap();
+            main.execute_batch(&format!(
+                "INSERT INTO puzzles (id, fen, moves, rating, plays, themes)
+                   VALUES ('old', '{START}', 'e2e4 e7e5', 1400, 10, 'fork');
+                 INSERT INTO puzzle_meta (id, importedAt, count, bytes) VALUES (1, 5, 1, 60);"
+            ))
+            .unwrap();
+        }
+        let (puzzles, _) = service(dir.path());
+        let status = puzzles.status().await.unwrap();
+        assert_eq!((status.count, status.imported_at), (1, Some(5)));
+        puzzles.delete().await.unwrap();
+        puzzles.close().await;
+        // Deleted puzzles are not taken over again from the untouched main database.
+        let (puzzles, _) = service(dir.path());
+        assert!(!puzzles.status().await.unwrap().installed);
+        puzzles.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_main_database_without_puzzle_tables_is_taken_over_later() {
+        let dir = tempfile::tempdir().unwrap();
+        Connection::open(dir.path().join("kchess.db"))
+            .unwrap()
+            .execute_batch("CREATE TABLE unrelated (id INTEGER)")
+            .unwrap();
+        let (puzzles, _) = service(dir.path());
+        assert!(!puzzles.status().await.unwrap().installed);
+        puzzles.close().await;
+        {
+            let main = Connection::open(dir.path().join("kchess.db")).unwrap();
+            crate::store::migrations::migrate(&main).unwrap();
+            main.execute_batch(&format!(
+                "INSERT INTO puzzles (id, fen, moves, rating, themes)
+                   VALUES ('old', '{START}', 'e2e4 e7e5', 1400, 'fork');
+                 INSERT INTO puzzle_meta (id, importedAt, count, bytes) VALUES (1, 5, 1, 60);"
+            ))
+            .unwrap();
+        }
+        let (puzzles, _) = service(dir.path());
+        assert_eq!(puzzles.status().await.unwrap().count, 1);
+        puzzles.close().await;
     }
 }

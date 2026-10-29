@@ -664,6 +664,8 @@ impl Render for EditorPage {
                     .child(error)
             }));
         let panel = widgets::side_panel(&palette)
+            .id("editor-panel")
+            .overflow_y_scroll()
             .h(self
                 .layout
                 .fixed(self.layout.panel_height_px(board_size) + SPARE_ROWS))
@@ -810,6 +812,7 @@ impl Render for EditorPage {
                     )
                     .child(
                         h_flex()
+                            .flex_wrap()
                             .gap(px(8.))
                             .child(
                                 Button::new("play-stockfish")

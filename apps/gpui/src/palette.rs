@@ -1243,13 +1243,26 @@ impl Render for CommandPalette {
                 panel.hover(|style| style.bg(palette.elevated))
             })
             .when(open, |panel| {
-                panel.max_h(tall).occlude().shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.35),
-                    offset: point(px(0.), px(18.)),
-                    blur_radius: px(40.),
-                    spread_radius: px(-12.),
-                    inset: false,
-                }])
+                panel
+                    .max_h(tall)
+                    .occlude()
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.35),
+                        offset: point(px(0.), px(18.)),
+                        blur_radius: px(40.),
+                        spread_radius: px(-12.),
+                        inset: false,
+                    }])
+                    // A press beside it closes it too, where nothing takes the focus (the
+                    // title bar's empty sides); a press that does is left to `Blur`.
+                    .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                        let input = this.input.clone();
+                        cx.defer_in(window, move |this, window, cx| {
+                            if this.open && input.read(cx).focus_handle(cx).is_focused(window) {
+                                this.close(window, cx);
+                            }
+                        });
+                    }))
             })
             .child(field)
             .when_some(results, |panel, (list, footer)| {

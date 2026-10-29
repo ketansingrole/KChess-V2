@@ -6,14 +6,14 @@ use std::process::Command;
 use crate::util::{Result, available, output, root, run, run_with, say};
 
 /// Coverage floors for the workspace without the GPUI app and this tooling, as whole percentages
-/// rounded down from the measured totals of `cargo llvm-cov` (2026-10-29: lines 81.88%, regions
-/// 79.78%, functions 80.58%). The run fails below
+/// rounded down from the measured totals of `cargo llvm-cov` (2026-10-29: lines 88.30%, regions
+/// 86.56%, functions 86.37%). The run fails below
 /// a floor. Ratchet them up when the measured totals rise; do not lower them without a
 /// measurement that explains the drop.
 ///
 /// The GPUI app's views are checked by running the app (its end-to-end suite), and its unit
 /// tests still run here, outside the coverage totals.
-const FLOORS: [(&str, f64); 3] = [("lines", 81.0), ("regions", 79.0), ("functions", 80.0)];
+const FLOORS: [(&str, f64); 3] = [("lines", 88.0), ("regions", 86.0), ("functions", 86.0)];
 
 /// The shipped binaries, whose code must not unwrap or expect outside tests.
 const SHIPPED_BINS: [&str; 4] = [
@@ -56,24 +56,25 @@ fn lints() -> Result {
             "clippy::expect_used",
         ],
     )?;
+    run("cargo", &shipped_bins_args())
+}
+
+/// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
+fn shipped_bins_args() -> Vec<&'static str> {
+    let mut args = vec!["clippy"];
     for bin in SHIPPED_BINS {
-        run(
-            "cargo",
-            &[
-                "clippy",
-                "-p",
-                bin,
-                "--bins",
-                "--locked",
-                "--",
-                "-D",
-                "clippy::unwrap_used",
-                "-D",
-                "clippy::expect_used",
-            ],
-        )?;
+        args.extend(["-p", bin]);
     }
-    Ok(())
+    args.extend([
+        "--bins",
+        "--locked",
+        "--",
+        "-D",
+        "clippy::unwrap_used",
+        "-D",
+        "clippy::expect_used",
+    ]);
+    args
 }
 
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
@@ -330,6 +331,16 @@ mod tests {
                 .unwrap()
                 .contains("untracked")
         );
+    }
+
+    #[test]
+    fn one_run_checks_every_shipped_binary() {
+        let args = shipped_bins_args();
+        for bin in SHIPPED_BINS {
+            assert!(args.windows(2).any(|pair| pair == ["-p", bin]), "{bin}");
+        }
+        assert!(args.contains(&"--bins"));
+        assert!(args.ends_with(&["-D", "clippy::expect_used"]));
     }
 
     #[test]

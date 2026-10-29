@@ -451,14 +451,34 @@ impl Render for InsightsPage {
             .flex_wrap()
             .when(names.len() > 1, |row| {
                 row.child(
-                    div()
-                        .w(px(160.))
-                        .child(Select::new(&self.account_select).small()),
+                    div().w(px(160.)).child(
+                        Select::new(&self.account_select)
+                            .small()
+                            .accessibility_label("Account"),
+                    ),
                 )
             })
-            .child(fit(&self.speed, &SPEEDS, cx).child(Select::new(&self.speed).small()))
-            .child(fit(&self.period, &PERIODS, cx).child(Select::new(&self.period).small()))
-            .child(fit(&self.rated, &RATED, cx).child(Select::new(&self.rated).small()));
+            .child(
+                fit(&self.speed, &SPEEDS, cx).child(
+                    Select::new(&self.speed)
+                        .small()
+                        .accessibility_label("Speed"),
+                ),
+            )
+            .child(
+                fit(&self.period, &PERIODS, cx).child(
+                    Select::new(&self.period)
+                        .small()
+                        .accessibility_label("Period"),
+                ),
+            )
+            .child(
+                fit(&self.rated, &RATED, cx).child(
+                    Select::new(&self.rated)
+                        .small()
+                        .accessibility_label("Rated or casual"),
+                ),
+            );
         let report = self.report.clone();
         let total = report
             .as_ref()

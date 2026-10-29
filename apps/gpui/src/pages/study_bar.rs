@@ -729,12 +729,15 @@ impl Render for StudyBar {
                     .gap(px(8.))
                     .child(
                         div()
+                            .min_w_0()
+                            .truncate()
                             .text_size(px(14.))
                             .text_color(palette.text_muted)
                             .child("Unsaved analysis"),
                     )
                     .child(
                         Button::new("save-as-study")
+                            .flex_none()
                             .ghost()
                             .xsmall()
                             .icon(icon("book-plus"))

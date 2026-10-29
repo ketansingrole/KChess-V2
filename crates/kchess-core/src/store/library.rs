@@ -1091,4 +1091,238 @@ mod tests {
             r#"{"id":"s","name":"new","pgn":"q","updatedAt":1}"#
         );
     }
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    /// 1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6?? 4. Qxf7#
+    const BLUNDER: [&str; 7] = ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"];
+
+    fn drills_db() -> Connection {
+        let db = Connection::open_in_memory().expect("database");
+        crate::store::migrations::migrate(&db).expect("migrate");
+        db
+    }
+
+    fn run(db: &Connection, method: &str, args: &[Value]) -> Result<Value> {
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = crate::store::StoreContext {
+            db,
+            host: &Quiet,
+            config: &config,
+            cache: &cache,
+        };
+        crate::store::call(&ctx, method, args)
+    }
+
+    /// A complete review of `BLUNDER`: level until Black's sixth move hands White mate in one.
+    fn store_blunder_review(db: &Connection, source: &str, depth: u32) -> String {
+        let key: Value = serde_json::from_str(
+            &kchess_domain::api::call("reviewKey", &json!([START, BLUNDER]).to_string())
+                .expect("key"),
+        )
+        .expect("key json");
+        let mut evals: Vec<Value> = (0..5)
+            .map(|_| json!({ "cp": 30, "depth": depth, "best": "a2a3" }))
+            .collect();
+        evals.push(
+            json!({ "cp": 30, "depth": depth, "best": "g7g6", "pv": ["g7g6", "h5f3", "g8f6"] }),
+        );
+        evals.push(json!({ "mate": 1, "depth": depth, "best": "h5f7", "pv": ["h5f7"] }));
+        evals.push(json!({ "mate": 0, "depth": depth }));
+        run(
+            db,
+            "store.reviewStore.writeReview",
+            &[json!({
+                "key": key, "fen": START, "moves": BLUNDER, "source": source,
+                "complete": true, "depth": depth, "updatedAt": 7, "evals": evals,
+            })],
+        )
+        .expect("write review");
+        key.as_str().expect("key").to_string()
+    }
+
+    #[test]
+    fn a_reviewed_blunder_becomes_a_drill_scheduled_by_its_answers() {
+        let db = drills_db();
+        let key = store_blunder_review(&db, "local", 20);
+        // White made no mistake, so a drill of White's moves adds nothing.
+        let white = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), json!("white"), json!(1)],
+        )
+        .expect("add");
+        assert_eq!(white["added"], json!(0));
+        let added = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), json!("black"), json!(1)],
+        )
+        .expect("add");
+        assert_eq!(added["added"], json!(1));
+        let drill = &added["items"][0];
+        assert_eq!(drill["id"], json!(format!("{key}:5")));
+        assert_eq!(drill["judgment"], json!("blunder"));
+        // The engine's line from the position, ending on a move of the drilled side.
+        assert_eq!(drill["solution"], json!(["g7g6", "h5f3", "g8f6"]));
+        assert_eq!(
+            (drill["dueAt"].clone(), drill["streak"].clone()),
+            (json!(1), json!(0))
+        );
+        // Adding again keeps one drill per position.
+        let again = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), Value::Null, json!(2)],
+        )
+        .expect("add");
+        assert_eq!(again["added"], json!(0));
+        assert_eq!(again["items"].as_array().map(Vec::len), Some(1));
+
+        let id = drill["id"].as_str().expect("id");
+        let day = 86_400_000.0;
+        let solved = run(
+            &db,
+            "store.library.answerMistake",
+            &[json!(id), json!(true), json!(10)],
+        )
+        .expect("answer");
+        assert_eq!(solved[0]["streak"], json!(1));
+        assert_eq!(solved[0]["attempts"], json!(1));
+        assert_eq!(solved[0]["dueAt"].as_f64(), Some(10.0 + day));
+        let twice = run(
+            &db,
+            "store.library.answerMistake",
+            &[json!(id), json!(true), json!(10)],
+        )
+        .expect("answer");
+        assert_eq!(twice[0]["dueAt"].as_f64(), Some(10.0 + 2.0 * day));
+        let missed = run(
+            &db,
+            "store.library.answerMistake",
+            &[json!(id), json!(false), json!(10)],
+        )
+        .expect("answer");
+        assert_eq!(missed[0]["streak"], json!(0));
+        assert_eq!(missed[0]["attempts"], json!(3));
+        assert_eq!(missed[0]["dueAt"].as_f64(), Some(10.0 + 600_000.0));
+        // An unknown drill changes nothing.
+        let unknown = run(
+            &db,
+            "store.library.answerMistake",
+            &[json!("nope"), json!(true), json!(10)],
+        )
+        .expect("answer");
+        assert_eq!(unknown[0]["attempts"].as_f64(), Some(3.0));
+        assert_eq!(unknown[0]["dueAt"].as_f64(), Some(10.0 + 600_000.0));
+    }
+
+    #[test]
+    fn shallow_local_reviews_and_unfinished_ones_make_no_drills() {
+        let db = drills_db();
+        let key = store_blunder_review(&db, "local", 8);
+        let shallow = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), Value::Null, json!(1)],
+        )
+        .expect("add");
+        assert_eq!(shallow["added"], json!(0));
+        let missing = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!("no review"), Value::Null, json!(1)],
+        )
+        .expect("add");
+        assert_eq!(missing, json!({ "added": 0, "items": [] }));
+        assert!(run(&db, "store.library.addMistakes", &[json!(3)]).is_err());
+    }
+
+    #[test]
+    fn drill_games_name_the_game_a_review_came_from() {
+        let db = drills_db();
+        assert_eq!(
+            run(&db, "store.library.mistakeGames", &[]).expect("games"),
+            json!([])
+        );
+        let key = store_blunder_review(&db, "local", 20);
+        run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), Value::Null, json!(1)],
+        )
+        .expect("add");
+        // Without a game it is dated by its review (when it was written).
+        let games = run(&db, "store.library.mistakeGames", &[]).expect("games");
+        assert_eq!(games[0]["key"], json!(key));
+        assert!(games[0]["playedAt"].as_f64().is_some_and(|at| at > 1.0e12));
+        assert!(games[0].get("white").is_none());
+
+        // A game played here whose line it reviews, with "You" as Black.
+        let game = json!({
+            "id": "local1", "source": "computer", "startedAt": 50, "updatedAt": 60, "white": "Stockfish",
+            "black": "You", "result": "1-0", "reason": "Checkmate", "timeControl": "-", "finished": true, "setup": { "variant": "standard", "fen": START },
+            "moves": BLUNDER,
+        });
+        run(&db, "store.library.saveArchivedGame", &[game]).expect("save");
+        let games = run(&db, "store.library.mistakeGames", &[]).expect("games");
+        assert_eq!(
+            (
+                games[0]["white"].clone(),
+                games[0]["player"].clone(),
+                games[0]["playedAt"].clone()
+            ),
+            (json!("Stockfish"), json!("black"), json!(50))
+        );
+
+        // A synced Lichess game linked to the review wins.
+        db.execute_batch(&format!(
+            "INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status, color,
+                                opponent, moves)
+               VALUES ('Alice', 'Lichess1', 99, 99, 1, 'blitz', 'blitz', 'mate', 'black', 'Bob', '');
+             INSERT INTO game_reviews (gameId, reviewKey) VALUES ('Lichess1', '{key}');"
+        ))
+        .expect("seed");
+        let games = run(&db, "store.library.mistakeGames", &[]).expect("games");
+        assert_eq!(
+            (
+                games[0]["white"].clone(),
+                games[0]["black"].clone(),
+                games[0]["gameId"].clone()
+            ),
+            (json!("Bob"), json!("Alice"), json!("Lichess1"))
+        );
+        assert_eq!(games[0]["playedAt"], json!(99));
+
+        run(&db, "store.library.removeArchivedGame", &[json!("local1")]).expect("remove");
+        assert!(run(&db, "store.library.removeArchivedGame", &[]).is_err());
+    }
+
+    #[test]
+    fn repertoire_misses_are_counted_per_line_and_cleared() {
+        let db = drills_db();
+        let miss = |key: &str, fen: &str| {
+            run(
+                &db,
+                "store.library.recordRepertoireMiss",
+                &[json!(key), json!(fen)],
+            )
+            .expect("miss")
+        };
+        miss("white", "fen1");
+        miss("white", "fen1");
+        let misses = miss("black", "fen2");
+        assert_eq!(
+            misses,
+            json!({ "white": { "fen1": 2 }, "black": { "fen2": 1 } })
+        );
+        let cleared = run(
+            &db,
+            "store.library.clearRepertoireMisses",
+            &[json!("white")],
+        )
+        .expect("clear");
+        assert_eq!(cleared, json!({ "black": { "fen2": 1 } }));
+        assert!(run(&db, "store.library.recordRepertoireMiss", &[json!("white")]).is_err());
+    }
 }

@@ -20,21 +20,40 @@ env:
     desktop-file-utils
 
 jobs:
-  # Whether packaging may have changed since the last release (a pull request: since its base).
+  # Whether packaging may have changed since main last packaged (a pull request: since its base).
   # The packages, the Snap and the Windows upgrade take most of CI's time, so they run only then.
-  # A release commit changes Cargo.toml, so it always runs them. Measured from the last release
-  # rather than the previous push, so a change keeps running them until it ships.
+  # A release commit changes Cargo.toml, so it always runs them. Measured from the newest main
+  # commit whose packaging jobs all passed (else the last release) rather than the previous push,
+  # so a change keeps running them until they pass.
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       packaging: ${{ steps.diff.outputs.packaging }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - id: packaged
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for run in $(gh run list --workflow ci.yml --branch main --event push --status success --limit 30 \
+              --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
+            sha="${run#*:}"
+            [ "$sha" = "$GITHUB_SHA" ] && continue
+            git merge-base --is-ancestor "$sha" HEAD 2>/dev/null || continue
+            if gh run view "${run%%:*}" --json jobs --jq '[.jobs[] | select(.name | test("^(package |snap|windows-upgrade)")) | .conclusion] | length > 0 and all(. == "success")' | grep -qx true; then
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
       - id: diff
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || steps.packaged.outputs.sha }}
           PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|apps/electron-bridge/|crates/kchess-voice/|tooling/xtask/src/(package/|voice\.rs$|licenses\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
         run: |
           base="${BASE:-$(git describe --tags --abbrev=0 --match 'v2*' HEAD 2>/dev/null || true)}"

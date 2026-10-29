@@ -10,6 +10,7 @@
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
 
 mod analysis;
+mod audit;
 mod computer;
 mod history;
 mod local;
@@ -18,6 +19,8 @@ mod openings;
 mod palette;
 mod practice;
 mod puzzles;
+#[cfg(target_os = "macos")]
+mod screens;
 mod settings;
 mod shell;
 mod studies;
@@ -40,6 +43,10 @@ thread_local! {
     /// Apps a test started again (`Harness::restart`), held until the test's thread ends.
     static KEPT_APPS: std::cell::RefCell<Vec<TestAppContext>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// The window sizes the audit and the screenshots look at: the minimum, a small laptop's and the
+/// default (`window_state`).
+const SIZES: [(f32, f32); 3] = [(640., 620.), (1024., 768.), (1320., 880.)];
 
 /// How often a wait looks again.
 const POLL: Duration = Duration::from_millis(5);
@@ -85,6 +92,10 @@ impl Harness {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::menu::init(cx);
+            // Dialogs and popovers appear at rest: their entrance runs on the real clock, so a
+            // click could otherwise land on a dialog still sliding in and be lost (seen once
+            // dependencies were optimized and the tests outran the 250 ms slide).
+            cx.set_reduce_motion(true);
         });
         // A restart opens the profile in the same process, where the earlier core may still be
         // letting it go (quit waits for it only so long); a relaunched app is a new process.
@@ -225,7 +236,11 @@ impl Harness {
                 .filter(ElementSnapshot::visible);
             target.is_some()
         });
-        let position = target.expect("found").bounds().center();
+        self.click_point(target.expect("found").bounds().center());
+    }
+
+    /// Press and release at a point of the window, whatever lies there.
+    pub fn click_point(&mut self, position: Point<Pixels>) {
         self.with_window(|window, cx| {
             for event in [
                 MouseDownEvent {
@@ -291,10 +306,10 @@ impl Harness {
             if shown == expected {
                 return;
             }
-            assert!(
-                started.elapsed() < TIMEOUT,
-                "the moves stayed {shown:?}, expected {expected:?}"
-            );
+            if started.elapsed() >= TIMEOUT {
+                let paths = self.paths();
+                panic!("the moves stayed {shown:?}, expected {expected:?}. Registered: {paths}");
+            }
             self.tick();
         }
     }
