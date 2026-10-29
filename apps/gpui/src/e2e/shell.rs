@@ -26,6 +26,16 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// The window hides the system title bar, so on Windows the top bar draws its controls.
+#[cfg(target_os = "windows")]
+#[gpui_kit::test]
+fn the_top_bar_has_the_window_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    for control in ["minimize", "maximize", "close"] {
+        app.find(control);
+    }
+}
+
 #[gpui_kit::test]
 fn the_sidebar_collapses_and_is_kept_collapsed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
