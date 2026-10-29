@@ -458,12 +458,19 @@ impl WrappedLineLayout {
 pub(crate) struct LineLayoutCache {
     previous_frame: Mutex<FrameCache>,
     current_frame: RwLock<FrameCache>,
+    /// KChess patch: lines shaped for earlier frames and not used since, so text that comes
+    /// back (a page opened again) is not shaped again. At most `RETAINED_LINES`.
+    retained: Mutex<FxHashMap<Arc<CacheKey>, Arc<LineLayout>>>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
     font_generation: Arc<AtomicUsize>,
     /// Records the generation represented by both frame caches.
     cached_font_generation: AtomicUsize,
 }
+
+/// KChess patch: how many shaped lines `LineLayoutCache::retained` keeps; reaching it starts
+/// the store again.
+const RETAINED_LINES: usize = 16_384;
 
 #[derive(Default)]
 struct FrameCache {
@@ -502,6 +509,7 @@ impl LineLayoutCache {
         Self {
             previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
+            retained: Mutex::default(),
             platform_text_system,
             font_generation,
             cached_font_generation: AtomicUsize::new(cached_font_generation),
@@ -588,6 +596,15 @@ impl LineLayoutCache {
         let mut curr_frame = self.current_frame.write();
         let mut prev_frame = self.previous_frame.lock();
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);
+        // KChess patch: the lines of two frames ago that no frame since has used are kept.
+        let unused = std::mem::take(&mut curr_frame.lines);
+        if !unused.is_empty() {
+            let mut retained = self.retained.lock();
+            if retained.len() + unused.len() > RETAINED_LINES {
+                retained.clear();
+            }
+            retained.extend(unused);
+        }
         curr_frame.lines.clear();
         curr_frame.wrapped_lines.clear();
         curr_frame.used_lines.clear();
@@ -691,7 +708,13 @@ impl LineLayoutCache {
         }
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        if let Some((key, layout)) = self.previous_frame.lock().lines.remove_entry(key) {
+        let earlier = self
+            .previous_frame
+            .lock()
+            .lines
+            .remove_entry(key)
+            .or_else(|| self.retained.lock().remove_entry(key));
+        if let Some((key, layout)) = earlier {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
@@ -885,6 +908,7 @@ impl LineLayoutCache {
 
         *current_frame = FrameCache::default();
         *self.previous_frame.lock() = FrameCache::default();
+        self.retained.lock().clear();
         self.cached_font_generation
             .store(font_generation, Ordering::Release);
         font_generation

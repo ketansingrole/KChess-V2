@@ -98,6 +98,24 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
         let _ = window.update(cx, |_, window, cx| set_up(scenario, window, cx));
         timer(WARM_UP).await;
         let mut collector = cx.update(|cx| cx.foreground_journal().collector());
+        // `pages-tour` opens every page once before measuring, each first opening on its own:
+        // the run then opens pages already made, as most openings are.
+        let mut first_opens = BTreeMap::new();
+        if scenario == Scenario::PagesTour {
+            for (page, label) in tour() {
+                let _ = collector.collect_unseen();
+                let _ = window.update(cx, |_, window, cx| shell::open(page, window, cx));
+                timer(step_every(scenario)).await;
+                let mut first = Totals {
+                    opening: Some(label),
+                    ..Totals::default()
+                };
+                first.add(collector.collect_unseen().entries);
+                if let Some(open) = first.opens.get(label).and_then(|opens| opens.first()) {
+                    first_opens.insert(label, open.as_secs_f64() * 1000.);
+                }
+            }
+        }
         let mut totals = Totals::default();
         let cpu_before = cpu_time();
         let started = std::time::Instant::now();
@@ -136,6 +154,9 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
             report["page"] = json!(shell::current_page(cx).map(|page| format!("{page:?}")));
             report["account"] = json!(crate::accounts::handle(cx).read(cx).active(cx));
             report["online_moves"] = json!(crate::online::handle(cx).read(cx).moves().len());
+            if !first_opens.is_empty() {
+                report["first_open_ms"] = json!(first_opens);
+            }
         });
         if let Err(cause) = std::fs::write(&out, serde_json::to_string_pretty(&report).unwrap()) {
             eprintln!("could not write {out}: {cause}");

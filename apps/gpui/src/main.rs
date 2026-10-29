@@ -21,6 +21,8 @@ mod explorer;
 mod export;
 mod game;
 mod game_image;
+#[cfg(test)]
+mod gpui_patches;
 mod interface_zoom;
 mod log;
 mod menu;

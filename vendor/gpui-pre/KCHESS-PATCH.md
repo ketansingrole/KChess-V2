@@ -33,7 +33,7 @@ stay centred on its top bar.
 
 The app draws its shell, pages and their parts as cached views (`AnyView::cached`,
 `apps/gpui/src/part.rs`), so a frame redraws only what changed and replays the rest. Four
-patches make that replay cheaper; none changes what is drawn.
+patches make that replay cheaper, and one keeps shaped text; none changes what is drawn.
 
 - **Cached views inside a redrawn cached view are reused** (`prepaint_view` in `src/view.rs`).
   Upstream set `window.refreshing` while a cached view drew again, so every cached view inside it
@@ -50,6 +50,12 @@ patches make that replay cheaper; none changes what is drawn.
   layer, each is still inserted.
 - **Tab order is sorted when Tab asks for it** (`TabStopMap` in `src/tab_stop.rs`). Upstream kept
   a sorted tree updated on every insert, and a reused view replays all its tab stops each frame.
+
+- **Shaped text is kept for a while** (`LineLayoutCache::retained` in
+  `src/text_system/line_layout.rs`). Upstream kept a line's shaping for one frame after its
+  last use, so a page opened again shaped all its text with CoreText again. Lines no frame has
+  used for two frames are kept, up to 16,384 of them, and dropped when new fonts are added.
+  `apps/gpui/src/gpui_patches.rs` checks it.
 
 The app's end-to-end tests draw as the window does (cached views reused), and
 `e2e::screens` checks that every page drawn again from its cached frame is pixel for pixel the

@@ -224,19 +224,42 @@ fn summary(options: &Options, results: &[Value]) -> String {
             }
             text.push('\n');
         }
-        page_opens(&mut text, options, results, scenario);
+        page_opens(
+            &mut text,
+            options,
+            results,
+            scenario,
+            "first_open_ms",
+            "first",
+        );
+        page_opens(
+            &mut text,
+            options,
+            results,
+            scenario,
+            "page_open_ms",
+            "open",
+        );
     }
     text
 }
 
-/// `pages-tour`'s opening of each page: the median of its runs' medians, by build.
-fn page_opens(text: &mut String, options: &Options, results: &[Value], scenario: &str) {
+/// `pages-tour`'s opening of each page (`key`: the first, or again): the median of its runs',
+/// by build.
+fn page_opens(
+    text: &mut String,
+    options: &Options,
+    results: &[Value],
+    scenario: &str,
+    key: &str,
+    title: &str,
+) {
     let mut pages: Vec<String> = Vec::new();
     for result in results
         .iter()
         .filter(|r| r["report"]["scenario"] == scenario)
     {
-        for page in result["report"]["page_open_ms"]
+        for page in result["report"][key]
             .as_object()
             .into_iter()
             .flat_map(|pages| pages.keys())
@@ -247,7 +270,7 @@ fn page_opens(text: &mut String, options: &Options, results: &[Value], scenario:
         }
     }
     for page in pages {
-        text.push_str(&format!("  open {page:<22}"));
+        text.push_str(&format!("  {title} {page:<22}"));
         let medians: Vec<Option<f64>> = options
             .builds
             .iter()
@@ -258,7 +281,7 @@ fn page_opens(text: &mut String, options: &Options, results: &[Value], scenario:
                         .filter(|r| {
                             r["build"] == label.as_str() && r["report"]["scenario"] == scenario
                         })
-                        .filter_map(|r| r["report"]["page_open_ms"][page.as_str()].as_f64())
+                        .filter_map(|r| r["report"][key][page.as_str()].as_f64())
                         .collect(),
                 )
             })
