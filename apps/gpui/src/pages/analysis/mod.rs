@@ -47,7 +47,7 @@ use crate::game::{STANDARD_FEN, rules, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, panel_style};
 use crate::reviews::ReviewHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
@@ -2744,18 +2744,6 @@ impl AnalysisPage {
     }
 }
 
-/// The panel as its `Part` beside the board: as `widgets::side_panel` sizes it in the row.
-fn panel_style(height: Pixels) -> StyleRefinement {
-    let mut style = StyleRefinement::default();
-    style.flex_grow = Some(1.);
-    style.flex_shrink = Some(1.);
-    style.flex_basis = Some(relative(0.).into());
-    style.min_size.width = Some(PANEL_MIN.into());
-    style.max_size.width = Some(PANEL_MAX.into());
-    style.size.height = Some(height.into());
-    style
-}
-
 impl Render for AnalysisPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_notes(window, cx);
@@ -2848,7 +2836,7 @@ impl Render for AnalysisPage {
         } else {
             self.panel
                 .clone()
-                .cached(panel_style(self.panel_height(board_size)))
+                .cached(panel_style(self.panel_height(board_size), PANEL_MAX))
                 .into_any_element()
         };
         div()

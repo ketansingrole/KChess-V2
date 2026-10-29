@@ -20,6 +20,19 @@ pub const PANEL_MAX: Pixels = px(560.);
 pub const PANEL_ZEN: Pixels = px(340.);
 pub const LAYOUT_GAP: Pixels = px(24.);
 
+/// The panel beside the board drawn as a cached view (`crate::part::Part`): sized in the row as
+/// `widgets::side_panel` sizes itself there, `height` high and at most `max_width` wide.
+pub fn panel_style(height: Pixels, max_width: Pixels) -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.flex_grow = Some(1.);
+    style.flex_shrink = Some(1.);
+    style.flex_basis = Some(relative(0.).into());
+    style.min_size.width = Some(PANEL_MIN.into());
+    style.max_size.width = Some(max_width.into());
+    style.size.height = Some(height.into());
+    style
+}
+
 /// `clamp(14px, 2.6vw, 36px)`: 2.6% of the window's width.
 pub fn side_padding(window: &Window) -> Pixels {
     (window.viewport_size().width * 0.026)

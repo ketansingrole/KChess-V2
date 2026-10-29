@@ -1286,6 +1286,9 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
+    /// KChess patch: how many frames this window has drawn, so a cached view can tell whether the
+    /// ranges it kept point into the last frame (`view::prepaint_view`).
+    pub(crate) frames_drawn: u64,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -2192,6 +2195,7 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
+            frames_drawn: 0,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -3539,6 +3543,7 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.frames_drawn += 1;
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
