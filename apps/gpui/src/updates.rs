@@ -478,7 +478,15 @@ fn signer(package: Package, path: &Path) -> Signer {
         }
         Package::WindowsInstaller => {
             // The path goes by the environment, never into the script's text.
-            let output = Command::new("powershell")
+            let mut powershell = Command::new("powershell");
+            #[cfg(windows)]
+            {
+                // No console window flashes up beside the app while the signature is checked.
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                powershell.creation_flags(CREATE_NO_WINDOW);
+            }
+            let output = powershell
                 .args([
                     "-NoProfile",
                     "-NonInteractive",

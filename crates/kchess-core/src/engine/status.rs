@@ -109,11 +109,13 @@ async fn is_executable_file(host: &dyn Host, path: &Path) -> bool {
 /// The command that starts the engine `status` names: the bundled executable or the configured
 /// one. The command is not spawned; the caller chooses its stdio.
 pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Command {
-    if status.bundled {
+    let mut command = if status.bundled {
         Command::new(&locations.bundled)
     } else {
         Command::new(&status.path)
-    }
+    };
+    crate::process::no_window(&mut command);
+    command
 }
 
 /// A key that changes when the selected executable does: the bundled identity, or the path with
