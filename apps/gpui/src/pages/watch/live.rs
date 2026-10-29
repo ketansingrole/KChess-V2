@@ -17,7 +17,7 @@ use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::{rules, view};
-use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
+use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
@@ -372,7 +372,7 @@ impl Live {
     }
 
     /// One side's clock, the side to move's running while connected (`clockOf`).
-    fn clock(&self, color: Color, connected: bool) -> Option<(String, bool)> {
+    pub(super) fn clock(&self, color: Color, connected: bool) -> Option<(String, bool)> {
         let frame = self.frame.as_ref()?;
         let base = frame[if color == Color::White {
             "whiteClock"
@@ -541,100 +541,21 @@ fn turn_of(frame: &Value) -> Color {
 
 impl WatchPage {
     /// The list, the board and its panel; or the list and an empty card.
-    pub(super) fn live_layout(
+    /// The live game's panel beside (or under) the board: what is on, the moves, the actions.
+    pub(super) fn render_live_panel(
         &mut self,
-        list: Div,
         window: &mut Window,
         cx: &mut Context<Self>,
-        palette: &Palette,
     ) -> AnyElement {
         let Some(frame) = self.live.frame.clone() else {
-            return h_flex()
-                .items_start()
-                .gap(LAYOUT_GAP)
-                .child(list)
-                .child(widgets::card(palette).flex_1().child(widgets::empty_state(
-                    icon("tv"),
-                    if self.target.is_some() {
-                        "Connecting…"
-                    } else {
-                        "Pick something to watch"
-                    },
-                    None,
-                    palette,
-                )))
-                .into_any_element();
+            return div().into_any_element();
         };
-        let set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
-        let connected = self.phase.as_deref() == Some("connected");
-        let orientation = self.live.orientation();
-        let fen = frame["fen"].as_str().unwrap_or_default().to_string();
+        let palette = &cx.global::<Palette>().clone();
         let crazyhouse = frame["variant"] == json!("crazyhouse");
-        let turn = turn_of(&frame);
         let finished = frame["finished"] == json!(true);
-        let line = |color: Color, index: usize| {
-            let player = &frame[if color == Color::White {
-                "white"
-            } else {
-                "black"
-            }];
-            let name = player["name"].as_str().unwrap_or("?").to_string();
-            let shown = label(player);
-            let identity = h_flex()
-                .gap(px(10.))
-                .child(widgets::avatar(
-                    icon("user"),
-                    if color == Color::White {
-                        Side::White
-                    } else {
-                        Side::Black
-                    },
-                    turn == color && !finished,
-                    palette,
-                ))
-                .child(if real_player(&name) {
-                    let link = name.clone();
-                    div()
-                        .id(("watch-player", index))
-                        .role(Role::Link)
-                        .keyboard_focus(palette.primary)
-                        .aria_label(name.clone())
-                        .cursor_pointer()
-                        .hover(|name| name.underline())
-                        .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
-                        .child(shown)
-                        .into_any_element()
-                } else {
-                    div().child(shown).into_any_element()
-                })
-                .children(if crazyhouse {
-                    None
-                } else {
-                    widgets::material(&fen, color == Color::White, &set, palette)
-                });
-            let clock = self.live.clock(color, connected).map(|(text, running)| {
-                widgets::clock(text.into(), running, palette).into_any_element()
-            });
-            widgets::player_line(identity, None, clock)
-        };
         let board_size = self
             .layout
             .board_size_in(px(240.) + LAYOUT_GAP, super::HEADER, window);
-        let board_column = v_flex()
-            .w(board_size)
-            .flex_none()
-            .gap(widgets::STACK_GAP)
-            .child(line(!orientation, 0))
-            .child(crate::board::cached(&self.live.board))
-            .child(line(orientation, 1));
-
         let browsing = self.live.browsing();
         let info = info_line(&frame, &self.channels);
         let banner_icon = if finished {
@@ -758,7 +679,7 @@ impl WatchPage {
                 cx.notify();
             });
         });
-        let panel = widgets::side_panel(palette)
+        widgets::side_panel(palette)
             .h(self.layout.panel_height(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
@@ -811,22 +732,180 @@ impl WatchPage {
                 .pt(px(14.))
                 .border_t_1()
                 .border_color(palette.border),
-            );
+            )
+            .into_any_element()
+    }
+
+    /// The channels (TV) or the players followed (Following) beside the live game, at the
+    /// board column's height beside it.
+    pub(super) fn render_live_list(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let palette = cx.global::<Palette>().clone();
+        let list = if self.tab == super::Tab::Friends {
+            self.friends_list(cx, &palette)
+        } else {
+            self.channel_list(cx, &palette)
+        };
+        if self.live.frame.is_none() || self.layout.is_stacked() {
+            return list.into_any_element();
+        }
+        let board_size = self
+            .layout
+            .board_size_in(px(240.) + LAYOUT_GAP, super::HEADER, window);
+        list.h(self.layout.panel_height_px(board_size))
+            .into_any_element()
+    }
+
+    /// A player's clock beside their name: its own `Part`, which a tick redraws.
+    pub(super) fn render_live_face(&mut self, color: Color, cx: &mut Context<Self>) -> AnyElement {
+        let palette = cx.global::<Palette>().clone();
+        let connected = self.phase.as_deref() == Some("connected");
+        let shown = self.live.clock(color, connected);
+        let ix = usize::from(color == Color::Black);
+        self.live_faces_shown[ix] = shown.clone();
+        match shown {
+            Some((text, running)) => {
+                widgets::clock(text.into(), running, &palette).into_any_element()
+            }
+            None => div().into_any_element(),
+        }
+    }
+
+    pub(super) fn live_layout(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
+        let Some(frame) = self.live.frame.clone() else {
+            let list = self.render_live_list(window, cx);
+            return h_flex()
+                .items_start()
+                .gap(LAYOUT_GAP)
+                .child(list)
+                .child(widgets::card(palette).flex_1().child(widgets::empty_state(
+                    icon("tv"),
+                    if self.target.is_some() {
+                        "Connecting…"
+                    } else {
+                        "Pick something to watch"
+                    },
+                    None,
+                    palette,
+                )))
+                .into_any_element();
+        };
+        let set = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .piece_set
+            .clone();
+        let connected = self.phase.as_deref() == Some("connected");
+        let orientation = self.live.orientation();
+        let fen = frame["fen"].as_str().unwrap_or_default().to_string();
+        let crazyhouse = frame["variant"] == json!("crazyhouse");
+        let turn = turn_of(&frame);
+        let finished = frame["finished"] == json!(true);
+        let line = |color: Color, index: usize| {
+            let player = &frame[if color == Color::White {
+                "white"
+            } else {
+                "black"
+            }];
+            let name = player["name"].as_str().unwrap_or("?").to_string();
+            let shown = label(player);
+            let identity = h_flex()
+                .gap(px(10.))
+                .child(widgets::avatar(
+                    icon("user"),
+                    if color == Color::White {
+                        Side::White
+                    } else {
+                        Side::Black
+                    },
+                    turn == color && !finished,
+                    palette,
+                ))
+                .child(if real_player(&name) {
+                    let link = name.clone();
+                    div()
+                        .id(("watch-player", index))
+                        .role(Role::Link)
+                        .keyboard_focus(palette.primary)
+                        .aria_label(name.clone())
+                        .cursor_pointer()
+                        .hover(|name| name.underline())
+                        .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
+                        .child(shown)
+                        .into_any_element()
+                } else {
+                    div().child(shown).into_any_element()
+                })
+                .children(if crazyhouse {
+                    None
+                } else {
+                    widgets::material(&fen, color == Color::White, &set, palette)
+                });
+            let ix = usize::from(color == Color::Black);
+            let clock = self
+                .live
+                .clock(color, connected)
+                .map(|_| self.live_faces[ix].clone().into_any_element());
+            widgets::player_line(identity, None, clock)
+        };
+        let board_size = self
+            .layout
+            .board_size_in(px(240.) + LAYOUT_GAP, super::HEADER, window);
+        let board_column = v_flex()
+            .w(board_size)
+            .flex_none()
+            .gap(widgets::STACK_GAP)
+            .child(line(!orientation, 0))
+            .child(crate::board::cached(&self.live.board))
+            .child(line(orientation, 1));
+
+        // Beside the board the panel is its own cached view; under it, part of the page.
+        let panel = if self.layout.is_stacked() {
+            self.render_live_panel(window, cx)
+        } else {
+            self.live_panel
+                .clone()
+                .cached(panel_style(
+                    self.layout.panel_height_px(board_size),
+                    PANEL_MAX,
+                ))
+                .into_any_element()
+        };
         if self.layout.is_stacked() {
+            let list = self.render_live_list(window, cx);
             let column = |child: AnyElement| div().w(board_size).max_w_full().child(child);
             return v_flex()
                 .items_center()
                 .gap(LAYOUT_GAP)
                 .child(board_column)
-                .child(column(panel.into_any_element()))
-                .child(column(list.into_any_element()))
+                .child(column(panel))
+                .child(column(list))
                 .into_any_element();
         }
+        let list = self.live_list.clone().cached(StyleRefinement {
+            flex_shrink: Some(0.),
+            size: SizeRefinement {
+                width: Some(px(240.).into()),
+                height: Some(self.layout.panel_height_px(board_size).into()),
+            },
+            ..StyleRefinement::default()
+        });
         h_flex()
             .items_start()
             .justify_center()
             .gap(LAYOUT_GAP)
-            .child(list.h(self.layout.panel_height_px(board_size)))
+            .child(list)
             .child(board_column)
             .child(panel)
             .into_any_element()

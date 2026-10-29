@@ -9,6 +9,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
+use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::{AppCore, CoreEvent};
@@ -136,6 +137,15 @@ pub struct WatchPage {
     /// Followed players' presence by lowercase name.
     presence: std::collections::HashMap<String, Value>,
     presence_error: Option<SharedString>,
+    /// The live game's panel beside the board, drawn as a cached view of its own
+    /// (`render_live_panel`), so a sliding move redraws the page around the board alone.
+    live_panel: Entity<crate::part::Part<WatchPage>>,
+    /// The channels or players beside the live game, drawn as a cached view of its own.
+    live_list: Entity<crate::part::Part<WatchPage>>,
+    /// White's and Black's clock faces (`render_live_face`): a tick redraws only these.
+    live_faces: [Entity<crate::part::Part<WatchPage>>; 2],
+    /// What the clock faces showed at the last tick.
+    live_faces_shown: [Option<(String, bool)>; 2],
     layout: PlayLayout,
     shown: bool,
     focus: FocusHandle,
@@ -173,6 +183,8 @@ impl WatchPage {
                     this.broadcasts.return_to_game();
                 }
                 this.engine_changed(cx);
+                // The lists offer games to watch only while none of one's own is on.
+                cx.notify();
             }),
             cx.observe(&accounts, |_, _, cx| cx.notify()),
             // A broadcast's cover arrived.
@@ -194,6 +206,19 @@ impl WatchPage {
             broadcasts: Broadcasts::new(window, cx),
             presence: std::collections::HashMap::new(),
             presence_error: None,
+            live_panel: crate::part::Part::panel(
+                |this, window, cx| this.render_live_panel(window, cx),
+                cx,
+            ),
+            live_list: crate::part::Part::new(
+                |this, window, cx| this.render_live_list(window, cx),
+                cx,
+            ),
+            live_faces: [
+                crate::part::Part::new(|this, _, cx| this.render_live_face(Color::White, cx), cx),
+                crate::part::Part::new(|this, _, cx| this.render_live_face(Color::Black, cx), cx),
+            ],
+            live_faces_shown: [None, None],
             layout: PlayLayout::default(),
             shown: false,
             focus: cx.focus_handle(),
@@ -231,8 +256,10 @@ impl WatchPage {
                 cx.background_executor().timer(TICK).await;
                 let live = this
                     .update(cx, |this, cx| {
-                        if this.live.frame.is_some() || this.broadcasts.ticking() {
+                        if this.broadcasts.ticking() {
                             cx.notify();
+                        } else if this.live.frame.is_some() {
+                            this.redraw_faces_if_ticked(cx);
                         }
                     })
                     .is_ok();
@@ -241,6 +268,25 @@ impl WatchPage {
                 }
             }
         }));
+    }
+
+    /// A tick redraws a live clock face only when it shows something else, and only that face;
+    /// the page when a clock comes or goes.
+    fn redraw_faces_if_ticked(&mut self, cx: &mut Context<Self>) {
+        let connected = self.phase.as_deref() == Some("connected");
+        for (ix, color) in [Color::White, Color::Black].into_iter().enumerate() {
+            let shown = self.live.clock(color, connected);
+            if shown == self.live_faces_shown[ix] {
+                continue;
+            }
+            let came_or_went = shown.is_some() != self.live_faces_shown[ix].is_some();
+            self.live_faces_shown[ix] = shown;
+            if came_or_went {
+                cx.notify();
+            } else {
+                self.live_faces[ix].update(cx, |_, cx| cx.notify());
+            }
+        }
     }
 
     /// The stream on a lost connection ended with it: what is watched streams again.
@@ -766,14 +812,7 @@ impl Render for WatchPage {
             ));
         let notices = self.notices(cx, &palette);
         let body = match self.tab {
-            Tab::Tv => {
-                let list = self.channel_list(cx, &palette);
-                self.live_layout(list, window, cx, &palette)
-            }
-            Tab::Friends => {
-                let list = self.friends_list(cx, &palette);
-                self.live_layout(list, window, cx, &palette)
-            }
+            Tab::Tv | Tab::Friends => self.live_layout(window, cx, &palette),
             Tab::Broadcasts => self.broadcasts_body(window, cx, &palette),
         };
         div()
