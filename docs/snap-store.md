@@ -21,7 +21,7 @@ The sandbox needs network access, a localhost listener for Lichess OAuth, deskto
 interfaces, and home access for PGNs. Microphone and password-manager interfaces may need
 manual connection or Store approval.
 
-From 2026.10.16 the Snap is the Rust app, built by `cargo xtask package --final --snap` with the
+From 2026.10.16 the Snap is the Rust app, built by `cargo xtask package --snap` with the
 GNOME extension and Mesa's Vulkan drivers. It keeps the store name, strict confinement and the
 Electron Snap's plugs (it no longer needs `browser-support`), and its profile is the same folder
 (`$SNAP_USER_DATA/.config/KChess`), so the store's update replaces the Electron Snap in place.

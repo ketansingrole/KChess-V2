@@ -31,12 +31,8 @@ const IDLE: Duration = if cfg!(test) {
 };
 /// `checkAutomatically`: on startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-/// The name this identity's packages carry, which the packaging builds in: the preview
-/// beside Electron, or (`--final`) the app replacing it.
-const PREFIX: &str = match option_env!("KCHESS_PACKAGE_PREFIX") {
-    Some(prefix) => prefix,
-    None => "KChess-Preview",
-};
+/// The name KChess's packages carry, as the Electron app's did.
+const PREFIX: &str = "KChess";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -1600,11 +1596,11 @@ mod tests {
         };
         assert!(signed_alike(&ad_hoc, &other_app).is_err());
         // The way off ad hoc signing: a Developer ID build of the same app.
-        let ad_hoc_preview = Signer {
+        let ad_hoc_build = Signer {
             app: developer.app.clone(),
             ..ad_hoc.clone()
         };
-        assert_eq!(signed_alike(&ad_hoc_preview, &developer), Ok(()));
+        assert_eq!(signed_alike(&ad_hoc_build, &developer), Ok(()));
         // Unsigned (Linux, or Windows without a certificate): the checksum is the check.
         assert_eq!(signed_alike(&Signer::default(), &Signer::default()), Ok(()));
     }
@@ -1662,20 +1658,17 @@ mod tests {
     fn packages_are_named_as_electrons_are() {
         let x64 = std::env::consts::ARCH == "x86_64";
         let name = |package| asset_name("2026.11.0", package).unwrap();
-        assert!(name(Package::MacZip).starts_with("KChess-Preview-2026.11.0-mac-"));
+        assert!(name(Package::MacZip).starts_with("KChess-2026.11.0-mac-"));
         if x64 {
             assert_eq!(
                 name(Package::WindowsInstaller),
-                "KChess-Preview-2026.11.0-win-x64.exe"
+                "KChess-2026.11.0-win-x64.exe"
             );
             assert_eq!(
                 name(Package::AppImage),
-                "KChess-Preview-2026.11.0-linux-x86_64.AppImage"
+                "KChess-2026.11.0-linux-x86_64.AppImage"
             );
-            assert_eq!(
-                name(Package::Deb),
-                "KChess-Preview-2026.11.0-linux-amd64.deb"
-            );
+            assert_eq!(name(Package::Deb), "KChess-2026.11.0-linux-amd64.deb");
         }
         let sums = format!("ABC123  {}\nfff  other.zip\n", name(Package::Deb));
         assert_eq!(

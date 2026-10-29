@@ -37,10 +37,10 @@ draft release by rerunning its original tag-push workflow.
 | Windows  | `.exe` installer (x64)                        |
 | Linux    | `.AppImage`, `.deb` and the Snap (x64)        |
 
-Each is made by `cargo xtask package` in two identities: `KChess-*` (`--final`), the app every
-KChess installation runs, with the `latest*.yml` manifests; and `KChess-Preview-*`, which installs
-beside it under its own name, folder, NSIS GUID and `.deb` package and writes no manifests, so
-preview installations keep updating as themselves.
+Each is made by `cargo xtask package`, with the `latest*.yml` manifests. Releases from 2026.10.12
+to 2026.10.17 also carried `KChess-Preview-*` packages, a side-by-side preview of the Rust app;
+later releases do not, and a preview installation stays on 2026.10.17 (it shares the KChess
+profile, so installing KChess loses nothing).
 
 ### The move from the Electron app
 
@@ -54,8 +54,13 @@ reaches every Electron installation as an ordinary update, from any earlier vers
   installation's own uninstaller in place, keeping user data, and removes an all-users copy from
   releases up to 2026.10.11. The **Windows upgrade** workflow checks per-user, custom-folder,
   all-users and fresh installs.
-- **macOS**: Squirrel.Mac installs the `.zip` when it carries the same bundle identifier
-  (`com.kchess.app`) and Developer ID team; ad hoc signed installations link to a manual download.
+- **macOS**: Squirrel.Mac installs a bundle from the `.zip` only when it has the running app's
+  bundle identifier and meets its Developer ID requirement. Electron releases from 2026.10.12 were
+  `com.kchess.app`, as KChess is; earlier ones were `com.kchess.electron`, so the zip also holds
+  `legacy/KChess.app`, a bridge with that identifier (`apps/electron-bridge`). Squirrel installs the
+  bridge, which unpacks KChess from the zip electron-updater kept (or downloads it), checks it is
+  `com.kchess.app` signed by the same team, takes its place and opens it. Ad hoc signed
+  installations link to a manual download.
 - **Linux**: the AppImage replaces the running one; the `.deb` (package `kchess`, `/opt/KChess`)
   upgrades the Electron package in place and dpkg removes its files. The Snap keeps the store name
   `kchess` and its plugs.

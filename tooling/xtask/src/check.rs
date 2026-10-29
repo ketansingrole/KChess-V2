@@ -16,7 +16,12 @@ use crate::util::{Result, available, output, root, run, run_with, say};
 const FLOORS: [(&str, f64); 3] = [("lines", 81.0), ("regions", 79.0), ("functions", 80.0)];
 
 /// The shipped binaries, whose code must not unwrap or expect outside tests.
-const SHIPPED_BINS: [&str; 3] = ["kchess-voice", "kchess-service", "kchess-cli"];
+const SHIPPED_BINS: [&str; 4] = [
+    "kchess-voice",
+    "kchess-service",
+    "kchess-cli",
+    "kchess-electron-bridge",
+];
 
 fn step(name: &str, work: impl FnOnce() -> Result) -> Result {
     say(&format!("Checking {name}…"));

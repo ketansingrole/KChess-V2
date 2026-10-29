@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn the_final_installer_keeps_the_electron_apps_identity() {
-        let identity = Identity::new(true, "2026.10.16".into());
+        let identity = Identity::new("2026.10.16".into());
         let text = script(
             &identity,
             Path::new("C:/stage/KChess"),
@@ -260,19 +260,5 @@ mod tests {
         assert!(!text.contains("{{"), "no unexpanded braces");
         // A 32-bit installer reads the 64-bit registry view, where earlier installers wrote.
         assert_eq!(text.matches("SetRegView 64").count(), 2);
-    }
-
-    #[test]
-    fn the_preview_installs_apart() {
-        let text = script(
-            &Identity::new(false, "2026.10.16".into()),
-            Path::new("s"),
-            Path::new("i"),
-            Path::new("o"),
-            1,
-        );
-        assert!(text.contains("3ddfc8df-572e-41e0-a3bd-fc08e5e3da9f"));
-        assert!(!text.contains("6bb66f38"));
-        assert!(text.contains(r#"!define EXE "KChess Preview.exe""#));
     }
 }

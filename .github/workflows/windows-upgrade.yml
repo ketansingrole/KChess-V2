@@ -39,7 +39,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       # The app and its installer take the test version from KCHESS_PACKAGE_VERSION.
-      - run: cargo xtask package --final
+      - run: cargo xtask package
         env:
           KCHESS_PACKAGE_VERSION: ${{ env.KCHESS_TEST_VERSION }}
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
@@ -81,7 +81,7 @@ jobs:
         run: |
           # Without a tag, gh downloads the latest published release.
           $tag = @($env:RELEASE | Where-Object { $_ })
-          # KChess's own installer, not the preview's (`KChess-Preview-…`) beside it.
+          # KChess's own installer, not the preview's (`KChess-Preview-…`) earlier releases carried.
           gh release download @tag --repo $env:GITHUB_REPOSITORY --pattern 'KChess-2*-win-x64.exe' --pattern SHA256SUMS.txt --dir old
           $installer = Get-Item old/*-win-x64.exe
           # The installer's own line: its name also starts the `.exe.blockmap` line.

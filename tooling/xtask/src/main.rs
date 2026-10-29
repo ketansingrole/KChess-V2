@@ -29,7 +29,7 @@ const HELP: &str = "cargo xtask <command>
   icons [--check]       Write the Lucide icons the app names (or check they match)
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
-  package [--final] [--skip-build] [--snap]
+  package [--skip-build] [--snap]
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap
 ";

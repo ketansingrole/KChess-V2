@@ -19,7 +19,7 @@ records what the switch kept.
 ## Shell
 
 - [x] Named KChess in the menu bar, Dock and app switcher (the executable is `KChess`, so a
-      `cargo run` build is too; the preview package is "KChess Preview" on purpose)
+      `cargo run` build is too)
 - [x] Dock, app switcher and Mission Control icon: the light or dark tile by the system
       appearance, set at runtime as Electron does (`src/dock_icon.rs`), so a development build
       has it too
@@ -316,8 +316,7 @@ None.
 - [x] Packages in the formats KChess has always shipped, made by `cargo xtask package`: macOS
       (.dmg, .zip), Windows (NSIS .exe) and Linux (.AppImage, .deb, Snap), with the official native
       Stockfish, the core service, the command line and the voice runtime beside the app
-      (`--final` takes the Electron app's identity, NSIS GUID and .deb name and writes
-      `latest*.yml`; the preview installs apart as "KChess Preview")
+      (with the Electron app's identity, NSIS GUID and .deb name, and `latest*.yml`)
 - [x] Rust updater on the same GitHub release feed: check, background download checked against
       `SHA256SUMS.txt` and the running app's signature, then the new bundle, the installer run
       silently, the new AppImage or the .deb (`pkexec`); restart to install or install on quit,

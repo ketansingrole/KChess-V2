@@ -51,22 +51,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - run: cargo xtask check
 
-  # KChess for every platform in both identities: `final` is the app every KChess installation
-  # runs, with the update manifests the Electron app's updater reads (`latest*.yml`), so it installs
-  # this over itself; `preview` keeps "KChess Preview" installations updating. Signed and notarized
-  # on macOS with the Developer ID when its secrets are set, ad hoc otherwise.
+  # KChess for every platform, with the update manifests the Electron app's updater reads
+  # (`latest*.yml`), so it installs this over itself. Signed and notarized on macOS with the
+  # Developer ID when its secrets are set, ad hoc otherwise.
   package:
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-24.04]
-        identity: [final, preview]
     runs-on: ${{ matrix.os }}
     env:
       KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
-      # The packages' name, and the Mac app's.
-      PACKAGE_PREFIX: ${{ matrix.identity == 'final' && 'KChess' || 'KChess-Preview' }}
-      APP_NAME: ${{ matrix.identity == 'final' && 'KChess' || 'KChess Preview' }}
     steps:
       - uses: actions/checkout@v7
       - name: Install GPUI build libraries
@@ -105,7 +100,7 @@ jobs:
           identity="$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application:/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::No Developer ID Application identity in MAC_CSC_LINK."; exit 1; }
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
-      - run: cargo xtask package ${{ matrix.identity == 'final' && '--final' || '' }}
+      - run: cargo xtask package
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
@@ -122,39 +117,38 @@ jobs:
           # The app as the updater and a download receive it: from the zip that ships.
           unpacked="$RUNNER_TEMP/kchess-zip"
           rm -rf "$unpacked" && mkdir -p "$unpacked"
-          ditto -x -k apps/gpui/dist/"$PACKAGE_PREFIX"-*-mac-arm64.zip "$unpacked"
-          mac_app="$unpacked/$APP_NAME.app"
-          codesign --verify --deep --strict --verbose=2 "$mac_app"
-          signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
-          if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
-            echo "::error::$APP_NAME's signing team does not match APPLE_TEAM_ID."
-            exit 1
-          fi
-          spctl --assess --type execute --verbose=2 "$mac_app"
-          xcrun stapler validate "$mac_app"
+          ditto -x -k apps/gpui/dist/KChess-*-mac-arm64.zip "$unpacked"
+          for mac_app in "$unpacked/KChess.app" "$unpacked/legacy/KChess.app"; do
+            codesign --verify --deep --strict --verbose=2 "$mac_app"
+            signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+            if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
+              echo "::error::$mac_app's signing team does not match APPLE_TEAM_ID."
+              exit 1
+            fi
+            spctl --assess --type execute --verbose=2 "$mac_app"
+            xcrun stapler validate "$mac_app"
+          done
+          # Squirrel.Mac in an Electron release before 2026.10.12 installs only what meets its
+          # own designated requirement: the bridge must.
+          codesign --verify --deep --strict -R "=identifier \"com.kchess.electron\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\"" "$unpacked/legacy/KChess.app"
       - name: Verify every supported package exists
         shell: bash
         run: |
           case "${{ runner.os }}" in
-            macOS) manifest=latest-mac.yml; packages="$PACKAGE_PREFIX-*-mac-arm64.dmg $PACKAGE_PREFIX-*-mac-arm64.zip" ;;
-            Windows) manifest=latest.yml; packages="$PACKAGE_PREFIX-*-win-x64.exe" ;;
-            Linux) manifest=latest-linux.yml; packages="$PACKAGE_PREFIX-*-linux-x86_64.AppImage $PACKAGE_PREFIX-*-linux-amd64.deb" ;;
+            macOS) manifest=latest-mac.yml; packages="KChess-*-mac-arm64.dmg KChess-*-mac-arm64.zip" ;;
+            Windows) manifest=latest.yml; packages="KChess-*-win-x64.exe" ;;
+            Linux) manifest=latest-linux.yml; packages="KChess-*-linux-x86_64.AppImage KChess-*-linux-amd64.deb" ;;
           esac
           for pattern in $packages; do
             found=$(find apps/gpui/dist -maxdepth 1 -name "$pattern" -size +0 | head -n 1)
             test -n "$found" || { echo "::error::Missing package: $pattern"; exit 1; }
           done
-          if [ "${{ matrix.identity }}" = final ]; then
-            # The Electron app's updater finds the app replacing it through these.
-            test -s "apps/gpui/dist/$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
-          elif ls apps/gpui/dist/latest*.yml >/dev/null 2>&1; then
-            # The preview must never carry manifests an installed KChess would read as its own.
-            echo "::error::The preview wrote update manifests."; exit 1
-          fi
+          # The Electron app's updater finds the app replacing it through these.
+          test -s "apps/gpui/dist/$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
       # The release job writes one SHA256SUMS.txt for every package.
       - uses: actions/upload-artifact@v7
         with:
-          name: kchess-${{ runner.os }}-${{ matrix.identity }}
+          name: kchess-${{ runner.os }}
           path: |
             apps/gpui/dist/*
             !apps/gpui/dist/SHA256SUMS.txt
@@ -187,7 +181,7 @@ jobs:
             sudo iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
           fi
       - name: Build the Snap
-        run: sg lxd -c 'cargo xtask package --final --snap'
+        run: sg lxd -c 'cargo xtask package --snap'
         env:
           GH_TOKEN: ${{ github.token }}
           KCHESS_SNAP_LXD: '1'

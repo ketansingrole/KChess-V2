@@ -4206,6 +4206,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-electron-bridge"
+version = "2026.10.17"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "kchess-electron-legacy"
 version = "2026.10.17"
 dependencies = [

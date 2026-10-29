@@ -57,7 +57,7 @@ jobs:
       - run: cargo deny check
 
   # The app on each platform: its lints, its unit and end-to-end tests (`src/e2e`, headless), and
-  # a preview package as the Release workflow makes them (ad hoc signed on macOS).
+  # its packages as the Release workflow makes them (ad hoc signed on macOS).
   gpui:
     strategy:
       fail-fast: false
@@ -84,7 +84,7 @@ jobs:
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
-          # Release packages are made by the Release workflow; CI's are ad hoc signed previews.
+          # Release packages are made by the Release workflow; CI's are ad hoc signed.
           KCHESS_SIGN_IDENTITY: ''
       - uses: actions/upload-artifact@v7
         with:

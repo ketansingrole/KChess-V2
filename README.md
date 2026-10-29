@@ -69,8 +69,7 @@ it beside the app (`/usr/bin/kchess-cli` from the `.deb`).
 ### Packaging
 
 ```bash
-cargo xtask package             # "KChess Preview" for this platform (apps/gpui/dist/)
-cargo xtask package --final     # KChess itself, with the update manifests
+cargo xtask package             # KChess for this platform, with the update manifests (apps/gpui/dist/)
 ```
 
 macOS makes a `.dmg` and `.zip` (Apple Silicon), Windows a per-user NSIS installer, Linux an

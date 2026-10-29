@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-electron-legacy", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-voice", "crates/kchess-service", "apps/gpui", "apps/cli", "tooling/xtask"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-electron-legacy", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-voice", "crates/kchess-service", "apps/gpui", "apps/cli", "apps/electron-bridge", "tooling/xtask"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
 # their own manifests and lints.
 exclude = ["fuzz", "vendor/gpui-pre"]

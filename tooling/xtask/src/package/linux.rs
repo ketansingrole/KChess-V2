@@ -157,19 +157,15 @@ fn ar(members: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 pub fn control(identity: &Identity, installed_kb: u64) -> String {
-    let mut control = format!(
-        "Package: {}\nVersion: {}\nArchitecture: amd64\nMaintainer: {}\nInstalled-Size: {installed_kb}\nDepends: {DEPENDS}\nSection: games\nPriority: optional\nHomepage: {}\nDescription: {}\n {}\n",
+    format!(
+        "Package: {}\nVersion: {}\nArchitecture: amd64\nMaintainer: {}\nInstalled-Size: {installed_kb}\nDepends: {DEPENDS}\nSection: games\nPriority: optional\nHomepage: {}\nDescription: {}\n {}\nReplaces: kchess-electron\nConflicts: kchess-electron\n",
         identity.package,
         identity.version,
         super::AUTHOR,
         super::HOMEPAGE,
         super::SYNOPSIS,
         super::DESCRIPTION
-    );
-    if identity.final_build {
-        control.push_str("Replaces: kchess-electron\nConflicts: kchess-electron\n");
-    }
-    control
+    )
 }
 
 fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
@@ -216,11 +212,7 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
         0o644,
     ));
     let cli = format!("/opt/{}/kchess-cli", identity.name);
-    let cli_link = if identity.final_build {
-        "kchess-cli"
-    } else {
-        "kchess-cli-preview"
-    };
+    let cli_link = "kchess-cli";
     let postinst = format!(
         "#!/bin/sh\nset -e\nif type update-alternatives >/dev/null 2>&1; then\n  update-alternatives --install '/usr/bin/{exe}' '{exe}' '{exec}' 100 || ln -sf '{exec}' '/usr/bin/{exe}'\n  update-alternatives --install '/usr/bin/{cli_link}' '{cli_link}' '{cli}' 100 || ln -sf '{cli}' '/usr/bin/{cli_link}'\nelse\n  ln -sf '{exec}' '/usr/bin/{exe}'\n  ln -sf '{cli}' '/usr/bin/{cli_link}'\nfi\nif type update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi\n",
         exe = identity.linux_exe
@@ -345,9 +337,6 @@ parts:
 }
 
 fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
-    if !identity.final_build {
-        return Err("The Snap is the final app only: pass --final.".into());
-    }
     let project = stage.join("snap");
     let app = project.join("app");
     stage_folder(identity, built, &app)?;
@@ -423,11 +412,8 @@ mod tests {
 
     #[test]
     fn the_final_deb_replaces_the_electron_package() {
-        let text = control(&Identity::new(true, "2026.10.16".into()), 100);
+        let text = control(&Identity::new("2026.10.16".into()), 100);
         assert!(text.starts_with("Package: kchess\nVersion: 2026.10.16\nArchitecture: amd64\n"));
         assert!(text.contains("Replaces: kchess-electron\n"));
-        let preview = control(&Identity::new(false, "2026.10.16".into()), 100);
-        assert!(preview.starts_with("Package: kchess-preview\n"));
-        assert!(!preview.contains("Replaces"));
     }
 }

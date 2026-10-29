@@ -1,14 +1,13 @@
-//! `cargo xtask package [--final] [--skip-build]`: the app for this machine, with its own native
+//! `cargo xtask package [--skip-build] [--snap]`: the app for this machine, with its own native
 //! Stockfish, the core service, the command line and the voice runtime beside it, in the formats
 //! KChess has always shipped: macOS a .dmg and a .zip (Apple Silicon); Windows the per-user NSIS
 //! installer (.exe); Linux an .AppImage and a .deb. The updater installs each kind
 //! (`apps/gpui/src/updates.rs`). Every file gets a line in SHA256SUMS.txt. Output:
 //! `apps/gpui/dist/`.
 //!
-//! `--final` is the identity every KChess installation runs (`com.kchess.app`, "KChess", the
-//! Electron app's NSIS GUID and .deb name), with the update manifests (`latest*.yml`) the
-//! Electron app's updater reads, so it installs this over itself. Without it the preview installs
-//! beside it as "KChess Preview" and writes no manifests.
+//! Every package carries the identity every KChess installation runs (`com.kchess.app`, "KChess",
+//! the Electron app's NSIS GUID and .deb name), with the update manifests (`latest*.yml`) the
+//! Electron app's updater reads, so it installs this over itself.
 //!
 //! macOS signing: without `KCHESS_SIGN_IDENTITY` the bundle is signed ad hoc. With a Developer ID
 //! identity it is signed with the hardened runtime, then notarized and stapled (`APPLE_ID`,
@@ -42,8 +41,7 @@ pub const DESCRIPTION: &str =
 /// Who the package installs as (each platform reads its own fields).
 #[allow(dead_code)]
 pub struct Identity {
-    pub final_build: bool,
-    /// "KChess" or "KChess Preview": the Mac app, the Windows product and install folder.
+    /// The Mac app, the Windows product and install folder.
     pub name: &'static str,
     pub app_id: &'static str,
     /// The Windows executable's and the Linux launcher's name.
@@ -57,29 +55,15 @@ pub struct Identity {
 }
 
 impl Identity {
-    pub fn new(final_build: bool, version: String) -> Identity {
-        if final_build {
-            Identity {
-                final_build,
-                name: "KChess",
-                app_id: "com.kchess.app",
-                windows_exe: "KChess",
-                linux_exe: "kchess",
-                package: "kchess",
-                guid: "6bb66f38-a1a5-5ec8-b24f-c899466885ca",
-                version,
-            }
-        } else {
-            Identity {
-                final_build,
-                name: "KChess Preview",
-                app_id: "com.kchess.app.preview",
-                windows_exe: "KChess Preview",
-                linux_exe: "kchess-preview",
-                package: "kchess-preview",
-                guid: "3ddfc8df-572e-41e0-a3bd-fc08e5e3da9f",
-                version,
-            }
+    pub fn new(version: String) -> Identity {
+        Identity {
+            name: "KChess",
+            app_id: "com.kchess.app",
+            windows_exe: "KChess",
+            linux_exe: "kchess",
+            package: "kchess",
+            guid: "6bb66f38-a1a5-5ec8-b24f-c899466885ca",
+            version,
         }
     }
 
@@ -97,6 +81,9 @@ pub struct Built {
     pub stockfish: PathBuf,
     pub voice: PathBuf,
     pub licenses: PathBuf,
+    /// The Electron bridge (macOS only).
+    #[allow(dead_code)]
+    pub bridge: PathBuf,
 }
 
 fn exe(name: &str) -> String {
@@ -161,27 +148,28 @@ fn verify_no_dev_build(path: &Path) -> Result {
     Ok(())
 }
 
-fn build(identity: &Identity, skip: bool) -> Result<Built> {
+fn build(skip: bool) -> Result<Built> {
     let target = root().join("target/release");
     if !skip {
         say("Building the app, core service, command line and voice helper (release)…");
         let mut cargo = Command::new("cargo");
-        cargo
-            .args([
-                "build",
-                "--release",
-                "--locked",
-                "-p",
-                "kchess-gpui",
-                "-p",
-                "kchess-service",
-                "-p",
-                "kchess-cli",
-                "-p",
-                "kchess-voice",
-            ])
-            // The updater looks for packages under the name this build is made with.
-            .env("KCHESS_PACKAGE_PREFIX", identity.prefix());
+        cargo.args([
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "kchess-gpui",
+            "-p",
+            "kchess-service",
+            "-p",
+            "kchess-cli",
+            "-p",
+            "kchess-voice",
+        ]);
+        // What a Mac Electron app from before 2026.10.12 updates to (`mac::bridge`).
+        if cfg!(target_os = "macos") {
+            cargo.args(["-p", "kchess-electron-bridge"]);
+        }
         run_with(&mut cargo)?;
     }
     let voice = crate::voice::stage("release")?;
@@ -219,6 +207,7 @@ fn build(identity: &Identity, skip: bool) -> Result<Built> {
         stockfish,
         voice,
         licenses,
+        bridge: target.join("kchess-electron-bridge"),
     };
     // Debug builds draw a development badge in the sidebar; a release binary must not contain it.
     verify_no_dev_build(&built.app)?;
@@ -232,7 +221,6 @@ fn sha256(path: &Path) -> Result<String> {
 }
 
 pub fn run(args: &[String]) -> Result {
-    let final_build = args.iter().any(|arg| arg == "--final");
     let skip = args.iter().any(|arg| arg == "--skip-build");
     let snap = args.iter().any(|arg| arg == "--snap");
     // KCHESS_PACKAGE_VERSION builds a test installer above every release (windows-upgrade.yml);
@@ -241,8 +229,8 @@ pub fn run(args: &[String]) -> Result {
         .ok()
         .filter(|version| !version.is_empty())
         .map_or_else(crate::util::version, Ok)?;
-    let identity = Identity::new(final_build, version);
-    let built = build(&identity, skip)?;
+    let identity = Identity::new(version);
+    let built = build(skip)?;
     let out = root().join("apps/gpui/dist");
     let stage = root().join("target/package/stage");
     let _ = std::fs::remove_dir_all(&out);
@@ -264,7 +252,7 @@ pub fn run(args: &[String]) -> Result {
         return Err("The Snap is built on Linux.".into());
     }
     // The Snap Store updates the Snap; the manifests are for the other packages.
-    if identity.final_build && !snap {
+    if !snap {
         manifest::write(&identity, &packages, &out)?;
     }
     let mut files: Vec<PathBuf> = std::fs::read_dir(&out)

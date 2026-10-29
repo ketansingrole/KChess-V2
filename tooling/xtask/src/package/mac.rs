@@ -1,5 +1,10 @@
 //! macOS: the `.app` bundle, signed (ad hoc, or Developer ID with the hardened runtime and
 //! notarization), as a `.zip` (what the updaters install) and a `.dmg` (what people download).
+//!
+//! The zip also holds `legacy/KChess.app`, the Electron bridge (`apps/electron-bridge`): Electron
+//! releases before 2026.10.12 were `com.kchess.electron`, and Squirrel.Mac only installs a bundle
+//! with the running app's identifier, which it looks for anywhere in the zip. The bridge has that
+//! identifier and puts this KChess in its place.
 
 use std::path::{Path, PathBuf};
 
@@ -15,12 +20,24 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// The identifier of the Electron releases before 2026.10.12, which the bridge carries.
+const ELECTRON_APP_ID: &str = "com.kchess.electron";
+
 pub fn info_plist(identity: &Identity) -> String {
+    plist(identity, identity.app_id, "kchess", false)
+}
+
+/// The bridge's: Electron's identifier, and no Dock icon while it works.
+fn bridge_plist(identity: &Identity) -> String {
+    plist(identity, ELECTRON_APP_ID, "kchess-electron-bridge", true)
+}
+
+fn plist(identity: &Identity, app_id: &str, executable: &str, background: bool) -> String {
     let strings = [
         ("CFBundleName", identity.name),
         ("CFBundleDisplayName", identity.name),
-        ("CFBundleIdentifier", identity.app_id),
-        ("CFBundleExecutable", "kchess"),
+        ("CFBundleIdentifier", app_id),
+        ("CFBundleExecutable", executable),
         ("CFBundleIconFile", "icon"),
         ("CFBundlePackageType", "APPL"),
         ("CFBundleShortVersionString", &identity.version),
@@ -41,6 +58,9 @@ pub fn info_plist(identity: &Identity) -> String {
         ));
     }
     body.push_str("  <key>NSHighResolutionCapable</key>\n  <true/>\n");
+    if background {
+        body.push_str("  <key>LSUIElement</key>\n  <true/>\n");
+    }
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n{body}</dict>\n</plist>\n"
     )
@@ -50,9 +70,13 @@ fn text(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn sign_identity() -> String {
+    std::env::var("KCHESS_SIGN_IDENTITY").unwrap_or_default()
+}
+
 /// Sign the nested programs before the app that seals them.
 fn sign(app: &Path, nested: &[PathBuf], stage: &Path) -> Result {
-    let identity = std::env::var("KCHESS_SIGN_IDENTITY").unwrap_or_default();
+    let identity = sign_identity();
     if identity.is_empty() {
         say("Signing ad hoc (no KCHESS_SIGN_IDENTITY)…");
         for path in nested {
@@ -87,6 +111,14 @@ fn sign(app: &Path, nested: &[PathBuf], stage: &Path) -> Result {
     args.extend(["--entitlements", &entitlements_text, &app_text]);
     run("codesign", &args)?;
     let _ = std::fs::remove_file(&entitlements);
+    Ok(())
+}
+
+/// Notarize `apps` in one submission and staple each; nothing to do when signed ad hoc.
+fn notarize(apps: &[&Path], stage: &Path) -> Result {
+    if sign_identity().is_empty() {
+        return Ok(());
+    }
     let var = |name: &str| std::env::var(name).unwrap_or_default();
     let (apple_id, password, team) = (
         var("APPLE_ID"),
@@ -97,8 +129,16 @@ fn sign(app: &Path, nested: &[PathBuf], stage: &Path) -> Result {
         return Err("Signed Mac packages require APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID for notarization.".into());
     }
     say("Notarizing…");
+    let folder = stage.join("notarize");
+    std::fs::create_dir_all(&folder).map_err(|cause| cause.to_string())?;
+    for (index, app) in apps.iter().enumerate() {
+        run(
+            "ditto",
+            &[&text(app), &text(&folder.join(format!("{index}.app")))],
+        )?;
+    }
     let upload = text(&stage.join("notarize.zip"));
-    run("ditto", &["-c", "-k", "--keepParent", &app_text, &upload])?;
+    run("ditto", &["-c", "-k", &text(&folder), &upload])?;
     run(
         "xcrun",
         &[
@@ -115,7 +155,29 @@ fn sign(app: &Path, nested: &[PathBuf], stage: &Path) -> Result {
         ],
     )?;
     let _ = std::fs::remove_file(&upload);
-    run("xcrun", &["stapler", "staple", &app_text])
+    let _ = std::fs::remove_dir_all(&folder);
+    for app in apps {
+        run("xcrun", &["stapler", "staple", &text(app)])?;
+    }
+    Ok(())
+}
+
+/// The Electron bridge's bundle at `app`, signed.
+fn bridge(identity: &Identity, built: &Built, app: &Path, stage: &Path) -> Result {
+    let contents = app.join("Contents");
+    copy_program(
+        &built.bridge,
+        &contents.join("MacOS/kchess-electron-bridge"),
+    )?;
+    std::fs::create_dir_all(contents.join("Resources")).map_err(|cause| cause.to_string())?;
+    std::fs::copy(
+        root().join("apps/gpui/build/icon.icns"),
+        contents.join("Resources/icon.icns"),
+    )
+    .map_err(|cause| cause.to_string())?;
+    std::fs::write(contents.join("Info.plist"), bridge_plist(identity))
+        .map_err(|cause| cause.to_string())?;
+    sign(app, &[], stage)
 }
 
 /// The `.zip` and `.dmg`, as `(file name, path)`.
@@ -156,21 +218,27 @@ pub fn package(
         macos.join("stockfish"),
     ]);
     sign(&app, &nested, stage)?;
+    let bridged = stage.join("zip");
+    let bridge_app = bridged
+        .join("legacy")
+        .join(format!("{}.app", identity.name));
+    bridge(identity, built, &bridge_app, stage)?;
+    notarize(&[&app, &bridge_app], stage)?;
+    run(
+        "ditto",
+        &[
+            &text(&app),
+            &text(&bridged.join(format!("{}.app", identity.name))),
+        ],
+    )?;
 
     let base = format!("{}-{}-mac-arm64", identity.prefix(), identity.version);
     let zip = out.join(format!("{base}.zip"));
     say("Making the zip…");
-    // ditto keeps the bundle's symlinks, permissions and signature, as Squirrel.Mac expects.
+    // ditto keeps the bundles' symlinks, permissions and signatures, as Squirrel.Mac expects.
     run(
         "ditto",
-        &[
-            "-c",
-            "-k",
-            "--sequesterRsrc",
-            "--keepParent",
-            &text(&app),
-            &text(&zip),
-        ],
+        &["-c", "-k", "--sequesterRsrc", &text(&bridged), &text(&zip)],
     )?;
     say("Making the disk image…");
     let image = stage.join("dmg");

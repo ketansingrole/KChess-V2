@@ -37,11 +37,11 @@ creating/pushing a tag or publishing a release.
   is permanent: ship fixes with the next version and a new tag. Never bypass the
   `attach-draft-release` guard with a direct `gh release upload --clobber`.
 - Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
-  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*` (the final
-  identity, which writes `latest*.yml`) and `KChess-Preview-*` (which must never ship
-  `latest*.yml`). Every Electron installation ever released updates itself to the final build
-  through those manifests: keep their names, the Windows GUID, install folder, executable and
-  uninstaller names, and the `.deb` package and `/opt/KChess` layout (`tooling/xtask/src/package`).
+  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*` with
+  `latest*.yml`. Every Electron installation ever released updates itself through those
+  manifests: keep their names, the Windows GUID, install folder, executable and uninstaller
+  names, the `.deb` package and `/opt/KChess` layout, and the Mac zip's Electron bridge
+  (`legacy/KChess.app`, `com.kchess.electron`) (`tooling/xtask/src/package`).
   Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
   publishing; macOS ZIPs are required for the update feed.
 
