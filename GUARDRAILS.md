@@ -20,7 +20,7 @@ warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries)
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
 `check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
-changed since the last release (a version bump always has), it also packages on each platform,
+changed since `main` last packaged successfully (a version bump always has), it also packages on each platform,
 builds the Snap and runs the Windows upgrade workflow. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.
 
@@ -56,6 +56,10 @@ deadlines and UCI pipes.
 For each escaped regression, preserve the reproducer and test its sequence: late replies,
 overlapping requests, cancellation, lost credentials, interrupted writes and recovery. When a
 generated or fuzzed case finds a defect, keep its seed and a focused reproducer.
+
+Timing races in the app's tests show up under load: `cargo test -p kchess-gpui -- --test-threads=40`
+runs the suite oversubscribed and should pass as reliably as a plain run. The harness runs with
+reduced motion, so dialogs and popovers are at rest when a test clicks them.
 
 ## Coverage and corpora
 

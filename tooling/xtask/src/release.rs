@@ -138,8 +138,8 @@ pub fn verify() -> Result {
 }
 
 /// `release-verify`: the metadata, and CI green for the commit with every job run. The packages,
-/// the Snap and the Windows upgrade run only when packaging may have changed since the last
-/// release (ci.yml), which a version bump always is, so a release commit has had them all; before,
+/// the Snap and the Windows upgrade run only when packaging may have changed since main last
+/// packaged (ci.yml), which a version bump always is, so a release commit has had them all; before,
 /// each of them first failed after a tag. A manual Release build (downloads only) skips this.
 pub fn verify_release() -> Result {
     verify()?;
