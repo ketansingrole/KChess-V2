@@ -85,6 +85,10 @@ impl Harness {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::menu::init(cx);
+            // Dialogs and popovers appear at rest: their entrance runs on the real clock, so a
+            // click could otherwise land on a dialog still sliding in and be lost (seen once
+            // dependencies were optimized and the tests outran the 250 ms slide).
+            cx.set_reduce_motion(true);
         });
         // A restart opens the profile in the same process, where the earlier core may still be
         // letting it go (quit waits for it only so long); a relaunched app is a new process.
@@ -291,10 +295,10 @@ impl Harness {
             if shown == expected {
                 return;
             }
-            assert!(
-                started.elapsed() < TIMEOUT,
-                "the moves stayed {shown:?}, expected {expected:?}"
-            );
+            if started.elapsed() >= TIMEOUT {
+                let paths = self.paths();
+                panic!("the moves stayed {shown:?}, expected {expected:?}. Registered: {paths}");
+            }
             self.tick();
         }
     }
