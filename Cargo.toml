@@ -49,6 +49,16 @@ serde_json = { version = "1", features = ["preserve_order", "unbounded_depth", "
 memchr = "2"
 thiserror = "2"
 
+# Development and test builds: dependencies optimized (the app's end-to-end tests and
+# `cargo xtask app` run several times faster; they compile once), line tables only for
+# backtraces with file and line, which keeps links and `target/` small.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
 [profile.release]
 lto = "fat"
 overflow-checks = true
