@@ -50,7 +50,7 @@ use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::reviews::ReviewHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -1750,7 +1750,7 @@ impl TreeView<'_> {
             .px(px(4.))
             .py(px(2.))
             .mx(px(1.))
-            .rounded(px(5.))
+            .rounded(radii::XS)
             .cursor_pointer()
             .text_color(if main { palette.text } else { palette.toned })
             .when(main, |chip| chip.font_weight(FontWeight::SEMIBOLD))
@@ -1865,7 +1865,7 @@ impl TreeView<'_> {
                     .py(px(4.))
                     .border_l_2()
                     .border_color(tint(palette.primary, 50.))
-                    .rounded_r(px(6.))
+                    .rounded_r(radii::SM)
                     .bg(palette.elevated)
             })
             .when(!block, |comment| comment.mx(px(4.)))
@@ -2351,7 +2351,7 @@ impl AnalysisPage {
             .flex_none()
             .gap(px(2.))
             .p(px(3.))
-            .rounded(px(9.))
+            .rounded(radii::MD)
             .bg(palette.accented)
             .children(tabs.into_iter().map(|(choice, label, glyph)| {
                 let chosen = choice == tool;
@@ -2367,7 +2367,7 @@ impl AnalysisPage {
                     .gap(px(6.))
                     .px(px(8.))
                     .py(px(5.))
-                    .rounded(px(7.))
+                    .rounded(radii::SM)
                     .text_size(px(13.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
@@ -2697,7 +2697,7 @@ impl Render for AnalysisPage {
                         .p(px(8.))
                         .border_1()
                         .border_color(palette.border)
-                        .rounded(px(10.))
+                        .rounded(radii::LG)
                         .bg(palette.bg)
                         // Away from any move, the list's menu copies the game.
                         .context_menu({

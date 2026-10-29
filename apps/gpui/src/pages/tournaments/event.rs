@@ -14,7 +14,7 @@ use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::game::rules;
 use crate::pages::players::player_link;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// "Starts in 5 min", "12 min left", "Next round in 2 min", "Finished".
@@ -237,7 +237,7 @@ impl TournamentsPage {
                 h_flex()
                     .gap(px(8.))
                     .p(px(10.))
-                    .rounded(px(8.))
+                    .rounded(radii::MD)
                     .bg(palette.accented)
                     .text_size(px(13.))
                     .child(icon("eye").size(px(16.)))
@@ -357,7 +357,7 @@ impl TournamentsPage {
                                     .items_center()
                                     .gap(px(2.))
                                     .p(px(10.))
-                                    .rounded(px(10.))
+                                    .rounded(radii::LG)
                                     .bg(palette.accented)
                                     .child(icon("trophy").size(px(20.)).text_color(rgb(
                                         match index {
@@ -393,7 +393,7 @@ impl TournamentsPage {
                     .gap(px(10.))
                     .px(px(8.))
                     .py(px(6.))
-                    .rounded(px(6.))
+                    .rounded(radii::SM)
                     .text_size(px(13.))
                     .when(mine, |row| row.bg(crate::theme::tint(palette.primary, 14.)))
                     .child(

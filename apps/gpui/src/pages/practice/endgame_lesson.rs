@@ -22,7 +22,7 @@ use crate::core::AppCore;
 use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Tone};
 
 /// The chapters' column beside the board, and the page width below which it goes under it.
@@ -507,7 +507,7 @@ impl EndgameLesson {
             .p(px(12.))
             .border_1()
             .border_color(palette.border)
-            .rounded(px(14.))
+            .rounded(radii::XL)
             .bg(palette.elevated)
             .child(
                 h_flex()

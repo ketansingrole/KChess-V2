@@ -19,7 +19,7 @@ use crate::core::AppCore;
 use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// `ENDINGS`: how a game ended, as Lichess names its status.
@@ -486,7 +486,7 @@ impl Live {
                     .gap(px(4.))
                     .p(px(8.))
                     .w(px(190.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.elevated)
@@ -697,7 +697,7 @@ impl WatchPage {
                 .gap(px(16.))
                 .px(px(12.))
                 .py(px(8.))
-                .rounded(px(10.))
+                .rounded(radii::LG)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)

@@ -32,7 +32,7 @@ use crate::pages::studies::StudiesPage;
 use crate::pages::watch::WatchPage;
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 
 /// The window's height above the page; matches `--topbar-height`.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
@@ -1281,7 +1281,7 @@ fn dev_build_badge(open: bool, cx: &App) -> Option<AnyElement> {
             .id("kchess-dev-build-badge")
             .h(px(28.))
             .gap(px(6.))
-            .rounded(px(6.))
+            .rounded(radii::SM)
             .overflow_hidden()
             .border_1()
             .border_color(warning.opacity(0.3))

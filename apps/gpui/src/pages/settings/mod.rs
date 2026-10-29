@@ -33,7 +33,7 @@ use crate::board::looks;
 use crate::game::rules;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::settings::{SettingsChanged, SettingsHandle};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, columns};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -572,7 +572,7 @@ fn option(
         .gap(px(5.))
         .py(px(6.))
         .px(px(5.))
-        .rounded(px(10.))
+        .rounded(radii::LG)
         .bg(palette.bg)
         .text_size(px(10.5))
         .font_weight(FontWeight::MEDIUM)
@@ -631,15 +631,19 @@ fn picture_width(width: Pixels) -> Pixels {
 
 fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
     let side = picture_width(width) / 2.;
-    let square = |piece: Piece, color: u32| {
-        div().size(side).bg(rgb(color)).child(
-            img(SharedString::from(looks::piece_path(set, piece)))
-                .size(side)
-                .object_fit(ObjectFit::Cover),
-        )
+    // Each square takes the preview's outer corners: GPUI clips to rectangles, not rounded ones.
+    let square = |piece: Piece, color: u32, first: bool| {
+        crate::widgets::bar_segment(div(), (first, !first), radii::SM)
+            .size(side)
+            .bg(rgb(color))
+            .child(
+                img(SharedString::from(looks::piece_path(set, piece)))
+                    .size(side)
+                    .object_fit(ObjectFit::Cover),
+            )
     };
     h_flex()
-        .rounded(px(6.))
+        .rounded(radii::SM)
         .overflow_hidden()
         .child(square(
             Piece {
@@ -647,6 +651,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
                 role: Role::Knight,
             },
             0xf0d9b5,
+            true,
         ))
         .child(square(
             Piece {
@@ -654,17 +659,19 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
                 role: Role::Queen,
             },
             0xb58863,
+            false,
         ))
 }
 
 fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
     img(SharedString::from(format!("boards/{image}")))
         .size(picture_width(width))
-        .rounded(px(6.))
+        .rounded(radii::SM)
         .object_fit(ObjectFit::Cover)
 }
 
-/// `previewColors`: the theme's background, a raised card, its text and primary colors.
+/// `previewColors`: the theme's background, a raised card, its text and primary colors. A scale
+/// model of a page, so its corners are scaled down with it rather than taken from `radii`.
 fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) -> impl IntoElement {
     let colors = crate::theme::colors(theme, custom, dark);
     let color = |name: &str| {

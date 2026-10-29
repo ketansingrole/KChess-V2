@@ -15,7 +15,7 @@ use super::review::{classification_look, eval_chart};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::tree::path_of;
-use crate::theme::{Palette, judgment_color};
+use crate::theme::{Palette, judgment_color, radii};
 use crate::widgets;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -356,7 +356,7 @@ impl AnalysisPage {
                             row.child(
                                 div()
                                     .px(px(5.))
-                                    .rounded(px(4.))
+                                    .rounded(radii::XS)
                                     .bg(palette.accented)
                                     .text_size(px(11.))
                                     .text_color(palette.text_muted)

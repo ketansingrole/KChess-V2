@@ -13,7 +13,7 @@ use super::{Theme, theme_name};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Look};
 
 const FILTER: &str = "kchess:puzzle-history-filter";
@@ -473,7 +473,7 @@ impl Render for PuzzleHistory {
                     .px(px(10.))
                     .py(px(8.))
                     .gap(px(12.))
-                    .rounded(px(8.))
+                    .rounded(radii::MD)
                     .text_size(px(13.))
                     .hover(|row| row.bg(palette.accented))
                     .child(

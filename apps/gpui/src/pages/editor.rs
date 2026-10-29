@@ -22,7 +22,7 @@ use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, SparePiece};
 use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Pill, Tone};
@@ -452,7 +452,7 @@ impl EditorPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(8.))
+                .rounded(radii::MD)
                 .text_color(if selected {
                     palette.text
                 } else {
@@ -496,7 +496,7 @@ impl EditorPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(8.))
+                .rounded(radii::MD)
                 .cursor_pointer()
                 .when(selected, |spare| {
                     spare
@@ -527,7 +527,7 @@ impl EditorPage {
                         .w(across * 0.86)
                         .h(cell * 0.86)
                         .justify_center()
-                        .rounded(px(5.))
+                        .rounded(radii::SM)
                         .bg(rgb(0xf0d9b5))
                         .child(img(image).size(cell * 0.86)),
                 )
@@ -536,7 +536,7 @@ impl EditorPage {
         h_flex()
             .gap(px(4.))
             .p(px(4.))
-            .rounded(px(10.))
+            .rounded(radii::LG)
             .border_1()
             .border_color(palette.border)
             .bg(palette.elevated)

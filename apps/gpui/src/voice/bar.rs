@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use super::{ErrorKind, State};
 use crate::assets::icon;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 
 /// What a page puts in its bar.
 pub struct Bar {
@@ -92,12 +92,12 @@ pub fn voice_bar(
                     div()
                         .w(px(36.))
                         .h(px(6.))
-                        .rounded(px(3.))
+                        .rounded_full()
                         .bg(palette.accented)
                         .child(
                             div()
                                 .h_full()
-                                .rounded(px(3.))
+                                .rounded_full()
                                 .bg(palette.primary)
                                 .w(relative(voice.level.max(0.04))),
                         ),
@@ -150,7 +150,7 @@ pub fn voice_bar(
                         .id((bar.id, 3usize))
                         .px(px(10.))
                         .py(px(4.))
-                        .rounded(px(6.))
+                        .rounded(radii::SM)
                         .border_1()
                         .border_color(palette.border)
                         .when(state == State::Listening, |hold| hold.bg(palette.accented))

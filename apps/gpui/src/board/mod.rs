@@ -18,6 +18,7 @@ use shakmaty::variant::VariantPosition;
 use shakmaty::{Board, Color, File, Piece, Position as _, Rank, Role, Square};
 
 use crate::settings::SettingsHandle;
+use crate::theme::radii;
 
 /// Chessground's square colors (`chessground.brown.css`).
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
@@ -28,8 +29,6 @@ const DEST_HOVER: u32 = 0x14551e4d; // rgba(20, 85, 30, 0.3)
 /// Chessground's queued premove and its targets (`current-premove`, `premove-dest`).
 const PREMOVE: u32 = 0x141e5580; // rgba(20, 30, 85, 0.5)
 const PREMOVE_DOT: u32 = 0x141e5580;
-/// `--board-radius`.
-const BOARD_RADIUS: Pixels = px(14.);
 /// A press moves this far before it is a drag rather than a click.
 const DRAG_THRESHOLD: Pixels = px(4.);
 
@@ -988,7 +987,7 @@ impl ChessBoard {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(BOARD_RADIUS)
+                .rounded(radii::XL)
                 .bg(hsla(0., 0., 0., 0.5))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -1002,7 +1001,7 @@ impl ChessBoard {
                         .flex()
                         .gap(px(6.))
                         .p(px(8.))
-                        .rounded(px(12.))
+                        .rounded(radii::XL)
                         .bg(elevated)
                         .border_1()
                         .border_color(border)
@@ -1014,7 +1013,8 @@ impl ChessBoard {
                                 .aria_label(label)
                                 .size(px(60.))
                                 .p(px(4.))
-                                .rounded(px(8.))
+                                // Concentric with the picker's corners, 8px further out.
+                                .rounded(radii::SM)
                                 .bg(background)
                                 .border_1()
                                 .border_color(border)
@@ -1068,12 +1068,26 @@ struct Frame {
 
 fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let side = bounds.size.width / 8.;
-    let at = |square: Square| -> Bounds<Pixels> {
+    let place = |square: Square| -> (u32, u32) {
         let (file, rank) = (u32::from(square.file()), u32::from(square.rank()));
-        let (column, row) = match frame.state.orientation {
+        match frame.state.orientation {
             Color::White => (file, 7 - rank),
             Color::Black => (7 - file, rank),
-        };
+        }
+    };
+    // A corner square's fill takes the board's rounded corner: GPUI does not clip to it.
+    let rounded = |square: Square| -> Corners<Pixels> {
+        let (column, row) = place(square);
+        let corner = |at: bool| if at { radii::XL.min(side) } else { px(0.) };
+        Corners {
+            top_left: corner(column == 0 && row == 0),
+            top_right: corner(column == 7 && row == 0),
+            bottom_right: corner(column == 7 && row == 7),
+            bottom_left: corner(column == 0 && row == 7),
+        }
+    };
+    let at = |square: Square| -> Bounds<Pixels> {
+        let (column, row) = place(square);
         Bounds::new(
             point(
                 bounds.origin.x + side * column as f32,
@@ -1083,7 +1097,7 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
         )
     };
     let fill = |window: &mut Window, square: Square, color: u32| {
-        window.paint_quad(gpui_kit::fill(at(square), rgba(color)));
+        window.paint_quad(gpui_kit::fill(at(square), rgba(color)).corner_radii(rounded(square)));
     };
     if let Some((from, to)) = frame.state.last_move {
         fill(window, from, LAST_MOVE);
@@ -1097,7 +1111,7 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
                 if frame.hovered == Some(to) {
                     fill(window, to, DEST_HOVER);
                 } else if frame.pieces.piece_at(to).is_some() {
-                    paint_corners(window, cell, rgba(DEST_CORNER));
+                    paint_corners(window, cell, rounded(to), rgba(DEST_CORNER));
                 } else {
                     let diameter = side * 0.311;
                     let dot = Bounds::new(
@@ -1293,19 +1307,38 @@ fn paint_arrow(
     }
 }
 
-/// Chessground's mark on a square the piece can take: the corners outside a circle.
-fn paint_corners(window: &mut Window, cell: Bounds<Pixels>, color: Rgba) {
+/// Chessground's mark on a square the piece can take: the corners outside a circle, but for one
+/// on the board's rounded corner (`board`), which would stand out past it.
+fn paint_corners(window: &mut Window, cell: Bounds<Pixels>, board: Corners<Pixels>, color: Rgba) {
     let side = cell.size.width;
     // The circle reaches 80% of the way to the corners; it cuts each edge this far from a corner.
     let radius = side * 0.5657;
     let cut = side * (0.5 - (0.5657f32.powi(2) - 0.25).sqrt());
     let corners = [
-        (cell.origin, 1., 1.),
-        (point(cell.origin.x + side, cell.origin.y), -1., 1.),
-        (point(cell.origin.x + side, cell.origin.y + side), -1., -1.),
-        (point(cell.origin.x, cell.origin.y + side), 1., -1.),
+        (cell.origin, 1., 1., board.top_left),
+        (
+            point(cell.origin.x + side, cell.origin.y),
+            -1.,
+            1.,
+            board.top_right,
+        ),
+        (
+            point(cell.origin.x + side, cell.origin.y + side),
+            -1.,
+            -1.,
+            board.bottom_right,
+        ),
+        (
+            point(cell.origin.x, cell.origin.y + side),
+            1.,
+            -1.,
+            board.bottom_left,
+        ),
     ];
-    for (corner, dx, dy) in corners {
+    for (corner, dx, dy, rounded) in corners {
+        if rounded > px(0.) {
+            continue;
+        }
         let mut path = PathBuilder::fill();
         path.move_to(corner);
         path.line_to(point(corner.x + cut * dx, corner.y));
@@ -1560,7 +1593,7 @@ impl Render for ChessBoard {
                     .absolute()
                     .size_full()
                     .object_fit(ObjectFit::Fill)
-                    .rounded(BOARD_RADIUS),
+                    .rounded(radii::XL),
             )
             .children(check)
             .child(

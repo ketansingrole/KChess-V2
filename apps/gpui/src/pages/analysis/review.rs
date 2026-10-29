@@ -19,7 +19,7 @@ use crate::core::AppCore;
 use crate::game::rules;
 use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
-use crate::theme::{Palette, judgment_color};
+use crate::theme::{Palette, judgment_color, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -1076,7 +1076,7 @@ impl AnalysisPage {
                             .min_w(px(30.))
                             .px(px(6.))
                             .py(px(1.))
-                            .rounded(px(5.))
+                            .rounded(radii::XS)
                             .flex()
                             .justify_center()
                             .when(count > 0, |button| {
@@ -1182,7 +1182,7 @@ pub(super) fn eval_chart(
         .aria_label("Evaluation chart")
         .w_full()
         .h(px(64.))
-        .rounded(px(6.))
+        .rounded(radii::SM)
         .overflow_hidden()
         .cursor_pointer()
         .on_click(move |event, _, cx| {
@@ -1199,7 +1199,9 @@ pub(super) fn eval_chart(
             canvas(
                 move |bounds, _, _| measured.set(bounds),
                 move |bounds, (), window, _| {
-                    window.paint_quad(fill(bounds, rgb(0x403d39)));
+                    // GPUI clips the canvas to a rectangle, so the chart rounds its own corners.
+                    let corner = radii::SM;
+                    window.paint_quad(fill(bounds, rgb(0x403d39)).corner_radii(corner));
                     if count < 2 {
                         return;
                     }
@@ -1228,11 +1230,24 @@ pub(super) fn eval_chart(
                             continue;
                         }
                         let mut area = PathBuilder::fill();
-                        area.move_to(point(x(start), bounds.bottom()));
+                        let bottom = bounds.bottom();
+                        if start == 0 {
+                            let left = bounds.origin.x;
+                            area.move_to(point(left + corner, bottom));
+                            area.curve_to(point(left, bottom - corner), point(left, bottom));
+                        } else {
+                            area.move_to(point(x(start), bottom));
+                        }
                         for (at, chances) in points.iter().enumerate().take(index).skip(start) {
                             area.line_to(point(x(at), y(chances.unwrap_or(0.))));
                         }
-                        area.line_to(point(x(index - 1), bounds.bottom()));
+                        if index == count {
+                            let right = bounds.right();
+                            area.line_to(point(right, bottom - corner));
+                            area.curve_to(point(right - corner, bottom), point(right, bottom));
+                        } else {
+                            area.line_to(point(x(index - 1), bottom));
+                        }
                         area.close();
                         if let Ok(path) = area.build() {
                             window.paint_path(path, rgb(0xf2f0ea));
@@ -1247,10 +1262,20 @@ pub(super) fn eval_chart(
                         rgba(0xd64f008c),
                     ));
                     if let Some(current) = current {
+                        // Within a corner's reach of a side, the line stops at the rounded edge.
+                        let near = (x(current) - bounds.origin.x)
+                            .min(bounds.right() - x(current))
+                            .max(px(0.));
+                        let inset = if near < corner {
+                            let (r, d) = (corner.as_f32(), (corner - near).as_f32());
+                            px(r - (r * r - d * d).max(0.).sqrt())
+                        } else {
+                            px(0.)
+                        };
                         window.paint_quad(fill(
                             Bounds::new(
-                                point(x(current) - px(1.), bounds.origin.y),
-                                size(px(2.), bounds.size.height),
+                                point(x(current) - px(1.), bounds.origin.y + inset),
+                                size(px(2.), bounds.size.height - inset * 2.),
                             ),
                             primary,
                         ));

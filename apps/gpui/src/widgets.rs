@@ -10,7 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::assets::icon;
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 
 /// What a button runs when it is clicked.
 pub type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -151,7 +151,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         .relative()
         .flex_none()
         .size(px(30.))
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .bg(palette.accented)
         .text_color(palette.toned)
         .flex()
@@ -165,7 +165,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                     .top(px(-2.))
                     .left(px(-2.))
                     .size(px(34.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_2()
                     .border_color(palette.primary),
             )
@@ -199,7 +199,7 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> impl IntoEl
         .min_w(px(72.))
         .px(px(10.))
         .py(px(4.))
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .text_right()
         .text_size(px(16.))
         .font_weight(FontWeight::BOLD)
@@ -309,7 +309,7 @@ impl RenderOnce for StatusBanner {
             .min_h(px(58.))
             .px(px(12.))
             .py(px(10.))
-            .rounded(px(10.))
+            .rounded(radii::LG)
             .text_size(px(13.))
             .bg(background)
             .when(self.announce, |banner| {
@@ -424,14 +424,10 @@ pub fn moves_list(
     if !row.is_empty() {
         rows.push(row);
     }
-    div()
+    let list = div()
         .id(id)
         .size_full()
         .overflow_y_scroll()
-        .border_1()
-        .border_color(palette.border)
-        .rounded(px(10.))
-        .bg(palette.bg)
         .text_size(px(13.))
         .when(sans.is_empty(), |list| {
             list.child(
@@ -455,7 +451,58 @@ pub fn moves_list(
                     }
                 }))
                 .when(filled == 2, |row| row.child(div().flex_1()))
-        }))
+        }));
+    // A side panel's list: its rows scroll under corners in the panel's color.
+    div()
+        .relative()
+        .size_full()
+        .border_1()
+        .border_color(palette.border)
+        .rounded(radii::LG)
+        .bg(palette.bg)
+        .child(list)
+        .child(corner_caps(radii::LG, palette.elevated))
+}
+
+/// The outside of a box's rounded corners, painted in the color around the box (`outside`) over
+/// its content: GPUI clips a box's children to its rectangle, not to its rounded corners, so
+/// rows scrolling in a rounded list would otherwise show square corners. Lies over the whole
+/// box, under its border.
+pub fn corner_caps(radius: Pixels, outside: Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let (left, top, right, bottom) = (
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.right(),
+                bounds.bottom(),
+            );
+            for (corner, dx, dy) in [
+                (point(left, top), 1., 1.),
+                (point(right, top), -1., 1.),
+                (point(right, bottom), -1., -1.),
+                (point(left, bottom), 1., -1.),
+            ] {
+                let mut cap = PathBuilder::fill();
+                cap.move_to(corner);
+                cap.line_to(point(corner.x + radius * dx, corner.y));
+                cap.arc_to(
+                    point(radius, radius),
+                    px(0.),
+                    false,
+                    (dx * dy) < 0.,
+                    point(corner.x, corner.y + radius * dy),
+                );
+                cap.close();
+                if let Ok(path) = cap.build() {
+                    window.paint_path(path, outside);
+                }
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 /// `.move-controls`: first, previous, next and last move, and a board flip.
@@ -527,7 +574,7 @@ pub fn side_panel(palette: &Palette) -> Div {
         .gap(px(14.))
         .border_1()
         .border_color(palette.border)
-        .rounded(px(14.))
+        .rounded(radii::XL)
         .bg(palette.elevated)
 }
 
@@ -688,11 +735,20 @@ pub fn columns(width: Pixels, min: Pixels, gap: Pixels) -> (usize, Pixels) {
     (count, item)
 }
 
+/// A share of a rounded bar, rounded at the bar's (`first`, `last`) ends: GPUI clips a child to
+/// its parent's rectangle, not to the parent's rounded corners. `radius` is the bar's, less any
+/// border.
+pub fn bar_segment(segment: Div, (first, last): (bool, bool), radius: Pixels) -> Div {
+    segment
+        .when(first, |segment| segment.rounded_l(radius))
+        .when(last, |segment| segment.rounded_r(radius))
+}
+
 /// `.card`: a bordered, raised box with the page's standard padding.
 pub fn card(palette: &Palette) -> Div {
     v_flex()
         .p(px(20.))
-        .rounded(px(14.))
+        .rounded(radii::XL)
         .border_1()
         .border_color(palette.border)
         .bg(palette.elevated)
@@ -828,7 +884,7 @@ fn pill_row(
         .flex_wrap()
         .p(px(2.))
         .gap(px(4.))
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .border_1()
         .border_color(palette.border)
         .bg(palette.bg)
@@ -848,7 +904,7 @@ fn pill_row(
                 .gap(px(if compact { 6. } else { 8. }))
                 .h(px(if compact { 20. } else { 26. }))
                 .px(px(if compact { 8. } else { 12. }))
-                .rounded(px(6.))
+                .rounded(radii::SM)
                 .text_size(px(if compact { 12. } else { 14. }))
                 .font_weight(FontWeight::MEDIUM)
                 .when(chosen, |tab| {
@@ -870,7 +926,7 @@ fn pill_row(
                 .children(tab.badge.map(|badge| {
                     div()
                         .px(px(5.))
-                        .rounded(px(4.))
+                        .rounded(radii::XS)
                         .text_size(px(10.))
                         .line_height(px(16.))
                         .when(chosen, |badge| {
@@ -890,7 +946,7 @@ pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) 
     h_flex()
         .border_1()
         .border_color(palette.border)
-        .rounded(px(8.))
+        .rounded(radii::MD)
         .bg(palette.bg)
         .when(!enabled, |entry| entry.opacity(0.55))
         .child(
@@ -1107,7 +1163,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
         .overflow_hidden()
         .border_1()
         .border_color(palette.border)
-        .rounded(px(12.))
+        .rounded(radii::XL)
         .bg(palette.elevated)
         .child(
             div()
@@ -1120,6 +1176,8 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                 .flex()
                 .items_center()
                 .justify_center()
+                // Inside the card's border; GPUI does not clip to the card's rounded corners.
+                .rounded_t(radii::XL - px(1.))
                 .bg(palette.bg)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| open(window, cx))
@@ -1269,7 +1327,7 @@ fn badge_box(look: Look, palette: &Palette) -> Div {
         .gap(px(6.))
         .px(px(8.))
         .py(px(4.))
-        .rounded(px(6.))
+        .rounded(radii::SM)
         .bg(bg)
         .text_color(fg)
         .text_size(px(12.))
@@ -1356,17 +1414,25 @@ pub fn result_row(
             h_flex()
                 .id(SharedString::from(format!("result-row-{label}")))
                 .h(px(8.))
-                .rounded(px(4.))
+                .rounded(radii::XS)
                 .overflow_hidden()
                 .bg(palette.elevated)
                 .when(total > 0., |bar| {
                     bar.tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
                 })
-                .children(parts.into_iter().filter(|(part, _)| *part > 0.).map(
-                    move |(part, color)| {
-                        div().h_full().w(relative((part / total) as f32)).bg(color)
-                    },
-                )),
+                .children({
+                    let shown: Vec<_> = parts.into_iter().filter(|(part, _)| *part > 0.).collect();
+                    let count = shown.len();
+                    shown
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(index, (part, color))| {
+                            bar_segment(div(), (index == 0, index + 1 == count), radii::XS)
+                                .h_full()
+                                .w(relative((part / total) as f32))
+                                .bg(color)
+                        })
+                }),
         )
 }
 

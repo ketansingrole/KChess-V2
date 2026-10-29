@@ -14,7 +14,7 @@ use crate::game::rules;
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -144,7 +144,7 @@ fn tile(
         .gap(px(12.))
         .px(px(16.))
         .py(px(14.))
-        .rounded(px(14.))
+        .rounded(radii::XL)
         .border_1()
         .cursor_pointer()
         .when(primary, |tile| {
@@ -355,7 +355,7 @@ impl Render for HomePage {
                             .gap(px(12.))
                             .px(px(8.))
                             .py(px(9.))
-                            .rounded(px(8.))
+                            .rounded(radii::MD)
                             .cursor_pointer()
                             .hover(|row| row.bg(palette.accented))
                             .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
