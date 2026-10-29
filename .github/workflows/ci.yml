@@ -35,7 +35,7 @@ jobs:
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|apps/electron-bridge/|crates/kchess-voice/|tooling/xtask/src/(package/|voice\.rs$|licenses\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
+          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|apps/electron-bridge/|crates/kchess-voice/|tooling/xtask/src/(package/|voice\.rs$|licenses\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
         run: |
           base="${BASE:-$(git describe --tags --abbrev=0 --match 'v2*' HEAD 2>/dev/null || true)}"
           if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE "$PACKAGING"; then
@@ -121,8 +121,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - name: Install NSIS
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
+        uses: ./.github/actions/install-nsis
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: package

@@ -22,8 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install NSIS
-        shell: pwsh
-        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
+        uses: ./.github/actions/install-nsis
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: package

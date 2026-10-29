@@ -75,8 +75,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - name: Install NSIS
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
+        uses: ./.github/actions/install-nsis
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: package
