@@ -222,3 +222,144 @@ fn cell(value: ValueRef<'_>) -> Value {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT, weight REAL, raw BLOB);
+             CREATE INDEX idx_notes_body ON notes (body);
+             PRAGMA user_version = 7;",
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn exec_binds_every_json_kind_and_query_reads_it_back() {
+        let db = database();
+        let changed = exec(
+            &db,
+            &[
+                json!("INSERT INTO notes (id, body, weight, raw) VALUES (?, ?, ?, ?)"),
+                json!([1, "first", 1.5, null]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(changed, json!(1));
+        // Booleans bind as integers; arrays and objects as their JSON text.
+        exec(
+            &db,
+            &[
+                json!("INSERT INTO notes (id, body, weight) VALUES (?, ?, ?)"),
+                json!([2, { "a": [1] }, true]),
+            ],
+        )
+        .unwrap();
+        // Without parameters the SQL runs as a batch.
+        assert_eq!(
+            exec(
+                &db,
+                &[json!(
+                    "INSERT INTO notes (id, raw) VALUES (3, x'00ff'); UPDATE notes SET weight = 0 WHERE id = 3"
+                )],
+            )
+            .unwrap(),
+            Value::Null
+        );
+        let rows = query(
+            &db,
+            &[
+                json!("SELECT * FROM notes WHERE id >= ? ORDER BY id"),
+                json!([1]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            rows,
+            json!([
+                { "id": 1, "body": "first", "weight": 1.5, "raw": null },
+                { "id": 2, "body": "{\"a\":[1]}", "weight": 1.0, "raw": null },
+                { "id": 3, "body": null, "weight": 0.0, "raw": "00ff" },
+            ])
+        );
+        assert_eq!(
+            query(&db, &[json!("SELECT 1 AS one")]).unwrap(),
+            json!([{ "one": 1 }])
+        );
+    }
+
+    #[test]
+    fn statements_need_sql_and_report_sqlite_errors() {
+        let db = database();
+        assert!(query(&db, &[]).is_err());
+        assert!(exec(&db, &[json!(1)]).is_err());
+        assert!(query(&db, &[json!("SELECT * FROM missing")]).is_err());
+        assert!(exec(&db, &[json!("INSERT INTO missing VALUES (?)"), json!([1])]).is_err());
+    }
+
+    #[test]
+    fn tables_dumps_schema_version_and_ordered_rows() {
+        let db = database();
+        exec(
+            &db,
+            &[json!(
+                "INSERT INTO notes (id, body) VALUES (2, 'a'), (1, 'b')"
+            )],
+        )
+        .unwrap();
+        let dump = tables(&db, &[]).unwrap();
+        assert_eq!(dump["userVersion"], json!(7));
+        let names: Vec<&str> = dump["schema"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["idx_notes_body", "notes"]);
+        // Every column orders by default; a given order is used as written.
+        assert_eq!(dump["tables"]["notes"][0]["id"], json!(1));
+        let ordered = tables(&db, &[json!({ "notes": "body" })]).unwrap();
+        assert_eq!(ordered["tables"]["notes"][0]["id"], json!(2));
+        assert!(tables(&db, &[json!({ "notes": "nonsense(" })]).is_err());
+    }
+
+    #[test]
+    fn historical_writes_an_old_version_with_the_rows_it_knew() {
+        let dir = std::env::temp_dir().join(format!(
+            "kchess-debug-historical-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("kchess.db");
+        let _ = std::fs::remove_file(&path);
+        historical(
+            &path,
+            &[
+                json!(1),
+                json!([
+                    ["accounts", { "username": "Alice", "connected": 1, "notAColumn": 3 }],
+                    ["accounts", { "notAColumn": 3 }],
+                    ["accounts", "not a row"],
+                ]),
+            ],
+        )
+        .unwrap();
+        let db = Connection::open(&path).unwrap();
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+        assert_eq!(
+            query(&db, &[json!("SELECT username, connected FROM accounts")]).unwrap(),
+            json!([{ "username": "Alice", "connected": 1 }])
+        );
+        drop(db);
+        assert!(historical(&path, &[json!("one")]).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
