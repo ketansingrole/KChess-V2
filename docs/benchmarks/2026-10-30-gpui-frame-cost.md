@@ -81,6 +81,45 @@ Reverted:
   every frame shown and did not change. On the main thread board slides cost 2.3× less.
 - **Memory.** Nothing here was meant to reduce it, and it did not change.
 
+## Signed in to Lichess, and every page opened
+
+Added after the record above: `cargo xtask bench` now runs a stand-in Lichess on 127.0.0.1
+(`tooling/xtask/src/fake_lichess.rs`) that the app signs in to through its own OAuth flow, in a
+first launch, before the measured one. `pages-tour` opens every sidebar page and Settings in
+turn: each page once ("first", the page is made), then again and again ("again"). Before is
+`main` with this bench, after is `62c707e`; median of 3 × 20 s.
+
+| Scenario | Figure | Before | After | Change |
+| -------- | ------ | -----: | ----: | -----: |
+| Play on Lichess, signed in (`lichess-idle`) | Process CPU | 1.0% | 0.14% | **7.3×** |
+| | Change to frame, ms | 12.3 | 4.3 | 2.9× |
+| A live Lichess game (`lichess-game`) | Draw p50, ms | 4.13 | 1.88 | 2.2× |
+| | Draw time, ms per s | 36.7 | 17.9 | 2.1× |
+| | Change to frame p50, ms | 8.29 | 2.73 | **3.0×** |
+| Lichess TV (`lichess-tv`) | Draw p50, ms | 4.85 | 1.56 | **3.1×** |
+| | Draw time, ms per s | 47.0 | 13.9 | **3.4×** |
+| | Change to frame p50, ms | 7.90 | 1.86 | **4.3×** |
+| Every page (`pages-tour`) | Opening again, p50, ms | 10.0 | 4.9 | 2.1× |
+| | Opening again, p95, ms | 17.0 | 6.7 | 2.5× |
+
+Opening a page again is 1.5–9× faster depending on the page (Puzzles 1.5×, Settings 1.6×,
+Practice 1.9×, Watch 2.5×, Game history 9×). Opening one the first time is 1–15× faster: Home,
+Watch, Game history and Lichess insights most, the board pages 1.1–1.4×, Settings unchanged,
+and Openings 0.9× (21.1 → 23.4 ms, in two separate comparisons): the one figure that got worse.
+
+What changed for these:
+
+- **Shaped text is kept** while it is off screen (`vendor/gpui-pre`, `LineLayoutCache::retained`):
+  a page opened again no longer shapes all its text with CoreText.
+- **The live game's and TV's panels, TV's channel list and its clock faces are cached parts**
+  (`pages/online/game.rs`, `pages/watch`): a sliding move redraws the page around the board
+  alone, and TV's clock tick redraws the face whose text changed instead of the page twice a
+  second (so TV draws one frame a second fewer).
+
+A first opening is mostly work done once per launch: rasterizing glyphs and icons, a board's
+pieces at its size (on the main thread), shaping text for the first time, and uploading to the
+GPU atlas (sampled with `sample` over five launches).
+
 ## Correctness
 
 Caching more means more chances to show something stale, so the checks were tightened first:
