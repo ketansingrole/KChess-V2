@@ -14,17 +14,21 @@ use serde_json::{Value, json};
 
 use crate::util::{Result, say};
 
-const SCENARIOS: [&str; 6] = [
+const SCENARIOS: [&str; 10] = [
     "home-idle",
     "local-clock",
     "board-animation",
     "analysis-engine",
     "analysis-stepping",
     "openings-shell",
+    "lichess-idle",
+    "lichess-game",
+    "lichess-tv",
+    "pages-tour",
 ];
 
 /// The figures compared, as the app reports them.
-const METRICS: [&str; 10] = [
+const METRICS: [&str; 12] = [
     "draws_per_s",
     "latency_ms_p50",
     "latency_ms_p95",
@@ -35,6 +39,8 @@ const METRICS: [&str; 10] = [
     "process_cpu_fraction",
     "max_rss_mib",
     "journal_entries_lost",
+    "page_open_ms_p50",
+    "page_open_ms_p95",
 ];
 
 struct Options {
@@ -106,6 +112,10 @@ pub fn run(args: &[String]) -> Result {
                     ));
                     continue;
                 }
+                say(&format!(
+                    "  ended on {} as {}, {} moves in the online game",
+                    report["page"], report["account"], report["online_moves"]
+                ));
                 results.push(json!({ "build": label, "run": run, "report": report }));
             }
         }
@@ -118,20 +128,46 @@ pub fn run(args: &[String]) -> Result {
     Ok(())
 }
 
-/// One run of one scenario, on a profile of its own.
+/// One run of one scenario, on a profile of its own. The `lichess-*` scenarios sign in to a
+/// stand-in Lichess (`fake_lichess`), through the core's test origin.
 fn measure(binary: &Path, scenario: &str, seconds: u64, engine: &Path) -> Result<Value> {
     let profile = tempfile::tempdir().map_err(|e| format!("No temporary profile: {e}"))?;
     let out = profile.path().join("bench.json");
-    let status = Command::new(binary)
-        .env("KCHESS_USER_DATA_DIR", profile.path().join("profile"))
+    let lichess = crate::fake_lichess::FakeLichess::start(scenario)?;
+    let app = |bench: &str| {
+        let mut command = Command::new(binary);
+        if let Some(lichess) = &lichess {
+            command
+                .env("KCHESS_STORE_DEBUG", "1")
+                .env("KCHESS_TEST_LICHESS_BASE", &lichess.base);
+        }
+        command
+            .env("KCHESS_USER_DATA_DIR", profile.path().join("profile"))
+            .env("KCHESS_BENCH", bench);
+        command
+    };
+    if lichess.is_some() {
+        // Signed in by an earlier launch, as someone who plays on Lichess is.
+        app("lichess-login")
+            .env("KCHESS_ENGINE_PATH", engine)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("Could not start {}: {e}", binary.display()))?;
+    }
+    let status = app(scenario)
         .env("KCHESS_ENGINE_PATH", engine)
-        .env("KCHESS_BENCH", scenario)
         .env("KCHESS_BENCH_SECONDS", seconds.to_string())
         .env("KCHESS_BENCH_OUT", &out)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map_err(|e| format!("Could not start {}: {e}", binary.display()))?;
+    if let Some(lichess) = &lichess {
+        for path in lichess.unknown() {
+            say(&format!("  Lichess stand-in has no answer for {path}"));
+        }
+    }
     let text = std::fs::read_to_string(&out).map_err(|e| {
         format!(
             "{} wrote no report for {scenario} ({status}): {e}",
@@ -188,6 +224,57 @@ fn summary(options: &Options, results: &[Value]) -> String {
             }
             text.push('\n');
         }
+        page_opens(&mut text, options, results, scenario);
     }
     text
+}
+
+/// `pages-tour`'s opening of each page: the median of its runs' medians, by build.
+fn page_opens(text: &mut String, options: &Options, results: &[Value], scenario: &str) {
+    let mut pages: Vec<String> = Vec::new();
+    for result in results
+        .iter()
+        .filter(|r| r["report"]["scenario"] == scenario)
+    {
+        for page in result["report"]["page_open_ms"]
+            .as_object()
+            .into_iter()
+            .flat_map(|pages| pages.keys())
+        {
+            if !pages.contains(page) {
+                pages.push(page.clone());
+            }
+        }
+    }
+    for page in pages {
+        text.push_str(&format!("  open {page:<22}"));
+        let medians: Vec<Option<f64>> = options
+            .builds
+            .iter()
+            .map(|(label, _)| {
+                median(
+                    results
+                        .iter()
+                        .filter(|r| {
+                            r["build"] == label.as_str() && r["report"]["scenario"] == scenario
+                        })
+                        .filter_map(|r| r["report"]["page_open_ms"][page.as_str()].as_f64())
+                        .collect(),
+                )
+            })
+            .collect();
+        for ((label, _), value) in options.builds.iter().zip(&medians) {
+            match value {
+                Some(value) => text.push_str(&format!("  {label}={value:>9.3}")),
+                None => text.push_str(&format!("  {label}=        -")),
+            }
+        }
+        if let (Some(Some(first)), Some(Some(last))) = (medians.first(), medians.last())
+            && medians.len() > 1
+            && *last != 0.
+        {
+            text.push_str(&format!("  ×{:.2}", first / last));
+        }
+        text.push('\n');
+    }
 }

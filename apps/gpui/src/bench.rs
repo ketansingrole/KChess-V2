@@ -43,6 +43,15 @@ enum Scenario {
     /// The openings grid while the shell redraws ten times a second (its network, account and
     /// update observers).
     OpeningsShell,
+    /// Signed in to Lichess (`cargo xtask bench`'s stand-in), on Play on Lichess.
+    LichessIdle,
+    /// A live Lichess game, both sides moving every 1.5 s, clocks running.
+    LichessGame,
+    /// Lichess TV, its featured game moving every 1.5 s.
+    LichessTv,
+    /// Every page of the sidebar and Settings, signed in, a new one every second: what opening
+    /// each costs (`page_open_ms`).
+    PagesTour,
 }
 
 impl Scenario {
@@ -54,6 +63,10 @@ impl Scenario {
             "analysis-engine" => Scenario::AnalysisEngine,
             "analysis-stepping" => Scenario::AnalysisStepping,
             "openings-shell" => Scenario::OpeningsShell,
+            "lichess-idle" => Scenario::LichessIdle,
+            "lichess-game" => Scenario::LichessGame,
+            "lichess-tv" => Scenario::LichessTv,
+            "pages-tour" => Scenario::PagesTour,
             _ => return None,
         })
     }
@@ -64,6 +77,10 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
     let Ok(name) = std::env::var("KCHESS_BENCH") else {
         return;
     };
+    if name == "lichess-login" {
+        log_in_and_quit(window, cx);
+        return;
+    }
     let Some(scenario) = Scenario::of(&name) else {
         eprintln!("unknown KCHESS_BENCH scenario: {name}");
         cx.quit();
@@ -93,7 +110,12 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
             let elapsed = started.elapsed();
             if elapsed >= next_step {
                 next_step = elapsed + step_every(scenario);
+                // What was drawn before the step belongs to the page before it.
+                totals.add(collector.collect_unseen().entries);
                 let _ = window.update(cx, |_, window, cx| step(scenario, &mut ply, window, cx));
+                if scenario == Scenario::PagesTour {
+                    totals.opening = Some(tour()[(ply - 1) % tour().len()].1);
+                }
             }
             totals.add(collector.collect_unseen().entries);
             totals.checks += 1;
@@ -108,7 +130,13 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
         totals.cpu = cpu_time()
             .zip(cpu_before)
             .map(|(after, before)| after - before);
-        let report = totals.report(&name, started.elapsed());
+        let mut report = totals.report(&name, started.elapsed());
+        // What the window showed at the end, so a run that never reached its page is seen.
+        cx.update(|cx| {
+            report["page"] = json!(shell::current_page(cx).map(|page| format!("{page:?}")));
+            report["account"] = json!(crate::accounts::handle(cx).read(cx).active(cx));
+            report["online_moves"] = json!(crate::online::handle(cx).read(cx).moves().len());
+        });
         if let Err(cause) = std::fs::write(&out, serde_json::to_string_pretty(&report).unwrap()) {
             eprintln!("could not write {out}: {cause}");
         }
@@ -121,6 +149,7 @@ fn step_every(scenario: Scenario) -> Duration {
     match scenario {
         Scenario::BoardAnimation | Scenario::AnalysisStepping => Duration::from_millis(400),
         Scenario::OpeningsShell => Duration::from_millis(100),
+        Scenario::PagesTour => Duration::from_secs(1),
         _ => Duration::from_secs(3600),
     }
 }
@@ -159,10 +188,118 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
             }
         }
         Scenario::OpeningsShell => shell::open(Page::Openings, window, cx),
+        // Signed in by an earlier launch (`lichess-login`), as someone who plays there is.
+        Scenario::LichessIdle | Scenario::LichessGame => shell::open(Page::Online, window, cx),
+        Scenario::LichessTv => shell::open(Page::Watch, window, cx),
+        Scenario::PagesTour => {}
     }
 }
 
-fn step(scenario: Scenario, ply: &mut usize, _: &mut Window, cx: &mut App) {
+/// `lichess-login`: sign in, then quit once the account is connected. `cargo xtask bench` runs
+/// it before a `lichess-*` scenario on the same profile, which then starts signed in.
+fn log_in_and_quit(window: AnyWindowHandle, cx: &mut App) {
+    let _ = window.update(cx, |_, window, cx| sign_in(window, cx));
+    cx.spawn(async move |cx| {
+        for _ in 0..400 {
+            if cx.update(|cx| crate::accounts::handle(cx).read(cx).active(cx).is_some()) {
+                break;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+        }
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// Sign in with Connect, as a person would: the core opens Lichess's login page, which the
+/// stand-in's app writes to `opened-urls.txt` (the core's test switch), and the "browser" here
+/// returns to the core's callback with a code.
+fn sign_in(window: &mut Window, cx: &mut App) {
+    let Ok(dir) = crate::profile::data_dir() else {
+        return;
+    };
+    crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx));
+    std::thread::spawn(move || {
+        let opened = dir.join("opened-urls.txt");
+        for _ in 0..200 {
+            if let Some(url) = std::fs::read_to_string(&opened).ok().and_then(|text| {
+                text.lines()
+                    .find(|line| line.contains("/oauth"))
+                    .map(str::to_string)
+            }) {
+                return_from_login(&url);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        eprintln!("the login page never opened");
+    });
+}
+
+/// GET the login URL's `redirect_uri` with its `state` and a code.
+fn return_from_login(url: &str) {
+    use std::io::{Read as _, Write as _};
+    let query = url.split_once('?').map_or("", |(_, query)| query);
+    let param = |name: &str| {
+        query.split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == name).then(|| decode(value))
+        })
+    };
+    let (Some(redirect), Some(state)) = (param("redirect_uri"), param("state")) else {
+        return;
+    };
+    let rest = redirect.trim_start_matches("http://");
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let Ok(mut socket) = std::net::TcpStream::connect(host) else {
+        return;
+    };
+    let _ = write!(
+        socket,
+        "GET /{path}?code=bench&state={state} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    );
+    let _ = socket.read_to_end(&mut Vec::new());
+}
+
+/// A query value's percent-encoding undone.
+fn decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'%' if at + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[at + 1..at + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(byte) => {
+                        out.push(byte);
+                        at += 3;
+                        continue;
+                    }
+                    Err(_) => out.push(b'%'),
+                }
+            }
+            b'+' => out.push(b' '),
+            byte => out.push(byte),
+        }
+        at += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The pages `pages-tour` opens in turn: the sidebar's, then Settings.
+fn tour() -> Vec<(Page, &'static str)> {
+    let mut pages: Vec<(Page, &'static str)> = shell::nav()
+        .iter()
+        .map(|(page, label, _)| (*page, *label))
+        .collect();
+    pages.push((Page::Settings, "Settings"));
+    pages
+}
+
+fn step(scenario: Scenario, ply: &mut usize, window: &mut Window, cx: &mut App) {
     match scenario {
         Scenario::BoardAnimation | Scenario::AnalysisStepping => {
             if let Some(analysis) = shell::view_of::<AnalysisPage>(Page::Analysis, cx) {
@@ -178,6 +315,11 @@ fn step(scenario: Scenario, ply: &mut usize, _: &mut Window, cx: &mut App) {
             }
         }
         Scenario::OpeningsShell => shell::notify_shell(cx),
+        Scenario::PagesTour => {
+            let pages = tour();
+            shell::open(pages[*ply % pages.len()].0, window, cx);
+            *ply += 1;
+        }
         _ => {}
     }
 }
@@ -208,6 +350,10 @@ struct Totals {
     /// The process's CPU time (user and system, every thread) over the measured window.
     cpu: Option<Duration>,
     views: BTreeMap<&'static str, ViewTotals>,
+    /// The page just opened (`pages-tour`), whose first frame is its opening's.
+    opening: Option<&'static str>,
+    /// Each page's openings: from the open to the end of the frame that drew it.
+    opens: BTreeMap<&'static str, Vec<Duration>>,
 }
 
 impl Totals {
@@ -225,6 +371,12 @@ impl Totals {
                 ForegroundEvent::Draw(frame) => {
                     self.draws.push(frame.draw_duration());
                     self.latencies.extend(frame.dirty_to_draw_duration());
+                    if let Some(page) = self.opening.take() {
+                        let open = frame
+                            .dirty_to_draw_duration()
+                            .unwrap_or(frame.draw_duration());
+                        self.opens.entry(page).or_default().push(open);
+                    }
                     self.request_layout += frame.phases.request_layout;
                     self.prepaint += frame.phases.prepaint;
                     self.paint += frame.phases.paint;
@@ -282,8 +434,24 @@ impl Totals {
                 )
             })
             .collect();
+        let mut opens: Vec<Duration> = self.opens.values().flatten().copied().collect();
+        opens.sort();
+        let open = |p: f64| -> Option<f64> {
+            (!opens.is_empty()).then(|| ms(opens[((opens.len() - 1) as f64 * p).round() as usize]))
+        };
+        let page_open_ms: serde_json::Map<String, Value> = self
+            .opens
+            .iter_mut()
+            .map(|(page, times)| {
+                times.sort();
+                (page.to_string(), json!(ms(times[times.len() / 2])))
+            })
+            .collect();
         json!({
             "scenario": scenario,
+            "page_open_ms_p50": open(0.5),
+            "page_open_ms_p95": open(0.95),
+            "page_open_ms": page_open_ms,
             "seconds": seconds,
             "draws_per_s": self.draws.len() as f64 / seconds,
             "draw_ms_p50": percentile(0.5),

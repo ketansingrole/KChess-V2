@@ -4,6 +4,7 @@ mod app;
 mod app_icon;
 mod bench;
 mod check;
+mod fake_lichess;
 mod icons;
 mod licenses;
 mod package;
