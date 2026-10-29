@@ -333,6 +333,17 @@ impl WindowFrameSource {
         Ok(())
     }
 
+    /// KChess patch: whether the source is subscribed to its display's link.
+    pub fn is_running(&self) -> bool {
+        self.registration.is_some()
+    }
+
+    /// KChess patch: ask for a frame now, as a refresh of the display would, without waiting for
+    /// the link's next one.
+    pub fn request_frame(&self) {
+        self.frame_requests.merge_data(1);
+    }
+
     pub fn take_signal(&self) -> Option<(Instant, FrameRequestSource)> {
         self.signal.take()
     }

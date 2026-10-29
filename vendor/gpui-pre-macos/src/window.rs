@@ -83,9 +83,10 @@ use std::{
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
-/// KChess patch: how long the display link keeps running after a frame was asked for, so a
-/// burst of frames (an animation, a timer) does not stop and restart it between frames.
-const FRAME_DEMAND_GRACE: Duration = Duration::from_millis(100);
+/// KChess patch: how long the display link keeps running after a frame was asked for (three
+/// refreshes at 120 Hz), so an animation's frames, a 16 ms timer's included, do not stop and
+/// restart it between frames, while a redraw ten times a second lets it rest in between.
+const FRAME_DEMAND_GRACE: Duration = Duration::from_millis(25);
 /// KChess patch: how long it keeps running after input, as long as GPUI keeps presenting after
 /// high-rate input so the display is not underclocked (`InputRateTracker`).
 const INPUT_DEMAND_GRACE: Duration = Duration::from_secs(1);
@@ -928,10 +929,19 @@ impl MacWindowState {
         }
     }
 
-    /// KChess patch: starts the display link again if it was paused for want of demand.
+    /// KChess patch: starts the display link again if it was paused for want of demand, and asks
+    /// for the frame now: the restarted link's first refresh would draw it a refresh or two later
+    /// than a running link does.
     fn resume_display_link(&mut self) {
         if self.frame_demand.paused.load(Ordering::Acquire) {
             self.start_display_link();
+            if let Some(frame_source) = self
+                .frame_source
+                .as_ref()
+                .filter(|frame_source| frame_source.is_running())
+            {
+                frame_source.request_frame();
+            }
         }
     }
 

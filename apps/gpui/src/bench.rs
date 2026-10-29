@@ -190,6 +190,9 @@ struct ViewTotals {
 #[derive(Default)]
 struct Totals {
     draws: Vec<Duration>,
+    /// From each frame's first invalidation to the end of its draw: how long a change takes to
+    /// be drawn.
+    latencies: Vec<Duration>,
     request_layout: Duration,
     prepaint: Duration,
     paint: Duration,
@@ -218,6 +221,7 @@ impl Totals {
             match event {
                 ForegroundEvent::Draw(frame) => {
                     self.draws.push(frame.draw_duration());
+                    self.latencies.extend(frame.dirty_to_draw_duration());
                     self.request_layout += frame.phases.request_layout;
                     self.prepaint += frame.phases.prepaint;
                     self.paint += frame.phases.paint;
@@ -253,6 +257,13 @@ impl Totals {
             ms(self.draws[index])
         };
         let draw_total: Duration = self.draws.iter().sum();
+        self.latencies.sort();
+        let latency = |p: f64| -> f64 {
+            if self.latencies.is_empty() {
+                return 0.;
+            }
+            ms(self.latencies[((self.latencies.len() - 1) as f64 * p).round() as usize])
+        };
         let views: serde_json::Map<String, Value> = self
             .views
             .iter()
@@ -276,6 +287,8 @@ impl Totals {
             "draw_ms_p95": percentile(0.95),
             "draw_ms_max": percentile(1.),
             "draw_ms_per_s": ms(draw_total) / seconds,
+            "latency_ms_p50": latency(0.5),
+            "latency_ms_p95": latency(0.95),
             "request_layout_ms_per_s": ms(self.request_layout) / seconds,
             "prepaint_ms_per_s": ms(self.prepaint) / seconds,
             "paint_ms_per_s": ms(self.paint) / seconds,
