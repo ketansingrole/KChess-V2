@@ -62,9 +62,14 @@ git push origin "refs/tags/$release_tag"
 
 ## Running the app
 
-- `cargo run -p kchess-gpui` builds and starts the app (`tooling/macos-dev-runner.sh` signs it
-  on macOS with a stable identity, so the keychain remembers it). Never point a development run
-  at the real profile (`~/Library/Application Support/KChess`): set `KCHESS_USER_DATA_DIR` to a
+- Check UI behaviour headless first: the end-to-end tests (`cargo test -p kchess-gpui e2e::<area>`)
+  drive every page without a window. Start the real app only for what they cannot show.
+- `cargo xtask app` builds and starts the app in the background on the scratch profile
+  `.data/gpui-profile` with a native Stockfish (fetched into `.data/stockfish` once), prints its
+  PID and logs to `.data/gpui.log`; `cargo xtask app --stop` stops it by that PID. It refuses a
+  real profile. `cargo run -p kchess-gpui` also works (`tooling/macos-dev-runner.sh` signs it on
+  macOS with a stable identity, so the keychain remembers it); never point a development run at
+  the real profile (`~/Library/Application Support/KChess`): set `KCHESS_USER_DATA_DIR` to a
   scratch folder, and `KCHESS_ENGINE_PATH` to a native Stockfish.
 - `cargo xtask voice-runtime debug` stages the speech helper with libvosk for a debug build.
 - `cargo run -p kchess-cli -- --help` is the command line; it shares the profile's core with a
@@ -156,6 +161,13 @@ git push origin "refs/tags/$release_tag"
   packages changed since main). Before pushing to `main`, run the full `cargo xtask check` (the
   pre-push hook enforces it). Packaging changes also need `cargo xtask package` on the platform
   they touch; CI then packages, builds the Snap and runs the Windows upgrade (`ci.yml` `changes`).
+- Run anything that may take over a minute (`cargo xtask check`, `cargo test -p kchess-gpui`,
+  packaging) in the background with its output in a file, and read the result when it finishes;
+  never poll CI with `sleep` loops (`gh run watch` in the background reports when a run ends).
+- Several agent sessions often work in this repository at once, each in its own worktree. Never
+  use `git stash` (one stash list serves every worktree, so a pop can take another session's
+  work); keep work in progress as commits on your own branch, and never commit in a checkout or
+  on a branch another session is using.
 - Bug fixes must retain a regression for the concrete failure sequence. When generated
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
 - Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that
