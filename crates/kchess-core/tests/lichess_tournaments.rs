@@ -9,12 +9,16 @@ mod fixtures;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, http_client, serve};
+use fixtures::{
+    MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, http_client, ndjson, serve,
+};
 use kchess_core::host::Host;
 use kchess_core::lichess::accounts::{Lichess, LichessStore, Reply as Outcome};
 use kchess_core::lichess::client::{LichessClient, TokenSource};
 use kchess_core::lichess::policy::Policy;
-use kchess_core::lichess::tournaments::{NewArena, arena_extras, create_tournament, tournaments};
+use kchess_core::lichess::tournaments::{
+    NewArena, arena_extras, create_tournament, tournament, tournaments,
+};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -336,4 +340,198 @@ async fn reads_an_arenas_top_game_games_in_progress_podium_and_totals() {
     // Nothing readable: no extras rather than a broken event page.
     let nothing = arena_extras(&json!({ "duels": [{ "id": 1 }] }));
     assert_eq!(nothing, Default::default());
+}
+
+/// `swiss()`: a Swiss event as Lichess sends it, in a team's list or on its own.
+fn swiss(id: &str, status: &str) -> Value {
+    json!({
+        "id": id,
+        "name": format!("Swiss {id}"),
+        "status": status,
+        "variant": "standard",
+        "rated": true,
+        "clock": { "limit": 900, "increment": 10 },
+        "round": 2,
+        "nbRounds": 7,
+        "nbPlayers": 30,
+        "startsAt": "2026-11-01T18:00:00Z",
+        "nextRound": { "in": 120 },
+        "verdicts": { "accepted": false, "list": [{ "condition": "Team member", "verdict": "ok" }] }
+    })
+}
+
+#[tokio::test]
+async fn lists_the_upcoming_swiss_events_of_each_team_and_names_a_team_that_failed() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament" => Reply::Json(
+            200,
+            json!({ "started": [arena(json!({}))], "created": [], "finished": [] }).to_string(),
+        ),
+        "/api/team/of/Alice" => Reply::Json(
+            200,
+            json!([{ "id": "club", "name": "The Club" }, { "id": "broken", "name": "Broken" }])
+                .to_string(),
+        ),
+        "/api/team/club/swiss" => Reply::Text(
+            200,
+            "application/x-ndjson",
+            ndjson(&[
+                swiss("Later111", "created"),
+                json!({ "id": "unreadable" }),
+                swiss("Done1111", "finished"),
+                json!(swiss("Now11111", "started")),
+            ]),
+        ),
+        _ => Reply::Json(500, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(
+        &fixture.base,
+        &host,
+        MemoryTokens::with(&[("Alice", "Alice-token")]),
+    );
+    let list = tournaments(&lichess, "Alice").await.unwrap();
+    assert_eq!(list.arenas.len(), 1);
+    // Finished and unreadable events are left out.
+    let ids: Vec<&str> = list.swiss.iter().map(|event| event.id.as_str()).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"Later111") && ids.contains(&"Now11111"));
+    let later = list
+        .swiss
+        .iter()
+        .find(|event| event.id == "Later111")
+        .unwrap();
+    assert_eq!(
+        later.team.as_ref().map(|team| team.name.as_str()),
+        Some("The Club")
+    );
+    assert_eq!(later.status, "created");
+    assert_eq!(later.starts_at, 1_793_556_000_000);
+    assert_eq!(
+        fixture.to("/api/team/club/swiss")[0]
+            .query("max")
+            .as_deref(),
+        Some("10")
+    );
+    assert_eq!(list.problems.len(), 1);
+    assert!(list.problems[0].starts_with("Couldn’t load Swiss events of Broken"));
+    assert!(
+        host.logged()
+            .contains("Could not load Swiss events: broken")
+    );
+}
+
+#[tokio::test]
+async fn reads_an_arena_with_its_leaderboard_page_and_the_accounts_place() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament/Abcd1234" => Reply::Json(
+            200,
+            json!({
+                "id": "Abcd1234",
+                "fullName": "Hourly Rapid",
+                "clock": { "limit": 600, "increment": 0 },
+                "variant": "standard",
+                "rated": true,
+                "nbPlayers": 2,
+                "startsAt": "2026-11-01T18:00:00Z",
+                "secondsToFinish": 900,
+                "berserkable": true,
+                "description": "Have fun",
+                "standing": { "page": 2, "players": [
+                    { "rank": 1, "name": "Bob", "rating": 1800, "score": 9, "sheet": { "scores": "5432", "fire": true } },
+                    { "rank": 2, "username": "Alice", "rating": 1700, "points": 4 },
+                    { "rank": "not a rank" }
+                ] },
+                "me": { "rank": 2, "withdraw": false, "gameId": "game1234" },
+                "verdicts": { "accepted": true, "list": [{ "condition": "Rated ≥ 10 games", "verdict": "ok" }] }
+            })
+            .to_string(),
+        ),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let tokens = MemoryTokens::with(&[("Alice", "Alice-token")]);
+    let lichess = lichess(&fixture.base, &host, Arc::clone(&tokens));
+    let detail = tournament(&lichess, tokens.as_ref(), "arena", "Abcd1234", "Alice", 2)
+        .await
+        .unwrap();
+    let seen = &fixture.to("/api/tournament/Abcd1234")[0];
+    assert_eq!(seen.query("page").as_deref(), Some("2"));
+    assert_eq!(seen.header("Authorization"), Some("Bearer Alice-token"));
+    let value = serde_json::to_value(&detail).unwrap();
+    assert_eq!(value["status"], json!("started"));
+    assert_eq!(value["description"], json!("Have fun"));
+    assert_eq!(value["berserkable"], json!(true));
+    assert_eq!(value["standingPage"], json!(2));
+    assert_eq!(
+        value["me"],
+        json!({ "rank": 2, "withdraw": false, "gameId": "game1234" })
+    );
+    assert_eq!(value["verdicts"]["accepted"], json!(true));
+    let standing = value["standing"].as_array().unwrap();
+    assert_eq!(standing.len(), 2);
+    assert_eq!(standing[0]["sheet"], json!("5432"));
+    assert_eq!(standing[1]["name"], json!("Alice"));
+    assert_eq!(standing[1]["score"], json!(4));
+
+    // An arena whose clock cannot be read is refused, not shown half-read.
+    let fixture = serve(|_| Reply::Json(200, json!({ "id": "Abcd1234" }).to_string())).await;
+    let lichess = self::lichess(&fixture.base, &host, MemoryTokens::with(&[]));
+    let error = tournament(&lichess, tokens.as_ref(), "arena", "Abcd1234", "", 1)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.message(),
+        "Lichess sent an unreadable tournament clock."
+    );
+    assert!(fixture.requests()[0].header("Authorization").is_none());
+}
+
+#[tokio::test]
+async fn reads_a_swiss_event_with_its_results_and_next_round() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/swiss/Swiss123" => Reply::Json(200, swiss("Swiss123", "started").to_string()),
+        "/api/swiss/Swiss123/results" => Reply::Text(
+            200,
+            "application/x-ndjson",
+            ndjson(&[
+                json!({ "rank": 1, "username": "Bob", "rating": 1900, "points": 2 }),
+                json!({ "rank": 2, "username": "Alice", "rating": 1700, "points": 1.5 }),
+            ]),
+        ),
+        "/api/swiss/Garbled1" => Reply::Json(200, json!({ "id": "Garbled1" }).to_string()),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let tokens = MemoryTokens::with(&[]);
+    let lichess = lichess(&fixture.base, &host, Arc::clone(&tokens));
+    let detail = tournament(&lichess, tokens.as_ref(), "swiss", "Swiss123", "", 1)
+        .await
+        .unwrap();
+    let value = serde_json::to_value(&detail).unwrap();
+    assert_eq!(value["system"], json!("swiss"));
+    assert_eq!(value["round"], json!(2));
+    assert_eq!(value["nbRounds"], json!(7));
+    assert_eq!(value["nextRoundIn"], json!(120));
+    assert_eq!(
+        value["verdicts"]["list"][0]["condition"],
+        json!("Team member")
+    );
+    assert_eq!(value["standing"][1]["score"], json!(1.5));
+    assert_eq!(
+        fixture.to("/api/swiss/Swiss123/results")[0]
+            .query("nb")
+            .as_deref(),
+        Some("50")
+    );
+    let error = tournament(&lichess, tokens.as_ref(), "swiss", "Garbled1", "", 1)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.message(),
+        "Lichess sent details KChess could not read."
+    );
 }
