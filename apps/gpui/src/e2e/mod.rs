@@ -225,7 +225,11 @@ impl Harness {
                 .filter(ElementSnapshot::visible);
             target.is_some()
         });
-        let position = target.expect("found").bounds().center();
+        self.click_point(target.expect("found").bounds().center());
+    }
+
+    /// Press and release at a point of the window, whatever lies there.
+    pub fn click_point(&mut self, position: Point<Pixels>) {
         self.with_window(|window, cx| {
             for event in [
                 MouseDownEvent {
