@@ -1,50 +1,16 @@
 //! The facade's tournaments for a signed-in account over a local Lichess: joining keeps the
 //! tournament (with its name and end) until it is left, finished or the account withdrawn, and
 //! invalid arguments are refused before anything is sent.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 #[path = "support/lichess_http.rs"]
 mod fixtures;
+#[path = "support/signed_in.rs"]
+mod signed_in;
 
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex};
 
 use fixtures::{Reply, serve};
-use kchess_core::{Config, Core, Host, Level};
 use serde_json::{Value, json};
-
-/// Opens the account's stored login as written (`secrets.decrypt`), as a host's secret store.
-#[derive(Default)]
-struct SignedIn {
-    core: OnceLock<Weak<Core>>,
-    logs: Mutex<Vec<String>>,
-}
-
-impl Host for SignedIn {
-    fn log(&self, _: Level, scope: &str, message: &str) {
-        self.logs
-            .lock()
-            .unwrap()
-            .push(format!("[{scope}] {message}"));
-    }
-
-    fn emit(&self, event: &str, payload: Value) {
-        if event != "host:request" {
-            return;
-        }
-        let Some(core) = self.core.get().and_then(Weak::upgrade) else {
-            return;
-        };
-        let answer = match payload["kind"].as_str() {
-            Some("secrets.decrypt") => json!({ "value": payload["payload"] }),
-            _ => json!({ "error": "Not in this test." }),
-        };
-        tokio::spawn(async move {
-            core.call("host.reply", vec![payload["id"].clone(), answer])
-                .await
-                .unwrap();
-        });
-    }
-}
+use signed_in::ALICE_LOGIN;
 
 /// The arena as Lichess answers `GET /api/tournament/{id}`, with the account's place when it is in.
 fn detail(me: bool, finished: bool) -> Value {
@@ -104,30 +70,8 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         }
     })
     .await;
-    // SAFETY: this test binary has one test; the fixture origin is set before opening the core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", &fixture.base);
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let host = Arc::new(SignedIn::default());
-    let core = Arc::new(
-        Core::open(
-            Config::new(dir.path().to_path_buf()),
-            Arc::clone(&host) as Arc<dyn Host>,
-        )
-        .unwrap(),
-    );
-    host.core.set(Arc::downgrade(&core)).unwrap();
-    core.call("store.games.addAccount", vec![json!("Alice"), json!(true)])
-        .await
-        .unwrap();
-    core.call(
-        "store.games.importTokenCiphertext",
-        vec![json!("Alice"), json!("lip_alice")],
-    )
-    .await
-    .unwrap();
+    let profile = signed_in::open(&fixture.base).await;
+    let core = &profile.core;
     let joined = || async {
         core.call("store.library.joinedTournaments", vec![json!(0)])
             .await
@@ -183,7 +127,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
     assert_eq!(list["problems"], json!([]));
     assert_eq!(
         fixture.to("/api/team/of/Alice")[0].header("Authorization"),
-        Some("Bearer lip_alice")
+        Some(ALICE_LOGIN)
     );
 
     // Joining keeps the tournament under its name, for the joining account.
@@ -193,7 +137,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         json!(true)
     );
     let join = &fixture.to("/api/tournament/Abcd1234/join")[0];
-    assert_eq!(join.header("Authorization"), Some("Bearer lip_alice"));
+    assert_eq!(join.header("Authorization"), Some(ALICE_LOGIN));
     let entries = joined().await;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["name"], json!("Hourly Rapid"));
@@ -267,7 +211,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         .into_iter()
         .find(|seen| seen.method == "POST" && seen.path() == "/api/tournament")
         .unwrap();
-    assert_eq!(posted.header("Authorization"), Some("Bearer lip_alice"));
+    assert_eq!(posted.header("Authorization"), Some(ALICE_LOGIN));
     assert!(posted.body.contains("name=Club+Night") || posted.body.contains("name=Club%20Night"));
     core.close().await;
 }
