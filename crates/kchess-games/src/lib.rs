@@ -26,6 +26,12 @@ pub fn whole(value: &Value) -> u64 {
 
 /// A rules method by name (`kchess_domain::api::call`), with its JSON answer.
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
+    // Trees and deep arguments go through JSON text as they always have: an answer nested deeper
+    // than JSON's usual limit stays unreadable here. Everything else skips writing the arguments
+    // out and reading the answer back (`call_value` answers as `call` does).
+    if !kchess_domain::api::needs_large_stack(method, args) {
+        return kchess_domain::api::call_value(method, args);
+    }
     let text = kchess_domain::api::call(method, &Value::Array(args.to_vec()).to_string())?;
     serde_json::from_str(&text).map_err(|e| format!("{method} answered something unreadable: {e}"))
 }

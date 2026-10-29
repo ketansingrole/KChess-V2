@@ -70,6 +70,17 @@ fn every_method_answers_as_recorded() {
         let (method, args) = (case["m"].as_str().unwrap(), case["a"].as_str().unwrap());
         let actual = digest(&kchess_domain::api::call(method, args));
         cases += 1;
+        // Rust callers pass values (`call_value`): the same answer, whatever the arguments.
+        if let Ok(values) = serde_json::from_str::<Vec<Value>>(args) {
+            let by_value = kchess_domain::api::call_value(method, &values).map(|v| v.to_string());
+            if digest(&by_value) != actual && differ.len() < 20 {
+                differ.push(format!(
+                    "{method} by value {}: {actual} ≠ {}",
+                    &args[..args.len().min(200)],
+                    digest(&by_value)
+                ));
+            }
+        }
         if actual != case["d"] {
             if differ.len() < 20 {
                 differ.push(format!(
