@@ -200,6 +200,50 @@ fn installed() -> Option<Install> {
     )
 }
 
+/// Where 2026.10.18's Electron bridge left KChess: ShipIt names the folder it installs after the
+/// update's executable, which was the bridge's, so Spotlight found no KChess.
+const BRIDGE_FOLDER: &str = "kchess-electron-bridge.app";
+
+/// Move an installation in the bridge's folder to `KChess.app` and reopen it from there; whether
+/// this process should exit before it starts anything.
+pub fn leave_bridge_folder() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+    let Some(Install {
+        package: Package::MacZip,
+        path,
+    }) = installed()
+    else {
+        return false;
+    };
+    match rename_bridge_folder(&path) {
+        Ok(Some(moved)) => {
+            log(&format!("moved {} to {}", path.display(), moved.display()));
+            reopen_after_exit(&moved);
+            true
+        }
+        Ok(None) => false,
+        Err(cause) => {
+            log(&format!("{} stays where it is ({cause})", path.display()));
+            false
+        }
+    }
+}
+
+/// The new place of `bundle` when it was the bridge's folder, never over a `KChess.app` beside it.
+fn rename_bridge_folder(bundle: &Path) -> std::io::Result<Option<PathBuf>> {
+    if bundle.file_name() != Some(BRIDGE_FOLDER.as_ref()) {
+        return Ok(None);
+    }
+    let target = bundle.with_file_name("KChess.app");
+    if target.exists() {
+        return Ok(None);
+    }
+    std::fs::rename(bundle, &target)?;
+    Ok(Some(target))
+}
+
 /// The installation `exe` runs from on `os`. Only a package counts: a `.app` bundle; a folder
 /// the Windows installer made (its uninstaller beside the app); an AppImage (`$APPIMAGE`, set by
 /// the AppImage itself); or the .deb's folder under `/opt`. Never a build's `target`.
@@ -1249,9 +1293,10 @@ impl Updates {
 #[cfg(test)]
 mod tests {
     use super::{
-        INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace, aside, asset_name,
-        detect, digest_for, download, downloads_in, incoming, last_install_failed, latest, offer,
-        parse_version, replace_by, signed_alike, swap_file, tidy,
+        BRIDGE_FOLDER, INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace,
+        aside, asset_name, detect, digest_for, download, downloads_in, incoming,
+        last_install_failed, latest, offer, parse_version, rename_bridge_folder, replace_by,
+        signed_alike, swap_file, tidy,
     };
     use sha2::{Digest, Sha256};
     use std::io::{Read as _, Write as _};
@@ -1272,6 +1317,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&folder).unwrap();
         folder
+    }
+
+    #[test]
+    fn the_bridge_folder_becomes_kchess_app() {
+        let folder = scratch("bridge-folder");
+        let bridge = folder.join(BRIDGE_FOLDER);
+        std::fs::create_dir_all(bridge.join("Contents")).unwrap();
+        assert_eq!(
+            rename_bridge_folder(&bridge).unwrap(),
+            Some(folder.join("KChess.app"))
+        );
+        assert!(folder.join("KChess.app/Contents").is_dir() && !bridge.exists());
+        assert_eq!(
+            rename_bridge_folder(&folder.join("KChess.app")).unwrap(),
+            None
+        );
+
+        std::fs::create_dir_all(&bridge).unwrap();
+        assert_eq!(
+            rename_bridge_folder(&bridge).unwrap(),
+            None,
+            "never over KChess.app"
+        );
+        assert!(bridge.is_dir());
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     #[test]

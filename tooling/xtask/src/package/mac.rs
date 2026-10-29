@@ -4,7 +4,9 @@
 //! The zip also holds `legacy/KChess.app`, the Electron bridge (`apps/electron-bridge`): Electron
 //! releases before 2026.10.12 were `com.kchess.electron`, and Squirrel.Mac only installs a bundle
 //! with the running app's identifier, which it looks for anywhere in the zip. The bridge has that
-//! identifier and puts this KChess in its place.
+//! identifier and puts this KChess in its place. Its executable is named like the app because
+//! ShipIt names the installed folder after the update's executable (`SQRLInstaller.m`), so with
+//! any other name an update left `/Applications/<executable>.app`, which Spotlight never finds.
 
 use std::path::{Path, PathBuf};
 
@@ -29,7 +31,7 @@ pub fn info_plist(identity: &Identity) -> String {
 
 /// The bridge's: Electron's identifier, and no Dock icon while it works.
 fn bridge_plist(identity: &Identity) -> String {
-    plist(identity, ELECTRON_APP_ID, "kchess-electron-bridge", true)
+    plist(identity, ELECTRON_APP_ID, identity.name, true)
 }
 
 fn plist(identity: &Identity, app_id: &str, executable: &str, background: bool) -> String {
@@ -165,10 +167,7 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
 /// The Electron bridge's bundle at `app`, signed.
 fn bridge(identity: &Identity, built: &Built, app: &Path, stage: &Path) -> Result {
     let contents = app.join("Contents");
-    copy_program(
-        &built.bridge,
-        &contents.join("MacOS/kchess-electron-bridge"),
-    )?;
+    copy_program(&built.bridge, &contents.join("MacOS").join(identity.name))?;
     std::fs::create_dir_all(contents.join("Resources")).map_err(|cause| cause.to_string())?;
     std::fs::copy(
         root().join("apps/gpui/build/icon.icns"),
@@ -272,4 +271,19 @@ pub fn package(
         ],
     )?;
     Ok(vec![zip, dmg])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bridge_executable_is_named_like_the_app() {
+        // ShipIt installs the update as `<executable>.app`; 2026.10.18 landed as
+        // `/Applications/kchess-electron-bridge.app`.
+        let identity = Identity::new("2026.10.19".into());
+        let plist = bridge_plist(&identity);
+        assert!(plist.contains("<key>CFBundleExecutable</key>\n  <string>KChess</string>"));
+        assert!(plist.contains("<string>com.kchess.electron</string>"));
+    }
 }

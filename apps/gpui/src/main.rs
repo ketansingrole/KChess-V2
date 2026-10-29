@@ -80,6 +80,9 @@ fn main() {
             std::env::consts::ARCH
         ),
     );
+    if updates::leave_bridge_folder() {
+        return;
+    }
     let app = gpui_kit::application().with_assets(assets::Assets);
     // macOS keeps KChess running with no window; the Dock icon brings one back.
     app.on_reopen(|cx| {
