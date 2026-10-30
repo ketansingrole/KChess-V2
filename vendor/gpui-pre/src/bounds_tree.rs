@@ -135,6 +135,23 @@ where
         ordering
     }
 
+    /// KChess patch: inserts `new_bounds` for a run of primitives whose orders span `span`
+    /// above their lowest, and returns the order the lowest takes: one greater than the maximum
+    /// ordering of any existing bounds that intersect `new_bounds`. The bounds are kept with the
+    /// highest order of the run, so anything inserted later that intersects them is ordered
+    /// above all of it.
+    pub fn insert_span(&mut self, new_bounds: Bounds<U>, span: u32) -> u32 {
+        let base = self.find_max_ordering(&new_bounds) + 1;
+        let top = base + span;
+        let new_leaf_idx = self.insert_leaf(new_bounds, top);
+        self.max_leaf = match self.max_leaf {
+            None => Some(new_leaf_idx),
+            Some(old_idx) if self.nodes[old_idx].max_order < top => Some(new_leaf_idx),
+            some => some,
+        };
+        base
+    }
+
     /// Finds the maximum ordering among all bounds that intersect with the query.
     fn find_max_ordering(&mut self, query: &Bounds<U>) -> u32 {
         let Some(root_idx) = self.root else {

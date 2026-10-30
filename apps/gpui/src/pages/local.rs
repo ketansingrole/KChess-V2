@@ -27,7 +27,8 @@ use crate::export::{Exporter, GameExport};
 use crate::game::history::HistoryPlace;
 use crate::game::local::{Flagged, LocalGame};
 use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
-use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
+use crate::part::Part;
+use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
@@ -105,6 +106,14 @@ pub struct LocalPage {
     layout: PlayLayout,
     /// The side panel, measured for `.panel-actions`' narrow rule.
     panel_area: Measured,
+    /// The side panel beside the board, a cached view of its own (`render_panel`).
+    panel: Entity<Part<LocalPage>>,
+    /// White's and Black's clock faces (`render_clock_face`): a tick redraws only these.
+    faces: [Entity<Part<LocalPage>>; 2],
+    /// Whether each clock is running, as the page last drew it.
+    faces_active: [bool; 2],
+    /// What the game's clock faces showed at its last tick (`ticked` is the chess clock's).
+    faces_ticked: Option<[String; 2]>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -241,6 +250,13 @@ impl LocalPage {
             ticked: None,
             layout: PlayLayout::default(),
             panel_area: Measured::default(),
+            panel: Part::panel(|this, window, cx| this.render_panel(window, cx), cx),
+            faces: [
+                Part::new(|this, _, cx| this.render_clock_face(Color::White, cx), cx),
+                Part::new(|this, _, cx| this.render_clock_face(Color::Black, cx), cx),
+            ],
+            faces_active: [false; 2],
+            faces_ticked: None,
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -511,7 +527,7 @@ impl LocalPage {
                         }
                         let shown = ["white", "black"]
                             .map(|side| clock_face(this.game.remaining(side, now)));
-                        this.redraw_if_ticked(shown, cx);
+                        this.redraw_faces_if_ticked(shown, cx);
                     });
                     if alive.is_err() {
                         break;
@@ -789,6 +805,17 @@ impl LocalPage {
         if self.ticked.as_ref() != Some(&shown) {
             self.ticked = Some(shown);
             cx.notify();
+        }
+    }
+
+    /// A game's tick redraws a clock face beside the board only when it shows something else,
+    /// and only that face.
+    fn redraw_faces_if_ticked(&mut self, shown: [String; 2], cx: &mut Context<Self>) {
+        let before = self.faces_ticked.replace(shown.clone());
+        for (ix, face) in self.faces.iter().enumerate() {
+            if before.as_ref().map(|before| &before[ix]) != Some(&shown[ix]) {
+                face.update(cx, |_, cx| cx.notify());
+            }
         }
     }
 
@@ -1202,16 +1229,13 @@ impl Render for LocalPage {
         }
         let now = self.now();
         let board_size = self.layout.board_size(window);
-        let narrow = widgets::is_narrow(self.panel_area.size().width);
         let moves = self.moves();
-        let sans = view::sans(self.setup(), &moves);
         let shown = self.shown_ply();
         let over = self.game.over(now);
-        let result = self.game.result(now);
+        let live = self.game.result(now).is_none();
         let orientation = self.orientation(cx);
         let display = view::position_at(self.setup(), &moves, shown);
         let display_turn = view::turn(display.as_ref());
-        let live = result.is_none();
         let frontend = cx
             .global::<SettingsHandle>()
             .0
@@ -1225,22 +1249,8 @@ impl Render for LocalPage {
             .unwrap_or_default();
         let timed = !self.game.state["times"].is_null();
         let paused = self.game.state["paused"].as_bool() == Some(true);
-        let clock_text = |color: Color| -> Option<SharedString> {
-            if !timed {
-                return None;
-            }
-            let name = if color == Color::White {
-                "white"
-            } else {
-                "black"
-            };
-            rules("formatClock", &[json!(self.game.remaining(name, now))])
-                .ok()
-                .and_then(|text| {
-                    text.as_str()
-                        .map(|text| SharedString::from(text.to_string()))
-                })
-        };
+        self.faces_active = [Color::White, Color::Black]
+            .map(|color| live && display_turn == color && timed && !paused);
         let line = |color: Color, middle: Option<AnyElement>| {
             let name = if color == Color::White {
                 "White"
@@ -1269,9 +1279,7 @@ impl Render for LocalPage {
                         &palette,
                     )),
                 middle,
-                clock_text(color).map(|text| {
-                    widgets::clock(text, active && timed && !paused, &palette).into_any_element()
-                }),
+                timed.then(|| self.faces[face(color)].clone().into_any_element()),
             )
         };
         let interactive = !over && self.at_live();
@@ -1306,6 +1314,53 @@ impl Render for LocalPage {
                     .child(message)
             }));
 
+        let panel = if self.layout.is_stacked() {
+            self.render_panel(window, cx)
+        } else {
+            let max_width = if frontend.zen_mode {
+                PANEL_ZEN
+            } else {
+                PANEL_MAX
+            };
+            self.panel
+                .clone()
+                .cached(panel_style(
+                    self.layout.panel_height_px(board_size),
+                    max_width,
+                ))
+                .into_any_element()
+        };
+        self.layout
+            .render("local-page", board_column, panel, window, cx)
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::key))
+            .into_any_element()
+    }
+}
+
+impl LocalPage {
+    /// The panel beside (or under) the board: the game's setup and status, its moves and the
+    /// actions. Beside the board it is the page's `Part`, kept while only a clock face redraws.
+    fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let palette = *cx.global::<Palette>();
+        let now = self.now();
+        let board_size = self.layout.board_size(window);
+        let narrow = widgets::is_narrow(self.panel_area.size().width);
+        let moves = self.moves();
+        let sans = view::sans(self.setup(), &moves);
+        let shown = self.shown_ply();
+        let over = self.game.over(now);
+        let result = self.game.result(now);
+        let display = view::position_at(self.setup(), &moves, shown);
+        let frontend = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .clone();
+        let timed = !self.game.state["times"].is_null();
+        let paused = self.game.state["paused"].as_bool() == Some(true);
         let variant_label = {
             let variant = self.setup()["variant"].as_str().unwrap_or("standard");
             if variant == "standard" {
@@ -1415,7 +1470,7 @@ impl Render for LocalPage {
         });
         let auto_flip = self.auto_flip(cx);
         let in_progress = !over && !moves.is_empty();
-        let panel = widgets::side_panel(&palette)
+        widgets::side_panel(&palette)
             .relative()
             .child(self.panel_area.probe(cx))
             .h(self.layout.panel_height(board_size))
@@ -1592,11 +1647,31 @@ impl Render for LocalPage {
                             .into()
                     })),
                 ))
-            });
-        self.layout
-            .render("local-page", board_column, panel, window, cx)
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key))
+            })
+            .into_any_element()
+    }
+
+    /// A player's clock beside their name: its own `Part`, which a tick redraws.
+    fn render_clock_face(&mut self, color: Color, cx: &mut Context<Self>) -> AnyElement {
+        let palette = *cx.global::<Palette>();
+        let name = if color == Color::White {
+            "white"
+        } else {
+            "black"
+        };
+        let text = clock_face(self.game.remaining(name, self.now()));
+        let label = format!(
+            "{} clock, {text}",
+            if color == Color::White {
+                "White"
+            } else {
+                "Black"
+            }
+        );
+        widgets::clock(text.into(), self.faces_active[face(color)], &palette)
+            .id(("local-clock", face(color)))
+            .test_support()
+            .aria_label(label)
             .into_any_element()
     }
 }
@@ -1887,6 +1962,11 @@ impl Render for NewGame {
 }
 
 /// A clock face's text (`formatClock`), as the page shows it.
+/// White's or Black's place in `LocalPage::faces`.
+fn face(color: Color) -> usize {
+    usize::from(color == Color::Black)
+}
+
 fn clock_face(millis: f64) -> String {
     rules("formatClock", &[json!(millis)])
         .ok()

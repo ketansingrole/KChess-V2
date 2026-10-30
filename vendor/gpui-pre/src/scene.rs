@@ -139,13 +139,58 @@ impl Scene {
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        for operation in &prev_scene.paint_operations[range] {
+        let operations = &prev_scene.paint_operations[range];
+        // KChess patch: the replayed primitives keep the orders they had among themselves, all
+        // moved up together above whatever this frame drew under their bounds so far, and
+        // their bounds go into the tree once, at the highest of those orders, so anything drawn
+        // after them that overlaps them is still ordered above. Upstream inserted each one into
+        // the tree again, which was most of the cost of reusing a cached view. Inside a layer,
+        // where every primitive takes the layer's order, each is inserted as before.
+        if self.layer_stack.is_empty()
+            && let Some((bounds, lowest, highest)) = ordered_span(operations)
+        {
+            let base = self.primitive_bounds.insert_span(bounds, highest - lowest);
+            for operation in operations {
+                match operation {
+                    PaintOperation::Primitive(primitive) => {
+                        let mut primitive = primitive.clone();
+                        let order = primitive.order() - lowest + base;
+                        self.push_primitive(primitive.with_order(order));
+                    }
+                    PaintOperation::StartLayer(bounds) => self
+                        .paint_operations
+                        .push(PaintOperation::StartLayer(*bounds)),
+                    PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                }
+            }
+            return;
+        }
+        for operation in operations {
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    /// KChess patch: a primitive that already has its order.
+    fn push_primitive(&mut self, mut primitive: Primitive) {
+        match &mut primitive {
+            Primitive::Shadow(shadow) => self.shadows.push(*shadow),
+            Primitive::Quad(quad) => self.quads.push(*quad),
+            Primitive::Path(path) => {
+                path.id = PathId(self.paths.len());
+                self.paths.push(path.clone());
+            }
+            Primitive::Underline(underline) => self.underlines.push(*underline),
+            Primitive::MonochromeSprite(sprite) => self.monochrome_sprites.push(*sprite),
+            Primitive::SubpixelSprite(sprite) => self.subpixel_sprites.push(*sprite),
+            Primitive::PolychromeSprite(sprite) => self.polychrome_sprites.push(*sprite),
+            Primitive::Surface(surface) => self.surfaces.push(surface.clone()),
+        }
+        self.paint_operations
+            .push(PaintOperation::Primitive(primitive));
     }
 
     pub fn finish(&mut self) {
@@ -257,6 +302,74 @@ impl Primitive {
             Primitive::Surface(surface) => &surface.content_mask,
         }
     }
+
+    /// KChess patch: the order the scene gave the primitive.
+    pub(crate) fn order(&self) -> DrawOrder {
+        match self {
+            Primitive::Shadow(shadow) => shadow.order,
+            Primitive::Quad(quad) => quad.order,
+            Primitive::Path(path) => path.order,
+            Primitive::Underline(underline) => underline.order,
+            Primitive::MonochromeSprite(sprite) => sprite.order,
+            Primitive::SubpixelSprite(sprite) => sprite.order,
+            Primitive::PolychromeSprite(sprite) => sprite.order,
+            Primitive::Surface(surface) => surface.order,
+        }
+    }
+
+    /// KChess patch: the primitive drawn at `order` instead.
+    pub(crate) fn with_order(mut self, order: DrawOrder) -> Primitive {
+        match &mut self {
+            Primitive::Shadow(shadow) => shadow.order = order,
+            Primitive::Quad(quad) => quad.order = order,
+            Primitive::Path(path) => path.order = order,
+            Primitive::Underline(underline) => underline.order = order,
+            Primitive::MonochromeSprite(sprite) => sprite.order = order,
+            Primitive::SubpixelSprite(sprite) => sprite.order = order,
+            Primitive::PolychromeSprite(sprite) => sprite.order = order,
+            Primitive::Surface(surface) => surface.order = order,
+        }
+        self
+    }
+}
+
+/// KChess patch: the bounds that replayed paint operations cover (each primitive clipped to its
+/// content mask, as the scene inserted it, and each layer's bounds) and their lowest and highest
+/// orders; none without a primitive.
+fn ordered_span(
+    operations: &[PaintOperation],
+) -> Option<(Bounds<ScaledPixels>, DrawOrder, DrawOrder)> {
+    let mut span: Option<(Bounds<ScaledPixels>, DrawOrder, DrawOrder)> = None;
+    let mut layers: Option<Bounds<ScaledPixels>> = None;
+    for operation in operations {
+        match operation {
+            PaintOperation::Primitive(primitive) => {
+                let bounds = primitive
+                    .bounds()
+                    .intersect(&primitive.content_mask().bounds);
+                let order = primitive.order();
+                span = Some(match span {
+                    None => (bounds, order, order),
+                    Some((covered, lowest, highest)) => (
+                        covered.union(&bounds),
+                        lowest.min(order),
+                        highest.max(order),
+                    ),
+                });
+            }
+            PaintOperation::StartLayer(bounds) => {
+                layers = Some(layers.map_or(*bounds, |covered| covered.union(bounds)));
+            }
+            PaintOperation::EndLayer => {}
+        }
+    }
+    span.map(|(covered, lowest, highest)| {
+        (
+            layers.map_or(covered, |layers| covered.union(&layers)),
+            lowest,
+            highest,
+        )
+    })
 }
 
 #[cfg_attr(

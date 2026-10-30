@@ -13,7 +13,7 @@ name = "KChess"
 path = "src/main.rs"
 
 [features]
-# Frame benchmarks of the real app (`src/bench.rs`, `tooling/gpui-render-benchmark.mjs`).
+# Frame benchmarks of the real app (`src/bench.rs`, run by `cargo xtask bench`).
 bench = ["gpui-kit/profiler"]
 
 [dependencies]

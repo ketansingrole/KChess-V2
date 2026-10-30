@@ -4,6 +4,7 @@
 //! the ways to train it. The names and the tree are the shared rules' (`openingTree`).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -12,6 +13,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_core::Level;
+use kchess_domain::training::openings::{OpeningNode, opening_tree};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
@@ -62,16 +64,6 @@ const GROUPS: [(&str, &str, &[&str]); 4] = [
     ("flank", "1.c4 / 1.Nf3", &["c2c4", "g1f3"]),
     ("other", "Other", &[]),
 ];
-
-/// One entry of the openings tree (`OpeningNode`).
-#[derive(Clone, Deserialize)]
-struct OpeningNode {
-    name: String,
-    label: String,
-    eco: Option<String>,
-    moves: Option<Vec<String>>,
-    children: Vec<OpeningNode>,
-}
 
 /// An opening chosen to drill or opened lately (`OpeningChoice`).
 #[derive(Clone, Serialize, Deserialize)]
@@ -212,10 +204,39 @@ fn named(tree: &[OpeningNode]) -> Vec<(String, String, Vec<String>, String)> {
     out
 }
 
-pub struct OpeningsPage {
-    tree: Vec<OpeningNode>,
+/// The openings the browser lists, the same for every page: the rules' tree, its named lines
+/// and the popular ones (`catalog`).
+struct Catalog {
+    tree: &'static [OpeningNode],
     named: Vec<(String, String, Vec<String>, String)>,
     popular: Vec<Entry>,
+}
+
+/// The catalog, made the first time a page asks for it and shared by every page after.
+fn catalog() -> Arc<Catalog> {
+    static CATALOG: OnceLock<Arc<Catalog>> = OnceLock::new();
+    CATALOG
+        .get_or_init(|| {
+            let tree = opening_tree();
+            let named = named(tree);
+            let popular = POPULAR
+                .iter()
+                .filter_map(|line| {
+                    let moves: Vec<String> = line.split(' ').map(str::to_string).collect();
+                    entry(&moves, None)
+                })
+                .collect();
+            Arc::new(Catalog {
+                tree,
+                named,
+                popular,
+            })
+        })
+        .clone()
+}
+
+pub struct OpeningsPage {
+    catalog: Arc<Catalog>,
     search: Entity<InputState>,
     query: String,
     search_task: Option<Task<()>>,
@@ -252,18 +273,6 @@ impl Focusable for OpeningsPage {
 
 impl OpeningsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
-        let tree: Vec<OpeningNode> = rules("openingTree", &[])
-            .ok()
-            .and_then(|tree| serde_json::from_value(tree).ok())
-            .unwrap_or_default();
-        let named = named(&tree);
-        let popular = POPULAR
-            .iter()
-            .filter_map(|line| {
-                let moves: Vec<String> = line.split(' ').map(str::to_string).collect();
-                entry(&moves, None)
-            })
-            .collect();
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
         let move_input =
@@ -314,9 +323,7 @@ impl OpeningsPage {
             ),
         ];
         OpeningsPage {
-            tree,
-            named,
-            popular,
+            catalog: catalog(),
             search,
             query: String::new(),
             search_task: None,
@@ -689,7 +696,8 @@ impl OpeningsPage {
                 .aria_label("Search openings"),
         );
         if !words.is_empty() {
-            let matches: Vec<_> = self
+            let catalog = self.catalog.clone();
+            let matches: Vec<_> = catalog
                 .named
                 .iter()
                 .filter(|(_, _, _, key)| words.iter().all(|word| key.contains(word.as_str())))
@@ -821,8 +829,9 @@ impl OpeningsPage {
             );
         }
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
-        let popular = self.popular.clone();
-        let cards: Vec<AnyElement> = popular
+        let catalog = self.catalog.clone();
+        let cards: Vec<AnyElement> = catalog
+            .popular
             .iter()
             .map(|item| self.render_card(item, card_width, cx))
             .collect();
@@ -842,7 +851,7 @@ impl OpeningsPage {
                 .child(v_flex().gap(CARD_GAP).children(rows)),
         );
         let group = crate::prefs::get::<String>(cx, GROUP, "e4".into());
-        let families: Vec<AnyElement> = self
+        let families: Vec<AnyElement> = catalog
             .tree
             .iter()
             .filter(|node| group_of(node) == group)
@@ -1194,7 +1203,24 @@ impl Render for OpeningsPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{OpeningNode, entry, fold, group_of};
+    use std::sync::Arc;
+
+    use super::{OpeningNode, catalog, entry, fold, group_of, opening_tree};
+
+    /// Each Openings page made the catalog again as it opened, from a JSON copy of the rules'
+    /// tree.
+    #[test]
+    fn every_page_shares_one_catalog() {
+        let first = catalog();
+        assert!(Arc::ptr_eq(&first, &catalog()));
+        assert!(
+            std::ptr::eq(first.tree, opening_tree().as_slice()),
+            "the rules' own tree"
+        );
+        assert!(!first.tree.is_empty());
+        assert!(!first.named.is_empty());
+        assert!(!first.popular.is_empty());
+    }
 
     #[test]
     fn search_ignores_accents_and_apostrophes() {

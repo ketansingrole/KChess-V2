@@ -16,7 +16,7 @@ use crate::assets::icon;
 use crate::export::GameExport;
 use crate::game::view;
 use crate::online::{OnlineHandle, OnlineState, Phase};
-use crate::play_layout::{PANEL_MAX, PANEL_MIN};
+use crate::play_layout::{PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
@@ -330,11 +330,40 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
 }
 
 impl OnlinePage {
+    /// The game's panel at its height beside (or under) the board.
+    pub(super) fn render_game_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let palette = *cx.global::<Palette>();
+        let online_entity = cx.global::<OnlineHandle>().0.clone();
+        let online = online_entity.read(cx);
+        let model = online.model().clone();
+        let board_size = self.layout.board_size(window);
+        self.game_panel(online, &model, cx, &palette)
+            .h(self.layout.panel_height(board_size))
+            .into_any_element()
+    }
+
     pub(super) fn game_view(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let board_size = self.layout.board_size(window);
+        // Beside the board the panel is its own cached view; under it, part of the page.
+        let panel = if self.layout.is_stacked() {
+            self.render_game_panel(window, cx)
+        } else {
+            self.game_panel
+                .clone()
+                .cached(panel_style(
+                    self.layout.panel_height_px(board_size),
+                    PANEL_MAX,
+                ))
+                .into_any_element()
+        };
         let palette = *cx.global::<Palette>();
         let online_entity = cx.global::<OnlineHandle>().0.clone();
         let online = online_entity.read(cx);
@@ -420,7 +449,6 @@ impl OnlinePage {
                 }),
             )
         };
-        let board_size = self.layout.board_size(window);
         let mut board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
         if online.phase == Phase::Disconnected {
             board_column = board_column.child(self.disconnected(online, &palette));
@@ -430,9 +458,6 @@ impl OnlinePage {
             .child(crate::board::cached(&self.board))
             .child(line(orientation));
 
-        let panel = self
-            .game_panel(online, &model, cx, &palette)
-            .h(self.layout.panel_height(board_size));
         self.layout
             .render("online-game", board_column, panel, window, cx)
             .track_focus(&self.focus)

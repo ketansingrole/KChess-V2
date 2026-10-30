@@ -194,7 +194,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
 }
 
 /// `.player-clock`: a side's time, highlighted while it runs.
-pub fn clock(text: SharedString, active: bool, palette: &Palette) -> impl IntoElement {
+pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
     div()
         .min_w(px(72.))
         .px(px(10.))

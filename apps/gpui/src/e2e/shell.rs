@@ -45,3 +45,36 @@ fn the_sidebar_collapses_and_is_kept_collapsed(cx: &mut gpui_kit::TestAppContext
     let mut app = app.restart();
     assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
 }
+
+/// Tab and Shift-Tab walk a page's controls in opposite orders, also after frames in which only
+/// the shell redrew and the page's last frame, its tab stops included, was reused.
+#[gpui_kit::test]
+fn tab_and_shift_tab_walk_the_same_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Openings");
+    let step = |app: &mut Harness, forward: bool| {
+        app.with_window(|window, cx| {
+            if forward {
+                window.focus_next(cx);
+            } else {
+                window.focus_prev(cx);
+            }
+        });
+        app.with_window(|window, cx| window.focused(cx))
+            .expect("a control has the keys")
+    };
+    let forward: Vec<_> = (0..6).map(|_| step(&mut app, true)).collect();
+    for (ix, focus) in forward.iter().enumerate() {
+        assert!(
+            !forward[..ix].contains(focus),
+            "Tab came back to a control after {ix} steps"
+        );
+    }
+    app.cx.update(crate::shell::notify_shell);
+    let back: Vec<_> = (0..5).map(|_| step(&mut app, false)).collect();
+    let expected: Vec<_> = forward[..5].iter().rev().cloned().collect();
+    assert_eq!(back, expected, "Shift-Tab retraces Tab");
+    app.cx.update(crate::shell::notify_shell);
+    let again: Vec<_> = (0..5).map(|_| step(&mut app, true)).collect();
+    assert_eq!(again, forward[1..], "Tab after the shell redrew");
+}

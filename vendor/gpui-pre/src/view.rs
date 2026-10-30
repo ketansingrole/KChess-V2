@@ -317,6 +317,9 @@ struct ViewElementState {
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
+    /// KChess patch: the frame (`Window::frames_drawn` while it was drawn) the ranges point into.
+    /// A view inside a cached view that was reused whole keeps the ranges of an older frame.
+    drawn_in: u64,
 }
 
 struct ViewElementCacheKey {
@@ -528,6 +531,7 @@ fn prepaint_view(
                 let text_style = window.text_style();
 
                 if let Some(mut element_state) = element_state
+                    && element_state.drawn_in + 1 == window.frames_drawn
                     && element_state.cache_key.bounds == bounds
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
@@ -540,11 +544,15 @@ fn prepaint_view(
                         .extend_accessed(&element_state.accessed_entities);
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
+                    element_state.drawn_in = window.frames_drawn;
 
                     return (None, element_state);
                 }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
+                // KChess patch: a cached view drawn again because it (or a view inside it)
+                // changed reuses the cached views inside it that did not, as the window's root
+                // does; upstream drew them all again (`window.refreshing = true` here). A window
+                // refresh still draws every view.
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
@@ -554,7 +562,6 @@ fn prepaint_view(
                 });
 
                 let prepaint_end = window.prepaint_index();
-                window.refreshing = refreshing;
 
                 (
                     Some(element),
@@ -567,6 +574,7 @@ fn prepaint_view(
                             content_mask,
                             text_style,
                         },
+                        drawn_in: window.frames_drawn,
                     },
                 )
             },

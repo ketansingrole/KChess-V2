@@ -93,7 +93,8 @@ fn setup_position(args: &[Value]) -> Result<shakmaty::variant::VariantPosition> 
         .ok_or_else(|| DomainError::Message("setup is not a legal position".to_string()))
 }
 
-/// Dispatch one call. Unknown methods and malformed arguments are errors.
+/// Answer one call, its arguments a JSON array. Unknown methods and malformed arguments are
+/// errors.
 pub fn call(method: &str, args: &str) -> std::result::Result<String, String> {
     let depth = nesting(args);
     if depth > MAX_JSON_DEPTH {
@@ -106,15 +107,20 @@ pub fn call(method: &str, args: &str) -> std::result::Result<String, String> {
 }
 
 /// `call_inner` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked.
-#[cfg(not(target_arch = "wasm32"))]
 fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
+    on_large_stack(|| call_inner(method, args).map_err(|e| e.to_string()))
+}
+
+/// `work` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked.
+#[cfg(not(target_arch = "wasm32"))]
+fn on_large_stack<T: Send>(
+    work: impl FnOnce() -> std::result::Result<T, String> + Send,
+) -> std::result::Result<T, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("kchess-deep-call".into())
             .stack_size(DEEP_STACK)
-            .spawn_scoped(scope, || {
-                call_inner(method, args).map_err(|e| e.to_string())
-            })
+            .spawn_scoped(scope, work)
             .map_err(|error| format!("could not start a thread: {error}"))?
             .join()
             .map_err(|_| "internal error".to_string())?
@@ -123,8 +129,10 @@ fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
 
 /// The WebAssembly build has no threads; its own stack (`.cargo/config.toml`) is large enough.
 #[cfg(target_arch = "wasm32")]
-fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
-    call_inner(method, args).map_err(|e| e.to_string())
+fn on_large_stack<T>(
+    work: impl FnOnce() -> std::result::Result<T, String>,
+) -> std::result::Result<T, String> {
+    work()
 }
 
 fn call_inner(method: &str, args: &str) -> Result<String> {
@@ -135,34 +143,74 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
     let args: Vec<Value> = serde::Deserialize::deserialize(&mut reader)?;
     // One JSON array, nothing after it.
     reader.end()?;
+    Ok(serde_json::to_string(&dispatch(method, &args)?)?)
+}
+
+/// `call` for arguments a Rust caller already holds as values: the same rules and answers,
+/// without writing the arguments out as JSON and reading the answer back.
+pub fn call_value(method: &str, args: &[Value]) -> std::result::Result<Value, String> {
+    if deeper_than(args, MAX_JSON_DEPTH) {
+        return Err("arguments nest too deeply".to_string());
+    }
+    if needs_large_stack(method, args) {
+        return on_large_stack(|| dispatch(method, args).map_err(|e| e.to_string()));
+    }
+    dispatch(method, args).map_err(|e| e.to_string())
+}
+
+/// Whether `call_value` answers this call on a thread of its own with a large stack: deep
+/// arguments, and the methods that build deep trees.
+pub fn needs_large_stack(method: &str, args: &[Value]) -> bool {
+    TREE_METHODS.contains(&method) || deeper_than(args, DEEP_JSON)
+}
+
+/// Whether the values nest more than `limit` arrays and objects deep.
+fn deeper_than(args: &[Value], limit: usize) -> bool {
+    let mut stack: Vec<(&Value, usize)> = args.iter().map(|value| (value, 2)).collect();
+    while let Some((value, depth)) = stack.pop() {
+        let children: Box<dyn Iterator<Item = &Value>> = match value {
+            Value::Array(items) => Box::new(items.iter()),
+            Value::Object(map) => Box::new(map.values()),
+            _ => continue,
+        };
+        if depth > limit {
+            return true;
+        }
+        stack.extend(children.map(|child| (child, depth + 1)));
+    }
+    false
+}
+
+/// Dispatch one call. Unknown methods and malformed arguments are errors.
+fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
     let result = match method {
-        "treeFromPgn" => to_value(tree_from_pgn(text(&args, 0, "pgn")?))?,
+        "treeFromPgn" => to_value(tree_from_pgn(text(args, 0, "pgn")?))?,
         "treeToPgn" => Value::String(tree_to_pgn(
-            arg(&args, 0).ok_or_else(|| DomainError::Message("root".to_string()))?,
-            arg(&args, 1),
+            arg(args, 0).ok_or_else(|| DomainError::Message("root".to_string()))?,
+            arg(args, 1),
         )?),
         "replay" => to_value(replay_positions(
-            text(&args, 0, "fen")?,
-            &texts(&args, 1, "moves")?,
+            text(args, 0, "fen")?,
+            &texts(args, 1, "moves")?,
         ))?,
         "setupReplay" => {
-            let (variant, fen) = setup(&args, 0)?;
-            to_value(replay_setup(variant, fen, &texts(&args, 1, "moves")?))?
+            let (variant, fen) = setup(args, 0)?;
+            to_value(replay_setup(variant, fen, &texts(args, 1, "moves")?))?
         }
         "reviewClassifications" => crate::review::review_classifications(
-            arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
+            arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
         )
         .unwrap_or(Value::Null),
         "reviewPhases" => crate::review::review_phases(
-            arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
+            arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
         )
         .unwrap_or(Value::Null),
         "analyseReview" => {
-            analyse_review(arg(&args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
+            analyse_review(arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
                 .unwrap_or(Value::Null)
         }
         "studyDocumentPgn" => {
-            let chapters = arg(&args, 0)
+            let chapters = arg(args, 0)
                 .and_then(Value::as_array)
                 .ok_or_else(|| DomainError::Message("chapters".to_string()))?;
             let pairs: Vec<(&str, &str)> = chapters
@@ -175,37 +223,32 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
             study_document_pgn(&pairs).map_or(Value::Null, Value::String)
         }
         "pvSan" => {
-            let max = arg(&args, 2).and_then(Value::as_u64).unwrap_or(12) as usize;
-            pv_san(text(&args, 0, "fen")?, &texts(&args, 1, "pv")?, max)
+            let max = arg(args, 2).and_then(Value::as_u64).unwrap_or(12) as usize;
+            pv_san(text(args, 0, "fen")?, &texts(args, 1, "pv")?, max)
         }
-        "playMove" => play_move(text(&args, 0, "fen")?, text(&args, 1, "uci")?),
-        "startNode" => start_node(text(&args, 0, "fen")?),
-        "sanHistory" => to_value(san_history(&texts(&args, 0, "moves")?))?,
-        "pgnFromSan" => Value::String(pgn_from_san(&texts(&args, 0, "sans")?)),
-        "pgnFromUci" => Value::String(pgn_from_san(&san_history(&texts(&args, 0, "moves")?))),
-        "pgnFromMoves" => Value::String(pgn_from_moves(&texts(&args, 0, "tokens")?)),
+        "playMove" => play_move(text(args, 0, "fen")?, text(args, 1, "uci")?),
+        "startNode" => start_node(text(args, 0, "fen")?),
+        "sanHistory" => to_value(san_history(&texts(args, 0, "moves")?))?,
+        "pgnFromSan" => Value::String(pgn_from_san(&texts(args, 0, "sans")?)),
+        "pgnFromUci" => Value::String(pgn_from_san(&san_history(&texts(args, 0, "moves")?))),
+        "pgnFromMoves" => Value::String(pgn_from_moves(&texts(args, 0, "tokens")?)),
         "setupPgn" => {
-            let (variant, fen) = setup(&args, 0)?;
-            let headers = arg(&args, 2).and_then(Value::as_object);
-            Value::String(setup_pgn(
-                variant,
-                fen,
-                &texts(&args, 1, "moves")?,
-                headers,
-            )?)
+            let (variant, fen) = setup(args, 0)?;
+            let headers = arg(args, 2).and_then(Value::as_object);
+            Value::String(setup_pgn(variant, fen, &texts(args, 1, "moves")?, headers)?)
         }
-        "drawReason" => to_value(draw_reason(&texts(&args, 0, "moves")?))?,
+        "drawReason" => to_value(draw_reason(&texts(args, 0, "moves")?))?,
         "setupDrawReason" => {
-            let (variant, fen) = setup(&args, 0)?;
-            to_value(setup_draw_reason(variant, fen, &texts(&args, 1, "moves")?))?
+            let (variant, fen) = setup(args, 0)?;
+            to_value(setup_draw_reason(variant, fen, &texts(args, 1, "moves")?))?
         }
         "position" => {
-            let (variant, fen) = setup(&args, 0)?;
+            let (variant, fen) = setup(args, 0)?;
             to_value(rules::setup_start(variant, fen).map(|pos| position::info(&pos)))?
         }
         "dests" => {
-            let pos = setup_position(&args)?;
-            let mode = match arg(&args, 1).and_then(Value::as_str) {
+            let pos = setup_position(args)?;
+            let mode = match arg(args, 1).and_then(Value::as_str) {
                 Some("board") => DestMode::Board,
                 Some("board960") => DestMode::Board960,
                 _ => DestMode::Rules,
@@ -222,19 +265,19 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
                     .collect(),
             )
         }
-        "legalMoves" => to_value(position::legal_moves(&setup_position(&args)?))?,
+        "legalMoves" => to_value(position::legal_moves(&setup_position(args)?))?,
         "play" => to_value(position::play_uci(
-            &setup_position(&args)?,
-            text(&args, 1, "uci")?,
+            &setup_position(args)?,
+            text(args, 1, "uci")?,
         ))?,
         "playSan" => to_value(position::play_san(
-            &setup_position(&args)?,
-            text(&args, 1, "san")?,
+            &setup_position(args)?,
+            text(args, 1, "san")?,
         ))?,
         "line" => {
-            let (variant, fen) = setup(&args, 0)?;
-            let moves = texts(&args, 1, "moves")?;
-            let options = arg(&args, 2);
+            let (variant, fen) = setup(args, 0)?;
+            let moves = texts(args, 1, "moves")?;
+            let options = arg(args, 2);
             let flag = |key| {
                 options
                     .and_then(|o| o.get(key))
@@ -251,22 +294,22 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
             }
         }
         "chess960Fen" => {
-            let n = arg(&args, 0)
+            let n = arg(args, 0)
                 .and_then(Value::as_f64)
                 .ok_or_else(|| DomainError::Message("n must be a number".to_string()))?;
             Value::String(rules::chess960_fen(n.floor() as i64))
         }
         "defaultFen" => {
-            let variant = rules::lichess_variant(text(&args, 0, "variant")?)
+            let variant = rules::lichess_variant(text(args, 0, "variant")?)
                 .ok_or_else(|| DomainError::Message("variant".to_string()))?;
             Value::String(rules::make_fen(&rules::default_position(variant)))
         }
-        "fenSetup" => position::fen_setup(text(&args, 0, "fen")?).unwrap_or(Value::Null),
-        "fenProblem" => to_value(position::fen_problem(text(&args, 0, "fen")?))?,
-        "pgnGames" => position::pgn_games(text(&args, 0, "pgn")?),
+        "fenSetup" => position::fen_setup(text(args, 0, "fen")?).unwrap_or(Value::Null),
+        "fenProblem" => to_value(position::fen_problem(text(args, 0, "fen")?))?,
+        "pgnGames" => position::pgn_games(text(args, 0, "pgn")?),
         "pgnMainline" => {
-            let limit = arg(&args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);
-            position::pgn_mainline(text(&args, 0, "pgn")?, limit as usize)
+            let limit = arg(args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);
+            position::pgn_mainline(text(args, 0, "pgn")?, limit as usize)
         }
         _ => {
             // Each group of moved rules dispatches its own methods.
@@ -280,18 +323,15 @@ fn call_inner(method: &str, args: &str) -> Result<String> {
                 crate::trainer::call,
                 crate::theme::call,
             ];
-            return match moved.iter().find_map(|call| call(method, &args)) {
-                Some(result) => {
-                    let value = result.map_err(DomainError::Message)?;
-                    Ok(serde_json::to_string(&value)?)
-                }
+            return match moved.iter().find_map(|call| call(method, args)) {
+                Some(result) => Ok(result.map_err(DomainError::Message)?),
                 None => Err(DomainError::Message(format!(
                     "unknown rules method {method}"
                 ))),
             };
         }
     };
-    Ok(serde_json::to_string(&result)?)
+    Ok(result)
 }
 
 fn to_value<T: serde::Serialize>(value: T) -> Result<Value> {

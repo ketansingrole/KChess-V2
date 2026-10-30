@@ -1174,6 +1174,7 @@ fn paint_pieces(
     cx: &mut App,
 ) {
     let pixels = (side.as_f32() * window.scale_factor()).round() as u32;
+    let viewer = window.current_view();
     for square in frame.pieces.occupied() {
         if Some(square) == frame.lifted || frame.sliding.contains(&square) {
             continue;
@@ -1181,7 +1182,7 @@ fn paint_pieces(
         let Some(piece) = frame.pieces.piece_at(square) else {
             continue;
         };
-        if let Some(image) = looks::piece_image(&frame.set, piece, pixels, cx) {
+        if let Some(image) = looks::piece_image(&frame.set, piece, pixels, viewer, cx) {
             let cell = at(square);
             let _ = window.paint_image(cell, cell, Corners::default(), image, 0, false);
         }

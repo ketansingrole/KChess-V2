@@ -17,6 +17,7 @@ use gpui_kit::*;
 use std::time::Duration;
 
 use crate::assets::icon;
+use crate::part::Part;
 
 use crate::pages::analysis::AnalysisPage;
 use crate::pages::computer::ComputerPage;
@@ -42,6 +43,8 @@ const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
 
 /// `USidebar`'s `--sidebar-width`, and `--sidebar-width-icon` collapsed to icons.
 const SIDEBAR_WIDTH: Pixels = px(256.);
+/// How long the sidebar's width eases when it opens or closes.
+const SIDEBAR_EASE: Duration = Duration::from_millis(200);
 const SIDEBAR_RAIL: Pixels = px(64.);
 
 fn sidebar_width(open: bool) -> Pixels {
@@ -159,6 +162,103 @@ fn page_style() -> StyleRefinement {
     let mut style = StyleRefinement::default();
     style.size.width = Some(relative(1.).into());
     style.size.height = Some(relative(1.).into());
+    style
+}
+
+/// What the sidebar shows (`render_sidebar`): it is drawn again when one of these changes.
+#[derive(PartialEq)]
+struct SidebarInputs {
+    open: bool,
+    width_from: Pixels,
+    current: Page,
+    section: Option<Section>,
+    back: Page,
+    game_mark: Option<GameMark>,
+    online: bool,
+    accounts_busy: bool,
+    active: Option<String>,
+    connected: Vec<String>,
+}
+
+impl SidebarInputs {
+    fn of(workspace: &Workspace, cx: &App) -> SidebarInputs {
+        let accounts = crate::accounts::handle(cx).read(cx);
+        SidebarInputs {
+            open: workspace.sidebar_open,
+            width_from: workspace.sidebar_width_from,
+            current: workspace.pages.current(),
+            section: workspace
+                .pages
+                .settings()
+                .map(|page| page.read(cx).section()),
+            back: workspace.back,
+            game_mark: game_mark(cx),
+            online: crate::network::online(cx),
+            accounts_busy: accounts.busy,
+            active: accounts.active(cx),
+            connected: accounts.connected(),
+        }
+    }
+}
+
+/// What the top bar shows besides the command palette, a view of its own
+/// (`render_topbar_content`): it is drawn again when one of these changes.
+#[derive(PartialEq)]
+struct TopbarInputs {
+    sidebar_open: bool,
+    online: bool,
+    working: bool,
+    update: UpdateInputs,
+}
+
+/// What the update button shows (`update_button`).
+#[derive(PartialEq)]
+struct UpdateInputs {
+    phase: crate::updates::Phase,
+    version: Option<String>,
+    current: String,
+    progress: Option<(u64, u64)>,
+    error: Option<String>,
+}
+
+impl TopbarInputs {
+    fn of(workspace: &Workspace, cx: &App) -> TopbarInputs {
+        let updates = cx.global::<crate::updates::UpdatesHandle>().0.read(cx);
+        TopbarInputs {
+            sidebar_open: workspace.sidebar_open,
+            online: crate::network::online(cx),
+            working: working(cx),
+            update: UpdateInputs {
+                phase: updates.phase,
+                version: updates.version.clone(),
+                current: updates.current.clone(),
+                progress: updates.progress,
+                error: updates.error.clone(),
+            },
+        }
+    }
+}
+
+/// The sidebar toggle as its `Part` (`.sidebar-toggle-wrap`): its 28px button, `TOPBAR_HEIGHT`
+/// high, over the top bar's left end.
+fn toggle_style(window: &Window) -> StyleRefinement {
+    let mut style = StyleRefinement {
+        position: Some(Position::Absolute),
+        ..Default::default()
+    };
+    style.inset.top = Some(px(0.).into());
+    style.inset.left = Some(toggle_left(window).into());
+    style.size.width = Some(px(28.).into());
+    style.size.height = Some(TOPBAR_HEIGHT.into());
+    style
+}
+
+/// The top bar as its `Part`: the window's width, `TOPBAR_HEIGHT` high.
+fn topbar_style() -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.size.width = Some(relative(1.).into());
+    style.size.height = Some(TOPBAR_HEIGHT.into());
+    style.flex_shrink = Some(0.);
     style
 }
 
@@ -375,15 +475,15 @@ pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
     let _ = workspace.update(cx, |workspace, cx| workspace.choose_section(section, cx));
 }
 
-/// A page's view, once it has been shown.
 /// Redraw the shell, as its network, account and update observers do.
-#[cfg(feature = "bench")]
+#[cfg(any(test, feature = "bench"))]
 pub fn notify_shell(cx: &mut App) {
     if let Some(workspace) = cx.try_global::<Navigator>().and_then(|nav| nav.0.upgrade()) {
         workspace.update(cx, |_, cx| cx.notify());
     }
 }
 
+/// A page's view, once it has been shown.
 pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
     workspace.read(cx).pages.view_of::<V>(page)
@@ -552,6 +652,13 @@ pub struct Workspace {
     sidebar_open: bool,
     /// The width the sidebar's last open or close started from.
     sidebar_width_from: Pixels,
+    /// When the sidebar last opened or closed: it is drawn in the shell, not as its `Part`,
+    /// while its width eases.
+    sidebar_toggled: Option<std::time::Instant>,
+    sidebar: Entity<Part<Workspace>>,
+    topbar: Entity<Part<Workspace>>,
+    /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
+    toggle: Entity<Part<Workspace>>,
     history: crate::swipe::History<Page>,
     swipe: crate::swipe::Swipe,
     swipe_feedback: Option<SwipeFeedback>,
@@ -639,6 +746,22 @@ impl Workspace {
         Workspace {
             sidebar_open,
             sidebar_width_from: sidebar_width(sidebar_open),
+            sidebar_toggled: None,
+            sidebar: Part::keyed(
+                |this, window, cx| this.render_sidebar(window, cx).into_any_element(),
+                SidebarInputs::of,
+                cx,
+            ),
+            topbar: Part::keyed(
+                |this, window, cx| this.render_topbar(window, cx).into_any_element(),
+                TopbarInputs::of,
+                cx,
+            ),
+            toggle: Part::keyed(
+                |this, _, cx| this.render_sidebar_toggle(cx).into_any_element(),
+                |this, _| this.sidebar_open,
+                cx,
+            ),
             history: crate::swipe::History::default(),
             swipe: crate::swipe::Swipe::default(),
             swipe_feedback: None,
@@ -986,6 +1109,7 @@ impl Workspace {
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_width_from = sidebar_width(self.sidebar_open);
         self.sidebar_open = !self.sidebar_open;
+        self.sidebar_toggled = Some(std::time::Instant::now());
         crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
         cx.notify();
     }
@@ -1071,10 +1195,10 @@ impl Workspace {
             .overflow_hidden()
             .child(sidebar);
         let from = self.sidebar_width_from;
-        if from == width {
+        if from == width || self.sidebar_settled() {
             return frame.w(width).into_any_element();
         }
-        EffectTransition::new(Duration::from_millis(200))
+        EffectTransition::new(SIDEBAR_EASE)
             .ease(ease_out_cubic)
             .width(from, width)
             .apply(
@@ -1084,30 +1208,42 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// Whether the sidebar's width has finished easing since it last opened or closed.
+    fn sidebar_settled(&self) -> bool {
+        self.sidebar_toggled
+            .is_none_or(|toggled| toggled.elapsed() > SIDEBAR_EASE + Duration::from_millis(50))
+    }
+
+    /// The sidebar as its `Part` once settled, at its width; while it eases, drawn here.
+    fn sidebar_element(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if !self.sidebar_settled() {
+            return self.render_sidebar(window, cx).into_any_element();
+        }
+        let mut style = StyleRefinement::default();
+        style.size.width = Some(sidebar_width(self.sidebar_open).into());
+        style.size.height = Some(relative(1.).into());
+        style.flex_shrink = Some(0.);
+        self.sidebar.clone().cached(style).into_any_element()
+    }
+
     /// The sidebar toggle (`.sidebar-toggle-wrap`): one button at the same place in the window
     /// whether the sidebar is open or a rail, beside the macOS traffic lights (which ignore the
     /// interface size, so its offset does too), else at the window's edge.
-    fn render_sidebar_toggle(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let label = if self.sidebar_open {
             "Hide sidebar"
         } else {
             "Show sidebar"
         };
-        h_flex()
-            .id("sidebar-toggle-wrap")
-            .absolute()
-            .top_0()
-            .left(toggle_left(window))
-            .h(TOPBAR_HEIGHT)
-            .child(
-                Button::new("sidebar-toggle")
-                    .custom(ghost_neutral(cx))
-                    .icon(icon("panel-left"))
-                    .size(px(28.))
-                    .tooltip(label)
-                    .accessibility_label(label)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-            )
+        h_flex().id("sidebar-toggle-wrap").size_full().child(
+            Button::new("sidebar-toggle")
+                .custom(ghost_neutral(cx))
+                .icon(icon("panel-left"))
+                .size(px(28.))
+                .tooltip(label)
+                .accessibility_label(label)
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+        )
     }
 
     /// The top bar inside GPUI Kit's title bar, which ends it with the window's minimize,
@@ -1521,13 +1657,13 @@ impl Render for Workspace {
             .relative()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .when(!zen, |shell| shell.child(self.render_sidebar(window, cx)))
+            .when(!zen, |shell| shell.child(self.sidebar_element(window, cx)))
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.render_topbar(window, cx))
+                    .child(self.topbar.clone().cached(topbar_style()))
                     .child(
                         div()
                             .id("page-area")
@@ -1555,7 +1691,7 @@ impl Render for Workspace {
                     ),
             )
             .when(!zen, |shell| {
-                shell.child(self.render_sidebar_toggle(window, cx))
+                shell.child(self.toggle.clone().cached(toggle_style(window)))
             })
     }
 }

@@ -1,5 +1,7 @@
 //! Screenshots of every page at the minimum, a mid and the default window size, rendered offscreen
 //! by the platform's headless renderer with the app's own assets, for comparing layouts by eye.
+//! Each page is also drawn again after only the shell redrew, from its cached frame, and must look
+//! the same as when it was drawn afresh.
 //!
 //! `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens -- --ignored` writes
 //! `<dir>/<width>x<height>/<page>.png` on macOS; it needs a GPU, so it is not part of `check`.
@@ -19,16 +21,23 @@ use crate::pages::Page;
 fn every_page_at_every_size() {
     let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     super::environment();
+    let mut differ = Vec::new();
     for (width, height) in SIZES {
         capture(
             &Path::new(&out).join(format!("{width}x{height}")),
             width,
             height,
+            &mut differ,
         );
     }
+    assert!(
+        differ.is_empty(),
+        "drawn from their cached frames, these pages look different (see their -reused.png):\n  {}",
+        differ.join("\n  ")
+    );
 }
 
-fn capture(out: &Path, width: f32, height: f32) {
+fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
     std::fs::create_dir_all(out).expect("the screenshot folder");
     let profile = tempfile::tempdir().expect("a temporary profile");
     let state = serde_json::json!({ "x": 0, "y": 0, "width": width, "height": height });
@@ -67,6 +76,17 @@ fn capture(out: &Path, width: f32, height: f32) {
         image
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
+        // Only the shell redraws: the page's last frame is reused, as on screen.
+        cx.update(crate::shell::notify_shell);
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .expect("the window");
+        let reused = cx.capture_screenshot(window).expect("a screenshot");
+        if reused.as_raw() != image.as_raw() {
+            reused
+                .save(out.join(format!("{name}-reused.png")))
+                .expect("the screenshot saves");
+            differ.push(format!("{label} at {width}×{height}"));
+        }
     }
     let quit = cx.update(crate::core::quit);
     cx.foreground_executor().block_test(quit);

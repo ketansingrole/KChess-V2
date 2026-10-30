@@ -46,7 +46,8 @@ use crate::game::tree::{
 use crate::game::{STANDARD_FEN, rules, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use crate::part::Part;
+use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, panel_style};
 use crate::reviews::ReviewHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
@@ -150,6 +151,8 @@ pub struct AnalysisPage {
     /// The Explorer tool, and whether it was shown at the last render.
     explorer: Entity<PositionExplorer>,
     explorer_open: bool,
+    /// The panel beside the board, drawn as a cached view of its own (`render_panel`).
+    panel: Entity<Part<AnalysisPage>>,
     exporter: Entity<Exporter>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
@@ -409,6 +412,7 @@ impl AnalysisPage {
             reveal_move: std::rc::Rc::new(std::cell::Cell::new(true)),
             explorer,
             explorer_open: false,
+            panel: Part::panel(|this, window, cx| this.render_panel(window, cx), cx),
             exporter: cx.new(|_| Exporter::default()),
             board,
             layout: PlayLayout::default(),
@@ -2584,99 +2588,15 @@ impl AnalysisPage {
     }
 }
 
-impl Render for AnalysisPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_notes(window, cx);
+impl AnalysisPage {
+    /// The tools beside (or under) the board: the engine or practice, the tabs and the tool
+    /// shown, and the controls. Beside the board it is the page's `Part`, so a board animation
+    /// or the move box redrawing reuses it.
+    fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
         let tool = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
         let allowed = Self::assistance_allowed(cx);
-        let using_cloud = self.using_cloud(cx);
-        let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
-        let lines = self.lines(cx);
-        let position = self.position();
-        let result = game_over(position.as_ref()).map(|_| {
-            if position
-                .as_ref()
-                .is_some_and(|position| position.is_checkmate())
-            {
-                if position.as_ref().map(|position| position.turn()) == Some(Color::White) {
-                    "0-1"
-                } else {
-                    "1-0"
-                }
-            } else {
-                "½-½"
-            }
-        });
-        // The column always keeps the eval bar's width beside the board.
-        // The column holds the board and the move box under it (`.analysis-surface`).
-        let board_size = self.layout.board_size_around(
-            EVAL_BAR + EVAL_GAP,
-            STUDY_BAR,
-            widgets::STACK_GAP + px(36.),
-            window,
-        );
-        let entry = widgets::move_entry(&self.move_input, true, &palette).h(px(36.));
-        let voice = board_bar(
-            &self.voice,
-            cx.entity().downgrade(),
-            Access {
-                write: |this: &mut Self| &mut this.voice,
-                play: |this: &mut Self, uci, _, cx| {
-                    this.play(uci, cx);
-                },
-            },
-            BoardBar {
-                id: "analysis-voice",
-                hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”.",
-                active: true,
-                listening: true,
-                grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
-            },
-            cx,
-        );
-        let board_column = v_flex()
-            .w(board_size + EVAL_BAR + EVAL_GAP)
-            .flex_none()
-            .gap(widgets::STACK_GAP)
-            .child(
-                h_flex()
-                    .items_stretch()
-                    .gap(EVAL_GAP)
-                    .when(show_bar, |row| {
-                        row.child(crate::engine_view::eval_bar(
-                            lines.first(),
-                            self.orientation,
-                            result,
-                        ))
-                    })
-                    .when(!show_bar, |row| row.pl(EVAL_BAR))
-                    .child(
-                        div()
-                            .id("analysis-board")
-                            .w(board_size)
-                            .on_scroll_wheel(cx.listener(Self::scroll))
-                            // The board takes the keys back from the move box, as a click
-                            // outside a text field does in the browser.
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
-                            )
-                            .child(crate::board::cached(&self.board)),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .pl(EVAL_BAR + EVAL_GAP)
-                    .gap(px(4.))
-                    .child(widgets::input_row(entry, voice))
-                    .children(self.move_message.clone().map(|message| {
-                        div()
-                            .text_size(px(12.))
-                            .text_color(palette.text_muted)
-                            .child(message)
-                    })),
-            );
+        let board_size = self.board_size(window);
         let tool_body: AnyElement = match tool {
             // Never shorter than its list's minimum (`.moves-tool { min-height: auto }`).
             Tool::Moves => v_flex()
@@ -2782,7 +2702,7 @@ impl Render for AnalysisPage {
         self.explorer_open = tool == Tool::Explorer;
         // A click in the panel gives the keys back to the board, before a text field in it
         // (a comment, the explorer's player) takes them for itself.
-        let panel = widgets::side_panel(&palette)
+        widgets::side_panel(&palette)
             // A short window scrolls the panel rather than let the move list cover the controls.
             .id("analysis-panel")
             .overflow_y_scroll()
@@ -2791,7 +2711,7 @@ impl Render for AnalysisPage {
                     window.focus(&this.focus, cx);
                 }
             }))
-            .h(self.layout.fixed(board_size + px(36.) + widgets::STACK_GAP))
+            .h(self.layout.fixed(self.panel_height(board_size)))
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
@@ -2804,7 +2724,121 @@ impl Render for AnalysisPage {
             })
             .child(self.render_tabs(tool, &palette))
             .child(tool_body)
-            .child(self.render_controls(cx));
+            .child(self.render_controls(cx))
+            .into_any_element()
+    }
+
+    /// The panel's height beside a board of `board_size`: the board and the move box under it.
+    fn panel_height(&self, board_size: Pixels) -> Pixels {
+        board_size + px(36.) + widgets::STACK_GAP
+    }
+
+    /// The board's size in the page, the eval bar beside it and the study bar above.
+    fn board_size(&self, window: &Window) -> Pixels {
+        self.layout.board_size_around(
+            EVAL_BAR + EVAL_GAP,
+            STUDY_BAR,
+            widgets::STACK_GAP + px(36.),
+            window,
+        )
+    }
+}
+
+impl Render for AnalysisPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_notes(window, cx);
+        let palette = *cx.global::<Palette>();
+        let allowed = Self::assistance_allowed(cx);
+        let using_cloud = self.using_cloud(cx);
+        let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
+        let lines = self.lines(cx);
+        let position = self.position();
+        let result = game_over(position.as_ref()).map(|_| {
+            if position
+                .as_ref()
+                .is_some_and(|position| position.is_checkmate())
+            {
+                if position.as_ref().map(|position| position.turn()) == Some(Color::White) {
+                    "0-1"
+                } else {
+                    "1-0"
+                }
+            } else {
+                "½-½"
+            }
+        });
+        // The column always keeps the eval bar's width beside the board.
+        // The column holds the board and the move box under it (`.analysis-surface`).
+        let board_size = self.board_size(window);
+        let entry = widgets::move_entry(&self.move_input, true, &palette).h(px(36.));
+        let voice = board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, _, cx| {
+                    this.play(uci, cx);
+                },
+            },
+            BoardBar {
+                id: "analysis-voice",
+                hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”.",
+                active: true,
+                listening: true,
+                grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
+            },
+            cx,
+        );
+        let board_column = v_flex()
+            .w(board_size + EVAL_BAR + EVAL_GAP)
+            .flex_none()
+            .gap(widgets::STACK_GAP)
+            .child(
+                h_flex()
+                    .items_stretch()
+                    .gap(EVAL_GAP)
+                    .when(show_bar, |row| {
+                        row.child(crate::engine_view::eval_bar(
+                            lines.first(),
+                            self.orientation,
+                            result,
+                        ))
+                    })
+                    .when(!show_bar, |row| row.pl(EVAL_BAR))
+                    .child(
+                        div()
+                            .id("analysis-board")
+                            .w(board_size)
+                            .on_scroll_wheel(cx.listener(Self::scroll))
+                            // The board takes the keys back from the move box, as a click
+                            // outside a text field does in the browser.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
+                            )
+                            .child(crate::board::cached(&self.board)),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .pl(EVAL_BAR + EVAL_GAP)
+                    .gap(px(4.))
+                    .child(widgets::input_row(entry, voice))
+                    .children(self.move_message.clone().map(|message| {
+                        div()
+                            .text_size(px(12.))
+                            .text_color(palette.text_muted)
+                            .child(message)
+                    })),
+            );
+        let panel = if self.layout.is_stacked() {
+            self.render_panel(window, cx)
+        } else {
+            self.panel
+                .clone()
+                .cached(panel_style(self.panel_height(board_size), PANEL_MAX))
+                .into_any_element()
+        };
         div()
             .size_full()
             .track_focus(&self.focus)

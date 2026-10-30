@@ -33,6 +33,43 @@ fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
     app.type_text(text);
 }
 
+/// A timed game's clock runs beside the board for the side to move, redrawn on its own each
+/// second while the rest of the page keeps its last frame.
+#[gpui_kit::test]
+fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let setup =
+                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            let clock = serde_json::json!({
+                "white": { "minutes": 5, "increment": 0 },
+                "black": { "minutes": 5, "increment": 0 },
+            });
+            local.replace_game(setup, clock, window, cx);
+            local.play("e2e4", window, cx);
+        });
+    });
+    let label = |app: &mut Harness, face: usize| {
+        app.find(("local-clock", face))
+            .label()
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    app.wait_for("Black's clock to run down", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(("local-clock", 1usize))
+            .and_then(|face| face.label().map(|label| label.contains("4:58")))
+            == Some(true)
+    });
+    assert_eq!(label(&mut app, 0), "White clock, 5:00");
+    assert_eq!(app.moves(), ["e4"]);
+}
+
 const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"];
 
 #[gpui_kit::test]

@@ -21,6 +21,8 @@ mod explorer;
 mod export;
 mod game;
 mod game_image;
+#[cfg(test)]
+mod gpui_patches;
 mod interface_zoom;
 mod log;
 mod menu;
@@ -31,6 +33,7 @@ mod notifications;
 mod online;
 mod pages;
 mod palette;
+mod part;
 mod play_layout;
 mod played;
 mod position_engine;
