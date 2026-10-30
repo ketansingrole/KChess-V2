@@ -11,7 +11,7 @@ use serde_json::json;
 use super::OnlinePage;
 use crate::assets::icon;
 use crate::online::{OnlineHandle, Phase};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 const OPEN_KEY: &str = "kchess:chat-open";
@@ -184,7 +184,7 @@ impl OnlinePage {
                 .right(px(16.))
                 .bottom_0()
                 .w(px(320.))
-                .rounded_t(px(12.))
+                .rounded_t(radii::XL)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)

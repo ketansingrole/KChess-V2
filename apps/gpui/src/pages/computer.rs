@@ -28,7 +28,7 @@ use crate::game::rules;
 use crate::pages::computer_options::{Chosen, Current, GameOptions};
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::SettingsHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Side, Tone};
 
 /// Clocks are checked this often while one runs (`useIntervalFn(…, 200)`).
@@ -1412,7 +1412,7 @@ impl Render for ComputerPage {
                         .w(px(196.))
                         .pl(px(8.))
                         .gap(px(2.))
-                        .rounded(px(6.))
+                        .rounded(radii::SM)
                         .bg(palette.elevated)
                         .text_color(palette.highlighted)
                         .font_weight(FontWeight::SEMIBOLD)

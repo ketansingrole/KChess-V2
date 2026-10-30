@@ -28,7 +28,7 @@ use crate::pages::Page;
 use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
 };
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const GROUP: &str = "kchess:openings-group";
@@ -789,7 +789,7 @@ impl OpeningsPage {
                         .py(px(6.))
                         .border_1()
                         .border_color(palette.border)
-                        .rounded(px(10.))
+                        .rounded(radii::LG)
                         .bg(palette.elevated)
                         .cursor_pointer()
                         .hover(|item| item.bg(palette.accented))
@@ -934,7 +934,7 @@ impl OpeningsPage {
                             .keyboard_focus(palette.primary)
                             .aria_label(san.clone())
                             .px(px(3.))
-                            .rounded(px(4.))
+                            .rounded(radii::XS)
                             .cursor_pointer()
                             .when(current, |chip| chip.font_weight(FontWeight::SEMIBOLD))
                             .hover(|chip| chip.bg(palette.accented))

@@ -24,7 +24,7 @@ use crate::game::tree::format_eval;
 use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
 
 /// Typing pauses this long before a search is sent.
@@ -710,7 +710,7 @@ impl WatchPage {
                     .gap(px(4.))
                     .p(px(8.))
                     .w(px(190.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.elevated)
@@ -913,7 +913,7 @@ impl WatchPage {
                                         item["tourName"].as_str().unwrap_or_default().to_string(),
                                     )
                                     .w(px(260.))
-                                    .rounded(px(12.))
+                                    .rounded(radii::XL)
                                     .overflow_hidden()
                                     .border_1()
                                     .border_color(if live { palette.error } else { palette.border })
@@ -929,17 +929,21 @@ impl WatchPage {
                                             }))
                                     })
                                     .child(
+                                        // Inside the card's border; GPUI does not clip
+                                        // to the card's rounded corners.
                                         div()
                                             .h(px(130.))
                                             .flex()
                                             .items_center()
                                             .justify_center()
                                             .overflow_hidden()
+                                            .rounded_t(radii::XL - px(1.))
                                             .bg(palette.accented)
                                             .map(|area| match cover {
                                                 Some(cover) => area.child(
                                                     img(cover)
                                                         .size_full()
+                                                        .rounded_t(radii::XL - px(1.))
                                                         .object_fit(ObjectFit::Cover),
                                                 ),
                                                 None => area.child(

@@ -6,7 +6,7 @@
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 
 /// Room for the value labels left of the plot, the dates under it and the top.
 const LEFT: f32 = 40.;
@@ -232,7 +232,7 @@ impl Render for LineChart {
                 .gap(px(2.))
                 .px(px(8.))
                 .py(px(4.))
-                .rounded(px(6.))
+                .rounded(radii::SM)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)
@@ -258,7 +258,7 @@ impl Render for LineChart {
                             .child(
                                 div()
                                     .size(px(10.))
-                                    .rounded(px(3.))
+                                    .rounded(radii::XS)
                                     .bg(series.color.unwrap_or(palette.primary)),
                             )
                             .child(div().flex_1().child(series.name.clone()))

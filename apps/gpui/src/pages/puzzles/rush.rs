@@ -17,7 +17,7 @@ use crate::core::AppCore;
 use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets::{self, KeyboardFocus as _, Tone};
 
 const TICK: Duration = Duration::from_millis(100);
@@ -484,7 +484,7 @@ impl PuzzleRush {
                     .gap(px(2.))
                     .px(px(12.))
                     .py(px(10.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_1()
                     .text_size(px(13.))
                     .cursor_pointer()

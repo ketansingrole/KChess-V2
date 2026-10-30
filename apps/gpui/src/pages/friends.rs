@@ -20,7 +20,7 @@ use crate::accounts::{Accounts, AccountsHandle};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// Presence is asked for this many players at a time, and again this often.
@@ -1067,7 +1067,7 @@ impl Render for ImportDialog {
                 h_flex()
                     .gap(px(8.))
                     .p(px(10.))
-                    .rounded(px(8.))
+                    .rounded(radii::MD)
                     .bg(crate::theme::tint(palette.warning, 12.))
                     .text_size(px(13.))
                     .child(icon("triangle-alert").size(px(14.)))

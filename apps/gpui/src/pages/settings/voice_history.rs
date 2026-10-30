@@ -15,7 +15,7 @@ use serde_json::json;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Look};
 
 const SUCCESS: [&str; 4] = ["played", "confirmed", "picked", "correct"];
@@ -386,7 +386,7 @@ impl Render for VoiceHistory {
                 .min_w(px(110.))
                 .px(px(12.))
                 .py(px(10.))
-                .rounded(px(10.))
+                .rounded(radii::LG)
                 .bg(palette.elevated)
                 .child(
                     div()

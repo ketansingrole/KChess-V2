@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::{AppCore, CoreEvent};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, format_bytes};
 
 pub struct PuzzleDb {
@@ -298,7 +298,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             card.p(px(16.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(px(12.))
+                .rounded(radii::XL)
                 .bg(palette.bg)
                 .child(
                     div()

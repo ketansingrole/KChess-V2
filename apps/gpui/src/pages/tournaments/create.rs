@@ -13,7 +13,7 @@ use super::TournamentsPage;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice};
 
 /// `ARENA_CLOCK_MINUTES` (without 0), `ARENA_INCREMENTS`, `ARENA_DURATIONS`, `ARENA_WAIT_MINUTES`.
@@ -369,7 +369,7 @@ impl Render for CreateArena {
                     h_flex()
                         .gap(px(8.))
                         .p(px(10.))
-                        .rounded(px(8.))
+                        .rounded(radii::MD)
                         .bg(palette.accented)
                         .text_size(px(13.))
                         .child(icon("eye").size(px(16.)).flex_none())

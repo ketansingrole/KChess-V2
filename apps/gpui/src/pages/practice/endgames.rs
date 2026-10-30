@@ -16,7 +16,7 @@ use super::endgame_lesson::EndgameLesson;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
-use crate::theme::{Palette, tint};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -243,7 +243,7 @@ impl Endgames {
             .py(px(14.))
             .border_1()
             .border_color(palette.border)
-            .rounded(px(12.))
+            .rounded(radii::XL)
             .bg(palette.elevated)
             .cursor_pointer()
             .hover(|card| card.border_color(palette.primary))
@@ -256,7 +256,7 @@ impl Endgames {
                     .flex_none()
                     .size(px(40.))
                     .p(px(8.))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .bg(tint(palette.primary, 16.))
                     .child(glyph.size(px(24.)).text_color(palette.primary)),
             )

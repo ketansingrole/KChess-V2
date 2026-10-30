@@ -16,7 +16,7 @@ use crate::game::rules;
 use crate::rating_history::{
     DAY_MS, RATING_PAD, Retry, YEARS_SPAN_MS, array_or_empty, has_points, point_of,
 };
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -348,7 +348,7 @@ impl RatingSpeeds {
                 }
             })
             .on_click(cx.listener(move |this, _, _, cx| this.toggle(key.clone(), cx)))
-            .child(div().size(px(10.)).rounded(px(3.)).map(|swatch| {
+            .child(div().size(px(10.)).rounded(radii::XS).map(|swatch| {
                 if hidden {
                     swatch.border_1().border_color(palette.dimmed)
                 } else {

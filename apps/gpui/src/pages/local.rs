@@ -30,7 +30,7 @@ use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
 use crate::part::Part;
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use crate::settings::{SettingsChanged, SettingsHandle};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
 
 /// Clocks are checked this often while one runs (`useIntervalFn(…, 100)`).
@@ -1061,7 +1061,7 @@ impl LocalPage {
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .rounded(px(18.))
+                .rounded(radii::XL)
                 .border_1()
                 .border_color(palette.border)
                 .bg(background)

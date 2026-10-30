@@ -30,7 +30,7 @@ use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Pill, Tone};
 
 const STUDY: &str = "kchess:repertoire-study";
@@ -1117,7 +1117,7 @@ impl Render for Repertoire {
                     .py(px(6.))
                     .border_l_2()
                     .border_color(crate::theme::tint(palette.primary, 50.))
-                    .rounded_r(px(6.))
+                    .rounded_r(radii::SM)
                     .bg(palette.elevated)
                     .text_size(px(13.))
                     .text_color(palette.toned)

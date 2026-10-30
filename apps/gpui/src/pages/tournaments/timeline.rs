@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::{TournamentsPage, control};
 use crate::assets::icon;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -176,7 +176,7 @@ pub fn legend(palette: &Palette) -> impl IntoElement {
         .children(CATEGORIES.iter().map(|(_, label, color)| {
             h_flex()
                 .gap(px(6.))
-                .child(div().size(px(10.)).rounded(px(3.)).bg(rgb(*color)))
+                .child(div().size(px(10.)).rounded(radii::XS).bg(rgb(*color)))
                 .child(*label)
         }))
 }
@@ -335,7 +335,7 @@ impl TournamentsPage {
                             .pr(px(10.))
                             .gap(px(8.))
                             .overflow_hidden()
-                            .rounded(px(6.))
+                            .rounded(radii::SM)
                             .bg(rgb(color))
                             .text_color(rgb(0xffffff))
                             .when(finished, |bar| bar.opacity(0.42))
@@ -453,7 +453,7 @@ impl TournamentsPage {
                         // Redraw so the pinned names follow the scroll.
                         cx.notify();
                     }))
-                    .rounded(px(10.))
+                    .rounded(radii::LG)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.bg)

@@ -19,7 +19,7 @@ use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::rating_history::{Retry, has_points};
 use crate::rating_speeds::RatingSpeeds;
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
 
 /// Recent lookups kept (`kchess:players-recent`), and names offered under the search.
@@ -822,7 +822,7 @@ impl PlayersPage {
                                 Some(title) => format!("{title} {name}"),
                                 None => name.clone(),
                             };
-                            div().rounded(px(6.)).bg(palette.accented).child(
+                            div().rounded(radii::SM).bg(palette.accented).child(
                                 Button::new(("players-match", index))
                                     .xsmall()
                                     .ghost()
@@ -845,7 +845,7 @@ impl PlayersPage {
                         .when(empty, |row| row.justify_center())
                         .children(names.into_iter().enumerate().map(|(index, name)| {
                             // `variant="soft" color="neutral"`: a filled chip.
-                            div().rounded(px(6.)).bg(palette.accented).child(
+                            div().rounded(radii::SM).bg(palette.accented).child(
                                 Button::new(("players-suggestion", index))
                                     .xsmall()
                                     .ghost()
@@ -1058,7 +1058,7 @@ impl PlayersPage {
                     .gap(px(8.))
                     .px(px(12.))
                     .py(px(8.))
-                    .rounded(px(8.))
+                    .rounded(radii::MD)
                     .bg(palette.elevated)
                     .text_size(px(13.))
                     .child(icon("scale").size(px(16.)))
@@ -1589,7 +1589,7 @@ impl Render for MessageDialog {
                     h_flex()
                         .gap(px(8.))
                         .p(px(10.))
-                        .rounded(px(8.))
+                        .rounded(radii::MD)
                         .bg(crate::theme::tint(palette.warning, 10.))
                         .text_size(px(13.))
                         .child(icon("key-round").size(px(16.)).text_color(palette.warning))
