@@ -6,7 +6,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::{
-    App, AssetSource as _, DevicePixels, Global, Hsla, RenderImage, Rgba, SvgSize, rgb, size,
+    App, AppContext as _, AssetSource as _, DevicePixels, EntityId, Global, Hsla, RenderImage,
+    Rgba, SvgRenderer, SvgSize, rgb, size,
 };
 use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
@@ -117,40 +118,192 @@ pub fn piece_path(set: &str, piece: Piece) -> String {
 struct PieceImages {
     images: HashMap<(String, u32), Arc<RenderImage>>,
     order: VecDeque<(String, u32)>,
+    /// Sets and sizes being rasterized in the background (`rasterize_later`), each with the
+    /// views to draw again once it is done.
+    pending: HashMap<(String, u32), Vec<EntityId>>,
+    /// Views that asked for a size while `MOST_PENDING` were already being rasterized: they are
+    /// drawn again when one finishes, and ask again.
+    deferred: Vec<EntityId>,
 }
 
 impl Global for PieceImages {}
 
+impl PieceImages {
+    fn keep(&mut self, key: (String, u32), image: Arc<RenderImage>) {
+        if self.images.insert(key.clone(), image).is_none() {
+            self.order.push_back(key);
+        }
+        while self.order.len() > MAX_IMAGES {
+            if let Some(old) = self.order.pop_front() {
+                self.images.remove(&old);
+            }
+        }
+    }
+}
+
 /// The most images kept: two piece sets at four sizes.
 const MAX_IMAGES: usize = 12 * 8;
 
-/// A piece of set `set`, `pixels` device pixels square.
-pub fn piece_image(set: &str, piece: Piece, pixels: u32, cx: &mut App) -> Option<Arc<RenderImage>> {
-    let key = (piece_path(set, piece), pixels.max(1));
-    if let Some(image) = cx.default_global::<PieceImages>().images.get(&key) {
+/// The most sizes rasterized in the background at once; a window being resized asks for a new
+/// size every frame.
+const MOST_PENDING: usize = 2;
+
+/// The size the current piece set is rasterized at while the app starts (`prepare`), so the
+/// first board drawn has a size to stand in while its own is made.
+const PREPARED_PIXELS: u32 = 160;
+
+/// A piece of set `set`, `pixels` device pixels square, as `viewer` draws it.
+///
+/// A size not rasterized yet is rasterized in the background, the set's twelve pieces at once,
+/// and `viewer` is drawn again once they are; until then the piece's nearest size stands in,
+/// scaled. A piece with no size at all is rasterized here and now.
+pub fn piece_image(
+    set: &str,
+    piece: Piece,
+    pixels: u32,
+    viewer: EntityId,
+    cx: &mut App,
+) -> Option<Arc<RenderImage>> {
+    let path = piece_path(set, piece);
+    let pixels = pixels.max(1);
+    let images = cx.default_global::<PieceImages>();
+    if let Some(image) = images.images.get(&(path.clone(), pixels)) {
         return Some(Arc::clone(image));
     }
-    let bytes = crate::assets::Assets.load(&key.0).ok()??;
-    let renderer = cx.svg_renderer();
+    let nearest = images
+        .images
+        .iter()
+        .filter(|((drawn, _), _)| *drawn == path)
+        .min_by_key(|((_, size), _)| size.abs_diff(pixels))
+        .map(|(_, image)| Arc::clone(image));
+    let Some(nearest) = nearest else {
+        let image = rasterize(&path, pixels, &cx.svg_renderer())?;
+        cx.default_global::<PieceImages>()
+            .keep((path, pixels), Arc::clone(&image));
+        return Some(image);
+    };
+    rasterize_later(piece_set(set), pixels, Some(viewer), cx);
+    Some(nearest)
+}
+
+/// Rasterize the current piece set in the background while the app starts.
+pub fn prepare(set: &str, cx: &mut App) {
+    rasterize_later(piece_set(set), PREPARED_PIXELS, None, cx);
+}
+
+fn rasterize(path: &str, pixels: u32, renderer: &SvgRenderer) -> Option<Arc<RenderImage>> {
+    let bytes = crate::assets::Assets.load(path).ok()??;
     let parsed = renderer.parse_svg(&bytes).ok()?;
-    let side = DevicePixels(key.1 as i32);
-    let image = renderer
+    let side = DevicePixels(pixels as i32);
+    renderer
         .render_parsed(&parsed, SvgSize::ExactSize(size(side, side)))
-        .ok()?;
-    let cache = cx.default_global::<PieceImages>();
-    cache.images.insert(key.clone(), Arc::clone(&image));
-    cache.order.push_back(key);
-    while cache.order.len() > MAX_IMAGES {
-        if let Some(old) = cache.order.pop_front() {
-            cache.images.remove(&old);
-        }
+        .ok()
+}
+
+/// Rasterize every piece of `set` at `pixels` on a background thread, then draw `viewer` again.
+fn rasterize_later(set: &str, pixels: u32, viewer: Option<EntityId>, cx: &mut App) {
+    let key = (set.to_string(), pixels);
+    let images = cx.default_global::<PieceImages>();
+    if let Some(waiting) = images.pending.get_mut(&key) {
+        waiting.extend(viewer.filter(|viewer| !waiting.contains(viewer)));
+        return;
     }
-    Some(image)
+    if images.pending.len() >= MOST_PENDING {
+        images
+            .deferred
+            .extend(viewer.filter(|viewer| !images.deferred.contains(viewer)));
+        return;
+    }
+    images
+        .pending
+        .insert(key.clone(), viewer.into_iter().collect());
+    let paths: Vec<String> = Color::ALL
+        .into_iter()
+        .flat_map(|color| Role::ALL.map(|role| piece_path(set, Piece { color, role })))
+        .collect();
+    let renderer = cx.svg_renderer();
+    let rasterized = cx.background_spawn(async move {
+        paths
+            .into_iter()
+            .filter_map(|path| Some((path.clone(), rasterize(&path, pixels, &renderer)?)))
+            .collect::<Vec<_>>()
+    });
+    cx.spawn(async move |cx| {
+        let rasterized = rasterized.await;
+        cx.update(|cx| {
+            let images = cx.default_global::<PieceImages>();
+            for (path, image) in rasterized {
+                images.keep((path, pixels), image);
+            }
+            let mut waiting = images.pending.remove(&key).unwrap_or_default();
+            waiting.append(&mut images.deferred);
+            for view in waiting {
+                cx.notify(view);
+            }
+        });
+    })
+    .detach();
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::{Entity, TestAppContext};
+
     use super::*;
+
+    struct Board;
+
+    fn width(image: &RenderImage) -> i32 {
+        image.size(0).width.0
+    }
+
+    /// Every new board size rasterized its twelve pieces on the main thread, in the frame that
+    /// showed it (4-10 ms when a board page opened, and again at each size while a window was
+    /// resized).
+    #[gpui_kit::test]
+    fn a_new_size_is_rasterized_in_the_background(cx: &mut TestAppContext) {
+        let board: Entity<Board> = cx.new(|_| Board);
+        let viewer = board.entity_id();
+        let drawn_again = Rc::new(Cell::new(0));
+        let _observing = cx.update(|cx| {
+            let drawn_again = drawn_again.clone();
+            cx.observe(&board, move |_, _| drawn_again.set(drawn_again.get() + 1))
+        });
+        let knight = Piece {
+            color: Color::White,
+            role: Role::Knight,
+        };
+        let image = |pixels, cx: &mut TestAppContext| {
+            cx.update(|cx| piece_image("cburnett", knight, pixels, viewer, cx))
+                .expect("the knight")
+        };
+
+        // No size of the piece yet: made at once.
+        let first = image(40, cx);
+        assert_eq!(width(&first), 40);
+        // Another size: the nearest stands in while the set is made in the background.
+        assert!(Arc::ptr_eq(&image(64, cx), &first));
+        assert!(Arc::ptr_eq(&image(48, cx), &first));
+        // A third size waits for one of those two to finish.
+        assert!(Arc::ptr_eq(&image(72, cx), &first));
+        cx.run_until_parked();
+        assert_eq!(width(&image(64, cx)), 64);
+        assert_eq!(width(&image(48, cx)), 48);
+        let bishop = Piece {
+            color: Color::Black,
+            role: Role::Bishop,
+        };
+        let made = cx.update(|cx| piece_image("cburnett", bishop, 64, viewer, cx));
+        assert_eq!(made.map(|image| width(&image)), Some(64), "the whole set");
+        assert!(drawn_again.get() >= 1, "the board is drawn again");
+        // The deferred size, asked again when the board is drawn again.
+        assert_eq!(width(&image(72, cx)), 64);
+        cx.run_until_parked();
+        assert_eq!(width(&image(72, cx)), 72);
+    }
 
     #[test]
     fn every_piece_image_is_embedded() {
