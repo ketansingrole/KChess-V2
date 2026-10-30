@@ -103,9 +103,10 @@ turn: each page once ("first", the page is made), then again and again ("again")
 | | Opening again, p95, ms | 17.0 | 6.7 | 2.5× |
 
 Opening a page again is 1.5–9× faster depending on the page (Puzzles 1.5×, Settings 1.6×,
-Practice 1.9×, Watch 2.5×, Game history 9×). Opening one the first time is 1–15× faster: Home,
-Watch, Game history and Lichess insights most, the board pages 1.1–1.4×, Settings unchanged,
-and Openings 0.9× (21.1 → 23.4 ms, in two separate comparisons): the one figure that got worse.
+Practice 1.9×, Watch 2.5×, Game history 9×). These openings are timed from the page's first
+invalidation to the end of its frame, which leaves out making a new page: see
+[Opening a page, from the open](#opening-a-page-from-the-open) for the full time, and for
+Openings, which looked 0.9× here.
 
 What changed for these:
 
@@ -119,6 +120,44 @@ What changed for these:
 A first opening is mostly work done once per launch: rasterizing glyphs and icons, a board's
 pieces at its size (on the main thread), shaping text for the first time, and uploading to the
 GPU atlas (sampled with `sample` over five launches).
+
+## Opening a page, from the open
+
+`pages-tour` now times an opening from the call that opens the page to the end of the frame that
+shows it, so making a page the first time is counted (it was not: the figures above start at the
+page's first invalidation). Main is `a2e89a9` (`main`), before is `68f1ae2`, after is `68808b7`,
+all three with this bench; median of 8 × 5 s, builds alternating.
+
+| Opening | Main, ms | Before, ms | After, ms | Main → after |
+| ------- | -------: | ---------: | --------: | -----------: |
+| Every page again, p50 | 16.3 | 7.1 | 6.9 | 2.3× |
+| Every page again, p95 | 18.3 | 9.2 | 8.2 | 2.2× |
+| Openings, first | 54.4 | 46.3 | 42.7 | 1.27× |
+| Practice, first | 30.5 | 26.4 | 16.6 | 1.83× |
+| Board editor, first | 30.1 | 26.2 | 19.3 | 1.56× |
+| Home, first | 9.8 | 1.2 | 1.1 | **9.1×** |
+| Watch, first | 30.4 | 7.8 | 7.4 | **4.1×** |
+| Game history, first | 7.0 | 1.7 | 1.7 | **4.1×** |
+| Settings, first | 48.8 | 48.7 | 48.9 | 1.0× |
+
+Measured this way, Openings' first opening was faster than `main`'s before these changes too.
+Its first frame alone did take about 1.5 ms longer, but making the page took less; the work
+moved, and no change found added to it (each GPUI patch switched off in turn, profiles of five
+launches each). What changed from before to after:
+
+- **The openings catalog is made once and borrows the rules' tree**
+  (`pages/openings.rs`, `catalog`): each Openings page made the rules' opening tree into JSON,
+  read it back and walked it again, about 25 ms on the main thread the first time.
+- **A board at a new size rasterizes its pieces in the background** (`board/looks.rs`,
+  `piece_image`): the nearest size already made stands in, scaled, until the twelve pieces are
+  made, and the board is drawn again then (a frame or two later). A first board, with no size
+  made yet, still rasterizes at once. This also takes the rasterizing off the main thread while
+  a window with a board is resized.
+
+Making either ahead of time, at launch, would take the rest off a first opening (Openings 36 ms,
+Play with Computer 35 ms), but raised every launch's peak memory by about 10 MiB, used or not;
+it is not done. Peak memory, CPU and draw times of the other scenarios are unchanged (3 × 10 s,
+and 5 × 10 s for the three whose latency moved either way between runs).
 
 ## Correctness
 
