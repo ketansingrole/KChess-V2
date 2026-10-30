@@ -13,6 +13,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_core::Level;
+use kchess_domain::training::openings::{OpeningNode, opening_tree};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
@@ -63,16 +64,6 @@ const GROUPS: [(&str, &str, &[&str]); 4] = [
     ("flank", "1.c4 / 1.Nf3", &["c2c4", "g1f3"]),
     ("other", "Other", &[]),
 ];
-
-/// One entry of the openings tree (`OpeningNode`).
-#[derive(Clone, Deserialize)]
-struct OpeningNode {
-    name: String,
-    label: String,
-    eco: Option<String>,
-    moves: Option<Vec<String>>,
-    children: Vec<OpeningNode>,
-}
 
 /// An opening chosen to drill or opened lately (`OpeningChoice`).
 #[derive(Clone, Serialize, Deserialize)]
@@ -216,22 +207,18 @@ fn named(tree: &[OpeningNode]) -> Vec<(String, String, Vec<String>, String)> {
 /// The openings the browser lists, the same for every page: the rules' tree, its named lines
 /// and the popular ones (`catalog`).
 struct Catalog {
-    tree: Vec<OpeningNode>,
+    tree: &'static [OpeningNode],
     named: Vec<(String, String, Vec<String>, String)>,
     popular: Vec<Entry>,
 }
 
-/// The catalog, made the first time it is asked for. Making it takes the rules a while (tens
-/// of milliseconds), so `prepare` starts it in the background at launch.
+/// The catalog, made the first time a page asks for it and shared by every page after.
 fn catalog() -> Arc<Catalog> {
     static CATALOG: OnceLock<Arc<Catalog>> = OnceLock::new();
     CATALOG
         .get_or_init(|| {
-            let tree: Vec<OpeningNode> = rules("openingTree", &[])
-                .ok()
-                .and_then(|tree| serde_json::from_value(tree).ok())
-                .unwrap_or_default();
-            let named = named(&tree);
+            let tree = opening_tree();
+            let named = named(tree);
             let popular = POPULAR
                 .iter()
                 .filter_map(|line| {
@@ -246,14 +233,6 @@ fn catalog() -> Arc<Catalog> {
             })
         })
         .clone()
-}
-
-/// Make the catalog in the background, so the page's first opening finds it made.
-pub fn prepare(cx: &App) {
-    cx.background_spawn(async {
-        catalog();
-    })
-    .detach();
 }
 
 pub struct OpeningsPage {
@@ -1226,14 +1205,18 @@ impl Render for OpeningsPage {
 mod tests {
     use std::sync::Arc;
 
-    use super::{OpeningNode, catalog, entry, fold, group_of};
+    use super::{OpeningNode, catalog, entry, fold, group_of, opening_tree};
 
-    /// Each Openings page made the whole catalog again on the main thread, as it opened (about
-    /// 25 ms the first time a launch showed it).
+    /// Each Openings page made the catalog again as it opened, from a JSON copy of the rules'
+    /// tree.
     #[test]
     fn every_page_shares_one_catalog() {
         let first = catalog();
         assert!(Arc::ptr_eq(&first, &catalog()));
+        assert!(
+            std::ptr::eq(first.tree, opening_tree().as_slice()),
+            "the rules' own tree"
+        );
         assert!(!first.tree.is_empty());
         assert!(!first.named.is_empty());
         assert!(!first.popular.is_empty());

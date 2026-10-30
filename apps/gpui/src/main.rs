@@ -134,17 +134,6 @@ fn start_models(cx: &mut App) {
     voice::init(cx);
     cx.set_global(startup::Started);
     open_main_window(cx);
-    // Made in the background now rather than on the main thread the first time they are shown.
-    let set = cx
-        .global::<settings::SettingsHandle>()
-        .0
-        .read(cx)
-        .settings
-        .frontend
-        .piece_set
-        .clone();
-    board::looks::prepare(&set, cx);
-    pages::openings::prepare(cx);
 }
 
 /// A blank stand-in window for the dialog below.

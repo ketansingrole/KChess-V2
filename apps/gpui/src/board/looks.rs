@@ -148,10 +148,6 @@ const MAX_IMAGES: usize = 12 * 8;
 /// size every frame.
 const MOST_PENDING: usize = 2;
 
-/// The size the current piece set is rasterized at while the app starts (`prepare`), so the
-/// first board drawn has a size to stand in while its own is made.
-const PREPARED_PIXELS: u32 = 160;
-
 /// A piece of set `set`, `pixels` device pixels square, as `viewer` draws it.
 ///
 /// A size not rasterized yet is rasterized in the background, the set's twelve pieces at once,
@@ -182,13 +178,8 @@ pub fn piece_image(
             .keep((path, pixels), Arc::clone(&image));
         return Some(image);
     };
-    rasterize_later(piece_set(set), pixels, Some(viewer), cx);
+    rasterize_later(piece_set(set), pixels, viewer, cx);
     Some(nearest)
-}
-
-/// Rasterize the current piece set in the background while the app starts.
-pub fn prepare(set: &str, cx: &mut App) {
-    rasterize_later(piece_set(set), PREPARED_PIXELS, None, cx);
 }
 
 fn rasterize(path: &str, pixels: u32, renderer: &SvgRenderer) -> Option<Arc<RenderImage>> {
@@ -201,22 +192,22 @@ fn rasterize(path: &str, pixels: u32, renderer: &SvgRenderer) -> Option<Arc<Rend
 }
 
 /// Rasterize every piece of `set` at `pixels` on a background thread, then draw `viewer` again.
-fn rasterize_later(set: &str, pixels: u32, viewer: Option<EntityId>, cx: &mut App) {
+fn rasterize_later(set: &str, pixels: u32, viewer: EntityId, cx: &mut App) {
     let key = (set.to_string(), pixels);
     let images = cx.default_global::<PieceImages>();
     if let Some(waiting) = images.pending.get_mut(&key) {
-        waiting.extend(viewer.filter(|viewer| !waiting.contains(viewer)));
+        if !waiting.contains(&viewer) {
+            waiting.push(viewer);
+        }
         return;
     }
     if images.pending.len() >= MOST_PENDING {
-        images
-            .deferred
-            .extend(viewer.filter(|viewer| !images.deferred.contains(viewer)));
+        if !images.deferred.contains(&viewer) {
+            images.deferred.push(viewer);
+        }
         return;
     }
-    images
-        .pending
-        .insert(key.clone(), viewer.into_iter().collect());
+    images.pending.insert(key.clone(), vec![viewer]);
     let paths: Vec<String> = Color::ALL
         .into_iter()
         .flat_map(|color| Role::ALL.map(|role| piece_path(set, Piece { color, role })))
