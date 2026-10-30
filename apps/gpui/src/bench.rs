@@ -104,10 +104,11 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
         if scenario == Scenario::PagesTour {
             for (page, label) in tour() {
                 let _ = collector.collect_unseen();
+                let opened = std::time::Instant::now();
                 let _ = window.update(cx, |_, window, cx| shell::open(page, window, cx));
                 timer(step_every(scenario)).await;
                 let mut first = Totals {
-                    opening: Some(label),
+                    opening: Some((label, opened)),
                     ..Totals::default()
                 };
                 first.add(collector.collect_unseen().entries);
@@ -130,9 +131,10 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
                 next_step = elapsed + step_every(scenario);
                 // What was drawn before the step belongs to the page before it.
                 totals.add(collector.collect_unseen().entries);
+                let stepped = std::time::Instant::now();
                 let _ = window.update(cx, |_, window, cx| step(scenario, &mut ply, window, cx));
                 if scenario == Scenario::PagesTour {
-                    totals.opening = Some(tour()[(ply - 1) % tour().len()].1);
+                    totals.opening = Some((tour()[(ply - 1) % tour().len()].1, stepped));
                 }
             }
             totals.add(collector.collect_unseen().entries);
@@ -317,6 +319,15 @@ fn tour() -> Vec<(Page, &'static str)> {
         .map(|(page, label, _)| (*page, *label))
         .collect();
     pages.push((Page::Settings, "Settings"));
+    // `KCHESS_BENCH_TOUR=Openings,Home`: those pages alone, in that order, so a page's first
+    // opening is measured without the pages before it.
+    if let Ok(only) = std::env::var("KCHESS_BENCH_TOUR") {
+        let all = pages;
+        pages = only
+            .split(',')
+            .filter_map(|label| all.iter().find(|(_, name)| *name == label).copied())
+            .collect();
+    }
     pages
 }
 
@@ -371,9 +382,10 @@ struct Totals {
     /// The process's CPU time (user and system, every thread) over the measured window.
     cpu: Option<Duration>,
     views: BTreeMap<&'static str, ViewTotals>,
-    /// The page just opened (`pages-tour`), whose first frame is its opening's.
-    opening: Option<&'static str>,
-    /// Each page's openings: from the open to the end of the frame that drew it.
+    /// The page just opened (`pages-tour`) and when, whose first frame is its opening's.
+    opening: Option<(&'static str, std::time::Instant)>,
+    /// Each page's openings: from the open, making the page if it is new, to the end of the
+    /// frame that drew it.
     opens: BTreeMap<&'static str, Vec<Duration>>,
 }
 
@@ -392,10 +404,8 @@ impl Totals {
                 ForegroundEvent::Draw(frame) => {
                     self.draws.push(frame.draw_duration());
                     self.latencies.extend(frame.dirty_to_draw_duration());
-                    if let Some(page) = self.opening.take() {
-                        let open = frame
-                            .dirty_to_draw_duration()
-                            .unwrap_or(frame.draw_duration());
+                    if let Some((page, opened)) = self.opening.take() {
+                        let open = frame.draw_end.saturating_duration_since(opened);
                         self.opens.entry(page).or_default().push(open);
                     }
                     self.request_layout += frame.phases.request_layout;
