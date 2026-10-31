@@ -1,4 +1,5 @@
-//! Home: where to start, the recent games played here, and connecting Lichess.
+//! Home: where to start, the position you left, the recent games played here, and connecting
+//! Lichess.
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -6,11 +7,13 @@ use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
+use shakmaty::Color;
 
 use crate::assets::icon;
+use crate::board::ChessBoard;
 use crate::core::AppCore;
 use crate::game::computer::{ComputerGame, Host};
-use crate::game::rules;
+use crate::game::{rules, view};
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
@@ -22,12 +25,18 @@ mod lichess;
 
 /// Recent games on Home (`localGames`).
 const RECENT: usize = 6;
-/// The page header's empty row above the tiles.
-const HEADER: Pixels = px(20.);
+/// A tile's narrowest width; four of them share a row when they fit, else two, else one.
+const TILE: Pixels = px(192.);
+/// The board's side, and the window wide enough for the larger one.
+const BOARD: Pixels = px(360.);
+const BOARD_SMALL: Pixels = px(280.);
+const BOARD_WIDE: Pixels = px(1100.);
 
 pub struct HomePage {
-    /// "Move 4 · White · Club Player · ~1600" while a computer game is unfinished.
-    continue_game: Option<String>,
+    /// "Move 4 · White · Club Player · ~1600" while a computer game is unfinished, and that game.
+    continue_game: Option<(String, Value)>,
+    /// The position on the board, and what it was drawn from.
+    board: Option<(String, Entity<ChessBoard>)>,
     /// Your Lichess activity, once an account is connected, and the account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
     focus: FocusHandle,
@@ -90,6 +99,7 @@ impl HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
         let mut page = HomePage {
             continue_game: None,
+            board: None,
             activity: None,
             focus: cx.focus_handle(),
             _subscriptions: vec![
@@ -114,7 +124,8 @@ impl HomePage {
             let library = library.await;
             let _ = this.update(cx, |this, cx| {
                 if let Ok(library) = library {
-                    this.continue_game = continue_line(&library["sessions"]["computer"]);
+                    let session = &library["sessions"]["computer"];
+                    this.continue_game = continue_line(session).map(|line| (line, session.clone()));
                 }
                 cx.notify();
             });
@@ -123,7 +134,22 @@ impl HomePage {
     }
 }
 
-/// `.home-tile`: an activity to start, its icon in the primary color.
+/// The side to see a game from: yours, when you played Black.
+fn orientation(game: &Value) -> Color {
+    if game["color"] == "black" || game["black"] == "You" {
+        Color::Black
+    } else {
+        Color::White
+    }
+}
+
+/// `game`'s setup and moves, as the board shows them.
+fn line(game: &Value) -> (Value, Vec<String>) {
+    let moves = serde_json::from_value(game["moves"].clone()).unwrap_or_default();
+    (game["setup"].clone(), moves)
+}
+
+/// `.home-tile`: an activity to start; only the primary one carries the accent.
 fn tile(
     id: &'static str,
     glyph: Icon,
@@ -139,11 +165,11 @@ fn tile(
         .keyboard_focus(palette.primary)
         .aria_label(label)
         .flex_1()
+        .flex_basis(TILE)
         .min_w_0()
         .min_h(px(72.))
         .gap(px(12.))
-        .px(px(16.))
-        .py(px(14.))
+        .p(px(16.))
         .rounded(radii::XL)
         .border_1()
         .cursor_pointer()
@@ -165,23 +191,20 @@ fn tile(
         .on_click(move |_, window, cx| crate::shell::open(page, window, cx))
         .child(
             glyph
-                .size(px(24.))
+                .size(px(20.))
                 .flex_none()
-                .when(!primary, |glyph| glyph.text_color(palette.primary)),
+                .when(!primary, |glyph| glyph.text_color(palette.toned)),
         )
         .child(
             v_flex()
                 .flex_1()
                 .min_w_0()
                 .gap(px(2.))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
+                .child(div().font_weight(FontWeight::MEDIUM).child(label))
                 .children(
                     sub.map(|sub| div().truncate().text_size(px(13.)).opacity(0.8).child(sub)),
                 ),
         )
-        .when(primary, |tile| {
-            tile.child(icon("arrow-right").size(px(18.)).flex_none())
-        })
 }
 
 /// A quiet shortcut under the tiles.
@@ -193,29 +216,10 @@ fn shortcut(id: &'static str, glyph: Icon, label: &'static str, page: Page) -> i
         .on_click(move |_, window, cx| crate::shell::open(page, window, cx))
 }
 
-/// `.card-header` with a `.section-title`.
-fn card_title(title: &'static str, palette: &Palette) -> Div {
-    div()
-        .text_size(px(15.))
-        .font_weight(FontWeight(650.))
-        .text_color(palette.highlighted)
-        .child(title)
-}
-
 /// `UEmpty variant="naked" size="sm"`: an icon, a title and the action that fills it.
 fn empty(glyph: Icon, title: &'static str, action: Option<Button>, palette: &Palette) -> Div {
-    v_flex()
-        .items_center()
-        .gap(px(10.))
+    widgets::empty_state(glyph, title, None, palette)
         .py(px(24.))
-        .child(glyph.size(px(20.)).text_color(palette.text_muted))
-        .child(
-            div()
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(palette.highlighted)
-                .child(title),
-        )
         .children(action)
 }
 
@@ -228,14 +232,7 @@ impl Render for HomePage {
             (accounts.active(cx), accounts.busy)
         };
         let width = window.viewport_size().width;
-        let columns = if width < px(560.) {
-            1
-        } else if width < px(1100.) {
-            2
-        } else {
-            4
-        };
-        let continuing = self.continue_game.clone();
+        let continuing = self.continue_game.as_ref().map(|(line, _)| line.clone());
         let tiles: Vec<AnyElement> = vec![
             tile(
                 "home-computer",
@@ -254,7 +251,7 @@ impl Render for HomePage {
             tile(
                 "home-puzzles",
                 icon("puzzle"),
-                "Practice puzzles",
+                "Puzzles",
                 None,
                 false,
                 Page::Puzzles,
@@ -282,14 +279,19 @@ impl Render for HomePage {
             )
             .into_any_element(),
         ];
-        let mut tile_rows = Vec::new();
+        // Pairs that wrap, and tiles that wrap within them: never three and one.
         let mut tiles = tiles.into_iter().peekable();
+        let mut pairs = Vec::new();
         while tiles.peek().is_some() {
-            tile_rows.push(
+            pairs.push(
                 h_flex()
+                    .flex_wrap()
                     .items_stretch()
+                    .flex_1()
+                    .flex_basis(TILE * 2. + px(12.))
+                    .min_w_0()
                     .gap(px(12.))
-                    .children(tiles.by_ref().take(columns)),
+                    .children(tiles.by_ref().take(2)),
             );
         }
 
@@ -306,15 +308,46 @@ impl Render for HomePage {
             let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
             started(b).total_cmp(&started(a))
         });
+        // The game you left, else the last one you finished, else the starting position.
+        let session = self.continue_game.as_ref().map(|(_, session)| session);
+        let latest = games.first().cloned();
+        let (setup, moves) = session
+            .or(latest.as_ref())
+            .map_or_else(Default::default, line);
+        let side = session
+            .or(latest.as_ref())
+            .map_or(Color::White, orientation);
+        let drawn = format!("{setup}{moves:?}{side:?}");
+        if self.board.as_ref().is_none_or(|(shown, _)| *shown != drawn) {
+            let mut state = view::board_state(&setup, &moves, moves.len(), side, None);
+            state.preview = true;
+            self.board = Some((drawn, cx.new(|_| ChessBoard::new(state))));
+        }
+        let board = self.board.as_ref().map(|(_, board)| board.clone());
+        // What the board shows, and where choosing it goes.
+        let caption = match (&self.continue_game, &latest) {
+            (Some((line, _)), _) => Some((line.clone(), None, None)),
+            (None, Some(game)) => Some((
+                format!(
+                    "{} vs {}",
+                    game["white"].as_str().unwrap_or_default(),
+                    game["black"].as_str().unwrap_or_default()
+                ),
+                Some(result_text(game["result"].as_str().unwrap_or("*"))),
+                game["id"].as_str().map(str::to_string),
+            )),
+            (None, None) => None,
+        };
         games.truncate(RECENT);
         let recent = widgets::card(&palette)
             .flex_1()
+            .mt(px(8.))
             .min_w_0()
             .child(
                 h_flex()
                     .justify_between()
-                    .mb(px(14.))
-                    .child(card_title("Recent games", &palette))
+                    .mb(px(12.))
+                    .child(widgets::heading("Recent games", &palette))
                     .when(!games.is_empty(), |header| {
                         header.child(
                             // The arrow trails the label (`trailing-icon`).
@@ -352,9 +385,9 @@ impl Render for HomePage {
                                 game["white"].as_str().unwrap_or_default(),
                                 game["black"].as_str().unwrap_or_default()
                             ))
+                            .h(px(36.))
                             .gap(px(12.))
                             .px(px(8.))
-                            .py(px(9.))
                             .rounded(radii::MD)
                             .cursor_pointer()
                             .hover(|row| row.bg(palette.accented))
@@ -377,7 +410,10 @@ impl Render for HomePage {
                             )))
                             .child(
                                 div()
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .w(px(80.))
+                                    .flex_none()
+                                    .text_right()
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child(result_text(game["result"].as_str().unwrap_or("*"))),
                             )
                             .child(
@@ -396,14 +432,14 @@ impl Render for HomePage {
         let lichess = widgets::card(&palette)
             .flex_1()
             .min_w_0()
-            .child(card_title("Lichess", &palette))
+            .child(widgets::heading("Lichess", &palette))
             .child(match &connected {
                 None => empty(
                     icon("chart-line"),
                     "Ratings, games and puzzle progress",
                     Some(
                         Button::new("home-connect")
-                            .primary()
+                            .outline()
                             .small()
                             .icon(icon("log-in"))
                             .label("Connect Lichess")
@@ -467,6 +503,86 @@ impl Render for HomePage {
                     }),
             )
         });
+        let side = if connected.is_some() || width < BOARD_WIDE {
+            BOARD_SMALL
+        } else {
+            BOARD
+        };
+        let square = div().size(side).flex_none().children(board);
+        let position = v_flex()
+            .gap(px(8.))
+            .child(match caption.clone() {
+                Some((title, _, id)) => square
+                    .id("home-board")
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(title)
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| match &id {
+                        Some(id) => crate::shell::open_game(id, window, cx),
+                        None => crate::shell::open(Page::Computer, window, cx),
+                    })
+                    .into_any_element(),
+                None => square.into_any_element(),
+            })
+            .children(caption.map(|(title, result, _)| {
+                h_flex()
+                    .w(side)
+                    .gap(px(12.))
+                    .text_size(px(13.))
+                    .text_color(palette.text_muted)
+                    .child(div().flex_1().min_w_0().truncate().child(title))
+                    .children(result.map(|result| div().flex_none().child(result)))
+            }));
+        let starts = v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap(px(12.))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .items_stretch()
+                    .gap(px(12.))
+                    .children(pairs),
+            )
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .ml(px(-10.))
+                    .child(shortcut(
+                        "home-history",
+                        icon("history"),
+                        "Game history",
+                        Page::History,
+                    ))
+                    .child(shortcut(
+                        "home-local",
+                        icon("swords"),
+                        "Over the board",
+                        Page::Local,
+                    ))
+                    .child(shortcut(
+                        "home-practice",
+                        icon("graduation-cap"),
+                        "Practice",
+                        Page::Practice,
+                    ))
+                    .child(shortcut(
+                        "home-studies",
+                        icon("library-big"),
+                        "Studies",
+                        Page::Studies,
+                    )),
+            )
+            // A connected account's activity replaces the local cards (`hasConnectedAccount`).
+            .when(activity.is_none(), |starts| starts.child(recent));
+        let beside = v_flex()
+            .flex_none()
+            .gap(px(20.))
+            .when(!stacked, |beside| beside.w(side))
+            .child(position)
+            .when(activity.is_none(), |beside| beside.child(lichess));
         div()
             .id("home-page")
             .track_focus(&self.focus)
@@ -474,73 +590,45 @@ impl Render for HomePage {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .pt(PAGE_TOP + if header.is_some() { px(0.) } else { HEADER })
+                    .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
                     .px(side_padding(window))
                     .children(header)
-                    .child(
-                        v_flex().gap(px(12.)).mb(px(32.)).children(tile_rows).child(
-                            h_flex()
-                                .flex_wrap()
-                                .gap(px(8.))
-                                .ml(px(-10.))
-                                .child(shortcut(
-                                    "home-history",
-                                    icon("history"),
-                                    "Your game history",
-                                    Page::History,
-                                ))
-                                .child(shortcut(
-                                    "home-local",
-                                    icon("swords"),
-                                    "Play over the board",
-                                    Page::Local,
-                                ))
-                                .child(shortcut(
-                                    "home-practice",
-                                    icon("graduation-cap"),
-                                    "Practice chess skills",
-                                    Page::Practice,
-                                ))
-                                .child(shortcut(
-                                    "home-studies",
-                                    icon("library-big"),
-                                    "Your studies",
-                                    Page::Studies,
-                                )),
-                        ),
-                    )
-                    .child(match activity {
-                        Some(activity) => activity.into_any_element(),
-                        None => {
-                            // `.two-columns`: 1.15 to 1, the cards as tall as each other.
-                            if stacked {
-                                v_flex().gap(px(20.))
-                            } else {
-                                h_flex().items_stretch().gap(px(20.))
-                            }
-                            .child(
-                                div()
-                                    .flex_basis(relative(0.535))
-                                    .min_w_0()
-                                    .child(recent.h_full()),
-                            )
-                            .child(
-                                div()
-                                    .flex_basis(relative(0.465))
-                                    .min_w_0()
-                                    .child(lichess.h_full()),
-                            )
-                            .into_any_element()
-                        }
-                    }),
+                    .child(if stacked {
+                        v_flex().gap(px(20.)).child(starts).child(beside)
+                    } else {
+                        h_flex()
+                            .items_stretch()
+                            .gap(px(24.))
+                            .child(beside)
+                            .child(starts)
+                    })
+                    .children(activity.map(|activity| div().mt(px(32.)).child(activity))),
             )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::result_text;
+    use serde_json::json;
+    use shakmaty::Color;
+
+    use super::{line, orientation, result_text};
+
+    #[test]
+    fn the_board_shows_the_game_from_your_side() {
+        assert_eq!(orientation(&json!({ "color": "black" })), Color::Black);
+        assert_eq!(
+            orientation(&json!({ "white": "Expert", "black": "You" })),
+            Color::Black
+        );
+        assert_eq!(
+            orientation(&json!({ "white": "You", "black": "Sam" })),
+            Color::White
+        );
+        let (_, moves) = line(&json!({ "moves": ["e2e4", "e7e5"] }));
+        assert_eq!(moves, ["e2e4", "e7e5"]);
+    }
 
     #[test]
     fn results_read_as_on_a_scoresheet() {

@@ -133,8 +133,8 @@ fn stat(label: &str, value: impl IntoElement, sub: impl IntoElement, palette: &P
         )
         .child(
             div()
-                .text_size(px(26.))
-                .font_weight(FontWeight::BOLD)
+                .text_size(px(28.))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(value),
         )
@@ -171,8 +171,8 @@ impl Render for LichessActivity {
                 .child(
                     div()
                         .ml(px(2.))
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
                         .opacity(0.7)
                         .child(letter),
                 )
@@ -295,7 +295,7 @@ impl Render for LichessActivity {
             }));
         let stacked = window.viewport_size().width < px(900.);
         v_flex()
-            .gap(px(14.))
+            .gap(px(12.))
             .child(widgets::heading("Your Lichess activity", &palette))
             .child(stats)
             .child(

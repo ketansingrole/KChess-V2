@@ -1055,6 +1055,7 @@ pub fn empty_state(
         .child(
             div()
                 .text_size(px(16.))
+                .text_center()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(title.into()),
