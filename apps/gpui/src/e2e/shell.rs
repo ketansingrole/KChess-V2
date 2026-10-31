@@ -49,6 +49,45 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// Windows gives a press on a drag area to the title bar, so a button left over one never hears
+/// its click: the top bar's Restart to update did nothing there.
+#[gpui_kit::test]
+fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppContext) {
+    use crate::updates::{Phase, UpdatesHandle};
+    use gpui_kit::test::TestQueryExt as _;
+    let mut app = Harness::start(cx);
+    app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.phase = Phase::Downloaded;
+            updates.version = Some("2026.10.20".into());
+            cx.notify();
+        });
+    });
+    let update = app.find("update-button").bounds();
+    let toggle = app.find("sidebar-toggle").bounds();
+    let search = app.with_window(|window, _| {
+        let search = window.try_find_by_label("Search pages and commands");
+        search.expect("the search box").bounds()
+    });
+    // A whole frame: a cached view's reused frame does not replay its title-bar areas.
+    let (controls, beside) = app.with_window(|window, cx| {
+        window.refresh();
+        super::draw(window, cx);
+        let width = f32::from(window.viewport_size().width) as usize;
+        let beside = (0..width).step_by(4).any(|x| {
+            let at = gpui_kit::point(gpui_kit::px(x as f32), search.center().y);
+            window.window_control_at(at) == Some(gpui_kit::WindowControlArea::Drag)
+        });
+        (
+            [update, toggle, search].map(|bounds| window.window_control_at(bounds.center())),
+            beside,
+        )
+    });
+    assert_eq!(controls, [None; 3], "update, sidebar toggle and search");
+    assert!(beside, "the bar still moves the window");
+}
+
 /// The window hides the system title bar, so on Windows the top bar draws its controls.
 #[cfg(target_os = "windows")]
 #[gpui_kit::test]

@@ -3049,6 +3049,18 @@ impl Window {
         self.platform_window.window_controls()
     }
 
+    /// KChess patch: the title-bar area the platform's hit test finds at `position`, so tests can
+    /// see what only Windows acts on: a press on a drag area never reaches the window as a click.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn window_control_at(&self, position: Point<Pixels>) -> Option<WindowControlArea> {
+        let hit = self.rendered_frame.hit_test(position);
+        self.rendered_frame
+            .window_control_hitboxes
+            .iter()
+            .find(|(_, hitbox)| hit.ids.contains(&hitbox.id))
+            .map(|(area, _)| *area)
+    }
+
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);

@@ -61,6 +61,12 @@ fn toggle_left(window: &Window) -> Pixels {
     }
 }
 
+/// A control on a title bar, which takes its own press: on Windows a press on the drag area under
+/// it would move the window, and the control would never hear the click.
+fn over_title_bar(control: impl IntoElement) -> Div {
+    div().occlude().child(control)
+}
+
 /// Part of the window's title bar: dragging moves the window, a double click zooms it.
 fn title_bar(id: &'static str) -> Stateful<Div> {
     div()
@@ -1251,7 +1257,7 @@ impl Workspace {
         h_flex()
             .id("sidebar-toggle-wrap")
             .size_full()
-            .child(
+            .child(over_title_bar(
                 Button::new("sidebar-toggle")
                     .custom(ghost_neutral(cx))
                     .icon(icon("panel-left"))
@@ -1259,7 +1265,7 @@ impl Workspace {
                     .tooltip(label)
                     .accessibility_label(label)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-            )
+            ))
             .when(self.sidebar_open, |wrap| {
                 wrap.child(
                     title_bar("sidebar-name")
@@ -1317,11 +1323,10 @@ impl Workspace {
                     }),
             )
             .child(
-                div()
+                over_title_bar(self.palette.clone())
                     .flex_basis(px(600.))
                     .flex_shrink_1()
-                    .min_w_0()
-                    .child(self.palette.clone()),
+                    .min_w_0(),
             )
             .child(self.render_topbar_right(cx))
     }
@@ -1651,7 +1656,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
     };
     let phase = updates.phase;
     let target = handle.downgrade();
-    Some(
+    Some(over_title_bar(
         Button::new("update-button")
             .small()
             .when(phase == Phase::Downloaded, |button| button.primary())
@@ -1675,7 +1680,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
                     let _ = target.update(cx, |updates, cx| updates.download(cx));
                 }
             }),
-    )
+    ))
 }
 
 impl Render for Workspace {
