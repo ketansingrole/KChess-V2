@@ -158,7 +158,7 @@ impl Exporter {
                 .unwrap_or_default();
             let Some(pgn) = game_pgn(&game) else {
                 window.push_notification(
-                    Notification::error("That game cannot be replayed.")
+                    Notification::error("That game cannot be replayed")
                         .title("Could not upload the game"),
                     cx,
                 );
@@ -177,7 +177,7 @@ impl Exporter {
                     game["url"]
                         .as_str()
                         .map(str::to_string)
-                        .ok_or_else(|| kchess_core::CoreError::new("Lichess sent no link."))
+                        .ok_or_else(|| kchess_core::CoreError::new("Lichess sent no link"))
                 }),
             };
             let _ = this.update_in(cx, |this, window, cx| {
@@ -241,7 +241,7 @@ impl Exporter {
                 }
                 Kind::Pgn => game_pgn(&game)
                     .map(String::into_bytes)
-                    .ok_or_else(|| "That game cannot be replayed.".to_string()),
+                    .ok_or_else(|| "That game cannot be replayed".to_string()),
             }
         });
         cx.spawn_in(window, async move |this, cx| {

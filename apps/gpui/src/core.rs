@@ -162,7 +162,7 @@ impl CoreBridge {
     /// starts it again and carries on with the new connection.
     fn connect(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<CoreEvent>), String> {
         let runtime = Self::runtime()?;
-        let binary = service_binary().ok_or("The KChess core service is missing.")?;
+        let binary = service_binary().ok_or("The KChess core service is missing")?;
         let profile = config.data_dir.clone();
         let start = kchess_service::Start {
             binary,
@@ -277,14 +277,14 @@ impl CoreBridge {
                 let answer = client
                     .lock()
                     .map(|client| client.call(&method, args))
-                    .map_err(|_| CoreError::new("The KChess core stopped."));
+                    .map_err(|_| CoreError::new("The KChess core stopped"));
                 self.runtime
                     .spawn(async move { answer?.await.map_err(CoreError::new) })
             }
         };
         async move {
             task.await
-                .unwrap_or_else(|_| Err(CoreError::new("The KChess core stopped.")))
+                .unwrap_or_else(|_| Err(CoreError::new("The KChess core stopped")))
         }
     }
 
@@ -439,7 +439,7 @@ pub fn prepare_quit(
                 Waited::Saved(saved) => saved,
                 Waited::Unanswered(save) => {
                     unanswered = Some(save);
-                    Err("Saving is taking longer than expected.".to_string())
+                    Err("Saving is taking longer than expected".to_string())
                 }
             };
             let Err(cause) = saved else {
@@ -462,7 +462,7 @@ pub fn prepare_quit(
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Warning,
-                            "Some changes could not be saved.",
+                            "Some changes could not be saved",
                             Some(&cause),
                             &["Retry", without, "Cancel"],
                             cx,
@@ -728,14 +728,14 @@ fn answer_host(request: &Value, cx: &mut App) {
                 cx.open_url(url);
                 json!({ "value": null })
             }
-            _ => json!({ "error": "Only web addresses open in the browser." }),
+            _ => json!({ "error": "Only web addresses open in the browser" }),
         },
         "focus" => {
             cx.activate(true);
             json!({ "value": null })
         }
         "onBattery" => json!({ "value": crate::power::on_battery() }),
-        kind => json!({ "error": format!("Unknown host capability {kind}.") }),
+        kind => json!({ "error": format!("Unknown host capability {kind}") }),
     };
     let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
     let delivery = bridge.call("host.reply", vec![json!(id), reply]);

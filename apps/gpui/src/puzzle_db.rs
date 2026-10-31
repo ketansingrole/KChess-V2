@@ -177,7 +177,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             Some("importing") => "Saving puzzles…".to_string(),
             Some("failed") => progress["message"]
                 .as_str()
-                .unwrap_or("The download failed.")
+                .unwrap_or("The download failed")
                 .to_string(),
             _ => format!(
                 "Downloading… {}{}",
@@ -242,7 +242,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             .gap(px(8.))
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .text_size(px(14.))
                     .child(
                         icon("circle-check")
@@ -276,9 +276,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
     } else {
         v_flex()
             .gap(px(8.))
-            .child(hint(
-                "About 300 MB download · keeps 100,000 puzzles.".into(),
-            ))
+            .child(hint("About 300 MB download · keeps 100,000 puzzles".into()))
             .child(
                 h_flex().child(
                     Button::new("db-install")
@@ -302,12 +300,12 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
                 .bg(palette.bg)
                 .child(
                     div()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight(650.))
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.highlighted)
                         .child("Puzzle database"),
                 )
-                .child(hint("For offline puzzles, Storm, Streak and Rush.".into()))
+                .child(hint("For offline puzzles, Storm, Streak and Rush".into()))
         })
         .child(div().when(!compact, |body| body.mt(px(8.))).child(body))
         .children(this.error.clone().map(|error| {

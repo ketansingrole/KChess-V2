@@ -167,7 +167,7 @@ impl AnalysisPage {
                         .border_1()
                         .rounded(radii::SM)
                         .text_size(px(12.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .cursor_pointer()
                         .when(on, |button| {
                             button
@@ -195,13 +195,13 @@ impl AnalysisPage {
         });
         let head = h_flex()
             .gap(px(8.))
-            .min_h(px(26.))
+            .min_h(px(28.))
             .child(
                 h_flex()
                     .flex_1()
                     .min_w_0()
                     .text_size(px(12.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(palette.text_muted)
                     .child(div().truncate().child(subject.clone()))
                     .children(clock.filter(|clock| !clock.is_empty()).map(|clock| {
@@ -224,9 +224,9 @@ impl AnalysisPage {
                 .keyboard_focus(palette.primary)
                 .aria_label("Add a comment")
                 .w_full()
-                .gap(px(6.))
-                .px(px(10.))
-                .py(px(7.))
+                .gap(px(8.))
+                .px(px(12.))
+                .py(px(8.))
                 .border_1()
                 .border_dashed()
                 .border_color(palette.border_accented)
@@ -245,7 +245,7 @@ impl AnalysisPage {
                 .child(div().flex_1())
                 .child(
                     div()
-                        .px(px(5.))
+                        .px(px(4.))
                         .rounded(radii::XS)
                         .border_1()
                         .border_color(palette.border_accented)
@@ -255,7 +255,7 @@ impl AnalysisPage {
                 .into_any_element()
         };
         v_flex()
-            .gap(px(6.))
+            .gap(px(8.))
             .child(head)
             .child(body)
             .into_any_element()

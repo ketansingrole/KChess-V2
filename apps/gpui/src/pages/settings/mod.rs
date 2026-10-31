@@ -382,12 +382,12 @@ impl SettingsPage {
 /// A row's title and its optional hint (`.setting-info`).
 fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Palette) -> Div {
     v_flex()
-        .gap(px(3.))
+        .gap(px(4.))
         .min_w_0()
         .child(
             div()
                 .text_size(px(14.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(title.into()),
         )
@@ -430,7 +430,7 @@ impl Rows {
         let control = div().w_full().max_w(px(520.)).child(control);
         let row = if self.narrow {
             v_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(info)
                 .child(control)
                 .into_any_element()
@@ -485,7 +485,7 @@ impl Rows {
     ) -> Rows {
         self.rows.push(
             v_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(info(title, hint.map(SharedString::from), palette))
                 .child(control)
                 .into_any_element(),
@@ -569,12 +569,12 @@ fn option(
         .aria_selected(chosen)
         .w(width)
         .items_center()
-        .gap(px(5.))
+        .gap(px(4.))
         .py(px(6.))
-        .px(px(5.))
+        .px(px(4.))
         .rounded(radii::LG)
         .bg(palette.bg)
-        .text_size(px(10.5))
+        .text_size(px(11.))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .when(chosen, |option| {
@@ -582,7 +582,7 @@ fn option(
             option
                 .border_2()
                 .border_color(palette.primary)
-                .py(px(5.))
+                .py(px(4.))
                 .px(px(4.))
                 .text_color(palette.highlighted)
         })
@@ -603,10 +603,10 @@ fn option(
         .child(name)
         .children(tag.map(|tag| {
             div()
-                .text_size(px(9.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(11.))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.primary)
-                .child(tag.to_uppercase())
+                .child(tag)
         }))
 }
 
@@ -695,8 +695,8 @@ fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) ->
         .child(
             v_flex()
                 .w(card_width)
-                .gap(px(3.))
-                .p(px(5.))
+                .gap(px(4.))
+                .p(px(4.))
                 .rounded(px(4.))
                 .bg(color("--ui-bg-elevated"))
                 .child(
@@ -814,7 +814,7 @@ impl SettingsPage {
                     if cfg!(target_os = "macos") {
                         "⌘ + and ⌘ − adjust it anywhere."
                     } else {
-                        "Ctrl + and Ctrl − adjust it anywhere."
+                        "Ctrl + and Ctrl − adjust it anywhere"
                     }
                     .into(),
                 ),
@@ -911,7 +911,7 @@ impl SettingsPage {
         };
         let dir = dir.to_string();
         let own = v_flex()
-            .gap(px(10.))
+            .gap(px(8.))
             .child(
                 h_flex()
                     .gap(px(8.))
@@ -1036,7 +1036,7 @@ impl SettingsPage {
             .switch(
                 "premove",
                 "Premoves",
-                Some("Plays your queued move automatically when legal."),
+                Some("Plays your queued move automatically when legal"),
                 frontend.premove,
                 true,
                 |s, on| s.frontend.premove = on,
@@ -1060,8 +1060,8 @@ impl SettingsPage {
             )
             .stacked(
                 "Computer levels",
-                Some("Approximate engine ratings."),
-                v_flex().gap(px(10.)).child(checkboxes).child(reset),
+                Some("Approximate engine ratings"),
+                v_flex().gap(px(8.)).child(checkboxes).child(reset),
                 palette,
             );
         let switches: [SwitchRow; 4] = [
@@ -1075,14 +1075,14 @@ impl SettingsPage {
             (
                 "blindfold",
                 "Blindfold",
-                Some("Hide pieces while playing."),
+                Some("Hide pieces while playing"),
                 frontend.blindfold,
                 |s, on| s.frontend.blindfold = on,
             ),
             (
                 "zen-mode",
                 "Zen mode",
-                Some("Board and game controls only · Z to toggle."),
+                Some("Board and game controls only · Z to toggle"),
                 frontend.zen_mode,
                 |s, on| s.frontend.zen_mode = on,
             ),
@@ -1106,7 +1106,7 @@ impl SettingsPage {
             .switch(
                 "swipe-navigation",
                 "Two-finger swipe",
-                Some("Go back and forward with a horizontal swipe."),
+                Some("Go back and forward with a horizontal swipe"),
                 frontend.swipe_navigation,
                 true,
                 |s, on| s.frontend.swipe_navigation = on,
@@ -1115,7 +1115,7 @@ impl SettingsPage {
             .switch(
                 "swipe-indicator",
                 "Swipe feedback",
-                Some("Show an edge hint that follows the swipe."),
+                Some("Show an edge hint that follows the swipe"),
                 frontend.swipe_indicator,
                 frontend.swipe_navigation,
                 |s, on| s.frontend.swipe_indicator = on,
@@ -1147,7 +1147,7 @@ impl SettingsPage {
             )
             .row(
                 "Check correspondence games",
-                Some("Only while KChess is open.".into()),
+                Some("Only while KChess is open".into()),
                 Select::new(&self.poll).accessibility_label("Check correspondence games"),
                 palette,
             )
@@ -1217,9 +1217,9 @@ impl SettingsPage {
                     match outcome {
                         Outcome::InApp => "Shown inside KChess. Switch to another app before it sends to try the system notification.",
                         Outcome::System => "Sent. If nothing appeared, check KChess in your system notification settings and that Focus is off.",
-                        Outcome::Disabled => "Notifications are turned off.",
-                        Outcome::CategoryOff => "That kind of notification is turned off.",
-                        Outcome::WindowState | Outcome::Redundant => "Alerts are off for the current window state.",
+                        Outcome::Disabled => "Notifications are turned off",
+                        Outcome::CategoryOff => "That kind of notification is turned off",
+                        Outcome::WindowState | Outcome::Redundant => "Alerts are off for the current window state",
                     }
                     .into(),
                 );
@@ -1295,7 +1295,7 @@ impl SettingsPage {
             (
                 "notify-sound",
                 "System sound",
-                Some("For system notifications."),
+                Some("For system notifications"),
                 frontend.notify_sound,
                 |s, on| s.frontend.notify_sound = on,
             ),
@@ -1308,7 +1308,7 @@ impl SettingsPage {
             Some(
                 self.test_note
                     .clone()
-                    .unwrap_or_else(|| "Sends a sample in 5 seconds.".into()),
+                    .unwrap_or_else(|| "Sends a sample in 5 seconds".into()),
             ),
             h_flex()
                 .gap(px(8.))
@@ -1330,7 +1330,7 @@ impl SettingsPage {
                                 Some(url) => cx.open_url(url),
                                 None => {
                                     this.test_note = Some(
-                                        "Open your system notification settings and allow KChess there.".into(),
+                                        "Open your system notification settings and allow KChess there".into(),
                                     );
                                     cx.notify();
                                 }

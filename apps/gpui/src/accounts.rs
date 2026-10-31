@@ -184,7 +184,7 @@ impl Accounts {
                     );
                 }
                 this.set_active(&username, cx);
-                say(window, cx, format!("Connected @{username}."));
+                say(window, cx, format!("Connected @{username}"));
                 this.sync(Some(username), window, cx);
             });
         })
@@ -220,7 +220,7 @@ impl Accounts {
                                 crate::widgets::format_bytes(downloaded)
                             )
                         } else {
-                            "Lichess games synced.".into()
+                            "Lichess games synced".into()
                         };
                         say(window, cx, message);
                     }
@@ -308,7 +308,7 @@ impl Accounts {
                     Ok(Value::Bool(true)) => true,
                     Ok(_) => {
                         let note = gpui_kit::component::notification::Notification::warning(
-                            format!("Connect @{account} again to {action} players on Lichess."),
+                            format!("Connect @{account} again to {action} players on Lichess"),
                         )
                         .title("Lichess needs a new permission");
                         let reconnect = crate::widgets::action_notification(

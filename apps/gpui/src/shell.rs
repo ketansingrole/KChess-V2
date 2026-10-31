@@ -374,7 +374,7 @@ pub fn play_online(minutes: f64, increment: f64, rated: bool, window: &mut Windo
     open(Page::Online, window, cx);
     let online = crate::online::handle(cx);
     if online.read(cx).busy_with_game() {
-        crate::online::notice(cx, "Finish or cancel your game before starting another.");
+        crate::online::notice(cx, "Finish or cancel your game before starting another");
         return;
     }
     online.update(cx, |online, cx| {
@@ -584,7 +584,7 @@ pub fn replace_analysis(
         let (load, run) = (load.clone(), run.clone());
         dialog
             .title("Replace the unsaved analysis?")
-            .description("The analysis board has moves that are not saved as a study.")
+            .description("The analysis board has moves that are not saved as a study")
             .ok_text("Replace")
             .ok_variant(ButtonVariant::Danger)
             .cancel_text("Cancel")
@@ -1338,7 +1338,7 @@ impl Workspace {
                         .text_color(cx.theme().muted_foreground)
                         .tooltip(|window, cx| {
                             gpui_kit::component::tooltip::Tooltip::new(
-                                "Local play, analysis and downloaded content are available.",
+                                "Local play, analysis and downloaded content are available",
                             )
                             .build(window, cx)
                         })
@@ -1350,7 +1350,7 @@ impl Workspace {
             .when(working(cx), |bar| {
                 bar.child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .text_size(px(14.))
                         .text_color(cx.theme().muted_foreground)
                         .child(icon("loader-circle").size(px(16.)))
@@ -1640,7 +1640,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
             updates
                 .error
                 .clone()
-                .unwrap_or_else(|| "The update could not finish.".into()),
+                .unwrap_or_else(|| "The update could not finish".into()),
         ),
         _ => return None,
     };

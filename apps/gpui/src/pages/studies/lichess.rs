@@ -258,7 +258,7 @@ impl StudiesPage {
                                 window,
                                 cx,
                             ),
-                            None => fail("The study could not be saved offline.".into(), window, cx),
+                            None => fail("The study could not be saved offline".into(), window, cx),
                         }
                     }
                     Err(cause) => fail(cause, window, cx),
@@ -342,7 +342,7 @@ impl StudiesPage {
                     page.lichess.message = if conflict {
                         "Your offline edits were kept. The cloud version was downloaded as a separate copy.".into()
                     } else {
-                        "Study available offline.".into()
+                        "Study available offline".into()
                     };
                     cx.notify();
                 });
@@ -408,9 +408,9 @@ impl StudiesPage {
                     }
                     Ok(_) => {
                         this.lichess.message = if target.is_empty() {
-                            format!("Created a private study with “{chapter_name}”.")
+                            format!("Created a private study with “{chapter_name}”")
                         } else {
-                            format!("Added “{chapter_name}” as a chapter.")
+                            format!("Added “{chapter_name}” as a chapter")
                         };
                         this.load_lichess(true, cx);
                     }
@@ -444,11 +444,11 @@ impl StudiesPage {
             entry.error.clone()
         } else if entry.needs_reconnect {
             format!(
-                "Connect @{} again in Settings → My accounts to allow study access.",
+                "Connect @{} again in Settings → My accounts to allow study access",
                 self.lichess.account
             )
         } else if entry.items.as_ref().is_some_and(Vec::is_empty) {
-            "No studies on this account yet.".into()
+            "No studies on this account yet".into()
         } else {
             String::new()
         };
@@ -561,7 +561,7 @@ impl StudiesPage {
                 .child(
                     div()
                         .text_size(px(14.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child("Send the analysis board to"),
                 )
                 .child(

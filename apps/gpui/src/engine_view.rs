@@ -146,7 +146,7 @@ pub fn engine_lines(
                             .py(px(1.))
                             .rounded(radii::SM)
                             .bg(palette.accented)
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .text_center()
                             .cursor_pointer()
                             .hover(|eval| eval.bg(tint(palette.primary, 24.)))
@@ -199,7 +199,7 @@ pub fn engine_lines(
     }
     v_flex()
         .flex_none()
-        .text_size(px(12.5))
+        .text_size(px(13.))
         .border_1()
         .border_color(palette.border)
         .rounded(radii::LG)

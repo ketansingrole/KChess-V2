@@ -267,7 +267,7 @@ impl VoiceMoves {
             {
                 Some(choice) => self.choose(choice, "confirmed", cx),
                 None => {
-                    self.control.feedback = Some("Choose one of the numbered moves.".into());
+                    self.control.feedback = Some("Choose one of the numbered moves".into());
                     Action::Nothing
                 }
             };
@@ -287,7 +287,7 @@ impl VoiceMoves {
                         self.choose(only, "confirmed", cx)
                     }
                     _ => {
-                        self.control.feedback = Some("Say a move, or choose its number.".into());
+                        self.control.feedback = Some("Say a move, or choose its number".into());
                         Action::Nothing
                     }
                 }
@@ -395,7 +395,7 @@ impl VoiceMoves {
         // Settled before the move: the board's change abandons any choice still waiting.
         self.settle(outcome, Some(&choice.san), cx);
         self.choices.clear();
-        self.control.feedback = Some(format!("Played {}.", choice.san).into());
+        self.control.feedback = Some(format!("Played {}", choice.san).into());
         Action::Play(choice.uci)
     }
 
@@ -452,7 +452,7 @@ impl VoiceMoves {
     pub fn cancel(&mut self, cx: &App) {
         self.settle("cancelled", None, cx);
         self.choices.clear();
-        self.control.feedback = Some("Move cancelled.".into());
+        self.control.feedback = Some("Move cancelled".into());
     }
 }
 

@@ -28,7 +28,7 @@ fn ask_remove(username: String, connected: bool, window: &mut Window, cx: &mut A
         (
             "Stop tracking this account?",
             "Stop tracking",
-            format!("@{username} and its synced games will be removed from this device."),
+            format!("@{username} and its synced games will be removed from this device"),
         )
     };
     let handle = cx.global::<AccountsHandle>().0.downgrade();
@@ -111,7 +111,7 @@ fn account_row(
                         .items_center()
                         .justify_center()
                         .text_size(px(13.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child(initials),
                 )
                 .child(
@@ -123,7 +123,7 @@ fn account_row(
                                 .gap(px(8.))
                                 .child(
                                     div()
-                                        .font_weight(FontWeight::BOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .truncate()
                                         .child(format!("@{username}")),
                                 )
@@ -150,7 +150,7 @@ fn account_row(
         )
         .child(
             h_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .when(several && connected && !plays, |row| {
                     row.child(
                         Button::new(SharedString::from(format!("account-activate-{username}")))
@@ -231,7 +231,7 @@ impl SettingsPage {
             )
             .when(!connected.is_empty(), |card| {
                 card.child(widgets::hint(
-                    "To add another account, sign in to it on lichess.org first.",
+                    "To add another account, sign in to it on lichess.org first",
                     palette,
                 ))
             })

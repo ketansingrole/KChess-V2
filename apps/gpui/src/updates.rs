@@ -324,14 +324,14 @@ async fn latest(feed: String) -> Result<Release, String> {
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| "Could not reach the update server.".to_string())?;
+        .map_err(|_| "Could not reach the update server".to_string())?;
     if !response.status().is_success() {
         return Err(format!("The update server answered {}.", response.status()));
     }
     response
         .json::<Release>()
         .await
-        .map_err(|_| "The update server's answer could not be read.".to_string())
+        .map_err(|_| "The update server's answer could not be read".to_string())
 }
 
 /// Download `asset` into `folder` and check it against the release's digest; the downloaded
@@ -347,25 +347,25 @@ async fn download(
         .assets
         .iter()
         .find(|entry| entry.name == "SHA256SUMS.txt")
-        .ok_or("The release lists no checksums.")?;
+        .ok_or("The release lists no checksums")?;
     let sums = client
         .get(&sums.browser_download_url)
         .timeout(Duration::from_secs(60))
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| "Could not download the checksums.".to_string())?
+        .map_err(|_| "Could not download the checksums".to_string())?
         .text()
         .await
-        .map_err(|_| "Could not download the checksums.".to_string())?;
+        .map_err(|_| "Could not download the checksums".to_string())?;
     let expected =
-        digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package.")?;
+        digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
     let response = client
         .get(&asset.browser_download_url)
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| "Could not download the update.".to_string())?;
+        .map_err(|_| "Could not download the update".to_string())?;
     let total = response.content_length().unwrap_or(asset.size);
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).map_err(|cause| cause.to_string())?;
@@ -377,7 +377,7 @@ async fn download(
     let mut received = 0u64;
     let mut body = response.bytes_stream();
     while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|_| "The download stopped.".to_string())?;
+        let chunk = chunk.map_err(|_| "The download stopped".to_string())?;
         hasher.update(&chunk);
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
@@ -395,7 +395,7 @@ async fn download(
         .collect();
     if digest != expected {
         let _ = std::fs::remove_dir_all(&folder);
-        return Err("The downloaded update did not match its checksum.".into());
+        return Err("The downloaded update did not match its checksum".into());
     }
     Ok(file_path)
 }
@@ -411,7 +411,7 @@ fn unpack(archive: &Path) -> Result<PathBuf, String> {
         .arg(&unpacked)
         .status();
     if !status.is_ok_and(|status| status.success()) {
-        return Err("The update could not be unpacked.".into());
+        return Err("The update could not be unpacked".into());
     }
     let _ = std::fs::remove_file(archive);
     std::fs::read_dir(&unpacked)
@@ -419,7 +419,7 @@ fn unpack(archive: &Path) -> Result<PathBuf, String> {
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| path.extension().is_some_and(|ext| ext == "app"))
-        .ok_or_else(|| "The update holds no app.".into())
+        .ok_or_else(|| "The update holds no app".into())
 }
 
 /// Who signed a program: whether its signature holds, the signer (a macOS team or a Windows
@@ -435,13 +435,13 @@ struct Signer {
 /// An unsigned app (a Linux package, or a build without credentials) relies on the checksum.
 fn signed_alike(running: &Signer, update: &Signer) -> Result<(), String> {
     if running.valid && !update.valid {
-        return Err("The update's signature is not valid.".into());
+        return Err("The update's signature is not valid".into());
     }
     if running.identity.is_some() && update.identity != running.identity {
-        return Err("The update is not signed by KChess's developer.".into());
+        return Err("The update is not signed by KChess's developer".into());
     }
     if running.app.is_some() && update.app != running.app {
-        return Err("The update is not KChess.".into());
+        return Err("The update is not KChess".into());
     }
     Ok(())
 }
@@ -565,7 +565,7 @@ fn apply(staged: &Path, install: &Install, lock: &InstallLock, reopen: bool) -> 
             }
             installer
                 .spawn()
-                .map_err(|cause| format!("The installer could not start ({cause})."))?;
+                .map_err(|cause| format!("The installer could not start ({cause})"))?;
         }
         Package::AppImage => {
             swap_file(staged, &install.path)?;
@@ -582,7 +582,7 @@ fn apply(staged: &Path, install: &Install, lock: &InstallLock, reopen: bool) -> 
                     "KChess could not ask for permission to install. Install the .deb with your package manager.".to_string()
                 })?;
             if !status.success() {
-                return Err("The update was not installed.".into());
+                return Err("The update was not installed".into());
             }
             if reopen {
                 reopen_after_exit(&install.path);
@@ -631,7 +631,7 @@ fn replace_by(
     exchange: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<(), String> {
     let incoming = incoming(installed);
-    let fail = |cause: std::io::Error| format!("The update could not be installed ({cause}).");
+    let fail = |cause: std::io::Error| format!("The update could not be installed ({cause})");
     let _ = std::fs::remove_dir_all(&incoming);
     if std::fs::rename(staged, &incoming).is_err() {
         copy_tree(staged, &incoming).map_err(|cause| {
@@ -675,7 +675,7 @@ fn exchange(_: &Path, _: &Path) -> std::io::Result<()> {
 /// Replace the file at `installed` with `staged`, executable, in one rename on the same disk.
 fn swap_file(staged: &Path, installed: &Path) -> Result<(), String> {
     let incoming = incoming(installed);
-    let fail = |cause: std::io::Error| format!("The update could not be installed ({cause}).");
+    let fail = |cause: std::io::Error| format!("The update could not be installed ({cause})");
     std::fs::copy(staged, &incoming).map_err(fail)?;
     #[cfg(unix)]
     {
@@ -729,7 +729,7 @@ fn reopen_after_exit(target: &Path) {
 /// Where this identity's downloads go: a folder of this user's, never the shared temporary folder,
 /// where another user could replace a checked package before it is installed.
 fn downloads_root() -> Result<PathBuf, String> {
-    let cache = dirs::cache_dir().ok_or("KChess has no folder to download updates to.")?;
+    let cache = dirs::cache_dir().ok_or("KChess has no folder to download updates to")?;
     downloads_in(&cache)
 }
 
@@ -746,7 +746,7 @@ fn downloads_in(cache: &Path) -> Result<PathBuf, String> {
 /// Make `dir` a folder only its owner can use, refusing a link or another user's folder (its
 /// owner must be `owner`'s).
 fn private_dir(dir: &Path, owner: &Path) -> Result<(), String> {
-    let refused = || format!("The update folder {} is not private.", dir.display());
+    let refused = || format!("The update folder {} is not private", dir.display());
     match std::fs::create_dir(dir) {
         Ok(()) => {}
         Err(cause) if cause.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -835,7 +835,7 @@ impl InstallLock {
             .truncate(false)
             .write(true)
             .open(Self::path(root, installed))
-            .map_err(|cause| format!("The update could not be installed ({cause})."))?;
+            .map_err(|cause| format!("The update could not be installed ({cause})"))?;
         match file.try_lock() {
             Ok(()) => Ok(Self { held: file }),
             Err(std::fs::TryLockError::WouldBlock) => Err(
@@ -854,7 +854,7 @@ impl InstallLock {
         self.held
             .try_clone()
             .map(Stdio::from)
-            .map_err(|cause| format!("The update could not be installed ({cause})."))
+            .map_err(|cause| format!("The update could not be installed ({cause})"))
     }
 }
 
@@ -938,7 +938,7 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
     let (package, failed) = (held.with_extension("deb"), held.with_extension("failed"));
     // Out of this app's download folder, which the next start may clear: the helper's now.
     std::fs::rename(staged, &package)
-        .map_err(|cause| format!("The update could not be installed ({cause})."))?;
+        .map_err(|cause| format!("The update could not be installed ({cause})"))?;
     let helper = Command::new("sh")
         .arg("-c")
         .arg(DEB_HELPER)
@@ -1010,7 +1010,7 @@ pub fn init(cx: &mut App) {
             released: None,
             checked_at: None,
             progress: None,
-            error: failed.then(|| "The last update was not installed.".to_string()),
+            error: failed.then(|| "The last update was not installed".to_string()),
             release: None,
             staged: None,
             restart: false,
@@ -1109,7 +1109,7 @@ impl Updates {
         self.work = Some(cx.spawn(async move |this, cx| {
             let answer = answer
                 .await
-                .unwrap_or_else(|_| Err("The check stopped.".into()));
+                .unwrap_or_else(|_| Err("The check stopped".into()));
             let _ = this.update(cx, |this, cx| {
                 this.checked_at = Some(chrono::Utc::now().timestamp_millis());
                 match answer {
@@ -1172,7 +1172,7 @@ impl Updates {
         cx.notify();
         let Some(workspace) = self.workspace.as_ref() else {
             self.phase = Phase::Error;
-            self.error = Some("KChess has no private folder to download the update to.".into());
+            self.error = Some("KChess has no private folder to download the update to".into());
             cx.notify();
             return;
         };
@@ -1195,7 +1195,7 @@ impl Updates {
             }
             let done = done
                 .await
-                .unwrap_or_else(|_| Err("The download stopped.".into()));
+                .unwrap_or_else(|_| Err("The download stopped".into()));
             let _ = this.update(cx, |this, cx| {
                 match done {
                     Ok(staged) => {
@@ -1224,7 +1224,7 @@ impl Updates {
         if self.install.is_none() {
             self.phase = Phase::Error;
             self.error = Some(
-                "This copy of KChess is not an installed package; install the update by hand."
+                "This copy of KChess is not an installed package; install the update by hand"
                     .into(),
             );
             cx.notify();
@@ -1271,7 +1271,7 @@ impl Updates {
         });
         self.work = Some(cx.spawn(async move |this, cx| {
             let done = done.await.unwrap_or_else(|_| {
-                Err(("The update could not be installed.".into(), PathBuf::new()))
+                Err(("The update could not be installed".into(), PathBuf::new()))
             });
             let _ = this.update(cx, |this, cx| match done {
                 Ok(()) => cx.quit(),
@@ -1859,7 +1859,7 @@ mod tests {
         let silent = stall("");
         assert_eq!(
             attempt(format!("{silent}/sums"), format!("{silent}/pkg")),
-            Err("Could not download the checksums.".into())
+            Err("Could not download the checksums".into())
         );
         // The package stops halfway through its body.
         let sums = serve(vec![(
@@ -1869,7 +1869,7 @@ mod tests {
         let halfway = stall("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nhalf");
         assert_eq!(
             attempt(format!("{sums}/SHA256SUMS.txt"), format!("{halfway}/pkg")),
-            Err("The download stopped.".into())
+            Err("The download stopped".into())
         );
         let _ = std::fs::remove_dir_all(&folder);
     }
@@ -1912,14 +1912,14 @@ mod tests {
         let refused = block_on(check_and_download(url, folder.join("bad")));
         assert_eq!(
             refused,
-            Err("The downloaded update did not match its checksum.".into())
+            Err("The downloaded update did not match its checksum".into())
         );
         assert!(!folder.join("bad").exists());
 
         let url = feed("2026.11.0", &package, |_, _| "abc  other.zip\n".into());
         assert_eq!(
             block_on(check_and_download(url, folder.join("none"))),
-            Err("The release lists no checksum for this package.".into())
+            Err("The release lists no checksum for this package".into())
         );
 
         // The running version, or one without this platform's package, is not offered.

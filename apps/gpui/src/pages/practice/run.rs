@@ -173,7 +173,7 @@ pub fn field(
     palette: &Palette,
 ) -> impl IntoElement {
     v_flex()
-        .gap(px(6.))
+        .gap(px(8.))
         .child(
             div()
                 .text_size(px(14.))
@@ -230,8 +230,8 @@ pub fn hud(
         .gap(px(12.))
         .child(
             div()
-                .text_size(px(44.))
-                .font_weight(FontWeight(750.))
+                .text_size(px(40.))
+                .font_weight(FontWeight::MEDIUM)
                 .line_height(relative(1.))
                 .text_color(if clock.low() {
                     palette.loss
@@ -249,7 +249,7 @@ pub fn hud(
                         .test_support()
                         .aria_label(format!("{score}"))
                         .text_size(px(32.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .line_height(relative(1.))
                         .child(format!("{score}")),
                 )
@@ -279,14 +279,14 @@ pub fn training_list(
     palette: &Palette,
 ) -> impl IntoElement {
     v_flex()
-        .gap(px(10.))
+        .gap(px(8.))
         .children(groups.into_iter().map(|(label, items)| {
             v_flex()
                 .gap(px(4.))
                 .children(label.map(|label| {
                     div()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight(650.))
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.highlighted)
                         .child(label)
                 }))
@@ -302,8 +302,8 @@ pub fn training_list(
                         .aria_label(item.title.clone())
                         .aria_selected(current)
                         .gap(px(8.))
-                        .px(px(10.))
-                        .py(px(7.))
+                        .px(px(12.))
+                        .py(px(8.))
                         .border_1()
                         .rounded(radii::MD)
                         .text_size(px(13.))

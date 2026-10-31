@@ -238,15 +238,14 @@ impl Endgames {
             .keyboard_focus(palette.primary)
             .aria_label(title.clone())
             .w(width)
-            .gap(px(14.))
-            .px(px(16.))
-            .py(px(14.))
+            .gap(px(12.))
+            .p(px(16.))
             .border_1()
             .border_color(palette.border)
             .rounded(radii::XL)
             .bg(palette.elevated)
             .cursor_pointer()
-            .hover(|card| card.border_color(palette.primary))
+            .hover(|card| card.border_color(palette.border_accented))
             .on_click(move |_, window, cx| {
                 Self::open(&view, cx);
                 window.refresh();
@@ -257,8 +256,8 @@ impl Endgames {
                     .size(px(40.))
                     .p(px(8.))
                     .rounded(radii::LG)
-                    .bg(tint(palette.primary, 16.))
-                    .child(glyph.size(px(24.)).text_color(palette.primary)),
+                    .bg(palette.accented)
+                    .child(glyph.size(px(24.)).text_color(palette.toned)),
             )
             .child(
                 v_flex()
@@ -266,8 +265,8 @@ impl Endgames {
                     .min_w_0()
                     .child(
                         div()
-                            .text_size(px(15.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
                             .child(title),
                     )
                     .child(
@@ -284,15 +283,13 @@ impl Endgames {
                     .py(px(2.))
                     .rounded_full()
                     .text_size(px(12.))
-                    .bg(if complete {
-                        tint(palette.success, 18.)
-                    } else {
-                        palette.accented
-                    })
+                    .font_features(widgets::tabular())
+                    .when(!complete, |badge| badge.text_color(palette.text_muted))
                     .when(complete, |badge| {
                         badge
+                            .bg(tint(palette.success, 18.))
                             .text_color(palette.success)
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                     })
                     .child(if complete {
                         "Done".to_string()
@@ -330,7 +327,7 @@ impl Endgames {
         };
         let group = |title: &'static str, cards: Vec<AnyElement>| {
             v_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(widgets::heading(title, palette))
                 .child(grid(cards))
         };

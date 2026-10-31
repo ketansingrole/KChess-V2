@@ -49,7 +49,7 @@ const SPEEDS: [(&str, &str); 6] = [
     ("blitz", "Blitz"),
     ("rapid", "Rapid"),
     ("classical", "Classical"),
-    ("correspondence", "Corr."),
+    ("correspondence", "Corr"),
 ];
 /// `EXPLORER_RATINGS`.
 const RATINGS: [f64; 9] = [400., 1000., 1200., 1400., 1600., 1800., 2000., 2200., 2500.];
@@ -185,7 +185,7 @@ pub fn result_bar(entry: &Value, min_label: u64, palette: &Palette) -> impl Into
         .overflow_hidden()
         .border_1()
         .border_color(palette.border)
-        .text_size(px(10.))
+        .text_size(px(11.))
         .line_height(px(14.))
         .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
         .children(counts.into_iter().zip(looks).enumerate().map(
@@ -501,7 +501,7 @@ impl PositionExplorer {
                     let opened = analysis.open_game(&pgn, 0, None, Some(origin.clone()), false, cx);
                     if !opened {
                         window.push_notification(
-                            Notification::error("That game could not be read.")
+                            Notification::error("That game could not be read")
                                 .title("Could not open the game"),
                             cx,
                         );
@@ -750,7 +750,7 @@ impl PositionExplorer {
                                 .justify_between()
                                 .items_baseline()
                                 .gap(px(8.))
-                                .child(div().font_weight(FontWeight::BOLD).child(san))
+                                .child(div().font_weight(FontWeight::MEDIUM).child(san))
                                 .child(
                                     div()
                                         .text_size(px(12.))
@@ -800,7 +800,7 @@ impl PositionExplorer {
                             .aria_label(format!("Play {san}"))
                             .w(px(56.))
                             .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.primary)
                             .cursor_pointer()
                             .hover(|chip| chip.underline())
@@ -850,7 +850,7 @@ impl PositionExplorer {
                 .child(
                     div()
                         .text_size(px(12.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.text_muted)
                         .child(title),
                 )
@@ -1004,7 +1004,7 @@ impl Render for PositionExplorer {
                 .unwrap_or_default();
             let empty = result["moves"].as_array().is_none_or(Vec::is_empty);
             v_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .text_size(px(13.))
                 .child(
                     h_flex()
@@ -1047,7 +1047,7 @@ impl Render for PositionExplorer {
                             )),
                     )
                 })
-                .when(empty, |body| body.child("No moves found for this position."))
+                .when(empty, |body| body.child("No moves found for this position"))
                 .child(self.render_moves(&result, cx, &palette))
                 .children(self.render_games(&result, cx, &palette))
         });
@@ -1096,7 +1096,7 @@ impl Render for PositionExplorer {
             })
             .when(needs_player, |explorer| {
                 explorer.child(widgets::hint(
-                    "Enter a Lichess username to see the moves they played here.",
+                    "Enter a Lichess username to see the moves they played here",
                     &palette,
                 ))
             })

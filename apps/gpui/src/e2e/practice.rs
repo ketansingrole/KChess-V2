@@ -187,7 +187,7 @@ fn a_checkmate_lesson_takes_back_a_wrong_move_and_accepts_the_mate(
     wait_for_label(&mut app, "status-banner", "Not the move — try again");
     // The refused bishop is back on d3 to make the mate.
     app.drag_square("d3", "b5", true);
-    wait_for_label(&mut app, "status-banner", "Checkmate!");
+    wait_for_label(&mut app, "status-banner", "Checkmate");
     app.click("lesson-back");
     app.find("card-checkmate-patterns-2");
 }

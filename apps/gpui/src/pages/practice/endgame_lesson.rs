@@ -35,7 +35,7 @@ const REPLY: Duration = Duration::from_millis(450);
 fn reason_title(reason: &str) -> &'static str {
     match reason {
         "lineDone" => "Well done",
-        "checkmate" => "Checkmate!",
+        "checkmate" => "Checkmate",
         "mated" => "You were checkmated",
         "stalemate" => "Stalemate",
         "insufficient" => "Insufficient material",
@@ -77,15 +77,15 @@ fn goal(task: &Value, side: &str) -> String {
     let within = crate::game::whole(&task["within"]);
     let moves = format!("{within} {}", if within == 1 { "move" } else { "moves" });
     match task["kind"].as_str().unwrap_or_default() {
-        "line" => format!("Find the best move for {side}."),
-        "mate" if within == 1 => "Checkmate in one move.".into(),
-        "mate" => format!("Checkmate in {within} moves."),
+        "line" => format!("Find the best move for {side}"),
+        "mate" if within == 1 => "Checkmate in one move".into(),
+        "mate" => format!("Checkmate in {within} moves"),
         "play" => match task["goal"].as_str().unwrap_or_default() {
-            "mate" => format!("Checkmate the engine within {moves}."),
-            "win" => format!("Win against the engine within {moves}."),
-            "draw" => format!("Hold the draw for {moves}."),
-            "reach" => format!("Bring your king to a marked square within {moves}."),
-            "confine" => format!("Box the king into the marked area within {moves}."),
+            "mate" => format!("Checkmate the engine within {moves}"),
+            "win" => format!("Win against the engine within {moves}"),
+            "draw" => format!("Hold the draw for {moves}"),
+            "reach" => format!("Bring your king to a marked square within {moves}"),
+            "confine" => format!("Box the king into the marked area within {moves}"),
             _ => String::new(),
         },
         _ => String::new(),
@@ -503,7 +503,7 @@ impl EndgameLesson {
             })
             .collect();
         v_flex()
-            .gap(px(10.))
+            .gap(px(8.))
             .p(px(12.))
             .border_1()
             .border_color(palette.border)
@@ -592,7 +592,7 @@ impl EndgameLesson {
                     Tone::Alert,
                     icon("triangle-alert"),
                     "Stockfish not found".to_string(),
-                    Some("Install or choose an engine in Settings to play this out.".to_string()),
+                    Some("Install or choose an engine in Settings to play this out".to_string()),
                 )
             } else if your_turn {
                 (
@@ -697,7 +697,7 @@ impl EndgameLesson {
                             .when(!(over && success), |button| button.outline())
                             .child(
                                 h_flex()
-                                    .gap(px(6.))
+                                    .gap(px(8.))
                                     .child(if self.last_step() {
                                         "Next chapter"
                                     } else {
@@ -736,7 +736,7 @@ impl EndgameLesson {
             )
             .child(
                 v_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .text_size(px(14.))
                     .line_height(relative(1.5))
                     .children(
@@ -823,18 +823,18 @@ mod tests {
     fn steps_say_what_they_ask() {
         assert_eq!(
             goal(&json!({ "kind": "mate", "within": 1 }), "White"),
-            "Checkmate in one move."
+            "Checkmate in one move"
         );
         assert_eq!(
             goal(
                 &json!({ "kind": "play", "goal": "draw", "within": 1.0 }),
                 "Black"
             ),
-            "Hold the draw for 1 move."
+            "Hold the draw for 1 move"
         );
         assert_eq!(
             goal(&json!({ "kind": "line", "moves": [] }), "Black"),
-            "Find the best move for Black."
+            "Find the best move for Black"
         );
     }
 

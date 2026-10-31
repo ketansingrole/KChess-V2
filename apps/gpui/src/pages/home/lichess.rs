@@ -179,8 +179,8 @@ impl Render for LichessActivity {
         };
         let record_value = h_flex()
             .items_baseline()
-            .gap(px(10.))
-            .text_size(px(22.))
+            .gap(px(8.))
+            .text_size(px(20.))
             .child(tally(count("win"), "W", palette.win))
             .child(tally(count("loss"), "L", palette.loss))
             .child(tally(count("draw"), "D", palette.text_muted));
@@ -265,7 +265,7 @@ impl Render for LichessActivity {
                 card.child(
                     widgets::empty_state(icon("history"), "No synced games yet", None, &palette)
                         .child(
-                            h_flex().mt(px(10.)).child(
+                            h_flex().mt(px(8.)).child(
                                 Button::new("home-lichess-sync")
                                     .outline()
                                     .icon(icon("refresh-cw"))

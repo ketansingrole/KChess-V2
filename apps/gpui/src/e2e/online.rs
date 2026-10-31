@@ -125,7 +125,7 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
     app.click_label("Lichess username");
     app.type_text("!");
     app.click("players-lookup");
-    wait_for_label(&mut app, "players-error", "Enter a Lichess username.");
+    wait_for_label(&mut app, "players-error", "Enter a Lichess username");
 
     // A real name goes out, fails and leaves the lookup ready for another try.
     app.click_label("Lichess username");
@@ -139,7 +139,7 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
         window
             .try_find("players-error")
             .and_then(|error| error.label().map(str::to_string))
-            .is_some_and(|error| !error.is_empty() && error != "Enter a Lichess username.")
+            .is_some_and(|error| !error.is_empty() && error != "Enter a Lichess username")
     });
     assert!(app.enabled("players-lookup"));
 }

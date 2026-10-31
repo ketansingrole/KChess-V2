@@ -306,8 +306,8 @@ fn figure(label: &str, value: String, sub: Option<String>, palette: &Palette) ->
         )
         .child(
             div()
-                .text_size(px(22.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(20.))
+                .font_weight(FontWeight::MEDIUM)
                 .child(value),
         )
         .children(sub.map(|sub| {
@@ -434,7 +434,7 @@ type Rows = Vec<(String, (f64, f64, f64))>;
 fn section(title: &'static str, rows: Rows, palette: &Palette) -> Div {
     v_flex()
         .w_full()
-        .gap(px(6.))
+        .gap(px(8.))
         .child(div().mb(px(4.)).child(widgets::heading(title, palette)))
         .children(
             rows.into_iter()
@@ -511,7 +511,7 @@ impl Render for InsightsPage {
                         h_flex()
                             .justify_center()
                             .gap(px(8.))
-                            .mt(px(10.))
+                            .mt(px(8.))
                             .child(
                                 Button::new("insights-follow")
                                     .primary()
@@ -524,7 +524,7 @@ impl Render for InsightsPage {
                             .child(
                                 Button::new("insights-analyse")
                                     .outline()
-                                    .label("Analyze a PGN")
+                                    .label("Analyse a PGN")
                                     .on_click(|_, window, cx| {
                                         crate::shell::open(Page::Analysis, window, cx)
                                     }),
@@ -560,11 +560,11 @@ impl Render for InsightsPage {
                     widgets::empty_state(
                         icon("chart-pie"),
                         "No finished games match",
-                        Some("Sync games from Lichess history, or widen the filters.".into()),
+                        Some("Sync games from Lichess history, or widen the filters".into()),
                         &palette,
                     )
                     .child(
-                        h_flex().justify_center().mt(px(10.)).child(
+                        h_flex().justify_center().mt(px(8.)).child(
                             Button::new("insights-history")
                                 .outline()
                                 .label("Open Lichess history")
@@ -674,7 +674,7 @@ impl InsightsPage {
             .child(h_flex().items_start().gap(px(40.)).children(column_list))
             .child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .child(widgets::heading("Openings", palette))
                     .children(best.map(|(top, bottom)| {
                         widgets::hint(
@@ -684,7 +684,7 @@ impl InsightsPage {
                     }))
                     .when(openings.is_empty(), |list| {
                         list.child(widgets::hint(
-                            "Lichess names openings of synced games; none have two games yet.",
+                            "Lichess names openings of synced games; none have two games yet",
                             palette,
                         ))
                     })

@@ -351,3 +351,18 @@ async fn traffic_of_a_forgotten_account_is_not_counted() {
         "logged out traffic must not be counted"
     );
 }
+
+/// A page showed reqwest's "error sending request for url (…)" when Lichess could not be reached.
+#[tokio::test]
+async fn an_unreachable_server_is_said_in_plain_words() {
+    let host = Arc::new(Recording::default());
+    let policy = policy_with(host, Duration::from_secs(5));
+    let request = http_client()
+        .get("http://127.0.0.1:9/api/puzzle/daily")
+        .build()
+        .unwrap();
+    let Err(failure) = policy.send(request, &CancellationToken::new()).await else {
+        panic!("nothing listens on the discard port");
+    };
+    assert_eq!(failure.message, "Couldn’t reach Lichess");
+}

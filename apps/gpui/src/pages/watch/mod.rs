@@ -585,7 +585,7 @@ impl WatchPage {
                                 .child(
                                     div()
                                         .text_size(px(14.))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .truncate()
                                         .child(
                                             channel["label"]
@@ -643,7 +643,7 @@ impl WatchPage {
                     .child(widgets::heading("Followed players playing now", palette))
                     .child(widgets::hint(
                         if friends.is_empty() {
-                            "Follow players on the Following page.".to_string()
+                            "Follow players on the Following page".to_string()
                         } else {
                             format!("{online} of {} online", friends.len())
                         },
@@ -669,7 +669,7 @@ impl WatchPage {
             }))
             .when(playing.is_empty(), |card| {
                 card.child(div().px(px(8.)).child(widgets::hint(
-                    "No followed player is playing right now.",
+                    "No followed player is playing right now",
                     palette,
                 )))
             })
@@ -679,7 +679,7 @@ impl WatchPage {
                     .enumerate()
                     .map(|(index, (name, game))| {
                         h_flex()
-                            .gap(px(10.))
+                            .gap(px(8.))
                             .p(px(8.))
                             .child(icon("swords").size(px(16.)).text_color(palette.text_muted))
                             .child(
@@ -693,7 +693,7 @@ impl WatchPage {
                                             palette.primary,
                                         )
                                         .text_size(px(14.))
-                                        .font_weight(FontWeight::SEMIBOLD),
+                                        .font_weight(FontWeight::MEDIUM),
                                     )
                                     .child(
                                         div()
@@ -727,7 +727,7 @@ impl WatchPage {
                     icon("swords"),
                     "You are in a game".into(),
                 )
-                .detail("Watching is paused while your game uses the connection.".into())
+                .detail("Watching is paused while your game uses the connection".into())
                 .into_any_element(),
             );
         }

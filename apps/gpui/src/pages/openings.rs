@@ -592,7 +592,7 @@ impl OpeningsPage {
             )
         };
         let row = h_flex()
-            .gap(px(6.))
+            .gap(px(8.))
             .min_h(px(28.))
             .when(!node.children.is_empty(), |row| {
                 row.child(
@@ -657,7 +657,7 @@ impl OpeningsPage {
                 entry.child(
                     v_flex()
                         .ml(px(14.))
-                        .pl(px(10.))
+                        .pl(px(12.))
                         .border_l_1()
                         .border_color(palette.border)
                         .children(
@@ -680,8 +680,8 @@ impl OpeningsPage {
         let section = |title: &'static str| {
             div()
                 .mb(px(8.))
-                .text_size(px(15.))
-                .font_weight(FontWeight(650.))
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(title)
         };
@@ -741,7 +741,7 @@ impl OpeningsPage {
                             div()
                                 .text_size(px(14.))
                                 .text_color(palette.text_muted)
-                                .child("No openings found."),
+                                .child("No openings found"),
                         )
                     })
                     .children(rows)
@@ -782,9 +782,9 @@ impl OpeningsPage {
                         .keyboard_focus(palette.primary)
                         .aria_label(recent.name.clone())
                         .w(item)
-                        .gap(px(10.))
+                        .gap(px(8.))
                         .pl(px(6.))
-                        .pr(px(10.))
+                        .pr(px(12.))
                         .py(px(6.))
                         .border_1()
                         .border_color(palette.border)
@@ -910,7 +910,7 @@ impl OpeningsPage {
             .child(entry);
         let moves = h_flex()
             .flex_wrap()
-            .gap_x(px(6.))
+            .gap_x(px(8.))
             .gap_y(px(2.))
             .text_size(px(14.))
             .children(steps.iter().enumerate().map(|(index, (_, san, _))| {
@@ -932,10 +932,10 @@ impl OpeningsPage {
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
                             .aria_label(san.clone())
-                            .px(px(3.))
+                            .px(px(4.))
                             .rounded(radii::XS)
                             .cursor_pointer()
-                            .when(current, |chip| chip.font_weight(FontWeight::SEMIBOLD))
+                            .when(current, |chip| chip.font_weight(FontWeight::MEDIUM))
                             .hover(|chip| chip.bg(palette.accented))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_line(Some(upto.clone()), cx)
@@ -964,12 +964,12 @@ impl OpeningsPage {
             let more = blocks.len() > shown.len() || self.full_description;
             let url = page["url"].as_str().unwrap_or_default().to_string();
             v_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .children(shown.into_iter().map(|block| {
                     div()
                         .text_size(px(14.))
                         .when(block["heading"] == json!(true), |text| {
-                            text.font_weight(FontWeight::SEMIBOLD)
+                            text.font_weight(FontWeight::MEDIUM)
                         })
                         .child(block["text"].as_str().unwrap_or_default().to_string())
                 }))
@@ -1062,8 +1062,8 @@ impl OpeningsPage {
                             .id("opening-title")
                             .test_support()
                             .aria_label(title.clone())
-                            .text_size(px(15.))
-                            .font_weight(FontWeight(650.))
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.highlighted)
                             .child(title),
                     )
@@ -1124,7 +1124,7 @@ impl OpeningsPage {
                                     h_flex()
                                         .gap(px(4.))
                                         .text_size(px(12.))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(palette.text_muted)
                                         .child(format!("Popularity of {}", self.popularity_san))
                                         .child(

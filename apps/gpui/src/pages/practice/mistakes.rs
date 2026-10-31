@@ -386,7 +386,7 @@ impl Mistakes {
                     _ => None,
                 };
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .py(px(8.))
                     .when(index > 0, |row| {
                         row.border_t_1().border_color(palette.border)
@@ -403,8 +403,8 @@ impl Mistakes {
                             .child(
                                 div()
                                     .truncate()
-                                    .text_size(px(13.5))
-                                    .font_weight(FontWeight::BOLD)
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child(title(game)),
                             )
                             .child(
@@ -418,10 +418,10 @@ impl Mistakes {
                         h_flex()
                             .flex_wrap()
                             .justify_end()
-                            .gap_x(px(10.))
+                            .gap_x(px(8.))
                             .gap_y(px(2.))
                             .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .children(judgment_counts(&items).into_iter().map(
                                 |(judgment, text)| {
                                     div()
@@ -516,8 +516,8 @@ impl Mistakes {
                 .child(
                     div()
                         .mt(px(2.))
-                        .text_size(px(26.))
-                        .font_weight(FontWeight(750.))
+                        .text_size(px(28.))
+                        .font_weight(FontWeight::MEDIUM)
                         .child(value.to_string()),
                 )
         };
@@ -535,8 +535,7 @@ impl Mistakes {
                         icon("book-open"),
                         "No mistakes yet",
                         Some(
-                            "When you review one of your games, its mistakes are added here."
-                                .into(),
+                            "When you review one of your games, its mistakes are added here".into(),
                         ),
                         palette,
                     )
@@ -566,7 +565,7 @@ impl Mistakes {
                     card.child(
                         div()
                             .mt(px(12.))
-                            .child(widgets::hint("You're caught up.", palette)),
+                            .child(widgets::hint("You're caught up", palette)),
                     )
                 })
                 .child(

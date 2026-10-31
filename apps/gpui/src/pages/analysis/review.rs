@@ -502,8 +502,7 @@ impl AnalysisPage {
                     );
                     this.review.practice_feedback = Some(cause);
                 } else if this.saved_positions(&key).0 == 0 {
-                    this.review.practice_feedback =
-                        Some("No verified mistakes to practice.".into());
+                    this.review.practice_feedback = Some("No verified mistakes to practice".into());
                 } else {
                     this.start_practice(&key, cx);
                     // The move list beside the practice card shows the moves around each position.
@@ -819,7 +818,7 @@ impl AnalysisPage {
             .child(
                 div()
                     .text_size(px(13.))
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .child("Game review"),
             )
             .children(source.map(|source| {
@@ -963,7 +962,7 @@ impl AnalysisPage {
             .when(self.practice.is_none(), |panel| panel.children(chart))
             .when(review.is_none() && !can_review, |panel| {
                 panel.child(note(
-                    "Set up Stockfish in Settings to review games.".into(),
+                    "Set up Stockfish in Settings to review games".into(),
                     false,
                 ))
             })
@@ -1011,7 +1010,7 @@ impl AnalysisPage {
                 .flex()
                 .justify_center()
                 .text_size(px(13.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .child(content)
         };
         let names = h_flex()
@@ -1021,14 +1020,14 @@ impl AnalysisPage {
                 cell(
                     v_flex()
                         .items_center()
-                        .gap(px(3.))
+                        .gap(px(4.))
                         .max_w_full()
                         .child(widgets::side_dot(color))
                         .child(
                             div()
                                 .max_w_full()
                                 .truncate()
-                                .text_size(px(12.5))
+                                .text_size(px(13.))
                                 .child(self.player_name(color)),
                         )
                         .into_any_element(),
@@ -1041,7 +1040,7 @@ impl AnalysisPage {
                 cell(
                     div()
                         .text_size(px(16.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child(percent(side_of(color)["accuracy"].as_f64()))
                         .into_any_element(),
                 )
@@ -1141,13 +1140,13 @@ impl AnalysisPage {
         let group = |rows: Vec<AnyElement>| {
             v_flex()
                 .pt(px(6.))
-                .gap(px(3.))
+                .gap(px(4.))
                 .border_t_1()
                 .border_color(palette.border)
                 .children(rows)
         };
         v_flex()
-            .gap(px(3.))
+            .gap(px(4.))
             .child(names)
             .child(accuracy)
             .child(group(

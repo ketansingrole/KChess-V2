@@ -145,7 +145,7 @@ impl Render for GameReplay {
         let line = |color: Color| {
             widgets::player_line(
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(widgets::avatar(
                         icon("user"),
                         if color == Color::White {
@@ -201,7 +201,7 @@ impl Render for GameReplay {
                 &self.sans,
                 self.ply,
                 view::black_first(&self.setup),
-                "No moves to review.".into(),
+                "No moves to review".into(),
                 select.clone(),
                 &palette,
             )))

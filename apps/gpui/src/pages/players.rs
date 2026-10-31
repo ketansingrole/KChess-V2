@@ -173,7 +173,7 @@ impl PlayersPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> PlayersPage {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
         let perf_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
-        let history = cx.new(|cx| RatingSpeeds::new("Built from the last 200 rated games.", cx));
+        let history = cx.new(|cx| RatingSpeeds::new("Built from the last 200 rated games", cx));
         let accounts = crate::accounts::handle(cx);
         let board_perf: String = crate::prefs::get(cx, BOARD_PERF_KEY, "blitz".to_string());
         let board_items: Vec<Choice> = BOARD_PERFS
@@ -354,7 +354,7 @@ impl PlayersPage {
     fn lookup(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let name = name.unwrap_or_else(|| self.input.read(cx).value().trim().to_string());
         if !is_username(&name) {
-            self.error = Some("Enter a Lichess username.".into());
+            self.error = Some("Enter a Lichess username".into());
             cx.notify();
             return;
         }
@@ -506,7 +506,7 @@ impl PlayersPage {
                 dialog
                     .title(format!("Block {name}?"))
                     .description(format!(
-                        "@{account} stops seeing their messages, challenges and chat on Lichess."
+                        "@{account} stops seeing their messages, challenges and chat on Lichess"
                     ))
                     .ok_text("Block")
                     .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
@@ -700,7 +700,7 @@ impl PlayersPage {
                 let _ = page.update(cx, |page, cx| page.load_activity(cx));
             });
             (
-                SharedString::from("Lichess isn’t sending this player’s rating history right now."),
+                SharedString::from("Lichess isn’t sending this player’s rating history right now"),
                 retry,
             )
         })
@@ -760,7 +760,7 @@ impl PlayersPage {
         let online = crate::network::online(cx);
         // `.player-search-empty`: 28px above and 32px below, the `UEmpty` with room around it.
         widgets::card(palette)
-            .gap(px(10.))
+            .gap(px(8.))
             .when(empty, |card| {
                 card.pt(px(28.)).pb(px(32.)).items_center().child(
                     v_flex()
@@ -920,15 +920,15 @@ impl PlayersPage {
                     .justify_between()
                     .items_start()
                     .flex_wrap()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(
                         v_flex()
                             .gap(px(2.))
                             .child(
                                 h_flex()
-                                    .gap(px(6.))
+                                    .gap(px(8.))
                                     .text_size(px(16.))
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .children(title.map(|title| {
                                         widgets::badge(title.to_string(), Look::Primary, palette)
                                     }))
@@ -950,7 +950,7 @@ impl PlayersPage {
                     .child(
                         h_flex()
                             .flex_wrap()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .when(!followed, |row| {
                                 row.child(
                                     Button::new("players-follow")
@@ -1037,14 +1037,14 @@ impl PlayersPage {
                     .is_some_and(|relation| relation["blocking"] == json!(true)),
                 |card| {
                     card.child(widgets::hint(
-                        format!("Blocked by @{}.", me.clone().unwrap_or_default()),
+                        format!("Blocked by @{}", me.clone().unwrap_or_default()),
                         palette,
                     ))
                 },
             )
             .when(!self.extras_failed.is_empty(), |card| {
                 card.child(widgets::hint(
-                    format!("Could not load {}.", self.extras_failed.join(" or ")),
+                    format!("Could not load {}", self.extras_failed.join(" or ")),
                     palette,
                 ))
             })
@@ -1068,11 +1068,11 @@ impl PlayersPage {
     }
 
     fn record_card(&self, palette: &Palette) -> Div {
-        let mut card = widgets::card(palette).gap(px(10.)).child(
+        let mut card = widgets::card(palette).gap(px(8.)).child(
             h_flex()
                 .justify_between()
                 .items_start()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(
                     v_flex()
                         .flex_1()
@@ -1091,14 +1091,14 @@ impl PlayersPage {
                             }
                             h_flex()
                                 .flex_wrap()
-                                .gap(px(6.))
+                                .gap(px(8.))
                                 .items_baseline()
                                 .text_size(px(12.))
                                 .text_color(palette.text_muted)
                                 .child(
                                     div()
                                         .text_size(px(16.))
-                                        .font_weight(FontWeight::BOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(palette.highlighted)
                                         .child(
                                             stats["rating"]
@@ -1175,7 +1175,7 @@ impl PlayersPage {
                 h_flex()
                     .justify_between()
                     .gap(px(16.))
-                    .py(px(7.))
+                    .py(px(8.))
                     .border_t_1()
                     .border_color(palette.border)
                     .text_size(px(13.))
@@ -1190,7 +1190,7 @@ impl PlayersPage {
                     .min_w(px(160.))
                     .gap(px(4.))
                     .text_size(px(13.))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(title))
                     .when(entries.is_empty(), |list| {
                         list.child(div().text_color(palette.text_muted).child(none))
                     })
@@ -1218,13 +1218,13 @@ impl PlayersPage {
                 .child(opponents(
                     "Best rated wins",
                     &stats["bestWins"],
-                    "None yet.",
+                    "None yet",
                     "best-win",
                 ))
                 .child(opponents(
                     "Worst rated losses",
                     &stats["worstLosses"],
-                    "None.",
+                    "None",
                     "worst-loss",
                 )),
         )
@@ -1282,7 +1282,7 @@ impl PlayersPage {
                                 .gap(px(4.))
                                 .children(entry["title"].as_str().map(|title| {
                                     div()
-                                        .font_weight(FontWeight::BOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(palette.warning)
                                         .child(title.to_string())
                                 }))
@@ -1328,14 +1328,14 @@ impl PlayersPage {
             .child(widgets::heading("Activity", palette));
         if self.days_error {
             return card.child(widgets::hint(
-                "Lichess isn’t sending this player’s activity.",
+                "Lichess isn’t sending this player’s activity",
                 palette,
             ));
         }
         match &self.days {
             None => card.child(widgets::hint("Loading…", palette)),
             Some(days) if days.is_empty() => {
-                card.child(widgets::hint("No recent activity.", palette))
+                card.child(widgets::hint("No recent activity", palette))
             }
             Some(days) => card.child(crate::activity::activity_list(
                 "players-activity",
@@ -1352,10 +1352,10 @@ impl PlayersPage {
         if self.games_error {
             return card.child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .text_size(px(13.))
                     .text_color(palette.text_muted)
-                    .child("Lichess isn’t sending this player’s games right now.")
+                    .child("Lichess isn’t sending this player’s games right now")
                     .child(
                         Button::new("players-games-retry")
                             .text()
@@ -1368,7 +1368,7 @@ impl PlayersPage {
         }
         match &self.games {
             None => card.child(widgets::hint("Loading…", palette)),
-            Some(games) if games.is_empty() => card.child(widgets::hint("No games yet.", palette)),
+            Some(games) if games.is_empty() => card.child(widgets::hint("No games yet", palette)),
             Some(games) => card.children(games.iter().enumerate().map(|(index, game)| {
                 let chosen = game.clone();
                 game_row(
@@ -1412,7 +1412,7 @@ pub fn open_exported(
                         )
                     });
                 }
-                Ok(_) => window.push_notification("That game could not be read.", cx),
+                Ok(_) => window.push_notification("That game could not be read", cx),
                 Err(cause) => window
                     .push_notification(format!("Could not open the game: {}", cause.message), cx),
             });
@@ -1581,14 +1581,14 @@ impl Render for MessageDialog {
         v_flex()
             .gap(px(12.))
             .child(widgets::hint(
-                format!("Sent from @{} as a Lichess private message.", self.account),
+                format!("Sent from @{} as a Lichess private message", self.account),
                 &palette,
             ))
             .when(self.reconnect, |dialog| {
                 dialog.child(
                     h_flex()
                         .gap(px(8.))
-                        .p(px(10.))
+                        .p(px(12.))
                         .rounded(radii::MD)
                         .bg(crate::theme::tint(palette.warning, 10.))
                         .text_size(px(13.))

@@ -211,7 +211,7 @@ impl PuzzleRush {
                     Ok(Value::Array(ladder)) if ladder.len() >= 10 => ladder,
                     Ok(_) => {
                         this.error =
-                            Some("The puzzle database is too small; download it again.".into());
+                            Some("The puzzle database is too small; download it again".into());
                         this.stage = Stage::Menu;
                         cx.notify();
                         return;
@@ -483,7 +483,7 @@ impl PuzzleRush {
                     .flex_1()
                     .gap(px(2.))
                     .px(px(12.))
-                    .py(px(10.))
+                    .py(px(8.))
                     .rounded(radii::LG)
                     .border_1()
                     .text_size(px(13.))
@@ -504,7 +504,7 @@ impl PuzzleRush {
                     })
                     .child(
                         div()
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .child(self.title_of(key)),
                     )
                     .children(best.map(|best| {
@@ -534,7 +534,7 @@ impl PuzzleRush {
                 .child(
                     h_flex()
                         .text_size(px(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.text_muted)
                         .child(div().flex_1().child("WHEN"))
                         .child(cell("KIND".into(), 90.))
@@ -550,7 +550,7 @@ impl PuzzleRush {
                         .unwrap_or_default();
                     let variant = run["variant"].as_str().unwrap_or_default();
                     h_flex()
-                        .py(px(3.))
+                        .py(px(4.))
                         .text_size(px(13.))
                         .border_t_1()
                         .border_color(palette.border)
@@ -651,12 +651,12 @@ impl PuzzleRush {
                     .absolute()
                     .top(px(12.))
                     .right(px(12.))
-                    .px(px(10.))
+                    .px(px(12.))
                     .py(px(4.))
                     .rounded_full()
                     .bg(palette.primary)
                     .text_color(palette.inverted)
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .child(format!("+{}s", bonus / 1000.))
             }));
         let title = config["title"].as_str().unwrap_or_default().to_string();
@@ -675,8 +675,8 @@ impl PuzzleRush {
                 .items_end()
                 .children(left.map(|left| {
                     div()
-                        .text_size(px(34.))
-                        .font_weight(FontWeight::BOLD)
+                        .text_size(px(32.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(if low {
                             palette.error
                         } else {
@@ -686,12 +686,12 @@ impl PuzzleRush {
                 }))
                 .child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .items_baseline()
                         .child(
                             div()
-                                .text_size(px(26.))
-                                .font_weight(FontWeight::BOLD)
+                                .text_size(px(28.))
+                                .font_weight(FontWeight::MEDIUM)
                                 .child(number("score").to_string()),
                         )
                         .child(div().text_color(palette.text_muted).child("solved")),
@@ -711,7 +711,7 @@ impl PuzzleRush {
                             .child("Combo")
                             .child(
                                 div()
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child(number("combo").to_string()),
                             ),
                     )
@@ -736,7 +736,7 @@ impl PuzzleRush {
                 .map(|strikes| {
                     let used = number("mistakes") as u64;
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .children((0..strikes).map(|slot| {
                             if slot < used {
                                 icon("circle-x").size(px(20.)).text_color(palette.error)
@@ -798,13 +798,13 @@ impl PuzzleRush {
                 Some("time") => "Time’s up".to_string(),
                 Some("strikes") if config["strikes"].as_u64() == Some(1) => "Streak over".into(),
                 Some("strikes") => "Out of strikes".into(),
-                Some("complete") => "You cleared every puzzle!".into(),
+                Some("complete") => "Every puzzle cleared".into(),
                 _ => "Run ended".into(),
             };
             let detail = if best {
-                "A new personal best!".to_string()
+                "New personal best".to_string()
             } else if self.saved.is_some() {
-                "Saved on this computer.".into()
+                "Saved on this computer".into()
             } else if let Some(error) = &self.error {
                 format!("Not saved: {error}")
             } else {
@@ -826,7 +826,7 @@ impl PuzzleRush {
                     .child(
                         div()
                             .text_size(px(18.))
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .child(value),
                     )
             };

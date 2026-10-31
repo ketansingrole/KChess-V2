@@ -247,7 +247,7 @@ impl EditorPage {
                 self.changed(cx);
             }
             None => {
-                self.fen_error = Some("That is not a valid FEN.".into());
+                self.fen_error = Some("That is not a valid FEN".into());
                 cx.notify();
             }
         }
@@ -370,7 +370,7 @@ impl EditorPage {
                     self.setup["board"] = board;
                     self.changed(cx);
                 }
-                format!("{} {role} on {}.", side(&color), square.to_uppercase())
+                format!("{} {role} on {}", side(&color), square.to_uppercase())
             }
             Some("remove") => {
                 let square = text("square");
@@ -379,15 +379,15 @@ impl EditorPage {
                     self.setup["board"] = board;
                     self.changed(cx);
                 }
-                format!("Cleared {}.", square.to_uppercase())
+                format!("Cleared {}", square.to_uppercase())
             }
             Some("clear") => {
                 self.clear_board(cx);
-                "Board cleared.".into()
+                "Board cleared".into()
             }
             Some("start") => {
                 self.start_position(cx);
-                "Starting position.".into()
+                "Starting position".into()
             }
             Some("turn") => {
                 let color = text("color");
@@ -399,11 +399,11 @@ impl EditorPage {
                     },
                     cx,
                 );
-                format!("{} to move.", side(&color))
+                format!("{} to move", side(&color))
             }
             Some("flip") => {
                 self.flip(cx);
-                "Board flipped.".into()
+                "Board flipped".into()
             }
             Some("analyze") => match self.problem() {
                 Some(problem) => format!("Can’t analyse yet: {problem}"),
@@ -598,7 +598,7 @@ impl Render for EditorPage {
                 |this: &mut Self| &mut this.voice,
                 BarSpec {
                     id: "editor-voice",
-                    hint: "Say “white knight F three”, “remove E four” or “clear board”.",
+                    hint: "Say “white knight F three”, “remove E four” or “clear board”",
                     active: true,
                     grammar: crate::voice::grammar("EDITOR_GRAMMAR"),
                 },
@@ -607,7 +607,7 @@ impl Render for EditorPage {
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.text_muted)
                 .child(text)
         };
@@ -628,7 +628,7 @@ impl Render for EditorPage {
         });
         let [k, q, bk, bq] = castling;
         let fen_box = v_flex()
-            .gap(px(6.))
+            .gap(px(8.))
             .child(label("FEN"))
             .child(
                 h_flex()
@@ -709,7 +709,7 @@ impl Render for EditorPage {
             )
             .child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .child(label("Side to move"))
                     .child(widgets::pills(
                         "editor-turn",
@@ -739,9 +739,9 @@ impl Render for EditorPage {
                     )),
             )
             .child(
-                v_flex().gap(px(6.)).child(label("Castling")).child(
+                v_flex().gap(px(8.)).child(label("Castling")).child(
                     v_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .text_size(px(13.))
                         .child(
                             h_flex()
@@ -759,7 +759,7 @@ impl Render for EditorPage {
             )
             .when(!self.ep_squares.is_empty(), |panel| {
                 panel.child(
-                    v_flex().gap(px(6.)).child(label("En passant")).child(
+                    v_flex().gap(px(8.)).child(label("En passant")).child(
                         div().w(px(128.)).child(
                             Select::new(&self.ep_select)
                                 .small()

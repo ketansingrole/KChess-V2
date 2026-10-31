@@ -97,7 +97,7 @@ impl Render for StartupScreen {
             .child(
                 div()
                     .text_size(px(18.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .child("KChess couldn't start"),
             )
             .child(

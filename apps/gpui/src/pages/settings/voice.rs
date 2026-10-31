@@ -156,15 +156,13 @@ impl SettingsPage {
             Access::Denied => {
                 Some("Access was turned off. Allow KChess in your system privacy settings.")
             }
-            Access::Restricted => Some("A device policy blocks the microphone for this app."),
-            Access::NotDetermined => {
-                Some("Your system will ask the first time voice input starts.")
-            }
-            Access::Unknown => Some("Voice input asks for access when you turn it on."),
+            Access::Restricted => Some("A device policy blocks the microphone for this app"),
+            Access::NotDetermined => Some("Your system will ask the first time voice input starts"),
+            Access::Unknown => Some("Voice input asks for access when you turn it on"),
         };
         let launcher = access != Access::Granted && crate::microphone::launched_from_terminal();
         let access_info = v_flex()
-            .gap(px(3.))
+            .gap(px(4.))
             .child(
                 h_flex()
                     .gap(px(8.))
@@ -185,7 +183,7 @@ impl SettingsPage {
                 ))
             });
         let access_actions = h_flex()
-            .gap(px(6.))
+            .gap(px(8.))
             .when(access == Access::NotDetermined, |row| {
                 row.child(
                     Button::new("voice-allow")
@@ -207,7 +205,7 @@ impl SettingsPage {
             .row_with(access_info, access_actions)
             .row_with(
                 v_flex()
-                    .gap(px(3.))
+                    .gap(px(4.))
                     .child(
                         div()
                             .text_size(px(14.))
@@ -241,7 +239,7 @@ impl SettingsPage {
             .switch(
                 "voice-confirm",
                 "Confirm spoken moves",
-                Some("Say “confirm” before playing the move."),
+                Some("Say “confirm” before playing the move"),
                 frontend.voice_confirm_moves,
                 true,
                 |s, on| s.frontend.voice_confirm_moves = on,
@@ -250,7 +248,7 @@ impl SettingsPage {
             .switch(
                 "voice-push-to-talk",
                 "Hold to speak",
-                Some("Hold Space or the on-screen button."),
+                Some("Hold Space or the on-screen button"),
                 frontend.voice_push_to_talk,
                 true,
                 |s, on| s.frontend.voice_push_to_talk = on,
@@ -259,7 +257,7 @@ impl SettingsPage {
             .switch(
                 "voice-history",
                 "Keep voice history",
-                Some("Saves recognized text on this device; no audio."),
+                Some("Saves recognized text on this device; no audio"),
                 core.voice_history,
                 true,
                 |s, on| s.core.voice_history = on,

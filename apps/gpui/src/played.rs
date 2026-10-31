@@ -215,7 +215,7 @@ impl PlayedGames {
         let _ = self.writes.unbounded_send(Write::Flushed(done, again));
         Box::pin(async move {
             wait.await
-                .unwrap_or_else(|_| Err("The game history is closed.".to_string()))
+                .unwrap_or_else(|_| Err("The game history is closed".to_string()))
         })
     }
 

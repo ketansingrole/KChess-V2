@@ -345,7 +345,7 @@ impl Render for EndgameDrills {
                 Tone::Alert,
                 icon("triangle-alert"),
                 "Stockfish not found".to_string(),
-                Some("Install or choose an engine in Settings to use the drills.".to_string()),
+                Some("Install or choose an engine in Settings to use the drills".to_string()),
             )
         } else if over {
             (
@@ -427,9 +427,9 @@ impl Render for EndgameDrills {
                 format!(
                     "{} {}",
                     if self.drill.goal == "win" {
-                        "Checkmate within 50 moves."
+                        "Checkmate within 50 moves"
                     } else {
-                        "Hold the draw."
+                        "Hold the draw"
                     },
                     self.drill.idea
                 ),

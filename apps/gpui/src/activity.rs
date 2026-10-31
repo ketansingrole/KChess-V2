@@ -100,7 +100,7 @@ pub fn activity_list(id: &'static str, groups: &[ActivityGroup], palette: &Palet
         .text_size(px(13.))
         .children(groups.iter().map(|group| {
             v_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .child(
                     div()
                         .text_size(px(12.))

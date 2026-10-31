@@ -66,7 +66,7 @@ fn rasterize(svg: &[u8], width: u32, height: u32) -> Result<Pixmap, String> {
         ..usvg::Options::default()
     };
     let tree = usvg::Tree::from_data(svg, &options).map_err(|cause| cause.to_string())?;
-    let mut pixmap = Pixmap::new(width, height).ok_or("The image could not be made.")?;
+    let mut pixmap = Pixmap::new(width, height).ok_or("The image could not be made")?;
     let scale = tree.size();
     resvg::render(
         &tree,
@@ -90,16 +90,16 @@ fn painter(options: &ImageOptions) -> Result<Painter, String> {
     let look = looks::board(&options.board_theme);
     let board = crate::assets::shared(&format!("boards/{}", look.image))
         .or_else(|| crate::assets::shared("boards/brown.png"))
-        .ok_or("No board image is available.")?;
+        .ok_or("No board image is available")?;
     let board = image::load_from_memory(&board)
-        .map_err(|_| "An image for the export could not be loaded.")?
+        .map_err(|_| "An image for the export could not be loaded")?
         .resize_exact(size, size, image::imageops::FilterType::Triangle)
         .to_rgba8();
     let board = Pixmap::from_vec(
         board.into_raw(),
-        IntSize::from_wh(size, size).ok_or("The image could not be made.")?,
+        IntSize::from_wh(size, size).ok_or("The image could not be made")?,
     )
-    .ok_or("The image could not be made.")?;
+    .ok_or("The image could not be made")?;
     let flipped = options.orientation == Color::Black;
     let (top, bottom) = if flipped {
         (&options.white, &options.black)
@@ -133,7 +133,7 @@ fn painter(options: &ImageOptions) -> Result<Painter, String> {
         for role in shakmaty::Role::ALL {
             let piece = Piece { color, role };
             let svg = crate::assets::shared(&looks::piece_path(&options.piece_set, piece))
-                .ok_or("An image for the export could not be loaded.")?;
+                .ok_or("An image for the export could not be loaded")?;
             pieces.insert(piece, rasterize(&svg, square, square)?);
         }
     }
@@ -193,7 +193,7 @@ impl Painter {
 /// that many moves. The line stops at the first illegal move.
 fn positions(options: &ImageOptions, up_to: usize) -> Result<Vec<(Board, Option<String>)>, String> {
     let mut position = kchess_domain::rules::setup_start(&options.variant, &options.fen)
-        .ok_or("That game cannot be replayed.")?;
+        .ok_or("That game cannot be replayed")?;
     let mut list = vec![(position.board().clone(), None)];
     for uci in options.moves.iter().take(up_to) {
         let Some(chosen) = kchess_domain::rules::parse_uci(uci.trim())
@@ -211,7 +211,7 @@ fn rgba(frame: Pixmap) -> Result<RgbaImage, String> {
     let (width, height) = (frame.width(), frame.height());
     // The frames are opaque, so their premultiplied pixels are the plain ones.
     RgbaImage::from_raw(width, height, frame.take())
-        .ok_or_else(|| "The image could not be made.".into())
+        .ok_or_else(|| "The image could not be made".into())
 }
 
 /// One line of rotated text: what it says, its size and weight, and how strongly it shows.
@@ -278,7 +278,7 @@ pub fn position_png(options: &ImageOptions, ply: usize) -> Result<Vec<u8>, Strin
     let paint = painter(options)?;
     let (board, last) = positions(options, ply)?
         .pop()
-        .ok_or("That game cannot be replayed.")?;
+        .ok_or("That game cannot be replayed")?;
     let frame = rgba(paint.draw(&board, last.as_deref()))?;
     let mut out = Vec::new();
     image::codecs::png::PngEncoder::new(&mut out)
@@ -288,7 +288,7 @@ pub fn position_png(options: &ImageOptions, ply: usize) -> Result<Vec<u8>, Strin
             frame.height(),
             image::ExtendedColorType::Rgba8,
         )
-        .map_err(|_| "The image could not be made.")?;
+        .map_err(|_| "The image could not be made")?;
     Ok(out)
 }
 
@@ -303,14 +303,14 @@ pub fn game_gif(
     let paint = painter(options)?;
     let list = positions(options, options.moves.len())?;
     if list.len() > MAX_FRAMES {
-        return Err("That game is too long for a GIF (300 moves at most).".into());
+        return Err("That game is too long for a GIF (300 moves at most)".into());
     }
     let mut out = Cursor::new(Vec::new());
     {
         let mut encoder = GifEncoder::new_with_speed(&mut out, 10);
         encoder
             .set_repeat(Repeat::Infinite)
-            .map_err(|_| "The image could not be made.")?;
+            .map_err(|_| "The image could not be made")?;
         let count = list.len();
         for (index, (board, last)) in list.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
@@ -331,7 +331,7 @@ pub fn game_gif(
             );
             encoder
                 .encode_frame(frame)
-                .map_err(|_| "The image could not be made.")?;
+                .map_err(|_| "The image could not be made")?;
             progress(index + 1, count);
         }
     }

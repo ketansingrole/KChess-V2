@@ -370,7 +370,7 @@ impl TournamentsPage {
             |dialog: gpui_kit::component::dialog::AlertDialog, _, _| {
                 dialog
                     .title("Connect Lichess to join")
-                    .description("Connect your Lichess account to join or create tournaments.")
+                    .description("Connect your Lichess account to join or create tournaments")
                     .ok_text("Connect Lichess")
                     .cancel_text("Keep browsing")
                     .show_cancel(true)
@@ -396,7 +396,7 @@ impl TournamentsPage {
     fn created(&mut self, created: &Value, window: &mut Window, cx: &mut Context<Self>) {
         window.push_notification(
             format!(
-                "Created {}.",
+                "Created {}",
                 created["name"].as_str().unwrap_or("the arena")
             ),
             cx,
@@ -419,7 +419,7 @@ impl TournamentsPage {
                 "Lichess needs a new permission".into(),
             )
             .detail(
-                format!("Connect @{account} again to allow joining and creating tournaments.")
+                format!("Connect @{account} again to allow joining and creating tournaments")
                     .into(),
             )
             .extra(
@@ -455,7 +455,7 @@ impl Render for TournamentsPage {
             });
         };
         let header = h_flex()
-            .gap(px(10.))
+            .gap(px(8.))
             .flex_wrap()
             .child(div().flex_1().min_w_0().when(!showing_event, |lead| {
                 lead.child(timeline::legend(&palette))

@@ -406,7 +406,7 @@ impl StudiesPage {
         if !copy && !cloud.is_null() && !cloud_account.eq_ignore_ascii_case(&account) {
             window.push_notification(
                 Notification::warning(format!(
-                    "Switch to @{cloud_account} to upload changes to this study."
+                    "Switch to @{cloud_account} to upload changes to this study"
                 )),
                 cx,
             );
@@ -427,7 +427,7 @@ impl StudiesPage {
                     .update(cx, |_, cx| library.read(cx).study(&id).cloned())
                     .ok()
                     .flatten()
-                    .ok_or("The study is gone.")?;
+                    .ok_or("The study is gone")?;
                 let pgn = document_pgn(&study);
                 let cloud = study["cloud"].clone();
                 let linked = !copy
@@ -477,7 +477,7 @@ impl StudiesPage {
                         .map_err(|cause| cause.message)?
                 };
                 if chapters.get("needsReconnect").is_some() {
-                    return Err("Uploaded, but study access needs reconnection.".into());
+                    return Err("Uploaded, but study access needs reconnection".into());
                 }
                 let baseline = chapters
                     .as_array()
@@ -496,7 +496,7 @@ impl StudiesPage {
                             "baseline": baseline,
                         }))
                     })
-                    .map_err(|_| "The page closed.".to_string())?;
+                    .map_err(|_| "The page closed".to_string())?;
                 let result = marked.await?;
                 let _ = this.update(cx, |_, cx| {
                     library.update(cx, |library, cx| {
@@ -776,7 +776,7 @@ impl StudiesPage {
                             .child(
                                 div()
                                     .text_size(px(18.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child("No studies yet"),
                             )
                             .child(
@@ -864,7 +864,7 @@ impl StudiesPage {
                 .text_center()
                 .text_color(palette.text_muted)
                 .child(format!(
-                    "No study matches “{}”.",
+                    "No study matches “{}”",
                     self.search.read(cx).value()
                 ))
                 .into_any_element()
@@ -990,7 +990,7 @@ impl ImportStudy {
     fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.text.read(cx).value().trim().to_string();
         let Some(chapters) = import_chapters(&text) else {
-            self.error = Some("Paste valid PGN with up to 64 chapters.".into());
+            self.error = Some("Paste valid PGN with up to 64 chapters".into());
             cx.notify();
             return;
         };
@@ -1051,7 +1051,7 @@ impl Render for ImportStudy {
                 div()
                     .text_size(px(14.))
                     .text_color(palette.text_muted)
-                    .child("Paste PGN chapters."),
+                    .child("Paste PGN chapters"),
             )
             .child(Input::new(&self.name).aria_label("Study name"))
             .child(Textarea::new(&self.text).aria_label("PGN"))

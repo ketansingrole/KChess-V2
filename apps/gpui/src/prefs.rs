@@ -105,7 +105,7 @@ impl ViewPreferences {
                 return Ok(());
             }
             wait.await
-                .unwrap_or_else(|_| Err("View preferences are closed.".to_string()))
+                .unwrap_or_else(|_| Err("View preferences are closed".to_string()))
         })
     }
 }

@@ -465,7 +465,7 @@ impl Live {
                 let line = |side: &'static str, slot: usize| {
                     h_flex()
                         .justify_between()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .text_size(px(12.))
                         .child(
                             crate::pages::players::player_link(
@@ -477,7 +477,7 @@ impl Live {
                         )
                         .child(
                             div()
-                                .font_weight(FontWeight::BOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .child(past_score(entry, side)),
                         )
                 };
@@ -626,7 +626,7 @@ impl WatchPage {
                 .child(
                     h_flex()
                         .gap(px(4.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child(crate::pages::players::player_link(
                             "watch-h2h-white",
                             white,
@@ -641,9 +641,9 @@ impl WatchPage {
                 )
                 .children(scores.into_iter().map(|(label, score, games)| {
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .child(div().text_color(palette.text_muted).child(label))
-                        .child(div().font_weight(FontWeight::BOLD).child(score))
+                        .child(div().font_weight(FontWeight::MEDIUM).child(score))
                         .child(div().text_color(palette.text_muted).child(format!(
                             "{games} game{}",
                             if games == 1. { "" } else { "s" }
@@ -657,9 +657,9 @@ impl WatchPage {
             .map(|setup| view::sans(setup, &moves))
             .unwrap_or_default();
         let empty = if frame["source"] != json!("tv") {
-            "Lichess does not send this game’s moves."
+            "Lichess does not send this game’s moves"
         } else if crazyhouse {
-            "No move list for Crazyhouse."
+            "No move list for Crazyhouse"
         } else {
             "Loading moves…"
         };
@@ -703,7 +703,7 @@ impl WatchPage {
             ))
             .when(frame["source"] == json!("game"), |panel| {
                 panel.child(widgets::hint(
-                    "Moves shown with Lichess’s anti-cheat delay.",
+                    "Moves shown with Lichess’s anti-cheat delay",
                     palette,
                 ))
             })
@@ -821,7 +821,7 @@ impl WatchPage {
             let name = player["name"].as_str().unwrap_or("?").to_string();
             let shown = label(player);
             let identity = h_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(widgets::avatar(
                     icon("user"),
                     if color == Color::White {

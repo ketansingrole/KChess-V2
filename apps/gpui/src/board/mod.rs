@@ -866,7 +866,7 @@ impl ChessBoard {
                     .pt(relative(0.06 / 8.))
                     .pr(relative(0.04 / 8.))
                     .text_size(px(11.))
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(if square.is_light() {
                         looks::hex(&look.coord_black)
                     } else {
@@ -923,11 +923,7 @@ impl ChessBoard {
                             .items_center()
                     })
                     .text_size(px(11.))
-                    .font_weight(if inside {
-                        FontWeight::BOLD
-                    } else {
-                        FontWeight::SEMIBOLD
-                    })
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(color(square))
                     .opacity(0.8)
                     .child(rank.char().to_string())
@@ -950,11 +946,7 @@ impl ChessBoard {
                             .justify_center()
                     })
                     .text_size(px(11.))
-                    .font_weight(if inside {
-                        FontWeight::BOLD
-                    } else {
-                        FontWeight::SEMIBOLD
-                    })
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(color(square))
                     .opacity(0.8)
                     .child(file.char().to_string())
@@ -999,7 +991,7 @@ impl ChessBoard {
                         .role(gpui_kit::Role::Dialog)
                         .aria_label("Choose promotion piece")
                         .flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .p(px(8.))
                         .rounded(radii::XL)
                         .bg(elevated)
@@ -1568,7 +1560,7 @@ impl Render for ChessBoard {
                     .items_center()
                     .justify_center()
                     .text_size(diameter * 0.55)
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(0xffffff))
                     .child(badge.glyph)
             });

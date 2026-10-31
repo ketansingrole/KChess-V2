@@ -175,7 +175,7 @@ pub fn legend(palette: &Palette) -> impl IntoElement {
         .text_color(palette.text_muted)
         .children(CATEGORIES.iter().map(|(_, label, color)| {
             h_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .child(div().size(px(10.)).rounded(radii::XS).bg(rgb(*color)))
                 .child(*label)
         }))
@@ -242,7 +242,9 @@ impl TournamentsPage {
         }
         let Some(list) = &self.list else {
             return body
-                .child(widgets::hint("Loading…", palette))
+                .when(self.error.is_none(), |body| {
+                    body.child(widgets::hint("Loading…", palette))
+                })
                 .into_any_element();
         };
         let arenas: Vec<Value> = list["arenas"]
@@ -254,7 +256,7 @@ impl TournamentsPage {
             .collect();
         if arenas.is_empty() {
             return body
-                .child(widgets::hint("No arenas to show right now.", palette))
+                .child(widgets::hint("No arenas to show right now", palette))
                 .into_any_element();
         }
         let now = chrono::Utc::now().timestamp_millis() as f64;
@@ -332,7 +334,7 @@ impl TournamentsPage {
                             .w(px((right - left).max(1.)))
                             .h(px(ROW))
                             .pl(px(10. + pinned))
-                            .pr(px(10.))
+                            .pr(px(12.))
                             .gap(px(8.))
                             .overflow_hidden()
                             .rounded(radii::SM)
@@ -360,7 +362,7 @@ impl TournamentsPage {
                                     .child(
                                         div()
                                             .text_size(px(14.))
-                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .font_weight(FontWeight::MEDIUM)
                                             .truncate()
                                             .child(
                                                 arena["name"]
@@ -411,7 +413,7 @@ impl TournamentsPage {
                             .top_0()
                             .h(px(height))
                             .pl(px(6.))
-                            .pt(px(7.))
+                            .pt(px(8.))
                             .border_l_1()
                             .border_color(if hour {
                                 palette.border_accented
@@ -424,7 +426,7 @@ impl TournamentsPage {
                             } else {
                                 palette.dimmed
                             })
-                            .when(hour, |tick| tick.font_weight(FontWeight::SEMIBOLD))
+                            .when(hour, |tick| tick.font_weight(FontWeight::MEDIUM))
                             .child(label)
                     })),
             )

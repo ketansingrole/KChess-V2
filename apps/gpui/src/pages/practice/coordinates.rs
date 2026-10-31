@@ -359,7 +359,7 @@ impl Coordinates {
             return;
         }
         let Some(square) = square else {
-            self.voice.feedback = Some("Say one square, such as “E four” or “Echo four”.".into());
+            self.voice.feedback = Some("Say one square, such as “E four” or “Echo four”".into());
             cx.notify();
             return;
         };
@@ -593,7 +593,7 @@ impl Render for Coordinates {
                 .child(shadowed(
                     self.target.clone(),
                     board_size * 0.2,
-                    FontWeight::BOLD,
+                    FontWeight::MEDIUM,
                     0.9,
                 ))
                 .child(shadowed(
@@ -689,6 +689,48 @@ impl Render for Coordinates {
         );
         let limited = crate::prefs::get(cx, LIMITED, false);
         let length = Self::length(cx);
+        // The run first: with limits showing, the settings fill the panel.
+        let mut drill = v_flex().gap(px(12.));
+        drill = drill.child(run::hud(
+            &self.clock,
+            f64::from(self.score),
+            "correct",
+            &palette,
+        ));
+        if self.mode == Mode::Name {
+            let pending = self.pending_file.clone();
+            drill = drill.child(
+                v_flex()
+                    .gap(px(8.))
+                    .child(h_flex().gap(px(4.)).children(FILES.iter().map(|file| {
+                        let chosen = pending.as_deref() == Some(*file);
+                        Button::new(SharedString::from(format!("answer-{file}")))
+                            .small()
+                            .flex_1()
+                            .when(chosen, |button| button.primary())
+                            .when(!chosen, |button| button.outline())
+                            .label(*file)
+                            .on_click(cx.listener(move |this, _, _, cx| this.press(file, cx)))
+                    })))
+                    .child(h_flex().gap(px(4.)).children(RANKS.iter().map(|rank| {
+                        Button::new(SharedString::from(format!("answer-{rank}")))
+                            .small()
+                            .flex_1()
+                            .outline()
+                            .label(*rank)
+                            .disabled(pending.is_none())
+                            .on_click(cx.listener(move |this, _, _, cx| this.press(rank, cx)))
+                    }))),
+            );
+        }
+        drill = drill.child(
+            Button::new("coordinates-end")
+                .outline()
+                .icon(icon("flag"))
+                .label("End run")
+                .on_click(cx.listener(|this, _, _, cx| this.finish(cx))),
+        );
+
         let mut panel = widgets::side_panel(&palette)
             .id("coordinates-panel")
             .overflow_y_scroll()
@@ -696,10 +738,13 @@ impl Render for Coordinates {
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
-            .gap(px(14.))
+            .gap(px(12.))
+            .when(running, |panel| {
+                panel.child(drill).child(div().h(px(1.)).bg(palette.border))
+            })
             .child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .child(
                         h_flex()
                             .justify_between()
@@ -732,7 +777,7 @@ impl Render for Coordinates {
             .when(limited, |panel| {
                 panel.child(
                     v_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .child(self.file_rank_row(
                             &FILES,
                             Self::files(cx),
@@ -776,55 +821,17 @@ impl Render for Coordinates {
                     |this: &mut Self| &mut this.voice,
                     BarSpec {
                         id: "coordinates-voice",
-                        hint: "Say “E four” or “Echo four”.",
+                        hint: "Say “E four” or “Echo four”",
                         active: running,
                         grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
                     },
                     cx,
                 ))
             })
-            .child(div().h(px(1.)).bg(palette.border));
-        if running {
-            panel = panel.child(run::hud(
-                &self.clock,
-                f64::from(self.score),
-                "correct",
-                &palette,
-            ));
-            if self.mode == Mode::Name {
-                let pending = self.pending_file.clone();
-                panel = panel.child(
-                    v_flex()
-                        .gap(px(6.))
-                        .child(h_flex().gap(px(4.)).children(FILES.iter().map(|file| {
-                            let chosen = pending.as_deref() == Some(*file);
-                            Button::new(SharedString::from(format!("answer-{file}")))
-                                .small()
-                                .flex_1()
-                                .when(chosen, |button| button.primary())
-                                .when(!chosen, |button| button.outline())
-                                .label(*file)
-                                .on_click(cx.listener(move |this, _, _, cx| this.press(file, cx)))
-                        })))
-                        .child(h_flex().gap(px(4.)).children(RANKS.iter().map(|rank| {
-                            Button::new(SharedString::from(format!("answer-{rank}")))
-                                .small()
-                                .flex_1()
-                                .outline()
-                                .label(*rank)
-                                .disabled(pending.is_none())
-                                .on_click(cx.listener(move |this, _, _, cx| this.press(rank, cx)))
-                        }))),
-                );
-            }
-            panel = panel.child(
-                Button::new("coordinates-end")
-                    .outline()
-                    .icon(icon("flag"))
-                    .label("End run")
-                    .on_click(cx.listener(|this, _, _, cx| this.finish(cx))),
-            );
-        } else {
+            .when(!running, |panel| {
+                panel.child(div().h(px(1.)).bg(palette.border))
+            });
+        if !running {
             let variant = self.record_variant(cx);
             let best = run::best(&self.summary, &variant);
             if self.stage == Stage::Over {
@@ -834,7 +841,7 @@ impl Render for Coordinates {
                 } else if self.clock.untimed {
                     format!("in {}", self.clock.text())
                 } else if is_best {
-                    "A new personal best!".to_string()
+                    "New personal best".to_string()
                 } else {
                     format!("Best so far: {}", best.unwrap_or(f64::from(self.score)))
                 };
@@ -865,7 +872,7 @@ impl Render for Coordinates {
                                     .child(format!("Average as {name}:"))
                                     .child(
                                         div()
-                                            .font_weight(FontWeight::BOLD)
+                                            .font_weight(FontWeight::MEDIUM)
                                             .child(format!("{average}")),
                                     ),
                             )

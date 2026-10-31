@@ -357,7 +357,7 @@ impl HistoryPage {
         if !crate::network::online(cx) {
             return card
                 .child(note(
-                    "Offline · reconnect to see bookmarks.".into(),
+                    "Offline · reconnect to see bookmarks".into(),
                     palette.text_muted,
                 ))
                 .into_any_element();
@@ -822,10 +822,9 @@ impl HistoryPage {
         };
         let head = |label: &'static str| {
             div()
-                .text_size(px(11.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(palette.dimmed)
-                .child(label.to_uppercase())
+                .text_size(px(12.))
+                .text_color(palette.text_muted)
+                .child(label)
                 .into_any_element()
         };
         let header = columns(
@@ -871,9 +870,9 @@ impl HistoryPage {
                     .min_w_0()
                     .child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .min_w_0()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .children(side.map(widgets::side_dot))
                             .child(div().min_w_0().truncate().child(opponent(&game))),
                     )
@@ -952,7 +951,7 @@ impl HistoryPage {
                         ))
                         .pl(px(12.))
                         .pr(px(8.))
-                        .py(px(11.))
+                        .py(px(12.))
                         .when(index > 0, |row| {
                             row.border_t_1().border_color(palette.border)
                         })
@@ -988,7 +987,7 @@ impl HistoryPage {
                 card.child(
                     v_flex()
                         .items_center()
-                        .gap(px(10.))
+                        .gap(px(8.))
                         .py(px(20.))
                         .child(
                             icon("search-x")

@@ -56,8 +56,7 @@ fn every_tab_in_both_appearances() {
 /// The app in a window of this size, over `profile`.
 fn start(profile: &Path, width: f32, height: f32) -> (HeadlessAppContext, AnyWindowHandle) {
     let state = serde_json::json!({ "x": 0, "y": 0, "width": width, "height": height });
-    std::fs::write(profile.join("window-state.json"), state.to_string())
-        .expect("the window state");
+    std::fs::write(profile.join("window-state.json"), state.to_string()).expect("the window state");
     crate::profile::TEST_DATA_DIR.set(Some(profile.to_path_buf()));
     let text = Arc::new(gpui_apple::AppleTextSystem::new());
     let mut cx = HeadlessAppContext::with_platform(
@@ -132,10 +131,9 @@ fn tabs(out: &Path, appearance: Appearance) {
 }
 
 fn slug(label: &str) -> String {
-    label.to_lowercase().replace(
-        |c: char| !c.is_alphanumeric(),
-        "-",
-    )
+    label
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric(), "-")
 }
 
 fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {

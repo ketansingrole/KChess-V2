@@ -224,7 +224,7 @@ impl CreateArena {
         let soon = chrono::Utc::now().timestamp_millis() as f64 + 60_000.;
         match parse_start(&self.start_at.read(cx).value()) {
             Some(at) if at >= soon => None,
-            _ => Some("Pick a start time in the future."),
+            _ => Some("Pick a start time in the future"),
         }
     }
 
@@ -368,19 +368,19 @@ impl Render for CreateArena {
                 form.child(
                     h_flex()
                         .gap(px(8.))
-                        .p(px(10.))
+                        .p(px(12.))
                         .rounded(radii::MD)
                         .bg(palette.accented)
                         .text_size(px(13.))
                         .child(icon("eye").size(px(16.)).flex_none())
                         .child(div().flex_1().min_w_0().child(
-                            "KChess can play only Rapid and Classical arena games; players will join faster ones on Lichess.",
+                            "KChess can play only Rapid and Classical arena games; players will join faster ones on Lichess",
                         )),
                 )
             })
             .when(self.reconnect, |form| {
                 form.child(widgets::StatusBanner::new(widgets::Tone::Alert, icon("key-round"), "Lichess needs a new permission".into()).detail(format!(
-                            "Connect @{} again to allow creating tournaments.",
+                            "Connect @{} again to allow creating tournaments",
                             self.account
                         )
                         .into(),).extra(h_flex()

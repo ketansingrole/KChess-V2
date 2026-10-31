@@ -678,7 +678,7 @@ impl LocalPage {
             let (page, chosen) = (page.clone(), chosen.clone());
             dialog
                 .title("Start a new game?")
-                .description("The game on the board is still in progress and will be lost.")
+                .description("The game on the board is still in progress and will be lost")
                 .ok_text("New game")
                 .cancel_text("Cancel")
                 .show_cancel(true)
@@ -1025,14 +1025,14 @@ impl LocalPage {
                 .child(
                     div()
                         .text_size(px(14.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .opacity(0.75)
                         .child(format!("Player {index}")),
                 )
                 .child(
                     div()
                         .text_size(px(120.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .line_height(px(120.))
                         .child(time.clone()),
                 )
@@ -1045,7 +1045,7 @@ impl LocalPage {
                 .child(
                     div()
                         .text_size(px(12.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child(state),
                 );
             div()
@@ -1259,7 +1259,7 @@ impl Render for LocalPage {
             let active = live && display_turn == color;
             widgets::player_line(
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(widgets::avatar(
                         icon("user"),
                         if color == Color::White {
@@ -1292,7 +1292,7 @@ impl Render for LocalPage {
             },
             crate::voice::moves::BoardBar {
                 id: "local-voice",
-                hint: "Either player can say “E four” or “Knight F three”.",
+                hint: "Either player can say “E four” or “Knight F three”",
                 active: self.voice_taking(),
                 listening: self.voice_taking(),
                 grammar: crate::voice::grammar("MOVE_GRAMMAR"),
@@ -1421,7 +1421,7 @@ impl LocalPage {
                 icon("history"),
                 "Reviewing an earlier position".into(),
             )
-            .detail("Go to the last move to keep playing.".into()),
+            .detail("Go to the last move to keep playing".into()),
             None => {
                 let check = display.as_ref().is_some_and(shakmaty::Position::is_check);
                 let detail = if timed && paused && !moves.is_empty() {
@@ -1487,7 +1487,7 @@ impl LocalPage {
                     .text_color(palette.text_muted)
                     .children(
                         variant_label
-                            .map(|label| div().font_weight(FontWeight::SEMIBOLD).child(label)),
+                            .map(|label| div().font_weight(FontWeight::MEDIUM).child(label)),
                     )
                     .children(clock_label)
                     .child(div().flex_1())
@@ -1770,7 +1770,7 @@ impl NewGame {
         position_problem(&text).map(SharedString::from).or_else(|| {
             kchess_domain::rules::setup_start("standard", &text)
                 .is_none()
-                .then(|| "Not a legal position.".into())
+                .then(|| "Not a legal position".into())
         })
     }
 
@@ -1863,7 +1863,7 @@ impl Render for NewGame {
                                 Input::new(&self.number),
                                 self.number960(cx)
                                     .is_none()
-                                    .then(|| "Enter a number from 0 to 959.".into()),
+                                    .then(|| "Enter a number from 0 to 959".into()),
                                 &palette,
                             )
                             .flex_1(),

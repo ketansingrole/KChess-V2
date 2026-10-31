@@ -84,7 +84,7 @@ impl OnlinePage {
                 cx.notify();
             }))
             .child(icon("message-circle").size(px(16.)))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Chat"))
+            .child(div().font_weight(FontWeight::MEDIUM).child("Chat"))
             .when(unread > 0, |head| {
                 head.child(widgets::badge(unread.to_string(), Look::Primary, palette))
             })
@@ -127,14 +127,14 @@ impl OnlinePage {
                             .gap(px(4.))
                             .text_size(px(13.))
                             .when(lines.is_empty(), |log| {
-                                log.child(widgets::hint("No messages.", palette))
+                                log.child(widgets::hint("No messages", palette))
                             })
                             .children(lines.iter().map(|line| {
                                 let spectator = line["room"] != json!("player");
                                 h_flex()
-                                    .gap(px(6.))
+                                    .gap(px(8.))
                                     .when(spectator, |row| row.text_color(palette.text_muted))
-                                    .child(div().font_weight(FontWeight::SEMIBOLD).child(
+                                    .child(div().font_weight(FontWeight::MEDIUM).child(
                                         line["user"].as_str().unwrap_or_default().to_string(),
                                     ))
                                     .child(line["text"].as_str().unwrap_or_default().to_string())

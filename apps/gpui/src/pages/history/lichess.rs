@@ -281,7 +281,7 @@ impl HistoryPage {
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 let Some((setup, moves)) = pgn.as_deref().and_then(line_of) else {
-                    this.message = Some("That game could not be read.".into());
+                    this.message = Some("That game could not be read".into());
                     cx.notify();
                     return;
                 };
@@ -396,9 +396,9 @@ impl HistoryPage {
                         h_flex()
                             .gap(px(4.))
                             .text_size(px(14.))
-                            .child(div().font_weight(FontWeight::BOLD).child(account))
+                            .child(div().font_weight(FontWeight::MEDIUM).child(account))
                             .child("vs")
-                            .child(div().font_weight(FontWeight::BOLD).child(opponent))
+                            .child(div().font_weight(FontWeight::MEDIUM).child(opponent))
                             .child(div().text_color(palette.text_muted).child(match opening {
                                 Some(opening) => format!("· {date} · {opening}"),
                                 None => format!("· {date}"),
@@ -458,7 +458,7 @@ impl HistoryPage {
                 widgets::empty_state(
                     icon("history"),
                     "No saved Lichess games",
-                    Some("Sync games to get started.".into()),
+                    Some("Sync games to get started".into()),
                     palette,
                 )
                 .child(h_flex().mt(px(12.)).child(sync))
@@ -466,7 +466,7 @@ impl HistoryPage {
                 widgets::empty_state(
                     icon("history"),
                     "No saved Lichess games",
-                    Some("Follow a player or connect Lichess.".into()),
+                    Some("Follow a player or connect Lichess".into()),
                     palette,
                 )
                 .child(
@@ -485,7 +485,7 @@ impl HistoryPage {
                         .child(
                             Button::new("lichess-analyse")
                                 .outline()
-                                .label("Analyze a PGN")
+                                .label("Analyse a PGN")
                                 .on_click(|_, window, cx| {
                                     crate::shell::open(Page::Analysis, window, cx)
                                 }),
@@ -527,7 +527,7 @@ impl HistoryPage {
         let several = accounts.read(cx).all().len() > 1;
         let toolbar = h_flex()
             .flex_wrap()
-            .gap(px(10.))
+            .gap(px(8.))
             .when(several, |row| {
                 row.child(
                     div()
@@ -575,7 +575,7 @@ impl HistoryPage {
                 palette,
             )
             .child(
-                h_flex().mt(px(10.)).child(
+                h_flex().mt(px(8.)).child(
                     Button::new("lichess-clear-empty")
                         .outline()
                         .label("Clear filters")
@@ -591,7 +591,7 @@ impl HistoryPage {
                 .pb(px(8.))
                 .gap(px(12.))
                 .text_size(px(11.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.text_muted)
                 .child(div().w(px(64.)).child("RESULT"))
                 .child(div().flex_1().child("OPPONENT"))
@@ -652,7 +652,7 @@ impl HistoryPage {
         v_flex()
             .gap(px(16.))
             .child(toolbar)
-            .child(widgets::card(palette).p(px(10.)).child(body).child(pager))
+            .child(widgets::card(palette).p(px(12.)).child(body).child(pager))
             .into_any_element()
     }
 
@@ -770,7 +770,7 @@ pub fn game_row(
         .keyboard_focus(palette.primary)
         .aria_label(format!("Game against {opponent}"))
         .px(px(12.))
-        .py(px(11.))
+        .py(px(12.))
         .gap(px(12.))
         .rounded(radii::MD)
         .text_size(px(13.))
@@ -788,7 +788,7 @@ pub fn game_row(
                 .min_w_0()
                 .child(
                     div()
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .truncate()
                         .child(opponent),
                 )

@@ -249,11 +249,11 @@ impl KnightPaths {
             self.reached += 1;
             if self.jumps <= self.best {
                 self.optimal += 1;
-                self.notice = Some("Shortest path!".into());
+                self.notice = Some("Shortest path".into());
             } else {
                 self.missed += 1;
                 self.notice = Some(format!(
-                    "Reached it in {}; the shortest was {}.",
+                    "Reached it in {}; the shortest was {}",
                     self.jumps, self.best
                 ));
             }
@@ -299,7 +299,7 @@ impl KnightPaths {
         let feedback = match square {
             None => {
                 log(self, "invalid", None, cx);
-                "Say a square, such as “F three” or “Foxtrot three”.".to_string()
+                "Say a square, such as “F three” or “Foxtrot three”".to_string()
             }
             Some(square) if !knight_moves(&self.knight).contains(&square) => {
                 log(self, "invalid", Some(&square), cx);
@@ -320,7 +320,7 @@ impl KnightPaths {
         if self.knight != self.goal {
             self.missed += 1;
             self.notice = Some(format!(
-                "Skipped — the shortest path was {} jumps.",
+                "Skipped — the shortest path was {} jumps",
                 self.best
             ));
         }
@@ -433,7 +433,7 @@ impl Render for KnightPaths {
                         div()
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
-                            .child("Reach the green square in the fewest moves."),
+                            .child("Reach the green square in the fewest moves"),
                     )
                     .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
             )
@@ -457,7 +457,7 @@ impl Render for KnightPaths {
                 |this: &mut Self| &mut this.voice,
                 BarSpec {
                     id: "knight-voice",
-                    hint: "Say the square to jump to, such as “F three”.",
+                    hint: "Say the square to jump to, such as “F three”",
                     active: running,
                     grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
                 },
@@ -483,7 +483,7 @@ impl Render for KnightPaths {
                                 .id("knight-target")
                                 .test_support()
                                 .aria_label(target.clone())
-                                .font_weight(FontWeight::BOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .child(target),
                         )
                         .child(
@@ -535,7 +535,7 @@ impl Render for KnightPaths {
                         if self.clock.untimed {
                             format!("in {}", self.clock.text())
                         } else if is_best {
-                            "A new personal best!".to_string()
+                            "New personal best".to_string()
                         } else {
                             format!("Best so far: {}", best.unwrap_or(f64::from(self.optimal)))
                         }

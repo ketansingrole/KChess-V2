@@ -412,7 +412,7 @@ impl FriendsPage {
             .id(("friend", index))
             .gap(px(12.))
             .px(px(12.))
-            .py(px(10.))
+            .py(px(8.))
             .border_t_1()
             .border_color(palette.border)
             .text_size(px(13.))
@@ -420,7 +420,7 @@ impl FriendsPage {
                 h_flex()
                     .flex_1()
                     .min_w(px(180.))
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(
                         div()
                             .size(px(30.))
@@ -431,7 +431,7 @@ impl FriendsPage {
                             .items_center()
                             .justify_center()
                             .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .child(initials),
                     )
                     .child(
@@ -439,14 +439,14 @@ impl FriendsPage {
                             .min_w_0()
                             .child(
                                 h_flex()
-                                    .gap(px(6.))
+                                    .gap(px(8.))
                                     .child(
                                         div()
                                             .id(("friend-name", index))
                                             .role(Role::Link)
                                             .keyboard_focus(palette.primary)
                                             .aria_label(format!("@{name}"))
-                                            .font_weight(FontWeight::BOLD)
+                                            .font_weight(FontWeight::MEDIUM)
                                             .truncate()
                                             .cursor_pointer()
                                             .hover(|name| name.underline())
@@ -464,7 +464,7 @@ impl FriendsPage {
                             )
                             .child(
                                 h_flex()
-                                    .gap(px(6.))
+                                    .gap(px(8.))
                                     .text_size(px(12.))
                                     .text_color(palette.text_muted)
                                     .child(div().size(px(7.)).rounded_full().bg(dot))
@@ -661,9 +661,9 @@ impl Render for FriendsPage {
                     .label("Follow player")
                     .tooltip(match accounts.active(cx) {
                         Some(account) if has_connected => {
-                            format!("Follows on Lichess as @{account} and downloads public games.")
+                            format!("Follows on Lichess as @{account} and downloads public games")
                         }
-                        _ => "Follows in KChess and downloads public games.".to_string(),
+                        _ => "Follows in KChess and downloads public games".to_string(),
                     })
                     .disabled(!typed || busy)
                     .on_click(cx.listener(|this, _, window, cx| this.follow(window, cx))),
@@ -701,10 +701,10 @@ impl Render for FriendsPage {
                 let head_cell =
                     |text: &'static str, width: f32| div().w(px(width)).text_right().child(text);
                 v_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .text_size(px(13.))
                         .text_color(palette.text_muted)
                         .child(format!(
@@ -784,7 +784,7 @@ impl FriendsPage {
             ),
             (None, None) => card.child(widgets::hint("Loading…", palette)),
             (None, Some(entries)) if entries.is_empty() => {
-                card.child(widgets::hint("Nothing new.", palette))
+                card.child(widgets::hint("Nothing new", palette))
             }
             (None, Some(entries)) => card.child(crate::activity::activity_list(
                 "friends-timeline",
@@ -906,7 +906,7 @@ impl Render for ImportDialog {
                 .into_any_element()
         } else if self.report.is_some() {
             v_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(
                     h_flex()
                         .gap(px(8.))
@@ -947,9 +947,9 @@ impl Render for ImportDialog {
                         },
                         Some(
                             if users.is_empty() {
-                                "Follow players on lichess.org and they will show up here."
+                                "Follow players on lichess.org and they will show up here"
                             } else {
-                                "Everyone they follow is already in Following."
+                                "Everyone they follow is already in Following"
                             }
                             .into(),
                         ),
@@ -979,7 +979,7 @@ impl Render for ImportDialog {
                                 .collect();
                             let toggled = name.clone();
                             h_flex()
-                                .gap(px(10.))
+                                .gap(px(8.))
                                 .py(px(6.))
                                 .child(
                                     Checkbox::new(("import-user", index))
@@ -993,7 +993,7 @@ impl Render for ImportDialog {
                                 )
                                 .child(
                                     div()
-                                        .font_weight(FontWeight::BOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .child(format!("@{name}")),
                                 )
                                 .children(user["title"].as_str().map(|title| {
@@ -1029,7 +1029,7 @@ impl Render for ImportDialog {
                         .gap(px(4.))
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
-                        .child(format!("{already} already added."))
+                        .child(format!("{already} already added"))
                         .when(removed > 0, |row| {
                             row.child(
                                 div()
@@ -1047,7 +1047,7 @@ impl Render for ImportDialog {
                                         cx.notify();
                                     }))
                                     .child(format!(
-                                        "{} {removed} you removed earlier.",
+                                        "{} {removed} you removed earlier",
                                         if self.show_removed { "Hide" } else { "Show" }
                                     )),
                             )
@@ -1060,13 +1060,13 @@ impl Render for ImportDialog {
         v_flex()
             .gap(px(12.))
             .child(widgets::hint(
-                "Players your connected accounts follow on Lichess.",
+                "Players your connected accounts follow on Lichess",
                 &palette,
             ))
             .children(problems.iter().map(|problem| {
                 h_flex()
                     .gap(px(8.))
-                    .p(px(10.))
+                    .p(px(12.))
                     .rounded(radii::MD)
                     .bg(crate::theme::tint(palette.warning, 12.))
                     .text_size(px(13.))

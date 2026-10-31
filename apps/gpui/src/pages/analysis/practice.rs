@@ -343,19 +343,19 @@ impl AnalysisPage {
                 .text_size(px(13.))
                 .children([Color::White, Color::Black].map(|color| {
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .min_w_0()
                         .child(widgets::side_dot(color))
                         .child(
                             div()
                                 .truncate()
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .child(self.player_name(color)),
                         )
                         .when(player == Some(color), |row| {
                             row.child(
                                 div()
-                                    .px(px(5.))
+                                    .px(px(4.))
                                     .rounded(radii::XS)
                                     .bg(palette.accented)
                                     .text_size(px(11.))
@@ -370,7 +370,7 @@ impl AnalysisPage {
             .gap(px(8.))
             .min_h(px(24.))
             .text_size(px(13.))
-            .child(div().font_weight(FontWeight::BOLD).child("Practice"))
+            .child(div().font_weight(FontWeight::MEDIUM).child("Practice"))
             .when(practice.status != Status::Done, |head| {
                 head.child(
                     div()
@@ -391,8 +391,8 @@ impl AnalysisPage {
             );
         let status_line = |text: AnyElement, color: Hsla| {
             div()
-                .text_size(px(15.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(color)
                 .child(text)
         };
@@ -404,12 +404,12 @@ impl AnalysisPage {
             let found = practice.found.iter().filter(|found| **found).count();
             vec![
                 status_line(
-                    format!("You found {found} of {count}.").into_any_element(),
+                    format!("You found {found} of {count}").into_any_element(),
                     palette.text,
                 )
                 .into_any_element(),
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .child(
                         Button::new("practice-again")
                             .primary()
@@ -442,7 +442,7 @@ impl AnalysisPage {
                     .child(format!("{mover} played"))
                     .child(
                         div()
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(tone)
                             .child(format!("{label}{glyph}")),
                     )
@@ -454,7 +454,7 @@ impl AnalysisPage {
                     .into_any_element()
             });
             let status = match practice.status {
-                Status::Find => status_line("Find a better move.".into_any_element(), palette.text),
+                Status::Find => status_line("Find a better move".into_any_element(), palette.text),
                 Status::Wrong => status_line(
                     format!("{} isn't the best move. Try again.", practice.tried)
                         .into_any_element(),
@@ -464,12 +464,12 @@ impl AnalysisPage {
                     h_flex()
                         .gap(px(4.))
                         .child(icon("check").size(px(16.)))
-                        .child(format!("{answer_san} is the best move."))
+                        .child(format!("{answer_san} is the best move"))
                         .into_any_element(),
                     palette.success,
                 ),
                 _ => status_line(
-                    format!("The best move was {answer_san}.").into_any_element(),
+                    format!("The best move was {answer_san}").into_any_element(),
                     palette.text,
                 ),
             };
@@ -478,7 +478,7 @@ impl AnalysisPage {
                 if self.at_position() {
                     h_flex()
                         .flex_wrap()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .child(
                             Button::new("practice-hint")
                                 .small()

@@ -30,7 +30,7 @@ impl SettingsPage {
                     match status {
                         Some(status) => this.voice_model = Some(status),
                         None => {
-                            this.voice_model_error = Some("Could not check the voice model.".into())
+                            this.voice_model_error = Some("Could not check the voice model".into())
                         }
                     }
                 }
@@ -85,7 +85,7 @@ impl SettingsPage {
                 let failed = match outcome {
                     Some(Ok(())) => None,
                     Some(Err(cause)) => Some(cause),
-                    None => Some("Could not download the voice model.".to_string()),
+                    None => Some("Could not download the voice model".to_string()),
                 };
                 if let Some(cause) = failed {
                     crate::log::write(
@@ -144,7 +144,7 @@ impl SettingsPage {
         };
         let online = crate::network::online(cx);
         widgets::card(palette)
-            .gap(px(6.))
+            .gap(px(8.))
             .child(
                 h_flex()
                     .justify_between()
@@ -224,7 +224,7 @@ impl SettingsPage {
             .map(|status| &status.managed)
             .filter(|managed| managed.installed);
         let engine = widgets::card(palette)
-            .gap(px(6.))
+            .gap(px(8.))
             .child(
                 h_flex()
                     .justify_between()
@@ -246,7 +246,7 @@ impl SettingsPage {
                     .map(|version| format!(" · {version}"))
                     .unwrap_or_default();
                 widgets::hint(
-                    format!("Optional native engine installed{version}."),
+                    format!("Optional native engine installed{version}"),
                     palette,
                 )
             }))

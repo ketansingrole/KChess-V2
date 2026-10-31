@@ -123,17 +123,17 @@ impl OnlinePage {
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;
         let (status, tone) = match &online.lobby {
             _ if !receive => (
-                "Not listening for challenges (Settings → Online play).".to_string(),
+                "Not listening for challenges (Settings → Online play)".to_string(),
                 palette.text_muted,
             ),
             None => (
-                "Listening for challenges while a game is open.".to_string(),
+                "Listening for challenges while a game is open".to_string(),
                 palette.text_muted,
             ),
             Some(lobby) => match lobby["phase"].as_str() {
                 Some("connected") => (
                     format!(
-                        "Listening for challenges to @{}.",
+                        "Listening for challenges to @{}",
                         lobby["account"].as_str().unwrap_or_default()
                     ),
                     palette.success,
@@ -141,14 +141,14 @@ impl OnlinePage {
                 Some("auth-required") => (
                     lobby["message"]
                         .as_str()
-                        .unwrap_or("Sign in to Lichess again in Settings.")
+                        .unwrap_or("Sign in to Lichess again in Settings")
                         .to_string(),
                     palette.error,
                 ),
                 Some("disconnected") => (
                     lobby["message"]
                         .as_str()
-                        .unwrap_or("Not connected to Lichess.")
+                        .unwrap_or("Not connected to Lichess")
                         .to_string(),
                     palette.error,
                 ),
@@ -159,7 +159,7 @@ impl OnlinePage {
         let challenges = online.challenges.clone();
         let row = |glyph: &'static str| {
             h_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .py(px(8.))
                 .border_t_1()
                 .border_color(palette.border)
@@ -174,7 +174,7 @@ impl OnlinePage {
                     .child(div().text_size(px(12.)).text_color(tone).child(status)),
             )
             .when(challenges.is_empty(), |card| {
-                card.child(widgets::hint("No open challenges.", palette))
+                card.child(widgets::hint("No open challenges", palette))
             })
             .children(
                 challenges
@@ -218,7 +218,7 @@ impl OnlinePage {
                                 .child(
                                     h_flex()
                                         .gap(px(4.))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .children(opponent["title"].as_str().map(|t| t.to_string()))
                                         .child(player_link(
                                             ("challenge-from", index),
@@ -314,7 +314,7 @@ impl OnlinePage {
                                     .child(
                                         h_flex()
                                             .gap(px(4.))
-                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .font_weight(FontWeight::MEDIUM)
                                             .child("To")
                                             .child(player_link(
                                                 ("challenge-to", index),
@@ -431,7 +431,7 @@ impl OnlinePage {
                 let open_now = current.as_deref() == Some(id.as_str());
                 let account = game["account"].as_str().unwrap_or_default().to_string();
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .py(px(8.))
                     .border_t_1()
                     .border_color(palette.border)
@@ -444,7 +444,7 @@ impl OnlinePage {
                             .child(
                                 h_flex()
                                     .gap(px(4.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child(player_link(
                                         ("ongoing-opponent", index),
                                         game["opponent"]["name"]
@@ -470,7 +470,7 @@ impl OnlinePage {
                                     .text_size(px(12.))
                                     .when(mine, |text| {
                                         text.text_color(palette.primary)
-                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .font_weight(FontWeight::MEDIUM)
                                     })
                                     .when(!mine, |text| text.text_color(palette.text_muted))
                                     .child(turn),
@@ -519,7 +519,7 @@ impl OnlinePage {
                     .child(error)
             }))
             .when(loaded && games.is_empty(), |card| {
-                card.child(widgets::hint("No games in progress.", palette))
+                card.child(widgets::hint("No games in progress", palette))
             })
             .children(rows)
     }

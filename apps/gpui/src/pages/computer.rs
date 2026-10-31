@@ -890,12 +890,12 @@ impl ComputerPage {
         {
             Question::NewGame => (
                 "Start a new game?".into(),
-                "Your current game is still in progress and will be lost.".into(),
+                "Your current game is still in progress and will be lost".into(),
                 "New game".into(),
             ),
             Question::Options => (
                 "Start a new game?".into(),
-                "Your computer game is still in progress and will be lost.".into(),
+                "Your computer game is still in progress and will be lost".into(),
                 "New game".into(),
             ),
             Question::Resign => (
@@ -913,7 +913,7 @@ impl ComputerPage {
                     "Your current game is still in progress. Switching sides starts a new game."
                         .into()
                 } else {
-                    "Switching sides starts a new game.".into()
+                    "Switching sides starts a new game".into()
                 },
                 "New game".into(),
             ),
@@ -980,9 +980,9 @@ impl ComputerPage {
         if self.game.result(&self.host()).is_some() {
             "The game is over. Say “new game” to play again."
         } else if self.ply() != self.moves().len() {
-            "Go to the last move to keep playing."
+            "Go to the last move to keep playing"
         } else {
-            "Wait for Stockfish, then say your move."
+            "Wait for Stockfish, then say your move"
         }
     }
 
@@ -1032,7 +1032,7 @@ impl ComputerPage {
                                 window.close_dialog(cx);
                                 this.answer(question, window, cx);
                             }));
-                            reply("confirm", "Done.")
+                            reply("confirm", "Done")
                         }
                         Some("cancel") => {
                             run = Some(Box::new(|this, window, cx| {
@@ -1040,11 +1040,11 @@ impl ComputerPage {
                                 window.close_dialog(cx);
                                 cx.notify();
                             }));
-                            reply("cancel", "Cancelled.")
+                            reply("cancel", "Cancelled")
                         }
                         _ => crate::voice::moves::Reply {
                             said: "expected confirm or cancel".into(),
-                            feedback: "Say “confirm” or “cancel”.".into(),
+                            feedback: "Say “confirm” or “cancel”".into(),
                             understood: false,
                         },
                     });
@@ -1057,7 +1057,7 @@ impl ComputerPage {
                                 this.takeback(cx);
                             }
                         }));
-                        ("take back", None, "Took back your last move.")
+                        ("take back", None, "Took back your last move")
                     }
                     "newGame" => (
                         "new game",
@@ -1156,7 +1156,7 @@ impl ComputerPage {
                 icon("triangle-alert"),
                 "Stockfish not found".into(),
             )
-            .detail("Install or choose an engine in Settings to play.".into())
+            .detail("Install or choose an engine in Settings to play".into())
             .extra(
                 h_flex()
                     .gap(px(12.))
@@ -1423,7 +1423,7 @@ impl Render for ComputerPage {
             },
             crate::voice::moves::BoardBar {
                 id: "computer-voice",
-                hint: "Say “E four”, “Knight F three”, or “take back”.",
+                hint: "Say “E four”, “Knight F three”, or “take back”",
                 active: self.voice_taking(),
                 listening: self.voice_listening(),
                 grammar: crate::voice::grammar("GAME_GRAMMAR"),

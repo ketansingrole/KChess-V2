@@ -62,9 +62,9 @@ const COLORS: [(&str, &str); 3] = [("random", "Random"), ("white", "White"), ("b
 /// `MODE_HINTS`: what each mode means for the result, where the choice is made.
 fn mode_hint(mode: &str) -> &'static str {
     match mode {
-        "offline" => "Puzzles downloaded to this computer.",
-        "rated" => "Results affect your Lichess rating.",
-        _ => "Lichess puzzles, unrated.",
+        "offline" => "Puzzles downloaded to this computer",
+        "rated" => "Results affect your Lichess rating",
+        _ => "Lichess puzzles, unrated",
     }
 }
 
@@ -713,7 +713,7 @@ pub(crate) fn status_panel(
             "Solution shown — not counted as solved".to_string(),
         ),
         "solved" if outcome == Some(true) => {
-            (Tone::Win, icon("trophy"), "Puzzle solved!".to_string())
+            (Tone::Win, icon("trophy"), "Puzzle solved".to_string())
         }
         "solved" => (
             Tone::Plain,
@@ -741,7 +741,7 @@ pub(crate) fn status_panel(
     let finished = matches!(status, "solved" | "revealed" | "failed");
     let facts = finished.then(|| {
         v_flex()
-            .gap(px(6.))
+            .gap(px(8.))
             .text_size(px(13.))
             .child(
                 h_flex()
@@ -844,7 +844,7 @@ pub(crate) fn status_panel(
                     .when(!finished, |button| button.outline())
                     .child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .child("Next")
                             .child(icon("arrow-right").size(px(14.))),
                     )
@@ -898,7 +898,7 @@ impl PuzzlesPage {
             "noaccount" => empty(
                 icon("user-round-plus"),
                 "Connect a Lichess account for rated puzzles".into(),
-                Some("Connect Lichess or switch to Practice.".into()),
+                Some("Connect Lichess or switch to Practice".into()),
             )
             .child(actions("connect-lichess", "Connect Lichess", cx))
             .into_any_element(),
@@ -906,7 +906,7 @@ impl PuzzlesPage {
                 icon("key-round"),
                 "Lichess needs your permission for puzzles".into(),
                 Some(format!(
-                    "Sign in to @{} on lichess.org, then reconnect to enable rated puzzles.",
+                    "Sign in to @{} on lichess.org, then reconnect to enable rated puzzles",
                     self.account(cx)
                 )),
             )
@@ -1049,7 +1049,7 @@ impl PuzzlesPage {
                         .gap(px(4.))
                         .child(
                             div()
-                                .font_weight(FontWeight::BOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(tone)
                                 .child(format!("{value}")),
                         )
@@ -1062,7 +1062,7 @@ impl PuzzlesPage {
                 h_flex()
                     .child(
                         div()
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text)
                             .child(format!("{}", count("movesFound"))),
                     )
@@ -1092,7 +1092,7 @@ impl PuzzlesPage {
                             .child(icon("flame").size(px(14.)))
                             .child(
                                 div()
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(palette.text)
                                     .child(format!("{day_streak}")),
                             ),
@@ -1233,7 +1233,7 @@ impl PuzzlesPage {
         };
         let field = |label: &'static str, control: AnyElement| {
             v_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .child(
                     div()
                         .text_size(px(14.))
@@ -1295,7 +1295,7 @@ impl PuzzlesPage {
                     false,
                 )
             } else {
-                ("Sent to Lichess.".to_string(), false)
+                ("Sent to Lichess".to_string(), false)
             }
         });
         let panel = widgets::side_panel(palette)
@@ -1333,7 +1333,7 @@ impl PuzzlesPage {
             ))
             .child(
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(
                         div().flex_1().child(field(
                             "Difficulty",
@@ -1512,7 +1512,7 @@ impl Render for PuzzlesPage {
                         .items_center()
                         .py(px(40.))
                         .text_color(palette.text_muted)
-                        .child("Use the Electron app for this tab for now."),
+                        .child("Use the Electron app for this tab for now"),
                 )
                 .into_any_element()
         };

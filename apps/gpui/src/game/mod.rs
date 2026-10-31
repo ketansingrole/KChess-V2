@@ -62,12 +62,12 @@ pub fn editor_setup(text: &str) -> Option<Value> {
 /// Why a position cannot be played, in the words the board editor uses (`positionProblem`).
 pub fn position_problem(fen: &str) -> Option<&'static str> {
     Some(match kchess_domain::position::fen_problem(fen)? {
-        "fen" => "That is not a valid FEN.",
-        "empty" => "The board is empty.",
-        "kings" => "Each side needs exactly one king.",
-        "pawnsOnBackrank" => "Pawns can’t stand on the first or last rank.",
-        "tooManyPieces" => "Each side can have at most 16 pieces.",
-        "oppositeCheck" => "The side not to move is in check.",
-        _ => "This position is not legal.",
+        "fen" => "That is not a valid FEN",
+        "empty" => "The board is empty",
+        "kings" => "Each side needs exactly one king",
+        "pawnsOnBackrank" => "Pawns can’t stand on the first or last rank",
+        "tooManyPieces" => "Each side can have at most 16 pieces",
+        "oppositeCheck" => "The side not to move is in check",
+        _ => "This position is not legal",
     })
 }

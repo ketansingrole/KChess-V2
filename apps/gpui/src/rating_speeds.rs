@@ -322,8 +322,8 @@ impl RatingSpeeds {
         let action = if hidden { "Show" } else { "Hide" };
         h_flex()
             .id(SharedString::from(format!("speed-{}", speed.key)))
-            .gap(px(6.))
-            .px(px(10.))
+            .gap(px(8.))
+            .px(px(12.))
             .py(px(4.))
             .rounded_full()
             .border_1()
@@ -357,7 +357,7 @@ impl RatingSpeeds {
             }))
             .child(speed.name.clone())
             .children(rating.map(|rating| {
-                div().font_weight(FontWeight::BOLD).child(format!(
+                div().font_weight(FontWeight::MEDIUM).child(format!(
                     "{}{}",
                     rating.round(),
                     if provisional { "?" } else { "" }
@@ -434,20 +434,20 @@ impl Render for RatingSpeeds {
                     .flex_wrap()
                     .items_start()
                     .justify_between()
-                    .gap(px(10.))
-                    .child(h_flex().flex_1().flex_wrap().gap(px(6.)).children(chips))
+                    .gap(px(8.))
+                    .child(h_flex().flex_1().flex_wrap().gap(px(8.)).children(chips))
                     .child(ranges),
             )
             .map(|card| {
                 if all.is_empty() {
                     let (text, retry) = match &self.withheld {
                         Some((text, retry)) => (text.clone(), Some(retry.clone())),
-                        None => ("No rated games yet.".into(), None),
+                        None => ("No rated games yet".into(), None),
                     };
                     card.child(
                         h_flex()
                             .flex_wrap()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .text_size(px(13.))
                             .text_color(palette.text_muted)
                             .child(text)
@@ -462,9 +462,9 @@ impl Render for RatingSpeeds {
                             })),
                     )
                 } else if shown == 0 {
-                    card.child(empty("Pick a speed to show."))
+                    card.child(empty("Pick a speed to show"))
                 } else if !enough {
-                    card.child(empty("Not enough rated games in this range."))
+                    card.child(empty("Not enough rated games in this range"))
                 } else {
                     card.child(self.chart.clone()).when(from_games, |card| {
                         card.child(widgets::hint(self.games_hint.clone(), &palette))

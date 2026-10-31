@@ -319,7 +319,7 @@ impl AppSettings {
         let _ = self.writes.unbounded_send(Write::Flushed(done));
         Box::pin(async move {
             wait.await
-                .unwrap_or_else(|_| Err("The settings writer stopped.".to_string()))
+                .unwrap_or_else(|_| Err("The settings writer stopped".to_string()))
         })
     }
 }

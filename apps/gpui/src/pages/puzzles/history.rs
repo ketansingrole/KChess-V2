@@ -322,8 +322,8 @@ impl PuzzleHistory {
                 )
                 .child(
                     div()
-                        .text_size(px(26.))
-                        .font_weight(FontWeight::BOLD)
+                        .text_size(px(28.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.highlighted)
                         .child(value),
                 )
@@ -395,7 +395,7 @@ impl Render for PuzzleHistory {
         let has_account = !self.account.is_empty();
         let header = h_flex()
             .justify_between()
-            .mb(px(10.))
+            .mb(px(8.))
             .child(
                 div()
                     .w(px(160.))
@@ -427,12 +427,12 @@ impl Render for PuzzleHistory {
             div()
                 .text_size(px(13.))
                 .text_color(palette.text_muted)
-                .child(format!("No {label} puzzles yet."))
+                .child(format!("No {label} puzzles yet"))
                 .into_any_element()
         } else if rows.is_empty() {
             widgets::empty_state(icon("puzzle"), "No puzzles yet", None, &palette)
                 .child(
-                    h_flex().mt(px(10.)).child(
+                    h_flex().mt(px(8.)).child(
                         Button::new("puzzle-history-train")
                             .primary()
                             .icon(icon("puzzle"))
@@ -444,11 +444,11 @@ impl Render for PuzzleHistory {
         } else {
             let muted = palette.text_muted;
             let head = h_flex()
-                .px(px(10.))
+                .px(px(12.))
                 .pb(px(8.))
                 .gap(px(12.))
                 .text_size(px(11.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(div().w(px(96.)).child("RESULT"))
                 .child(div().w(px(120.)).child("MODE"))
@@ -470,7 +470,7 @@ impl Render for PuzzleHistory {
                     (row.puzzle.clone(), row.puzzle.clone(), row.wrong.clone());
                 h_flex()
                     .id(("puzzle-attempt", index))
-                    .px(px(10.))
+                    .px(px(12.))
                     .py(px(8.))
                     .gap(px(12.))
                     .rounded(radii::MD)
@@ -487,7 +487,7 @@ impl Render for PuzzleHistory {
                         h_flex()
                             .id(("puzzle-mode", index))
                             .w(px(120.))
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .text_color(muted)
                             .tooltip(move |window, cx| {
                                 gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx)
@@ -557,7 +557,7 @@ impl Render for PuzzleHistory {
                         div()
                             .text_size(px(13.))
                             .text_color(palette.text_muted)
-                            .child("Lichess needs your permission to show its puzzle history."),
+                            .child("Lichess needs your permission to show its puzzle history"),
                     )
                     .child(
                         Button::new("puzzle-history-reconnect")

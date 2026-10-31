@@ -720,7 +720,7 @@ impl AnalysisPage {
             .and_then(|chapter| chapter["pgn"].as_str())
             .and_then(TreeNode::from_pgn);
         let (Some(opened), Some(tree)) = (opened, tree) else {
-            return Err("This study could not be opened.".into());
+            return Err("This study could not be opened".into());
         };
         self.take_board(tree, cx);
         self.study = id.to_string();
@@ -750,7 +750,7 @@ impl AnalysisPage {
             let result = answer.await?;
             let id = result["id"]
                 .as_str()
-                .ok_or("The study could not be saved.")?
+                .ok_or("The study could not be saved")?
                 .to_string();
             this.update(cx, |this, cx| {
                 library.update(cx, |library, cx| {
@@ -767,7 +767,7 @@ impl AnalysisPage {
                     .study(&id)
                     .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string));
                 let Some(chapter) = chapter else {
-                    return Err("The saved study has no chapter.".to_string());
+                    return Err("The saved study has no chapter".to_string());
                 };
                 this.study = id.clone();
                 this.chapter = chapter;
@@ -777,7 +777,7 @@ impl AnalysisPage {
                 cx.notify();
                 Ok(id)
             })
-            .map_err(|_| "The analysis board closed.".to_string())?
+            .map_err(|_| "The analysis board closed".to_string())?
         })
     }
 
@@ -1386,7 +1386,7 @@ impl AnalysisPage {
                 let said = crate::game::rules("spokenAnalysisCommand", &[json!(text)]).ok()?;
                 let said = said.as_str()?.to_string();
                 let feedback = if said == "best" && best.is_none() {
-                    "The engine has no move yet.".to_string()
+                    "The engine has no move yet".to_string()
                 } else {
                     format!("“{text}”")
                 };
@@ -1488,7 +1488,7 @@ impl AnalysisPage {
             dialog
                 .title("Delete from here?")
                 .description(
-                    "This move and every move after it, with their variations and comments, are removed.",
+                    "This move and every move after it, with their variations and comments, are removed",
                 )
                 .ok_text("Delete")
                 .ok_variant(ButtonVariant::Danger)
@@ -1519,7 +1519,7 @@ impl AnalysisPage {
                         div()
                             .text_size(px(14.))
                             .text_color(cx.global::<Palette>().text_muted)
-                            .child("Paste a FEN, or a PGN with or without variations."),
+                            .child("Paste a FEN, or a PGN with or without variations"),
                     )
                     .child(Textarea::new(&import).aria_label("FEN or PGN"))
                     .children(error.map(|error| {
@@ -1571,11 +1571,11 @@ impl AnalysisPage {
             self.load(Some(&fen), cx);
         } else if !self.load_pgn(&text, cx) {
             self.import_error =
-                Some("Use a valid FEN or one PGN game with legal moves, under 2 MB.".into());
+                Some("Use a valid FEN or one PGN game with legal moves, under 2 MB".into());
             window.refresh();
             return;
         } else if self.root.children.is_empty() {
-            self.import_error = Some("No moves could be read from that PGN.".into());
+            self.import_error = Some("No moves could be read from that PGN".into());
             window.refresh();
             return;
         }
@@ -1756,7 +1756,7 @@ impl TreeView<'_> {
             .rounded(radii::XS)
             .cursor_pointer()
             .text_color(if main { palette.text } else { palette.toned })
-            .when(main, |chip| chip.font_weight(FontWeight::SEMIBOLD))
+            .when(main, |chip| chip.font_weight(FontWeight::MEDIUM))
             .when(active, |chip| {
                 chip.bg(tint(palette.primary, 30.))
                     .text_color(palette.highlighted)
@@ -1812,9 +1812,12 @@ impl TreeView<'_> {
                 )
             })
             .child(node.san.clone())
-            .children(
-                glyph.map(|(glyph, _)| div().ml(px(1.)).font_weight(FontWeight::BOLD).child(glyph)),
-            )
+            .children(glyph.map(|(glyph, _)| {
+                div()
+                    .ml(px(1.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(glyph)
+            }))
             // Without an annotation, the review's label.
             .when(!annotated, |chip| {
                 chip.children(
@@ -1827,7 +1830,7 @@ impl TreeView<'_> {
                             div()
                                 .id(SharedString::from(format!("label-{path}")))
                                 .ml(px(1.))
-                                .font_weight(FontWeight::BOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(color)
                                 .tooltip(move |window, cx| {
                                     gpui_kit::component::tooltip::Tooltip::new(label)
@@ -1852,8 +1855,7 @@ impl TreeView<'_> {
             .role(Role::Button)
             .keyboard_focus(palette.primary)
             .aria_label(text.clone())
-            .text_size(px(12.5))
-            .italic()
+            .text_size(px(13.))
             .line_height(relative(1.5))
             .text_color(palette.text_muted)
             .cursor_pointer()
@@ -1941,11 +1943,11 @@ impl TreeView<'_> {
                         v_flex()
                             .w_full()
                             .my(px(2.))
-                            .ml(px(10.))
+                            .ml(px(8.))
                             .pl(px(8.))
                             .border_l_2()
                             .border_color(self.palette.border)
-                            .text_size(px(12.5))
+                            .text_size(px(13.))
                             .children(rows)
                             .into_any_element(),
                     ));
@@ -2117,7 +2119,7 @@ impl AnalysisPage {
                     .p(px(4.))
                     .child(
                         h_flex()
-                            .gap(px(10.))
+                            .gap(px(8.))
                             .child(
                                 Switch::new("infinite")
                                     .small()
@@ -2137,7 +2139,7 @@ impl AnalysisPage {
                     )
                     .child(
                         h_flex()
-                            .gap(px(10.))
+                            .gap(px(8.))
                             .child(
                                 Switch::new("arrows")
                                     .small()
@@ -2153,7 +2155,7 @@ impl AnalysisPage {
                     )
                     .child(
                         h_flex()
-                            .gap(px(10.))
+                            .gap(px(8.))
                             .child(
                                 Switch::new("cloud")
                                     .small()
@@ -2199,8 +2201,8 @@ impl AnalysisPage {
             .child(
                 div()
                     .min_w(px(75.))
-                    .text_size(px(22.))
-                    .font_weight(FontWeight::BOLD)
+                    .text_size(px(20.))
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(if !engine_on && !using_cloud {
                         palette.dimmed
                     } else {
@@ -2216,7 +2218,7 @@ impl AnalysisPage {
                     .child(
                         div()
                             .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .truncate()
                             .child("Stockfish"),
                     )
@@ -2277,7 +2279,7 @@ impl AnalysisPage {
                         "Asking Lichess cloud…".to_string()
                     } else {
                         self.cloud_error.clone().unwrap_or_else(|| {
-                            "Lichess cloud has no evaluation of this position.".into()
+                            "Lichess cloud has no evaluation of this position".into()
                         })
                     })
                     .into_any_element(),
@@ -2323,7 +2325,7 @@ impl AnalysisPage {
                         &self.node().fen,
                         &lines,
                         if using_cloud { 0 } else { prefs_lines(cx) },
-                        over.map(|_| "Nothing to analyse."),
+                        over.map(|_| "Nothing to analyse"),
                         std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
                             let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
                         }),
@@ -2353,7 +2355,7 @@ impl AnalysisPage {
         h_flex()
             .flex_none()
             .gap(px(2.))
-            .p(px(3.))
+            .p(px(4.))
             .rounded(radii::MD)
             .bg(palette.accented)
             .children(tabs.into_iter().map(|(choice, label, glyph)| {
@@ -2367,12 +2369,12 @@ impl AnalysisPage {
                     .aria_selected(chosen)
                     .flex_1()
                     .justify_center()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .px(px(8.))
-                    .py(px(5.))
+                    .py(px(4.))
                     .rounded(radii::SM)
                     .text_size(px(13.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .when(chosen, |tab| {
                         tab.bg(palette.bg).text_color(palette.highlighted)
@@ -2651,9 +2653,9 @@ impl AnalysisPage {
                         .into_any_element()
                 };
                 let body = if !allowed {
-                    note("Engine assistance is paused until Lichess game status is verified.")
+                    note("Engine assistance is paused until Lichess game status is verified")
                 } else if self.root.children.is_empty() {
-                    note("Make some moves or import a game to review it.")
+                    note("Make some moves or import a game to review it")
                 } else {
                     self.render_review(cx, &palette)
                 };
@@ -2667,9 +2669,9 @@ impl AnalysisPage {
             }
             Tool::Explorer => {
                 let note = if self.hides_engine() {
-                    Some("Shown once you find the move.")
+                    Some("Shown once you find the move")
                 } else if !allowed {
-                    Some("Engine assistance is paused until Lichess game status is verified.")
+                    Some("Engine assistance is paused until Lichess game status is verified")
                 } else {
                     None
                 };
@@ -2781,7 +2783,7 @@ impl Render for AnalysisPage {
             },
             BoardBar {
                 id: "analysis-voice",
-                hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”.",
+                hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”",
                 active: true,
                 listening: true,
                 grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),

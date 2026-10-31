@@ -36,7 +36,7 @@ type Bases = Arc<Mutex<HashMap<(String, String), String>>>;
 
 /// The core refused a chapter save: another window changed the chapter since this one read it.
 pub fn is_stale(cause: &str) -> bool {
-    cause.contains("This study was changed in another KChess window.")
+    cause.contains("This study was changed in another KChess window")
 }
 
 pub struct StudyLibrary {
@@ -322,11 +322,11 @@ impl StudyLibrary {
         });
         async move {
             if sent.is_err() {
-                return Err("The study library is closed.".to_string());
+                return Err("The study library is closed".to_string());
             }
             answer
                 .await
-                .unwrap_or_else(|_| Err("The study library is closed.".to_string()))
+                .unwrap_or_else(|_| Err("The study library is closed".to_string()))
         }
     }
 
@@ -336,7 +336,7 @@ impl StudyLibrary {
         let _ = self.writes.unbounded_send(Write::Flushed(done));
         Box::pin(async move {
             wait.await
-                .unwrap_or_else(|_| Err("The study library is closed.".to_string()))
+                .unwrap_or_else(|_| Err("The study library is closed".to_string()))
         })
     }
 

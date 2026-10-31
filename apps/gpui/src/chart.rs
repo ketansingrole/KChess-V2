@@ -192,7 +192,7 @@ impl Render for LineChart {
         let label = |text: String| {
             div()
                 .absolute()
-                .text_size(px(10.))
+                .text_size(px(11.))
                 .text_color(palette.text_muted)
                 .child(text)
         };
@@ -242,7 +242,7 @@ impl Render for LineChart {
                 return tip
                     .child(
                         div()
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .child((self.format)(value)),
                     )
                     .child(div().text_color(palette.text_muted).child(date));
@@ -254,7 +254,7 @@ impl Render for LineChart {
                     let value = series.values.get(index).copied().flatten()?;
                     Some(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .child(
                                 div()
                                     .size(px(10.))
@@ -264,7 +264,7 @@ impl Render for LineChart {
                             .child(div().flex_1().child(series.name.clone()))
                             .child(
                                 div()
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child((self.format)(value)),
                             ),
                     )

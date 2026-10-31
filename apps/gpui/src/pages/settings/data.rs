@@ -173,7 +173,7 @@ impl SettingsPage {
             let cleared = clearing.await;
             let _ = this.update(cx, |this, cx| {
                 this.runs_note = Some(match cleared {
-                    Ok(_) => "Local scores and progress cleared.".into(),
+                    Ok(_) => "Local scores and progress cleared".into(),
                     Err(cause) => {
                         crate::log::write(
                             kchess_core::Level::Warn,
@@ -215,7 +215,7 @@ impl SettingsPage {
             let _ = this.update(cx, |this, cx| {
                 this.exporting = false;
                 this.diagnostics_note = match saved {
-                    Some(Ok(())) => Some("Diagnostics exported.".into()),
+                    Some(Ok(())) => Some("Diagnostics exported".into()),
                     Some(Err(cause)) => {
                         crate::log::write(
                             kchess_core::Level::Warn,
@@ -277,7 +277,7 @@ impl SettingsPage {
                 .child(
                     div()
                         .text_size(px(20.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child(value),
                 )
                 .children(note.map(muted))
@@ -355,7 +355,7 @@ impl SettingsPage {
                                             .gap(px(8.))
                                             .child(
                                                 div()
-                                                    .font_weight(FontWeight::BOLD)
+                                                    .font_weight(FontWeight::MEDIUM)
                                                     .child(row.label),
                                             )
                                             .children(row.badge.map(|badge| {
@@ -414,7 +414,7 @@ impl SettingsPage {
             .row(
                 "Diagnostics",
                 Some(self.diagnostics_note.clone().unwrap_or_else(|| {
-                    "Exports logs without tokens, games or account databases.".into()
+                    "Exports logs without tokens, games or account databases".into()
                 })),
                 h_flex().child(
                     Button::new("data-diagnostics")

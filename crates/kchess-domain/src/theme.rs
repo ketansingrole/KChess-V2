@@ -149,78 +149,21 @@ pub fn colors(palette: &Value, dark: bool) -> Option<Map<String, Value>> {
     )
 }
 
-/// The colors KChess ships with (the default theme, which has no palette): slate
-/// neutrals with KChess's overrides, as `#rrggbb`. The GPUI app paints with these.
+/// The colors KChess ships with (the default theme, which has no palette): a graphite ramp warmed
+/// a touch toward the board's wood, and the moss accent, as `#rrggbb`. The GPUI app paints with
+/// these.
 pub fn default_colors(dark: bool) -> Map<String, Value> {
-    // Tailwind's slate, converted from its OKLCH values.
-    const SLATE: [(u16, &str); 10] = [
-        (50, "#f8fafc"),
-        (100, "#f1f5f9"),
-        (200, "#e2e8f0"),
-        (300, "#cad5e2"),
-        (400, "#90a1b9"),
-        (500, "#62748e"),
-        (600, "#45556c"),
-        (700, "#314158"),
-        (800, "#1d293d"),
-        (900, "#0f172b"),
-    ];
-    let slate = |step: u16| {
-        SLATE
-            .iter()
-            .find(|(s, _)| *s == step)
-            .map_or("#000000", |(_, hex)| hex)
-    };
     let values: [&str; 22] = if dark {
         [
-            slate(900),
-            slate(800),
-            slate(800),
-            slate(700),
-            "#ffffff",
-            slate(800),
-            slate(700),
-            slate(700),
-            "#ffffff",
-            slate(200),
-            "#ffffff",
-            slate(300),
-            slate(400),
-            slate(500),
-            slate(900),
-            "#91af6a",
-            "#62b57a",
-            // The dark warning and info colors: yellow-400 and blue-400.
-            "#fdc700",
-            "#e07979",
-            "#51a2ff",
-            "#62b57a",
-            "#e07979",
+            "#171615", "#1c1b1a", "#201f1d", "#2c2a28", "#f5f4f1", "#33312e", "#282725", "#45433f",
+            "#f5f4f1", "#ecebe8", "#f5f4f1", "#c4c1bb", "#9c9992", "#7f7c76", "#171615", "#91af6a",
+            "#62b57a", "#e0b25c", "#e07979", "#6cb6ff", "#62b57a", "#e07979",
         ]
     } else {
         [
-            "#ffffff",
-            slate(50),
-            slate(100),
-            slate(200),
-            slate(900),
-            slate(200),
-            slate(200),
-            slate(300),
-            slate(900),
-            slate(700),
-            slate(900),
-            slate(600),
-            "#52637b",
-            slate(400),
-            "#ffffff",
-            "#4b6231",
-            "#246b37",
-            "#805500",
-            "#b4232c",
-            "#1d5b91",
-            "#246b37",
-            "#d05f5f",
+            "#fcfcfb", "#f7f6f4", "#f4f3f0", "#e9e7e3", "#1c1b19", "#e4e2dd", "#ecebe7", "#d3d0ca",
+            "#1c1b19", "#1c1b19", "#141312", "#48453f", "#5f5c55", "#858178", "#ffffff", "#4b6231",
+            "#246b37", "#805500", "#b4232c", "#1d5b91", "#246b37", "#d05f5f",
         ]
     };
     NAMES
@@ -310,7 +253,7 @@ mod tests {
             );
         }
         assert_eq!(default_colors(false)["--ui-primary"], "#4b6231");
-        assert_eq!(default_colors(true)["--ui-bg"], "#0f172b");
+        assert_eq!(default_colors(true)["--ui-bg"], "#171615");
     }
 
     #[test]

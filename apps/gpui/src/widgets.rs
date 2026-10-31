@@ -633,7 +633,7 @@ pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<
             .flex_none()
             .gap(px(4.))
             .text_size(px(12.))
-            .font_weight(FontWeight::SEMIBOLD)
+            .font_weight(FontWeight::MEDIUM)
             .text_color(palette.toned)
             .children(groups.into_iter().map(|(role, count)| {
                 let path: SharedString = format!("pieces/{set}/b{}.svg", letter(&role)).into();
@@ -690,7 +690,7 @@ pub fn field(
     palette: &Palette,
 ) -> Div {
     v_flex()
-        .gap(px(6.))
+        .gap(px(8.))
         .child(
             div()
                 .text_size(px(14.))
@@ -734,8 +734,8 @@ pub fn card(palette: &Palette) -> Div {
         .bg(palette.elevated)
 }
 
-/// `UTabs variant="pill"`: a full-width row of choices, the chosen one filled with the primary
-/// color. `choose` gets the index picked.
+/// `UTabs variant="pill"`: a full-width row of choices, the chosen one a step up from the row: the
+/// accent is left to the page's main action. `choose` gets the index picked.
 pub fn pill_tabs(
     id: &'static str,
     tabs: Vec<(Option<Icon>, SharedString)>,
@@ -888,7 +888,7 @@ fn pill_row(
                 .text_size(px(if compact { 12. } else { 14. }))
                 .font_weight(FontWeight::MEDIUM)
                 .when(chosen, |tab| {
-                    tab.bg(palette.primary).text_color(palette.inverted)
+                    tab.bg(palette.accented).text_color(palette.highlighted)
                 })
                 .when(!chosen && tab.disabled, |tab| {
                     tab.text_color(palette.text_muted).opacity(0.75)
@@ -905,9 +905,9 @@ fn pill_row(
                 .child(tab.label)
                 .children(tab.badge.map(|badge| {
                     div()
-                        .px(px(5.))
+                        .px(px(4.))
                         .rounded(radii::XS)
-                        .text_size(px(10.))
+                        .text_size(px(11.))
                         .line_height(px(16.))
                         .when(chosen, |badge| {
                             badge.bg(palette.bg).text_color(palette.highlighted)
@@ -1030,7 +1030,7 @@ pub fn empty_state(
 ) -> Div {
     v_flex()
         .items_center()
-        .gap(px(10.))
+        .gap(px(8.))
         .child(glyph.size(px(24.)).text_color(palette.text_muted))
         .child(
             div()
@@ -1198,7 +1198,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                                 .min_w_0()
                                 .min_h(px(44.))
                                 .text_size(px(16.))
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .line_height(relative(1.4))
                                 // `-webkit-line-clamp: 2`: a longer name ends in "…".
                                 .line_clamp(2)
@@ -1305,7 +1305,7 @@ fn badge_box(look: Look, palette: &Palette) -> Div {
     };
     h_flex()
         .flex_none()
-        .gap(px(6.))
+        .gap(px(8.))
         .px(px(8.))
         .py(px(4.))
         .rounded(radii::SM)
@@ -1347,7 +1347,7 @@ pub fn result_row(
     ];
     v_flex()
         .gap(px(4.))
-        .py(px(3.))
+        .py(px(4.))
         .text_size(px(13.))
         .child(
             h_flex()
@@ -1367,7 +1367,7 @@ pub fn result_row(
                 .child(
                     // `.result-value`: the score at the row's weight, its unit 12px and muted.
                     h_flex()
-                        .gap(px(3.))
+                        .gap(px(4.))
                         .items_baseline()
                         .child(if total > 0. {
                             format!("{score}%")

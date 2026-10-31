@@ -136,7 +136,7 @@ impl SquareColors {
             return;
         }
         let Some(color) = color else {
-            self.voice.feedback = Some("Say “light” or “dark”.".into());
+            self.voice.feedback = Some("Say “light” or “dark”".into());
             cx.notify();
             return;
         };
@@ -251,7 +251,7 @@ impl Render for SquareColors {
             Stage::Running => vec![
                 div()
                     .text_size(px(18.))
-                    .font_weight(FontWeight(650.))
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(if self.clock.low() {
                         palette.loss
                     } else {
@@ -264,7 +264,7 @@ impl Render for SquareColors {
                     .test_support()
                     .aria_label(self.square.clone())
                     .text_size(px(72.))
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .line_height(relative(1.))
                     .child(self.square.clone())
                     .into_any_element(),
@@ -277,14 +277,14 @@ impl Render for SquareColors {
             Stage::Over => vec![
                 div()
                     .text_size(px(36.))
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .child(format!("{} correct", self.score))
                     .into_any_element(),
                 muted(format!("{}% accuracy", self.accuracy())).into_any_element(),
                 if self.saved["isBest"] == json!(true) {
                     div()
                         .text_color(palette.success)
-                        .child("A new personal best!")
+                        .child("New personal best")
                         .into_any_element()
                 } else {
                     muted(format!(
@@ -297,7 +297,7 @@ impl Render for SquareColors {
             Stage::Idle => vec![
                 div()
                     .text_size(px(36.))
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .child("Ready?")
                     .into_any_element(),
                 muted(format!(
@@ -310,7 +310,7 @@ impl Render for SquareColors {
         let key = |key: &'static str| {
             div()
                 .ml(px(6.))
-                .px(px(5.))
+                .px(px(4.))
                 .rounded(radii::XS)
                 .border_1()
                 .border_color(palette.border_accented)
@@ -336,7 +336,7 @@ impl Render for SquareColors {
                     .flex_1()
                     .h(px(44.))
                     .justify_center()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .rounded(radii::MD)
                     .border_1()
                     .border_color(if light { palette.border_accented } else { bg })
@@ -352,7 +352,7 @@ impl Render for SquareColors {
             };
         let answers = if self.stage == Stage::Running {
             h_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(answer("answer-light", "Light", "L", true))
                 .child(answer("answer-dark", "Dark", "D", false))
         } else {
@@ -383,7 +383,7 @@ impl Render for SquareColors {
                 v_flex()
                     .items_center()
                     .justify_center()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .min_h(px(220.))
                     .my(px(16.))
                     .rounded(radii::XL)
@@ -401,7 +401,7 @@ impl Render for SquareColors {
                 |this: &mut Self| &mut this.voice,
                 BarSpec {
                     id: "square-colors-voice",
-                    hint: "Say “light” or “dark”.",
+                    hint: "Say “light” or “dark”",
                     active: self.stage == Stage::Running,
                     grammar: grammar(),
                 },

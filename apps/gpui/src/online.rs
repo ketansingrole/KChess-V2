@@ -566,7 +566,7 @@ impl OnlineState {
                     crate::notifications::desktop(
                         "lowTime",
                         "Low on time",
-                        &format!("{left} left against {opponent}."),
+                        &format!("{left} left against {opponent}"),
                         cx,
                     );
                 }

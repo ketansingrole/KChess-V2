@@ -294,7 +294,7 @@ impl Render for RatingHistory {
         let values = self.values();
         let change = (values.len() >= 2).then(|| values[values.len() - 1] - values[0]);
         v_flex()
-            .gap(px(10.))
+            .gap(px(8.))
             .child(
                 h_flex()
                     .justify_between()
@@ -328,7 +328,7 @@ impl Render for RatingHistory {
                     // `USelect size="sm"`: each only as wide as its choice and chevron.
                     .child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .child(
                                 div()
                                     .w(fit_select(
@@ -360,7 +360,7 @@ impl Render for RatingHistory {
                 card.child(widgets::empty_state(
                     icon("chart-line"),
                     "No rating points",
-                    Some("Try another mode or date range.".into()),
+                    Some("Try another mode or date range".into()),
                     &palette,
                 ))
             })

@@ -215,7 +215,7 @@ impl TournamentsPage {
                             .child(
                                 div()
                                     .text_size(px(20.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child(detail["name"].as_str().unwrap_or_default().to_string()),
                             )
                             .child(
@@ -225,7 +225,7 @@ impl TournamentsPage {
                                     .child(line)
                                     .child(
                                         div()
-                                            .font_weight(FontWeight::BOLD)
+                                            .font_weight(FontWeight::MEDIUM)
                                             .when(started, |text| text.text_color(palette.primary))
                                             .child(status_line(detail)),
                                     ),
@@ -236,7 +236,7 @@ impl TournamentsPage {
             .children(detail["problem"].as_str().map(|problem| {
                 h_flex()
                     .gap(px(8.))
-                    .p(px(10.))
+                    .p(px(12.))
                     .rounded(radii::MD)
                     .bg(palette.accented)
                     .text_size(px(13.))
@@ -259,7 +259,7 @@ impl TournamentsPage {
                             .children(list.iter().map(|entry| {
                                 let ok = entry["verdict"] == json!("ok");
                                 h_flex()
-                                    .gap(px(6.))
+                                    .gap(px(8.))
                                     .child(
                                         if ok {
                                             icon("circle-check")
@@ -299,7 +299,7 @@ impl TournamentsPage {
         let me = Self::account(cx).unwrap_or_default().to_lowercase();
         let rows = detail["standing"].as_array().cloned().unwrap_or_default();
         widgets::card(palette)
-            .gap(px(10.))
+            .gap(px(8.))
             .child(
                 h_flex()
                     .justify_between()
@@ -344,9 +344,8 @@ impl TournamentsPage {
                     .as_array()
                     .filter(|podium| !podium.is_empty())
                     .map(|podium| {
-                        h_flex()
-                            .gap(px(10.))
-                            .children(podium.iter().enumerate().map(|(index, entry)| {
+                        h_flex().gap(px(8.)).children(podium.iter().enumerate().map(
+                            |(index, entry)| {
                                 let mut line =
                                     format!("{} pts", entry["score"].as_f64().unwrap_or_default());
                                 if let Some(performance) = entry["performance"].as_f64() {
@@ -356,7 +355,7 @@ impl TournamentsPage {
                                     .flex_1()
                                     .items_center()
                                     .gap(px(2.))
-                                    .p(px(10.))
+                                    .p(px(12.))
                                     .rounded(radii::LG)
                                     .bg(palette.accented)
                                     .child(icon("trophy").size(px(20.)).text_color(rgb(
@@ -372,7 +371,7 @@ impl TournamentsPage {
                                             entry["name"].as_str().unwrap_or("?").to_string(),
                                             palette.primary,
                                         )
-                                        .font_weight(FontWeight::SEMIBOLD),
+                                        .font_weight(FontWeight::MEDIUM),
                                     )
                                     .child(
                                         div()
@@ -380,17 +379,18 @@ impl TournamentsPage {
                                             .text_color(palette.text_muted)
                                             .child(line),
                                     )
-                            }))
+                            },
+                        ))
                     }),
             )
             .when(rows.is_empty(), |card| {
-                card.child(widgets::hint("No players yet.", palette))
+                card.child(widgets::hint("No players yet", palette))
             })
             .children(rows.iter().enumerate().map(|(index, row)| {
                 let name = row["name"].as_str().unwrap_or("?").to_string();
                 let mine = name.to_lowercase() == me;
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .px(px(8.))
                     .py(px(6.))
                     .rounded(radii::SM)
@@ -406,10 +406,10 @@ impl TournamentsPage {
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .children(row["title"].as_str().map(|title| {
                                 div()
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(palette.primary)
                                     .child(title.to_string())
                             }))
@@ -432,7 +432,7 @@ impl TournamentsPage {
                             .w(px(48.))
                             .justify_end()
                             .gap(px(2.))
-                            .font_weight(FontWeight::BOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .when(row["fire"] == json!(true), |score| {
                                 score
                                     .text_color(palette.warning)
@@ -498,7 +498,7 @@ impl TournamentsPage {
                 .text_size(px(13.))
                 .child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .children(entry["rank"].as_f64().map(|rank| {
                             div()
                                 .text_color(palette.text_muted)
@@ -548,13 +548,13 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
         .clone();
     Some(
         widgets::card(palette)
-            .gap(px(6.))
+            .gap(px(8.))
             .child(widgets::heading("Playing now", palette))
             .children(duels.into_iter().enumerate().map(|(index, duel)| {
                 let id = duel["id"].as_str().unwrap_or_default().to_string();
                 let side = |key: &str, slot: usize| {
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .min_w_0()
                         .children(duel[key]["rank"].as_f64().map(|rank| {
                             div()
@@ -615,7 +615,7 @@ fn totals(detail: &Value, palette: &Palette) -> Option<Div> {
             .children(rows.into_iter().map(|(label, value)| {
                 h_flex()
                     .justify_between()
-                    .py(px(5.))
+                    .py(px(4.))
                     .text_size(px(13.))
                     .child(div().text_color(palette.text_muted).child(label))
                     .child(value)

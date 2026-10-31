@@ -199,19 +199,19 @@ impl GameOptions {
         }
         let text = self.fen.read(cx).value().trim().to_string();
         if text.is_empty() {
-            return Some("Paste a FEN, or set up the position in the board editor.".into());
+            return Some("Paste a FEN, or set up the position in the board editor".into());
         }
         if let Some(problem) = position_problem(&text) {
             return Some(problem.into());
         }
         kchess_domain::rules::setup_start("standard", &text)
             .is_none()
-            .then(|| "That FEN is not a legal position.".into())
+            .then(|| "That FEN is not a legal position".into())
     }
 
     fn number_problem(&self, cx: &App) -> Option<SharedString> {
         (self.start == Start::Chess960 && self.number960(cx).is_none())
-            .then(|| "Enter a number from 0 to 959.".into())
+            .then(|| "Enter a number from 0 to 959".into())
     }
 
     fn chosen(&self, cx: &App) -> Chosen {

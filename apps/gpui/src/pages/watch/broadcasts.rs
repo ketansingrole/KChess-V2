@@ -619,8 +619,8 @@ impl WatchPage {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight(650.))
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.highlighted)
                         .child(tour["name"].as_str().unwrap_or_default().to_string()),
                 )
@@ -632,7 +632,7 @@ impl WatchPage {
                         .assistance_allowed();
                     bar.child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .text_size(px(13.))
                             .child(
                                 Switch::new("broadcast-grid-evaluations")
@@ -725,7 +725,7 @@ impl WatchPage {
                         h_flex()
                             .w_full()
                             .h(px(174.))
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .when_some(estimate.clone(), |row, (line, _)| {
                                 row.child(
                                     crate::engine_view::eval_bar(
@@ -797,7 +797,7 @@ impl WatchPage {
         v_flex()
             .gap(px(12.))
             .when(self.broadcasts.ended && games.is_empty(), |body| {
-                body.child(widgets::hint("No games in this round yet.", palette))
+                body.child(widgets::hint("No games in this round yet", palette))
             })
             .child(h_flex().flex_wrap().gap(px(14.)).children(cells))
             .into_any_element()
@@ -836,7 +836,7 @@ impl WatchPage {
         } else if !searching && broadcasts.loading {
             Some("Loading broadcasts…")
         } else if searching && broadcasts.results.is_empty() && broadcasts.search_error.is_none() {
-            Some("No broadcasts found.")
+            Some("No broadcasts found")
         } else {
             None
         };
@@ -850,8 +850,8 @@ impl WatchPage {
                     .gap(px(12.))
                     .child(
                         div()
-                            .text_size(px(22.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::MEDIUM)
                             .child("Tournament broadcasts"),
                     )
                     .child(
@@ -976,7 +976,7 @@ impl WatchPage {
                                                             .flex_none()
                                                             .when(live, |time| {
                                                                 time.text_color(palette.error)
-                                                                    .font_weight(FontWeight::BOLD)
+                                                                    .font_weight(FontWeight::MEDIUM)
                                                             })
                                                             .child(timing(&item, now)),
                                                     ),
@@ -984,7 +984,7 @@ impl WatchPage {
                                             .child(
                                                 div()
                                                     .text_size(px(14.))
-                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .font_weight(FontWeight::MEDIUM)
                                                     .child(
                                                         item["tourName"]
                                                             .as_str()
@@ -1057,7 +1057,7 @@ impl WatchPage {
                 });
             widgets::player_line(
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(widgets::avatar(
                         icon("user"),
                         if color == Color::White {
@@ -1147,7 +1147,7 @@ impl WatchPage {
                 &sans,
                 ply,
                 view::black_first(&setup),
-                "No moves yet.".into(),
+                "No moves yet".into(),
                 select.clone(),
                 palette,
             )))

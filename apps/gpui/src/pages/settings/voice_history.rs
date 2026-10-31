@@ -310,7 +310,7 @@ impl VoiceHistory {
 fn subtitle(text: &'static str, palette: &Palette) -> Div {
     div()
         .text_size(px(13.))
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight::MEDIUM)
         .text_color(palette.highlighted)
         .child(text)
 }
@@ -332,7 +332,7 @@ impl Render for VoiceHistory {
             .child(widgets::heading("Voice history", &palette))
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .child(
                         Button::new("voice-history-refresh")
                             .ghost()
@@ -385,13 +385,13 @@ impl Render for VoiceHistory {
                 .flex_1()
                 .min_w(px(110.))
                 .px(px(12.))
-                .py(px(10.))
+                .py(px(8.))
                 .rounded(radii::LG)
                 .bg(palette.elevated)
                 .child(
                     div()
                         .text_size(px(20.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .child(value),
                 )
                 .child(muted(label, &palette))
@@ -411,7 +411,7 @@ impl Render for VoiceHistory {
             .gap(px(8.))
             .child(subtitle("Least certain words", &palette))
             .when(weak.is_empty(), |column| {
-                column.child(muted("No word stands out yet.", &palette))
+                column.child(muted("No word stands out yet", &palette))
             })
             .children(weak.into_iter().map(|(word, count, conf)| {
                 v_flex()
@@ -423,7 +423,7 @@ impl Render for VoiceHistory {
                             .child(
                                 div()
                                     .w(px(70.))
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .child(word.clone()),
                             )
                             .child(
@@ -455,11 +455,11 @@ impl Render for VoiceHistory {
             .gap(px(8.))
             .child(subtitle("Heard → meant", &palette))
             .when(pairs.is_empty(), |column| {
-                column.child(muted("No corrections yet.", &palette))
+                column.child(muted("No corrections yet", &palette))
             })
             .children(pairs.into_iter().map(|(heard, meant, count)| {
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .text_size(px(13.))
                     .child(
                         div()
@@ -471,7 +471,7 @@ impl Render for VoiceHistory {
                             .size(px(14.))
                             .text_color(palette.text_muted),
                     )
-                    .child(div().font_weight(FontWeight::BOLD).child(meant))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(meant))
                     .when(count > 1, |row| {
                         row.child(muted(format!("{count}×"), &palette))
                     })

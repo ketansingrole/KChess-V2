@@ -527,7 +527,7 @@ impl Repertoire {
         if self.at.is_some() {
             self.feedback = Some(Feedback {
                 kind: Kind::Info,
-                text: "New line.".into(),
+                text: "New line".into(),
                 detail: None,
             });
             if !self.your_turn(cx) {
@@ -600,7 +600,7 @@ impl Repertoire {
                 kind: Kind::Wrong,
                 text: "Not in your repertoire".into(),
                 detail: Some(format!(
-                    "Expected {}.",
+                    "Expected {}",
                     if expected.is_empty() {
                         "nothing (line ended)".to_string()
                     } else {
@@ -878,7 +878,7 @@ impl Render for Repertoire {
                 .pt(px(20.))
                 .child(widgets::card(&palette).child(Self::empty(
                     "Nothing to drill yet",
-                    Some("Drill an opening, or lines you saved as a study."),
+                    Some("Drill an opening, or lines you saved as a study"),
                     &palette,
                 )))
                 .into_any_element();
@@ -953,8 +953,8 @@ impl Render for Repertoire {
                     .gap(px(8.))
                     .child(
                         div()
-                            .text_size(px(15.))
-                            .font_weight(FontWeight(650.))
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.highlighted)
                             .child("Repertoire"),
                     )
@@ -1112,7 +1112,7 @@ impl Render for Repertoire {
             // The study's note on this position: below the controls, however long it is.
             .children(comment.filter(|text| !text.is_empty()).map(|text| {
                 div()
-                    .px(px(10.))
+                    .px(px(12.))
                     .py(px(6.))
                     .border_l_2()
                     .border_color(crate::theme::tint(palette.primary, 50.))

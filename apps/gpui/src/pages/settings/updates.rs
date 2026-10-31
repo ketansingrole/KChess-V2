@@ -82,9 +82,9 @@ fn summary(updates: &Updates, settings: &Settings) -> String {
             _ => "Preparing download…".into(),
         },
         Phase::Downloaded if settings.frontend.update_install_on_quit => {
-            "Installs when you quit KChess, or restart now.".into()
+            "Installs when you quit KChess, or restart now".into()
         }
-        Phase::Downloaded => "Restart KChess to install.".into(),
+        Phase::Downloaded => "Restart KChess to install".into(),
         Phase::Installing => "Installing the update…".into(),
         Phase::Disabled => {
             "This installation cannot update itself. Download and install the latest release."
@@ -214,7 +214,7 @@ impl SettingsPage {
                             .child(
                                 div()
                                     .text_size(px(18.))
-                                    .font_weight(FontWeight::BOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(palette.highlighted)
                                     .child(format!(
                                         "KChess {}",
@@ -227,7 +227,7 @@ impl SettingsPage {
                     )
                     .child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(8.))
                             .flex_wrap()
                             .text_size(px(13.))
                             .text_color(palette.text_muted)
@@ -262,7 +262,7 @@ impl SettingsPage {
                 )
                 .child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
                         .children(updates.released.as_ref().and_then(|date| {
@@ -295,7 +295,7 @@ impl SettingsPage {
             .children(target_block)
             .children(updates.error.clone().map(|error| {
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .text_size(px(13.))
                     .text_color(palette.error)
                     .child(icon("circle-alert").size(px(14.)))
@@ -309,7 +309,7 @@ impl SettingsPage {
                     .switch(
                         "update-auto-check",
                         "Automatically check for updates",
-                        Some("On startup and every six hours."),
+                        Some("On startup and every six hours"),
                         frontend.update_auto_check,
                         true,
                         |s, on| s.frontend.update_auto_check = on,
@@ -318,7 +318,7 @@ impl SettingsPage {
                     .switch(
                         "update-auto-download",
                         "Download updates in the background",
-                        Some("Turning this off does not cancel an ongoing download."),
+                        Some("Turning this off does not cancel an ongoing download"),
                         frontend.update_auto_download,
                         true,
                         |s, on| s.frontend.update_auto_download = on,
@@ -327,7 +327,7 @@ impl SettingsPage {
                     .switch(
                         "update-install-on-quit",
                         "Install updates when I quit",
-                        Some("KChess will not quit or restart automatically."),
+                        Some("KChess will not quit or restart automatically"),
                         frontend.update_install_on_quit,
                         true,
                         |s, on| s.frontend.update_install_on_quit = on,

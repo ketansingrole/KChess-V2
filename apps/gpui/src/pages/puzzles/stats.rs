@@ -367,8 +367,8 @@ fn stat(label: &str, value: String, sub: Option<AnyElement>, palette: &Palette) 
         )
         .child(
             div()
-                .text_size(px(26.))
-                .font_weight(FontWeight::BOLD)
+                .text_size(px(28.))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(value),
         )
@@ -391,7 +391,7 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
     let value = |value: &Value| {
         div()
             .text_size(px(20.))
-            .font_weight(FontWeight::BOLD)
+            .font_weight(FontWeight::MEDIUM)
             .child(
                 value
                     .as_f64()
@@ -439,7 +439,7 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
         .cloned()
         .collect();
     let table = if days.is_empty() {
-        widgets::hint("No Storm runs on Lichess in the last 30 days.", palette).into_any_element()
+        widgets::hint("No Storm runs on Lichess in the last 30 days", palette).into_any_element()
     } else {
         let cell = |text: String, width: f32| div().w(px(width)).child(text);
         v_flex()
@@ -448,7 +448,7 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
                 h_flex()
                     .pb(px(6.))
                     .text_size(px(11.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(palette.text_muted)
                     .child(cell("DAY".into(), 110.))
                     .child(cell("RUNS".into(), 70.))
@@ -628,7 +628,7 @@ impl Render for PuzzleStats {
         let chart_card = widgets::card(&palette)
             .flex_1()
             .min_w(px(300.))
-            .gap(px(10.))
+            .gap(px(8.))
             .child(widgets::heading("Puzzle rating history", &palette))
             .when(self.point_count() >= 2, |card| {
                 card.child(self.chart.clone())
@@ -646,11 +646,11 @@ impl Render for PuzzleStats {
             widgets::empty_state(
                 icon("key-round"),
                 "Lichess needs your permission",
-                Some("Reconnect this account to load puzzle statistics.".into()),
+                Some("Reconnect this account to load puzzle statistics".into()),
                 &palette,
             )
             .child(
-                h_flex().mt(px(10.)).child(
+                h_flex().mt(px(8.)).child(
                     Button::new("stats-reconnect")
                         .primary()
                         .icon(icon("log-in"))
@@ -669,7 +669,7 @@ impl Render for PuzzleStats {
             widgets::empty_state(
                 icon("puzzle"),
                 "Nothing in this period",
-                Some("Solve some puzzles on Lichess or in rated mode here, then refresh.".into()),
+                Some("Solve some puzzles on Lichess or in rated mode here, then refresh".into()),
                 &palette,
             )
             .into_any_element()
@@ -681,12 +681,12 @@ impl Render for PuzzleStats {
                     h_flex()
                         .pb(px(6.))
                         .text_size(px(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.text_muted)
                         .child(div().flex_1().child("THEME"))
                         .child(cell(60.).child("PLAYED"))
                         .child(cell(76.).child("FIRST TRY"))
-                        .child(cell(60.).child("PERF."))
+                        .child(cell(60.).child("PERF"))
                         .child(div().w(px(60.))),
                 )
                 .children(rows.into_iter().enumerate().map(|(index, row)| {
@@ -722,14 +722,14 @@ impl Render for PuzzleStats {
         let themes_card = widgets::card(&palette)
             .flex_1()
             .min_w(px(300.))
-            .gap(px(10.))
+            .gap(px(8.))
             .child(
                 h_flex()
                     .justify_between()
                     .gap(px(8.))
                     .child(v_flex().child(widgets::heading("Themes", &palette)).child(
                         widgets::hint(
-                            format!("Where you are strongest and weakest, last {days} days."),
+                            format!("Where you are strongest and weakest, last {days} days"),
                             &palette,
                         ),
                     ))
@@ -776,7 +776,7 @@ impl PuzzleStats {
                         palette,
                     )
                     .child(
-                        h_flex().mt(px(10.)).child(
+                        h_flex().mt(px(8.)).child(
                             Button::new("storm-connect")
                                 .primary()
                                 .icon(icon("log-in"))

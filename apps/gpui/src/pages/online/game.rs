@@ -103,7 +103,7 @@ fn connection_row(label: &'static str, value: String, palette: &Palette) -> Div 
         .justify_between()
         .gap(px(16.))
         .child(div().text_color(palette.text_muted).child(label))
-        .child(div().font_weight(FontWeight::SEMIBOLD).child(value))
+        .child(div().font_weight(FontWeight::MEDIUM).child(value))
 }
 
 /// Your connection, shown when your connection line is pointed at.
@@ -131,7 +131,7 @@ fn own_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
                         .child(
                             div()
                                 .text_size(px(18.))
-                                .font_weight(FontWeight::BOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .child(format!("{}", current.round())),
                         )
                         .child(div().text_color(palette.text_muted).child("ms ping")),
@@ -199,7 +199,7 @@ fn own_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
             palette,
         ))
         .child(div().text_color(palette.text_muted).child(format!(
-            "Measured against lichess.org every {} s.",
+            "Measured against lichess.org every {} s",
             crate::online::PRESENCE_EVERY.as_secs()
         )))
 }
@@ -247,13 +247,13 @@ fn opponent_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
         .gap(px(8.))
         .text_size(px(12.))
         .aria_label(format!("{name}'s connection"))
-        .child(div().font_weight(FontWeight::BOLD).child(name))
+        .child(div().font_weight(FontWeight::MEDIUM).child(name))
         .child(connection_row("Status", status, palette))
         .child(connection_row("Signal", signal, palette))
         .child(
             div()
                 .text_color(palette.text_muted)
-                .child("As reported by Lichess."),
+                .child("As reported by Lichess"),
         )
 }
 
@@ -311,7 +311,7 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
         .open_delay(std::time::Duration::from_millis(200))
         .trigger(
             h_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .text_size(px(12.))
                 .font_weight(FontWeight::NORMAL)
                 .text_color(color)
@@ -420,7 +420,7 @@ impl OnlinePage {
             let running = playing && live_turn == side;
             widgets::player_line(
                 h_flex()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .child(widgets::avatar(
                         icon("user"),
                         if side == Color::White {
@@ -501,7 +501,7 @@ impl OnlinePage {
             .gap(px(8.))
             .child(widgets::heading(title, palette))
             .child(widgets::hint(
-                format!("{status} Clocks are paused until a fresh server update arrives."),
+                format!("{status} Clocks are paused until a fresh server update arrives"),
                 palette,
             ))
             .child(
@@ -582,7 +582,7 @@ impl OnlinePage {
             Some((
                 "history",
                 "Reviewing an earlier position".into(),
-                "Go to the last move to keep playing.".into(),
+                "Go to the last move to keep playing".into(),
             ))
         } else if playing {
             None
@@ -620,7 +620,7 @@ impl OnlinePage {
             notices.push(
                 offer(
                     "timer",
-                    format!("Move within {seconds}s or the game is aborted."),
+                    format!("Move within {seconds}s or the game is aborted"),
                     Vec::new(),
                     palette,
                 )
@@ -641,7 +641,7 @@ impl OnlinePage {
                 "theirs" => notices.push(
                     offer(
                         "handshake",
-                        format!("{opponent} offers a draw."),
+                        format!("{opponent} offers a draw"),
                         vec![
                             small("draw-accept", "Accept", true, "acceptDraw"),
                             small("draw-decline", "Decline", false, "declineDraw"),
@@ -653,7 +653,7 @@ impl OnlinePage {
                 "mine" => notices.push(
                     offer(
                         "handshake",
-                        "You offered a draw.".into(),
+                        "You offered a draw".into(),
                         vec![small("draw-cancel", "Cancel offer", false, "declineDraw")],
                         palette,
                     )
@@ -665,7 +665,7 @@ impl OnlinePage {
                 "theirs" => notices.push(
                     offer(
                         "undo-2",
-                        format!("{opponent} asks to take back a move."),
+                        format!("{opponent} asks to take back a move"),
                         vec![
                             small("takeback-accept", "Accept", true, "takeback"),
                             small("takeback-decline", "Decline", false, "declineTakeback"),
@@ -677,7 +677,7 @@ impl OnlinePage {
                 "mine" => notices.push(
                     offer(
                         "undo-2",
-                        "Takeback requested.".into(),
+                        "Takeback requested".into(),
                         vec![small("takeback-cancel", "Cancel", false, "declineTakeback")],
                         palette,
                     )
@@ -693,7 +693,7 @@ impl OnlinePage {
                     if seconds > 0. {
                         format!("{opponent} left the game. You can claim the win in {seconds}s.")
                     } else {
-                        format!("{opponent} left the game.")
+                        format!("{opponent} left the game")
                     },
                     if seconds > 0. {
                         Vec::new()
@@ -714,7 +714,7 @@ impl OnlinePage {
                 offer(
                     "repeat",
                     format!(
-                        "{} wants a rematch.",
+                        "{} wants a rematch",
                         rematch["opponent"]["name"]
                             .as_str()
                             .unwrap_or("Your opponent")
@@ -808,7 +808,7 @@ impl OnlinePage {
                             window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
                                 dialog
                                     .title("Resign this game?")
-                                    .description("Your opponent will be awarded the win.")
+                                    .description("Your opponent will be awarded the win")
                                     .ok_text("Resign")
                                     .ok_variant(ButtonVariant::Danger)
                                     .cancel_text("Cancel")
@@ -907,7 +907,7 @@ impl OnlinePage {
                 h_flex()
                     .text_size(px(12.))
                     .text_color(palette.text_muted)
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .child(format!(
                         "{}{}",
                         variant_name
@@ -945,7 +945,7 @@ impl OnlinePage {
                 &sans,
                 ply,
                 view::black_first(&setup),
-                "No moves yet.".into(),
+                "No moves yet".into(),
                 select,
                 palette,
             )))

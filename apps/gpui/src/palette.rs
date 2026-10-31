@@ -879,20 +879,20 @@ impl Global for PaletteHandle {}
 
 fn placeholder(mode: Mode, open: bool) -> &'static str {
     if !open {
-        return "Search…";
+        return "Search";
     }
     match mode {
         Mode::All => "Search pages and commands (type ? for help)",
-        Mode::Commands => "Type a command…",
+        Mode::Commands => "Type a command",
         Mode::Players => "Search players you follow, or type a Lichess username",
-        Mode::Settings => "Search settings…",
+        Mode::Settings => "Search settings",
         Mode::Help => "Pick how to search",
     }
 }
 
 impl CommandPalette {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> CommandPalette {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search…"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let subscriptions = vec![cx.subscribe_in(
             &input,
             window,
@@ -1043,7 +1043,7 @@ impl Render for CommandPalette {
                 .map(|(at_group, group)| {
                     let heading = group.label.map(|label| {
                         div()
-                            .px(px(10.))
+                            .px(px(12.))
                             .pt(px(6.))
                             .pb(px(4.))
                             .text_size(px(11.))
@@ -1066,8 +1066,8 @@ impl Render for CommandPalette {
                                 .role(Role::Button)
                                 .aria_label(command.label.clone())
                                 .aria_selected(chosen)
-                                .gap(px(10.))
-                                .px(px(10.))
+                                .gap(px(8.))
+                                .px(px(12.))
                                 .py(px(6.))
                                 .rounded(radii::SM)
                                 .text_size(px(13.))
@@ -1104,7 +1104,7 @@ impl Render for CommandPalette {
                                                 div()
                                                     .when(mark, |part| {
                                                         part.text_color(palette.primary)
-                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .font_weight(FontWeight::MEDIUM)
                                                     })
                                                     .child(part)
                                             },
@@ -1161,14 +1161,14 @@ impl Render for CommandPalette {
                 })
                 .children(sections);
             let hint = |keys: &'static str, label: &'static str| {
-                h_flex().gap(px(3.)).child(kbd(keys, &palette)).child(label)
+                h_flex().gap(px(4.)).child(kbd(keys, &palette)).child(label)
             };
             let footer = h_flex()
                 .flex_none()
                 .flex_wrap()
                 .gap_x(px(14.))
                 .gap_y(px(4.))
-                .px(px(10.))
+                .px(px(12.))
                 .py(px(6.))
                 .border_t_1()
                 .border_color(palette.border)
@@ -1180,7 +1180,7 @@ impl Render for CommandPalette {
                 .child(
                     h_flex()
                         .ml_auto()
-                        .gap(px(3.))
+                        .gap(px(4.))
                         .child(kbd(">", &palette))
                         .child("commands")
                         .child(kbd("@", &palette))
@@ -1195,9 +1195,9 @@ impl Render for CommandPalette {
         let input = self.input.clone();
         let field = h_flex()
             .flex_none()
-            .h(px(30.))
-            .px(px(10.))
-            .gap(px(6.))
+            .h(px(32.))
+            .px(px(12.))
+            .gap(px(8.))
             .when(!open, |field| field.cursor_pointer())
             // A press anywhere on the closed box opens it, the icon and shortcut included.
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -1215,7 +1215,7 @@ impl Render for CommandPalette {
                 Input::new(&self.input)
                     .appearance(false)
                     .flex_1()
-                    .h(px(30.))
+                    .h(px(32.))
                     .px_0()
                     .text_size(px(13.))
                     .aria_label("Search pages and commands"),

@@ -198,7 +198,7 @@ impl StudyBar {
                 flushed.await?;
                 let answer = this
                     .update(cx, |_, cx| library.read(cx).command(command))
-                    .map_err(|_| "The analysis board closed.".to_string())?;
+                    .map_err(|_| "The analysis board closed".to_string())?;
                 answer.await
             }
             .await;
@@ -377,7 +377,7 @@ impl StudyBar {
                 .description(if cloud {
                     "Removes this chapter from the offline study. The Lichess copy is unchanged."
                 } else {
-                    "Removes this chapter and all of its moves, comments, and variations."
+                    "Removes this chapter and all of its moves, comments, and variations"
                 })
                 .ok_text("Delete chapter")
                 .ok_variant(ButtonVariant::Danger)
@@ -414,7 +414,7 @@ impl StudyBar {
                                 window.close_dialog(cx);
                                 window.push_notification(
                                     Notification::success(
-                                        "Changes on the board are now saved to it automatically.",
+                                        "Changes on the board are now saved to it automatically",
                                     )
                                     .title("Study saved"),
                                     cx,
@@ -505,7 +505,7 @@ impl StudyBar {
                         crate::widgets::action_notification(
                             Notification::new()
                                 .title(format!("Deleted “{name}”"))
-                                .message("The board keeps its moves."),
+                                .message("The board keeps its moves"),
                             "undo-delete-study",
                             "Undo",
                             move |window, cx| {
@@ -679,8 +679,8 @@ impl Render for StudyBar {
                         .child(
                             div()
                                 .w(px(280.))
-                                .text_size(px(15.))
-                                .font_weight(FontWeight(650.))
+                                .text_size(px(14.))
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.highlighted)
                                 .child(
                                     Input::new(&self.name)
@@ -868,7 +868,7 @@ impl Render for GameDetails {
         let field = |label: &'static str, control: AnyElement| {
             v_flex()
                 .flex_1()
-                .gap(px(6.))
+                .gap(px(8.))
                 .child(
                     div()
                         .text_size(px(14.))

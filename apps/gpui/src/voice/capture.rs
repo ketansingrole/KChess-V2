@@ -216,7 +216,7 @@ pub fn read_wav(path: &std::path::Path) -> Result<(Vec<f32>, u32), String> {
 }
 
 fn parse_wav(bytes: &[u8]) -> Result<(Vec<f32>, u32), String> {
-    let invalid = || "Not a 16-bit PCM WAV file.".to_string();
+    let invalid = || "Not a 16-bit PCM WAV file".to_string();
     if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err(invalid());
     }

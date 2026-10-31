@@ -72,13 +72,13 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
         );
     }
     match status["paused"].as_str() {
-        Some("battery") => "Paused while on battery power.".into(),
-        Some("engine") => "Paused while the engine is in use.".into(),
-        Some("online") => "Paused during your online game.".into(),
-        Some("off") => "Games are reviewed when you ask for it.".into(),
-        _ if auto == ReviewAuto::Off => "Games are reviewed when you ask for it.".into(),
-        _ if waiting > 0 => format!("{waiting} games waiting."),
-        _ => "All caught up.".into(),
+        Some("battery") => "Paused while on battery power".into(),
+        Some("engine") => "Paused while the engine is in use".into(),
+        Some("online") => "Paused during your online game".into(),
+        Some("off") => "Games are reviewed when you ask for it".into(),
+        _ if auto == ReviewAuto::Off => "Games are reviewed when you ask for it".into(),
+        _ if waiting > 0 => format!("{waiting} games waiting"),
+        _ => "All caught up".into(),
     }
 }
 
@@ -201,20 +201,20 @@ impl SettingsPage {
                 if result["updated"] != json!(true) {
                     window.push_notification(
                         SharedString::from(format!(
-                            "You already have the latest Stockfish ({version})."
+                            "You already have the latest Stockfish ({version})"
                         )),
                         cx,
                     );
                     this.refresh_engine(cx);
                 } else if had_download {
                     window.push_notification(
-                        SharedString::from(format!("Stockfish updated to {version}.")),
+                        SharedString::from(format!("Stockfish updated to {version}")),
                         cx,
                     );
                     this.refresh_engine(cx);
                 } else {
                     window.push_notification(
-                        SharedString::from(format!("Stockfish {version} downloaded.")),
+                        SharedString::from(format!("Stockfish {version} downloaded")),
                         cx,
                     );
                     let path = result["path"].as_str().unwrap_or_default().to_string();
@@ -283,7 +283,7 @@ impl SettingsPage {
                 } else {
                     this.refresh_engine(cx);
                 }
-                window.push_notification("Downloaded Stockfish deleted.", cx);
+                window.push_notification("Downloaded Stockfish deleted", cx);
             });
         })
         .detach();
@@ -300,14 +300,14 @@ impl SettingsPage {
     ) -> AnyElement {
         let head = v_flex()
             .min_w_0()
-            .gap(px(3.))
+            .gap(px(4.))
             .child(
                 h_flex()
                     .gap(px(8.))
                     .child(
                         div()
                             .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.highlighted)
                             .truncate()
                             .child(title),
@@ -325,7 +325,7 @@ impl SettingsPage {
         let controls = h_flex().gap(px(8.)).flex_none().children(buttons);
         if self.narrow() {
             v_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(head)
                 .child(controls)
                 .into_any_element()
@@ -358,7 +358,7 @@ impl SettingsPage {
                 |version| format!("Version {version}"),
             ),
             _ if status.is_some() && !can_download => {
-                "No official download is available for this platform.".into()
+                "No official download is available for this platform".into()
             }
             _ => "Official native build".into(),
         };
@@ -442,7 +442,7 @@ impl SettingsPage {
             Some(if ready && !name.is_empty() {
                 name.into()
             } else {
-                "Choose an available engine below.".into()
+                "Choose an available engine below".into()
             }),
             h_flex().child(status_badge),
             palette,
@@ -473,7 +473,7 @@ impl SettingsPage {
         let review_rows = Rows::new(self.narrow())
             .row(
                 "Review my games automatically",
-                Some("Runs in the background after syncing.".into()),
+                Some("Runs in the background after syncing".into()),
                 choice(
                     "review-auto",
                     &[
@@ -490,7 +490,7 @@ impl SettingsPage {
             .switch(
                 "review-battery",
                 "Also on battery power",
-                Some("Uses more power; reviews otherwise wait for a charger."),
+                Some("Uses more power; reviews otherwise wait for a charger"),
                 settings.core.review_on_battery,
                 auto != ReviewAuto::Off,
                 |s, on| s.core.review_on_battery = on,
@@ -556,19 +556,19 @@ mod tests {
         );
         assert_eq!(
             review_text(&json!({ "paused": "battery" }), ReviewAuto::All),
-            "Paused while on battery power."
+            "Paused while on battery power"
         );
         assert_eq!(
             review_text(&json!({ "waiting": 0 }), ReviewAuto::Off),
-            "Games are reviewed when you ask for it."
+            "Games are reviewed when you ask for it"
         );
         assert_eq!(
             review_text(&json!({ "waiting": 4 }), ReviewAuto::Recent),
-            "4 games waiting."
+            "4 games waiting"
         );
         assert_eq!(
             review_text(&json!({ "waiting": 0 }), ReviewAuto::Recent),
-            "All caught up."
+            "All caught up"
         );
     }
 }

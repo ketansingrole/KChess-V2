@@ -451,7 +451,7 @@ impl WatchPage {
                 let toggle = |id: &'static str, key: &'static str, label: &'static str, default| {
                     let page = page.clone();
                     h_flex()
-                        .gap(px(10.))
+                        .gap(px(8.))
                         .child(
                             Switch::new(id)
                                 .small()
@@ -506,7 +506,7 @@ impl WatchPage {
                 div()
                     .min_w(px(60.))
                     .text_size(px(20.))
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(if active { palette.text } else { palette.dimmed })
                     .child(score),
             )
@@ -517,7 +517,7 @@ impl WatchPage {
                     .child(
                         div()
                             .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::MEDIUM)
                             .child("Stockfish"),
                     )
                     .child(
@@ -537,7 +537,7 @@ impl WatchPage {
         v_flex()
             .id("broadcast-engine")
             .flex_none()
-            .gap(px(10.))
+            .gap(px(8.))
             .aria_label("Broadcast engine analysis")
             .child(head)
             .when(error && active, |panel| {
@@ -571,7 +571,7 @@ impl WatchPage {
                     &fen,
                     &broadcasts.engine.engine.lines(),
                     crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
-                    terminal.map(|_| "Nothing to analyse."),
+                    terminal.map(|_| "Nothing to analyse"),
                     std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
                         let _ = page.update(cx, |page, cx| page.explore(pv, at, cx));
                     }),

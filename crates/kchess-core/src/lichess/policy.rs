@@ -440,7 +440,11 @@ impl Policy {
             _ = cancel.cancelled() => return Err(aborted()),
             answer = tokio::time::timeout(self.timeout, fut) => match answer {
                 Ok(Ok(response)) => response,
-                Ok(Err(cause)) => return Err(CoreError::new(cause.to_string())),
+                Ok(Err(cause)) => {
+                    // The cause is for the log: it names the address, which says nothing to a player.
+                    self.host.log(Level::Warn, "request-policy", &format!("Lichess request failed: {cause}"));
+                    return Err(CoreError::new("Couldn’t reach Lichess"));
+                }
                 Err(_) => return Err(CoreError::new("Lichess request timed out. Retry or reconnect.")),
             },
         };

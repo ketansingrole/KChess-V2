@@ -246,7 +246,7 @@ impl OnlinePage {
     ) {
         let online = crate::online::handle(cx);
         if online.read(cx).busy_with_game() {
-            crate::online::notice(cx, "Finish or cancel your game before starting another.");
+            crate::online::notice(cx, "Finish or cancel your game before starting another");
             return;
         }
         let username = username.to_string();
@@ -417,7 +417,7 @@ impl OnlinePage {
         };
         let field = |label: &str, hint: Option<String>, control: AnyElement| {
             v_flex()
-                .gap(px(6.))
+                .gap(px(8.))
                 .child(
                     h_flex()
                         .gap(px(4.))
@@ -452,7 +452,7 @@ impl OnlinePage {
                     .items_start()
                     .gap(px(2.))
                     .px(px(12.))
-                    .py(px(10.))
+                    .py(px(8.))
                     .rounded(radii::LG)
                     .border_1()
                     .border_color(if chosen {
@@ -476,8 +476,8 @@ impl OnlinePage {
                     .on_click(set(|form, value| form.minutes = value, *minutes))
                     .child(
                         div()
-                            .text_size(px(15.))
-                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
                             .child(format!("{minutes} min")),
                     )
                     .child(
@@ -611,9 +611,9 @@ impl OnlinePage {
                     form.minutes, form.increment
                 )
                 .into()).detail(if blitz_needs_target {
-                        "Add a username above to send it as a direct challenge, or pick a longer control."
+                        "Add a username above to send it as a direct challenge, or pick a longer control"
                     } else {
-                        "Pick Blitz or slower for a direct challenge, Rapid or slower for the public pool."
+                        "Pick Blitz or slower for a direct challenge, Rapid or slower for the public pool"
                     }
                     .into(),));
         } else if form.correspondence && !targeted {
@@ -631,7 +631,7 @@ impl OnlinePage {
                 .child(
                     v_flex()
                         .text_size(px(13.))
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(summary_line))
+                        .child(div().font_weight(FontWeight::MEDIUM).child(summary_line))
                         .when(!form.correspondence, |column| {
                             column.child(
                                 div()
@@ -735,7 +735,7 @@ impl Render for OnlinePage {
                             h_flex()
                                 .justify_center()
                                 .gap(px(8.))
-                                .mt(px(10.))
+                                .mt(px(8.))
                                 .child(
                                     Button::new("online-connect")
                                         .primary()

@@ -522,7 +522,7 @@ impl Render for PuzzleBoard {
             },
             BoardBar {
                 id: "puzzle-voice",
-                hint: "Say “E four” or “Knight F three”.",
+                hint: "Say “E four” or “Knight F three”",
                 active: playing,
                 listening: playing,
                 grammar: crate::voice::grammar("MOVE_GRAMMAR"),

@@ -148,7 +148,7 @@ pub fn voice_bar(
                 row.child(
                     div()
                         .id((bar.id, 3usize))
-                        .px(px(10.))
+                        .px(px(12.))
                         .py(px(4.))
                         .rounded(radii::SM)
                         .border_1()
