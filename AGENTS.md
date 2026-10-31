@@ -164,6 +164,9 @@ git push origin "refs/tags/$release_tag"
 - Run anything that may take over a minute (`cargo xtask check`, `cargo test -p kchess-gpui`,
   packaging) in the background with its output in a file, and read the result when it finishes;
   never poll CI with `sleep` loops (`gh run watch` in the background reports when a run ends).
+- The development shell is zsh on macOS. Quote globs and `grep --include` patterns (an unmatched
+  glob is an error in zsh), and do not call `timeout`, which macOS lacks: use the tool's own
+  timeout or run the command in the background.
 - Several agent sessions often work in this repository at once, each in its own worktree. Never
   use `git stash` (one stash list serves every worktree, so a pop can take another session's
   work); keep work in progress as commits on your own branch, and never commit in a checkout or
