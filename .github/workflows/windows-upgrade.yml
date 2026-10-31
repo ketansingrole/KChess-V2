@@ -17,6 +17,7 @@ env:
   KCHESS_TEST_VERSION: 9999.0.${{ github.run_number }}
 
 jobs:
+  # CI's Windows package, made here rather than twice.
   build:
     runs-on: windows-latest
     steps:
@@ -27,7 +28,7 @@ jobs:
         with:
           shared-key: package
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The app and its installer take the test version from KCHESS_PACKAGE_VERSION.
       - run: cargo xtask package
         env:

@@ -36,6 +36,7 @@ jobs:
       # The workspace includes the app, which builds against these system headers.
       - name: Install GPUI build libraries
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      # Its CI ran `cargo xtask check` on this very commit.
       - name: Verify release metadata and the commit's CI
         run: cargo xtask release-verify
         env:
@@ -43,19 +44,6 @@ jobs:
       - name: Verify the release commit belongs to main
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor HEAD origin/main
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: check
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: rustup component add llvm-tools-preview
-      # The official Stockfish, so the tests that need a real engine run (`tests/support`).
-      - name: Fetch Stockfish
-        run: echo "KCHESS_ENGINE_PATH=$(cargo run -q --locked -p kchess-core --example fetch_stockfish -- "$RUNNER_TEMP/stockfish")" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - run: cargo xtask check
 
   # KChess for every platform, with the update manifests the Electron app's updater reads
   # (`latest*.yml`), so it installs this over itself. Signed and notarized on macOS with the
