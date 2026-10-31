@@ -68,7 +68,8 @@ git push origin "refs/tags/$release_tag"
   `.data/gpui-profile` with a native Stockfish (fetched into `.data/stockfish` once), prints its
   PID and logs to `.data/gpui.log`; `cargo xtask app --stop` stops it by that PID. It refuses a
   real profile. `cargo run -p kchess-gpui` also works (`tooling/macos-dev-runner.sh` signs it on
-  macOS with a stable identity, so the keychain remembers it); never point a development run at
+  macOS with a stable identity, so the keychain remembers it, and runs a debug build from
+  `target/debug/KChess.app`, so Mission Control shows its icon); never point a development run at
   the real profile (`~/Library/Application Support/KChess`): set `KCHESS_USER_DATA_DIR` to a
   scratch folder, and `KCHESS_ENGINE_PATH` to a native Stockfish.
 - `cargo xtask app --watch` stays in the foreground and rebuilds and restarts the app on every
