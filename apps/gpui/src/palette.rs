@@ -144,14 +144,14 @@ fn places(cx: &App) -> Vec<Command> {
         (Page::Dashboard, "Home", icon("house"), "start overview"),
         (
             Page::Computer,
-            "Play with Computer",
+            "Play with computer",
             icon("monitor"),
             "stockfish bot ai engine vs",
         ),
         (
             Page::Local,
             "Over the board",
-            icon("users-round"),
+            icon("swords"),
             "otb friend two players pass and play clock",
         ),
         (Page::Puzzles, "Puzzles", icon("puzzle"), ""),

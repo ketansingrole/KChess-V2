@@ -100,7 +100,7 @@ fn a_saved_game_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn a_resigned_computer_game_is_listed_with_the_computer_games(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.open("Play with Computer");
+    app.open("Play with computer");
     app.click_square("e2", true);
     app.click_square("e4", true);
     app.wait_for_moves(&["e4"]);

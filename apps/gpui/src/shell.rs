@@ -33,7 +33,7 @@ use crate::pages::studies::StudiesPage;
 use crate::pages::watch::WatchPage;
 use crate::pages::{Page, Pages};
 use crate::settings::{SettingsChanged, SettingsHandle};
-use crate::theme::{Palette, radii};
+use crate::theme::Palette;
 
 /// The window's height above the page; matches `--topbar-height`.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
@@ -79,8 +79,8 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
 pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
     [
         (Page::Dashboard, "Home", icon("house")),
-        (Page::Computer, "Play with Computer", icon("monitor")),
-        (Page::Local, "Over the board", icon("users-round")),
+        (Page::Computer, "Play with computer", icon("monitor")),
+        (Page::Local, "Over the board", icon("swords")),
         (Page::Puzzles, "Puzzles", icon("puzzle")),
         (Page::Practice, "Practice", icon("graduation-cap")),
         (Page::Openings, "Openings", icon("book-open-text")),
@@ -96,14 +96,18 @@ pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
         (Page::Players, "Players", icon("user-search")),
     ]
 }
-/// A row of the sidebar's navigation (`UNavigationMenu`'s link, `p-1.5`): 32px tall, a 20px icon
-/// 6px from its label.
+
+/// How many of `nav`'s pages each of the sidebar's groups holds: home, playing, training, your
+/// own games and boards, Lichess.
+pub(crate) const NAV_GROUPS: [usize; 5] = [1, 2, 3, 4, 6];
+
+/// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
 fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
-        .icon(glyph.size(px(20.)))
+        .icon(glyph.size(px(18.)))
         .min_h(px(32.))
         .p(px(6.))
-        .gap_x(px(6.))
+        .gap_x(px(8.))
 }
 
 /// What the sidebar lists: menus, with a heading between them while Settings is open.
@@ -140,13 +144,13 @@ impl SidebarItem for NavBlock {
             NavBlock::Menu(menu) => menu.render(id, window, cx).into_any_element(),
             // A collapsed sidebar shows icons only.
             NavBlock::Heading(_, true) => div().into_any_element(),
-            // The navigation menu's label: `font-semibold text-xs/5 text-highlighted px-2.5 py-1.5`.
+            // On the rows' icon column, nearer its own rows than the row above.
             NavBlock::Heading(label, false) => div()
-                .px(px(10.))
-                .py(px(6.))
+                .px(px(6.))
+                .mt_1()
                 .text_size(px(12.))
                 .line_height(px(20.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(cx.global::<Palette>().highlighted)
                 .child(label)
                 .into_any_element(),
@@ -1046,43 +1050,44 @@ impl Workspace {
     fn nav_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let current = self.pages.current();
         if current != Page::Settings {
-            // Electron's rows (`p-1.5`): 32px tall and touching, 20px icons 6px from the label.
-            return vec![NavBlock::Menu(Box::new(
-                SidebarMenu::new().gap_0().children(nav().into_iter().map(
-                    |(page, label, glyph)| {
-                        let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                        nav_item(label, glyph)
-                            .active(current == page)
-                            .when_some(marked, |item, mark| {
-                                item.suffix(move |_, cx| {
-                                    let theme = cx.theme();
-                                    let color = if mark == GameMark::Turn {
-                                        theme.primary
-                                    } else {
-                                        theme.muted_foreground
-                                    };
-                                    div().size(px(8.)).rounded_full().bg(color).when(
-                                        mark == GameMark::Turn,
-                                        |dot| {
-                                            dot.shadow(vec![BoxShadow {
-                                                color: color.opacity(0.25),
-                                                offset: point(px(0.), px(0.)),
-                                                blur_radius: px(0.),
-                                                spread_radius: px(3.),
-                                                inset: false,
-                                            }])
-                                        },
-                                    )
+            let mut pages = nav().into_iter();
+            return NAV_GROUPS
+                .into_iter()
+                .map(|size| {
+                    NavBlock::Menu(Box::new(SidebarMenu::new().gap_0().children(
+                        pages.by_ref().take(size).map(|(page, label, glyph)| {
+                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
+                            nav_item(label, glyph)
+                                .active(current == page)
+                                .when_some(marked, |item, mark| {
+                                    item.suffix(move |_, cx| {
+                                        let theme = cx.theme();
+                                        let color = if mark == GameMark::Turn {
+                                            theme.primary
+                                        } else {
+                                            theme.muted_foreground
+                                        };
+                                        div().size(px(8.)).rounded_full().bg(color).when(
+                                            mark == GameMark::Turn,
+                                            |dot| {
+                                                dot.shadow(vec![BoxShadow {
+                                                    color: color.opacity(0.25),
+                                                    offset: point(px(0.), px(0.)),
+                                                    blur_radius: px(0.),
+                                                    spread_radius: px(3.),
+                                                    inset: false,
+                                                }])
+                                            },
+                                        )
+                                    })
                                 })
-                            })
-                            .on_click(
-                                cx.listener(move |this, _, window, cx| {
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     this.choose(page, window, cx)
-                                }),
-                            )
-                    },
-                )),
-            ))];
+                                }))
+                        }),
+                    )))
+                })
+                .collect();
         }
         let shown = self
             .pages
@@ -1161,14 +1166,16 @@ impl Workspace {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .p_4()
+                            .px_4()
+                            .py_3()
+                            .gap_2()
                             .children(blocks),
                     )
                     .child(
                         v_flex()
                             .flex_none()
-                            .p_4()
-                            .gap_1()
+                            .px_4()
+                            .py_2()
                             .border_t_1()
                             .border_color(border)
                             .children(dev_build_badge(open, cx))
@@ -1381,9 +1388,18 @@ fn ghost_neutral(cx: &App) -> ButtonCustomVariant {
         .active(palette.accented)
 }
 
-/// A footer button as Electron draws it (`UButton` ghost, `block`, `justify-start`): 32px tall,
-/// a 20px icon with the label beside it while the sidebar is open. On the rail the icon stands
-/// alone, 6px in (`square`), with the label as its tooltip.
+/// The sidebar footer's buttons: muted like the navigation above them.
+fn ghost_sidebar(cx: &App) -> ButtonCustomVariant {
+    let palette = cx.global::<Palette>();
+    ButtonCustomVariant::new(cx)
+        .foreground(palette.text_muted)
+        .hover(palette.elevated)
+        .active(palette.elevated)
+}
+
+/// A footer button drawn as a navigation row: 32px tall, an 18px icon on the rows' column with
+/// the label beside it while the sidebar is open. On the rail the icon stands alone, with the
+/// label as its tooltip.
 fn footer_button(
     id: &'static str,
     glyph: Icon,
@@ -1392,17 +1408,19 @@ fn footer_button(
     cx: &App,
 ) -> Button {
     Button::new(id)
-        .custom(ghost_neutral(cx))
+        .custom(ghost_sidebar(cx))
         .w_full()
+        .px(px(6.))
         .child(
             h_flex()
                 .flex_1()
                 .min_w_0()
-                .gap(px(6.))
-                .child(glyph.size(px(20.)).flex_none())
+                .gap(px(8.))
+                .when(!open, |row| row.justify_center())
+                .child(glyph.size(px(18.)).flex_none())
                 .when(open, |row| row.child(label.clone())),
         )
-        .when(!open, |button| button.px(px(6.)).tooltip(label))
+        .when(!open, |button| button.tooltip(label))
 }
 
 /// Marks a debug build (`cargo run -p kchess-gpui`) above Settings, as the Electron app marked
@@ -1410,32 +1428,23 @@ fn footer_button(
 /// its id.
 #[cfg(debug_assertions)]
 fn dev_build_badge(open: bool, cx: &App) -> Option<AnyElement> {
-    const LABEL: &str = "Development build · GPUI";
+    const LABEL: &str = "Development build";
     let warning = cx.global::<Palette>().warning;
     Some(
         h_flex()
             .id("kchess-dev-build-badge")
-            .h(px(28.))
-            .gap(px(6.))
-            .rounded(radii::SM)
-            .overflow_hidden()
-            .border_1()
-            .border_color(warning.opacity(0.3))
-            .bg(warning.opacity(0.12))
+            .h(px(32.))
+            .px(px(6.))
+            .gap(px(8.))
             .text_color(warning)
-            .text_size(px(12.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .map(|badge| {
-                if open {
-                    badge.px(px(8.))
-                } else {
-                    badge.justify_center().tooltip(|window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(LABEL).build(window, cx)
-                    })
-                }
+            .text_sm()
+            .when(!open, |badge| {
+                badge.justify_center().tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(LABEL).build(window, cx)
+                })
             })
-            .child(icon("moon").size(px(16.)).flex_none())
-            .when(open, |badge| badge.child("Dev · GPUI"))
+            .child(icon("terminal").size(px(18.)).flex_none())
+            .when(open, |badge| badge.child(LABEL))
             .into_any_element(),
     )
 }
@@ -1469,25 +1478,26 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
     let connected = accounts.connected();
     let label = format!("@{active}");
     let target = handle.downgrade();
-    // `square`: 6px all round, the label between the icon and a dimmed up-down chevron; elevated
-    // while its menu is open.
+    // A navigation row: the label between the icon and a dimmed up-down chevron; elevated while
+    // its menu is open.
     let palette = cx.global::<Palette>();
     let dimmed = palette.dimmed;
     Button::new("account-menu")
-        .custom(ghost_neutral(cx).active(palette.elevated))
+        .custom(ghost_sidebar(cx))
         .w_full()
         .px(px(6.))
         .child(
             h_flex()
                 .flex_1()
                 .min_w_0()
-                .gap(px(6.))
-                .child(icon("user").size(px(20.)).flex_none())
+                .gap(px(8.))
+                .when(!expanded, |row| row.justify_center())
+                .child(icon("user").size(px(18.)).flex_none())
                 .when(expanded, |row| {
                     row.child(div().flex_1().min_w_0().child(label.clone()))
                         .child(
                             icon("chevrons-up-down")
-                                .size(px(20.))
+                                .size(px(18.))
                                 .flex_none()
                                 .text_color(dimmed),
                         )

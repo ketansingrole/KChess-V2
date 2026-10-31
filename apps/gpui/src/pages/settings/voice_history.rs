@@ -373,7 +373,7 @@ impl Render for VoiceHistory {
         if empty {
             if !self.loading {
                 card = card.child(muted(
-                    "Nothing yet. Speak a few moves in Play with Computer or answer a practice drill by voice, then come back.",
+                    "Nothing yet. Speak a few moves in Play with computer or answer a practice drill by voice, then come back.",
                     &palette,
                 ));
             }

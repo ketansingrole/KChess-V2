@@ -70,7 +70,7 @@ pub fn sections() -> [(Section, &'static str, Icon); 14] {
         (Section::Accounts, "My accounts", icon("user-round")),
         (Section::Offline, "Offline downloads", icon("download")),
         (Section::Data, "Data & storage", icon("database")),
-        (Section::Updates, "Updates", icon("download")),
+        (Section::Updates, "Updates", icon("refresh-cw")),
     ]
 }
 

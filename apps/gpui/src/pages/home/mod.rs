@@ -492,7 +492,7 @@ impl Render for HomePage {
                                 ))
                                 .child(shortcut(
                                     "home-local",
-                                    icon("users-round"),
+                                    icon("swords"),
                                     "Play over the board",
                                     Page::Local,
                                 ))

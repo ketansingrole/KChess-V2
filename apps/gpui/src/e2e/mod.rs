@@ -226,13 +226,24 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
-    /// Open a page from the sidebar by its label ("Play with Computer").
+    /// Open a page from the sidebar by its label ("Play with computer").
     pub fn open(&mut self, label: &str) {
         let index = crate::shell::nav()
             .iter()
             .position(|(_, name, _)| *name == label)
             .unwrap_or_else(|| panic!("no sidebar page {label:?}"));
-        self.click(format!("0-{index}"));
+        let mut row = index;
+        let group = crate::shell::NAV_GROUPS
+            .iter()
+            .position(|size| {
+                let inside = row < *size;
+                if !inside {
+                    row -= size;
+                }
+                inside
+            })
+            .expect("every page has a group");
+        self.click(format!("{group}-{row}"));
     }
 
     /// Click the element with this accessible name, for elements whose ID is generated (inputs).
@@ -388,7 +399,8 @@ impl Harness {
 
     /// Open a category of Settings from its sidebar ("Sound").
     pub fn open_settings(&mut self, label: &str) {
-        if !self.shows("2-0") {
+        // The pages' third group is shorter than this.
+        if !self.shows("2-3") {
             self.click("settings");
         }
         let index = crate::pages::settings::sections()

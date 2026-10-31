@@ -55,10 +55,10 @@ fn settings_are_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn back_returns_to_the_page_open_before(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.open("Play with Computer");
+    app.open("Play with computer");
     app.find("chess-board");
     app.click("settings");
-    app.find("2-0");
+    app.find("2-3");
     assert!(!app.shows("chess-board"));
     // While Settings is open, the sidebar's first item is Back.
     app.click("0-0");
@@ -69,5 +69,5 @@ fn back_returns_to_the_page_open_before(cx: &mut gpui_kit::TestAppContext) {
 fn the_settings_shortcut_opens_settings(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.press("secondary-,");
-    app.find("2-0");
+    app.find("2-3");
 }

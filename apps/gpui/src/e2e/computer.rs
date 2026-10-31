@@ -1,11 +1,11 @@
-//! Play with Computer, against the scripted engine (it always answers `e2e4`, so the computer
+//! Play with computer, against the scripted engine (it always answers `e2e4`, so the computer
 //! moves only when it has White).
 
 use super::Harness;
 
 fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
-    app.open("Play with Computer");
+    app.open("Play with computer");
     app.find("chess-board");
     app
 }
@@ -123,6 +123,6 @@ fn an_unfinished_game_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.click_square("e5", false);
     app.wait_for_moves(&["e4", "e5"]);
     let mut app = app.restart();
-    app.open("Play with Computer");
+    app.open("Play with computer");
     app.wait_for_moves(&["e4", "e5"]);
 }

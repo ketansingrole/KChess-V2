@@ -216,10 +216,10 @@ mod tests {
 
     #[test]
     fn keywords_find_but_are_not_highlighted() {
-        let found = match_query("stockfish", "Play with Computer", "stockfish bot").unwrap();
+        let found = match_query("stockfish", "Play with computer", "stockfish bot").unwrap();
         assert!(found.ranges.is_empty());
         assert!(found.score > 0.);
-        let both = match_query("play bot", "Play with Computer", "stockfish bot").unwrap();
+        let both = match_query("play bot", "Play with computer", "stockfish bot").unwrap();
         assert_eq!(both.ranges, vec![(0, 3)]);
     }
 
