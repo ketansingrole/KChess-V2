@@ -244,15 +244,15 @@ impl TopbarInputs {
 }
 
 /// The sidebar toggle as its `Part` (`.sidebar-toggle-wrap`): its 28px button, `TOPBAR_HEIGHT`
-/// high, over the top bar's left end.
-fn toggle_style(window: &Window) -> StyleRefinement {
+/// high, over the top bar's left end, and the product's name beside it while the sidebar is open.
+fn toggle_style(open: bool, window: &Window) -> StyleRefinement {
     let mut style = StyleRefinement {
         position: Some(Position::Absolute),
         ..Default::default()
     };
     style.inset.top = Some(px(0.).into());
     style.inset.left = Some(toggle_left(window).into());
-    style.size.width = Some(px(28.).into());
+    style.size.width = Some(px(if open { 100. } else { 28. }).into());
     style.size.height = Some(TOPBAR_HEIGHT.into());
     style
 }
@@ -1242,15 +1242,33 @@ impl Workspace {
         } else {
             "Show sidebar"
         };
-        h_flex().id("sidebar-toggle-wrap").size_full().child(
-            Button::new("sidebar-toggle")
-                .custom(ghost_neutral(cx))
-                .icon(icon("panel-left"))
-                .size(px(28.))
-                .tooltip(label)
-                .accessibility_label(label)
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-        )
+        let name = cx.global::<Palette>().highlighted;
+        h_flex()
+            .id("sidebar-toggle-wrap")
+            .size_full()
+            .child(
+                Button::new("sidebar-toggle")
+                    .custom(ghost_neutral(cx))
+                    .icon(icon("panel-left"))
+                    .size(px(28.))
+                    .tooltip(label)
+                    .accessibility_label(label)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+            )
+            .when(self.sidebar_open, |wrap| {
+                wrap.child(
+                    title_bar("sidebar-name")
+                        .flex()
+                        .items_center()
+                        .flex_1()
+                        .h_full()
+                        .pl_2()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(name)
+                        .child("KChess"),
+                )
+            })
     }
 
     /// The top bar inside GPUI Kit's title bar, which ends it with the window's minimize,
@@ -1436,14 +1454,18 @@ fn dev_build_badge(open: bool, cx: &App) -> Option<AnyElement> {
             .h(px(32.))
             .px(px(6.))
             .gap(px(8.))
-            .text_color(warning)
             .text_sm()
             .when(!open, |badge| {
                 badge.justify_center().tooltip(|window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(LABEL).build(window, cx)
                 })
             })
-            .child(icon("terminal").size(px(18.)).flex_none())
+            .child(
+                icon("terminal")
+                    .size(px(18.))
+                    .flex_none()
+                    .text_color(warning),
+            )
             .when(open, |badge| badge.child(LABEL))
             .into_any_element(),
     )
@@ -1701,7 +1723,11 @@ impl Render for Workspace {
                     ),
             )
             .when(!zen, |shell| {
-                shell.child(self.toggle.clone().cached(toggle_style(window)))
+                shell.child(
+                    self.toggle
+                        .clone()
+                        .cached(toggle_style(self.sidebar_open, window)),
+                )
             })
     }
 }
