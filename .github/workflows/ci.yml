@@ -25,17 +25,45 @@ jobs:
   # A release commit changes Cargo.toml, so it always runs them. Measured from the newest main
   # commit whose packaging jobs all passed (else the last release) rather than the previous push,
   # so a change keeps running them until they pass.
+  #
+  # Whether this push or pull request changes more than the documents nothing reads. A release
+  # commit changes Cargo.toml, so `cargo xtask release-verify` never meets a skipped `check`.
+  #
+  # Whether this is a release commit. Only those package with the release profile's fat LTO, whose
+  # link takes over half of a package job: their run tests what the tag will build, and saves the
+  # dependencies the Release workflow restores.
   changes:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
     outputs:
+      code: ${{ steps.docs.outputs.code }}
+      release: ${{ steps.docs.outputs.release }}
       packaging: ${{ steps.diff.outputs.packaging }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - id: docs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DOCS: '^(docs/|(AGENTS|ARCHITECTURE|CONTRIBUTING|CORE_FRONTENDS|GUARDRAILS|README|RUST_MIGRATION|SECURITY)\.md$)'
+        run: |
+          if files="$(git diff --name-only "$BASE" HEAD)" && [ -z "$(echo "$files" | grep -vE "$DOCS")" ]; then
+            code=false
+          else
+            code=true
+          fi
+          echo "Code changed: $code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if git diff "$BASE" HEAD -- Cargo.toml | grep -q '^+version = '; then
+            release=true
+          else
+            release=false
+          fi
+          echo "Release commit: $release"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
       - id: packaged
         if: github.event_name == 'push'
         env:
@@ -66,8 +94,10 @@ jobs:
           echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
 
   # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
-  # gate, as the pre-push hook runs them.
+  # gate, as the pre-push hook runs them. This is also the app's lints and tests on Linux.
   check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -97,24 +127,26 @@ jobs:
           retention-days: 30
 
   deny:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
 
-  # The app on each platform: its lints and its unit and end-to-end tests (`src/e2e`, headless).
+  # The app on the other platforms: its lints and its unit and end-to-end tests (`src/e2e`,
+  # headless). `check` runs them on Linux.
   gpui:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install GPUI build libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: gpui
@@ -124,26 +156,27 @@ jobs:
       - run: cargo test -p kchess-gpui -p kchess-cli -p xtask --locked
 
   # The packages as the Release workflow makes them (ad hoc signed on macOS), with the release
-  # profile's dependencies cached apart from the tests' debug ones.
+  # profile's dependencies cached apart from the tests' debug ones. `windows-upgrade` packages
+  # for Windows.
   package:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.changes.outputs.release != 'true' && 'off' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.changes.outputs.release != 'true' && '16' || '1' }}
     steps:
       - uses: actions/checkout@v7
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
-      - name: Install NSIS
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/install-nsis
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: package
+          shared-key: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo xtask package
@@ -163,9 +196,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
     uses: ./.github/workflows/snap-build.yml
+    with:
+      fast: ${{ needs.changes.outputs.release != 'true' }}
 
   # Every way a Windows installation upgrades to this commit's installer.
   windows-upgrade:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
     uses: ./.github/workflows/windows-upgrade.yml
+    with:
+      fast: ${{ needs.changes.outputs.release != 'true' }}

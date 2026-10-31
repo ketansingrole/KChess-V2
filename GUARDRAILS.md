@@ -7,8 +7,8 @@ not establish complete regression coverage.
 
 The app's end-to-end tests (`apps/gpui/src/e2e`) run the whole app headless over a fresh profile
 with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with `e2e::computer`.
-They run with the app's unit tests in `cargo xtask check` and in CI's `gpui` job on macOS,
-Windows and Linux.
+They run with the app's unit tests in `cargo xtask check`, which CI runs on Linux, and in CI's
+`gpui` job on macOS and Windows.
 
 `e2e::audit` opens every page at the minimum, a mid and the default window size and fails when a
 control has no accessible name, runs past the window's side or overlaps another control, or when
@@ -27,8 +27,10 @@ warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries)
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
 `check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
-changed since `main` last packaged successfully (a version bump always has), it also packages on each platform,
-builds the Snap and runs the Windows upgrade workflow. `cargo xtask release-verify` refuses a commit
+changed since `main` last packaged successfully (a version bump always has), it also packages for
+macOS and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows.
+Only a release commit's packages use the release profile's fat LTO; the others link without it.
+A change to documents alone (`docs/` and the top-level guides) runs none of it. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.
 
 ## Ownership
