@@ -39,6 +39,17 @@ prints its path. Add `--release` to `cargo run` for a fast build; development bu
 **Dev** badge in the sidebar, release builds never do. `cargo xtask voice-runtime debug` stages the
 speech helper and libvosk for voice input in a debug build.
 
+To see changes as you work, let KChess rebuild and restart itself on every save:
+
+```bash
+cargo xtask app --watch
+```
+
+It runs on the scratch profile `.data/gpui-profile` with a native Stockfish, fetched once, and
+watches `apps/` and `crates/`. The app comes back on the page you were on, and stays open on the
+last good build when one fails. The core service restarts only when its own code changed. Stop
+with Ctrl-C or `cargo xtask app --stop`; the app's output is in `.data/gpui.log`.
+
 Several KChess windows, and the command line, share one profile through its core service
 ([docs/shared-core.md](docs/shared-core.md)). The app uses it when `kchess-service` is built beside
 it (`cargo build -p kchess-service`); `KCHESS_CORE_MODE=embedded` or `service` chooses explicitly.

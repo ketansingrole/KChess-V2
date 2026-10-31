@@ -747,7 +747,7 @@ impl Workspace {
             }),
         ];
         let sidebar_open = crate::prefs::get(cx, SIDEBAR_OPEN, true);
-        Workspace {
+        let mut workspace = Workspace {
             sidebar_open,
             sidebar_width_from: sidebar_width(sidebar_open),
             sidebar_toggled: None,
@@ -775,7 +775,11 @@ impl Workspace {
             pages: Pages::new(window, cx),
             back: Page::Dashboard,
             _subscriptions: subscriptions,
+        };
+        if let Some(page) = Page::remembered() {
+            workspace.choose(page, window, cx);
         }
+        workspace
     }
 
     /// A model the shell and the pages read while rendering changed. The page is a cached view,
@@ -800,6 +804,7 @@ impl Workspace {
     }
 
     fn choose(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        page.remember();
         let current = self.pages.current();
         if !self.navigating {
             self.history.visit(current, page);

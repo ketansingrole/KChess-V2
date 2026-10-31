@@ -16,9 +16,11 @@ use std::process::ExitCode;
 
 const HELP: &str = "cargo xtask <command>
 
-  app [--profile <dir>] [--stop] [-- <app arguments>]
+  app [--profile <dir>] [--watch] [--stop] [-- <app arguments>]
                         Build and start the app in the background on a scratch profile
-                        (.data/gpui-profile) with a native Stockfish; print its pid
+                        (.data/gpui-profile) with a native Stockfish; print its pid. --watch
+                        stays in the foreground and rebuilds and restarts it on every save,
+                        back on the same page
   bench --build <label>=<binary> [--build …] [--runs 5] [--seconds 30] [--scenarios a,b]
         [--out <file>]  The app's frame benchmarks for builds made with
                         `cargo build --release -p kchess-gpui --features bench`, alternating

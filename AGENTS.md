@@ -71,6 +71,9 @@ git push origin "refs/tags/$release_tag"
   macOS with a stable identity, so the keychain remembers it); never point a development run at
   the real profile (`~/Library/Application Support/KChess`): set `KCHESS_USER_DATA_DIR` to a
   scratch folder, and `KCHESS_ENGINE_PATH` to a native Stockfish.
+- `cargo xtask app --watch` stays in the foreground and rebuilds and restarts the app on every
+  save under `apps/` and `crates/`, back on the same page, with the old app kept open until the
+  build succeeds. Views are compiled, so there is no reload without a restart.
 - `cargo xtask voice-runtime debug` stages the speech helper with libvosk for a debug build.
 - `cargo run -p kchess-cli -- --help` is the command line; it shares the profile's core with a
   running app through the core service (`docs/shared-core.md`).

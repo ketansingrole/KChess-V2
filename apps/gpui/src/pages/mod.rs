@@ -47,6 +47,46 @@ pub enum Page {
 }
 
 impl Page {
+    const ALL: [Page; 17] = [
+        Page::Dashboard,
+        Page::Computer,
+        Page::Local,
+        Page::Puzzles,
+        Page::Practice,
+        Page::Openings,
+        Page::Analysis,
+        Page::History,
+        Page::Studies,
+        Page::Editor,
+        Page::Online,
+        Page::Tournaments,
+        Page::Watch,
+        Page::Insights,
+        Page::Friends,
+        Page::Players,
+        Page::Settings,
+    ];
+
+    /// The page `cargo xtask app --watch` was on before it restarted the app, from
+    /// `KCHESS_PAGE_FILE`.
+    pub fn remembered() -> Option<Page> {
+        let file = std::env::var_os("KCHESS_PAGE_FILE")?;
+        Page::named(std::fs::read_to_string(file).ok()?.trim())
+    }
+
+    /// Notes the page in `KCHESS_PAGE_FILE`, when a watch set it.
+    pub fn remember(self) {
+        if let Some(file) = std::env::var_os("KCHESS_PAGE_FILE") {
+            let _ = std::fs::write(file, format!("{self:?}"));
+        }
+    }
+
+    fn named(name: &str) -> Option<Page> {
+        Page::ALL
+            .into_iter()
+            .find(|page| format!("{page:?}") == name)
+    }
+
     /// A game page, where zen mode hides everything but the game (`useZenSurface(true)`).
     pub fn zen_surface(self) -> bool {
         matches!(self, Page::Computer | Page::Local)
@@ -212,5 +252,17 @@ fn create<T>(page: Page, window: &mut Window, cx: &mut Context<T>) -> Shown {
             let view = cx.new(|cx| players::PlayersPage::new(window, cx));
             focused(view, cx)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+
+    #[test]
+    fn a_remembered_page_is_found_by_its_name() {
+        assert_eq!(Page::named("Analysis"), Some(Page::Analysis));
+        assert_eq!(Page::named("Settings"), Some(Page::Settings));
+        assert_eq!(Page::named("Gone"), None);
     }
 }
