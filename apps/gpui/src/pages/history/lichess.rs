@@ -414,7 +414,7 @@ impl HistoryPage {
                         Button::new("lichess-review")
                             .outline()
                             .small()
-                            .icon(icon("sparkles"))
+                            .icon(icon("chart-line"))
                             .label("Review")
                             .on_click(move |_, window, cx| {
                                 let ply = replay_handle.read(cx).ply();

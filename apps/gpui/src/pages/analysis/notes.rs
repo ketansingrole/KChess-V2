@@ -203,7 +203,11 @@ impl AnalysisPage {
                     .text_size(px(12.))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(palette.text_muted)
-                    .child(div().truncate().child(subject.clone()))
+                    .child(div().truncate().child(if self.path.is_empty() {
+                        "Starting position".to_string()
+                    } else {
+                        subject.clone()
+                    }))
                     .children(clock.filter(|clock| !clock.is_empty()).map(|clock| {
                         div()
                             .ml(px(4.))

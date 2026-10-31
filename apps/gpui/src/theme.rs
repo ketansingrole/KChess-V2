@@ -78,7 +78,7 @@ const KEYS: &[(&str, &str)] = &[
     ("tab_bar.background", "--ui-bg-elevated"),
     ("tab.active.background", "--ui-bg"),
     ("skeleton.background", "--ui-bg-accented"),
-    ("switch.background", "--ui-bg-accented"),
+    ("switch.background", "--ui-border-accented"),
     ("progress.bar.background", "--ui-primary"),
     ("slider.background", "--ui-primary"),
     ("base.red", "--ui-error"),

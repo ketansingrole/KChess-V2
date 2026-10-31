@@ -2349,15 +2349,17 @@ impl AnalysisPage {
     fn render_tabs(&self, tool: Tool, palette: &Palette) -> impl IntoElement {
         let tabs = [
             (Tool::Moves, "Moves", icon("list-tree")),
-            (Tool::Review, "Review", icon("sparkles")),
+            (Tool::Review, "Review", icon("chart-line")),
             (Tool::Explorer, "Explorer", icon("book-open-text")),
         ];
         h_flex()
             .flex_none()
-            .gap(px(2.))
-            .p(px(4.))
+            .gap(px(4.))
+            .p(px(2.))
             .rounded(radii::MD)
-            .bg(palette.accented)
+            .border_1()
+            .border_color(palette.border)
+            .bg(palette.bg)
             .children(tabs.into_iter().map(|(choice, label, glyph)| {
                 let chosen = choice == tool;
                 h_flex()
@@ -2377,17 +2379,17 @@ impl AnalysisPage {
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .when(chosen, |tab| {
-                        tab.bg(palette.bg).text_color(palette.highlighted)
+                        tab.bg(palette.accented).text_color(palette.highlighted)
                     })
                     .when(!chosen, |tab| {
-                        tab.text_color(palette.toned)
-                            .hover(|tab| tab.text_color(palette.text))
+                        tab.text_color(palette.text_muted)
+                            .hover(|tab| tab.text_color(palette.highlighted))
                     })
                     .on_click(move |_, window, cx| {
                         crate::prefs::set(cx, TOOL, choice.key());
                         window.refresh();
                     })
-                    .child(glyph.size(px(14.)))
+                    .child(glyph.size(px(16.)))
                     .child(label)
             }))
     }

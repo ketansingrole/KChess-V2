@@ -58,7 +58,7 @@ fn ago(millis: i64) -> String {
 fn badge(phase: Phase) -> Option<(&'static str, Look, &'static str)> {
     Some(match phase {
         Phase::UpToDate => ("Up to date", Look::Success, "circle-check"),
-        Phase::Available => ("Update available", Look::Primary, "sparkles"),
+        Phase::Available => ("Update available", Look::Primary, "download"),
         Phase::Downloading => ("Downloading", Look::Primary, "download"),
         Phase::Downloaded => ("Ready to install", Look::Primary, "rotate-cw"),
         Phase::Installing => ("Installing", Look::Primary, "rotate-cw"),

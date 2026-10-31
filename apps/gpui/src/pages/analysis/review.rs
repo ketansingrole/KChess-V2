@@ -843,7 +843,7 @@ impl AnalysisPage {
                     Button::new("review-start")
                         .primary()
                         .xsmall()
-                        .icon(icon("sparkles"))
+                        .icon(icon("chart-line"))
                         .label(if review.is_some() && reviewed > 0 {
                             "Finish review"
                         } else {

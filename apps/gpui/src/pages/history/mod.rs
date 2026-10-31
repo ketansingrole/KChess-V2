@@ -703,7 +703,7 @@ impl HistoryPage {
                         let opened = pgn(game);
                         Button::new("open-analysis")
                             .primary()
-                            .icon(icon("sparkles"))
+                            .icon(icon("chart-line"))
                             .label("Open analysis")
                             .on_click(move |_, window, cx| {
                                 let Some(pgn) = opened.clone() else { return };

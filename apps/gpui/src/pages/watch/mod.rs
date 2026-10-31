@@ -731,6 +731,15 @@ impl WatchPage {
                 .into_any_element(),
             );
         }
+        if let Some(error) = &self.error {
+            notices.push(
+                div()
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error.clone())
+                    .into_any_element(),
+            );
+        }
         let failed = matches!(self.phase.as_deref(), Some("error" | "ended"));
         if let (true, Some(target)) = (failed, self.target.clone()) {
             notices.push(
@@ -744,15 +753,6 @@ impl WatchPage {
                                 cx.listener(move |this, _, _, cx| this.watch(target.clone(), cx)),
                             ),
                     )
-                    .into_any_element(),
-            );
-        }
-        if let Some(error) = &self.error {
-            notices.push(
-                div()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error.clone())
                     .into_any_element(),
             );
         }
