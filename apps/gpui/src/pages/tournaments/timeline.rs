@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::{TournamentsPage, control};
 use crate::assets::icon;
-use crate::theme::{Palette, radii};
+use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
@@ -333,13 +333,18 @@ impl TournamentsPage {
                             .top(px(AXIS + 8. + row as f32 * (ROW + ROW_GAP)))
                             .w(px((right - left).max(1.)))
                             .h(px(ROW))
-                            .pl(px(10. + pinned))
+                            .pl(px(8. + pinned))
                             .pr(px(12.))
                             .gap(px(8.))
                             .overflow_hidden()
                             .rounded(radii::SM)
-                            .bg(rgb(color))
-                            .text_color(rgb(0xffffff))
+                            .border_1()
+                            .border_color(tint(rgb(color).into(), 40.))
+                            .bg(tint(
+                                rgb(color).into(),
+                                if palette.dark { 32. } else { 16. },
+                            ))
+                            .text_color(palette.highlighted)
                             .when(finished, |bar| bar.opacity(0.42))
                             .cursor_pointer()
                             .hover(|bar| bar.opacity(0.9))

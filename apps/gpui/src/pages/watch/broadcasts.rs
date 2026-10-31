@@ -69,10 +69,10 @@ impl Clocks {
     }
 }
 
-/// "LIVE", "Finished", "in 20 min", or the day it starts (`BroadcastCard`'s timing).
+/// "Live", "Finished", "in 20 min", or the day it starts (`BroadcastCard`'s timing).
 fn timing(item: &Value, now: f64) -> String {
     if item["ongoing"] == json!(true) {
-        return "LIVE".into();
+        return "Live".into();
     }
     if item["section"] == json!("past") {
         return "Finished".into();
@@ -799,7 +799,7 @@ impl WatchPage {
             .when(self.broadcasts.ended && games.is_empty(), |body| {
                 body.child(widgets::hint("No games in this round yet", palette))
             })
-            .child(h_flex().flex_wrap().gap(px(14.)).children(cells))
+            .child(h_flex().flex_wrap().gap(px(12.)).children(cells))
             .into_any_element()
     }
 
@@ -892,116 +892,111 @@ impl WatchPage {
                 v_flex()
                     .gap(px(12.))
                     .child(widgets::heading(title, palette))
-                    .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap(px(14.))
-                            .children(items.into_iter().map(|item| {
-                                index += 1;
-                                let tour = item["tourId"].as_str().unwrap_or_default().to_string();
-                                let live = item["ongoing"] == json!(true);
-                                // The cover, once it has arrived; the placeholder until then.
-                                let cover = item["image"].as_str().and_then(|url| {
-                                    crate::remote_image::handle(cx)
-                                        .update(cx, |images, cx| images.get(url, cx))
-                                });
-                                v_flex()
-                                    .id(("broadcast-card", index))
-                                    .role(Role::Button)
-                                    .keyboard_focus(palette.primary)
-                                    .aria_label(
-                                        item["tourName"].as_str().unwrap_or_default().to_string(),
-                                    )
-                                    .w(px(260.))
-                                    .rounded(radii::XL)
-                                    .overflow_hidden()
-                                    .border_1()
-                                    .border_color(if live { palette.error } else { palette.border })
-                                    .bg(palette.elevated)
-                                    .when(disabled, |card| card.opacity(0.6))
-                                    .when(!disabled, |card| {
-                                        card.cursor_pointer()
-                                            .hover(|card| {
-                                                card.border_color(palette.border_accented)
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.open_tour(tour.clone(), window, cx)
-                                            }))
-                                    })
-                                    .child(
-                                        // Inside the card's border; GPUI does not clip
-                                        // to the card's rounded corners.
-                                        div()
-                                            .h(px(130.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .overflow_hidden()
-                                            .rounded_t(radii::XL - px(1.))
-                                            .bg(palette.accented)
-                                            .map(|area| match cover {
-                                                Some(cover) => area.child(
-                                                    img(cover)
-                                                        .size_full()
-                                                        .rounded_t(radii::XL - px(1.))
-                                                        .object_fit(ObjectFit::Cover),
-                                                ),
-                                                None => area.child(
-                                                    icon("radio")
-                                                        .size(px(28.))
-                                                        .text_color(palette.text_muted),
-                                                ),
-                                            }),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .gap(px(4.))
-                                            .p(px(12.))
-                                            .child(
-                                                h_flex()
-                                                    .justify_between()
-                                                    .gap(px(8.))
-                                                    .text_size(px(12.))
-                                                    .text_color(palette.text_muted)
-                                                    .child(
-                                                        div().truncate().child(
-                                                            item["roundName"]
-                                                                .as_str()
-                                                                .unwrap_or_default()
-                                                                .to_string(),
-                                                        ),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .flex_none()
-                                                            .when(live, |time| {
-                                                                time.text_color(palette.error)
-                                                                    .font_weight(FontWeight::MEDIUM)
-                                                            })
-                                                            .child(timing(&item, now)),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(14.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .child(
-                                                        item["tourName"]
+                    .child(h_flex().flex_wrap().items_stretch().gap(px(12.)).children(
+                        items.into_iter().map(|item| {
+                            index += 1;
+                            let tour = item["tourId"].as_str().unwrap_or_default().to_string();
+                            let live = item["ongoing"] == json!(true);
+                            // The cover, once it has arrived; the placeholder until then.
+                            let cover = item["image"].as_str().and_then(|url| {
+                                crate::remote_image::handle(cx)
+                                    .update(cx, |images, cx| images.get(url, cx))
+                            });
+                            v_flex()
+                                .id(("broadcast-card", index))
+                                .role(Role::Button)
+                                .keyboard_focus(palette.primary)
+                                .aria_label(
+                                    item["tourName"].as_str().unwrap_or_default().to_string(),
+                                )
+                                .w(px(260.))
+                                .rounded(radii::XL)
+                                .overflow_hidden()
+                                .border_1()
+                                .border_color(palette.border)
+                                .bg(palette.elevated)
+                                .when(disabled, |card| card.opacity(0.6))
+                                .when(!disabled, |card| {
+                                    card.cursor_pointer()
+                                        .hover(|card| card.border_color(palette.border_accented))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_tour(tour.clone(), window, cx)
+                                        }))
+                                })
+                                .child(
+                                    // Inside the card's border; GPUI does not clip
+                                    // to the card's rounded corners.
+                                    div()
+                                        .h(px(130.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .overflow_hidden()
+                                        .rounded_t(radii::XL - px(1.))
+                                        .bg(palette.accented)
+                                        .map(|area| match cover {
+                                            Some(cover) => area.child(
+                                                img(cover)
+                                                    .size_full()
+                                                    .rounded_t(radii::XL - px(1.))
+                                                    .object_fit(ObjectFit::Cover),
+                                            ),
+                                            None => area.child(
+                                                icon("radio")
+                                                    .size(px(28.))
+                                                    .text_color(palette.text_muted),
+                                            ),
+                                        }),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap(px(4.))
+                                        .p(px(12.))
+                                        .child(
+                                            h_flex()
+                                                .justify_between()
+                                                .gap(px(8.))
+                                                .text_size(px(12.))
+                                                .text_color(palette.text_muted)
+                                                .child(
+                                                    div().truncate().child(
+                                                        item["roundName"]
                                                             .as_str()
                                                             .unwrap_or_default()
                                                             .to_string(),
                                                     ),
-                                            )
-                                            .children(item["players"].as_str().map(|players| {
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(palette.text_muted)
-                                                    .line_clamp(2)
-                                                    .child(players.to_string())
-                                            })),
-                                    )
-                            })),
-                    )
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_none()
+                                                        .when(live, |time| {
+                                                            time.text_color(palette.error)
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                        })
+                                                        .child(timing(&item, now)),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(14.))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .child(
+                                                    item["tourName"]
+                                                        .as_str()
+                                                        .unwrap_or_default()
+                                                        .to_string(),
+                                                ),
+                                        )
+                                        .children(item["players"].as_str().map(|players| {
+                                            div()
+                                                .text_size(px(12.))
+                                                .text_color(palette.text_muted)
+                                                .line_clamp(2)
+                                                .child(players.to_string())
+                                        })),
+                                )
+                        }),
+                    ))
             }))
             .into_any_element()
     }
@@ -1229,7 +1224,7 @@ mod tests {
     #[test]
     fn cards_say_when_a_broadcast_is() {
         let now = 1_000_000_000_000.;
-        assert_eq!(timing(&json!({ "ongoing": true }), now), "LIVE");
+        assert_eq!(timing(&json!({ "ongoing": true }), now), "Live");
         assert_eq!(timing(&json!({ "section": "past" }), now), "Finished");
         assert_eq!(
             timing(

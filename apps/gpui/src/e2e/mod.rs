@@ -431,6 +431,8 @@ fn environment() {
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
+        let lichess =
+            std::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(|_| "http://127.0.0.1:9".into());
         // SAFETY: set once, before any test's core starts reading the environment.
         unsafe {
             std::env::set_var("KCHESS_CORE_MODE", "embedded");
@@ -440,7 +442,7 @@ fn environment() {
             // credential store, and the test Lichess origin below honoured.
             std::env::set_var("KCHESS_STORE_DEBUG", "1");
             // Lichess at a port nothing listens on: online features fail fast and offline.
-            std::env::set_var("KCHESS_TEST_LICHESS_BASE", "http://127.0.0.1:9");
+            std::env::set_var("KCHESS_TEST_LICHESS_BASE", lichess);
         }
     });
 }
