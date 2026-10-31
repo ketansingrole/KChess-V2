@@ -16,6 +16,29 @@ fn the_app_starts_on_home(cx: &mut gpui_kit::TestAppContext) {
     assert!(app.enabled("connect-lichess"));
 }
 
+/// The board on a first Home looks playable, so clicking it has to lead to a game.
+#[gpui_kit::test]
+fn the_board_on_a_first_home_starts_a_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let (width, height) = super::SIZES[2];
+    app.cx.simulate_window_resize(
+        app.window,
+        gpui_kit::size(gpui_kit::px(width), gpui_kit::px(height)),
+    );
+    let board = app.find("chess-board").bounds().center();
+    app.click_point(board);
+    let shown = app.cx.update(|cx| crate::shell::current_page(cx));
+    assert_eq!(shown, Some(crate::pages::Page::Computer));
+}
+
+#[gpui_kit::test]
+fn an_empty_home_offers_a_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.click("home-play");
+    let shown = app.cx.update(|cx| crate::shell::current_page(cx));
+    assert_eq!(shown, Some(crate::pages::Page::Computer));
+}
+
 #[gpui_kit::test]
 fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);

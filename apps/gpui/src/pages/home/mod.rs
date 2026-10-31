@@ -368,7 +368,20 @@ impl Render for HomePage {
                     }),
             )
             .when(games.is_empty(), |card| {
-                card.child(empty(icon("history"), "No saved games yet", None, &palette))
+                card.child(empty(
+                    icon("history"),
+                    "No saved games yet",
+                    Some(
+                        Button::new("home-play")
+                            .outline()
+                            .small()
+                            .label("Play the computer")
+                            .on_click(|_, window, cx| {
+                                crate::shell::open(Page::Computer, window, cx)
+                            }),
+                    ),
+                    &palette,
+                ))
             })
             .child(
                 v_flex()
@@ -508,23 +521,29 @@ impl Render for HomePage {
         } else {
             BOARD
         };
-        let square = div().size(side).flex_none().children(board);
+        // A board invites a click: it always goes to a game.
+        let (board_label, game) = caption.as_ref().map_or_else(
+            || ("Play the computer".to_string(), None),
+            |(title, _, id)| (title.clone(), id.clone()),
+        );
         let position = v_flex()
             .gap(px(8.))
-            .child(match caption.clone() {
-                Some((title, _, id)) => square
+            .child(
+                div()
                     .id("home-board")
                     .role(Role::Button)
                     .keyboard_focus(palette.primary)
-                    .aria_label(title)
+                    .aria_label(board_label)
+                    .size(side)
+                    .flex_none()
                     .cursor_pointer()
-                    .on_click(move |_, window, cx| match &id {
+                    .hover(|board| board.opacity(0.92))
+                    .on_click(move |_, window, cx| match &game {
                         Some(id) => crate::shell::open_game(id, window, cx),
                         None => crate::shell::open(Page::Computer, window, cx),
                     })
-                    .into_any_element(),
-                None => square.into_any_element(),
-            })
+                    .children(board),
+            )
             .children(caption.map(|(title, result, _)| {
                 h_flex()
                     .w(side)
