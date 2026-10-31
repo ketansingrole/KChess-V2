@@ -8,7 +8,7 @@ exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-macos"]
 [workspace.package]
 # The KChess release: `YEAR.MONTH.COUNTER` (`cargo xtask release-version`), the version every
 # binary reports and every package is named with.
-version = "2026.10.19"
+version = "2026.10.20"
 edition = "2024"
 # Matches rust-toolchain.toml so `cargo` warns on older toolchains.
 rust-version = "1.98.0"
