@@ -116,8 +116,7 @@ impl ComputerPage {
             .iter()
             .position(|id| Some(id.as_str()) == game.state["level"].as_str());
         let level = cx.new(|cx| SelectState::new(labels, selected.map(IndexPath::new), window, cx));
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
             cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
@@ -443,7 +442,7 @@ impl ComputerPage {
                 self.play(&uci, window, cx);
             }
             None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3.".into());
+                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
                 cx.notify();
             }
         }
@@ -1202,7 +1201,6 @@ impl ComputerPage {
                     Button::new("review-game")
                         .outline()
                         .small()
-                        .icon(icon("sparkles"))
                         .label("Review game")
                         .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
                         .into_any_element()
@@ -1217,7 +1215,6 @@ impl ComputerPage {
                 icon("history"),
                 "Reviewing an earlier position".into(),
             )
-            .detail("Go to the last move to keep playing.".into())
             .extra(
                 Button::new("back-to-game")
                     .link()
@@ -1232,39 +1229,19 @@ impl ComputerPage {
             .into_any_element();
         }
         if self.thinking() {
-            return widgets::StatusBanner::new(
-                Tone::Plain,
-                icon("loader-circle"),
-                "Stockfish is thinking…".into(),
-            )
-            .into_any_element();
+            return widgets::StatusBanner::turn("Stockfish is thinking…".into()).into_any_element();
         }
         let position = self.position_at(self.ply());
         let turn = position
             .as_ref()
             .map_or(Color::White, shakmaty::Position::turn);
         let check = position.as_ref().is_some_and(shakmaty::Position::is_check);
-        let yours = turn == self.user_color();
-        widgets::StatusBanner::new(
-            Tone::Plain,
-            if yours {
-                icon("mouse-pointer-click")
-            } else {
-                icon("hourglass")
-            },
-            if yours {
-                "Your move".into()
-            } else {
-                "Stockfish's move".into()
-            },
-        )
-        .detail(if check {
-            "Check!".into()
-        } else if turn == Color::White {
-            "White to play".into()
+        widgets::StatusBanner::turn(if turn == self.user_color() {
+            "Your move".into()
         } else {
-            "Black to play".into()
+            "Stockfish's move".into()
         })
+        .when(check, |banner| banner.detail("Check".into()))
         .into_any_element()
     }
 }
@@ -1392,48 +1369,38 @@ impl Render for ComputerPage {
             .frontend
             .piece_set
             .clone();
-        let presence = match self.engine {
-            Engine::Checking => ("Checking…", palette.text_muted),
-            Engine::Ready => ("Live", palette.success),
-            Engine::Missing => ("Unavailable", palette.error),
-        };
+        // A running clock says whose turn it is; only an untimed game needs the outline.
+        let untimed = self.game.state["times"].is_null();
         let computer_line = widgets::player_line(
             h_flex()
-                .gap(px(10.))
+                .min_w_0()
+                .gap(px(8.))
                 .child(widgets::avatar(
                     icon("cpu"),
                     side_of(!user),
-                    live && turn != user,
+                    live && turn != user && untimed,
                     &palette,
                 ))
                 .child("Stockfish")
                 .child(
                     h_flex()
                         .w(px(196.))
+                        .min_w_0()
                         .pl(px(8.))
-                        .gap(px(2.))
+                        .gap(px(4.))
                         .rounded(radii::SM)
                         .bg(palette.elevated)
                         .text_color(palette.highlighted)
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::NORMAL)
                         .child(icon("gauge").size(px(14.)).text_color(palette.text_muted))
                         .child(
-                            div().flex_1().child(
+                            div().flex_1().min_w_0().child(
                                 Select::new(&self.level)
-                                    .xsmall()
+                                    .small()
                                     .appearance(false)
                                     .accessibility_label("Difficulty"),
                             ),
                         ),
-                )
-                .child(
-                    h_flex()
-                        .gap(px(6.))
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(presence.1)
-                        .child(div().size(px(8.)).rounded_full().bg(presence.1))
-                        .child(presence.0),
                 )
                 .children(widgets::material(
                     &fen,
@@ -1443,12 +1410,7 @@ impl Render for ComputerPage {
                 )),
             None,
             self.clock_text(computer_name).map(|text| {
-                widgets::clock(
-                    text,
-                    live && turn != user && !self.game.state["times"].is_null(),
-                    &palette,
-                )
-                .into_any_element()
+                widgets::clock(text, live && turn != user && !untimed, &palette).into_any_element()
             }),
         );
         let entry = widgets::move_entry(&self.move_input, interactive, &palette);
@@ -1470,11 +1432,11 @@ impl Render for ComputerPage {
         );
         let you_line = widgets::player_line(
             h_flex()
-                .gap(px(10.))
+                .gap(px(8.))
                 .child(widgets::avatar(
                     icon("user"),
                     side_of(user),
-                    live && turn == user,
+                    live && turn == user && untimed,
                     &palette,
                 ))
                 .child("You")
@@ -1486,12 +1448,7 @@ impl Render for ComputerPage {
                 )),
             Some(widgets::move_row(entry, voice)),
             self.clock_text(user_name).map(|text| {
-                widgets::clock(
-                    text,
-                    live && turn == user && !self.game.state["times"].is_null(),
-                    &palette,
-                )
-                .into_any_element()
+                widgets::clock(text, live && turn == user && !untimed, &palette).into_any_element()
             }),
         );
         let board_column = v_flex()
@@ -1521,11 +1478,6 @@ impl Render for ComputerPage {
         let flip: widgets::ClickHandler = Box::new(move |_, window, cx| {
             let _ = flip_page.update(cx, |page, cx| page.ask(Question::SwitchSides, window, cx));
         });
-        let empty: SharedString = if user == Color::White {
-            "Make your move to start. Flip the board to play Black.".into()
-        } else {
-            "You play Black. Flip the board to play White.".into()
-        };
         let clock_label = self.game.state["clock"].as_object().map(|clock| {
             format!(
                 "{}+{}",
@@ -1558,6 +1510,7 @@ impl Render for ComputerPage {
             .max_w(if zen { PANEL_ZEN } else { PANEL_MAX })
             .child(
                 h_flex()
+                    .flex_wrap()
                     .gap(px(8.))
                     .text_size(px(12.))
                     .text_color(palette.text_muted)
@@ -1566,31 +1519,24 @@ impl Render for ComputerPage {
                     .child(
                         Button::new("game-options")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("settings-2"))
                             .label("Game options")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_options(window, cx)),
                             ),
                     )
+                    .when(!zen, |row| {
+                        row.child(crate::export::export_menu(
+                            "computer-export",
+                            &self.exporter,
+                            self.game_export(),
+                            Anchor::TopRight,
+                            cx,
+                        ))
+                    })
                     .child(widgets::view_toggles(blindfold, zen)),
             )
-            .when(show_opening, |panel| {
-                panel.child(
-                    div()
-                        .h(px(20.))
-                        .text_size(px(14.))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .children(opening.map(|(eco, name)| {
-                            h_flex()
-                                .gap(px(4.))
-                                .child(div().text_color(palette.text_muted).child(eco))
-                                .child(name)
-                        })),
-                )
-            })
             .child(self.render_banner(cx))
             .children(self.error.clone().map(|error| {
                 div()
@@ -1600,10 +1546,7 @@ impl Render for ComputerPage {
             }))
             .child(widgets::section_title(
                 "Moves",
-                (!moves.is_empty()).then(|| {
-                    let count = moves.len().div_ceil(2);
-                    format!("{count} {}", if count == 1 { "move" } else { "moves" })
-                }),
+                opening.map(|(eco, name)| format!("{eco} {name}")),
                 &palette,
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
@@ -1611,7 +1554,7 @@ impl Render for ComputerPage {
                 &sans,
                 ply,
                 black_first,
-                empty,
+                "No moves yet".into(),
                 select.clone(),
                 &palette,
             )))
@@ -1625,7 +1568,7 @@ impl Render for ComputerPage {
                 h_flex()
                     .flex_wrap()
                     .gap(px(8.))
-                    .pt(px(14.))
+                    .pt(px(12.))
                     .border_t_1()
                     .border_color(palette.border)
                     .child(
@@ -1663,21 +1606,7 @@ impl Render for ComputerPage {
                                 this.ask(Question::NewGame, window, cx)
                             })),
                     ),
-            )
-            .when(!zen, |panel| {
-                panel.child(widgets::panel_actions(
-                    narrow,
-                    [crate::export::export_menu(
-                        "computer-export",
-                        &self.exporter,
-                        self.game_export(),
-                        Anchor::BottomCenter,
-                        cx,
-                    )
-                    .into_any_element()
-                    .into()],
-                ))
-            });
+            );
 
         self.layout
             .render("computer-page", board_column, panel, window, cx)

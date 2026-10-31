@@ -957,7 +957,7 @@ impl ChessBoard {
                     })
                     .text_color(color(square))
                     .opacity(0.8)
-                    .child(file.char().to_ascii_uppercase().to_string())
+                    .child(file.char().to_string())
                     .into_any_element(),
             );
         }

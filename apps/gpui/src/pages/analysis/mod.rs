@@ -275,8 +275,7 @@ impl AnalysisPage {
                 None,
             ))
         });
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let lines = prefs_lines(cx);
         let lines_choice = cx.new(|cx| {
             SelectState::new(
@@ -859,7 +858,7 @@ impl AnalysisPage {
                 self.play(&uci, cx);
             }
             None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3.".into());
+                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
                 cx.notify();
             }
         }

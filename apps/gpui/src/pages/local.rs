@@ -149,8 +149,7 @@ impl LocalPage {
                 None,
             ))
         });
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let clock = OtbClock::default();
         let number_input = |value: f64, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| {
@@ -430,7 +429,7 @@ impl LocalPage {
                 self.play(&uci, window, cx);
             }
             None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3.".into());
+                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
                 cx.notify();
             }
         }
@@ -1428,13 +1427,11 @@ impl LocalPage {
                 let detail = if timed && paused && !moves.is_empty() {
                     Some("Clock paused".into())
                 } else if check {
-                    Some("Check!".into())
+                    Some("Check".into())
                 } else {
                     None
                 };
-                widgets::StatusBanner::new(
-                    Tone::Plain,
-                    icon("mouse-pointer-click"),
+                widgets::StatusBanner::turn(
                     format!(
                         "{} to move",
                         if self.turn() == Color::White {
@@ -1505,27 +1502,10 @@ impl LocalPage {
                     )
                     .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
             )
-            .children(opening.map(|opening| {
-                div()
-                    .h(px(20.))
-                    .text_size(px(14.))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .children(opening.map(|(eco, name)| {
-                        h_flex()
-                            .gap(px(4.))
-                            .child(div().text_color(palette.text_muted).child(eco))
-                            .child(name)
-                    }))
-            }))
             .child(banner)
             .child(widgets::section_title(
                 "Moves",
-                (!moves.is_empty()).then(|| {
-                    let count = moves.len().div_ceil(2);
-                    format!("{count} {}", if count == 1 { "move" } else { "moves" })
-                }),
+                opening.flatten().map(|(eco, name)| format!("{eco} {name}")),
                 &palette,
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(

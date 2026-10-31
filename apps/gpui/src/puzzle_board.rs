@@ -100,8 +100,7 @@ impl PuzzleBoard {
                 None,
             ))
         });
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
             cx.subscribe(&voice, |this, _, event: &crate::voice::VoiceEvent, cx| {
@@ -488,7 +487,7 @@ impl PuzzleBoard {
                 self.on_move(&uci, cx);
             }
             None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3.".into());
+                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
                 cx.notify();
             }
         }

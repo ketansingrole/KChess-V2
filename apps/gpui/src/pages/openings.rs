@@ -275,8 +275,7 @@ impl OpeningsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
                 &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),

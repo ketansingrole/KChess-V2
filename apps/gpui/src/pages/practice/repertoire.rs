@@ -207,8 +207,7 @@ impl Repertoire {
                 None,
             ))
         });
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let study_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let chapter_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let settings = cx.global::<SettingsHandle>().0.clone();

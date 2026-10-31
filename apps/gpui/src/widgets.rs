@@ -136,7 +136,12 @@ impl Element for LiveRegion {
 /// `.player-line` height.
 pub const PLAYER_LINE: Pixels = px(36.);
 /// The gap between the player lines and the board (`.board-stack`).
-pub const STACK_GAP: Pixels = px(10.);
+pub const STACK_GAP: Pixels = px(8.);
+
+/// Figures of one width, so clocks and move numbers hold still.
+pub fn tabular() -> FontFeatures {
+    FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
+}
 
 /// Which side a player plays, shown as a dot on their avatar.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -178,7 +183,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                 .size(px(13.))
                 .rounded_full()
                 .border_1()
-                .border_color(palette.border_accented)
+                .border_color(palette.dimmed)
                 .child(
                     div()
                         .size_full()
@@ -197,12 +202,13 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
 pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
     div()
         .min_w(px(72.))
-        .px(px(10.))
+        .px(px(8.))
         .py(px(4.))
         .rounded(radii::MD)
         .text_right()
         .text_size(px(16.))
-        .font_weight(FontWeight::BOLD)
+        .font_weight(FontWeight::MEDIUM)
+        .font_features(tabular())
         .bg(if active {
             palette.primary
         } else {
@@ -225,12 +231,11 @@ pub fn player_line(
     h_flex()
         .h(PLAYER_LINE)
         .flex_none()
-        .px(px(2.))
         .gap(px(12.))
         .justify_between()
         .text_size(px(14.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .child(h_flex().min_w_0().gap(px(10.)).child(identity))
+        .font_weight(FontWeight::MEDIUM)
+        .child(h_flex().min_w_0().gap(px(8.)).child(identity))
         .child(div().flex_1().min_w_0().children(middle))
         .children(aside)
 }
@@ -245,11 +250,11 @@ pub enum Tone {
 }
 
 /// `.status-banner.steady`: the game's state, its icon, and optionally a detail line and controls
-/// under it.
+/// under it. Whose turn it is goes on a plain line of its own instead (`turn`).
 #[derive(IntoElement)]
 pub struct StatusBanner {
     tone: Tone,
-    glyph: Icon,
+    glyph: Option<Icon>,
     title: SharedString,
     detail: Option<SharedString>,
     extra: Option<AnyElement>,
@@ -260,7 +265,19 @@ impl StatusBanner {
     pub fn new(tone: Tone, glyph: Icon, title: SharedString) -> StatusBanner {
         StatusBanner {
             tone,
-            glyph,
+            glyph: Some(glyph),
+            title,
+            detail: None,
+            extra: None,
+            announce: false,
+        }
+    }
+
+    /// The game going on as usual: its title and detail on one plain line, no surface or icon.
+    pub fn turn(title: SharedString) -> StatusBanner {
+        StatusBanner {
+            tone: Tone::Plain,
+            glyph: None,
             title,
             detail: None,
             extra: None,
@@ -295,6 +312,7 @@ impl RenderOnce for StatusBanner {
             Tone::Loss => (tint(palette.loss, 16.), palette.loss),
             Tone::Alert => (tint(palette.warning, 16.), palette.text),
         };
+        let plain = self.glyph.is_none();
         // Read as a status: its title names it, its detail describes it.
         h_flex()
             .id("status-banner")
@@ -305,25 +323,35 @@ impl RenderOnce for StatusBanner {
                 banner.aria_description(detail)
             })
             .items_center()
-            .gap(px(10.))
-            .min_h(px(58.))
-            .px(px(12.))
-            .py(px(10.))
-            .rounded(radii::LG)
-            .text_size(px(13.))
-            .bg(background)
+            .gap(px(8.))
+            .when(plain, |banner| banner.h(px(24.)).text_size(px(14.)))
+            .when(!plain, |banner| {
+                banner
+                    .min_h(px(56.))
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(radii::LG)
+                    .text_size(px(13.))
+                    .bg(background)
+            })
             .when(self.announce, |banner| {
                 banner.child(live_region("status-live", self.title.clone()))
             })
-            .child(self.glyph.size(px(16.)).flex_none().text_color(icon_color))
+            .children(
+                self.glyph
+                    .map(|glyph| glyph.size(px(16.)).flex_none().text_color(icon_color)),
+            )
             .child(
-                v_flex()
+                div()
+                    .flex()
                     .flex_1()
                     .min_w_0()
+                    .when(plain, |text| text.items_baseline().gap(px(8.)))
+                    .when(!plain, |text| text.flex_col())
                     .child(
                         div()
                             .line_height(px(20.))
-                            .font_weight(FontWeight(650.))
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.highlighted)
                             .child(self.title),
                     )
@@ -353,8 +381,8 @@ fn move_at(index: usize, black_first: bool) -> Move {
     }
 }
 
-/// `.moves-list`: the game's moves in numbered pairs, the one on the board highlighted. `select`
-/// is called with the ply to show (1 for the first move).
+/// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
+/// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
     sans: &[String],
@@ -366,11 +394,10 @@ pub fn moves_list(
 ) -> impl IntoElement {
     let number_cell = |text: String| {
         div()
-            .px(px(10.))
-            .py(px(7.))
+            .px(px(8.))
+            .py(px(4.))
             .text_right()
             .text_color(palette.dimmed)
-            .bg(tint(palette.elevated, 70.))
             .child(text)
     };
     let mut rows = Vec::new();
@@ -386,9 +413,8 @@ pub fn moves_list(
                 row.push(
                     div()
                         .flex_1()
-                        .px(px(10.))
-                        .py(px(7.))
-                        .text_center()
+                        .px(px(8.))
+                        .py(px(4.))
                         .text_color(palette.text_muted)
                         .child("…")
                         .into_any_element(),
@@ -407,13 +433,13 @@ pub fn moves_list(
                 .aria_selected(active)
                 .flex_1()
                 .min_w_0()
-                .px(px(10.))
-                .py(px(7.))
-                .text_center()
+                .px(px(8.))
+                .py(px(4.))
+                .rounded(radii::XS)
                 .cursor_pointer()
                 .when(active, |cell| {
                     cell.bg(tint(palette.primary, 26.))
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::MEDIUM)
                 })
                 .hover(|cell| cell.bg(palette.accented))
                 .on_click(move |_, window, cx| select(index + 1, window, cx))
@@ -424,24 +450,24 @@ pub fn moves_list(
     if !row.is_empty() {
         rows.push(row);
     }
-    let list = div()
+    div()
         .id(id)
         .size_full()
         .overflow_y_scroll()
         .text_size(px(13.))
+        .line_height(px(20.))
+        .font_features(tabular())
         .when(sans.is_empty(), |list| {
-            list.child(
-                div()
-                    .px(px(16.))
-                    .py(px(28.))
-                    .text_center()
-                    .text_color(palette.text_muted)
-                    .child(empty),
-            )
+            list.child(div().text_color(palette.text_muted).child(empty))
+        })
+        .when(!sans.is_empty(), |list| {
+            list.border_t_1().border_color(palette.border)
         })
         .children(rows.into_iter().map(|cells| {
             let filled = cells.len();
             h_flex()
+                .border_b_1()
+                .border_color(palette.border)
                 .children(cells.into_iter().enumerate().map(|(i, cell)| {
                     // The number column is 44px wide; the moves share the rest.
                     if i == 0 {
@@ -451,58 +477,7 @@ pub fn moves_list(
                     }
                 }))
                 .when(filled == 2, |row| row.child(div().flex_1()))
-        }));
-    // A side panel's list: its rows scroll under corners in the panel's color.
-    div()
-        .relative()
-        .size_full()
-        .border_1()
-        .border_color(palette.border)
-        .rounded(radii::LG)
-        .bg(palette.bg)
-        .child(list)
-        .child(corner_caps(radii::LG, palette.elevated))
-}
-
-/// The outside of a box's rounded corners, painted in the color around the box (`outside`) over
-/// its content: GPUI clips a box's children to its rectangle, not to its rounded corners, so
-/// rows scrolling in a rounded list would otherwise show square corners. Lies over the whole
-/// box, under its border.
-pub fn corner_caps(radius: Pixels, outside: Hsla) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, _| {
-            let (left, top, right, bottom) = (
-                bounds.origin.x,
-                bounds.origin.y,
-                bounds.right(),
-                bounds.bottom(),
-            );
-            for (corner, dx, dy) in [
-                (point(left, top), 1., 1.),
-                (point(right, top), -1., 1.),
-                (point(right, bottom), -1., -1.),
-                (point(left, bottom), 1., -1.),
-            ] {
-                let mut cap = PathBuilder::fill();
-                cap.move_to(corner);
-                cap.line_to(point(corner.x + radius * dx, corner.y));
-                cap.arc_to(
-                    point(radius, radius),
-                    px(0.),
-                    false,
-                    (dx * dy) < 0.,
-                    point(corner.x, corner.y + radius * dy),
-                );
-                cap.close();
-                if let Ok(path) = cap.build() {
-                    window.paint_path(path, outside);
-                }
-            }
-        },
-    )
-    .absolute()
-    .inset_0()
+        }))
 }
 
 /// `.move-controls`: first, previous, next and last move, and a board flip.
@@ -571,7 +546,7 @@ pub fn side_panel(palette: &Palette) -> Div {
         .min_h_0()
         .overflow_hidden()
         .p(px(16.))
-        .gap(px(14.))
+        .gap(px(12.))
         .border_1()
         .border_color(palette.border)
         .rounded(radii::XL)
@@ -581,8 +556,8 @@ pub fn side_panel(palette: &Palette) -> Div {
 /// `.section-title`: a panel's or section's heading.
 pub fn heading(text: impl Into<SharedString>, palette: &Palette) -> Div {
     div()
-        .text_size(px(15.))
-        .font_weight(FontWeight(650.))
+        .text_size(px(14.))
+        .font_weight(FontWeight::MEDIUM)
         .text_color(palette.highlighted)
         .child(text.into())
 }
@@ -596,7 +571,7 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
-/// `.section-title` with a muted count beside it.
+/// `.section-title` with a muted note beside it, cut short when it does not fit.
 pub fn section_title(
     title: &'static str,
     count: Option<String>,
@@ -608,15 +583,20 @@ pub fn section_title(
         .gap(px(8.))
         .child(
             div()
-                .text_size(px(15.))
-                .font_weight(FontWeight(650.))
+                .flex_none()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(title),
         )
         .children(count.map(|count| {
             div()
+                .min_w_0()
                 .text_size(px(12.))
                 .text_color(palette.text_muted)
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
                 .child(count)
         }))
 }
