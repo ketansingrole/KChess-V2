@@ -56,6 +56,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       KCHESS_MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}
+      # As CI's release commit, so its dependencies' cache applies here.
+      CARGO_PROFILE_RELEASE_LTO: fat
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
     steps:
       - uses: actions/checkout@v7
       - name: Install GPUI build libraries

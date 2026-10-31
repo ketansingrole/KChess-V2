@@ -7,6 +7,11 @@ name: Windows upgrade
 # have changed since the last release (ci.yml); run it from the Actions tab any time.
 on:
   workflow_call:
+    inputs:
+      # Without the release profile's fat LTO (ci.yml).
+      fast:
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -21,15 +26,15 @@ jobs:
   build:
     runs-on: windows-latest
     env:
-      CARGO_PROFILE_RELEASE_LTO: 'off'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      CARGO_PROFILE_RELEASE_LTO: ${{ inputs.fast && 'off' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ inputs.fast && '16' || '1' }}
     steps:
       - uses: actions/checkout@v7
       - name: Install NSIS
         uses: ./.github/actions/install-nsis
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: package-fast
+          shared-key: ${{ inputs.fast && 'package-fast' || 'package' }}
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The app and its installer take the test version from KCHESS_PACKAGE_VERSION.

@@ -6,7 +6,7 @@ name: Snap build
 on:
   workflow_call:
     inputs:
-      # A quicker build for CI than the release's fat LTO.
+      # Without the release profile's fat LTO (ci.yml).
       fast:
         type: boolean
         default: false

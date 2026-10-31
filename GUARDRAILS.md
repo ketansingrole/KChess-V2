@@ -29,6 +29,7 @@ installed. Packaging changes also need `cargo xtask package` on the platform the
 `check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
 changed since `main` last packaged successfully (a version bump always has), it also packages for
 macOS and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows.
+Only a release commit's packages use the release profile's fat LTO; the others link without it.
 A change to documents alone (`docs/` and the top-level guides) runs none of it. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.
 

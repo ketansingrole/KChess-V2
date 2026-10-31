@@ -28,6 +28,10 @@ jobs:
   #
   # Whether this push or pull request changes more than the documents nothing reads. A release
   # commit changes Cargo.toml, so `cargo xtask release-verify` never meets a skipped `check`.
+  #
+  # Whether this is a release commit. Only those package with the release profile's fat LTO, whose
+  # link takes over half of a package job: their run tests what the tag will build, and saves the
+  # dependencies the Release workflow restores.
   changes:
     runs-on: ubuntu-latest
     permissions:
@@ -35,6 +39,7 @@ jobs:
       actions: read
     outputs:
       code: ${{ steps.docs.outputs.code }}
+      release: ${{ steps.docs.outputs.release }}
       packaging: ${{ steps.diff.outputs.packaging }}
     steps:
       - uses: actions/checkout@v7
@@ -52,6 +57,13 @@ jobs:
           fi
           echo "Code changed: $code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          if git diff "$BASE" HEAD -- Cargo.toml | grep -q '^+version = '; then
+            release=true
+          else
+            release=false
+          fi
+          echo "Release commit: $release"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
       - id: packaged
         if: github.event_name == 'push'
         env:
@@ -155,8 +167,8 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     env:
-      CARGO_PROFILE_RELEASE_LTO: 'off'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.changes.outputs.release != 'true' && 'off' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.changes.outputs.release != 'true' && '16' || '1' }}
     steps:
       - uses: actions/checkout@v7
       - name: Install GPUI build libraries
@@ -164,7 +176,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: package-fast
+          shared-key: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo xtask package
@@ -185,10 +197,12 @@ jobs:
     if: needs.changes.outputs.packaging == 'true'
     uses: ./.github/workflows/snap-build.yml
     with:
-      fast: true
+      fast: ${{ needs.changes.outputs.release != 'true' }}
 
   # Every way a Windows installation upgrades to this commit's installer.
   windows-upgrade:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
     uses: ./.github/workflows/windows-upgrade.yml
+    with:
+      fast: ${{ needs.changes.outputs.release != 'true' }}
