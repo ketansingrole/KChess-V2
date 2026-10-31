@@ -5,6 +5,11 @@ name: Snap build
 # published release (snap-publish.yml).
 on:
   workflow_call:
+    inputs:
+      # A quicker build for CI than the release's fat LTO.
+      fast:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,13 +23,16 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      CARGO_PROFILE_RELEASE_LTO: ${{ inputs.fast && 'off' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ inputs.fast && '16' || '1' }}
     steps:
       - uses: actions/checkout@v7
       - name: Install GPUI build libraries
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: package
+          shared-key: ${{ inputs.fast && 'package-fast' || 'package' }}
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       - name: Prepare isolated Snap build environment

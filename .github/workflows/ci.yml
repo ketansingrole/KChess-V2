@@ -154,6 +154,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
     steps:
       - uses: actions/checkout@v7
       - name: Install GPUI build libraries
@@ -161,7 +164,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: package
+          shared-key: package-fast
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo xtask package
@@ -181,6 +184,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
     uses: ./.github/workflows/snap-build.yml
+    with:
+      fast: true
 
   # Every way a Windows installation upgrades to this commit's installer.
   windows-upgrade:
