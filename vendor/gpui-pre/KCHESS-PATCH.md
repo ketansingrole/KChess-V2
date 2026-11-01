@@ -26,6 +26,10 @@ A second, test-only patch makes the test platform's `show_window_menu` and `star
 (`src/platform/test/window.rs`) do nothing instead of panicking, so the app's end-to-end tests
 (`apps/gpui/src/e2e`) can click controls drawn over its title bar.
 
+A third, test-only patch adds `Window::window_control_at` (`src/window.rs`), which answers as the
+platform's title-bar hit test does, so the end-to-end tests can check that controls drawn over the
+title bar take their own clicks on Windows.
+
 The app sets the zoom (`apps/gpui/src/interface_zoom.rs`) and moves the macOS traffic lights to
 stay centred on its top bar.
 
