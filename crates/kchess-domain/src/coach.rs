@@ -286,18 +286,21 @@ pub fn review_moment(review: &Value, index: usize) -> Option<Value> {
         after: after["mate"].as_f64().map(|mate| mate as i32),
     };
     let facts = tactics::move_facts(&fen, played, &best, &refutation, mates)?;
-    Some(json!({
-        "reason": reason(&facts),
-        "request": {
-            "kind": "move",
-            "fen": fen,
-            "played": played,
-            "best": best,
-            "refutation": refutation,
-            "mateBefore": before["mate"],
-            "mateAfter": after["mate"],
-        },
-    }))
+    let mut request = json!({
+        "kind": "move",
+        "fen": fen,
+        "played": played,
+        "best": best,
+        "refutation": refutation,
+    });
+    // A score without a mate leaves the field out: the request's contract has no null.
+    if let Some(mate) = mates.before {
+        request["mateBefore"] = json!(mate);
+    }
+    if let Some(mate) = mates.after {
+        request["mateAfter"] = json!(mate);
+    }
+    Some(json!({ "reason": reason(&facts), "request": request }))
 }
 
 /// The brief for a hint. The model gets the idea, never the moves, and the first move and its
@@ -503,6 +506,18 @@ mod tests {
         let moment = review_moment(&review, 0).unwrap();
         assert_eq!(moment["reason"], Value::Null);
         assert_eq!(moment["request"]["kind"], "move");
+    }
+
+    #[test]
+    fn a_moment_names_only_the_mates_it_has() {
+        let review = json!({
+            "fen": FORK,
+            "moves": ["e1e2"],
+            "evals": [{ "cp": 0, "mate": null }, { "mate": -7 }],
+        });
+        let request = &review_moment(&review, 0).unwrap()["request"];
+        assert!(request.get("mateBefore").is_none(), "{request}");
+        assert_eq!(request["mateAfter"], -7);
     }
 
     #[test]

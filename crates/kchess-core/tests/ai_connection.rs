@@ -23,14 +23,17 @@ fn stream(text: &str) -> Reply {
     Reply::Text(200, "text/event-stream", body)
 }
 
+/// What the review page sends, so this fixture cannot drift from it: neither score here is a mate.
 fn request(played: &str) -> Value {
-    json!({
-        "kind": "move",
+    let review = json!({
         "fen": FORK,
-        "played": played,
-        "best": ["b5c7", "e8d7", "c7a8"],
-        "refutation": ["e8d7"],
-    })
+        "moves": [played],
+        "evals": [
+            { "cp": 500, "mate": null, "pv": ["b5c7", "e8d7", "c7a8"] },
+            { "cp": 0, "pv": ["e8d7"] },
+        ],
+    });
+    kchess_domain::coach::review_moment(&review, 0).unwrap()["request"].clone()
 }
 
 #[tokio::test(flavor = "multi_thread")]
