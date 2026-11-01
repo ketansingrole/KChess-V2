@@ -364,7 +364,8 @@ pub fn wrong_brief<S: AsRef<str>, T: AsRef<str>>(
     played: &str,
     refutation: &[T],
 ) -> Option<Brief> {
-    let (_, mut brief) = move_brief(fen, played, solution, refutation, tactics::Mates::default())?;
+    let (facts, mut brief) =
+        move_brief(fen, played, solution, refutation, tactics::Mates::default())?;
     brief.input = brief.input.replace(
         "Explain what the player missed, why it matters, and the idea behind the better move.",
         "Explain why the move played fails, without giving the better move away.",
@@ -374,12 +375,26 @@ pub fn wrong_brief<S: AsRef<str>, T: AsRef<str>>(
     if better.ends_in_mate() {
         brief.allowed.mate = true;
         brief.input += "\nThe position had a forced mate, and the move played gives it up.";
+    } else if better.material > 0 {
+        brief.input += &format!(
+            "\nThe position offered {}, and the move played misses it. {}",
+            points(better.material),
+            clue(&better),
+        );
     }
+    // A reply that achieves nothing is no reason, and the model would have to invent one.
+    let quiet = facts
+        .refutation
+        .as_ref()
+        .is_none_or(|line| line.material <= 0 && line.tactics.is_empty() && !line.ends_in_mate());
     // The input must not hand the model the answer it may not say.
     brief.input = brief
         .input
         .lines()
-        .filter(|line| !line.starts_with("The better line"))
+        .filter(|line| {
+            !line.starts_with("The better line")
+                && !(quiet && line.starts_with("The opponent's best reply line"))
+        })
         .collect::<Vec<_>>()
         .join("\n");
     Some(brief)
@@ -547,6 +562,20 @@ mod tests {
         assert!(!brief.input.contains("Rh8"), "{}", brief.input);
         assert!(check_reply("That gives up a forced mate.", &brief.allowed));
         assert!(!check_reply("Rh8 was the move.", &brief.allowed));
+    }
+
+    #[test]
+    fn a_wrong_move_is_told_what_it_missed_and_no_quiet_reply() {
+        let best = ["b5c7", "e8d7", "c7a8"];
+        let brief = wrong_brief(FORK, &best, "e1e2", &["e8d7"]).unwrap();
+        assert!(
+            brief.input.contains("5 points of material"),
+            "{}",
+            brief.input
+        );
+        assert!(brief.input.contains("Look for a fork."), "{}", brief.input);
+        assert!(!brief.input.contains("Kd7"), "{}", brief.input);
+        assert!(!brief.input.contains("Nc7"), "{}", brief.input);
     }
 
     #[test]
