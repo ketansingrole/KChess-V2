@@ -3,6 +3,8 @@
 
 pub const APPEARANCES: &[&str] = &["system", "light", "dark"];
 pub const COORDINATE_MODES: &[&str] = &["none", "inside", "outside"];
+/// The efforts every AI feature can run at.
+pub const AI_EFFORTS: &[&str] = &["auto", "low", "medium", "high"];
 pub const ENGINE_LEVELS: &[&str] = &[
     "beginner",
     "novice",

@@ -57,6 +57,7 @@ pub const ASSISTANCE_METHODS: &[&str] = &[
     "openingDescription",
     "openingPopularity",
     "cloudEval",
+    "aiExplain",
 ];
 /// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`).
 pub const TV_CHANNEL_KEYS: &[&str] = &[
@@ -149,6 +150,16 @@ const CORE: &[Row] = &[
     ("reviewRequest", 1, &[Valid("assertReviewRequest")]),
     ("reviewCancel", 1, &[Valid("assertReviewKey")]),
     ("reviewStatus", 0, &[]),
+    ("aiStatus", 0, &[]),
+    ("aiConnect", 0, &[]),
+    ("aiDisconnect", 0, &[]),
+    ("aiModels", 0, &[]),
+    (
+        "aiSetOptions",
+        2,
+        &[Valid("assertAiModel"), Valid("assertAiEffort")],
+    ),
+    ("aiExplain", 1, &[Valid("assertAiRequest")]),
     ("reviewSummaries", 1, &[Valid("assertGameIds")]),
     ("startOnline", 1, &[Valid("assertOnlineOptions")]),
     ("resumeOnline", 0, &[]),

@@ -444,6 +444,36 @@ pub fn methods() -> Vec<Method> {
         ),
         method("removeArchivedGame", "", vec![req("id")]),
         method(
+            "aiStatus",
+            "The ChatGPT connection, and the model and effort every AI feature uses.",
+            vec![],
+        ),
+        method(
+            "aiConnect",
+            "Sign a ChatGPT account in through the browser.",
+            vec![],
+        ),
+        method(
+            "aiDisconnect",
+            "Forget the ChatGPT sign-in on this profile.",
+            vec![],
+        ),
+        method(
+            "aiModels",
+            "The models the connected account may use.",
+            vec![],
+        ),
+        method(
+            "aiSetOptions",
+            "Choose the model (null: the account's first) and effort every AI feature uses.",
+            vec![req("model"), req("effort")],
+        ),
+        method(
+            "aiExplain",
+            "Explain a move or puzzle from checked facts; refused during a live game.",
+            vec![req("request")],
+        ),
+        method(
             "addMistakes",
             "Drills from a stored review's mistakes (one side's, when given); `added` counts new ones.",
             vec![req("reviewKey"), opt("color")],

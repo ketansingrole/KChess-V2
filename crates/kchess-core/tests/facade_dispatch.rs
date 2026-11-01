@@ -83,6 +83,7 @@ fn facade_arms_answer_exactly_the_listed_methods() {
     const SOURCES: &[&str] = &[
         include_str!("../src/facade.rs"),
         include_str!("../src/facade/accounts.rs"),
+        include_str!("../src/facade/ai.rs"),
         include_str!("../src/facade/engine.rs"),
         include_str!("../src/facade/games.rs"),
         include_str!("../src/facade/library.rs"),

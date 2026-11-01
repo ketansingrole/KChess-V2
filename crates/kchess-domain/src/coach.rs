@@ -264,6 +264,11 @@ fn puzzle_start<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<VariantPosition
     Some(start)
 }
 
+/// The FEN the solver of a puzzle faces.
+pub fn puzzle_position<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<String> {
+    puzzle_start(fen, moves).map(|start| rules::make_fen(&start))
+}
+
 /// The brief for a hint. The model gets the idea, never the moves, and the first move and its
 /// squares may not appear in what it says.
 pub fn nudge_brief<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<Brief> {

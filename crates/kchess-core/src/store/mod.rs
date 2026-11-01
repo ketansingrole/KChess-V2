@@ -1,6 +1,7 @@
 //! KChess's main database (`kchess.db`), the storage the services share. The Rust core is its only owner: one connection, opened
 //! and migrated on first use, with every storage method dispatched from here.
 
+pub mod ai;
 pub mod debug;
 pub mod documents;
 pub mod games;
@@ -310,7 +311,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         "store.debug.query" if debug::enabled() => return debug::query(ctx.db, args),
         _ => {}
     }
-    let modules: [Dispatch; 10] = [
+    let modules: [Dispatch; 11] = [
         migrations::call,
         games::call,
         library::call,
@@ -321,6 +322,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         voice_log::call,
         lookups::call,
         view_preferences::call,
+        ai::call,
     ];
     modules
         .iter()
