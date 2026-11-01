@@ -153,6 +153,9 @@ fn welcome(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// Runs just before a request goes out.
+pub type OnAsk = std::rc::Rc<dyn Fn(&mut App)>;
+
 /// How an explanation stands.
 #[derive(Clone, PartialEq)]
 enum Phase {
@@ -240,7 +243,7 @@ pub fn explain_block(
     label: &'static str,
     explainer: &Entity<Explainer>,
     request: Value,
-    on_ask: Option<std::rc::Rc<dyn Fn(&mut App)>>,
+    on_ask: Option<OnAsk>,
     cx: &App,
     palette: &Palette,
 ) -> Option<AnyElement> {

@@ -717,7 +717,7 @@ fn coach_block(
         }
         request
     };
-    let (id, label, request, on_ask): (_, _, _, Option<std::rc::Rc<dyn Fn(&mut App)>>) =
+    let (id, label, request, on_ask): (_, _, _, Option<crate::ai::OnAsk>) =
         if let (true, Some(wrong)) = (playing, shown.last_wrong()) {
             (
                 "puzzle-wrong",
@@ -727,7 +727,7 @@ fn coach_block(
             )
         } else if playing {
             let board = board_entity.downgrade();
-            let nudged: std::rc::Rc<dyn Fn(&mut App)> = std::rc::Rc::new(move |cx| {
+            let nudged: crate::ai::OnAsk = std::rc::Rc::new(move |cx| {
                 let _ = board.update(cx, |board, _| board.nudged());
             });
             (

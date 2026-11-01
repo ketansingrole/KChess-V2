@@ -128,7 +128,7 @@ pub struct SettingsPage {
     ai_model: Entity<SelectState<Vec<SharedString>>>,
     ai_effort: Entity<SelectState<Vec<SharedString>>>,
     /// The models and choices the pickers show.
-    ai_shown: Option<(Vec<(String, String)>, Option<String>, String)>,
+    ai_shown: Option<ai::Shown>,
     ladder: Vec<Rung>,
     default_levels: Vec<EngineLevel>,
     /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.

@@ -10,6 +10,9 @@ use crate::ai::{self, USAGE_SETTINGS};
 use crate::assets::icon;
 use crate::theme::Palette;
 
+/// What the pickers show: the models, and the chosen model and effort.
+pub(super) type Shown = (Vec<(String, String)>, Option<String>, String);
+
 /// The efforts on offer, as the core names them, with their labels.
 pub const EFFORTS: [(&str, &str); 4] = [
     ("auto", "Auto"),
