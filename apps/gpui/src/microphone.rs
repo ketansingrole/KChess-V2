@@ -23,11 +23,13 @@ pub enum Access {
 }
 
 /// A development build is attributed to the app that started it (a terminal or editor), which is
-/// the one macOS asks about: only a packaged app has its own entry.
+/// the one macOS asks about, even from the bundle `tooling/macos-dev-runner.sh` runs a debug build
+/// in: only a packaged app has its own entry.
 pub fn launched_from_terminal() -> bool {
     cfg!(target_os = "macos")
-        && !std::env::current_exe()
-            .is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"))
+        && (cfg!(debug_assertions)
+            || !std::env::current_exe()
+                .is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/")))
 }
 
 #[cfg(target_os = "macos")]
