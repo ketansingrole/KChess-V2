@@ -122,6 +122,7 @@ async fn a_plan_connects_explains_and_disconnects() {
                     .unwrap_or_default()
             };
             assert_eq!(query("client_id"), "dynamic_agent_client");
+            assert!(query("ext_agent_host_id").starts_with("urn:uuid:"));
             assert!(query("scope").contains("chatgpt.tokens.use.direct"));
             *nonce.lock().unwrap() = query("nonce");
             let back = format!(

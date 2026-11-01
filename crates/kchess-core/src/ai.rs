@@ -35,6 +35,42 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(90);
 /// More text than any explanation.
 const ANSWER_LIMIT: usize = 16 * 1024;
 
+/// The host id OpenAI accepts for these random bytes: a UUIDv4 URI.
+fn host_id_of(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = |range: std::ops::Range<usize>| -> String {
+        bytes[range]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    format!(
+        "urn:uuid:{}-{}-{}-{}-{}",
+        hex(0..4),
+        hex(4..6),
+        hex(6..8),
+        hex(8..10),
+        hex(10..16)
+    )
+}
+
+/// A new host id, kept for as long as this profile lives.
+pub fn new_host_id() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|cause| CoreError::wrap("host id", cause))?;
+    Ok(host_id_of(bytes))
+}
+
+/// Whether `id` has the form `new_host_id` gives.
+pub fn valid_host_id(id: &str) -> bool {
+    let Some(uuid) = id.strip_prefix("urn:uuid:") else {
+        return false;
+    };
+    let lengths: Vec<usize> = uuid.split('-').map(str::len).collect();
+    lengths == [8, 4, 4, 4, 12] && uuid.chars().all(|c| c == '-' || c.is_ascii_hexdigit())
+}
+
 /// What is kept of a sign-in, sealed by the credential store.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -516,6 +552,20 @@ mod tests {
             "iss": AUTH, "aud": "oaiapp_1", "exp": 2000, "nonce": "n",
             "sub": "user", "email": "a@example.test"
         })
+    }
+
+    /// OpenAI refused a bare random string (`invalid_authorize_request`, `ext_agent_host_id`).
+    #[test]
+    fn a_host_id_is_a_uuid_uri() {
+        assert_eq!(
+            host_id_of([0xff; 16]),
+            "urn:uuid:ffffffff-ffff-4fff-bfff-ffffffffffff"
+        );
+        let id = new_host_id().unwrap();
+        assert!(valid_host_id(&id), "{id}");
+        assert_ne!(id, new_host_id().unwrap());
+        assert!(!valid_host_id("b7mAFy8G5PmJeX1wdx_DZQwk0eFOg3fR"));
+        assert!(!valid_host_id("urn:uuid:1234"));
     }
 
     #[test]

@@ -8,7 +8,9 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 
 use super::args::{arg, normal};
-use crate::ai::{Attempt, CALLBACK_PATH, FIRST_PORT, Model, Problem, Refusal, Tokens};
+use crate::ai::{
+    Attempt, CALLBACK_PATH, FIRST_PORT, Model, Problem, Refusal, Tokens, new_host_id, valid_host_id,
+};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
@@ -158,8 +160,9 @@ impl Core {
     /// Signs a ChatGPT account in through the browser.
     async fn ai_connect(&self) -> Result<Value> {
         let mut connection = self.ai_connection().await?;
-        if connection.host_id.is_empty() {
-            connection.host_id = new_state()?;
+        if !valid_host_id(&connection.host_id) {
+            connection.host_id = new_host_id()?;
+            self.save_ai_connection(&connection).await?;
         }
         let pkce = new_pkce()?;
         let (state, nonce) = (new_state()?, new_state()?);
