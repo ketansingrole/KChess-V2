@@ -882,6 +882,14 @@ pub(crate) fn status_panel(
         .gap(px(12.))
         .child(widgets::StatusBanner::new(tone, glyph, title.into()).announce())
         .children(hinted.then(|| clue(&puzzle)).flatten())
+        .when(rated && playing && shown.hint_used(), |panel| {
+            panel.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(palette.text_muted)
+                    .child("Unrated: a hint was used"),
+            )
+        })
         .children(coach_block(
             board_entity,
             &puzzle,
@@ -900,7 +908,8 @@ pub(crate) fn status_panel(
                     .when(hinted, |button| button.primary())
                     .when(!hinted, |button| button.outline())
                     .icon(icon("lightbulb"))
-                    .label(if rated { "Hint · unrated" } else { "Hint" })
+                    .label("Hint")
+                    .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
                     .disabled(!playing)
                     .on_click({
                         let board = board_entity.downgrade();

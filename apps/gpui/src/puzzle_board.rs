@@ -217,6 +217,11 @@ impl PuzzleBoard {
         self.hinted
     }
 
+    /// A hint was shown at some point in this attempt, even if it is hidden again.
+    pub fn hint_used(&self) -> bool {
+        self.hint_used
+    }
+
     pub fn explainer(&self) -> &Entity<crate::ai::Explainer> {
         &self.explainer
     }
