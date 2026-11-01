@@ -29,6 +29,8 @@ pub struct Session {
     pub streams: usize,
     /// When it last did, in the order of every session's streams.
     pub stream_opened: usize,
+    /// The login no longer works: its streams close and Lichess answers 401.
+    pub revoked: bool,
     /// A game is under way: reported on the event stream and in `account/playing`.
     pub game: bool,
     pub moves: Vec<String>,
@@ -202,6 +204,9 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     let Some(session) = session else {
         return Ok(());
     };
+    if session.lock().revoked {
+        return unauthorized(&mut out);
+    }
     let path = request.path.as_str();
     let stream_path = format!("/api/board/game/stream/{GAME}");
     match (request.method.as_str(), path) {
@@ -227,7 +232,8 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 session.game
             };
             let first = start.then(|| json!({ "type": "gameStart", "game": summary() }));
-            stream(&mut out, first.into_iter().collect(), |_| None)
+            let open = move || !session.lock().revoked;
+            stream(&mut out, first.into_iter().collect(), open, |_| None)
         }
         ("GET", p) if p == stream_path => {
             let (first, seen) = {
@@ -235,13 +241,18 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 (full(&session), session.version)
             };
             let mut seen = seen;
-            stream(&mut out, vec![first], move |_| {
-                let session = session.lock();
-                (session.version != seen).then(|| {
-                    seen = session.version;
-                    state(&session)
-                })
-            })
+            stream(
+                &mut out,
+                vec![first],
+                || true,
+                move |_| {
+                    let session = session.lock();
+                    (session.version != seen).then(|| {
+                        seen = session.version;
+                        state(&session)
+                    })
+                },
+            )
         }
         ("POST", p) if p.starts_with("/api/board/game/") => {
             write_game(&session, p);
@@ -306,6 +317,16 @@ fn reply(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
     out.flush()
 }
 
+fn unauthorized(out: &mut TcpStream) -> std::io::Result<()> {
+    let body = json!({ "error": "No such token" }).to_string();
+    write!(
+        out,
+        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    out.flush()
+}
+
 fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
     let body = json!({ "error": "Not found" }).to_string();
     write!(
@@ -325,10 +346,11 @@ fn ndjson(out: &mut TcpStream) -> std::io::Result<()> {
 }
 
 /// An ndjson stream: `first`'s lines at once, then `next`'s whenever it has one, with keep-alives
-/// in between, until the app hangs up.
+/// in between, until the app hangs up or `open` says it is over.
 fn stream(
     out: &mut TcpStream,
     first: Vec<Value>,
+    open: impl Fn() -> bool,
     mut next: impl FnMut(usize) -> Option<Value>,
 ) -> std::io::Result<()> {
     write!(
@@ -341,7 +363,7 @@ fn stream(
         sent += 1;
     }
     let mut quiet = Instant::now();
-    loop {
+    while open() {
         if let Some(line) = next(sent) {
             chunk(out, &format!("{line}\n"))?;
             sent += 1;
@@ -352,6 +374,7 @@ fn stream(
         }
         std::thread::sleep(Duration::from_millis(5));
     }
+    chunk(out, "")
 }
 
 fn chunk(out: &mut TcpStream, text: &str) -> std::io::Result<()> {

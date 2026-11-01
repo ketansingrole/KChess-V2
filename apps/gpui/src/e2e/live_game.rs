@@ -168,3 +168,20 @@ fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) 
         listens_to(&first, &second)
     });
 }
+
+#[gpui_kit::test]
+fn a_refreshed_login_brings_back_the_event_stream(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, expired) = Harness::signed_in(cx, false);
+    app.wait_for("the event stream to open", |_, _| {
+        expired.lock().streams == 1
+    });
+    expired.lock().revoked = true;
+    app.wait_for("the app to stop syncing", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).busy
+    });
+
+    let refreshed = app.connect("Tester", false);
+    app.wait_for("the event stream with the new login", |_, _| {
+        refreshed.lock().streams == 1
+    });
+}

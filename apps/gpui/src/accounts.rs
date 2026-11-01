@@ -174,6 +174,7 @@ impl Accounts {
                     return;
                 };
                 if known.contains(&username.to_lowercase()) {
+                    crate::online::account_connected(cx);
                     // Lichess authorises whoever is signed in to the browser: the same account.
                     return say(
                         window,
