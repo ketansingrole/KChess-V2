@@ -70,10 +70,7 @@ fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppC
         let search = window.try_find_by_label("Search pages and commands");
         search.expect("the search box").bounds()
     });
-    // A whole frame: a cached view's reused frame does not replay its title-bar areas.
-    let (controls, beside) = app.with_window(|window, cx| {
-        window.refresh();
-        super::draw(window, cx);
+    let (controls, beside) = app.with_window(|window, _| {
         let width = f32::from(window.viewport_size().width) as usize;
         let beside = (0..width).step_by(4).any(|x| {
             let at = gpui_kit::point(gpui_kit::px(x as f32), search.center().y);
@@ -86,6 +83,39 @@ fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppC
     });
     assert_eq!(controls, [None; 3], "update, sidebar toggle and search");
     assert!(beside, "the bar still moves the window");
+}
+
+/// Windows moves the window and presses its buttons from the areas the last frame left, so a
+/// frame that reuses the top bar has to keep them: opening a page left the bar unable to drag.
+#[gpui_kit::test]
+fn the_title_bar_works_after_a_frame_that_reuses_the_top_bar(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::WindowControlArea::{Close, Drag, Max, Min};
+    use gpui_kit::test::TestQueryExt as _;
+    let mut app = Harness::start(cx);
+    let bar = app.with_window(|window, cx| {
+        let search = window.try_find_by_label("Search pages and commands");
+        let search = search.expect("the search box").bounds();
+        window.refresh();
+        super::draw(window, cx);
+        let width = f32::from(window.viewport_size().width) as usize;
+        (0..width)
+            .step_by(4)
+            .map(|x| gpui_kit::point(gpui_kit::px(x as f32), search.center().y))
+            .find(|at| window.window_control_at(*at) == Some(Drag))
+            .expect("the bar moves the window")
+    });
+    let controls = cfg!(target_os = "windows").then(|| {
+        ["minimize", "maximize", "close"].map(|control| app.find(control).bounds().center())
+    });
+    app.open("Openings");
+    let (at_bar, at_controls) = app.with_window(|window, _| {
+        let at = controls.map(|controls| controls.map(|at| window.window_control_at(at)));
+        (window.window_control_at(bar), at)
+    });
+    assert_eq!(at_bar, Some(Drag));
+    if let Some(at_controls) = at_controls {
+        assert_eq!(at_controls, [Some(Min), Some(Max), Some(Close)]);
+    }
 }
 
 /// The window hides the system title bar, so on Windows the top bar draws its controls.
