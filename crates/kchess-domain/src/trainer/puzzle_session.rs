@@ -129,6 +129,11 @@ struct VerdictFacts {
     total: u32,
 }
 
+/// Whether Lichess rates an attempt: as on its own site, a hint leaves the result but not the rating.
+fn counts_for_rating(mode: &str, hinted: bool) -> bool {
+    mode == "rated" && !hinted
+}
+
 /// The most player moves an attempt scores; longer solutions are not real puzzles.
 const MAX_TRIES: usize = 32;
 
@@ -530,7 +535,10 @@ impl Session {
             args.insert("id".into(), id.clone());
         }
         args.insert("win".into(), json!(win));
-        args.insert("rated".into(), json!(started.mode == "rated"));
+        args.insert(
+            "rated".into(),
+            json!(counts_for_rating(&started.mode, detail.hinted)),
+        );
         let mut token = resume("solve", self.internal.load_gen, selection);
         token.version = self.internal.session_version;
         token.key = started.key;
@@ -741,4 +749,16 @@ pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
         _ => return None,
     };
     Some(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::counts_for_rating;
+
+    #[test]
+    fn a_hint_takes_an_attempt_off_the_rating() {
+        assert!(counts_for_rating("rated", false));
+        assert!(!counts_for_rating("rated", true));
+        assert!(!counts_for_rating("practice", false));
+    }
 }

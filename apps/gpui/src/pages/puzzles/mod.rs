@@ -900,7 +900,7 @@ pub(crate) fn status_panel(
                     .when(hinted, |button| button.primary())
                     .when(!hinted, |button| button.outline())
                     .icon(icon("lightbulb"))
-                    .label("Hint")
+                    .label(if rated { "Hint · unrated" } else { "Hint" })
                     .disabled(!playing)
                     .on_click({
                         let board = board_entity.downgrade();
