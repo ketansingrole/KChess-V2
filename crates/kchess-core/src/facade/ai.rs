@@ -251,6 +251,7 @@ impl Core {
         let connection = self.ai_connection().await?;
         Ok(json!({
             "connected": connection.sealed.is_some(),
+            "registered": connection.client_id.is_some(),
             "email": connection.email,
             "model": connection.model,
             "effort": connection.effort.as_deref().unwrap_or("auto"),
@@ -431,7 +432,11 @@ impl Core {
             }
             "aiModels" => match self.ai_models().await {
                 Ok(models) => Ok(json!({ "models": models })),
-                Err(refusal) => Ok(problem(refusal.problem)),
+                Err(refusal) => {
+                    self.host
+                        .log(Level::Warn, "ai", &format!("Refused: {}", refusal.detail));
+                    Ok(problem(refusal.problem))
+                }
             },
             "aiSetOptions" => {
                 let model = normal("assertAiModel", &arg(args, 0))?;

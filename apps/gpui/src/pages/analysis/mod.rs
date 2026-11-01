@@ -140,6 +140,8 @@ pub struct AnalysisPage {
     study_bar: Entity<StudyBar>,
     /// The main line's game review, and practising its mistakes.
     review: review::ReviewState,
+    /// The explanation of the review's move on the board.
+    explainer: Entity<crate::ai::Explainer>,
     practice: Option<practice::Practice>,
     /// The engine made way for a review of this game.
     paused_for_review: bool,
@@ -400,6 +402,7 @@ impl AnalysisPage {
             navigation: 0,
             study_bar,
             review: review::ReviewState::new(mistakes),
+            explainer: cx.new(|_| crate::ai::Explainer::new()),
             practice: None,
             paused_for_review: false,
             notes: notes::Notes {

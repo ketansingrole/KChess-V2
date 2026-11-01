@@ -932,6 +932,7 @@ impl AnalysisPage {
                 panel.children(failure.clone().map(|failure| note(failure, true)))
             })
             .children(table)
+            .children(self.render_moment(cx, palette))
             .when(can_practice, |panel| {
                 panel.child(
                     Button::new("practice-review-mistakes")
@@ -967,6 +968,38 @@ impl AnalysisPage {
                 ))
             })
             .into_any_element()
+    }
+
+    /// The inaccuracy, mistake or blunder on the board: why, and the way to ask for more.
+    fn render_moment(&self, cx: &App, palette: &Palette) -> Option<AnyElement> {
+        if self.practice.is_some() {
+            return None;
+        }
+        let review = self.review(cx)?;
+        let ply = self.review_ply(self.reviewed_plies(&review))?;
+        let index = ply.checked_sub(1)?;
+        let (analysis, _) = self.game_analysis(cx)?;
+        let judgment = analysis["moves"][index]["judgment"].as_str()?;
+        if !matches!(judgment, "inaccuracy" | "mistake" | "blunder") {
+            return None;
+        }
+        let moment = rules("reviewMoment", &[review, json!(index)]).ok()?;
+        let reason = moment["reason"].as_str().map(str::to_string);
+        Some(
+            v_flex()
+                .gap(px(6.))
+                .children(reason.map(|reason| div().text_size(px(13.)).child(reason)))
+                .children(crate::ai::explain_block(
+                    "review",
+                    "Explain",
+                    &self.explainer,
+                    moment["request"].clone(),
+                    None,
+                    cx,
+                    palette,
+                ))
+                .into_any_element(),
+        )
     }
 
     fn render_review_table(

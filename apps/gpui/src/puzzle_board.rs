@@ -58,6 +58,10 @@ pub struct PuzzleBoard {
     outcome: Option<bool>,
     revealed: bool,
     hinted: bool,
+    /// The player's last wrong move here (UCI), until the next try.
+    last_wrong: Option<String>,
+    /// Explanations of this board's puzzle.
+    explainer: Entity<crate::ai::Explainer>,
     /// A hint was shown at some point: `hinted` itself clears after each move.
     hint_used: bool,
     feedback: Feedback,
@@ -133,6 +137,8 @@ impl PuzzleBoard {
             outcome: None,
             revealed: false,
             hinted: false,
+            last_wrong: None,
+            explainer: cx.new(|_| crate::ai::Explainer::new()),
             hint_used: false,
             feedback: Feedback::None,
             flash: false,
@@ -156,6 +162,7 @@ impl PuzzleBoard {
         self.outcome = outcome;
         self.mistakes = u32::from(outcome == Some(false));
         self.revealed = false;
+        self.last_wrong = None;
         self.hinted = false;
         self.hint_used = false;
         self.feedback = Feedback::None;
@@ -199,6 +206,19 @@ impl PuzzleBoard {
 
     pub fn hinted(&self) -> bool {
         self.hinted
+    }
+
+    pub fn explainer(&self) -> &Entity<crate::ai::Explainer> {
+        &self.explainer
+    }
+
+    pub fn last_wrong(&self) -> Option<&str> {
+        self.last_wrong.as_deref()
+    }
+
+    /// Asking a coach for a nudge counts like a hint, without showing one.
+    pub fn nudged(&mut self) {
+        self.hint_used = true;
     }
 
     /// The player may move: not while the opponent replies or the solution plays itself out.
@@ -287,6 +307,7 @@ impl PuzzleBoard {
         };
         let index = board.index() / 2;
         let (correct, reply) = board.player_move(uci);
+        self.last_wrong = (!correct).then(|| uci.to_string());
         if !correct {
             self.mistakes += 1;
             self.feedback = Feedback::Wrong;

@@ -680,6 +680,75 @@ impl PuzzlesPage {
 /// What the status panel's Next button does.
 pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 
+/// The puzzle's idea, shown with the hint.
+fn clue(puzzle: &Value) -> Option<AnyElement> {
+    let clue = rules(
+        "puzzleClue",
+        &[puzzle["fen"].clone(), puzzle["solution"].clone()],
+    )
+    .ok()?;
+    let clue = clue.as_str()?.to_string();
+    Some(div().text_size(px(13.)).child(clue).into_any_element())
+}
+
+/// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
+fn coach_block(
+    board_entity: &Entity<PuzzleBoard>,
+    puzzle: &Value,
+    status: &str,
+    playing: bool,
+    cx: &App,
+    palette: &Palette,
+) -> Option<AnyElement> {
+    let shown = board_entity.read(cx);
+    let on_board = shown.puzzle()?;
+    let solution = puzzle["solution"].as_array()?;
+    // While solving, from where the board stands: a long puzzle may be several moves in.
+    let current = json!({
+        "fen": on_board.fen(),
+        "moves": solution.get(on_board.index()..)?,
+    });
+    let whole = json!({ "fen": puzzle["fen"], "moves": solution });
+    let merged = |from: &Value, kind: &str, played: Option<&str>| {
+        let mut request = from.clone();
+        request["kind"] = json!(kind);
+        if let Some(played) = played {
+            request["played"] = json!(played);
+        }
+        request
+    };
+    let (id, label, request, on_ask): (_, _, _, Option<std::rc::Rc<dyn Fn(&mut App)>>) =
+        if let (true, Some(wrong)) = (playing, shown.last_wrong()) {
+            (
+                "puzzle-wrong",
+                "Why not?",
+                merged(&current, "wrong", Some(wrong)),
+                None,
+            )
+        } else if playing {
+            let board = board_entity.downgrade();
+            let nudged: std::rc::Rc<dyn Fn(&mut App)> = std::rc::Rc::new(move |cx| {
+                let _ = board.update(cx, |board, _| board.nudged());
+            });
+            (
+                "puzzle-nudge",
+                "Nudge",
+                merged(&current, "nudge", None),
+                Some(nudged),
+            )
+        } else if status != "playing" {
+            (
+                "puzzle-why",
+                "Explain",
+                merged(&whole, "solution", None),
+                None,
+            )
+        } else {
+            return None;
+        };
+    crate::ai::explain_block(id, label, shown.explainer(), request, on_ask, cx, palette)
+}
+
 pub(crate) fn status_panel(
     board_entity: &Entity<PuzzleBoard>,
     themes: &[Theme],
@@ -789,6 +858,15 @@ pub(crate) fn status_panel(
     v_flex()
         .gap(px(12.))
         .child(widgets::StatusBanner::new(tone, glyph, title.into()).announce())
+        .children(hinted.then(|| clue(&puzzle)).flatten())
+        .children(coach_block(
+            board_entity,
+            &puzzle,
+            status,
+            playing,
+            cx,
+            palette,
+        ))
         // `.panel-actions`: Hint, Solution, Flip and Next share the row.
         .child(widgets::panel_actions(
             false,

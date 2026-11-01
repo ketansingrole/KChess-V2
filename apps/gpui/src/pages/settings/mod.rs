@@ -2,6 +2,7 @@
 //! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
 
 mod accounts;
+mod ai;
 mod data;
 mod engine;
 mod offline;
@@ -44,6 +45,7 @@ pub enum Section {
     Gestures,
     Online,
     Analysis,
+    Ai,
     Sound,
     Notifications,
     Voice,
@@ -55,7 +57,7 @@ pub enum Section {
 }
 
 /// The categories the sidebar lists while Settings is open, in the Electron app's order.
-pub fn sections() -> [(Section, &'static str, Icon); 14] {
+pub fn sections() -> [(Section, &'static str, Icon); 15] {
     [
         (Section::Appearance, "Appearance", icon("palette")),
         (Section::Themes, "App theme", icon("swatch-book")),
@@ -63,6 +65,7 @@ pub fn sections() -> [(Section, &'static str, Icon); 14] {
         (Section::Gestures, "Gestures", icon("hand")),
         (Section::Online, "Online play", icon("globe-2")),
         (Section::Analysis, "Analysis", icon("microscope")),
+        (Section::Ai, "AI", icon("lightbulb")),
         (Section::Sound, "Sound", icon("volume-2")),
         (Section::Notifications, "Notifications", icon("bell")),
         (Section::Voice, "Voice input", icon("mic")),
@@ -122,6 +125,10 @@ pub struct SettingsPage {
     /// Interface size: Auto (its percent here) and the steps; refilled when either changes.
     zoom: Entity<SelectState<Vec<SharedString>>>,
     zoom_shown: Option<(crate::interface_zoom::Setting, u16)>,
+    ai_model: Entity<SelectState<Vec<SharedString>>>,
+    ai_effort: Entity<SelectState<Vec<SharedString>>>,
+    /// The models and choices the pickers show.
+    ai_shown: Option<(Vec<(String, String)>, Option<String>, String)>,
     ladder: Vec<Rung>,
     default_levels: Vec<EngineLevel>,
     /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.
@@ -182,7 +189,32 @@ impl SettingsPage {
             )
         });
         let zoom = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
+        let ai_model = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
+        let ai_effort = cx.new(|cx| {
+            SelectState::new(
+                ai::EFFORTS
+                    .iter()
+                    .map(|(_, label)| SharedString::from(*label))
+                    .collect(),
+                Some(IndexPath::new(0)),
+                window,
+                cx,
+            )
+        });
         let subscriptions = vec![
+            cx.subscribe(
+                &ai_model,
+                |this, _, _: &SelectEvent<Vec<SharedString>>, cx| {
+                    this.save_ai(cx);
+                },
+            ),
+            cx.subscribe(
+                &ai_effort,
+                |this, _, _: &SelectEvent<Vec<SharedString>>, cx| {
+                    this.save_ai(cx);
+                },
+            ),
+            cx.observe(&crate::ai::handle(cx), |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &zoom,
                 window,
@@ -277,6 +309,9 @@ impl SettingsPage {
             poll,
             zoom,
             zoom_shown: None,
+            ai_model,
+            ai_effort,
+            ai_shown: None,
             ladder,
             default_levels,
             engine: None,
@@ -323,6 +358,9 @@ impl SettingsPage {
         }
         if matches!(section, Section::Accounts | Section::Data) {
             crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
+        }
+        if section == Section::Ai {
+            crate::ai::handle(cx).update(cx, |ai, cx| ai.refresh(cx));
         }
         if section == Section::Offline {
             self.voice_model_error = None;
@@ -1371,6 +1409,7 @@ impl Render for SettingsPage {
             Section::Gestures => self.gestures(&settings, &palette),
             Section::Online => self.online(&settings, &palette),
             Section::Analysis => self.analysis(&settings, &palette),
+            Section::Ai => self.ai_section(cx, &palette),
             Section::Sound => self.sound(&settings, &palette),
             Section::Notifications => self.notifications(&settings, &palette, cx),
             Section::Engine => self.engine(&settings, cx, &palette),
@@ -1381,6 +1420,7 @@ impl Render for SettingsPage {
             Section::Data => self.data(cx, &palette),
         };
         self.sync_zoom(window, cx);
+        self.sync_ai(window, cx);
         div()
             .id("settings-page")
             .track_focus(&self.focus)
