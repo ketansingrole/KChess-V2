@@ -4,7 +4,8 @@
 //!
 //! Each test gets its own profile (`profile::TEST_DATA_DIR`), the scripted engine from
 //! `kchess-core` in place of Stockfish (`kchess-fake-uci` in `search` mode: it always answers
-//! `e2e4`), and a Lichess origin nobody listens on, so nothing leaves the machine.
+//! `e2e4`), and a stand-in Lichess (`fake_lichess`) that answers only a test that signed in, so
+//! nothing leaves the machine.
 //!
 //! Elements are found by their GPUI `ElementId` among those registered with `.test_support()`
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
@@ -12,13 +13,16 @@
 mod analysis;
 mod audit;
 mod computer;
+mod fake_lichess;
 mod history;
+mod live_game;
 mod local;
 mod online;
 mod openings;
 mod palette;
 mod practice;
 mod puzzles;
+mod review;
 #[cfg(target_os = "macos")]
 mod screens;
 mod settings;
@@ -81,6 +85,56 @@ impl Harness {
         let profile = tempfile::tempdir().expect("a temporary profile");
         prepare(profile.path());
         Self::boot(cx.clone(), profile, false)
+    }
+
+    /// Start the app and sign in to the stand-in Lichess as a person would: the core opens the
+    /// login page (`opened-urls.txt`, its test switch) and the "browser" returns with a code.
+    /// `game` puts a game under way there.
+    pub fn signed_in(cx: &mut TestAppContext, game: bool) -> (Harness, fake_lichess::Handle) {
+        let mut app = Self::start(cx);
+        app.online();
+        let (code, session) = fake_lichess::session(game);
+        let opened = app
+            .profile
+            .as_ref()
+            .expect("the profile")
+            .path()
+            .join("opened-urls.txt");
+        app.cx
+            .update_window(app.window, |_, window, cx| {
+                crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
+            })
+            .expect("the main window is open");
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < TIMEOUT {
+                let url = std::fs::read_to_string(&opened).ok().and_then(|text| {
+                    let line = text.lines().find(|line| line.contains("/oauth"))?;
+                    Some(line.to_string())
+                });
+                if let Some(url) = url {
+                    fake_lichess::return_from_login(&url, &code);
+                    return;
+                }
+                std::thread::sleep(POLL);
+            }
+        });
+        app.wait_for("the account to connect", |_, cx| {
+            crate::accounts::handle(cx).read(cx).active(cx).as_deref()
+                == Some(fake_lichess::USERNAME)
+        });
+        (app, session)
+    }
+
+    /// Take the computer to be on a network, whatever the machine running the test says.
+    pub fn online(&mut self) {
+        self.cx.update(|cx| {
+            let network = cx.global::<crate::network::NetworkHandle>().0.clone();
+            network.update(cx, |network, cx| {
+                network.online = true;
+                cx.notify();
+            });
+        });
     }
 
     /// Quit the app as a person would (its saves flushed, the core closed), then start it again
@@ -431,8 +485,7 @@ fn environment() {
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
-        let lichess =
-            std::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(|_| "http://127.0.0.1:9".into());
+        let lichess = std::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(|_| fake_lichess::base());
         // SAFETY: set once, before any test's core starts reading the environment.
         unsafe {
             std::env::set_var("KCHESS_CORE_MODE", "embedded");
@@ -441,7 +494,7 @@ fn environment() {
             // The core's test switch: credentials in a key file in the profile, never the OS
             // credential store, and the test Lichess origin below honoured.
             std::env::set_var("KCHESS_STORE_DEBUG", "1");
-            // Lichess at a port nothing listens on: online features fail fast and offline.
+            // Online features fail fast and offline, unless the test signed in.
             std::env::set_var("KCHESS_TEST_LICHESS_BASE", lichess);
             // A voice model that cannot be had: never the real download, and voice fails at once.
             std::env::set_var("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");

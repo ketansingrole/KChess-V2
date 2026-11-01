@@ -45,7 +45,7 @@ fn settle(app: &mut Harness) {
 }
 
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
-fn import(app: &mut Harness, text: &str) {
+pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
     fill_in_dialog(app, "FEN or PGN", text);
     app.click("import-run");
