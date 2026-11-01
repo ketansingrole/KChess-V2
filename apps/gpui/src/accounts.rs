@@ -184,6 +184,7 @@ impl Accounts {
                     );
                 }
                 this.set_active(&username, cx);
+                crate::online::account_connected(cx);
                 say(window, cx, format!("Connected @{username}"));
                 this.sync(Some(username), window, cx);
             });

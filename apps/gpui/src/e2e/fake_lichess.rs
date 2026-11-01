@@ -25,6 +25,8 @@ const KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// What Lichess holds for one signed-in test.
 #[derive(Default)]
 pub struct Session {
+    /// The app opened the event stream, which brings games and challenges.
+    pub listening: bool,
     /// A game is under way: reported on the event stream and in `account/playing`.
     pub game: bool,
     pub moves: Vec<String>,
@@ -209,7 +211,11 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             reply(&mut out, &json!({ "nowPlaying": playing }))
         }
         ("GET", "/api/stream/event") => {
-            let start = session.lock().game;
+            let start = {
+                let mut session = session.lock();
+                session.listening = true;
+                session.game
+            };
             let first = start.then(|| json!({ "type": "gameStart", "game": summary() }));
             stream(&mut out, first.into_iter().collect(), |_| None)
         }

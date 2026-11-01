@@ -994,6 +994,16 @@ pub fn init(cx: &mut App) {
     resume(state, cx);
 }
 
+/// An account was connected: its game and its event stream, as at startup. A game on the board
+/// stays; the connection follows it.
+pub fn account_connected(cx: &mut App) {
+    let state = handle(cx);
+    let phase = state.read(cx).model["onlinePhase"].as_str();
+    if !matches!(phase, Some("playing" | "seeking")) {
+        resume(state, cx);
+    }
+}
+
 /// Attach the game Lichess says is in progress, then stay connected for challenges and games.
 fn resume(state: Entity<OnlineState>, cx: &mut App) {
     let attempt = state.update(cx, |state, _| {

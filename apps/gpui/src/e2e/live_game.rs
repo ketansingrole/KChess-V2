@@ -131,12 +131,15 @@ fn a_game_without_moves_is_aborted(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(writes(&lichess), ["POST /api/board/game/E2eGame1/abort"]);
 }
 
-/// Fails today: `OnlineState::stay_connected` runs only at startup and after the core reconnects,
-/// so an account connected later has no event stream until the app restarts.
 #[gpui_kit::test]
-#[ignore = "signing in does not open the event stream until a restart"]
 fn a_game_under_way_comes_to_the_board_when_signing_in(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, true);
     app.open("Play on Lichess");
     app.find("online-abort");
+}
+
+#[gpui_kit::test]
+fn signing_in_starts_listening_for_challenges(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    app.wait_for("the event stream to open", |_, _| lichess.lock().listening);
 }
