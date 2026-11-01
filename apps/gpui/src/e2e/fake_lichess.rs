@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-pub const USERNAME: &str = "Tester";
 const OPPONENT: &str = "Opponent";
 const GAME: &str = "E2eGame1";
 const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -25,8 +24,11 @@ const KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// What Lichess holds for one signed-in test.
 #[derive(Default)]
 pub struct Session {
-    /// The app opened the event stream, which brings games and challenges.
-    pub listening: bool,
+    pub username: String,
+    /// How many times the app opened the event stream, which brings games and challenges.
+    pub streams: usize,
+    /// When it last did, in the order of every session's streams.
+    pub stream_opened: usize,
     /// A game is under way: reported on the event stream and in `account/playing`.
     pub game: bool,
     pub moves: Vec<String>,
@@ -61,6 +63,8 @@ impl Handle {
 struct Server {
     base: String,
     next: AtomicUsize,
+    /// Numbers the event streams as they open.
+    streams: AtomicUsize,
     /// By the code the sign-in returns with, which is also the end of the login.
     sessions: Mutex<HashMap<String, Handle>>,
 }
@@ -80,6 +84,7 @@ fn server() -> &'static Server {
         Server {
             base,
             next: AtomicUsize::new(0),
+            streams: AtomicUsize::new(1),
             sessions: Mutex::new(HashMap::new()),
         }
     })
@@ -91,10 +96,11 @@ pub fn base() -> String {
 }
 
 /// A new session, and the code that signs in to it.
-pub fn session(game: bool) -> (String, Handle) {
+pub fn session(username: &str, game: bool) -> (String, Handle) {
     let server = server();
     let code = server.next.fetch_add(1, Ordering::SeqCst).to_string();
     let session = Handle(Arc::new(Mutex::new(Session {
+        username: username.to_string(),
         game,
         ..Session::default()
     })));
@@ -199,7 +205,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     let path = request.path.as_str();
     let stream_path = format!("/api/board/game/stream/{GAME}");
     match (request.method.as_str(), path) {
-        ("GET", "/api/account") | ("GET", "/api/user/Tester") => reply(&mut out, &account()),
+        ("GET", "/api/account") => {
+            let username = session.lock().username.clone();
+            reply(&mut out, &account(&username))
+        }
         ("GET", "/api/account/playing") => {
             let session = session.lock();
             let playing: Vec<Value> = session
@@ -213,7 +222,8 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         ("GET", "/api/stream/event") => {
             let start = {
                 let mut session = session.lock();
-                session.listening = true;
+                session.streams += 1;
+                session.stream_opened = server().streams.fetch_add(1, Ordering::SeqCst);
                 session.game
             };
             let first = start.then(|| json!({ "type": "gameStart", "game": summary() }));
@@ -349,10 +359,10 @@ fn chunk(out: &mut TcpStream, text: &str) -> std::io::Result<()> {
     out.flush()
 }
 
-fn account() -> Value {
+fn account(username: &str) -> Value {
     json!({
-        "id": USERNAME.to_lowercase(),
-        "username": USERNAME,
+        "id": username.to_lowercase(),
+        "username": username,
         "createdAt": 1_600_000_000_000u64,
         "seenAt": 1_600_000_000_000u64,
         "perfs": { "rapid": { "games": 80, "rating": 1720, "rd": 60, "prog": 4 } },
@@ -391,7 +401,7 @@ fn full(session: &Session) -> Value {
         "speed": "rapid",
         "perf": { "name": "Rapid" },
         "createdAt": 1_600_000_000_000u64,
-        "white": { "id": USERNAME.to_lowercase(), "name": USERNAME, "rating": 1720 },
+        "white": { "id": session.username.to_lowercase(), "name": session.username, "rating": 1720 },
         "black": { "id": OPPONENT.to_lowercase(), "name": OPPONENT, "rating": 1700 },
         "initialFen": "startpos",
         "state": state(session)

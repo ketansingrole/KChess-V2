@@ -87,21 +87,28 @@ impl Harness {
         Self::boot(cx.clone(), profile, false)
     }
 
-    /// Start the app and sign in to the stand-in Lichess as a person would: the core opens the
-    /// login page (`opened-urls.txt`, its test switch) and the "browser" returns with a code.
-    /// `game` puts a game under way there.
+    /// Start the app signed in to the stand-in Lichess; `game` puts a game under way there.
     pub fn signed_in(cx: &mut TestAppContext, game: bool) -> (Harness, fake_lichess::Handle) {
         let mut app = Self::start(cx);
         app.online();
-        let (code, session) = fake_lichess::session(game);
-        let opened = app
+        let session = app.connect("Tester", game);
+        (app, session)
+    }
+
+    /// Connect an account as a person would: the core opens the login page (`opened-urls.txt`,
+    /// its test switch) and the "browser" returns with a code.
+    pub fn connect(&mut self, username: &str, game: bool) -> fake_lichess::Handle {
+        let (code, session) = fake_lichess::session(username, game);
+        let opened = self
             .profile
             .as_ref()
             .expect("the profile")
             .path()
             .join("opened-urls.txt");
-        app.cx
-            .update_window(app.window, |_, window, cx| {
+        // Only this sign-in's login page counts.
+        let _ = std::fs::remove_file(&opened);
+        self.cx
+            .update_window(self.window, |_, window, cx| {
                 crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
             })
             .expect("the main window is open");
@@ -119,11 +126,10 @@ impl Harness {
                 std::thread::sleep(POLL);
             }
         });
-        app.wait_for("the account to connect", |_, cx| {
-            crate::accounts::handle(cx).read(cx).active(cx).as_deref()
-                == Some(fake_lichess::USERNAME)
+        self.wait_for("the account to connect", |_, cx| {
+            crate::accounts::handle(cx).read(cx).active(cx).as_deref() == Some(username)
         });
-        (app, session)
+        session
     }
 
     /// Take the computer to be on a network, whatever the machine running the test says.

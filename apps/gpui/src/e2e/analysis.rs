@@ -36,7 +36,7 @@ fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
 }
 
 /// Let animations run their course: a dialog that is closing is gone after this.
-fn settle(app: &mut Harness) {
+pub(super) fn settle(app: &mut Harness) {
     let mut frames = 0;
     app.wait_for("the window to settle", |_, _| {
         frames += 1;

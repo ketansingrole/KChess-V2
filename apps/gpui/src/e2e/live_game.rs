@@ -141,5 +141,30 @@ fn a_game_under_way_comes_to_the_board_when_signing_in(cx: &mut gpui_kit::TestAp
 #[gpui_kit::test]
 fn signing_in_starts_listening_for_challenges(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = Harness::signed_in(cx, false);
-    app.wait_for("the event stream to open", |_, _| lichess.lock().listening);
+    app.wait_for("the event stream to open", |_, _| {
+        lichess.lock().streams == 1
+    });
+}
+
+#[gpui_kit::test]
+fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, first) = Harness::signed_in(cx, false);
+    app.wait_for("the first account's stream", |_, _| {
+        first.lock().streams == 1
+    });
+    let second = app.connect("Second", false);
+    let listens_to =
+        |one: &Handle, other: &Handle| one.lock().stream_opened > other.lock().stream_opened;
+    app.wait_for("the second account's stream", |_, _| {
+        listens_to(&second, &first)
+    });
+
+    app.open("Play on Lichess");
+    app.click_label("Account");
+    super::analysis::settle(&mut app);
+    app.press("down");
+    app.press("enter");
+    app.wait_for("the first account's stream again", |_, _| {
+        listens_to(&first, &second)
+    });
 }
