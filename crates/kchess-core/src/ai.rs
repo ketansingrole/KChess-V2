@@ -160,8 +160,16 @@ fn problem_of(code: &str) -> Problem {
 
 fn refused(status: u16, body: &str) -> Refusal {
     let parsed: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    // Not every error is an `error` object: some are `{"detail": "…"}`. Only the log reads this.
+    let said: String = parsed["error"]["message"]
+        .as_str()
+        .or(parsed["detail"].as_str())
+        .unwrap_or_default()
+        .chars()
+        .take(300)
+        .collect();
     if let Some(code) = parsed["error"]["code"].as_str() {
-        return Refusal::new(problem_of(code), code);
+        return Refusal::new(problem_of(code), format!("{code}: {said}"));
     }
     let problem = match status {
         401 => Problem::Connect,
@@ -169,7 +177,7 @@ fn refused(status: u16, body: &str) -> Refusal {
         429 => Problem::Limit,
         _ => Problem::Unavailable,
     };
-    Refusal::new(problem, format!("HTTP {status}"))
+    Refusal::new(problem, format!("HTTP {status}: {said}"))
 }
 
 /// Whether a refresh failure means the sign-in is over, rather than a bad moment.
@@ -480,7 +488,11 @@ impl Ai {
         let mut body = json!({
             "model": model,
             "instructions": instructions,
-            "input": input,
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": input }],
+            }],
             "store": false,
             "stream": true,
         });
@@ -631,6 +643,12 @@ mod tests {
             Problem::Unavailable
         );
         assert_eq!(refused(401, "").problem, Problem::Connect);
+        assert_eq!(
+            refused(400, "{\"detail\":\"Input must be a list\"}").detail,
+            "HTTP 400: Input must be a list"
+        );
+        let coded = "{\"error\":{\"code\":\"bad\",\"message\":\"No such field\"}}";
+        assert_eq!(refused(400, coded).detail, "bad: No such field");
     }
 
     /// Serves `responses` in turn, one per connection, and hands back the requests.
@@ -697,6 +715,8 @@ mod tests {
         );
         let body: Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(body["store"], false);
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
         assert_eq!(body["stream"], true);
         assert_eq!(body["reasoning"]["effort"], "low");
         assert!(body.get("temperature").is_none());
