@@ -691,15 +691,25 @@ fn clue(puzzle: &Value) -> Option<AnyElement> {
     Some(div().text_size(px(13.)).child(clue).into_any_element())
 }
 
+/// Whether a coach may speak: outside help on a puzzle that counts for a rating is cheating, so a
+/// rated attempt has none until it is over.
+fn coach_allowed(rated: bool, status: &str) -> bool {
+    !rated || status != "playing"
+}
+
 /// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
 fn coach_block(
     board_entity: &Entity<PuzzleBoard>,
     puzzle: &Value,
     status: &str,
     playing: bool,
+    rated: bool,
     cx: &App,
     palette: &Palette,
 ) -> Option<AnyElement> {
+    if !coach_allowed(rated, status) {
+        return None;
+    }
     let shown = board_entity.read(cx);
     let on_board = shown.puzzle()?;
     let solution = puzzle["solution"].as_array()?;
@@ -753,6 +763,7 @@ pub(crate) fn status_panel(
     board_entity: &Entity<PuzzleBoard>,
     themes: &[Theme],
     next: Option<NextPuzzle>,
+    rated: bool,
     cx: &App,
     palette: &Palette,
 ) -> AnyElement {
@@ -864,6 +875,7 @@ pub(crate) fn status_panel(
             &puzzle,
             status,
             playing,
+            rated,
             cx,
             palette,
         ))
@@ -1444,6 +1456,7 @@ impl PuzzlesPage {
                                 let _ = page.update(cx, |page, cx| page.load_next(cx));
                             }
                         })),
+                        mode == "rated" && !is_retry,
                         cx,
                         palette,
                     ))
@@ -1617,8 +1630,17 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{theme_name, themes};
+    use super::{coach_allowed, theme_name, themes};
     use crate::widgets::{self, format_bytes};
+
+    #[test]
+    fn a_rated_attempt_has_no_coach_until_it_is_over() {
+        assert!(!coach_allowed(true, "playing"));
+        for over in ["solved", "failed", "revealed"] {
+            assert!(coach_allowed(true, over));
+        }
+        assert!(coach_allowed(false, "playing"));
+    }
 
     #[test]
     fn sizes_and_counts_read_as_in_electron() {
