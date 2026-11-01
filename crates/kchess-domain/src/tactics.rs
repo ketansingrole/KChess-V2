@@ -403,13 +403,9 @@ pub fn move_facts<S: AsRef<str>, T: AsRef<str>>(
     })
 }
 
-/// What a puzzle's solution wins: `moves` from `fen` as the puzzle plays them, the opponent's
-/// setting-up move first.
-pub fn puzzle_facts<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<LineFacts> {
-    let mut start = rules::standard_from_fen(fen)?;
-    let (first, solution) = moves.split_first()?;
-    let setup = rules::parse_uci(first.as_ref()).and_then(|uci| rules::legal_move(&start, uci))?;
-    rules::san_and_play(&mut start, setup);
+/// What a puzzle's solution wins: `solution` from the solver's position `fen`.
+pub fn puzzle_facts<S: AsRef<str>>(fen: &str, solution: &[S]) -> Option<LineFacts> {
+    let start = rules::standard_from_fen(fen)?;
     let side = start.turn();
     line_facts(&start, solution, side)
 }
@@ -606,12 +602,13 @@ mod tests {
     }
 
     #[test]
-    fn a_puzzle_is_read_after_its_setting_up_move() {
+    fn a_puzzle_is_read_for_the_side_to_move() {
         let line = puzzle_facts(
-            "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/3K4 w - - 0 1",
-            &["d1e1", "a8d8", "b5c7"],
-        );
-        // White moved first, so the solver is Black.
-        assert_eq!(line.unwrap().san, ["Rd8", "Nc7+"]);
+            "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/4K3 w - - 0 1",
+            &["b5c7", "e8d7", "c7a8"],
+        )
+        .unwrap();
+        assert_eq!(line.material, 5);
+        assert_eq!(kinds(&line), ["fork"]);
     }
 }

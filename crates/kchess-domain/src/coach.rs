@@ -300,39 +300,24 @@ pub fn review_moment(review: &Value, index: usize) -> Option<Value> {
     }))
 }
 
-/// The solver's position, and the solution's line from it.
-fn puzzle_start<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<VariantPosition> {
-    let mut start = rules::standard_from_fen(fen)?;
-    let setup =
-        rules::parse_uci(moves.first()?.as_ref()).and_then(|uci| rules::legal_move(&start, uci))?;
-    rules::san_and_play(&mut start, setup);
-    Some(start)
-}
-
-/// The FEN the solver of a puzzle faces.
-pub fn puzzle_position<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<String> {
-    puzzle_start(fen, moves).map(|start| rules::make_fen(&start))
-}
-
 /// The brief for a hint. The model gets the idea, never the moves, and the first move and its
 /// squares may not appear in what it says.
-pub fn nudge_brief<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<Brief> {
-    let line = tactics::puzzle_facts(fen, moves)?;
-    let start = puzzle_start(fen, moves)?;
+pub fn nudge_brief<S: AsRef<str>>(fen: &str, solution: &[S]) -> Option<Brief> {
+    let line = tactics::puzzle_facts(fen, solution)?;
+    let start = rules::standard_from_fen(fen)?;
     let mut allowed = Allowed::default();
     see(&start, &mut allowed);
     allowed.mate = line.san.last().is_some_and(|san| san.ends_with('#'));
     credit(&line, &mut allowed);
-    let first =
-        rules::parse_uci(moves.get(1)?.as_ref()).and_then(|uci| rules::legal_move(&start, uci))?;
+    let first = rules::parse_uci(solution.first()?.as_ref())
+        .and_then(|uci| rules::legal_move(&start, uci))?;
     allowed.secret.insert(first.to().to_string());
     if let Some(from) = first.from() {
         allowed.secret.insert(from.to_string());
     }
     allowed.secret.insert(bare(line.san.first()?));
     let input = format!(
-        "Position (FEN): {}\nThe idea: {}\nGive a hint towards this idea.",
-        rules::make_fen(&start),
+        "Position (FEN): {fen}\nThe idea: {}\nGive a hint towards this idea.",
         clue(&line),
     );
     Some(Brief {
@@ -343,15 +328,14 @@ pub fn nudge_brief<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<Brief> {
 }
 
 /// The brief for why a puzzle's solution works.
-pub fn solution_brief<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<Brief> {
-    let line = tactics::puzzle_facts(fen, moves)?;
-    let start = puzzle_start(fen, moves)?;
+pub fn solution_brief<S: AsRef<str>>(fen: &str, solution: &[S]) -> Option<Brief> {
+    let line = tactics::puzzle_facts(fen, solution)?;
+    let start = rules::standard_from_fen(fen)?;
     let mut allowed = Allowed::default();
-    see_line(&start, &moves[1..], &mut allowed);
+    see_line(&start, solution, &mut allowed);
     credit(&line, &mut allowed);
     let input = format!(
-        "Position (FEN): {}\n{}Explain why this solution works.",
-        rules::make_fen(&start),
+        "Position (FEN): {fen}\n{}Explain why this solution works.",
         line_text("The solution", &line),
     );
     Some(Brief {
@@ -364,25 +348,24 @@ pub fn solution_brief<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<Brief> {
 /// The brief for why `played` fails in a puzzle: the solver's move, and the engine's answer.
 pub fn wrong_brief<S: AsRef<str>, T: AsRef<str>>(
     fen: &str,
-    moves: &[S],
+    solution: &[S],
     played: &str,
     refutation: &[T],
 ) -> Option<Brief> {
-    let start = puzzle_start(fen, moves)?;
-    let position = rules::make_fen(&start);
-    let (_, mut brief) = move_brief(
-        &position,
-        played,
-        &moves[1..],
-        refutation,
-        tactics::Mates::default(),
-    )?;
+    let (_, mut brief) = move_brief(fen, played, solution, refutation, tactics::Mates::default())?;
     brief.input = brief.input.replace(
         "Explain what the player missed, why it matters, and the idea behind the better move.",
         "Explain why the move played fails, without giving the better move away.",
     );
-    let solution = tactics::puzzle_facts(fen, moves)?;
-    brief.allowed.secret.insert(bare(solution.san.first()?));
+    let better = tactics::puzzle_facts(fen, solution)?;
+    brief.allowed.secret.insert(bare(better.san.first()?));
+    // The input must not hand the model the answer it may not say.
+    brief.input = brief
+        .input
+        .lines()
+        .filter(|line| !line.starts_with("The better line"))
+        .collect::<Vec<_>>()
+        .join("\n");
     Some(brief)
 }
 
@@ -482,16 +465,13 @@ mod tests {
 
     #[test]
     fn a_nudge_never_gives_the_answer() {
-        let moves = ["d1e1", "e8d8", "b5c7"];
-        let fen = "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/3K4 w - - 0 1";
-        let brief = nudge_brief(fen, &moves).unwrap();
-        assert!(!brief.input.contains("Kd8"), "{}", brief.input);
-        assert!(check_reply(
-            "Think about your king's safety.",
-            &brief.allowed
-        ));
-        assert!(!check_reply("Try Kd8.", &brief.allowed));
-        assert!(!check_reply("Your king wants d8.", &brief.allowed));
+        let solution = ["b5c7", "e8d7", "c7a8"];
+        let brief = nudge_brief(FORK, &solution).unwrap();
+        assert!(!brief.input.contains("Nc7"), "{}", brief.input);
+        assert!(check_reply("A fork is in the air.", &brief.allowed));
+        assert!(!check_reply("Try Nc7.", &brief.allowed));
+        assert!(!check_reply("The knight wants c7.", &brief.allowed));
+        assert!(!check_reply("Move from b5.", &brief.allowed));
     }
 
     #[test]
@@ -510,7 +490,10 @@ mod tests {
         assert_eq!(moment["request"]["played"], "e1e2");
         assert_eq!(moment["request"]["best"][0], "b5c7");
         assert_eq!(moment["request"]["refutation"][0], "e7d7");
-        assert_eq!(moment["reason"], "Missed Nc7+, forking Ra8 and Ke7.");
+        assert_eq!(
+            moment["reason"],
+            "Missed Nc7, winning 5 points of material."
+        );
         assert!(review_moment(&review, 3).is_none());
     }
 
@@ -542,10 +525,10 @@ mod tests {
 
     #[test]
     fn a_wrong_puzzle_move_is_explained_without_the_solution() {
-        let moves = ["d1e1", "a8d8", "b5c7"];
-        let fen = "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/3K4 w - - 0 1";
-        let brief = wrong_brief(fen, &moves, "a7a6", &["b5c7"]).unwrap();
+        let solution = ["b5c7", "e8d7", "c7a8"];
+        let brief = wrong_brief(FORK, &solution, "e1e2", &["e8d7"]).unwrap();
         assert!(brief.input.contains("without giving the better move away"));
-        assert!(!check_reply("Rd8 was the move.", &brief.allowed));
+        assert!(!brief.input.contains("Nc7"), "{}", brief.input);
+        assert!(!check_reply("Nc7 was the move.", &brief.allowed));
     }
 }

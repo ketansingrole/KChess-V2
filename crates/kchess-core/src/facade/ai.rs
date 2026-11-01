@@ -360,8 +360,7 @@ impl Core {
             Kind::Solution => coach::solution_brief(fen, moves),
             Kind::Wrong => {
                 let played = request.played.as_deref().ok_or_else(invalid)?;
-                let start = coach::puzzle_position(fen, moves).ok_or_else(invalid)?;
-                let refutation = self.ai_refutation(&start, played).await;
+                let refutation = self.ai_refutation(fen, played).await;
                 coach::wrong_brief(fen, moves, played, &refutation)
             }
         }
