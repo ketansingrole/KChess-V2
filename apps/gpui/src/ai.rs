@@ -153,8 +153,8 @@ fn welcome(window: &mut Window, cx: &mut App) {
     });
 }
 
-/// Runs just before a request goes out.
-pub type OnAsk = std::rc::Rc<dyn Fn(&mut App)>;
+/// Runs when an answer is shown, not before: a failed request costs the player nothing.
+pub type OnAnswer = std::rc::Rc<dyn Fn(&mut App)>;
 
 /// How an explanation stands.
 #[derive(Clone, PartialEq)]
@@ -182,7 +182,7 @@ impl Explainer {
         }
     }
 
-    pub fn ask(&mut self, request: Value, cx: &mut Context<Self>) {
+    pub fn ask(&mut self, request: Value, on_answer: Option<OnAnswer>, cx: &mut Context<Self>) {
         self.asked += 1;
         let asked = self.asked;
         self.request = request.clone();
@@ -197,7 +197,12 @@ impl Explainer {
                 }
                 this.phase = Some(match result {
                     Ok(answer) => match answer["text"].as_str() {
-                        Some(text) => Phase::Said(text.to_string().into()),
+                        Some(text) => {
+                            if let Some(on_answer) = &on_answer {
+                                on_answer(cx);
+                            }
+                            Phase::Said(text.to_string().into())
+                        }
                         None => Phase::Refused(
                             answer["problem"]
                                 .as_str()
@@ -237,13 +242,13 @@ fn manage_usage(id: &'static str) -> Button {
 }
 
 /// The explaining block for `request`: the button, then the answer. `id` keeps pages apart; with
-/// no plan connected it is nothing at all, and `on_ask` runs just before a request goes out.
+/// no plan connected it is nothing at all, and `on_answer` runs once an answer arrives.
 pub fn explain_block(
     id: &'static str,
     label: &'static str,
     explainer: &Entity<Explainer>,
     request: Value,
-    on_ask: Option<OnAsk>,
+    on_answer: Option<OnAnswer>,
     cx: &App,
     palette: &Palette,
 ) -> Option<AnyElement> {
@@ -257,10 +262,9 @@ pub fn explain_block(
         let explainer = explainer.clone();
         let request = request.clone();
         move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-            if let Some(on_ask) = &on_ask {
-                on_ask(cx);
-            }
-            explainer.update(cx, |explainer, cx| explainer.ask(request.clone(), cx));
+            explainer.update(cx, |explainer, cx| {
+                explainer.ask(request.clone(), on_answer.clone(), cx);
+            });
         }
     };
     let button = |text: &'static str| {

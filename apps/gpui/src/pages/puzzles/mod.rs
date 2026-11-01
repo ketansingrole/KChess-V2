@@ -727,7 +727,7 @@ fn coach_block(
         }
         request
     };
-    let (id, label, request, on_ask): (_, _, _, Option<crate::ai::OnAsk>) =
+    let (id, label, request, on_answer): (_, _, _, Option<crate::ai::OnAnswer>) =
         if let (true, Some(wrong)) = (playing, shown.last_wrong()) {
             (
                 "puzzle-wrong",
@@ -737,12 +737,12 @@ fn coach_block(
             )
         } else if playing {
             let board = board_entity.downgrade();
-            let nudged: crate::ai::OnAsk = std::rc::Rc::new(move |cx| {
+            let nudged: crate::ai::OnAnswer = std::rc::Rc::new(move |cx| {
                 let _ = board.update(cx, |board, _| board.nudged());
             });
             (
                 "puzzle-nudge",
-                "Nudge",
+                "Nudge · not counted",
                 merged(&current, "nudge", None),
                 Some(nudged),
             )
@@ -756,7 +756,15 @@ fn coach_block(
         } else {
             return None;
         };
-    crate::ai::explain_block(id, label, shown.explainer(), request, on_ask, cx, palette)
+    crate::ai::explain_block(
+        id,
+        label,
+        shown.explainer(),
+        request,
+        on_answer,
+        cx,
+        palette,
+    )
 }
 
 pub(crate) fn status_panel(
@@ -798,7 +806,11 @@ pub(crate) fn status_panel(
         "solved" => (
             Tone::Plain,
             icon("check"),
-            "Solved after a mistake — not counted".to_string(),
+            if shown.was_nudged() {
+                "Solved with a nudge — not counted".to_string()
+            } else {
+                "Solved after a mistake — not counted".to_string()
+            },
         ),
         "failed" => (
             Tone::Loss,
