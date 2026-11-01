@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 
+use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Position, Role};
 
@@ -255,6 +256,50 @@ pub fn move_brief<S: AsRef<str>, T: AsRef<str>>(
     ))
 }
 
+/// The move `index` of a stored review: its free reason, and the request that explains it.
+pub fn review_moment(review: &Value, index: usize) -> Option<Value> {
+    let moves = review["moves"].as_array()?;
+    let mut start = rules::standard_from_fen(review["fen"].as_str()?)?;
+    for played in moves.get(..index)? {
+        let chosen =
+            rules::parse_uci(played.as_str()?).and_then(|uci| rules::legal_move(&start, uci))?;
+        rules::san_and_play(&mut start, chosen);
+    }
+    let played = moves.get(index)?.as_str()?;
+    let fen = rules::make_fen(&start);
+    let before = &review["evals"][index];
+    let after = &review["evals"][index + 1];
+    let line = |eval: &Value| -> Vec<String> {
+        let pv = eval["pv"].as_array().map(|pv| {
+            pv.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        });
+        pv.filter(|pv| !pv.is_empty())
+            .or_else(|| eval["best"].as_str().map(|best| vec![best.to_string()]))
+            .unwrap_or_default()
+    };
+    let (best, refutation) = (line(before), line(after));
+    let mates = tactics::Mates {
+        before: before["mate"].as_f64().map(|mate| mate as i32),
+        after: after["mate"].as_f64().map(|mate| mate as i32),
+    };
+    let facts = tactics::move_facts(&fen, played, &best, &refutation, mates)?;
+    Some(json!({
+        "reason": reason(&facts),
+        "request": {
+            "kind": "move",
+            "fen": fen,
+            "played": played,
+            "best": best,
+            "refutation": refutation,
+            "mateBefore": before["mate"],
+            "mateAfter": after["mate"],
+        },
+    }))
+}
+
 /// The solver's position, and the solution's line from it.
 fn puzzle_start<S: AsRef<str>>(fen: &str, moves: &[S]) -> Option<VariantPosition> {
     let mut start = rules::standard_from_fen(fen)?;
@@ -447,6 +492,34 @@ mod tests {
         ));
         assert!(!check_reply("Try Kd8.", &brief.allowed));
         assert!(!check_reply("Your king wants d8.", &brief.allowed));
+    }
+
+    #[test]
+    fn a_review_moment_reads_the_lines_around_a_move() {
+        let review = json!({
+            "fen": FORK,
+            "moves": ["a2a3", "e8e7", "e1e2"],
+            "evals": [
+                { "cp": 0 },
+                { "cp": 0 },
+                { "cp": 500, "pv": ["b5c7", "e7d7", "c7a8"] },
+                { "cp": 0, "pv": ["e7d7"] },
+            ],
+        });
+        let moment = review_moment(&review, 2).unwrap();
+        assert_eq!(moment["request"]["played"], "e1e2");
+        assert_eq!(moment["request"]["best"][0], "b5c7");
+        assert_eq!(moment["request"]["refutation"][0], "e7d7");
+        assert_eq!(moment["reason"], "Missed Nc7+, forking Ra8 and Ke7.");
+        assert!(review_moment(&review, 3).is_none());
+    }
+
+    #[test]
+    fn a_review_without_lines_still_has_a_moment() {
+        let review = json!({ "fen": FORK, "moves": ["e1e2"], "evals": [null, null] });
+        let moment = review_moment(&review, 0).unwrap();
+        assert_eq!(moment["reason"], Value::Null);
+        assert_eq!(moment["request"]["kind"], "move");
     }
 
     #[test]

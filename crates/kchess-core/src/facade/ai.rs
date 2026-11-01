@@ -37,11 +37,21 @@ struct Connection {
     effort_refused: bool,
 }
 
+/// What kind of explanation is wanted.
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+enum Kind {
+    Move,
+    Nudge,
+    Solution,
+    Wrong,
+}
+
 /// What `aiExplain` is asked to explain.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Request {
-    kind: String,
+    kind: Kind,
     fen: String,
     #[serde(default)]
     played: Option<String>,
@@ -336,8 +346,8 @@ impl Core {
     async fn ai_brief(&self, request: &Request) -> Result<Brief> {
         let invalid = || CoreError::new("That position cannot be explained.");
         let (fen, moves) = (request.fen.as_str(), &request.moves);
-        match request.kind.as_str() {
-            "move" => {
+        match request.kind {
+            Kind::Move => {
                 let played = request.played.as_deref().ok_or_else(invalid)?;
                 let mates = Mates {
                     before: request.mate_before.map(|mate| mate as i32),
@@ -346,15 +356,14 @@ impl Core {
                 coach::move_brief(fen, played, &request.best, &request.refutation, mates)
                     .map(|(_, brief)| brief)
             }
-            "nudge" => coach::nudge_brief(fen, moves),
-            "solution" => coach::solution_brief(fen, moves),
-            "wrong" => {
+            Kind::Nudge => coach::nudge_brief(fen, moves),
+            Kind::Solution => coach::solution_brief(fen, moves),
+            Kind::Wrong => {
                 let played = request.played.as_deref().ok_or_else(invalid)?;
                 let start = coach::puzzle_position(fen, moves).ok_or_else(invalid)?;
                 let refutation = self.ai_refutation(&start, played).await;
                 coach::wrong_brief(fen, moves, played, &refutation)
             }
-            _ => None,
         }
         .ok_or_else(invalid)
     }
