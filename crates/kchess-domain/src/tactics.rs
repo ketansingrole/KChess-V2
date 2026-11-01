@@ -56,6 +56,12 @@ pub struct LineFacts {
     pub tactics: Vec<Tactic>,
 }
 
+impl LineFacts {
+    pub fn ends_in_mate(&self) -> bool {
+        self.san.last().is_some_and(|san| san.ends_with('#'))
+    }
+}
+
 /// What a played move did, and what the best move would have done.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -349,6 +355,14 @@ pub fn line_facts<S: AsRef<str>>(
     let steps = walk(start, line);
     if steps.is_empty() {
         return None;
+    }
+    // Checkmate is the whole story: what fell on the way there is not what the line is about.
+    if steps.last().is_some_and(|step| step.san.ends_with('#')) {
+        return Some(LineFacts {
+            san: steps.into_iter().map(|step| step.san).collect(),
+            material: 0,
+            tactics: Vec::new(),
+        });
     }
     let gain = settled_gain(start, &steps, side);
     // A fork or pin says more than the piece it won, so it goes first and speaks for that piece.

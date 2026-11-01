@@ -171,6 +171,9 @@ pub fn reason(facts: &MoveFacts) -> Option<String> {
         return Some(format!("Missed mate in {moves}."));
     }
     if let Some(line) = &facts.refutation {
+        if line.ends_in_mate() {
+            return Some("Allows mate.".to_string());
+        }
         if let Some(tactic) = line.tactics.first() {
             return Some(tactic_words(tactic, false));
         }
@@ -179,6 +182,9 @@ pub fn reason(facts: &MoveFacts) -> Option<String> {
         }
     }
     let line = facts.better.as_ref()?;
+    if line.ends_in_mate() {
+        return Some("Missed mate.".to_string());
+    }
     if let Some(tactic) = line.tactics.first() {
         return Some(tactic_words(tactic, true));
     }
@@ -192,7 +198,7 @@ pub fn clue(line: &LineFacts) -> &'static str {
         Some(Tactic::Fork { .. }) => "Look for a fork.",
         Some(Tactic::Pin { .. }) => "Look for a pin.",
         Some(Tactic::Hanging { .. }) => "Something is undefended.",
-        None if line.san.last().is_some_and(|san| san.ends_with('#')) => "There is a forced mate.",
+        None if line.ends_in_mate() => "There is a forced mate.",
         None if line.material > 0 => "There is material to win.",
         None => "Look for the most forcing move.",
     }
@@ -205,11 +211,14 @@ fn line_text(title: &str, line: &LineFacts) -> String {
         .map(|tactic| tactic_words(tactic, false))
         .collect::<Vec<_>>()
         .join(" ");
-    format!(
-        "{title}: {}. Material won: {}. {tactics}\n",
-        line.san.join(" "),
-        line.material
-    )
+    let outcome = if line.ends_in_mate() {
+        "It ends in checkmate.".to_string()
+    } else if line.material > 0 {
+        format!("Material won: {}.", line.material)
+    } else {
+        String::new()
+    };
+    format!("{title}: {}. {outcome} {tactics}\n", line.san.join(" "))
 }
 
 /// The brief for explaining what `played` did in `fen`.
@@ -310,7 +319,7 @@ pub fn nudge_brief<S: AsRef<str>>(fen: &str, solution: &[S]) -> Option<Brief> {
     let start = rules::standard_from_fen(fen)?;
     let mut allowed = Allowed::default();
     see(&start, &mut allowed);
-    allowed.mate = line.san.last().is_some_and(|san| san.ends_with('#'));
+    allowed.mate = line.ends_in_mate();
     credit(&line, &mut allowed);
     let first = rules::parse_uci(solution.first()?.as_ref())
         .and_then(|uci| rules::legal_move(&start, uci))?;
@@ -362,6 +371,10 @@ pub fn wrong_brief<S: AsRef<str>, T: AsRef<str>>(
     );
     let better = tactics::puzzle_facts(fen, solution)?;
     brief.allowed.secret.insert(bare(better.san.first()?));
+    if better.ends_in_mate() {
+        brief.allowed.mate = true;
+        brief.input += "\nThe position had a forced mate, and the move played gives it up.";
+    }
     // The input must not hand the model the answer it may not say.
     brief.input = brief
         .input
@@ -506,6 +519,34 @@ mod tests {
         let moment = review_moment(&review, 0).unwrap();
         assert_eq!(moment["reason"], Value::Null);
         assert_eq!(moment["request"]["kind"], "move");
+    }
+
+    /// The Lichess daily puzzle fWQJU, which the first real run of puzzle help got wrong: a mate
+    /// in 3 that takes a pawn on the way.
+    const MATE: &str = "5R2/5Bp1/5b1k/4p2p/5p2/6P1/P2rrP1P/5RK1 w - - 0 1";
+    const MATE_LINE: [&str; 5] = ["f8h8", "h6g5", "h8h5", "g5g4", "f2f3"];
+
+    #[test]
+    fn a_line_that_mates_is_about_the_mate() {
+        // Two moves in, the next move takes that pawn.
+        let near = "7R/5Bp1/5b2/4p1kp/5p2/6P1/P2rrP1P/5RK1 w - - 2 2";
+        let line = tactics::puzzle_facts(near, &MATE_LINE[2..]).unwrap();
+        assert_eq!(clue(&line), "There is a forced mate.");
+        assert_eq!(line.material, 0);
+
+        let input = solution_brief(MATE, &MATE_LINE).unwrap().input;
+        assert!(input.contains("It ends in checkmate."), "{input}");
+        assert!(!input.contains("Material"), "{input}");
+    }
+
+    #[test]
+    fn a_wrong_move_is_told_it_gave_up_the_mate() {
+        let brief = wrong_brief(MATE, &MATE_LINE, "g3f4", &["g7g6"]).unwrap();
+        assert!(brief.input.contains("forced mate"), "{}", brief.input);
+        assert!(!brief.input.contains("Material"), "{}", brief.input);
+        assert!(!brief.input.contains("Rh8"), "{}", brief.input);
+        assert!(check_reply("That gives up a forced mate.", &brief.allowed));
+        assert!(!check_reply("Rh8 was the move.", &brief.allowed));
     }
 
     #[test]
