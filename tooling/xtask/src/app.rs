@@ -88,8 +88,9 @@ pub fn engine() -> Result<PathBuf> {
     Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
 }
 
-/// Builds the app and the core service it starts, and answers the app's executable, as Cargo
-/// reports it.
+/// Builds the app, the core service it starts and the speech helper, staged where the app finds
+/// it, and answers the app's executable, as Cargo reports it. Without the helper, for instance
+/// offline with no libvosk yet, the app still starts.
 fn build() -> Result<PathBuf> {
     let out = Command::new("cargo")
         .args([
@@ -104,6 +105,10 @@ fn build() -> Result<PathBuf> {
             "kchess-service",
             "--bin",
             "kchess-service",
+            "-p",
+            "kchess-voice",
+            "--bin",
+            "kchess-voice",
             "--message-format=json-render-diagnostics",
         ])
         .current_dir(root())
@@ -112,6 +117,9 @@ fn build() -> Result<PathBuf> {
         .map_err(|cause| format!("Could not run cargo build: {cause}"))?;
     if !out.status.success() {
         return Err("The app did not build.".into());
+    }
+    if let Err(cause) = crate::voice::stage_if_outdated("debug") {
+        say(&format!("Voice input stays off: {cause}"));
     }
     executable(&String::from_utf8_lossy(&out.stdout))
         .ok_or_else(|| "cargo build reported no KChess executable.".into())
@@ -178,8 +186,9 @@ fn outdated_service(info: &str, built: SystemTime) -> Option<u32> {
     (started < millis(built)).then_some(info["pid"].as_u64()? as u32)
 }
 
-/// Stops the profile's core service if it runs a build older than `binary`'s, which the next
-/// client then starts: it outlives the app, so its code would otherwise stay as it was.
+/// Stops the profile's core service if it started before `binary`'s build or the speech helper
+/// was staged, which the next client then starts: it outlives the app, so its code and the helper
+/// it was told about would otherwise stay as they were.
 fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
     let service = binary.with_file_name(format!("kchess-service{}", std::env::consts::EXE_SUFFIX));
     let (Ok(info), Ok(built)) = (
@@ -188,6 +197,8 @@ fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
     ) else {
         return Ok(());
     };
+    // The folder, remade by each staging: a copied file can keep the time it was built.
+    let built = modified(&crate::voice::staged()).map_or(built, |staged| staged.max(built));
     let Some(pid) = outdated_service(&info, built) else {
         return Ok(());
     };

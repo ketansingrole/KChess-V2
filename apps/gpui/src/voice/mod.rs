@@ -473,23 +473,22 @@ impl Voice {
                         epoch,
                     } => (
                         core.call("voiceStart", vec![json!(grammar), json!(rate)]),
-                        Some((epoch, true)),
+                        Some(epoch),
                     ),
-                    Request::Accept { audio, epoch } => (
-                        core.call("voiceAccept", vec![json!(audio)]),
-                        Some((epoch, false)),
-                    ),
+                    Request::Accept { audio, epoch } => {
+                        (core.call("voiceAccept", vec![json!(audio)]), Some(epoch))
+                    }
                     Request::Finish { epoch } => {
-                        (core.call("voiceFinish", Vec::new()), Some((epoch, false)))
+                        (core.call("voiceFinish", Vec::new()), Some(epoch))
                     }
                     Request::Stop => (core.call("voiceStop", Vec::new()), None),
                 };
                 let answer = call.await;
-                let Some((epoch, starting)) = epoch else {
+                let Some(epoch) = epoch else {
                     continue;
                 };
                 let alive = this
-                    .update(cx, |this, cx| this.answered(epoch, starting, answer, cx))
+                    .update(cx, |this, cx| this.answered(epoch, answer, cx))
                     .is_ok();
                 if !alive {
                     return;
@@ -501,7 +500,6 @@ impl Voice {
     fn answered(
         &mut self,
         epoch: u64,
-        starting: bool,
         answer: Result<Value, kchess_core::CoreError>,
         cx: &mut Context<Self>,
     ) {
@@ -510,14 +508,7 @@ impl Voice {
         }
         let heard = match answer {
             Ok(heard) => heard,
-            Err(cause) => {
-                let message = if starting {
-                    format!("The offline voice model couldn’t load. {}", cause.message)
-                } else {
-                    cause.message
-                };
-                return self.fail(message, ErrorKind::Model, cx);
-            }
+            Err(cause) => return self.fail(cause.message, ErrorKind::Model, cx),
         };
         if let Some(result) = heard.get("result").filter(|result| result.is_object()) {
             self.partial.clear();
@@ -701,8 +692,28 @@ pub fn grammar(name: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{grammar, heard_of};
+    use super::{ErrorKind, grammar, handle, heard_of};
+    use crate::e2e::Harness;
+    use kchess_core::CoreError;
     use serde_json::json;
+
+    /// A build without the speech helper said "The offline voice model couldn’t load. Voice input
+    /// isn’t available in this build.", cut off after "Voice input isn’t…", though no model failed.
+    #[gpui_kit::test]
+    fn a_failed_start_says_only_what_the_core_said(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Harness::start(cx);
+        let message = "Voice input isn’t available in this build.";
+        let error = app.with_window(|_, cx| {
+            let voice = handle(cx);
+            voice.update(cx, |voice, cx| {
+                voice.owner = Some(1);
+                let epoch = voice.epoch;
+                voice.answered(epoch, Err(CoreError::new(message)), cx);
+                voice.error.clone()
+            })
+        });
+        assert_eq!(error, Some((message.to_string(), ErrorKind::Model)));
+    }
 
     #[test]
     fn confidence_ignores_noise_markers() {

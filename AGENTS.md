@@ -75,7 +75,8 @@ git push origin "refs/tags/$release_tag"
 - `cargo xtask app --watch` stays in the foreground and rebuilds and restarts the app on every
   save under `apps/` and `crates/`, back on the same page, with the old app kept open until the
   build succeeds. Views are compiled, so there is no reload without a restart.
-- `cargo xtask voice-runtime debug` stages the speech helper with libvosk for a debug build.
+- `cargo xtask voice-runtime debug` stages the speech helper with libvosk for a debug build;
+  `cargo xtask app` does it when the helper is missing or older than the build.
 - `cargo run -p kchess-cli -- --help` is the command line; it shares the profile's core with a
   running app through the core service (`docs/shared-core.md`).
 - Driving the app with synthetic input: start it by PID and check that PID is frontmost before

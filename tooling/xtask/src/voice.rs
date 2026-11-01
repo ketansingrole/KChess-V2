@@ -55,6 +55,22 @@ pub fn staged() -> PathBuf {
     root().join("target/voice-runtime")
 }
 
+/// Stage the helper built for `profile` unless what is staged is already as new. Staging replaces
+/// the folder, so a running helper is left alone when nothing changed.
+pub fn stage_if_outdated(profile: &str) -> Result<()> {
+    let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
+    let modified = |path: PathBuf| {
+        std::fs::metadata(path)
+            .and_then(|file| file.modified())
+            .ok()
+    };
+    let built = modified(root().join("target").join(profile).join(&executable));
+    if modified(staged().join(&executable)).is_none_or(|current| Some(current) < built) {
+        stage(profile)?;
+    }
+    Ok(())
+}
+
 /// Stage the helper built for `profile` (`release` or `debug`) with libvosk and the notices.
 pub fn stage(profile: &str) -> Result<PathBuf> {
     let pin = pin()?;
