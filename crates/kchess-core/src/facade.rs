@@ -21,6 +21,7 @@ use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
 mod accounts;
+mod ai;
 mod args;
 mod engine;
 mod games;
@@ -64,6 +65,12 @@ pub const FACADE_METHODS: &[&str] = &[
     "profile",
     "ratingHistory",
     "connectLichess",
+    "aiStatus",
+    "aiConnect",
+    "aiDisconnect",
+    "aiModels",
+    "aiSetOptions",
+    "aiExplain",
     "engineStatus",
     "installEngine",
     "deleteEngine",
@@ -636,6 +643,8 @@ impl Core {
             | "clearAccountData"
             | "following"
             | "addFriends" => self.run_games(method, args).await,
+            "aiStatus" | "aiConnect" | "aiDisconnect" | "aiModels" | "aiSetOptions"
+            | "aiExplain" => self.run_ai(method, args).await,
             "engineStatus" | "installEngine" | "deleteEngine" | "stopEngine" | "bestMove"
             | "startAnalysis" | "stopAnalysis" | "reviewGet" | "reviewRequest" | "reviewCancel"
             | "reviewStatus" | "reviewSummaries" => self.run_engine(method, args).await,
@@ -736,6 +745,7 @@ impl Core {
 
     async fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        self.ai.lifetime().cancel();
         self.services.spectator().stop();
         self.services.online().close();
         self.search.stop_engine(true);

@@ -162,7 +162,14 @@ impl Render for DailyPuzzle {
             .max_w(PANEL_MAX)
             .gap(px(12.))
             .when_some(self.puzzle.as_ref(), |panel, _| {
-                panel.child(status_panel(&self.board, &self.themes, None, cx, &palette))
+                panel.child(status_panel(
+                    &self.board,
+                    &self.themes,
+                    None,
+                    false,
+                    cx,
+                    &palette,
+                ))
             });
         self.layout
             .render("puzzle-daily", board_column, panel, window, cx)

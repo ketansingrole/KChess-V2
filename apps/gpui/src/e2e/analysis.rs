@@ -36,7 +36,7 @@ fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
 }
 
 /// Let animations run their course: a dialog that is closing is gone after this.
-fn settle(app: &mut Harness) {
+pub(super) fn settle(app: &mut Harness) {
     let mut frames = 0;
     app.wait_for("the window to settle", |_, _| {
         frames += 1;
@@ -45,7 +45,7 @@ fn settle(app: &mut Harness) {
 }
 
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
-fn import(app: &mut Harness, text: &str) {
+pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
     fill_in_dialog(app, "FEN or PGN", text);
     app.click("import-run");

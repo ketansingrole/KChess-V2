@@ -63,6 +63,8 @@ pub struct Core {
     pub(crate) search: Search,
     pub(crate) analysis: Analysis,
     pub(crate) reviews: Reviews,
+    /// ChatGPT plan usage.
+    pub(crate) ai: crate::ai::Ai,
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
     pub(crate) services: Services,
     /// Offline speech recognition through the `kchess-voice` helper.
@@ -155,6 +157,17 @@ fn test_lichess_origin() -> Option<String> {
         return None;
     }
     std::env::var("KCHESS_TEST_LICHESS_BASE")
+        .ok()
+        .map(|origin| origin.trim_end_matches('/').to_string())
+        .filter(|origin| !origin.is_empty())
+}
+
+/// A test-only OpenAI origin (`KCHESS_TEST_OPENAI_BASE`), honoured like `test_lichess_origin`.
+fn test_openai_origin() -> Option<String> {
+    if !debug::enabled() {
+        return None;
+    }
+    std::env::var("KCHESS_TEST_OPENAI_BASE")
         .ok()
         .map(|origin| origin.trim_end_matches('/').to_string())
         .filter(|origin| !origin.is_empty())
@@ -257,6 +270,7 @@ impl Core {
             search,
             analysis,
             reviews,
+            ai: crate::ai::Ai::new(test_openai_origin(), CancellationToken::new())?,
             services,
             usage,
             installs: Mutex::new(HashMap::new()),

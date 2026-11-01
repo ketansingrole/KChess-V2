@@ -187,6 +187,8 @@ impl OnlinePage {
                     if let SelectEvent::Confirm(Some(account)) = event {
                         crate::online::set_active_account(account, cx);
                         crate::accounts::handle(cx).update(cx, |_, cx| cx.notify());
+                        crate::online::handle(cx)
+                            .update(cx, |online, cx| online.stay_connected(cx));
                     }
                 },
             ),
@@ -504,7 +506,9 @@ impl OnlinePage {
             card = card.child(field(
                 "Account",
                 None,
-                Select::new(&self.account_select).into_any_element(),
+                Select::new(&self.account_select)
+                    .accessibility_label("Account")
+                    .into_any_element(),
             ));
         }
         card = card

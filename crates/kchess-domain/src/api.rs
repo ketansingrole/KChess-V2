@@ -205,6 +205,15 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
             arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?,
         )
         .unwrap_or(Value::Null),
+        "reviewMoment" => crate::coach::review_moment(
+            arg(args, 0).unwrap_or(&Value::Null),
+            arg(args, 1).and_then(Value::as_u64).unwrap_or(0) as usize,
+        )
+        .unwrap_or(Value::Null),
+        "puzzleClue" => {
+            crate::tactics::puzzle_facts(text(args, 0, "fen")?, &texts(args, 1, "moves")?)
+                .map_or(Value::Null, |line| json!(crate::coach::clue(&line)))
+        }
         "analyseReview" => {
             analyse_review(arg(args, 0).ok_or_else(|| DomainError::Message("review".to_string()))?)
                 .unwrap_or(Value::Null)

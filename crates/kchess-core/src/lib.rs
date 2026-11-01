@@ -5,6 +5,7 @@
 /// program with a 403 page; GitHub asks every API caller for one).
 pub const USER_AGENT: &str = "KChess";
 
+pub mod ai;
 pub mod archive;
 pub mod capabilities;
 pub mod connection;

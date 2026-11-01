@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod calendar;
+pub mod coach;
 pub mod error;
 pub use error::DomainError;
 pub mod games;
@@ -17,6 +18,7 @@ pub mod records;
 pub mod replay;
 pub mod review;
 pub mod rules;
+pub mod tactics;
 pub mod theme;
 pub mod trainer;
 pub mod training;

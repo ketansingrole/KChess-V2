@@ -4235,6 +4235,7 @@ version = "2026.11.0"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-domain",
+ "serde",
  "serde_json",
 ]
 

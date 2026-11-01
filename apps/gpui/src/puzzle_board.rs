@@ -58,8 +58,14 @@ pub struct PuzzleBoard {
     outcome: Option<bool>,
     revealed: bool,
     hinted: bool,
+    /// The player's last wrong move here (UCI), until the next try.
+    last_wrong: Option<String>,
+    /// Explanations of this board's puzzle.
+    explainer: Entity<crate::ai::Explainer>,
     /// A hint was shown at some point: `hinted` itself clears after each move.
     hint_used: bool,
+    /// A coach was asked mid-puzzle: a heavier help than a hint, so a solve no longer counts.
+    nudged: bool,
     feedback: Feedback,
     /// The board's red outline: a brief flash on a wrong move, while the panel keeps the message.
     flash: bool,
@@ -79,6 +85,11 @@ pub struct PuzzleBoard {
 }
 
 impl EventEmitter<PuzzleBoardEvent> for PuzzleBoard {}
+
+/// Whether a finished puzzle was the player's own work. A hint still counts; a coach does not.
+fn counts_as_solved(mistakes: u32, revealed: bool, nudged: bool) -> bool {
+    mistakes == 0 && !revealed && !nudged
+}
 
 impl PuzzleBoard {
     /// What the board's column holds besides the board: the material row above and the move box
@@ -133,7 +144,10 @@ impl PuzzleBoard {
             outcome: None,
             revealed: false,
             hinted: false,
+            last_wrong: None,
+            explainer: cx.new(|_| crate::ai::Explainer::new()),
             hint_used: false,
+            nudged: false,
             feedback: Feedback::None,
             flash: false,
             flipped: false,
@@ -156,8 +170,10 @@ impl PuzzleBoard {
         self.outcome = outcome;
         self.mistakes = u32::from(outcome == Some(false));
         self.revealed = false;
+        self.last_wrong = None;
         self.hinted = false;
         self.hint_used = false;
+        self.nudged = false;
         self.feedback = Feedback::None;
         self.flash = false;
         self.move_message = None;
@@ -199,6 +215,29 @@ impl PuzzleBoard {
 
     pub fn hinted(&self) -> bool {
         self.hinted
+    }
+
+    /// A hint was shown at some point in this attempt, even if it is hidden again.
+    pub fn hint_used(&self) -> bool {
+        self.hint_used
+    }
+
+    pub fn explainer(&self) -> &Entity<crate::ai::Explainer> {
+        &self.explainer
+    }
+
+    pub fn last_wrong(&self) -> Option<&str> {
+        self.last_wrong.as_deref()
+    }
+
+    /// Asking a coach for a nudge costs more than a hint: the solve is not counted.
+    pub fn nudged(&mut self) {
+        self.hint_used = true;
+        self.nudged = true;
+    }
+
+    pub fn was_nudged(&self) -> bool {
+        self.nudged
     }
 
     /// The player may move: not while the opponent replies or the solution plays itself out.
@@ -287,6 +326,7 @@ impl PuzzleBoard {
         };
         let index = board.index() / 2;
         let (correct, reply) = board.player_move(uci);
+        self.last_wrong = (!correct).then(|| uci.to_string());
         if !correct {
             self.mistakes += 1;
             self.feedback = Feedback::Wrong;
@@ -327,7 +367,7 @@ impl PuzzleBoard {
             uci: uci.to_string(),
         });
         if solved {
-            let clean = self.mistakes == 0 && !self.revealed;
+            let clean = counts_as_solved(self.mistakes, self.revealed, self.nudged);
             self.decide(clean, cx);
             crate::sound::play(crate::sound::Sound::GenericNotify, cx);
             cx.emit(PuzzleBoardEvent::Done);
@@ -572,5 +612,18 @@ impl Render for PuzzleBoard {
                     .text_color(palette.text_muted)
                     .child(message)
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::counts_as_solved;
+
+    #[test]
+    fn a_nudge_costs_the_solve() {
+        assert!(counts_as_solved(0, false, false));
+        assert!(!counts_as_solved(0, false, true));
+        assert!(!counts_as_solved(1, false, false));
+        assert!(!counts_as_solved(0, true, false));
     }
 }

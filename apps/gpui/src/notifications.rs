@@ -72,13 +72,19 @@ pub fn decide(settings: &Settings, kind: &str, away: bool, page: Page) -> Outcom
 /// Who sends a notification on macOS: a packaged app's own bundle, or for a bare `cargo run`
 /// binary (no bundle) the branded development app. Without one the
 /// notification library asks macOS for an app named "use_default", which opens a Choose
-/// Application dialog.
+/// Application dialog. Read once, before that library replaces what `bundleIdentifier` answers
+/// for the whole process.
 #[cfg(target_os = "macos")]
 fn sender() -> String {
-    objc2_foundation::NSBundle::mainBundle()
-        .bundleIdentifier()
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| DEV_SENDER.to_string())
+    static SENDER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SENDER
+        .get_or_init(|| {
+            objc2_foundation::NSBundle::mainBundle()
+                .bundleIdentifier()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| DEV_SENDER.to_string())
+        })
+        .clone()
 }
 
 /// `.dev/KChess.app`'s bundle identifier.
@@ -156,6 +162,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_binary_without_a_bundle_sends_as_the_development_app() {
+        assert_eq!(super::sender(), super::DEV_SENDER);
+        // The notification library answers for the bundle from then on, in the whole process,
+        // and any test that sends one gets there first on some runs.
+        let _ = notify_rust::set_application("com.apple.Finder");
         assert_eq!(super::sender(), super::DEV_SENDER);
     }
 

@@ -680,10 +680,98 @@ impl PuzzlesPage {
 /// What the status panel's Next button does.
 pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 
+/// The puzzle's idea, shown with the hint.
+fn clue(puzzle: &Value) -> Option<AnyElement> {
+    let clue = rules(
+        "puzzleClue",
+        &[puzzle["fen"].clone(), puzzle["solution"].clone()],
+    )
+    .ok()?;
+    let clue = clue.as_str()?.to_string();
+    Some(div().text_size(px(13.)).child(clue).into_any_element())
+}
+
+/// Whether a coach may speak: outside help on a puzzle that counts for a rating is cheating, so a
+/// rated attempt has none until it is over.
+fn coach_allowed(rated: bool, status: &str) -> bool {
+    !rated || status != "playing"
+}
+
+/// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
+fn coach_block(
+    board_entity: &Entity<PuzzleBoard>,
+    puzzle: &Value,
+    status: &str,
+    playing: bool,
+    rated: bool,
+    cx: &App,
+    palette: &Palette,
+) -> Option<AnyElement> {
+    if !coach_allowed(rated, status) {
+        return None;
+    }
+    let shown = board_entity.read(cx);
+    let on_board = shown.puzzle()?;
+    let solution = puzzle["solution"].as_array()?;
+    // While solving, from where the board stands: a long puzzle may be several moves in.
+    let current = json!({
+        "fen": on_board.fen(),
+        "moves": solution.get(on_board.index()..)?,
+    });
+    let whole = json!({ "fen": puzzle["fen"], "moves": solution });
+    let merged = |from: &Value, kind: &str, played: Option<&str>| {
+        let mut request = from.clone();
+        request["kind"] = json!(kind);
+        if let Some(played) = played {
+            request["played"] = json!(played);
+        }
+        request
+    };
+    let (id, label, request, on_answer): (_, _, _, Option<crate::ai::OnAnswer>) =
+        if let (true, Some(wrong)) = (playing, shown.last_wrong()) {
+            (
+                "puzzle-wrong",
+                "Why not?",
+                merged(&current, "wrong", Some(wrong)),
+                None,
+            )
+        } else if playing {
+            let board = board_entity.downgrade();
+            let nudged: crate::ai::OnAnswer = std::rc::Rc::new(move |cx| {
+                let _ = board.update(cx, |board, _| board.nudged());
+            });
+            (
+                "puzzle-nudge",
+                "Nudge · not counted",
+                merged(&current, "nudge", None),
+                Some(nudged),
+            )
+        } else if status != "playing" {
+            (
+                "puzzle-why",
+                "Explain",
+                merged(&whole, "solution", None),
+                None,
+            )
+        } else {
+            return None;
+        };
+    crate::ai::explain_block(
+        id,
+        label,
+        shown.explainer(),
+        request,
+        on_answer,
+        cx,
+        palette,
+    )
+}
+
 pub(crate) fn status_panel(
     board_entity: &Entity<PuzzleBoard>,
     themes: &[Theme],
     next: Option<NextPuzzle>,
+    rated: bool,
     cx: &App,
     palette: &Palette,
 ) -> AnyElement {
@@ -718,7 +806,11 @@ pub(crate) fn status_panel(
         "solved" => (
             Tone::Plain,
             icon("check"),
-            "Solved after a mistake — not counted".to_string(),
+            if shown.was_nudged() {
+                "Solved with a nudge — not counted".to_string()
+            } else {
+                "Solved after a mistake — not counted".to_string()
+            },
         ),
         "failed" => (
             Tone::Loss,
@@ -789,6 +881,24 @@ pub(crate) fn status_panel(
     v_flex()
         .gap(px(12.))
         .child(widgets::StatusBanner::new(tone, glyph, title.into()).announce())
+        .children(hinted.then(|| clue(&puzzle)).flatten())
+        .when(rated && playing && shown.hint_used(), |panel| {
+            panel.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(palette.text_muted)
+                    .child("Unrated: a hint was used"),
+            )
+        })
+        .children(coach_block(
+            board_entity,
+            &puzzle,
+            status,
+            playing,
+            rated,
+            cx,
+            palette,
+        ))
         // `.panel-actions`: Hint, Solution, Flip and Next share the row.
         .child(widgets::panel_actions(
             false,
@@ -799,6 +909,7 @@ pub(crate) fn status_panel(
                     .when(!hinted, |button| button.outline())
                     .icon(icon("lightbulb"))
                     .label("Hint")
+                    .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
                     .disabled(!playing)
                     .on_click({
                         let board = board_entity.downgrade();
@@ -1366,6 +1477,7 @@ impl PuzzlesPage {
                                 let _ = page.update(cx, |page, cx| page.load_next(cx));
                             }
                         })),
+                        mode == "rated" && !is_retry,
                         cx,
                         palette,
                     ))
@@ -1539,8 +1651,17 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{theme_name, themes};
+    use super::{coach_allowed, theme_name, themes};
     use crate::widgets::{self, format_bytes};
+
+    #[test]
+    fn a_rated_attempt_has_no_coach_until_it_is_over() {
+        assert!(!coach_allowed(true, "playing"));
+        for over in ["solved", "failed", "revealed"] {
+            assert!(coach_allowed(true, over));
+        }
+        assert!(coach_allowed(false, "playing"));
+    }
 
     #[test]
     fn sizes_and_counts_read_as_in_electron() {

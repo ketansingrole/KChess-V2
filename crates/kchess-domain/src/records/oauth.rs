@@ -121,15 +121,22 @@ fn colours(look: &Value) -> String {
 /// `oauthPage(authorized, look)`: a self-contained callback page. It loads nothing external and
 /// carries no credentials or callback values.
 pub fn callback_page(authorized: bool, look: &Value) -> String {
+    connection_page(authorized, look, "Lichess")
+}
+
+/// The page the browser lands on after signing in to `service`.
+pub fn connection_page(authorized: bool, look: &Value, service: &str) -> String {
     let title = if authorized {
-        "Signed in to Lichess"
+        format!("Signed in to {service}")
     } else {
-        "Connection cancelled"
+        "Connection cancelled".to_string()
     };
     let message = if authorized {
-        "KChess is finishing the connection and has been brought back to the front."
+        "KChess is finishing the connection and has been brought back to the front.".to_string()
     } else {
-        "Your Lichess account was not connected. Return to KChess to try again when you’re ready."
+        format!(
+            "Your {service} account was not connected. Return to KChess to try again when you’re ready."
+        )
     };
     let hint = if authorized {
         "You can close this browser tab and continue in KChess."
@@ -153,10 +160,10 @@ pub fn callback_page(authorized: bool, look: &Value) -> String {
     let mark = if authorized { "✓" } else { "↩" };
     PAGE_TEMPLATE
         .replace("__THEME__", &theme)
-        .replace("__TITLE__", title)
+        .replace("__TITLE__", &title)
         .replace("__ICON__", &icon)
         .replace("__MARK__", mark)
-        .replace("__MESSAGE__", message)
+        .replace("__MESSAGE__", &message)
         .replace("__HINT__", hint)
 }
 

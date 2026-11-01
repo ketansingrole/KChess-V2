@@ -7,6 +7,7 @@ pub mod archive;
 pub mod computer;
 pub mod local;
 
+use serde::Deserialize as _;
 use serde_json::{Map, Value};
 
 /// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.
@@ -26,14 +27,21 @@ pub fn whole(value: &Value) -> u64 {
 
 /// A rules method by name (`kchess_domain::api::call`), with its JSON answer.
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
-    // Trees and deep arguments go through JSON text as they always have: an answer nested deeper
-    // than JSON's usual limit stays unreadable here. Everything else skips writing the arguments
+    // Trees and deep arguments go through JSON text. Everything else skips writing the arguments
     // out and reading the answer back (`call_value` answers as `call` does).
     if !kchess_domain::api::needs_large_stack(method, args) {
         return kchess_domain::api::call_value(method, args);
     }
     let text = kchess_domain::api::call(method, &Value::Array(args.to_vec()).to_string())?;
-    serde_json::from_str(&text).map_err(|e| format!("{method} answered something unreadable: {e}"))
+    // A game's tree nests once a move: past JSON's usual limit of 128 once it runs some 64 plies.
+    let mut reader = serde_json::Deserializer::from_str(&text);
+    reader.disable_recursion_limit();
+    let answer = Value::deserialize(&mut reader)
+        .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
+    reader
+        .end()
+        .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
+    Ok(answer)
 }
 
 /// Run a session transition: the rules answer with the finished transition or with the next
@@ -99,5 +107,25 @@ mod tests {
         let mut state = json!({ "a": 1, "b": 2, "c": 3 });
         assign_written(&mut state, &json!({ "a": 10, "b": 20 }), &json!(["a", "c"]));
         assert_eq!(state, json!({ "a": 10, "b": 2 }));
+    }
+
+    /// A 100-move game could not be opened from Game history: its tree was refused at depth 128.
+    #[test]
+    fn a_long_game_tree_reads_back() {
+        let shuffle = ["Nf3", "Nf6", "Ng1", "Ng8"];
+        let moves: Vec<String> = (0..200)
+            .map(|ply| {
+                let number = format!("{}. ", ply / 2 + 1);
+                let prefix = if ply % 2 == 0 { number.as_str() } else { "" };
+                format!("{prefix}{}", shuffle[ply % 4])
+            })
+            .collect();
+        let tree = rules("treeFromPgn", &[Value::String(moves.join(" "))]).unwrap();
+        let (mut node, mut plies) = (&tree, 0);
+        while let Some(next) = node["children"].get(0) {
+            node = next;
+            plies += 1;
+        }
+        assert_eq!(plies, 200);
     }
 }

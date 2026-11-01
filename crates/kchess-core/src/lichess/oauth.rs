@@ -106,10 +106,12 @@ pub fn default_look() -> Value {
 pub use kchess_domain::records::oauth::callback_page;
 
 /// A callback request's target, parsed: its path and first value of `state` and `code`.
-struct Callback {
+pub struct Callback {
     path: String,
     state: Option<String>,
-    code: Option<String>,
+    pub code: Option<String>,
+    /// The client id a registering sign-in was issued.
+    pub client_id: Option<String>,
 }
 
 fn parse_target(target: &str) -> Option<Callback> {
@@ -123,6 +125,7 @@ fn parse_target(target: &str) -> Option<Callback> {
         path: url.path().to_string(),
         state: first("state"),
         code: first("code").filter(|code| !code.is_empty()),
+        client_id: first("client_id").filter(|id| !id.is_empty()),
     })
 }
 
@@ -170,23 +173,26 @@ fn page_response(status: u16, body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Waits for the one callback that may end the login: `/callback` with this `state`. Favicon
+/// Waits for the one callback that may end a sign-in: `path` with this `state`. Favicon
 /// requests, port probes and forged callbacks get a 404 and do not end it. `on_return` runs as
-/// soon as the browser hands the login back, before the token exchange.
-pub async fn wait_for_callback(
+/// soon as the browser hands the sign-in back, before the token exchange.
+#[allow(clippy::too_many_arguments)]
+pub async fn wait_for_redirect(
     listener: &TcpListener,
+    path: &str,
     state: &str,
-    look: &Value,
+    page: &(dyn Fn(bool) -> String + Sync),
+    timed_out: &str,
     timeout: Duration,
     cancel: &CancellationToken,
     on_return: &(dyn Fn() + Sync),
-) -> CoreResult<String> {
+) -> CoreResult<Callback> {
     let deadline = tokio::time::sleep(timeout);
     tokio::pin!(deadline);
     loop {
         let accepted = tokio::select! {
             _ = cancel.cancelled() => return Err(CoreError::aborted("Core closed.")),
-            _ = &mut deadline => return Err(CoreError::new("Lichess login timed out.")),
+            _ = &mut deadline => return Err(CoreError::new(timed_out)),
             accepted = listener.accept() => accepted,
         };
         let (mut socket, _) = match accepted {
@@ -204,28 +210,50 @@ pub async fn wait_for_callback(
                 continue;
             }
         };
-        let callback = request_target(&head).as_deref().and_then(parse_target);
-        let matches = callback.as_ref().is_some_and(|callback| {
-            callback.path == "/callback" && callback.state.as_deref() == Some(state)
-        });
-        if !matches {
+        let callback = request_target(&head)
+            .as_deref()
+            .and_then(parse_target)
+            .filter(|callback| callback.path == path && callback.state.as_deref() == Some(state));
+        let Some(callback) = callback else {
             let _ = socket.write_all(not_found()).await;
             let _ = socket.shutdown().await;
             continue;
-        }
-        let code = callback.and_then(|callback| callback.code);
+        };
         on_return();
-        let (status, body) = match &code {
-            Some(_) => (200, callback_page(true, look)),
-            None => (400, callback_page(false, look)),
-        };
-        let _ = socket.write_all(&page_response(status, &body)).await;
+        let authorized = callback.code.is_some();
+        let status = if authorized { 200 } else { 400 };
+        let _ = socket
+            .write_all(&page_response(status, &page(authorized)))
+            .await;
         let _ = socket.shutdown().await;
-        return match code {
-            Some(code) => Ok(code),
-            None => Err(CoreError::new("Lichess login was not completed.")),
-        };
+        return Ok(callback);
     }
+}
+
+/// `wait_for_redirect` for a Lichess login, answering its code.
+pub async fn wait_for_callback(
+    listener: &TcpListener,
+    state: &str,
+    look: &Value,
+    timeout: Duration,
+    cancel: &CancellationToken,
+    on_return: &(dyn Fn() + Sync),
+) -> CoreResult<String> {
+    let page = |authorized| callback_page(authorized, look);
+    let callback = wait_for_redirect(
+        listener,
+        "/callback",
+        state,
+        &page,
+        "Lichess login timed out.",
+        timeout,
+        cancel,
+        on_return,
+    )
+    .await?;
+    callback
+        .code
+        .ok_or_else(|| CoreError::new("Lichess login was not completed."))
 }
 
 #[derive(Deserialize)]

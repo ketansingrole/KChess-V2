@@ -71,3 +71,13 @@ fn the_settings_shortcut_opens_settings(cx: &mut gpui_kit::TestAppContext) {
     app.press("secondary-,");
     app.find("2-3");
 }
+
+#[gpui_kit::test]
+fn ai_settings_offer_a_chatgpt_plan(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("AI");
+    assert_eq!(
+        app.find("ai-connect").label(),
+        Some("Continue with ChatGPT")
+    );
+}

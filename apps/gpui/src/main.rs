@@ -7,6 +7,7 @@
 
 mod accounts;
 mod activity;
+mod ai;
 mod assets;
 #[cfg(feature = "bench")]
 mod bench;
@@ -126,6 +127,7 @@ fn start_models(cx: &mut App) {
     studies::init(cx);
     reviews::init(cx);
     accounts::init(cx);
+    ai::init(cx);
     puzzle_db::init(cx);
     updates::init(cx);
     sound::init(cx);
