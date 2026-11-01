@@ -443,6 +443,10 @@ fn environment() {
             std::env::set_var("KCHESS_STORE_DEBUG", "1");
             // Lichess at a port nothing listens on: online features fail fast and offline.
             std::env::set_var("KCHESS_TEST_LICHESS_BASE", lichess);
+            // A voice model that cannot be had: never the real download, and voice fails at once.
+            std::env::set_var("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");
+            std::env::set_var("KCHESS_TEST_VOICE_NAME", "no-model");
+            std::env::set_var("KCHESS_TEST_VOICE_SHA256", "0");
         }
     });
 }

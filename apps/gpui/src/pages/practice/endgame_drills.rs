@@ -513,7 +513,11 @@ impl Render for EndgameDrills {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(widgets::move_entry(&self.move_input, your_turn, &palette).h(px(36.)));
+            .child(widgets::lone_entry(widgets::move_entry(
+                &self.move_input,
+                your_turn,
+                &palette,
+            )));
         div().size_full().child(self.layout.render(
             "endgame-drills",
             board_column,

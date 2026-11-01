@@ -511,9 +511,9 @@ impl Render for PuzzleBoard {
             .piece_set
             .clone();
         let orientation = self.orientation();
-        let entry = widgets::move_entry(&self.move_input, true, &palette).h(px(36.));
+        let entry = widgets::move_entry(&self.move_input, true, &palette);
         let playing = self.playing();
-        let voice = board_bar(
+        let (voice, voice_line) = board_bar(
             &self.voice,
             cx.entity().downgrade(),
             Access {
@@ -565,6 +565,7 @@ impl Render for PuzzleBoard {
         };
         column
             .w_full()
+            .children(voice_line)
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))

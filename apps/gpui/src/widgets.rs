@@ -415,6 +415,7 @@ pub fn moves_list(
                         .flex_1()
                         .px(px(8.))
                         .py(px(4.))
+                        .text_center()
                         .text_color(palette.text_muted)
                         .child("…")
                         .into_any_element(),
@@ -435,6 +436,7 @@ pub fn moves_list(
                 .min_w_0()
                 .px(px(8.))
                 .py(px(4.))
+                .text_center()
                 .rounded(radii::XS)
                 .cursor_pointer()
                 .when(active, |cell| {
@@ -476,7 +478,7 @@ pub fn moves_list(
                         cell
                     }
                 }))
-                .when(filled == 2, |row| row.child(div().flex_1()))
+                .when(filled == 2, |row| row.child(div().flex_1().px(px(8.))))
         }))
 }
 
@@ -920,10 +922,16 @@ fn pill_row(
         }))
 }
 
+/// The typed-move box's width on every page; it is as tall as a player's line.
+const MOVE_ENTRY_WIDTH: Pixels = px(240.);
+
 /// The typed-move box under a board: the input, dimmed
 /// while no move can be made, and its Return hint.
 pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) -> Div {
     h_flex()
+        .w(MOVE_ENTRY_WIDTH)
+        .min_w_0()
+        .h(PLAYER_LINE)
         .border_1()
         .border_color(palette.border)
         .rounded(radii::MD)
@@ -993,31 +1001,37 @@ pub fn panel_actions(narrow: bool, actions: impl IntoIterator<Item = Action>) ->
         }))
 }
 
-/// `.board-input-row`: the move box and the controls a page adds (voice) on one line, the box
-/// taking the room and the controls at most 60% of it.
+/// `.board-input-row`: the move box and the controls a page adds (voice) on one line, kept to the
+/// right, the controls at most 60% of the line.
 pub fn input_row(entry: Div, controls: impl IntoElement) -> Div {
-    h_flex()
-        .w_full()
-        .min_w_0()
-        .gap(px(8.))
-        .child(entry.flex_1().min_w_0())
-        .child(div().max_w(relative(0.6)).min_w_0().child(controls))
+    entry_line(entry, Some(controls.into_any_element()))
 }
 
-/// `.player-middle` > `.move-entry`: the input row in a player's line, kept to the right and at
-/// most 22rem wide.
+/// The move box alone on its line, on a page with no controls beside it.
+pub fn lone_entry(entry: Div) -> Div {
+    entry_line(entry, None)
+}
+
+fn entry_line(entry: Div, controls: Option<AnyElement>) -> Div {
+    h_flex().w_full().min_w_0().justify_end().child(
+        h_flex()
+            .flex_1()
+            .min_w_0()
+            .gap(px(8.))
+            .justify_end()
+            .child(entry)
+            .children(
+                controls.map(|controls| div().max_w(relative(0.6)).min_w_0().child(controls)),
+            ),
+    )
+}
+
+/// `.player-middle` > `.move-entry`: the input row in a player's line.
 pub fn move_row(entry: Div, controls: impl IntoElement) -> AnyElement {
     h_flex()
         .flex_1()
         .min_w_0()
-        .justify_end()
-        .child(
-            div()
-                .flex_1()
-                .max_w(px(352.))
-                .min_w_0()
-                .child(input_row(entry, controls)),
-        )
+        .child(input_row(entry, controls))
         .into_any_element()
 }
 

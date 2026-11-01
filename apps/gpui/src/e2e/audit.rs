@@ -71,6 +71,55 @@ fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
+#[gpui_kit::test]
+fn the_move_box_is_one_size_on_every_board_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let (width, height) = SIZES[2];
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    let mut sizes = Vec::new();
+    for page in [Page::Computer, Page::Analysis] {
+        app.with_window(|window, cx| crate::shell::open(page, window, cx));
+        for _ in 0..20 {
+            app.tick();
+        }
+        sizes.push(app.with_window(|window, _| {
+            window
+                .try_find_by_label("Enter a chess move in SAN or UCI")
+                .expect("the page has a move box")
+                .bounds()
+                .size
+        }));
+    }
+    assert_eq!(sizes[0], sizes[1]);
+}
+
+#[gpui_kit::test]
+fn a_voice_error_is_read_in_full_under_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let (width, height) = SIZES[2];
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.with_window(|window, cx| crate::shell::open(Page::Computer, window, cx));
+    app.click_label("Voice input");
+    let mut line = None;
+    app.wait_for("the voice error", |window, _| {
+        line = window.elements().into_iter().find(|element| {
+            element.role() == Some(Role::Status)
+                && element.label().is_some_and(|label| label.contains("voice"))
+        });
+        window.try_find_by_label("Try again").is_some() && line.is_some()
+    });
+    // In the move box's row it had what the box and the buttons left: a word or two.
+    let line = line.expect("found");
+    assert!(
+        line.bounds().size.width > px(400.),
+        "{:?} is {:?} wide",
+        line.label(),
+        line.bounds().size.width
+    );
+}
+
 fn check(page: &str, width: f32, elements: &[ElementSnapshot], findings: &mut Findings) {
     let controls: Vec<&ElementSnapshot> = elements
         .iter()

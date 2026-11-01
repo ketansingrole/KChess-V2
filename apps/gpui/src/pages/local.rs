@@ -1283,7 +1283,7 @@ impl Render for LocalPage {
         };
         let interactive = !over && self.at_live();
         let entry = widgets::move_entry(&self.move_input, interactive, &palette);
-        let voice = crate::voice::moves::board_bar(
+        let (voice, voice_line) = crate::voice::moves::board_bar(
             &self.voice,
             cx.entity().downgrade(),
             crate::voice::moves::Access {
@@ -1306,6 +1306,7 @@ impl Render for LocalPage {
             .child(line(!orientation, None))
             .child(crate::board::cached(&self.board))
             .child(line(orientation, Some(widgets::move_row(entry, voice))))
+            .children(voice_line)
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))

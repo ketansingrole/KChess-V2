@@ -26,6 +26,59 @@ pub struct Bar {
     pub heard: Option<SharedString>,
     /// Choices the page offers (numbered moves), and Cancel.
     pub extra: Vec<AnyElement>,
+    /// The line sits in the bar; else the page shows `voice_line` where it has the room.
+    pub inline: bool,
+}
+
+/// What the bar has to say while it is `bar.owner`'s, and whether that is an error.
+fn status(bar: &Bar, cx: &App) -> Option<(SharedString, bool)> {
+    let voice = super::handle(cx).read(cx);
+    if voice.owner() != Some(bar.owner) || !bar.enabled {
+        return None;
+    }
+    let push = cx
+        .global::<crate::settings::SettingsHandle>()
+        .0
+        .read(cx)
+        .settings
+        .frontend
+        .voice_push_to_talk;
+    let line: SharedString = match voice.state {
+        State::Error => voice.error.as_ref().map_or_else(
+            || "Voice input unavailable".into(),
+            |(text, _)| text.clone().into(),
+        ),
+        _ if !voice.partial.is_empty() => format!("Hearing “{}”", voice.partial).into(),
+        _ if bar.feedback.is_some() => bar.feedback.clone().unwrap_or_default(),
+        _ if bar.heard.is_some() => {
+            format!("Heard “{}”", bar.heard.clone().unwrap_or_default()).into()
+        }
+        State::Loading => voice.preparing.clone().into(),
+        _ if !bar.active => "Ready for your next turn or run".into(),
+        _ if push => "Hold Space to speak".into(),
+        _ => format!("Listening · {}", bar.hint).into(),
+    };
+    Some((line, voice.state == State::Error))
+}
+
+/// The bar's line on a row of its own, wrapping rather than cut off.
+pub fn voice_line(bar: &Bar, cx: &App) -> Option<AnyElement> {
+    let palette = *cx.global::<Palette>();
+    status(bar, cx).map(|(line, error)| {
+        div()
+            .id((bar.id, 4usize))
+            .test_support()
+            .role(Role::Status)
+            .aria_label(line.clone())
+            .text_size(px(12.))
+            .text_color(if error {
+                palette.error
+            } else {
+                palette.text_muted
+            })
+            .child(line)
+            .into_any_element()
+    })
 }
 
 /// The bar; `toggle` turns voice on or off for the page.
@@ -45,21 +98,7 @@ pub fn voice_bar(
         .settings
         .frontend
         .voice_push_to_talk;
-    let line: SharedString = match state {
-        State::Error => voice.error.as_ref().map_or_else(
-            || "Voice input unavailable".into(),
-            |(text, _)| text.clone().into(),
-        ),
-        _ if !voice.partial.is_empty() => format!("Hearing “{}”", voice.partial).into(),
-        _ if bar.feedback.is_some() => bar.feedback.clone().unwrap_or_default(),
-        _ if bar.heard.is_some() => {
-            format!("Heard “{}”", bar.heard.clone().unwrap_or_default()).into()
-        }
-        State::Loading => voice.preparing.clone().into(),
-        _ if !bar.active => "Ready for your next turn or run".into(),
-        _ if push => "Hold Space to speak".into(),
-        _ => format!("Listening · {}", bar.hint).into(),
-    };
+    let line = status(&bar, cx).filter(|_| bar.inline);
     let denied = matches!(voice.error, Some((_, ErrorKind::Denied)));
     let enabled = bar.enabled;
     h_flex()
@@ -103,18 +142,18 @@ pub fn voice_bar(
                         ),
                 )
             })
-            .child(
+            .children(line.map(|(line, error)| {
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(if state == State::Error {
+                    .text_color(if error {
                         palette.error
                     } else {
                         palette.text_muted
                     })
-                    .child(line),
-            )
+                    .child(line)
+            }))
             .children(bar.extra)
             .when(state == State::Error && denied, |row| {
                 row.child(

@@ -779,7 +779,11 @@ impl Render for EndgameLesson {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(widgets::move_entry(&self.move_input, your_turn, &palette).h(px(36.)));
+            .child(widgets::lone_entry(widgets::move_entry(
+                &self.move_input,
+                your_turn,
+                &palette,
+            )));
         let chapters = self.render_chapters(cx, &palette);
         let board_column = if narrow {
             v_flex()

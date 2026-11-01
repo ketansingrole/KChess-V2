@@ -1414,7 +1414,7 @@ impl Render for ComputerPage {
             }),
         );
         let entry = widgets::move_entry(&self.move_input, interactive, &palette);
-        let voice = crate::voice::moves::board_bar(
+        let (voice, voice_line) = crate::voice::moves::board_bar(
             &self.voice,
             cx.entity().downgrade(),
             crate::voice::moves::Access {
@@ -1458,6 +1458,7 @@ impl Render for ComputerPage {
             .child(computer_line)
             .child(crate::board::cached(&self.board))
             .child(you_line)
+            .children(voice_line)
             .children(self.move_message.clone().map(|message| {
                 div()
                     .text_size(px(12.))

@@ -898,7 +898,11 @@ impl Render for Repertoire {
         let board_column = if self.at.is_some() {
             board_column
                 .child(crate::board::cached(&self.board))
-                .child(widgets::move_entry(&self.move_input, your_turn, &palette).h(px(36.)))
+                .child(widgets::lone_entry(widgets::move_entry(
+                    &self.move_input,
+                    your_turn,
+                    &palette,
+                )))
         } else if !(drills_opening && self.preparing) {
             board_column.child(widgets::card(&palette).child(Self::empty(
                 "Choose a repertoire",

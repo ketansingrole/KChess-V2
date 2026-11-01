@@ -2773,8 +2773,8 @@ impl Render for AnalysisPage {
         // The column always keeps the eval bar's width beside the board.
         // The column holds the board and the move box under it (`.analysis-surface`).
         let board_size = self.board_size(window);
-        let entry = widgets::move_entry(&self.move_input, true, &palette).h(px(36.));
-        let voice = board_bar(
+        let entry = widgets::move_entry(&self.move_input, true, &palette);
+        let (voice, voice_line) = board_bar(
             &self.voice,
             cx.entity().downgrade(),
             Access {
@@ -2827,6 +2827,7 @@ impl Render for AnalysisPage {
                     .pl(EVAL_BAR + EVAL_GAP)
                     .gap(px(4.))
                     .child(widgets::input_row(entry, voice))
+                    .children(voice_line)
                     .children(self.move_message.clone().map(|message| {
                         div()
                             .text_size(px(12.))

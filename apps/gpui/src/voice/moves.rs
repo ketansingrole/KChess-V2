@@ -490,7 +490,7 @@ pub fn board_bar<V: 'static>(
     access: Access<V>,
     bar: BoardBar,
     cx: &App,
-) -> AnyElement {
+) -> (AnyElement, Option<AnyElement>) {
     let (owner, on) = (state.control.owner, state.is_on(cx));
     let (feedback, heard) = (state.control.feedback.clone(), state.control.heard.clone());
     let (pick, cancel, toggle) = (page.clone(), page.clone(), page);
@@ -512,17 +512,20 @@ pub fn board_bar<V: 'static>(
         },
     );
     let (grammar, listening) = (bar.grammar, bar.listening);
-    super::voice_bar(
-        super::bar::Bar {
-            id: bar.id,
-            owner,
-            enabled: on,
-            active: bar.active,
-            hint: bar.hint.into(),
-            feedback,
-            heard,
-            extra,
-        },
+    let bar = super::bar::Bar {
+        id: bar.id,
+        owner,
+        enabled: on,
+        active: bar.active,
+        hint: bar.hint.into(),
+        feedback,
+        heard,
+        extra,
+        inline: false,
+    };
+    let line = super::bar::voice_line(&bar, cx);
+    let controls = super::voice_bar(
+        bar,
         move |on, _, cx| {
             let grammar = grammar.clone();
             let _ = toggle.update(cx, |this, cx| {
@@ -531,7 +534,8 @@ pub fn board_bar<V: 'static>(
             });
         },
         cx,
-    )
+    );
+    (controls, line)
 }
 
 #[cfg(test)]
