@@ -25,8 +25,8 @@ mod lichess;
 
 /// Recent games on Home (`localGames`).
 const RECENT: usize = 6;
-/// A tile's narrowest width; four of them share a row when they fit, else two, else one.
-const TILE: Pixels = px(192.);
+/// A tile's narrowest width; two of them share a row when they fit, else one.
+const TILE: Pixels = px(160.);
 /// The board's side, and the window wide enough for the larger one.
 const BOARD: Pixels = px(360.);
 const BOARD_SMALL: Pixels = px(280.);
@@ -154,12 +154,11 @@ fn tile(
     id: &'static str,
     glyph: Icon,
     label: &'static str,
-    sub: Option<String>,
     primary: bool,
     page: Page,
     palette: &Palette,
 ) -> impl IntoElement {
-    h_flex()
+    v_flex()
         .id(id)
         .role(Role::Button)
         .keyboard_focus(palette.primary)
@@ -167,7 +166,8 @@ fn tile(
         .flex_1()
         .flex_basis(TILE)
         .min_w_0()
-        .min_h(px(72.))
+        .min_h(px(96.))
+        .justify_between()
         .gap(px(12.))
         .p(px(16.))
         .rounded(radii::XL)
@@ -195,16 +195,7 @@ fn tile(
                 .flex_none()
                 .when(!primary, |glyph| glyph.text_color(palette.toned)),
         )
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap(px(2.))
-                .child(div().font_weight(FontWeight::MEDIUM).child(label))
-                .children(
-                    sub.map(|sub| div().truncate().text_size(px(13.)).opacity(0.8).child(sub)),
-                ),
-        )
+        .child(div().font_weight(FontWeight::MEDIUM).child(label))
 }
 
 /// A quiet shortcut under the tiles.
@@ -232,17 +223,15 @@ impl Render for HomePage {
             (accounts.active(cx), accounts.busy)
         };
         let width = window.viewport_size().width;
-        let continuing = self.continue_game.as_ref().map(|(line, _)| line.clone());
         let tiles: Vec<AnyElement> = vec![
             tile(
                 "home-computer",
                 icon("monitor"),
-                if continuing.is_some() {
+                if self.continue_game.is_some() {
                     "Continue your game"
                 } else {
                     "Play the computer"
                 },
-                continuing,
                 true,
                 Page::Computer,
                 &palette,
@@ -252,7 +241,6 @@ impl Render for HomePage {
                 "home-puzzles",
                 icon("puzzle"),
                 "Puzzles",
-                None,
                 false,
                 Page::Puzzles,
                 &palette,
@@ -262,7 +250,6 @@ impl Render for HomePage {
                 "home-analysis",
                 icon("microscope"),
                 "Analysis board",
-                None,
                 false,
                 Page::Analysis,
                 &palette,
@@ -272,23 +259,21 @@ impl Render for HomePage {
                 "home-online",
                 icon("globe-2"),
                 "Play on Lichess",
-                None,
                 false,
                 Page::Online,
                 &palette,
             )
             .into_any_element(),
         ];
-        // Pairs that wrap, and tiles that wrap within them: never three and one.
+        // Two rows of two, sharing the height the board leaves beside them.
         let mut tiles = tiles.into_iter().peekable();
-        let mut pairs = Vec::new();
+        let mut rows = Vec::new();
         while tiles.peek().is_some() {
-            pairs.push(
+            rows.push(
                 h_flex()
                     .flex_wrap()
                     .items_stretch()
                     .flex_1()
-                    .flex_basis(TILE * 2. + px(12.))
                     .min_w_0()
                     .gap(px(12.))
                     .children(tiles.by_ref().take(2)),
@@ -558,11 +543,10 @@ impl Render for HomePage {
             .min_w_0()
             .gap(px(12.))
             .child(
-                h_flex()
-                    .flex_wrap()
-                    .items_stretch()
+                v_flex()
+                    .when(activity.is_some() && !stacked, |grid| grid.flex_1())
                     .gap(px(12.))
-                    .children(pairs),
+                    .children(rows),
             )
             .child(
                 h_flex()
