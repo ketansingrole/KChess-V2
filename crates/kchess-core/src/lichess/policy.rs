@@ -62,7 +62,8 @@ pub fn current_usage() -> Option<UsageContext> {
     USAGE.try_with(|cell| lock(cell).clone()).ok().flatten()
 }
 
-/// A permit of the interactive/background lanes; returned to the pool when dropped.
+/// A permit of the interactive/background lanes, from the moment it is queued; returned to the
+/// pool (or taken out of the queue) when dropped, including by a caller dropped mid-admission.
 struct Slot {
     policy: Arc<Policy>,
     id: u64,
@@ -73,6 +74,8 @@ impl Drop for Slot {
         let mut lanes = lock(&self.policy.lanes);
         if lanes.running.remove(&self.id) {
             lanes.active -= 1;
+        } else if let Some(at) = lanes.waiting.iter().position(|waiter| waiter.id == self.id) {
+            lanes.waiting.remove(at);
         }
         pump(&mut lanes);
     }
@@ -105,6 +108,33 @@ fn pump(lanes: &mut Lanes) {
             // The waiter gave up while it was being started: the slot is not used.
             lanes.running.remove(&waiter.id);
             lanes.active -= 1;
+        }
+    }
+}
+
+/// A place in the bulk lane's queue until it is answered.
+struct BulkWait<'a> {
+    policy: &'a Arc<Policy>,
+    id: u64,
+    armed: bool,
+}
+
+impl Drop for BulkWait<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut lanes = lock(&self.policy.lanes);
+        if let Some(at) = lanes
+            .bulk_waiting
+            .iter()
+            .position(|(waiter, _)| *waiter == self.id)
+        {
+            lanes.bulk_waiting.remove(at);
+        } else {
+            // The lane was handed over before the wait ended.
+            drop(lanes);
+            self.policy.release_bulk();
         }
     }
 }
@@ -496,23 +526,18 @@ impl Policy {
             pump(&mut lanes);
             (id, receive)
         };
+        // Owns the place in the queue or the started slot: a cancelled or dropped wait gives it back.
+        let slot = Slot {
+            policy: Arc::clone(self),
+            id,
+        };
         tokio::select! {
             biased;
             answer = receive => match answer {
-                Ok(()) => Ok(Slot { policy: Arc::clone(self), id }),
+                Ok(()) => Ok(slot),
                 Err(_) => Err(aborted()),
             },
-            _ = cancel.cancelled() => {
-                let mut lanes = lock(&self.lanes);
-                if let Some(at) = lanes.waiting.iter().position(|waiter| waiter.id == id) {
-                    lanes.waiting.remove(at);
-                } else if lanes.running.remove(&id) {
-                    // Started just before the cancellation: give the slot back.
-                    lanes.active -= 1;
-                    pump(&mut lanes);
-                }
-                Err(aborted())
-            }
+            _ = cancel.cancelled() => Err(aborted()),
         }
     }
 
@@ -532,24 +557,21 @@ impl Policy {
             lanes.bulk_waiting.push_back((id, start));
             (id, receive)
         };
-        tokio::select! {
+        // A cancelled or dropped wait leaves the queue, or passes on a lane already handed to it.
+        let mut waiting = BulkWait {
+            policy: self,
+            id,
+            armed: true,
+        };
+        let answer = tokio::select! {
             biased;
-            answer = receive => match answer {
-                Ok(()) => Ok(self.hold()),
-                Err(_) => Err(aborted()),
-            },
-            _ = cancel.cancelled() => {
-                let mut lanes = lock(&self.lanes);
-                if let Some(at) = lanes.bulk_waiting.iter().position(|(waiter, _)| *waiter == id) {
-                    lanes.bulk_waiting.remove(at);
-                    Err(aborted())
-                } else {
-                    // The lane was handed over just before the cancellation.
-                    drop(lanes);
-                    self.release_bulk();
-                    Err(aborted())
-                }
-            }
+            answer = receive => answer,
+            _ = cancel.cancelled() => return Err(aborted()),
+        };
+        waiting.armed = false;
+        match answer {
+            Ok(()) => Ok(self.hold()),
+            Err(_) => Err(aborted()),
         }
     }
 
@@ -635,6 +657,64 @@ mod tests {
         assert_eq!(cooldown_for(&headers), Duration::from_secs(300));
         headers.insert(reqwest::header::RETRY_AFTER, "soon".parse().unwrap());
         assert_eq!(cooldown_for(&headers), Duration::from_secs(60));
+    }
+
+    struct Quiet;
+
+    impl Host for Quiet {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _: &str, _: serde_json::Value) {}
+    }
+
+    fn quiet_policy() -> Arc<Policy> {
+        Policy::new(
+            Arc::new(Quiet),
+            reqwest::Client::new(),
+            CancellationToken::new(),
+        )
+    }
+
+    /// Polls `future` once, so it queues, without waiting for it.
+    async fn queue<F: Future + Unpin>(future: &mut F) {
+        tokio::select! {
+            biased;
+            _ = future => panic!("admitted at once"),
+            () = std::future::ready(()) => {}
+        }
+    }
+
+    /// A request dropped after its slot was granted but before it ran again (a client that went
+    /// away, its call aborted) gives the slot back instead of keeping it forever.
+    #[tokio::test]
+    async fn a_dropped_wait_returns_a_slot_granted_to_it() {
+        let policy = quiet_policy();
+        let cancel = CancellationToken::new();
+        let first = policy.acquire_slot(0, &cancel).await.expect("first slot");
+        let second = policy.acquire_slot(0, &cancel).await.expect("second slot");
+        let mut third = Box::pin(policy.acquire_slot(0, &cancel));
+        queue(&mut third).await;
+        drop(first);
+        assert_eq!(lock(&policy.lanes).running.len(), 2, "granted to the third");
+        drop(third);
+        drop(second);
+        let lanes = lock(&policy.lanes);
+        assert_eq!(lanes.active, 0);
+        assert!(lanes.running.is_empty() && lanes.waiting.is_empty());
+    }
+
+    /// The same for the bulk lane: handed to a wait that is then dropped, it passes on.
+    #[tokio::test]
+    async fn a_dropped_wait_passes_on_the_bulk_lane_handed_to_it() {
+        let policy = quiet_policy();
+        let cancel = CancellationToken::new();
+        let first = policy.acquire_bulk(&cancel).await.expect("the lane");
+        let mut second = Box::pin(policy.acquire_bulk(&cancel));
+        queue(&mut second).await;
+        drop(first);
+        drop(second);
+        let lanes = lock(&policy.lanes);
+        assert!(!lanes.bulk_active, "the lane is free");
+        assert!(lanes.bulk_waiting.is_empty());
     }
 
     #[test]

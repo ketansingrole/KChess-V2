@@ -151,6 +151,38 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_client_reaches_only_the_core_api() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+
+    // Internal methods skip the facade's validation and its live-game assistance checks.
+    for method in [
+        "engine.bestMove",
+        "analysis.start",
+        "store.voiceLog.voiceHistoryDocument",
+    ] {
+        let refused = gpui
+            .call(method, vec![])
+            .await
+            .expect_err("an internal method");
+        assert!(
+            refused.contains("Unknown core method"),
+            "{method}: {refused}"
+        );
+    }
+    gpui.call("library", vec![])
+        .await
+        .expect("a CoreApi method");
+    gpui.call("host.reply", vec![json!(0), Value::Null])
+        .await
+        .expect("host replies still arrive");
+
+    drop(gpui);
+    service.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn hello_is_refused_without_the_token_or_with_another_release() {
     let profile = tempfile::tempdir().expect("profile");
     let service = spawn_service(profile.path(), Duration::from_secs(30));

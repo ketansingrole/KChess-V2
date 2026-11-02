@@ -351,9 +351,9 @@ impl Drop for ListenerGuard<'_> {
     }
 }
 
-/// Clears the searching flag and the stop token on every exit path, sending `stop`
-/// when the search did not complete so a dropped future never leaves Stockfish
-/// searching unobserved.
+/// Clears the searching flag and the stop token on every exit path. A search that did not
+/// complete (its future dropped, or it failed) fails the engine: its `bestmove` is still on the
+/// way and would answer the next search on this process, so the process is not reused.
 struct SearchGuard<'a> {
     inner: &'a Inner,
     completed: bool,
@@ -362,8 +362,7 @@ struct SearchGuard<'a> {
 impl Drop for SearchGuard<'_> {
     fn drop(&mut self) {
         if !self.completed {
-            // Best effort: the engine may already be gone; failure is recorded via `fail`.
-            let _ = self.inner.write("stop");
+            self.inner.fail(search_cancelled());
         }
         let mut state = lock(&self.inner.state);
         state.searching = false;

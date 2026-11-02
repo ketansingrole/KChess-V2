@@ -28,6 +28,25 @@ struct Download {
     cancel: CancellationToken,
 }
 
+/// The running download: cancelled, and no longer running, when dropped.
+struct Installing<'a> {
+    inner: &'a Inner,
+    download: Arc<Download>,
+}
+
+impl Drop for Installing<'_> {
+    fn drop(&mut self) {
+        self.download.cancel.cancel();
+        if let Ok(mut running) = self.inner.running.lock()
+            && running
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.download))
+        {
+            running.take();
+        }
+    }
+}
+
 struct Inner {
     config: Config,
     host: Arc<dyn Host>,
@@ -340,6 +359,11 @@ impl PuzzleService {
             *running = Some(Arc::clone(&download));
             download
         };
+        // Ends this download however `install` ends, including when its caller is dropped.
+        let installing = Installing {
+            inner: &self.inner,
+            download: Arc::clone(&download),
+        };
         let mut progress = Progress {
             host: Arc::clone(&self.inner.host),
             received: 0,
@@ -363,9 +387,7 @@ impl PuzzleService {
             }
         };
         self.inner.usage(0, progress.received);
-        if let Ok(mut running) = self.inner.running.lock() {
-            running.take();
-        }
+        drop(installing);
         let result = match outcome {
             Ok(()) => {
                 self.inner
@@ -732,6 +754,28 @@ mod tests {
                 .get("message")
                 .is_none()
         );
+        puzzles.close().await;
+    }
+
+    /// A client that goes away mid-download has its call aborted: the download ends with it, and
+    /// another install or a deletion is not refused forever.
+    #[tokio::test]
+    async fn an_aborted_install_stops_its_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, _host) = service(dir.path());
+        let puzzles = Arc::new(puzzles);
+        let stalled = serve(200, None).await;
+        let first = tokio::spawn({
+            let puzzles = Arc::clone(&puzzles);
+            async move { puzzles.install(stalled).await }
+        });
+        while !puzzles.status().await.unwrap().busy {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        assert!(!puzzles.status().await.unwrap().busy);
+        puzzles.delete().await.expect("deleting is allowed again");
         puzzles.close().await;
     }
 

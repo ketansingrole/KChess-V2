@@ -79,6 +79,34 @@ async fn cancels_an_active_search_after_the_stop_acknowledgment() {
     engine.close();
 }
 
+/// A search whose future is dropped (its client went away and the call was aborted) still has a
+/// `bestmove` on the way, which would answer the next search on the process: the engine is
+/// failed and stopped, so the next search starts a fresh one.
+#[tokio::test]
+async fn a_dropped_search_retires_its_engine() {
+    let host = support::host();
+    let hub = support::hub(&host);
+    let engine = UciController::start(&hub, support::fake("stop-ack", None), HANDSHAKE)
+        .expect("spawn the fake engine");
+    engine.ready().await.expect("handshake");
+    let mut search = Box::pin(engine.search("go infinite", |_line: &str| {}, None, None));
+    tokio::select! {
+        biased;
+        _ = &mut search => panic!("an infinite search does not end by itself"),
+        () = tokio::time::sleep(Duration::from_millis(20)) => {}
+    }
+    drop(search);
+    assert_eq!(engine.failed(), Some(search_cancelled()));
+    let next = engine
+        .search("go movetime 1", |_line: &str| {}, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(next, search_cancelled());
+    tokio::time::timeout(Duration::from_secs(5), engine.closed())
+        .await
+        .expect("the retired engine process exits");
+}
+
 #[tokio::test]
 async fn kills_a_search_that_ignores_stop_instead_of_waiting_indefinitely() {
     let host = support::host();

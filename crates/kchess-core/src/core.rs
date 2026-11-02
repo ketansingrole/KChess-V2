@@ -301,6 +301,20 @@ impl Core {
         crate::connection::scope(connection, self.call_unscoped(method, args)).await
     }
 
+    /// Run one method a socket client sent: only `CoreApi` methods and `host.reply`. The internal
+    /// service methods skip the facade's validation and its live-game assistance checks.
+    pub async fn call_client(
+        &self,
+        connection: u64,
+        method: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        if !crate::facade::is_facade_method(method) && method != "host.reply" {
+            return Err(CoreError::new(format!("Unknown core method {method}.")));
+        }
+        self.call_as(connection, method, args).await
+    }
+
     /// A new client of this core (the shared service's socket connections); its connection id.
     pub fn connect(&self, info: ClientInfo) -> u64 {
         let id = self.connections.connect(info);
