@@ -1448,7 +1448,8 @@ impl AnalysisPage {
         cx.stop_propagation();
     }
 
-    /// The game an Export saves: the main line, and the position shown on it.
+    /// The game an Export saves: the document with its variations and comments, its main line
+    /// for the GIF, and the position shown (in a variation too) for the PNG.
     fn game_export(&self) -> GameExport {
         let mainline = self.mainline();
         let depth = if self.path.is_empty() {
@@ -1471,6 +1472,8 @@ impl AnalysisPage {
                 .as_ref()
                 .and_then(|origin| origin["gameId"].as_str())
                 .map(str::to_string),
+            pgn: Some(self.root.to_pgn()),
+            shown: Some(moves_of(&self.path)),
         }
     }
 

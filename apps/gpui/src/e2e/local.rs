@@ -261,6 +261,65 @@ fn the_game_is_exported_as_an_animated_gif(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(&gif[..6], b"GIF89a");
 }
 
+/// Wait for the save dialog and answer it with `name` in `folder`; the path chosen.
+fn save_as(app: &mut Harness, folder: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+        app.tick();
+    }
+    let path = folder.join(name);
+    let chosen = path.clone();
+    app.cx.simulate_new_path_selection(move |_| Some(chosen));
+    path
+}
+
+/// An export cancelled while its save dialog is open, and finished after the next export started,
+/// leaves the next one running: its file is offered and written too.
+#[gpui_kit::test]
+fn a_cancelled_export_leaves_the_next_one_alone(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    type_moves(&mut app, &SCHOLARS_MATE);
+    app.click("local-export");
+    app.click_label("Animated GIF of the game");
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+        app.tick();
+    }
+    app.click_label("Cancel export");
+    app.click("local-export");
+    app.click_label("PNG of this position");
+
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    save_as(&mut app, folder.path(), "game.gif");
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(
+            started.elapsed() < super::TIMEOUT,
+            "no save dialog for the PNG"
+        );
+        app.tick();
+    }
+    // The cancelled export finishing left the running one shown as running.
+    assert!(
+        app.with_window(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            window.try_find(("local-export", 1usize)).is_some()
+        }),
+        "the PNG export can still be cancelled"
+    );
+    let png = save_as(&mut app, folder.path(), "position.png");
+    app.wait_for("Export to take clicks again", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("local-export")
+            .is_some_and(|button| button.disabled() != Some(true))
+    });
+    let saved = std::fs::read(&png).expect("the PNG");
+    assert_eq!(&saved[..4], b"\x89PNG");
+}
+
 #[gpui_kit::test]
 fn the_clock_runs_after_a_player_presses_their_side(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);

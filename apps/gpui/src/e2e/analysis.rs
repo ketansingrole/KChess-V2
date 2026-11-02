@@ -431,3 +431,52 @@ fn the_position_can_be_played_over_the_board(cx: &mut gpui_kit::TestAppContext) 
     app.press("enter");
     app.wait_for_moves(&["Kd2"]);
 }
+
+/// Export `label` from the analysis board's Export menu into a file; its bytes.
+fn export(app: &mut Harness, label: &str, file: &str) -> Vec<u8> {
+    app.click("analysis-export");
+    app.click_label(label);
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+        app.tick();
+    }
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let path = folder.path().join(file);
+    let chosen = path.clone();
+    app.cx.simulate_new_path_selection(move |_| Some(chosen));
+    app.wait_for("Export to take clicks again", |window, _| {
+        window
+            .try_find("analysis-export")
+            .is_some_and(|button| button.disabled() != Some(true))
+    });
+    std::fs::read(&path).expect("the saved file")
+}
+
+#[gpui_kit::test]
+fn a_pgn_file_keeps_the_variations_comments_and_headers(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(
+        &mut app,
+        "[Date \"2001.02.03\"] 1. e4 e5 { The usual reply } (1... c5) 2. Nf3 *",
+    );
+    app.find("tree-e2e4 c7c5");
+    let pgn = String::from_utf8(export(&mut app, "PGN file", "game.pgn")).expect("text");
+    assert!(pgn.contains("[Date \"2001.02.03\"]"), "{pgn}");
+    assert!(pgn.contains("The usual reply"), "{pgn}");
+    assert!(pgn.contains("( 1... c5 )"), "{pgn}");
+}
+
+#[gpui_kit::test]
+fn a_png_shows_the_position_in_the_variation_shown(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 (1... c5) *");
+    app.click("tree-e2e4 c7c5");
+    let in_variation = export(&mut app, "PNG of this position", "variation.png");
+    // The same position, now on the main line.
+    app.click("analysis-more");
+    app.click_label("Make main line");
+    app.click("tree-e2e4 c7c5");
+    let on_main_line = export(&mut app, "PNG of this position", "main.png");
+    assert!(in_variation == on_main_line, "the PNG shows 1... c5");
+}

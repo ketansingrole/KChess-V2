@@ -282,8 +282,9 @@ impl Core {
                 .await;
             let text = match reply {
                 Err(refusal) if refusal.problem == Problem::Unsupported && effort.is_some() => {
+                    let (chosen, refused) = (connection.model.clone(), connection.effort.clone());
                     connection.effort_refused = true;
-                    if let Err(cause) = self.refuse_ai_effort().await {
+                    if let Err(cause) = self.refuse_ai_effort(chosen, refused).await {
                         self.host.log(
                             Level::Warn,
                             "ai",
@@ -315,11 +316,15 @@ impl Core {
         })
     }
 
-    /// Records that the plan refused the chosen effort, on the connection as saved now: the copy
-    /// an explanation read before it may hold tokens a refresh has since replaced.
-    async fn refuse_ai_effort(&self) -> Result<()> {
+    /// Records that the plan refused the effort chosen with `model`, on the connection as saved
+    /// now: the copy an explanation read before it may hold tokens a refresh has since replaced.
+    /// A model or effort chosen since is not marked refused.
+    async fn refuse_ai_effort(&self, model: Option<String>, effort: Option<String>) -> Result<()> {
         let _renewing = self.ai.refreshing.lock().await;
         let mut connection = self.ai_connection().await?;
+        if connection.model != model || connection.effort != effort {
+            return Ok(());
+        }
         connection.effort_refused = true;
         self.save_ai_connection(&connection).await
     }
@@ -405,12 +410,12 @@ impl Core {
             .call_async("store.ai.explanation", &[json!(key)])
             .await?;
         if cached.is_string() {
+            // A game can start while the brief and the saved answer were read.
+            self.assistance_allowed(LIVE_GAME)?;
             return Ok(json!({ "text": cached }));
         }
         match self.ai_answer(&mut connection, &model, &brief).await {
             Ok(text) => {
-                // A game can start while the answer was on its way.
-                self.assistance_allowed(LIVE_GAME)?;
                 let saved = self
                     .database
                     .call_async("store.ai.saveExplanation", &[json!(key), json!(text)])
@@ -419,6 +424,8 @@ impl Core {
                     self.host
                         .log(Level::Warn, "ai", &format!("Not saved: {}", cause.message));
                 }
+                // A game can start while the answer was on its way, or being saved.
+                self.assistance_allowed(LIVE_GAME)?;
                 Ok(json!({ "text": text }))
             }
             Err(refusal) => {

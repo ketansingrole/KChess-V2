@@ -76,6 +76,11 @@ pub struct GameExport {
     pub result: Option<String>,
     /// The game's id when it was played on Lichess, so its link needs no upload.
     pub lichess_id: Option<String>,
+    /// The document to save and upload as it is, with its variations, comments and headers,
+    /// instead of the moves rebuilt as a PGN.
+    pub pgn: Option<String>,
+    /// The moves from `fen` to the position shown, when it is off `moves` (a variation).
+    pub shown: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,8 +100,11 @@ impl Kind {
     }
 }
 
-/// `setupPgn`: the game as a PGN file, dated today.
+/// The game as a PGN file: its own document, else `setupPgn` of its moves, dated today.
 fn game_pgn(game: &GameExport) -> Option<String> {
+    if let Some(pgn) = &game.pgn {
+        return Some(pgn.clone());
+    }
     rules(
         "setupPgn",
         &[
@@ -135,6 +143,13 @@ impl Exporter {
         if let Some(cancel) = &self.cancel {
             cancel.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Whether `cancel` is the token of the export running now.
+    fn runs(&self, cancel: &Arc<AtomicBool>) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, cancel))
     }
 
     fn finish(&mut self, cx: &mut Context<Self>) {
@@ -208,6 +223,8 @@ impl Exporter {
             return;
         }
         let cancel = Arc::new(AtomicBool::new(false));
+        // This export's own token: a cancelled export may still be finishing when the next starts.
+        let own = Arc::clone(&cancel);
         self.busy = true;
         self.progress.clear();
         self.cancel = Some(cancel.clone());
@@ -236,9 +253,18 @@ impl Exporter {
                 Kind::Gif => game_image::game_gif(&options, 80, &cancel, |done, total| {
                     let _ = sender.unbounded_send((done, total));
                 }),
-                Kind::Png => {
-                    game_image::position_png(&options, game.ply.unwrap_or(game.moves.len()))
-                }
+                Kind::Png => match &game.shown {
+                    Some(shown) => game_image::position_png(
+                        &ImageOptions {
+                            moves: shown.clone(),
+                            ..options
+                        },
+                        shown.len(),
+                    ),
+                    None => {
+                        game_image::position_png(&options, game.ply.unwrap_or(game.moves.len()))
+                    }
+                },
                 Kind::Pgn => game_pgn(&game)
                     .map(String::into_bytes)
                     .ok_or_else(|| "That game cannot be replayed".to_string()),
@@ -247,18 +273,14 @@ impl Exporter {
         cx.spawn_in(window, async move |this, cx| {
             while let Some((done, total)) = heard.next().await {
                 let _ = this.update(cx, |this, cx| {
-                    this.progress = format!("{done}/{total}");
-                    cx.notify();
+                    if this.runs(&own) {
+                        this.progress = format!("{done}/{total}");
+                        cx.notify();
+                    }
                 });
             }
             let data = work.await;
-            let stopped = this
-                .read_with(cx, |this, _| {
-                    this.cancel
-                        .as_ref()
-                        .is_none_or(|cancel| cancel.load(Ordering::Relaxed))
-                })
-                .unwrap_or(true);
+            let stopped = own.load(Ordering::Relaxed) || this.upgrade().is_none();
             let outcome = match data {
                 _ if stopped => None,
                 Err(cause) => Some(Err(cause)),
@@ -268,7 +290,9 @@ impl Exporter {
                 },
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                this.finish(cx);
+                if this.runs(&own) {
+                    this.finish(cx);
+                }
                 match outcome {
                     Some(Ok(())) => window.push_notification(
                         SharedString::from(format!("Saved the {}", kind.name().to_uppercase())),
@@ -386,6 +410,8 @@ mod tests {
             ply: None,
             result: None,
             lichess_id: None,
+            pgn: None,
+            shown: None,
         })
         .unwrap();
         assert!(pgn.contains("[White \"You\"]"));

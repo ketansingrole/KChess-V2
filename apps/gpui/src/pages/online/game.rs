@@ -992,6 +992,8 @@ impl OnlinePage {
                     .to_string(),
             ),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
+            pgn: None,
+            shown: None,
         }
     }
 }
