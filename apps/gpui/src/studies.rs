@@ -4,7 +4,6 @@
 //! studies the answers name. A command the core refuses shows its error and what the profile keeps.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -27,12 +26,18 @@ enum Write {
     /// Done once every command before it was answered: with the chapters whose last content save
     /// failed, if any did.
     Flushed(oneshot::Sender<crate::core::Saved>),
+    /// The board now shows this chapter with these moves (`None`: the library has no such
+    /// chapter). Queued like the saves, so a save sent before it keeps the base it was made on.
+    Track {
+        key: (String, String),
+        pgn: Option<String>,
+    },
 }
 
-/// The moves each chapter held when this window last opened or saved it, by study and chapter
-/// (`Bases`). Chapter saves are based on them (`basedOn`), so they never
-/// overwrite another window's newer moves; a library refresh leaves them.
-type Bases = Arc<Mutex<HashMap<(String, String), String>>>;
+/// The moves each chapter held when this window last opened or saved it, by study and chapter.
+/// Chapter saves are based on them (`basedOn`), so they never overwrite another window's newer
+/// moves; a library refresh leaves them. Only the writer keeps them, in the order of its queue.
+type Bases = HashMap<(String, String), String>;
 
 /// The core refused a chapter save: another window changed the chapter since this one read it.
 pub fn is_stale(cause: &str) -> bool {
@@ -44,7 +49,6 @@ pub struct StudyLibrary {
     /// Why the last command failed, until one succeeds; or why the stored studies could not be read.
     pub error: Option<String>,
     writes: mpsc::UnboundedSender<Write>,
-    bases: Bases,
     reads: Reads,
 }
 
@@ -64,15 +68,13 @@ pub fn init(cx: &mut App) {
     let items = library["studies"].as_array().cloned().unwrap_or_default();
     let error = library["studyError"].as_str().map(str::to_string);
     let (writes, queue) = mpsc::unbounded();
-    let bases = Bases::default();
     let entity = cx.new(|_| StudyLibrary {
         items,
         error,
         writes,
-        bases: Arc::clone(&bases),
         reads: Reads::default(),
     });
-    write_in_order(entity.downgrade(), queue, bases, cx);
+    write_in_order(entity.downgrade(), queue, cx);
     crate::core::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
@@ -116,7 +118,6 @@ fn written_chapter(command: &Value, result: &Value) -> Option<(String, String)> 
 fn write_in_order(
     entity: WeakEntity<StudyLibrary>,
     mut queue: mpsc::UnboundedReceiver<Write>,
-    bases: Bases,
     cx: &mut App,
 ) {
     let core = cx.global::<AppCore>().clone();
@@ -127,9 +128,17 @@ fn write_in_order(
             // Chapters whose last content save failed, until one succeeds: their moves are not
             // in the profile (a chapter another window changed keeps its moves as a copy).
             let mut unsaved: HashMap<(String, String), String> = HashMap::new();
+            let mut bases = Bases::new();
             while let Some(write) = queue.next().await {
                 let (command, reply) = match write {
                     Write::Command { command, reply } => (command, reply),
+                    Write::Track { key, pgn } => {
+                        match pgn {
+                            Some(pgn) => bases.insert(key, pgn),
+                            None => bases.remove(&key),
+                        };
+                        continue;
+                    }
                     Write::Flushed(done) => {
                         let _ = done.send(match unsaved.values().next() {
                             Some(cause) => Err(format!("A study could not be saved: {cause}")),
@@ -139,8 +148,7 @@ fn write_in_order(
                     }
                 };
                 let op = command["op"].as_str().unwrap_or_default().to_string();
-                let based_on =
-                    saved_chapter(&command).and_then(|key| bases.lock().ok()?.get(&key).cloned());
+                let based_on = saved_chapter(&command).and_then(|key| bases.get(&key).cloned());
                 let mut args = vec![command.clone(), json!(true)];
                 args.extend(based_on.map(Value::String));
                 let result = core.call("studyCommand", args).await.map_err(|cause| {
@@ -172,7 +180,6 @@ fn write_in_order(
                 if let Ok(result) = &result
                     && let Some(key) = written_chapter(&command, result)
                     && let Some(pgn) = command["pgn"].as_str()
-                    && let Ok(mut bases) = bases.lock()
                 {
                     bases.insert(key, pgn.to_string());
                 }
@@ -287,13 +294,8 @@ impl StudyLibrary {
             .and_then(|chapters| chapters.iter().find(|c| c["id"] == json!(chapter)))
             .and_then(|chapter| chapter["pgn"].as_str())
             .map(str::to_string);
-        if let Ok(mut bases) = self.bases.lock() {
-            let key = (study.to_string(), chapter.to_string());
-            match pgn {
-                Some(pgn) => bases.insert(key, pgn),
-                None => bases.remove(&key),
-            };
-        }
+        let key = (study.to_string(), chapter.to_string());
+        let _ = self.writes.unbounded_send(Write::Track { key, pgn });
     }
 
     /// A name no study has yet (`freshName`).
@@ -393,7 +395,7 @@ impl StudyLibrary {
 
 #[cfg(test)]
 mod tests {
-    use super::{StudyLibrary, chapter_items, saved_chapter, time_ago, written_chapter};
+    use super::{StudyLibrary, Write, chapter_items, saved_chapter, time_ago, written_chapter};
     use futures::channel::mpsc;
     use serde_json::json;
 
@@ -407,7 +409,6 @@ mod tests {
             ],
             error: None,
             writes,
-            bases: Default::default(),
             reads: Default::default(),
         };
         // An incremental answer: the changed study, and every id in order.
@@ -454,6 +455,32 @@ mod tests {
                 ("b".to_string(), "2. Side".to_string())
             ]
         );
+    }
+
+    /// A save queued before the board reopens a chapter another window changed keeps the base it
+    /// was made on: the new base reaches the writer after it, so the core refuses it as stale
+    /// instead of letting it overwrite the other window's moves.
+    #[test]
+    fn a_reopened_chapter_takes_its_base_after_the_saves_queued_before() {
+        let (writes, mut queue) = mpsc::unbounded();
+        let library = StudyLibrary {
+            items: vec![json!({ "id": "a", "chapters": [{ "id": "c", "pgn": "1. d4 *" }] })],
+            error: None,
+            writes,
+            reads: Default::default(),
+        };
+        let save = json!({ "op": "save", "id": "a", "chapterId": "c", "pgn": "1. e4 e5 *" });
+        drop(library.command(save.clone()));
+        library.track("a", "c");
+        let Ok(Write::Command { command, .. }) = queue.try_recv() else {
+            panic!("the save comes first");
+        };
+        assert_eq!(command, save);
+        let Ok(Write::Track { key, pgn }) = queue.try_recv() else {
+            panic!("then the new base");
+        };
+        assert_eq!(key, ("a".to_string(), "c".to_string()));
+        assert_eq!(pgn.as_deref(), Some("1. d4 *"));
     }
 
     #[test]

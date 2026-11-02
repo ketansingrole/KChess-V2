@@ -485,6 +485,16 @@ impl OnlineSession {
                     "Finish the live game on the board before opening another.",
                 ));
             }
+            // A real-time game left by a dropped connection stays protected until it is verified
+            // over; attaching another would replace its protection with the other game's.
+            if !st.protected_game.is_empty()
+                && st.protected_game != id
+                && st.protected_game != st.live_game
+            {
+                return Err(core(
+                    "Reconnect to your current game before opening another.",
+                ));
+            }
         }
         self.attach(account, id).await
     }

@@ -1182,6 +1182,24 @@ async fn a_live_game_is_not_replaced_by_opening_another_game() {
     online.close();
 }
 
+/// A real-time game left by a cancelled session stays protected; opening another game must not
+/// take its protection over, or that game finishing would allow assistance in the first.
+#[tokio::test]
+async fn a_protected_game_is_not_replaced_by_opening_another_game() {
+    let (_host, _fixture, online) = playing(|_| None).await;
+    online.cancel();
+    assert!(online.playing(), "the left game stays protected");
+    let other = online.open("Alice", "Corr1234").await;
+    assert!(
+        other
+            .unwrap_err()
+            .message()
+            .contains("Reconnect to your current game")
+    );
+    assert!(online.assistance_blocked());
+    online.close();
+}
+
 #[tokio::test]
 async fn a_dropped_game_stream_reconnects_and_keeps_the_game() {
     let attempts = Arc::new(AtomicUsize::new(0));

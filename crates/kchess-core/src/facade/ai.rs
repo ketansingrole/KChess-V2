@@ -283,7 +283,7 @@ impl Core {
             let text = match reply {
                 Err(refusal) if refusal.problem == Problem::Unsupported && effort.is_some() => {
                     connection.effort_refused = true;
-                    if let Err(cause) = self.save_ai_connection(connection).await {
+                    if let Err(cause) = self.refuse_ai_effort().await {
                         self.host.log(
                             Level::Warn,
                             "ai",
@@ -313,6 +313,15 @@ impl Core {
             problem: Problem::Unverified,
             detail: "outside the facts".into(),
         })
+    }
+
+    /// Records that the plan refused the chosen effort, on the connection as saved now: the copy
+    /// an explanation read before it may hold tokens a refresh has since replaced.
+    async fn refuse_ai_effort(&self) -> Result<()> {
+        let _renewing = self.ai.refreshing.lock().await;
+        let mut connection = self.ai_connection().await?;
+        connection.effort_refused = true;
+        self.save_ai_connection(&connection).await
     }
 
     /// The engine's reply to `played` in `fen`, when an engine can give one.
