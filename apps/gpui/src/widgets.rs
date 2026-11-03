@@ -264,8 +264,8 @@ pub enum Tone {
     Alert,
 }
 
-/// `.status-banner.steady`: the game's state, its icon, and optionally a detail line and controls
-/// under it. Whose turn it is goes on a plain line of its own instead (`turn`).
+/// `.status-banner.steady`: the game's state, its icon, and optionally a detail line, with
+/// controls at the end of the row. Whose turn it is goes on a plain line of its own instead (`turn`).
 #[derive(IntoElement)]
 pub struct StatusBanner {
     tone: Tone,
@@ -376,10 +376,21 @@ impl RenderOnce for StatusBanner {
                             .text_size(px(12.))
                             .text_color(palette.toned)
                             .child(detail)
-                    }))
-                    .children(self.extra),
+                    })),
             )
+            // Its action sits at the end of the row, centred against the text, not under it.
+            .children(self.extra.map(|extra| div().flex_none().child(extra)))
     }
+}
+
+/// The banner action that leaves an earlier position for the game's last move.
+pub fn back_to_game(on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> AnyElement {
+    Button::new("back-to-game")
+        .outline()
+        .small()
+        .label("Back to game")
+        .on_click(on_click)
+        .into_any_element()
 }
 
 /// One move of a list: its number, side and SAN.

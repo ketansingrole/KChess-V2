@@ -424,7 +424,6 @@ impl TournamentsPage {
             )
             .extra(
                 h_flex()
-                    .mt(px(6.))
                     .child(
                         Button::new("tournaments-reconnect")
                             .small()

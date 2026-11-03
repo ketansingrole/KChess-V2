@@ -1424,7 +1424,10 @@ impl LocalPage {
                 icon("history"),
                 "Reviewing an earlier position".into(),
             )
-            .detail("Go to the last move to keep playing".into()),
+            .extra(widgets::back_to_game(cx.listener(|this, _, _, cx| {
+                let last = this.moves().len();
+                this.show_ply(last, cx)
+            }))),
             None => {
                 let check = display.as_ref().is_some_and(shakmaty::Position::is_check);
                 let detail = if timed && paused && !moves.is_empty() {

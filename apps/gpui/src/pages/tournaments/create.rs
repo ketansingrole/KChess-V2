@@ -384,7 +384,6 @@ impl Render for CreateArena {
                             self.account
                         )
                         .into(),).extra(h_flex()
-                            .mt(px(6.))
                             .child(
                                 Button::new("arena-reconnect")
                                     .small()

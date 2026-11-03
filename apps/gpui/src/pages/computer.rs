@@ -1217,17 +1217,10 @@ impl ComputerPage {
                 icon("history"),
                 "Reviewing an earlier position".into(),
             )
-            .extra(
-                Button::new("back-to-game")
-                    .link()
-                    .xsmall()
-                    .label("Back to game")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let last = this.moves().len();
-                        this.show_ply(last, cx)
-                    }))
-                    .into_any_element(),
-            )
+            .extra(widgets::back_to_game(cx.listener(|this, _, _, cx| {
+                let last = this.moves().len();
+                this.show_ply(last, cx)
+            })))
             .into_any_element();
         }
         if self.thinking() {

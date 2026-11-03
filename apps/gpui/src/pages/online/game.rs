@@ -582,7 +582,7 @@ impl OnlinePage {
             Some((
                 "history",
                 "Reviewing an earlier position".into(),
-                "Go to the last move to keep playing".into(),
+                String::new(),
             ))
         } else if playing {
             None
@@ -938,6 +938,13 @@ impl OnlinePage {
                         (!detail.is_empty()).then(|| detail.into()),
                         |banner, value| banner.detail(value),
                     )
+                    .when(reviewing, |banner| {
+                        let last = moves.len();
+                        banner.extra(widgets::back_to_game(move |_, _, cx| {
+                            crate::online::handle(cx)
+                                .update(cx, |online, cx| online.view_ply(last, cx));
+                        }))
+                    })
             }))
             .children(notices)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(

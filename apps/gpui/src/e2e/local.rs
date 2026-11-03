@@ -137,6 +137,18 @@ fn an_earlier_position_can_be_reviewed_but_not_played_on(cx: &mut gpui_kit::Test
     app.click("skip-forward");
     assert_eq!(app.status(), "Black to move");
     assert!(!app.enabled("chevron-right"));
+    assert!(!app.shows("back-to-game"));
+}
+
+#[gpui_kit::test]
+fn the_review_banner_goes_back_to_the_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5", "Nf3"]);
+    app.click("skip-back");
+    assert_eq!(app.status(), "Reviewing an earlier position");
+    app.click("back-to-game");
+    assert_eq!(app.status(), "Black to move");
+    assert!(!app.shows("back-to-game"));
 }
 
 #[gpui_kit::test]
