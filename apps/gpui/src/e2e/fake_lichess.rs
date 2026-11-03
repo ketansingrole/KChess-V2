@@ -27,8 +27,9 @@ pub struct Session {
     pub username: String,
     /// How many times the app opened the event stream, which brings games and challenges.
     pub streams: usize,
-    /// When it last did, in the order of every session's streams.
-    pub stream_opened: usize,
+    /// How many of those streams the app is still reading. A request the app gave up on can
+    /// still arrive late, so when a stream opened says less than whether it is still open.
+    pub listening: usize,
     /// The login no longer works: its streams close and Lichess answers 401.
     pub revoked: bool,
     /// A game is under way: reported on the event stream and in `account/playing`.
@@ -65,8 +66,6 @@ impl Handle {
 struct Server {
     base: String,
     next: AtomicUsize,
-    /// Numbers the event streams as they open.
-    streams: AtomicUsize,
     /// By the code the sign-in returns with, which is also the end of the login.
     sessions: Mutex<HashMap<String, Handle>>,
 }
@@ -86,7 +85,6 @@ fn server() -> &'static Server {
         Server {
             base,
             next: AtomicUsize::new(0),
-            streams: AtomicUsize::new(1),
             sessions: Mutex::new(HashMap::new()),
         }
     })
@@ -252,12 +250,16 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             let start = {
                 let mut session = session.lock();
                 session.streams += 1;
-                session.stream_opened = server().streams.fetch_add(1, Ordering::SeqCst);
+                session.listening += 1;
                 session.game
             };
             let first = start.then(|| json!({ "type": "gameStart", "game": summary() }));
+            let listening = session.clone();
             let open = move || !session.lock().revoked;
-            stream(&mut out, first.into_iter().collect(), open, |_| None)
+            // Until the app hangs up (a keep-alive fails to send) or the login is revoked.
+            let ended = stream(&mut out, first.into_iter().collect(), open, |_| None);
+            listening.lock().listening -= 1;
+            ended
         }
         ("GET", p) if p == stream_path => {
             let (first, seen) = {
@@ -387,7 +389,13 @@ fn stream(
         sent += 1;
     }
     let mut quiet = Instant::now();
+    // A hang-up is seen at once, not at the next keep-alive: the app does not send on a stream,
+    // so a read that ends means it has gone.
+    out.set_read_timeout(Some(Duration::from_millis(1)))?;
     while open() {
+        if matches!(out.peek(&mut [0u8; 1]), Ok(0)) {
+            return Ok(());
+        }
         if let Some(line) = next(sent) {
             chunk(out, &format!("{line}\n"))?;
             sent += 1;

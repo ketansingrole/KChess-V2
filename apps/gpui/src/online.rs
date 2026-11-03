@@ -1000,17 +1000,30 @@ pub fn account_connected(cx: &mut App) {
     let state = handle(cx);
     let phase = state.read(cx).model["onlinePhase"].as_str();
     if !matches!(phase, Some("playing" | "seeking")) {
-        resume(state, cx);
+        resume_quietly(state, true, cx);
     }
 }
 
 /// Attach the game Lichess says is in progress, then stay connected for challenges and games.
 fn resume(state: Entity<OnlineState>, cx: &mut App) {
+    resume_quietly(state, false, cx);
+}
+
+/// `resume`, with `quiet_first` closing the idle event stream before it. A resume ends by opening
+/// the stream of the account the core last kept it for: after a connect that is the previous
+/// account, whose stream then opened once more only to be replaced by the new account's.
+fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     let attempt = state.update(cx, |state, _| {
         state.resumes += 1;
         state.resumes
     });
-    let resume = cx.global::<AppCore>().call("resumeOnline", Vec::new());
+    let core = cx.global::<AppCore>().clone();
+    let resume = async move {
+        if quiet_first {
+            let _ = core.call("stayConnected", vec![json!("")]).await;
+        }
+        core.call("resumeOnline", Vec::new()).await
+    };
     cx.spawn(async move |cx| {
         let resumed = resume.await;
         state.update(cx, |state, cx| {

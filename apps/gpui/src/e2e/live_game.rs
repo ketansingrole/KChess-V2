@@ -146,6 +146,11 @@ fn signing_in_starts_listening_for_challenges(cx: &mut gpui_kit::TestAppContext)
     });
 }
 
+/// The app ends up reading the active account's stream and no other, and a connect does not open
+/// the previous account's again. It did: the resume a connect starts reopened the stream the core
+/// last kept, the old account's, before the app named the new one. That abandoned request reached
+/// Lichess ten seconds late on a PC whose network filter holds loopback connections, and the test,
+/// which compared when streams opened, took it for the stream the app kept.
 #[gpui_kit::test]
 fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, first) = Harness::signed_in(cx, false);
@@ -154,10 +159,15 @@ fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) 
     });
     let second = app.connect("Second", false);
     let listens_to =
-        |one: &Handle, other: &Handle| one.lock().stream_opened > other.lock().stream_opened;
+        |one: &Handle, other: &Handle| one.lock().listening > 0 && other.lock().listening == 0;
     app.wait_for("the second account's stream", |_, _| {
         listens_to(&second, &first)
     });
+    assert_eq!(
+        first.lock().streams,
+        1,
+        "the old account's stream opened again"
+    );
 
     app.open("Play on Lichess");
     app.click_label("Account");
