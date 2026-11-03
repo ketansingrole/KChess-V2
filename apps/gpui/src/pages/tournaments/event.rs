@@ -481,6 +481,13 @@ impl TournamentsPage {
                 board
             }
         };
+        let elapsed = if detail["status"] == json!("finished") {
+            0.
+        } else {
+            self.open
+                .as_ref()
+                .map_or(0., |open| open.received.elapsed().as_secs_f64())
+        };
         let side = |color: Color, index: usize| {
             let key = if color == Color::White {
                 "white"
@@ -488,10 +495,12 @@ impl TournamentsPage {
                 "black"
             };
             let entry = &featured[key];
-            let clock = featured["clocks"][key].as_f64().and_then(|seconds| {
-                rules("formatClock", &[json!(seconds * 1000.)])
-                    .ok()
-                    .and_then(|text| text.as_str().map(str::to_string))
+            let clock = featured_clock(&featured, color, elapsed).map(|(text, running)| {
+                div()
+                    .font_features(widgets::tabular())
+                    .when(running, |clock| clock.font_weight(FontWeight::MEDIUM))
+                    .when(!running, |clock| clock.text_color(palette.text_muted))
+                    .child(text)
             });
             h_flex()
                 .justify_between()
@@ -538,6 +547,42 @@ impl TournamentsPage {
                 .child(side(orientation, 1)),
         )
     }
+}
+
+/// The side whose clock runs in the top game: the side to move, once the game has a move.
+pub(super) fn featured_running(featured: &Value) -> Option<Color> {
+    featured["lastMove"].as_str()?;
+    featured["clocks"].as_object()?;
+    Some(
+        if featured["fen"]
+            .as_str()
+            .and_then(|fen| fen.split(' ').nth(1))
+            == Some("b")
+        {
+            Color::Black
+        } else {
+            Color::White
+        },
+    )
+}
+
+/// One side's clock in the top game, `elapsed` seconds after Lichess reported it, and whether it
+/// is the one running.
+fn featured_clock(featured: &Value, color: Color, elapsed: f64) -> Option<(String, bool)> {
+    let key = if color == Color::White {
+        "white"
+    } else {
+        "black"
+    };
+    let reported = featured["clocks"][key].as_f64()?;
+    let running = featured_running(featured) == Some(color);
+    let left = if running {
+        reported - elapsed
+    } else {
+        reported
+    };
+    let text = rules("formatClock", &[json!(left.max(0.) * 1000.)]).ok()?;
+    Some((text.as_str()?.to_string(), running))
 }
 
 /// The games being played now, each watched with a click.
@@ -625,8 +670,42 @@ fn totals(detail: &Value, palette: &Palette) -> Option<Div> {
 
 #[cfg(test)]
 mod tests {
-    use super::{facts, status_line};
+    use super::{facts, featured_clock, featured_running, status_line};
     use serde_json::json;
+    use shakmaty::Color;
+
+    #[test]
+    fn the_top_games_side_to_move_loses_time_between_refreshes() {
+        let featured = json!({
+            "fen": "8/8/8/8/8/8/8/8 b - - 0 1", "lastMove": "e2e4",
+            "clocks": { "white": 255, "black": 239 },
+        });
+        assert_eq!(
+            featured_clock(&featured, Color::Black, 30.),
+            Some(("3:29".to_string(), true))
+        );
+        assert_eq!(
+            featured_clock(&featured, Color::White, 30.),
+            Some(("4:15".to_string(), false))
+        );
+        // It stops at zero.
+        assert_eq!(
+            featured_clock(&featured, Color::Black, 400.),
+            Some(("0:00.0".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn the_top_games_clocks_wait_for_the_first_move() {
+        let featured = json!({
+            "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "clocks": { "white": 180, "black": 180 },
+        });
+        assert_eq!(featured_running(&featured), None);
+        assert_eq!(
+            featured_clock(&featured, Color::White, 30.),
+            Some(("3:00".to_string(), false))
+        );
+    }
 
     #[test]
     fn the_status_says_what_happens_next() {

@@ -2,7 +2,7 @@
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::InputState;
@@ -23,6 +23,8 @@ mod timeline;
 
 /// Standings and games move quickly while a tournament runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
+/// How often the top game's running clock is redrawn between refreshes.
+const CLOCK_TICK: Duration = Duration::from_millis(250);
 
 /// `control`: "3+2", "½+0".
 pub fn control(clock: &Value) -> String {
@@ -42,6 +44,8 @@ struct Open {
     system: String,
     id: String,
     detail: Option<Value>,
+    /// When `detail` arrived: the top game's clocks are as they were then.
+    received: Instant,
     error: Option<SharedString>,
     page: usize,
     epoch: u64,
@@ -65,6 +69,7 @@ pub struct TournamentsPage {
     scrolled_to_now: bool,
     focus: FocusHandle,
     _refresh: Task<()>,
+    _clock: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -103,6 +108,28 @@ impl TournamentsPage {
                 }
             }
         });
+        // Between refreshes the top game's side to move keeps losing time.
+        let clock = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(CLOCK_TICK).await;
+                let alive = this
+                    .update(cx, |this, cx| {
+                        let running = this.open.as_ref().is_some_and(|open| {
+                            open.detail.as_ref().is_some_and(|detail| {
+                                detail["status"] != json!("finished")
+                                    && event::featured_running(&detail["featured"]).is_some()
+                            })
+                        });
+                        if running {
+                            cx.notify();
+                        }
+                    })
+                    .is_ok();
+                if !alive {
+                    return;
+                }
+            }
+        });
         let mut page = TournamentsPage {
             playable_only: false,
             list: None,
@@ -119,6 +146,7 @@ impl TournamentsPage {
             scrolled_to_now: false,
             focus: cx.focus_handle(),
             _refresh: refresh,
+            _clock: clock,
             _subscriptions: subscriptions,
         };
         page.refresh(cx);
@@ -196,6 +224,7 @@ impl TournamentsPage {
                 system: system.to_string(),
                 id: id.to_string(),
                 detail: None,
+                received: Instant::now(),
                 error: None,
                 page: 1,
                 epoch: 0,
@@ -246,6 +275,7 @@ impl TournamentsPage {
                 match answer {
                     Ok(detail) => {
                         open.detail = Some(detail);
+                        open.received = Instant::now();
                         open.error = None;
                     }
                     Err(cause) => open.error = Some(cause.message.into()),
