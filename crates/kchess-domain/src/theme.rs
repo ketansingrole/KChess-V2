@@ -52,6 +52,34 @@ impl Rgb {
         )
     }
 
+    /// WCAG relative luminance, of the color as `hex` writes it.
+    fn luminance(self) -> f64 {
+        let linear = |value: f64| {
+            let value = value.round().clamp(0.0, 255.0) / 255.0;
+            if value <= 0.039_28 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(self.0) + 0.7152 * linear(self.1) + 0.0722 * linear(self.2)
+    }
+
+    /// WCAG contrast ratio with `other`, 1 to 21.
+    pub fn contrast(self, other: Rgb) -> f64 {
+        let (a, b) = (self.luminance(), other.luminance());
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// This color, or the least mix of it toward `toward` that reaches `ratio` against `against`
+    /// (`toward` itself when nothing short of it does).
+    pub fn at_least(self, ratio: f64, toward: Rgb, against: Rgb) -> Rgb {
+        (0..=100)
+            .map(|share| toward.mix(f64::from(share), self))
+            .find(|mixed| mixed.contrast(against) >= ratio)
+            .unwrap_or(toward)
+    }
+
     /// `#rrggbb`, each channel rounded to the nearest step.
     pub fn hex(self) -> String {
         let channel = |value: f64| value.round().clamp(0.0, 255.0) as u8;
@@ -63,6 +91,11 @@ impl Rgb {
         )
     }
 }
+
+/// The least contrast with the background muted text (`--ui-text-muted`) has.
+pub const MUTED_CONTRAST: f64 = 7.0;
+/// The least contrast with the background dimmed text (`--ui-text-dimmed`) has: WCAG AA.
+pub const DIMMED_CONTRAST: f64 = 4.5;
 
 /// The color names `colors` resolves, as the CSS variables they set.
 pub const NAMES: &[&str] = &[
@@ -111,9 +144,12 @@ pub fn colors(palette: &Value, dark: bool) -> Option<Map<String, Value>> {
     let elevated = or_mix("elevated", bg.mix(91.0, text))?;
     let accented = or_mix("accented", bg.mix(84.0, text))?;
     let border = or_mix("border", bg.mix(82.0, text))?;
-    let text_muted = or_mix("textMuted", text.mix(62.0, bg))?;
+    // Secondary text stays legible whatever a palette gives: thin grey labels under these
+    // ratios read as blurred on a 1x display.
+    let text_muted_rgb =
+        Rgb::parse(&or_mix("textMuted", text.mix(62.0, bg))?)?.at_least(MUTED_CONTRAST, text, bg);
+    let text_muted = text_muted_rgb.hex();
     let border_rgb = Rgb::parse(&border)?;
-    let text_muted_rgb = Rgb::parse(&text_muted)?;
     let success = or_default("success", "#246b37", "#62b57a")?;
     let error = or_default("error", "#b4232c", "#e07979")?;
     let values = [
@@ -130,7 +166,10 @@ pub fn colors(palette: &Value, dark: bool) -> Option<Map<String, Value>> {
         text.hex(),
         text.mix(80.0, text_muted_rgb).hex(),
         text_muted.clone(),
-        text_muted_rgb.mix(60.0, bg).hex(),
+        text_muted_rgb
+            .mix(60.0, bg)
+            .at_least(DIMMED_CONTRAST, text, bg)
+            .hex(),
         bg.hex(),
         color(given("primary")?)?,
         success.clone(),
@@ -156,13 +195,13 @@ pub fn default_colors(dark: bool) -> Map<String, Value> {
     let values: [&str; 22] = if dark {
         [
             "#171615", "#1c1b1a", "#201f1d", "#2c2a28", "#f5f4f1", "#33312e", "#282725", "#45433f",
-            "#f5f4f1", "#ecebe8", "#f5f4f1", "#c4c1bb", "#9c9992", "#7f7c76", "#171615", "#91af6a",
+            "#f5f4f1", "#ecebe8", "#f5f4f1", "#c4c1bb", "#b0ada6", "#918e88", "#171615", "#91af6a",
             "#62b57a", "#e0b25c", "#e07979", "#6cb6ff", "#62b57a", "#e07979",
         ]
     } else {
         [
             "#fcfcfb", "#f7f6f4", "#f4f3f0", "#e9e7e3", "#1c1b19", "#e4e2dd", "#ecebe7", "#d3d0ca",
-            "#1c1b19", "#1c1b19", "#141312", "#48453f", "#5f5c55", "#858178", "#ffffff", "#4b6231",
+            "#1c1b19", "#1c1b19", "#141312", "#48453f", "#514e47", "#6a665d", "#ffffff", "#4b6231",
             "#246b37", "#805500", "#b4232c", "#1d5b91", "#246b37", "#d05f5f",
         ]
     };
@@ -221,10 +260,52 @@ mod tests {
         assert_eq!(resolved["--ui-bg-muted"], "#f2f2f2");
         assert_eq!(resolved["--ui-bg-elevated"], "#e8e8e8");
         assert_eq!(resolved["--ui-border"], "#d1d1d1");
-        assert_eq!(resolved["--ui-text-muted"], "#616161");
+        // 62% black over white (#616161) is lifted to the muted contrast.
+        assert_eq!(resolved["--ui-text-muted"], "#595959");
         assert_eq!(resolved["--ui-primary"], "#4b6231");
         assert_eq!(resolved["--ui-success"], "#246b37");
         assert_eq!(resolved["--ui-win"], resolved["--ui-success"]);
+    }
+
+    /// Mono's grey labels (#808080 on black, 5.3:1) read as blurred on a 1x display. Secondary
+    /// text now has at least `MUTED_CONTRAST`, and dimmed text WCAG AA, in every theme.
+    #[test]
+    fn secondary_text_is_legible_in_every_theme() {
+        let mono = colors(
+            &json!({ "bg": "#000000", "text": "#e5e5e5", "textMuted": "#808080", "primary": "#fff" }),
+            true,
+        )
+        .unwrap();
+        assert_ne!(mono["--ui-text-muted"], "#808080");
+        let presets: Vec<Value> = serde_json::from_value(presets().clone()).unwrap();
+        let mut themes: Vec<Map<String, Value>> = vec![default_colors(false), default_colors(true)];
+        for preset in &presets {
+            for (mode, dark) in [("light", false), ("dark", true)] {
+                themes.extend(colors(&preset[mode], dark));
+            }
+        }
+        themes.push(mono);
+        for theme in &themes {
+            let color = |name: &str| Rgb::parse(theme[name].as_str().unwrap()).unwrap();
+            let bg = color("--ui-bg");
+            // A palette whose own text is fainter than a floor gets its text there instead.
+            let text = color("--ui-text").contrast(bg);
+            assert!(
+                color("--ui-text-muted").contrast(bg) >= MUTED_CONTRAST.min(text),
+                "{theme:?}"
+            );
+            assert!(
+                color("--ui-text-dimmed").contrast(bg) >= DIMMED_CONTRAST.min(text),
+                "{theme:?}"
+            );
+        }
+        // A palette that already meets them keeps its colors.
+        let calm = colors(
+            &json!({ "bg": "#000000", "text": "#ffffff", "textMuted": "#bbbbbb", "primary": "#fff" }),
+            true,
+        )
+        .unwrap();
+        assert_eq!(calm["--ui-text-muted"], "#bbbbbb");
     }
 
     #[test]
