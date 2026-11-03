@@ -1,5 +1,6 @@
 //! Players beyond one profile: following and blocking, many profiles at once, leaderboards, name
-//! search, a player's activity, an account's timeline, uploading a game and bookmarked games.
+//! search, a player's activity, the Following list's timeline, uploading a game and bookmarked
+//! games.
 //! Activity and timeline lines are written here, so every frontend shows the same text.
 
 use serde::Serialize;
@@ -7,6 +8,7 @@ use serde_json::Value;
 
 use super::accounts::{
     Lichess, LichessGame, Reply, no_such_user, normalize_game, parse_game, path_segment,
+    profile_key,
 };
 use super::client::Failure;
 use crate::error::{CoreError, Result as CoreResult};
@@ -19,6 +21,8 @@ const LEADERBOARD_SIZE: usize = 100;
 /// Lichess searches names from this many characters.
 const SEARCH_MIN: usize = 3;
 const TIMELINE_SIZE: usize = 30;
+/// How many players of the Following list the timeline reads, at most.
+const TIMELINE_PLAYERS: usize = 15;
 const BOOKMARKS_MAX: usize = 100;
 
 /// `LichessRelation` of the contracts.
@@ -61,6 +65,15 @@ pub struct ActivityItem {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub game_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating: Option<RatingChange>,
+}
+
+/// `RatingChange` of the contracts: a rating over the line's games or puzzles.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct RatingChange {
+    pub before: f64,
+    pub after: f64,
 }
 
 /// `ActivityDay` of the contracts.
@@ -74,6 +87,8 @@ pub struct ActivityDay {
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct TimelineEntry {
     pub date: f64,
+    /// Who on the Following list the line is about.
+    pub player: String,
     pub item: ActivityItem,
 }
 
@@ -202,41 +217,71 @@ impl Lichess {
         Ok(read_suggestions(&body))
     }
 
-    /// `activity`: what `username` did lately, by day.
+    /// `activity`: what `username` did lately, by day. Cached for a few minutes like a profile,
+    /// so the timeline and the player's page share one read.
     pub async fn activity(&self, username: &str) -> CoreResult<Vec<ActivityDay>> {
-        let body: Value = self
-            .client()
-            .policy()
-            .with_usage("", "profile", async {
+        let body = self
+            .cached_fetch(&profile_key(username, "activity"), username, || async {
                 self.client()
-                    .get_json(
-                        &format!("/api/user/{}/activity", path_segment(username)),
-                        &[],
-                        None,
-                        self.lifetime(),
-                    )
+                    .policy()
+                    .with_usage("", "profile", async {
+                        self.client()
+                            .get_json(
+                                &format!("/api/user/{}/activity", path_segment(username)),
+                                &[],
+                                None,
+                                self.lifetime(),
+                            )
+                            .await
+                            .map_err(|failure| no_such_user(username, failure))
+                    })
                     .await
-                    .map_err(|failure| no_such_user(username, failure))
             })
             .await?;
         Ok(read_activity(&body))
     }
 
-    /// `timeline`: what the players `account` follows did lately.
-    pub async fn timeline(&self, account: &str) -> CoreResult<Reply<Vec<TimelineEntry>>> {
-        self.as_account(account, "profile", |token| async move {
-            let body: Value = self
-                .client()
-                .get_json(
-                    "/api/timeline",
-                    &[("nb", TIMELINE_SIZE.to_string())],
-                    Some(&super::client::authorize(&token)),
-                    self.lifetime(),
-                )
-                .await?;
-            Ok(read_timeline(&body))
-        })
-        .await
+    /// `timeline`: what the players on the Following list did lately, newest first. Lichess's
+    /// own timeline answers only its mobile app's login, so this reads each player's public
+    /// activity. A player whose activity cannot be read is left out; when none can be, the first
+    /// failure is the answer.
+    pub async fn timeline(&self) -> CoreResult<Vec<TimelineEntry>> {
+        let players: Vec<String> = self
+            .store()
+            .accounts()
+            .await?
+            .into_iter()
+            .filter(|row| !row.connected)
+            .map(|row| row.username)
+            .take(TIMELINE_PLAYERS)
+            .collect();
+        let mut entries = Vec::new();
+        let mut failure = None;
+        let mut answered = players.is_empty();
+        // One at a time: Lichess asks for that, and answers a burst with a minute's lockout.
+        for name in &players {
+            match self.activity(name).await {
+                Ok(days) => {
+                    answered = true;
+                    entries.extend(player_timeline(name, days));
+                }
+                Err(cause) => {
+                    self.host().log(
+                        crate::host::Level::Warn,
+                        "lichess",
+                        &format!("Could not read {name}'s activity: {}", cause.message),
+                    );
+                    failure.get_or_insert(cause);
+                }
+            }
+        }
+        if !answered && let Some(cause) = failure {
+            return Err(cause);
+        }
+        // Newest day first; a day keeps each player's lines together, in the list's order.
+        entries.sort_by(|a, b| b.date.total_cmp(&a.date));
+        entries.truncate(TIMELINE_SIZE);
+        Ok(entries)
     }
 
     /// `importGame`: upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
@@ -343,6 +388,7 @@ fn item(kind: &str, text: String) -> ActivityItem {
         text,
         username: None,
         game_id: None,
+        rating: None,
     }
 }
 
@@ -363,11 +409,11 @@ fn score_text(score: &Value) -> String {
 }
 
 /// `rp: { before, after }` as " · 1650 → 1672".
-fn rating_change(rp: &Value) -> String {
-    match (rp["before"].as_f64(), rp["after"].as_f64()) {
-        (Some(before), Some(after)) => format!(" · {} → {}", before.round(), after.round()),
-        _ => String::new(),
-    }
+fn rating_change(rp: &Value) -> Option<RatingChange> {
+    Some(RatingChange {
+        before: rp["before"].as_f64()?.round(),
+        after: rp["after"].as_f64()?.round(),
+    })
 }
 
 pub fn read_leaderboard(body: &Value, perf: &str) -> Vec<LeaderboardEntry> {
@@ -413,15 +459,17 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
                 continue;
             }
             let name = label(perf);
-            items.push(item(
-                "games",
-                format!(
-                    "Played {}: {}{}",
-                    plural(n, &format!("{name} game"), &format!("{name} games")),
-                    score_text(score),
-                    rating_change(&score["rp"]),
-                ),
-            ));
+            items.push(ActivityItem {
+                rating: rating_change(&score["rp"]),
+                ..item(
+                    "games",
+                    format!(
+                        "Played {}: {}",
+                        plural(n, &format!("{name} game"), &format!("{name} games")),
+                        score_text(score),
+                    ),
+                )
+            });
         }
     }
     let puzzles = &day["puzzles"]["score"];
@@ -429,12 +477,18 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
         let solved = count(&puzzles["win"]);
         let failed = count(&puzzles["loss"]);
         if solved + failed > 0 {
-            let mut text = format!("Solved {}", plural(solved, "puzzle", "puzzles"));
-            if failed > 0 {
+            let mut text = if solved == 0 {
+                format!("Failed {}", plural(failed, "puzzle", "puzzles"))
+            } else {
+                format!("Solved {}", plural(solved, "puzzle", "puzzles"))
+            };
+            if solved > 0 && failed > 0 {
                 text.push_str(&format!(", failed {failed}"));
             }
-            text.push_str(&rating_change(&puzzles["rp"]));
-            items.push(item("puzzles", text));
+            items.push(ActivityItem {
+                rating: rating_change(&puzzles["rp"]),
+                ..item("puzzles", text)
+            });
         }
     }
     for (key, name) in [
@@ -447,7 +501,7 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
             items.push(item(
                 "puzzles",
                 format!(
-                    "{name}: {}, best {}",
+                    "Played {name}: {}, best {}",
                     plural(runs, "run", "runs"),
                     count(&day[key]["score"])
                 ),
@@ -563,116 +617,14 @@ pub fn read_activity(body: &Value) -> Vec<ActivityDay> {
         .collect()
 }
 
-/// One `/api/timeline` entry as a line, with `users` naming the ids it mentions.
-fn timeline_item(entry: &Value, users: &Value) -> Option<ActivityItem> {
-    let data = &entry["data"];
-    let name = |id: &Value| -> Option<String> {
-        let id = id.as_str()?;
-        Some(users[id]["name"].as_str().unwrap_or(id).to_string())
-    };
-    let by = |text: String| -> Option<ActivityItem> {
-        let who = name(&data["userId"])?;
-        Some(ActivityItem {
-            username: Some(who.clone()),
-            ..item("other", format!("{who} {text}"))
-        })
-    };
-    let with_kind = |kind: &str, found: Option<ActivityItem>| {
-        found.map(|found| ActivityItem {
-            kind: kind.to_string(),
-            ..found
-        })
-    };
-    match entry["type"].as_str()? {
-        "follow" => {
-            let (from, to) = (name(&data["u1"])?, name(&data["u2"])?);
-            Some(ActivityItem {
-                username: Some(from.clone()),
-                ..item("follow", format!("{from} started following {to}"))
-            })
-        }
-        "game-end" => {
-            let opponent = name(&data["opponent"]);
-            let verb = match data["win"].as_bool() {
-                Some(true) => "Won",
-                Some(false) => "Lost",
-                None => "Drew",
-            };
-            let against = opponent
-                .as_ref()
-                .map_or(String::new(), |who| format!(" against {who}"));
-            let perf =
-                text_of(&data["perf"]).map_or(String::new(), |perf| format!(" ({})", label(&perf)));
-            let full = text_of(&data["fullId"])?;
-            Some(ActivityItem {
-                kind: "games".to_string(),
-                text: format!("{verb} a game{against}{perf}"),
-                username: opponent,
-                game_id: full.get(..8).map(str::to_string),
-            })
-        }
-        "tour-join" => with_kind(
-            "tournament",
-            by(format!("joined {}", text_of(&data["tourName"])?)),
-        ),
-        "simul-create" => with_kind(
-            "simul",
-            by(format!("is hosting {}", text_of(&data["simulName"])?)),
-        ),
-        "simul-join" => with_kind(
-            "simul",
-            by(format!("joined {}", text_of(&data["simulName"])?)),
-        ),
-        "study-like" => with_kind(
-            "study",
-            by(format!("liked the study {}", text_of(&data["studyName"])?)),
-        ),
-        "forum-post" => with_kind(
-            "post",
-            by(format!("posted in {}", text_of(&data["topicName"])?)),
-        ),
-        "ublog-post" => with_kind(
-            "post",
-            by(format!("published {}", text_of(&data["title"])?)),
-        ),
-        "ublog-post-like" => with_kind("post", by(format!("liked {}", text_of(&data["title"])?))),
-        "team-join" => with_kind(
-            "team",
-            by(format!("joined the team {}", text_of(&data["teamId"])?)),
-        ),
-        "team-create" => with_kind(
-            "team",
-            by(format!("created the team {}", text_of(&data["teamId"])?)),
-        ),
-        "plan-start" => with_kind("patron", by("became a Lichess patron".to_string())),
-        "plan-renew" => with_kind(
-            "patron",
-            by(format!(
-                "has supported Lichess for {}",
-                plural(count(&data["months"]), "month", "months")
-            )),
-        ),
-        "stream-start" => {
-            let who = name(&data["id"]).or_else(|| text_of(&data["name"]))?;
-            Some(ActivityItem {
-                username: Some(who.clone()),
-                ..item("stream", format!("{who} started streaming"))
-            })
-        }
-        _ => None,
-    }
-}
-
-pub fn read_timeline(body: &Value) -> Vec<TimelineEntry> {
-    let users = &body["users"];
-    body["entries"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            Some(TimelineEntry {
-                date: entry["date"].as_f64()?,
-                item: timeline_item(entry, users)?,
+/// `name`'s activity as timeline entries.
+fn player_timeline(name: &str, days: Vec<ActivityDay>) -> Vec<TimelineEntry> {
+    days.into_iter()
+        .flat_map(|day| {
+            day.items.into_iter().map(move |item| TimelineEntry {
+                date: day.start,
+                player: name.to_string(),
+                item,
             })
         })
         .collect()
@@ -717,7 +669,7 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "Played 10 Blitz games: 7 wins, 3 losses · 1650 → 1672",
+                "Played 10 Blitz games: 7 wins, 3 losses",
                 "Solved 15 puzzles, failed 3",
                 "Ranked #3 in Hourly Blitz Arena (top 5%) · 8 games",
                 "Gained 2 followers",
@@ -725,23 +677,15 @@ mod tests {
             ]
         );
         assert_eq!(days[0].items[4].username.as_deref(), Some("Erin"));
-    }
-
-    #[test]
-    fn names_timeline_users_and_skips_unknown_entries() {
-        let body = json!({
-            "entries": [
-                { "type": "follow", "data": { "u1": "alice", "u2": "bob" }, "date": 3 },
-                { "type": "game-end", "data": { "fullId": "AbCd1234wxyz", "perf": "rapid", "opponent": "bob", "win": true }, "date": 2 },
-                { "type": "something-new", "data": {}, "date": 1 },
-            ],
-            "users": { "alice": { "id": "alice", "name": "Alice" }, "bob": { "id": "bob", "name": "Bob" } },
-        });
-        let entries = read_timeline(&body);
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].item.text, "Alice started following Bob");
-        assert_eq!(entries[1].item.text, "Won a game against Bob (Rapid)");
-        assert_eq!(entries[1].item.game_id.as_deref(), Some("AbCd1234"));
+        // The rating is its own field, so it lines up beside the text.
+        assert_eq!(
+            days[0].items[0].rating,
+            Some(RatingChange {
+                before: 1650.,
+                after: 1672.
+            })
+        );
+        assert_eq!(days[0].items[1].rating, None);
     }
 
     #[test]
@@ -779,9 +723,9 @@ mod tests {
                 // In the order Lichess lists them.
                 ("games", "Played 1 Chess960 game: 1 win"),
                 ("games", "Played 1 Bullet game: 1 draw"),
-                ("puzzles", "Solved 1 puzzle · 1500 → 1510"),
-                ("puzzles", "Puzzle Storm: 2 runs, best 31"),
-                ("puzzles", "Puzzle Racer: 1 run, best 20"),
+                ("puzzles", "Solved 1 puzzle"),
+                ("puzzles", "Played Puzzle Storm: 2 runs, best 31"),
+                ("puzzles", "Played Puzzle Racer: 1 run, best 20"),
                 ("tournament", "Ranked #2 in Swiss · 1 game"),
                 ("correspondence", "Played 1 move in 1 correspondence game"),
                 (
@@ -801,71 +745,39 @@ mod tests {
     }
 
     #[test]
-    fn writes_every_kind_of_timeline_entry() {
-        let entry = |kind: &str, data: Value| json!({ "type": kind, "data": data, "date": 1 });
-        let body = json!({
-            "users": { "alice": { "name": "Alice" } },
-            "entries": [
-                entry("game-end", json!({ "fullId": "AbCd1234wxyz" })),
-                entry("game-end", json!({ "fullId": "AbCd1234wxyz", "opponent": "zed", "win": false, "perf": "unknownPerf" })),
-                entry("game-end", json!({ "opponent": "alice" })),
-                entry("tour-join", json!({ "userId": "alice", "tourName": "Arena" })),
-                entry("simul-create", json!({ "userId": "alice", "simulName": "S1" })),
-                entry("simul-join", json!({ "userId": "alice", "simulName": "S2" })),
-                entry("study-like", json!({ "userId": "alice", "studyName": "Endgames" })),
-                entry("forum-post", json!({ "userId": "alice", "topicName": "Hi" })),
-                entry("ublog-post", json!({ "userId": "alice", "title": "Blog" })),
-                entry("ublog-post-like", json!({ "userId": "alice", "title": "Blog" })),
-                entry("team-join", json!({ "userId": "alice", "teamId": "club" })),
-                entry("team-create", json!({ "userId": "alice", "teamId": "club" })),
-                entry("plan-start", json!({ "userId": "alice" })),
-                entry("plan-renew", json!({ "userId": "alice", "months": 2 })),
-                entry("stream-start", json!({ "id": "alice" })),
-                entry("stream-start", json!({ "name": "Streamer" })),
-                entry("tour-join", json!({ "tourName": "No user" })),
-                entry("follow", json!({ "u1": "alice" })),
-                json!({ "type": "follow", "data": { "u1": "alice", "u2": "bob" } }),
-            ],
-        });
-        let lines: Vec<(String, String, Option<String>)> = read_timeline(&body)
-            .into_iter()
-            .map(|entry| (entry.item.kind, entry.item.text, entry.item.username))
+    fn a_day_of_only_failed_puzzles_says_so() {
+        let body = json!([{ "interval": { "start": 0, "end": 1000 },
+                            "puzzles": { "score": { "win": 0, "loss": 1, "draw": 0 } } }]);
+        assert_eq!(read_activity(&body)[0].items[0].text, "Failed 1 puzzle");
+    }
+
+    #[test]
+    fn a_players_activity_reads_as_timeline_lines() {
+        let body = json!([{
+            "interval": { "start": 2000, "end": 3000 },
+            "puzzles": { "score": { "win": 2, "loss": 0, "draw": 0 } },
+            "follows": { "out": { "ids": ["Erin"] } },
+        }]);
+        let entries = player_timeline("Dana", read_activity(&body));
+        let lines: Vec<(f64, &str, &str, Option<&str>)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.date,
+                    entry.player.as_str(),
+                    entry.item.text.as_str(),
+                    entry.item.username.as_deref(),
+                )
+            })
             .collect();
-        let alice = Some("Alice".to_string());
-        let expected: Vec<(&str, &str, Option<String>)> = vec![
-            ("games", "Drew a game", None),
-            (
-                "games",
-                "Lost a game against zed (unknownPerf)",
-                Some("zed".into()),
-            ),
-            ("tournament", "Alice joined Arena", alice.clone()),
-            ("simul", "Alice is hosting S1", alice.clone()),
-            ("simul", "Alice joined S2", alice.clone()),
-            ("study", "Alice liked the study Endgames", alice.clone()),
-            ("post", "Alice posted in Hi", alice.clone()),
-            ("post", "Alice published Blog", alice.clone()),
-            ("post", "Alice liked Blog", alice.clone()),
-            ("team", "Alice joined the team club", alice.clone()),
-            ("team", "Alice created the team club", alice.clone()),
-            ("patron", "Alice became a Lichess patron", alice.clone()),
-            (
-                "patron",
-                "Alice has supported Lichess for 2 months",
-                alice.clone(),
-            ),
-            ("stream", "Alice started streaming", alice.clone()),
-            (
-                "stream",
-                "Streamer started streaming",
-                Some("Streamer".into()),
-            ),
-        ];
-        let expected: Vec<(String, String, Option<String>)> = expected
-            .into_iter()
-            .map(|(kind, text, user)| (kind.to_string(), text.to_string(), user))
-            .collect();
-        assert_eq!(lines, expected);
+        // The player is the entry's; a name in the line stays the line's own link.
+        assert_eq!(
+            lines,
+            [
+                (2000., "Dana", "Solved 2 puzzles", None),
+                (2000., "Dana", "Started following Erin", Some("Erin")),
+            ]
+        );
     }
 
     #[test]

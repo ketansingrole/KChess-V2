@@ -1082,6 +1082,15 @@ pub struct ActivityItem {
     pub username: Option<String>,
     /// A game the line is about, to open it.
     pub game_id: Option<String>,
+    /// The rating over the line's games or puzzles.
+    pub rating: Option<RatingChange>,
+}
+
+/// A rating before and after a day's games or puzzles.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RatingChange {
+    pub before: f64,
+    pub after: f64,
 }
 
 /// A day of a player's Lichess activity, newest first.
@@ -1093,12 +1102,14 @@ pub struct ActivityDay {
     pub items: Vec<ActivityItem>,
 }
 
-/// One entry of an account's Lichess timeline (what followed players did), newest first.
+/// One line of the Following list's timeline (what its players did), newest first.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineEntry {
-    /// Epoch milliseconds.
+    /// Start of the day, epoch milliseconds.
     pub date: f64,
+    /// Who on the Following list the line is about.
+    pub player: String,
     pub item: ActivityItem,
 }
 

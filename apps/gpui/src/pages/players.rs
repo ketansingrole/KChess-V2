@@ -27,6 +27,12 @@ const RECENT_KEY: &str = "kchess:players-recent";
 const RECENT_KEPT: usize = 8;
 const SUGGESTED: usize = 12;
 const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
+/// Which players the leaderboard shows: `all`, `titled` or one title.
+const BOARD_TITLE_KEY: &str = "kchess:leaderboard-title";
+/// Lichess's titles, in the order offered.
+const TITLES: [&str; 11] = [
+    "GM", "IM", "FM", "CM", "NM", "WGM", "WIM", "WFM", "WCM", "LM", "BOT",
+];
 /// How long typing settles before names are searched.
 const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
 /// Rating categories with a Lichess leaderboard, in the order offered.
@@ -151,6 +157,10 @@ pub struct PlayersPage {
     board_perf: String,
     board_select: Entity<SelectState<Vec<Choice>>>,
     board_epoch: u64,
+    board_title: String,
+    title_select: Entity<SelectState<Vec<Choice>>>,
+    /// The `board_epoch` whose titles `title_select` offers.
+    title_choices_for: Option<u64>,
     /// `PlayerSuggestion`s for what is typed.
     matches: Vec<Value>,
     search_epoch: u64,
@@ -192,6 +202,8 @@ impl PlayersPage {
             select.set_selected_value(&chosen, window, cx);
             select
         });
+        let board_title: String = crate::prefs::get(cx, BOARD_TITLE_KEY, "all".to_string());
+        let title_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let subscriptions =
             vec![
                 cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
@@ -224,6 +236,14 @@ impl PlayersPage {
                         }
                     },
                 ),
+                cx.subscribe(
+                    &title_select,
+                    |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                        if let SelectEvent::Confirm(Some(value)) = event {
+                            this.show_titles(value.to_string(), cx);
+                        }
+                    },
+                ),
                 cx.observe(&accounts, |this, _, cx| {
                     this.account_changed(cx);
                     cx.notify();
@@ -252,6 +272,9 @@ impl PlayersPage {
             board_perf,
             board_select,
             board_epoch: 0,
+            board_title,
+            title_select,
+            title_choices_for: None,
             matches: Vec::new(),
             search_epoch: 0,
             error: None,
@@ -295,6 +318,34 @@ impl PlayersPage {
             });
         })
         .detach();
+    }
+
+    /// Show only the leaderboard's players with `filter` (`all`, `titled` or one title).
+    fn show_titles(&mut self, filter: String, cx: &mut Context<Self>) {
+        if filter != self.board_title {
+            self.board_title = filter;
+            crate::prefs::set(cx, BOARD_TITLE_KEY, self.board_title.clone());
+            // The chosen filter is offered even when the board has none of its players.
+            self.title_choices_for = None;
+            cx.notify();
+        }
+    }
+
+    /// Offer the titles the loaded leaderboard has, each with how many of its players hold it.
+    fn sync_title_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(board) = &self.board else {
+            return;
+        };
+        if self.title_choices_for == Some(self.board_epoch) {
+            return;
+        }
+        self.title_choices_for = Some(self.board_epoch);
+        let items = title_choices(board, &self.board_title);
+        let chosen = SharedString::from(self.board_title.clone());
+        self.title_select.update(cx, |select, cx| {
+            select.set_items(items, window, cx);
+            select.set_selected_value(&chosen, window, cx);
+        });
     }
 
     /// Players whose names start with what is typed, once typing settles.
@@ -1230,18 +1281,33 @@ impl PlayersPage {
         )
     }
 
-    fn board_card(&self, palette: &Palette) -> Div {
+    fn board_card(&self, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let card = widgets::card(palette).gap(px(8.)).child(
+            // On a narrow window the filters drop under the heading.
             h_flex()
+                .flex_wrap()
+                .gap(px(8.))
                 .justify_between()
                 .items_center()
                 .child(widgets::heading("Leaderboard", palette))
                 .child(
-                    div().w(px(160.)).child(
-                        Select::new(&self.board_select)
-                            .small()
-                            .accessibility_label("Leaderboard speed"),
-                    ),
+                    h_flex()
+                        .gap(px(8.))
+                        .child(
+                            div().w(px(144.)).child(
+                                Select::new(&self.title_select)
+                                    .small()
+                                    .disabled(self.board.is_none())
+                                    .accessibility_label("Leaderboard titles"),
+                            ),
+                        )
+                        .child(
+                            div().w(px(160.)).child(
+                                Select::new(&self.board_select)
+                                    .small()
+                                    .accessibility_label("Leaderboard speed"),
+                            ),
+                        ),
                 ),
         );
         if let Some(error) = &self.board_error {
@@ -1255,37 +1321,79 @@ impl PlayersPage {
         let Some(board) = &self.board else {
             return card.child(widgets::hint("Loading…", palette));
         };
+        let filter = self.board_title.as_str();
+        let shown: Vec<(usize, &Value)> = board
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| title_shown(filter, entry["title"].as_str()))
+            .collect();
+        if shown.is_empty() && !board.is_empty() {
+            let none = match filter {
+                "titled" => "No titled players in this leaderboard".to_string(),
+                title => format!("No {title} in this leaderboard"),
+            };
+            return card.child(
+                h_flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(widgets::hint(none, palette))
+                    .child(
+                        Button::new("players-board-all")
+                            .text()
+                            .xsmall()
+                            .label("Show all players")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_titles("all".to_string(), cx)
+                            })),
+                    ),
+            );
+        }
+        let numeric = |width: f32| {
+            div()
+                .w(px(width))
+                .flex_none()
+                .text_right()
+                .font_features(widgets::tabular())
+        };
         card.child(
             v_flex()
                 .id("players-board")
                 .max_h(px(512.))
                 .overflow_y_scroll()
                 .text_size(px(13.))
-                .children(board.iter().enumerate().map(|(index, entry)| {
+                .children(shown.into_iter().map(|(index, entry)| {
                     let name = entry["username"].as_str().unwrap_or_default().to_string();
                     let progress = entry["progress"].as_f64().unwrap_or_default();
+                    // Rank, title, name, rating and change, each in its own column, so the
+                    // names and the digits line up down the board.
                     h_flex()
-                        .gap(px(8.))
+                        .id(("players-board-row", index))
+                        .test_support()
+                        .gap(px(12.))
                         .py(px(4.))
                         .border_t_1()
                         .border_color(palette.border)
                         .child(
-                            div()
-                                .w(px(40.))
+                            numeric(28.)
                                 .text_color(palette.text_muted)
                                 .child((index + 1).to_string()),
                         )
                         .child(
-                            h_flex()
+                            div()
+                                .id(("players-board-title", index))
+                                .test_support()
+                                .w(px(32.))
+                                .flex_none()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(palette.warning)
+                                .children(entry["title"].as_str().map(str::to_string)),
+                        )
+                        .child(
+                            div()
+                                .id(("players-board-player", index))
+                                .test_support()
                                 .flex_1()
                                 .min_w_0()
-                                .gap(px(4.))
-                                .children(entry["title"].as_str().map(|title| {
-                                    div()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(palette.warning)
-                                        .child(title.to_string())
-                                }))
                                 .child(player_link(
                                     ("players-board-name", index),
                                     name,
@@ -1293,7 +1401,7 @@ impl PlayersPage {
                                 )),
                         )
                         .child(
-                            div().w(px(64.)).child(
+                            numeric(48.).child(
                                 entry["rating"]
                                     .as_f64()
                                     .unwrap_or_default()
@@ -1302,8 +1410,15 @@ impl PlayersPage {
                             ),
                         )
                         .child(
-                            div()
-                                .w(px(48.))
+                            numeric(40.)
+                                .id(("players-board-change", index))
+                                // Lichess's progress counts games, not days.
+                                .tooltip(|window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(
+                                        "Rating change over the last 12 games",
+                                    )
+                                    .build(window, cx)
+                                })
                                 .text_size(px(12.))
                                 .text_color(if progress > 0. {
                                     palette.success
@@ -1322,7 +1437,7 @@ impl PlayersPage {
         )
     }
 
-    fn days_card(&self, palette: &Palette) -> Div {
+    fn days_card(&self, narrow: bool, palette: &Palette) -> Div {
         let card = widgets::card(palette)
             .gap(px(8.))
             .child(widgets::heading("Activity", palette));
@@ -1340,6 +1455,7 @@ impl PlayersPage {
             Some(days) => card.child(crate::activity::activity_list(
                 "players-activity",
                 &crate::activity::activity_groups(days),
+                narrow,
                 palette,
             )),
         }
@@ -1421,6 +1537,36 @@ pub fn open_exported(
 }
 
 /// A name that opens the player's profile; `ring` outlines it under the keyboard.
+/// Whether a player with `title` passes the leaderboard's `filter`.
+fn title_shown(filter: &str, title: Option<&str>) -> bool {
+    match filter {
+        "all" => true,
+        "titled" => title.is_some_and(|title| title != "BOT"),
+        filter => title == Some(filter),
+    }
+}
+
+/// The leaderboard's title filters: everyone, the titled, and each title its players hold, with
+/// how many; `chosen` is kept even when none hold it.
+fn title_choices(board: &[Value], chosen: &str) -> Vec<Choice> {
+    let held = |filter: &str| {
+        board
+            .iter()
+            .filter(|entry| title_shown(filter, entry["title"].as_str()))
+            .count()
+    };
+    let titled = held("titled");
+    let mut choices = vec![Choice::new("all", "All players")];
+    if titled > 0 || chosen == "titled" {
+        choices.push(Choice::new("titled", format!("Titled ({titled})")));
+    }
+    choices.extend(TITLES.iter().filter_map(|title| {
+        let count = held(title);
+        (count > 0 || chosen == *title).then(|| Choice::new(*title, format!("{title} ({count})")))
+    }));
+    choices
+}
+
 pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Stateful<Div> {
     div()
         .id(id)
@@ -1449,7 +1595,7 @@ impl Render for PlayersPage {
             let profile_card = self.profile_card(&profile, cx, &palette);
             let record = self.record_card(&palette);
             let games = self.games_card(cx, &palette);
-            let days = self.days_card(&palette);
+            let days = self.days_card(narrow, &palette);
             if narrow {
                 v_flex()
                     .gap(px(16.))
@@ -1478,8 +1624,10 @@ impl Render for PlayersPage {
                     .child(days)
             }
         });
-        let board = (self.profile.is_none() && crate::network::online(cx))
-            .then(|| self.board_card(&palette));
+        let board = (self.profile.is_none() && crate::network::online(cx)).then(|| {
+            self.sync_title_choices(window, cx);
+            self.board_card(&palette, cx)
+        });
         div()
             .id("players-page")
             .track_focus(&self.focus)
@@ -1643,7 +1791,7 @@ impl Render for MessageDialog {
 
 #[cfg(test)]
 mod tests {
-    use super::{hours, is_username, played_perfs, suggestions};
+    use super::{hours, is_username, played_perfs, suggestions, title_choices, title_shown};
     use serde_json::json;
 
     #[test]
@@ -1680,5 +1828,32 @@ mod tests {
     fn play_time_reads_in_hours_or_minutes() {
         assert_eq!(hours(7200.), "2 h");
         assert_eq!(hours(1500.), "25 min");
+    }
+
+    #[test]
+    fn titles_are_offered_as_the_board_holds_them() {
+        let board = [
+            json!({ "title": "GM" }),
+            json!({}),
+            json!({ "title": "IM" }),
+            json!({ "title": "GM" }),
+        ];
+        let labels = |chosen: &str| {
+            title_choices(&board, chosen)
+                .into_iter()
+                .map(|choice| choice.label.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels("all"),
+            ["All players", "Titled (3)", "GM (2)", "IM (1)"]
+        );
+        // A saved title the board lacks stays choosable, at none.
+        assert_eq!(
+            labels("WGM"),
+            ["All players", "Titled (3)", "GM (2)", "IM (1)", "WGM (0)"]
+        );
+        assert!(!title_shown("titled", Some("BOT")));
+        assert!(!title_shown("GM", None));
     }
 }

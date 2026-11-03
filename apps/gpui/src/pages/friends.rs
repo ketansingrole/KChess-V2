@@ -31,6 +31,10 @@ const PRESENCE_EVERY: Duration = Duration::from_secs(20);
 /// A saved profile this recent is not asked for again.
 const PROFILE_FRESH_MS: f64 = 3_600_000.;
 
+/// Timeline lines shown at first, and how many more each "Show more" adds.
+const TIMELINE_FIRST: usize = 12;
+const TIMELINE_MORE: usize = 20;
+
 pub struct FriendsPage {
     input: Entity<InputState>,
     /// Profiles by lowercase name (`LichessUser`), and presence (`UserPresence`).
@@ -42,12 +46,12 @@ pub struct FriendsPage {
     /// How many players were followed at the last look.
     followed: usize,
     importer: Option<Entity<ImportDialog>>,
-    /// The online account's Lichess timeline (`TimelineEntry`s), once read.
+    /// What the players on the list did lately (`TimelineEntry`s), once read.
     timeline: Option<Vec<Value>>,
     timeline_error: Option<SharedString>,
     timeline_epoch: u64,
-    /// The account the timeline was read for.
-    timeline_account: Option<String>,
+    /// How many of its lines the timeline shows.
+    timeline_shown: usize,
     focus: FocusHandle,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -88,11 +92,9 @@ impl FriendsPage {
                         this.followed = count;
                         this.load_profiles(cx);
                         this.refresh_status(cx);
-                    }
-                    this.load_versus(cx);
-                    if accounts.read(cx).active(cx) != this.timeline_account {
                         this.load_timeline(cx);
                     }
+                    this.load_versus(cx);
                     cx.notify();
                 }),
             ];
@@ -116,7 +118,7 @@ impl FriendsPage {
             timeline: None,
             timeline_error: None,
             timeline_epoch: 0,
-            timeline_account: None,
+            timeline_shown: TIMELINE_FIRST,
             focus: cx.focus_handle(),
             _poll: poll,
             _subscriptions: subscriptions,
@@ -138,22 +140,16 @@ impl FriendsPage {
         self.load_timeline(cx);
     }
 
-    /// What the players the online account follows on Lichess did lately.
+    /// What the players on the list did lately, from their Lichess activity.
     fn load_timeline(&mut self, cx: &mut Context<Self>) {
         self.timeline_epoch += 1;
         let epoch = self.timeline_epoch;
         self.timeline_error = None;
-        let account = crate::accounts::handle(cx).read(cx).active(cx);
-        if account != self.timeline_account {
+        if Self::friends(cx).is_empty() || !crate::network::online(cx) {
             self.timeline = None;
-            self.timeline_account = account.clone();
-        }
-        let Some(account) = account.filter(|_| crate::network::online(cx)) else {
             return;
-        };
-        let timeline = cx
-            .global::<AppCore>()
-            .call("timeline", vec![json!(account)]);
+        }
+        let timeline = cx.global::<AppCore>().call("timeline", Vec::new());
         cx.spawn(async move |this, cx| {
             let answer = timeline.await;
             let _ = this.update(cx, |this, cx| {
@@ -162,7 +158,10 @@ impl FriendsPage {
                 }
                 match answer {
                     Ok(Value::Array(entries)) => this.timeline = Some(entries),
-                    Ok(_) => this.timeline = Some(Vec::new()),
+                    // Anything else is not a timeline, so it is not "Nothing new" either.
+                    Ok(_) => {
+                        this.timeline_error = Some("Lichess sent an unexpected timeline.".into())
+                    }
                     Err(cause) => this.timeline_error = Some(cause.message.into()),
                 }
                 cx.notify();
@@ -394,7 +393,6 @@ impl FriendsPage {
                 versus["draw"].as_f64().unwrap_or_default()
             )
         });
-        let initials: String = name.chars().take(2).collect::<String>().to_uppercase();
         let playing_id = presence
             .as_ref()
             .and_then(|presence| presence["playingId"].as_str().map(str::to_string));
@@ -421,19 +419,7 @@ impl FriendsPage {
                     .flex_1()
                     .min_w(px(180.))
                     .gap(px(8.))
-                    .child(
-                        div()
-                            .size(px(30.))
-                            .flex_none()
-                            .rounded_full()
-                            .bg(palette.accented)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(initials),
-                    )
+                    .child(widgets::initials(&name, 30., palette))
                     .child(
                         v_flex()
                             .min_w_0()
@@ -761,15 +747,19 @@ impl Render for FriendsPage {
                     .pb(PAGE_BOTTOM)
                     .child(header)
                     .child(body)
-                    .children(self.timeline_card(cx, &palette)),
+                    .children(self.timeline_card(window, cx, &palette)),
             )
     }
 }
 
 impl FriendsPage {
-    fn timeline_card(&self, cx: &App, palette: &Palette) -> Option<Div> {
-        let account = crate::accounts::handle(cx).read(cx).active(cx);
-        if account.is_none() || !crate::network::online(cx) {
+    fn timeline_card(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> Option<Div> {
+        if Self::friends(cx).is_empty() || !crate::network::online(cx) {
             return None;
         }
         let card = widgets::card(palette)
@@ -786,11 +776,29 @@ impl FriendsPage {
             (None, Some(entries)) if entries.is_empty() => {
                 card.child(widgets::hint("Nothing new", palette))
             }
-            (None, Some(entries)) => card.child(crate::activity::activity_list(
-                "friends-timeline",
-                &crate::activity::timeline_groups(entries),
-                palette,
-            )),
+            (None, Some(entries)) => card
+                .child(crate::activity::activity_list(
+                    "friends-timeline",
+                    &crate::activity::timeline_groups(
+                        &entries[..entries.len().min(self.timeline_shown)],
+                    ),
+                    window.viewport_size().width < px(900.),
+                    palette,
+                ))
+                .when(entries.len() > self.timeline_shown, |card| {
+                    card.child(
+                        h_flex().child(
+                            Button::new("friends-timeline-more")
+                                .text()
+                                .small()
+                                .label("Show more")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.timeline_shown += TIMELINE_MORE;
+                                    cx.notify();
+                                })),
+                        ),
+                    )
+                }),
         })
     }
 }

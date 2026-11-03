@@ -302,7 +302,7 @@ pub fn path_segment(text: &str) -> String {
     out
 }
 
-fn profile_key(username: &str, kind: &str) -> String {
+pub(super) fn profile_key(username: &str, kind: &str) -> String {
     format!("{}:{kind}", username.to_lowercase())
 }
 
@@ -633,7 +633,12 @@ impl Lichess {
     /// `cachedFetch`: memory first (five minutes), then the network. The result is persisted;
     /// when Lichess is unreachable the last persisted copy is served instead of an error.
     /// Concurrent callers for the same key and account epoch share one network request.
-    async fn cached_fetch<F, Fut>(&self, key: &str, account: &str, load: F) -> CoreResult<Value>
+    pub(super) async fn cached_fetch<F, Fut>(
+        &self,
+        key: &str,
+        account: &str,
+        load: F,
+    ) -> CoreResult<Value>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Value, Failure>>,

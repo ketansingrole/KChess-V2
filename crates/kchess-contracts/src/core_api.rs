@@ -255,8 +255,8 @@ pub fn methods() -> Vec<Method> {
         ),
         method(
             "timeline",
-            "What the players a connected account follows did lately.",
-            vec![req("account")],
+            "What the players on the Following list did lately, newest first.",
+            vec![],
         ),
         method(
             "importGame",

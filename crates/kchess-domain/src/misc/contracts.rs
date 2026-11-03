@@ -241,7 +241,7 @@ const CORE: &[Row] = &[
     ("leaderboard", 1, &[Valid("assertPerfType")]),
     ("searchPlayers", 1, &[Valid("assertUsername")]),
     ("activity", 1, &[Valid("assertUsername")]),
-    ("timeline", 1, &[Valid("assertUsername")]),
+    ("timeline", 0, &[]),
     (
         "importGame",
         2,

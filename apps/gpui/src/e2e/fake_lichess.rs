@@ -222,6 +222,33 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         let sessions = server().sessions.lock().expect("the sessions");
         sessions.get(login).cloned()
     });
+    // A player's activity is public too: a few weeks of it, which each name staggers.
+    if let Some(name) = request
+        .path
+        .strip_prefix("/api/user/")
+        .and_then(|rest| rest.strip_suffix("/activity"))
+    {
+        return reply(&mut out, &activity(name));
+    }
+    // Leaderboards are public, so they are asked for without the login.
+    if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
+        let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {
+            json!({
+                "username": username,
+                "title": title,
+                "perfs": { perf: { "rating": rating, "progress": progress } },
+            })
+        };
+        return reply(
+            &mut out,
+            &json!({ "users": [
+                user("FirstGm", Some("GM"), 3004, 3),
+                user("Untitled", None, 2974, 16),
+                user("SomeIm", Some("IM"), 2916, -8),
+                user("SecondGm", Some("GM"), 2908, 0),
+            ] }),
+        );
+    }
     // Nobody signed in: no answer at all.
     let Some(session) = session else {
         return Ok(());
@@ -488,4 +515,68 @@ fn state(session: &Session) -> Value {
         state["winner"] = json!(winner);
     }
     state
+}
+
+/// A player's recent activity as Lichess sends it, days ago from today, different for each name
+/// so a merged timeline interleaves and its ratings go both ways.
+fn activity(name: &str) -> Value {
+    const DAY: u64 = 86_400_000;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    let today = now - now % DAY;
+    let seed = name.bytes().map(u64::from).sum::<u64>();
+    let shift = seed % 3;
+    let base = 1800 + (seed % 7) * 110;
+    let day = |ago: u64, body: Value| {
+        let start = today - (ago + shift) * DAY;
+        let mut day = json!({ "interval": { "start": start, "end": start + DAY } });
+        day.as_object_mut()
+            .expect("an object")
+            .extend(body.as_object().expect("an object").clone());
+        day
+    };
+    let (win, loss) = (1 + seed % 6, seed % 4);
+    let moved = (win as i64 - loss as i64) * 6;
+    json!([
+        day(
+            0,
+            json!({
+                "games": { "blitz": { "win": win, "loss": loss, "draw": seed % 2,
+                                      "rp": { "before": base, "after": base as i64 + moved } } },
+                "puzzles": { "score": { "win": 4 + seed % 9, "loss": 1 + seed % 5, "draw": 0,
+                                        "rp": { "before": base + 300, "after": base as i64 + 300 - 7 } } },
+            })
+        ),
+        day(
+            1,
+            json!({
+                "tournaments": { "nb": 1, "best": [{ "tournament": { "id": "t", "name": "Hourly Blitz Arena" },
+                                                     "nbGames": 6 + seed % 5, "rank": 2 + seed % 30,
+                                                     "rankPercent": 1 + seed % 20 }] },
+            })
+        ),
+        day(
+            2 + seed % 2,
+            json!({
+                "follows": { "out": { "ids": ["Fiona"] } },
+                "games": { "rapid": { "win": 1, "loss": 0, "draw": 0,
+                                      "rp": { "before": base - 90, "after": base - 82 } } },
+            })
+        ),
+        day(
+            9,
+            json!({
+                "studies": [{ "name": "Caro-Kann ideas" }],
+                "storm": { "runs": 3, "score": 20 + seed % 30 },
+            })
+        ),
+        day(
+            40,
+            json!({
+                "games": { "bullet": { "win": 0, "loss": 3, "draw": 0,
+                                       "rp": { "before": base + 40, "after": base + 4 } } },
+            })
+        ),
+    ])
 }

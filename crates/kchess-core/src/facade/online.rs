@@ -114,7 +114,8 @@ impl Core {
                 self.inner("lichess.relation", vec![account, username])
                     .await
             }
-            "timeline" | "bookmarkedGames" | "activity" | "searchPlayers" => {
+            "timeline" => self.inner("lichess.timeline", Vec::new()).await,
+            "bookmarkedGames" | "activity" | "searchPlayers" => {
                 let name = normal("assertUsername", &arg(args, 0))?;
                 self.inner(&format!("lichess.{method}"), vec![name]).await
             }

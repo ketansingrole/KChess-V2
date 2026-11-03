@@ -553,10 +553,7 @@ impl Services {
                 Ok(name) => to_json(self.lichess.activity(&name).await),
                 Err(cause) => Err(cause),
             },
-            "lichess.timeline" => match text(args, 0) {
-                Ok(account) => reply_json(self.lichess.timeline(&account).await),
-                Err(cause) => Err(cause),
-            },
+            "lichess.timeline" => to_json(self.lichess.timeline().await),
             "lichess.importGame" => match (text(args, 0), text(args, 1)) {
                 (Ok(account), Ok(pgn)) => to_json(self.lichess.import_game(&account, &pgn).await),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),

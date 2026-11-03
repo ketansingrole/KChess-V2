@@ -70,7 +70,6 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
 
     // Without a login, the account's own calls ask to reconnect and send nothing.
     for (method, args) in [
-        ("timeline", vec![json!("Alice")]),
         ("bookmarkedGames", vec![json!("Alice")]),
         ("relation", vec![json!("Alice"), json!("Bob")]),
         (

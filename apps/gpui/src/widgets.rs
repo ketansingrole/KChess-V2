@@ -150,6 +150,21 @@ pub enum Side {
     Black,
 }
 
+/// A player's first two letters in a circle `size` across, where Lichess has no picture.
+pub fn initials(name: &str, size: f32, palette: &Palette) -> Div {
+    div()
+        .size(px(size))
+        .flex_none()
+        .rounded_full()
+        .bg(palette.accented)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px((size * 0.4).round()))
+        .font_weight(FontWeight::MEDIUM)
+        .child(name.chars().take(2).collect::<String>().to_uppercase())
+}
+
 /// `.player-avatar`: the player's icon, the side they play, and the outline while it is their turn.
 pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl IntoElement {
     div()

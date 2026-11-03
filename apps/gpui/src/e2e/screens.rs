@@ -68,6 +68,51 @@ fn every_screen_with_content() {
     }
 }
 
+/// Following's timeline over the stand-in Lichess's players, wide and narrow, in both
+/// appearances: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::the_timeline --
+/// --ignored` writes `<dir>/timeline/<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn the_timeline() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("timeline");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        for (width, height) in [(1320., 1500.), (760., 1500.)] {
+            let profile = tempfile::tempdir().expect("a temporary profile");
+            let (mut cx, window) = start(profile.path(), width, height);
+            cx.update(|cx| {
+                crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+            });
+            let players =
+                serde_json::json!(["thibault", "EricRosen", "DrNykterstein", "penguingim1"]);
+            let added = cx.update(|cx| {
+                cx.global::<crate::core::AppCore>()
+                    .call("addFriends", vec![players])
+            });
+            cx.foreground_executor()
+                .block_test(added)
+                .expect("the players are added");
+            cx.update_window(window, |_, window, cx| {
+                crate::shell::open(Page::Friends, window, cx)
+            })
+            .expect("the window");
+            // Lichess answers while the app runs, not while it sleeps.
+            for _ in 0..10 {
+                settle(&mut cx, window);
+            }
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{name}-{width}.png")))
+                .expect("the screenshot saves");
+            let quit = cx.update(crate::core::quit);
+            cx.foreground_executor().block_test(quit);
+            crate::profile::TEST_DATA_DIR.set(None);
+        }
+    }
+}
+
 /// The Opera Game, a real game with a clear story for a review to tell.
 const OPERA: &str = "e2e4 e7e5 g1f3 d7d6 d2d4 c8g4 d4e5 g4f3 d1f3 d6e5 f1c4 g8f6 f3b3 d8e7 b1c3 c7c6 \
                      c1g5 b7b5 c3b5 c6b5 c4b5 b8d7 e1c1 a8d8 d1d7 d8d7 h1d1 e7e6 b5d7 f6d7 b3b8 \

@@ -17,6 +17,13 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
     let fixture = serve(|seen| match seen.path() {
         "/api/stream/event" => Reply::Hang,
         "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        "/api/user/Bob/activity" => Reply::Json(
+            200,
+            json!([{ "interval": { "start": 2000, "end": 3000 },
+                     "puzzles": { "score": { "win": 2, "loss": 0, "draw": 0 } } }])
+            .to_string(),
+        ),
+        "/api/user/Carol/activity" => Reply::Json(500, "{}".into()),
         "/api/cloud-eval" => Reply::Json(
             200,
             json!({ "fen": START, "knodes": 1000, "depth": 30,
@@ -133,12 +140,6 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
             true,
         ),
         (
-            "timeline",
-            vec![json!("Alice")],
-            vec!["GET /api/timeline?nb=30"],
-            true,
-        ),
-        (
             "bookmarkedGames",
             vec![json!("Alice")],
             vec!["GET /api/games/export/bookmarks?max=100&moves=false&opening=true"],
@@ -219,6 +220,36 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         .unwrap();
     assert_eq!(fixture.to("/api/cloud-eval").len(), 1);
 
+    // The timeline is the Following list's public activity, a player who fails left out; Lichess's
+    // own timeline answers only its mobile app.
+    core.call("addFriends", vec![json!(["Bob", "Carol"])])
+        .await
+        .unwrap();
+    let before = fixture.requests().len();
+    let timeline = core.call("timeline", vec![]).await.unwrap();
+    // One at a time, in the list's order: a burst gets a minute's lockout from Lichess.
+    let asked: Vec<String> = fixture.requests()[before..]
+        .iter()
+        .map(|seen| format!("{} {}", seen.method, seen.target))
+        .collect();
+    assert_eq!(
+        asked,
+        ["GET /api/user/Bob/activity", "GET /api/user/Carol/activity"]
+    );
+    assert_eq!(
+        timeline,
+        json!([{ "date": 2000.0, "player": "Bob",
+                  "item": { "kind": "puzzles", "text": "Solved 2 puzzles" } }])
+    );
+    // Read again soon, Bob's activity comes from the cache; Carol's failure is asked again.
+    let before = fixture.requests().len();
+    core.call("timeline", vec![]).await.unwrap();
+    let asked: Vec<String> = fixture.requests()[before..]
+        .iter()
+        .map(|seen| format!("{} {}", seen.method, seen.target))
+        .collect();
+    assert_eq!(asked, ["GET /api/user/Carol/activity"]);
+
     // Logging out revokes the login on Lichess; then account calls ask to reconnect.
     core.call("logout", vec![json!("Alice")]).await.unwrap();
     let revoked = fixture.to("/api/token");
@@ -226,7 +257,9 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
     assert_eq!(revoked[0].header("Authorization"), Some(ALICE_LOGIN));
     let before = fixture.requests().len();
     assert_eq!(
-        core.call("timeline", vec![json!("Alice")]).await.unwrap(),
+        core.call("bookmarkedGames", vec![json!("Alice")])
+            .await
+            .unwrap(),
         json!({ "needsReconnect": true })
     );
     assert_eq!(fixture.requests().len(), before);

@@ -167,6 +167,35 @@ fn a_player_is_followed_without_an_account_and_stays_followed(cx: &mut gpui_kit:
     app.find("friends-sync");
 }
 
+/// The timeline is what the followed players did, from their public activity: Lichess's own
+/// timeline answers only its mobile app, so it always read as "Nothing new".
+#[gpui_kit::test]
+fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    app.click_label("Lichess username to follow");
+    app.type_text("carol");
+    app.click("friends-follow");
+    let line = app
+        .find(gpui_kit::ElementId::NamedInteger(
+            "friends-timeline-player".into(),
+            1,
+        ))
+        .bounds();
+    // The day's date sits beside its first line, on its baseline, not over it.
+    let day = app
+        .find(gpui_kit::ElementId::NamedInteger(
+            "friends-timeline-day".into(),
+            0,
+        ))
+        .bounds();
+    assert!(day.right() < line.left(), "{day:?} {line:?}");
+    assert!(
+        (day.bottom() - line.bottom()).abs() < gpui_kit::px(4.),
+        "{day:?} {line:?}"
+    );
+}
+
 #[gpui_kit::test]
 fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Lichess insights", true);
@@ -175,4 +204,35 @@ fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestA
     app.open("Lichess insights");
     app.click("insights-follow");
     assert_eq!(page(&mut app), Some(Page::Friends));
+}
+
+/// A saved title the leaderboard lacks says so and offers everyone back; then titles have their
+/// own column, so every name starts at one place.
+#[gpui_kit::test]
+fn the_leaderboard_lines_up_names_and_offers_everyone_back(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.cx
+        .update(|cx| crate::prefs::set(cx, "kchess:leaderboard-title", "WGM".to_string()));
+    app.open("Players");
+    app.click("players-board-all");
+    let starts =
+        [0usize, 1, 2].map(|row| app.find(("players-board-player", row)).bounds().origin.x);
+    assert!(starts.iter().all(|x| *x == starts[0]), "{starts:?}");
+    let shown: String = app
+        .cx
+        .update(|cx| crate::prefs::get(cx, "kchess:leaderboard-title", String::new()));
+    assert_eq!(shown, "all");
+}
+
+/// One title shows only its players, each at their rank in the whole board.
+#[gpui_kit::test]
+fn the_leaderboard_shows_one_title(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.cx
+        .update(|cx| crate::prefs::set(cx, "kchess:leaderboard-title", "GM".to_string()));
+    app.open("Players");
+    app.find(("players-board-row", 0usize));
+    app.find(("players-board-row", 3usize));
+    assert!(!app.shows(("players-board-row", 1usize)));
+    assert!(!app.shows(("players-board-row", 2usize)));
 }
