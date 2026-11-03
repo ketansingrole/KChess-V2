@@ -120,8 +120,15 @@ impl LichessActivity {
 }
 
 /// `.stat-card`: a label, a value and a line under it.
-fn stat(label: &str, value: impl IntoElement, sub: impl IntoElement, palette: &Palette) -> Div {
+fn stat(
+    label: &'static str,
+    value: impl IntoElement,
+    sub: impl IntoElement,
+    palette: &Palette,
+) -> impl IntoElement {
     widgets::card(palette)
+        .id(label)
+        .test_support()
         .flex_1()
         .min_w(px(150.))
         .gap(px(4.))
@@ -134,6 +141,9 @@ fn stat(label: &str, value: impl IntoElement, sub: impl IntoElement, palette: &P
         .child(
             div()
                 .text_size(px(28.))
+                // The number's own line (GPUI's default, phi) in pixels: a relative line would follow
+                // the record's smaller counts and leave its card shorter than the ratings'.
+                .line_height(px(28.) * 1.618_034)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
                 .child(value),
@@ -186,6 +196,7 @@ impl Render for LichessActivity {
             .child(tally(count("draw"), "D", palette.text_muted));
         let stats = h_flex()
             .flex_wrap()
+            .items_stretch()
             .gap(px(12.))
             .child(stat(
                 "Games",

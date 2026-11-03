@@ -170,3 +170,15 @@ fn tab_and_shift_tab_walk_the_same_controls(cx: &mut gpui_kit::TestAppContext) {
     let again: Vec<_> = (0..5).map(|_| step(&mut app, true)).collect();
     assert_eq!(again, forward[1..], "Tab after the shell redrew");
 }
+
+/// The record's counts are smaller than the ratings beside it, and its card was shorter.
+#[gpui_kit::test]
+fn the_lichess_activity_cards_are_one_height(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    let heights = ["Games", "Blitz rating", "Rapid rating", "Recent record"]
+        .map(|card| app.find(card).bounds().size.height);
+    assert!(
+        heights.iter().all(|height| *height == heights[0]),
+        "{heights:?}"
+    );
+}
