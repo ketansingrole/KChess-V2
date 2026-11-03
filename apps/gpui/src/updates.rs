@@ -290,6 +290,30 @@ fn log(message: &str) {
     crate::log::write(Level::Info, "updates", message);
 }
 
+/// An error and every cause under it, as one line.
+fn causes(error: &dyn std::error::Error) -> String {
+    let mut line = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        line.push_str(&format!(": {cause}"));
+        source = cause.source();
+    }
+    line
+}
+
+/// `message` for the person; the request's own error for the log, which the message alone
+/// hides (a download that failed one run in forty left nothing to go on).
+fn failed(message: &'static str) -> impl FnOnce(reqwest::Error) -> String {
+    move |error| {
+        crate::log::write(
+            Level::Warn,
+            "updates",
+            &format!("{message}: {}", causes(&error)),
+        );
+        message.to_string()
+    }
+}
+
 /// Run `work` on a Tokio runtime of its own, off the UI thread.
 fn on_runtime<T: Send + 'static>(
     work: impl Future<Output = T> + Send + 'static,
@@ -324,14 +348,14 @@ async fn latest(feed: String) -> Result<Release, String> {
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| "Could not reach the update server".to_string())?;
+        .map_err(failed("Could not reach the update server"))?;
     if !response.status().is_success() {
         return Err(format!("The update server answered {}.", response.status()));
     }
     response
         .json::<Release>()
         .await
-        .map_err(|_| "The update server's answer could not be read".to_string())
+        .map_err(failed("The update server's answer could not be read"))
 }
 
 /// Download `asset` into `folder` and check it against the release's digest; the downloaded
@@ -354,10 +378,10 @@ async fn download(
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| "Could not download the checksums".to_string())?
+        .map_err(failed("Could not download the checksums"))?
         .text()
         .await
-        .map_err(|_| "Could not download the checksums".to_string())?;
+        .map_err(failed("Could not download the checksums"))?;
     let expected =
         digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
     let response = client
@@ -365,7 +389,7 @@ async fn download(
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| "Could not download the update".to_string())?;
+        .map_err(failed("Could not download the update"))?;
     let total = response.content_length().unwrap_or(asset.size);
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).map_err(|cause| cause.to_string())?;
@@ -377,7 +401,7 @@ async fn download(
     let mut received = 0u64;
     let mut body = response.bytes_stream();
     while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|_| "The download stopped".to_string())?;
+        let chunk = chunk.map_err(failed("The download stopped"))?;
         hasher.update(&chunk);
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
@@ -1309,6 +1333,29 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::io::{Read as _, Write as _};
     use std::path::{Path, PathBuf};
+
+    /// "Could not download the checksums" failed one full run in forty with nothing logged; a
+    /// failure's log line now carries the error and each cause under it.
+    #[test]
+    fn a_failed_request_logs_every_cause() {
+        #[derive(Debug)]
+        struct Request(std::io::Error);
+        impl std::fmt::Display for Request {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "error sending request")
+            }
+        }
+        impl std::error::Error for Request {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let reset = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "connection reset");
+        assert_eq!(
+            super::causes(&Request(reset)),
+            "error sending request: connection reset"
+        );
+    }
 
     /// Held by tests that start processes and by those that check a lock is free once dropped: a
     /// process started meanwhile can briefly share another test's lock.
