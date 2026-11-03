@@ -180,9 +180,10 @@ impl Spectator {
             let lichess = Arc::clone(&inner.lichess);
             let followed = lichess.client().policy().with_usage("", "watch", async {
                 match &target {
-                    WatchTarget::Channel(channel) => {
-                        inner.follow_tv(channel, session, &token).await
-                    }
+                    WatchTarget::Channel(channel) => inner
+                        .follow_tv(channel, session, &token)
+                        .await
+                        .map(|()| false),
                     WatchTarget::Game(id) => inner.follow_game(id, session, &token).await,
                 }
             });
@@ -191,7 +192,9 @@ impl Spectator {
                 .await
                 .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
             match result {
-                Ok(()) => inner.report(
+                // Lichess closes a game's stream once the game is over: nothing to reconnect to.
+                Ok(true) => inner.report(session, &token, "ended", None),
+                Ok(false) => inner.report(
                     session,
                     &token,
                     "ended",
@@ -694,12 +697,13 @@ impl Inner {
         });
     }
 
+    /// Follows one game until its stream closes; answers whether the game was over by then.
     async fn follow_game(
         &self,
         id: &str,
         session: u64,
         token: &CancellationToken,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<bool> {
         let path = format!("/api/stream/game/{}", path_segment(id));
         let mut current: Option<WatchFrame> = None;
         self.lichess
@@ -790,7 +794,7 @@ impl Inner {
                 },
             )
             .await?;
-        Ok(())
+        Ok(current.is_some_and(|frame| frame.finished))
     }
 
     /// `watchRound`'s feed (`readPgnStream`): the PGN text is read as it arrives and split at the

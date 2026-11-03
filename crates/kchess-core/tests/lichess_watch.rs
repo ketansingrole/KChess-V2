@@ -181,6 +181,79 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
     spectator.stop();
 }
 
+/// Watches one game whose stream sends `records` and closes; answers the last state reported.
+async fn last_state_of_a_closed_game_stream(records: Vec<Value>) -> WatchState {
+    let fixture = serve(move |seen: &Seen| {
+        if seen.path() != "/api/stream/game/Game0001" {
+            return Reply::Hang;
+        }
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        for record in &records {
+            tx.send(record.to_string() + "\n").unwrap();
+        }
+        Reply::Stream(rx)
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    spectator.watch(WatchTarget::Game("Game0001".into()));
+    wait_until("the end of the feed", || {
+        sink.states
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|state| state.phase == "ended" || state.phase == "error")
+    })
+    .await;
+    let last = sink.states.lock().unwrap().last().cloned().unwrap();
+    spectator.stop();
+    last
+}
+
+fn game_description(status: &str, winner: Option<&str>) -> Value {
+    let mut description = json!({
+        "id": "Game0001", "variant": { "key": "standard" }, "speed": "bullet",
+        "status": { "name": status },
+        "players": {
+            "white": { "user": { "name": "donnyrules" }, "rating": 2550 },
+            "black": { "user": { "name": "Solotorneos78" }, "rating": 2361 }
+        }
+    });
+    if let Some(winner) = winner {
+        description["winner"] = json!(winner);
+    }
+    description
+}
+
+#[tokio::test]
+async fn a_game_that_ended_closes_its_feed_without_asking_to_reconnect() {
+    // Lichess closes a game's stream after its result: Watch once said "The feed ended. Retry
+    // to reconnect." under a game that was simply over.
+    let last = last_state_of_a_closed_game_stream(vec![
+        game_description("started", None),
+        json!({ "fen": INITIAL, "wc": 60, "bc": 60 }),
+        game_description("outoftime", Some("black")),
+    ])
+    .await;
+    assert_eq!(last.phase, "ended");
+    assert_eq!(last.message, None);
+}
+
+#[tokio::test]
+async fn a_game_feed_that_closes_mid_game_offers_to_reconnect() {
+    let last = last_state_of_a_closed_game_stream(vec![
+        game_description("started", None),
+        json!({ "fen": INITIAL, "wc": 60, "bc": 60 }),
+    ])
+    .await;
+    assert_eq!(last.phase, "ended");
+    assert!(last.message.unwrap().contains("Retry"));
+}
+
 fn tv_frame(id: &str, fen: &str) -> String {
     json!({
         "t": "featured",

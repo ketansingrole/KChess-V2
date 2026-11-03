@@ -740,7 +740,17 @@ impl WatchPage {
                     .into_any_element(),
             );
         }
-        let failed = matches!(self.phase.as_deref(), Some("error" | "ended"));
+        // A finished game's feed ends with it: there is nothing to retry.
+        let over = self
+            .live
+            .frame
+            .as_ref()
+            .is_some_and(|frame| frame["finished"] == json!(true));
+        let failed = match self.phase.as_deref() {
+            Some("error") => true,
+            Some("ended") => !over,
+            _ => false,
+        };
         if let (true, Some(target)) = (failed, self.target.clone()) {
             notices.push(
                 h_flex()
