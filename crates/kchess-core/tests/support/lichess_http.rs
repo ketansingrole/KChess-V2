@@ -1,5 +1,6 @@
 //! Deterministic local fixtures for the Lichess tests: a scripted HTTP/1.1 server on 127.0.0.1
-//! (every response closes its connection; bodies can stream in chunks or wait on a gate), a host
+//! (every response closes its connection once the client hangs up; bodies can stream in chunks
+//! or wait on a gate), a host
 //! that records logs and events, and the in-memory store and token source the account code uses.
 #![allow(dead_code)]
 
@@ -14,6 +15,7 @@ use kchess_core::error::Result as CoreResult;
 use kchess_core::host::{Host, Level};
 use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessGame, LichessStore};
 use kchess_core::lichess::client::TokenSource;
+use kchess_core::loopback::close_after_client;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -234,7 +236,8 @@ async fn handle(
                     }
                 }
                 socket.write_all(b"0\r\n\r\n").await?;
-                return socket.shutdown().await;
+                close_after_client(&mut socket).await;
+                return Ok(());
             }
             Reply::Hang => {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -260,7 +263,8 @@ async fn write_sized(
     ));
     socket.write_all(head.as_bytes()).await?;
     socket.write_all(body.as_bytes()).await?;
-    socket.shutdown().await
+    close_after_client(socket).await;
+    Ok(())
 }
 
 /// The NDJSON body of a list of game records (one per line).

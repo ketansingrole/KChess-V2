@@ -131,8 +131,9 @@ async fn a_login_completes_through_the_loopback_callback() {
     // The browser was shown the success page, and the token was stored encrypted.
     let (status, page) = visits.recv().await.unwrap();
     assert_eq!(status, 200);
+    // That the page carries no script is pinned on `callback_page` itself: a filtering proxy
+    // on the PC (AdGuard for Windows) adds its own scripts to the page on the way.
     assert!(page.contains("Signed in to Lichess"));
-    assert!(!page.contains("<script"));
     assert_eq!(
         store.logins.lock().unwrap().clone(),
         vec![("Alice".to_string(), "enc:lip_new".to_string())]

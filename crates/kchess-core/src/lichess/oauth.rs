@@ -173,6 +173,12 @@ fn page_response(status: u16, body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Leaves an answered callback connection open until the browser hangs up, so the page is not
+/// lost to a reset (`loopback::close_after_client`); the sign-in goes on meanwhile.
+fn hand_back(mut socket: TcpStream) {
+    tokio::spawn(async move { crate::loopback::close_after_client(&mut socket).await });
+}
+
 /// Waits for the one callback that may end a sign-in: `path` with this `state`. Favicon
 /// requests, port probes and forged callbacks get a 404 and do not end it. `on_return` runs as
 /// soon as the browser hands the sign-in back, before the token exchange.
@@ -216,7 +222,7 @@ pub async fn wait_for_redirect(
             .filter(|callback| callback.path == path && callback.state.as_deref() == Some(state));
         let Some(callback) = callback else {
             let _ = socket.write_all(not_found()).await;
-            let _ = socket.shutdown().await;
+            hand_back(socket);
             continue;
         };
         on_return();
@@ -225,7 +231,7 @@ pub async fn wait_for_redirect(
         let _ = socket
             .write_all(&page_response(status, &page(authorized)))
             .await;
-        let _ = socket.shutdown().await;
+        hand_back(socket);
         return Ok(callback);
     }
 }

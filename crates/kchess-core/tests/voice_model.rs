@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kchess_core::host::{Host, Level};
+use kchess_core::loopback::close_after_client;
 use kchess_core::voice::{
     Archive, Listener, MAX_DOWNLOAD_BYTES, Phase, Progress, Status, VoiceModel, VoiceModelCache,
 };
@@ -98,8 +99,10 @@ async fn answer(socket: &mut TcpStream, reply: Reply) -> std::io::Result<()> {
                 .write_all(head(200, body.len() as u64 + 1_000).as_bytes())
                 .await?;
             socket.write_all(&body).await?;
+            return socket.shutdown().await;
         }
         Reply::Declared(length) => {
+            // The client refuses on the declared length alone and hangs up.
             socket.write_all(head(200, length).as_bytes()).await?;
         }
         Reply::Gate(gate, body) => {
@@ -110,7 +113,9 @@ async fn answer(socket: &mut TcpStream, reply: Reply) -> std::io::Result<()> {
             socket.write_all(&body).await?;
         }
     }
-    socket.shutdown().await
+    // A complete response: the client hangs up first.
+    close_after_client(socket).await;
+    Ok(())
 }
 
 fn head(status: u16, length: u64) -> String {

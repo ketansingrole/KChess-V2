@@ -112,7 +112,7 @@ async fn serve(build: impl FnOnce(&str) -> Vec<Route>) -> (String, Hits) {
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.write_all(&body).await;
-                let _ = socket.shutdown().await;
+                crate::loopback::close_after_client(&mut socket).await;
             });
         }
     });

@@ -682,7 +682,7 @@ mod tests {
                 }
                 seen.push(String::from_utf8_lossy(&request).into_owned());
                 socket.write_all(response.as_bytes()).await.unwrap();
-                socket.shutdown().await.unwrap();
+                tokio::spawn(async move { crate::loopback::close_after_client(&mut socket).await });
             }
             seen
         });

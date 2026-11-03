@@ -15,6 +15,7 @@ pub mod error;
 pub mod facade;
 pub mod host;
 pub mod lichess;
+pub mod loopback;
 mod panics;
 mod process;
 pub mod puzzles;

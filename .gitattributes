@@ -1,0 +1,3 @@
+# LevelDB files are read byte for byte: a checkout with `core.autocrlf` must not turn the
+# newline that ends `CURRENT` into CRLF, or LevelDB looks for a manifest named "…\r".
+crates/kchess-electron-legacy/tests/fixtures/** binary

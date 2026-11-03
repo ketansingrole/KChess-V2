@@ -615,6 +615,7 @@ mod tests {
                     );
                     let _ = socket.write_all(head.as_bytes()).await;
                     let _ = socket.write_all(&body).await;
+                    crate::loopback::close_after_client(&mut socket).await;
                 });
             }
         });

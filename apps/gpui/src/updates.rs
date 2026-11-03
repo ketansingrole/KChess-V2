@@ -1760,27 +1760,37 @@ mod tests {
     fn serve(files: Vec<(String, Vec<u8>)>) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        let files = std::sync::Arc::new(files);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let mut request = Vec::new();
-                let mut byte = [0u8; 1];
-                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
-                    request.push(byte[0]);
-                }
-                let request = String::from_utf8_lossy(&request);
-                let path = request.split_whitespace().nth(1).unwrap_or("");
-                let found = files.iter().find(|(file, _)| file == path);
-                let (status, body) = match found {
-                    Some((_, body)) => ("200 OK", body.clone()),
-                    None => ("404 Not Found", Vec::new()),
-                };
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = stream.write_all(&body);
+                let files = std::sync::Arc::clone(&files);
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !request.ends_with(b"\r\n\r\n")
+                        && stream.read(&mut byte).unwrap_or(0) == 1
+                    {
+                        request.push(byte[0]);
+                    }
+                    let request = String::from_utf8_lossy(&request);
+                    let path = request.split_whitespace().nth(1).unwrap_or("");
+                    let found = files.iter().find(|(file, _)| file == path);
+                    let (status, body) = match found {
+                        Some((_, body)) => ("200 OK", body.clone()),
+                        None => ("404 Not Found", Vec::new()),
+                    };
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(&body);
+                    // The client hangs up first, or the response can turn into a reset
+                    // (`kchess_core::loopback::close_after_client`).
+                    let _ = stream.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT));
+                    let _ = std::io::copy(&mut stream, &mut std::io::sink());
+                });
             }
         });
         base

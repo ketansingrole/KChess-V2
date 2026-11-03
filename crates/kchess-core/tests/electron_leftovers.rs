@@ -24,6 +24,12 @@ fn electron_profile() -> tempfile::TempDir {
     std::fs::create_dir_all(&target).unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../kchess-electron-legacy/tests/fixtures/local-storage");
+    // A Windows checkout with `core.autocrlf` once ended this with CRLF, and LevelDB then found
+    // no manifest (`.gitattributes` keeps the fixtures binary).
+    assert_eq!(
+        std::fs::read(fixture.join("CURRENT")).unwrap(),
+        b"MANIFEST-000001\n"
+    );
     for entry in std::fs::read_dir(fixture).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), target.join(entry.file_name())).unwrap();

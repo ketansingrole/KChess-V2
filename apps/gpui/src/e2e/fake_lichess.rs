@@ -134,7 +134,31 @@ pub fn return_from_login(url: &str, code: &str) {
         "GET /{path}?code={code}&state={state} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
     )
     .expect("the callback is written");
-    let _ = socket.read_to_end(&mut Vec::new());
+    // Read the page to its end, then hang up first, as a browser does: the core's callback
+    // waits for that before it closes.
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while !response_complete(&response) {
+        match socket.read(&mut chunk) {
+            Ok(read) if read > 0 => response.extend_from_slice(&chunk[..read]),
+            _ => break,
+        }
+    }
+}
+
+/// Whether `response` holds a whole response: its head and the `Content-Length` bytes after it.
+fn response_complete(response: &[u8]) -> bool {
+    let Some(end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&response[..end]);
+    let length = head
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    response.len() >= end + 4 + length
 }
 
 struct Request {
@@ -314,7 +338,7 @@ fn reply(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
-    out.flush()
+    answered(out)
 }
 
 fn unauthorized(out: &mut TcpStream) -> std::io::Result<()> {
@@ -324,7 +348,7 @@ fn unauthorized(out: &mut TcpStream) -> std::io::Result<()> {
         "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
-    out.flush()
+    answered(out)
 }
 
 fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
@@ -334,7 +358,7 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
         "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
-    out.flush()
+    answered(out)
 }
 
 fn ndjson(out: &mut TcpStream) -> std::io::Result<()> {
@@ -342,7 +366,7 @@ fn ndjson(out: &mut TcpStream) -> std::io::Result<()> {
         out,
         "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     )?;
-    out.flush()
+    answered(out)
 }
 
 /// An ndjson stream: `first`'s lines at once, then `next`'s whenever it has one, with keep-alives
@@ -374,7 +398,16 @@ fn stream(
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    chunk(out, "")
+    chunk(out, "")?;
+    answered(out)
+}
+
+/// A response is written in full: the app hangs up first, or it can read a reset instead
+/// (`kchess_core::loopback::close_after_client`).
+fn answered(out: &mut TcpStream) -> std::io::Result<()> {
+    out.flush()?;
+    out.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT))?;
+    std::io::copy(out, &mut std::io::sink()).map(|_| ())
 }
 
 fn chunk(out: &mut TcpStream, text: &str) -> std::io::Result<()> {
