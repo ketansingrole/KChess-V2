@@ -354,6 +354,13 @@ mod scheduling_tests {
     #[tokio::test]
     async fn a_contended_database_keeps_the_executor_free_and_close_drains_a_detached_worker() {
         let (_dir, database) = database();
+        // Opened first, so the detached worker's call below is cheap: a first open creates the
+        // files and runs every migration, which took over 10 s on a loaded Windows PC whose
+        // virus scanner reads each new file.
+        database
+            .call_async("store.open", &[])
+            .await
+            .expect("first open");
         let (held, held_rx) = tokio::sync::oneshot::channel();
         let (release, release_rx) = std::sync::mpsc::channel();
         let blocking_db = Arc::clone(&database);
@@ -384,7 +391,6 @@ mod scheduling_tests {
             "close waits for the detached database worker"
         );
         release.send(()).expect("release");
-        // A bound, not a wait: the worker's open can take over a second on a loaded Windows PC.
         tokio::time::timeout(Duration::from_secs(10), close)
             .await
             .expect("close completes")
