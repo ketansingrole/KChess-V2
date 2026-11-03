@@ -115,13 +115,26 @@ pub fn next() -> Result {
     Ok(())
 }
 
+/// Whether `lock` gives the app the workspace `version`, whichever line endings its checkout has
+/// (`core.autocrlf` writes Cargo.lock with CRLF on Windows).
+fn lock_names_version(lock: &str, version: &str) -> bool {
+    let mut lines = lock.lines();
+    let wanted = format!("version = \"{version}\"");
+    while let Some(line) = lines.next() {
+        if line == "name = \"kchess-gpui\"" {
+            return lines.next() == Some(wanted.as_str());
+        }
+    }
+    false
+}
+
 /// `release-verify`: the version is a release version, and a tag build's tag names it exactly.
 pub fn verify() -> Result {
     let version = version()?;
     parse(&version)?;
     let lock =
         std::fs::read_to_string(root().join("Cargo.lock")).map_err(|cause| cause.to_string())?;
-    if !lock.contains(&format!("name = \"kchess-gpui\"\nversion = \"{version}\"")) {
+    if !lock_names_version(&lock, &version) {
         return Err(
             "Cargo.lock does not match the workspace version. Run `cargo update --workspace`."
                 .into(),
@@ -371,6 +384,19 @@ pub fn download_snap() -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Windows checkout with `core.autocrlf` has Cargo.lock in CRLF, and `check` refused it.
+    #[test]
+    fn the_lock_matches_with_either_line_ending() {
+        let lock = "[[package]]\nname = \"kchess-gpui\"\nversion = \"2026.11.1\"\n";
+        assert!(lock_names_version(lock, "2026.11.1"));
+        assert!(lock_names_version(&lock.replace('\n', "\r\n"), "2026.11.1"));
+        assert!(!lock_names_version(lock, "2026.11.2"));
+        assert!(!lock_names_version(
+            "name = \"kchess-core\"\nversion = \"2026.11.1\"\n",
+            "2026.11.1"
+        ));
+    }
 
     #[test]
     fn release_versions_have_no_padding() {
