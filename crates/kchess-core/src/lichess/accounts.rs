@@ -131,6 +131,16 @@ pub trait LichessStore: Send + Sync {
         reviews: &'a [Value],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>>;
+    /// The player's Lichess play time when their games were synced (`saveSyncedPlayTime`).
+    fn save_synced_play_time<'a>(
+        &'a self,
+        account: &'a str,
+        play_time: i64,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        let _ = (account, play_time, current);
+        Box::pin(async { Ok(()) })
+    }
     /// Whether the user takes challenges (`getSettings().receiveChallenges`).
     fn receives_challenges<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<bool>> {
         Box::pin(async { Ok(true) })
@@ -1175,11 +1185,17 @@ impl Lichess {
     /// syncs when one fails; the first failure is reported afterwards.
     pub async fn sync_games(&self, username: Option<&str>) -> CoreResult<()> {
         let rows = self.store.accounts().await?;
+        let rows: Vec<&AccountRow> = rows
+            .iter()
+            .filter(|row| {
+                username.is_none_or(|wanted| row.username.to_lowercase() == wanted.to_lowercase())
+            })
+            .collect();
+        let play_times = self.play_times(&rows).await;
         let mut first_error: Option<CoreError> = None;
-        for row in rows.iter().filter(|row| {
-            username.is_none_or(|wanted| row.username.to_lowercase() == wanted.to_lowercase())
-        }) {
-            if let Err(cause) = self.sync_account(row).await {
+        for row in rows {
+            let play_time = play_times.get(&row.username.to_lowercase()).copied();
+            if let Err(cause) = self.sync_account(row, play_time).await {
                 self.host.log(
                     Level::Warn,
                     "lichess",
@@ -1194,13 +1210,42 @@ impl Lichess {
         }
     }
 
+    /// Each player's Lichess play time, read before their games are: it grows with every
+    /// finished game, so a profile with more than the one saved at the sync has games to sync.
+    /// One request covers 300 players; without an answer the sync goes ahead and saves none.
+    async fn play_times(&self, rows: &[&AccountRow]) -> HashMap<String, i64> {
+        let names: Vec<String> = rows.iter().map(|row| row.username.clone()).collect();
+        match self.profiles(&names).await {
+            Ok(users) => users
+                .iter()
+                .filter_map(|user| {
+                    Some((
+                        user["username"].as_str()?.to_lowercase(),
+                        user["playTime"]["total"].as_i64()?,
+                    ))
+                })
+                .collect(),
+            Err(cause) => {
+                self.host.log(
+                    Level::Warn,
+                    "lichess",
+                    &format!(
+                        "Play times before the sync were not read: {}",
+                        cause.message
+                    ),
+                );
+                HashMap::new()
+            }
+        }
+    }
+
     /// One sync per account at a time: a second request joins the running one.
     /// A logout removes the entry without notifying the waiter; the waiter stays until
     /// the in-flight run finishes and sends. A new generation started after cancel may
     /// briefly run concurrently with the old one, but both recheck the account epoch
     /// before every write (`current()`), so stale writes are skipped and only the
     /// current generation advances the cursor.
-    async fn sync_account(&self, row: &AccountRow) -> CoreResult<usize> {
+    async fn sync_account(&self, row: &AccountRow, play_time: Option<i64>) -> CoreResult<usize> {
         let key = row.username.to_lowercase();
         let joined = lock(&self.syncs)
             .get(&key)
@@ -1211,7 +1256,7 @@ impl Lichess {
         let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
         let (send, receive) = watch::channel(None);
         lock(&self.syncs).insert(key.clone(), (generation, receive));
-        let result = self.run_sync(row).await;
+        let result = self.run_sync(row, play_time).await;
         {
             let mut syncs = lock(&self.syncs);
             if syncs
@@ -1233,7 +1278,7 @@ impl Lichess {
         result
     }
 
-    async fn run_sync(&self, row: &AccountRow) -> CoreResult<usize> {
+    async fn run_sync(&self, row: &AccountRow, play_time: Option<i64>) -> CoreResult<usize> {
         let name = row.username.as_str();
         let epoch = self.account_epoch(name);
         let current = || self.account_epoch(name) == epoch;
@@ -1283,6 +1328,11 @@ impl Lichess {
                     self.store
                         .save_games_cursor(name, started_at, &current)
                         .await?;
+                    if let Some(play_time) = play_time {
+                        self.store
+                            .save_synced_play_time(name, play_time, &current)
+                            .await?;
+                    }
                 } else {
                     self.host.log(
                         Level::Warn,

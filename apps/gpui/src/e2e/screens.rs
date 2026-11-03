@@ -94,6 +94,16 @@ fn the_timeline() {
             cx.foreground_executor()
                 .block_test(added)
                 .expect("the players are added");
+            // Synced, and then two of them finish a game: theirs are new.
+            let synced = cx.update(|cx| {
+                cx.global::<crate::core::AppCore>()
+                    .call("syncGames", vec![])
+            });
+            cx.foreground_executor()
+                .block_test(synced)
+                .expect("the players are synced");
+            super::fake_lichess::play("EricRosen", 300);
+            super::fake_lichess::play("penguingim1", 300);
             cx.update_window(window, |_, window, cx| {
                 crate::shell::open(Page::Friends, window, cx)
             })

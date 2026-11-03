@@ -135,7 +135,7 @@ fn logging_out_every_connected_account_erases_their_data_and_keeps_public_follow
 fn logging_out_one_account_keeps_another_connected_account_and_a_followed_player() {
     let store = fresh();
     store.exec(
-        "INSERT INTO accounts VALUES ('Carol', 1, NULL);
+        "INSERT INTO accounts (username, connected, lastSyncedAt) VALUES ('Carol', 1, NULL);
          INSERT INTO tokens VALUES ('Alice', 'secret-a'), ('Carol', 'secret-c');
          INSERT INTO api_cache VALUES ('alice:profile', '{}', 0), ('carol:profile', '{}', 0)",
     );

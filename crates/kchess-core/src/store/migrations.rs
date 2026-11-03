@@ -235,6 +235,9 @@ pub const MIGRATIONS: &[&str] = &[
   );
   CREATE INDEX idx_studies_position ON studies(position);"#,
     "ALTER TABLE settings ADD COLUMN puzzleAutoNext INTEGER NOT NULL DEFAULT 1;",
+    // Lichess's `playTime.total` of the player when their games were last synced: it grows with
+    // every finished game, so a larger one in a profile means there are games to sync.
+    "ALTER TABLE accounts ADD COLUMN syncedPlayTime INTEGER;",
 ];
 
 fn storage_error(cause: rusqlite::Error) -> CoreError {

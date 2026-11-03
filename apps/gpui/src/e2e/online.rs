@@ -196,6 +196,38 @@ fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContex
     );
 }
 
+/// A player who finished a game since their sync is marked, and so is Sync all, from their profile
+/// alone; syncing takes the mark away.
+#[gpui_kit::test]
+fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    app.click_label("Lichess username to follow");
+    app.type_text("dana");
+    app.click("friends-follow");
+    let new_games = ("friend-new-games", 0usize);
+    app.wait_for("the follow's sync", |_, cx| {
+        let accounts = crate::accounts::handle(cx).read(cx);
+        !accounts.busy
+            && accounts
+                .tracked()
+                .iter()
+                .any(|friend| friend["syncedPlayTime"].is_number())
+    });
+    assert!(!app.shows(new_games), "the sync downloaded everything");
+    assert_eq!(app.find("friends-sync").label(), Some("Sync all"));
+
+    super::fake_lichess::play("dana", 300);
+    let mut app = app.restart();
+    app.open("Following");
+    app.find(new_games);
+    assert_eq!(app.find("friends-sync").label(), Some("Sync all · 1 new"));
+
+    app.click("friends-sync");
+    app.wait_gone(new_games);
+    assert_eq!(app.find("friends-sync").label(), Some("Sync all"));
+}
+
 #[gpui_kit::test]
 fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Lichess insights", true);

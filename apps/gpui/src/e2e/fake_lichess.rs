@@ -68,6 +68,8 @@ struct Server {
     next: AtomicUsize,
     /// By the code the sign-in returns with, which is also the end of the login.
     sessions: Mutex<HashMap<String, Handle>>,
+    /// Seconds each player has played beyond `account`'s, by lowercase name (`play`).
+    played: Mutex<HashMap<String, u64>>,
 }
 
 fn server() -> &'static Server {
@@ -86,8 +88,19 @@ fn server() -> &'static Server {
             base,
             next: AtomicUsize::new(0),
             sessions: Mutex::new(HashMap::new()),
+            played: Mutex::new(HashMap::new()),
         }
     })
+}
+
+/// `name` finishes a game of `seconds`: their profile's play time grows by it.
+pub fn play(name: &str, seconds: u64) {
+    *server()
+        .played
+        .lock()
+        .expect("the play times")
+        .entry(name.to_lowercase())
+        .or_default() += seconds;
 }
 
 /// The origin the core is pointed at.
@@ -229,6 +242,31 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         .and_then(|rest| rest.strip_suffix("/activity"))
     {
         return reply(&mut out, &activity(name));
+    }
+    // Profiles are public: many at once, by the comma-separated names in the body.
+    if request.method == "POST" && request.path == "/api/users" {
+        let played = server().played.lock().expect("the play times");
+        let users: Vec<Value> = request
+            .body
+            .split(',')
+            .map(|name| {
+                let mut user = account(name.trim());
+                user["playTime"]["total"] = json!(
+                    360_000
+                        + played
+                            .get(&name.trim().to_lowercase())
+                            .copied()
+                            .unwrap_or(0)
+                );
+                user
+            })
+            .collect();
+        return reply(&mut out, &json!(users));
+    }
+    // A followed player's games are public too: they have none.
+    if request.method == "GET" && request.path.starts_with("/api/games/user/") && session.is_none()
+    {
+        return ndjson(&mut out);
     }
     // Leaderboards are public, so they are asked for without the login.
     if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {

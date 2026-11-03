@@ -135,6 +135,8 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
             "syncGames",
             vec![json!("Alice")],
             vec![
+                // The play time it syncs to, from the public profiles.
+                "POST /api/users",
                 "GET /api/games/user/Alice?max=1000&ongoing=true&opening=true&moves=true&pgnInJson=true&clocks=true&evals=true&accuracy=true",
             ],
             true,
@@ -188,7 +190,7 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         let expected: Vec<String> = expected.iter().map(|target| target.to_string()).collect();
         assert_eq!(targets, expected, "{method}");
         if signed {
-            for seen in sent {
+            for seen in sent.iter().filter(|seen| seen.target != "/api/users") {
                 assert_eq!(seen.header("Authorization"), Some(ALICE_LOGIN), "{method}");
             }
         }

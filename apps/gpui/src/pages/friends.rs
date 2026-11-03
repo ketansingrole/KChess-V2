@@ -28,8 +28,10 @@ const PRESENCE_CHUNK: usize = 50;
 /// The most players `profiles` takes at once.
 const PROFILES_CHUNK: usize = 1000;
 const PRESENCE_EVERY: Duration = Duration::from_secs(20);
-/// A saved profile this recent is not asked for again.
+/// A saved profile this recent is not asked for again, except by the page's own round of everyone.
 const PROFILE_FRESH_MS: f64 = 3_600_000.;
+/// How often the page asks for every profile afresh, which tells whose games are new.
+const PROFILES_EVERY: Duration = Duration::from_secs(300);
 
 /// Timeline lines shown at first, and how many more each "Show more" adds.
 const TIMELINE_FIRST: usize = 12;
@@ -39,6 +41,8 @@ pub struct FriendsPage {
     input: Entity<InputState>,
     /// Profiles by lowercase name (`LichessUser`), and presence (`UserPresence`).
     profiles: HashMap<String, Value>,
+    /// When every profile was last asked for.
+    profiles_asked: Option<std::time::Instant>,
     status: HashMap<String, Value>,
     loading: bool,
     /// `gameLibraryOverview().versus`: the connected accounts' record against each player.
@@ -60,6 +64,18 @@ pub struct FriendsPage {
 impl Focusable for FriendsPage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+/// Whether Lichess has games of the player that the last sync did not download: their play time
+/// grows with every finished game, so a profile with more than the sync saved has new ones.
+fn has_new_games(friend: &Value, profile: &Value) -> bool {
+    match (
+        friend["syncedPlayTime"].as_f64(),
+        profile["playTime"]["total"].as_f64(),
+    ) {
+        (Some(synced), Some(now)) => now > synced,
+        _ => false,
     }
 }
 
@@ -110,6 +126,7 @@ impl FriendsPage {
         let mut page = FriendsPage {
             input,
             profiles: HashMap::new(),
+            profiles_asked: None,
             status: HashMap::new(),
             loading: false,
             versus: Value::Null,
@@ -185,7 +202,8 @@ impl FriendsPage {
         .detach();
     }
 
-    /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players.
+    /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players; every
+    /// few minutes the rest is everyone, so a play time that grew shows as new games.
     fn load_profiles(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
             .iter()
@@ -193,6 +211,12 @@ impl FriendsPage {
             .collect();
         if names.is_empty() {
             return;
+        }
+        let everyone = self
+            .profiles_asked
+            .is_none_or(|asked| asked.elapsed() >= PROFILES_EVERY);
+        if everyone {
+            self.profiles_asked = Some(std::time::Instant::now());
         }
         self.loading = true;
         cx.notify();
@@ -206,7 +230,7 @@ impl FriendsPage {
                     let recent = saved["profileFetchedAt"]
                         .as_f64()
                         .is_some_and(|at| crate::studies::now() - at < PROFILE_FRESH_MS);
-                    if recent {
+                    if recent && !everyone {
                         fresh.insert(key(name));
                     }
                     let _ = this.update(cx, |this, cx| {
@@ -397,6 +421,17 @@ impl FriendsPage {
             .as_ref()
             .and_then(|presence| presence["playingId"].as_str().map(str::to_string));
         let synced = friend["lastSyncedAt"].as_f64();
+        // Lichess has games the last sync did not download.
+        let mut new_badge = has_new_games(friend, &profile).then(|| {
+            div()
+                .id(("friend-new-games", index))
+                .test_support()
+                .tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("New games to sync")
+                        .build(window, cx)
+                })
+                .child(widgets::badge("New", Look::Primary, palette))
+        });
         let cell = |width: f32| div().w(px(width)).text_right();
         let busy = accounts.busy;
         let (sync_name, clear_name, remove_name, games_name, challenge_name) = (
@@ -477,7 +512,12 @@ impl FriendsPage {
                     .w(px(130.))
                     .when(games > 0., |column| {
                         column
-                            .child(format!("{} games", widgets::format_count(games)))
+                            .child(
+                                h_flex()
+                                    .gap(px(6.))
+                                    .child(format!("{} games", widgets::format_count(games)))
+                                    .children(new_badge.take()),
+                            )
                             .child(
                                 div()
                                     .text_size(px(12.))
@@ -492,13 +532,27 @@ impl FriendsPage {
                                     }),
                             )
                     })
-                    .when(games <= 0., |column| {
-                        column.child(
+                    .when(games <= 0., |column| match synced {
+                        // Synced, with nothing to keep: when, as for a player with games.
+                        Some(at) => column
+                            .child(
+                                h_flex()
+                                    .gap(px(6.))
+                                    .child("No games")
+                                    .children(new_badge.take()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .child(ago(at)),
+                            ),
+                        None => column.child(
                             div()
                                 .text_size(px(12.))
                                 .text_color(palette.text_muted)
                                 .child("Not synced"),
-                        )
+                        ),
                     }),
             )
             .child(
@@ -628,6 +682,15 @@ impl Render for FriendsPage {
             });
         let typed = !self.input.read(cx).value().trim().is_empty();
         let busy = accounts.busy;
+        let new_games = friends
+            .iter()
+            .filter(|friend| {
+                let name = friend["username"].as_str().unwrap_or_default();
+                self.profiles
+                    .get(&key(name))
+                    .is_some_and(|profile| has_new_games(friend, profile))
+            })
+            .count();
         let has_connected = !accounts.connected().is_empty();
         let header = h_flex()
             .flex_wrap()
@@ -670,7 +733,16 @@ impl Render for FriendsPage {
                     Button::new("friends-sync")
                         .outline()
                         .icon(icon("refresh-cw"))
-                        .label("Sync all")
+                        .label(match new_games {
+                            0 => "Sync all".to_string(),
+                            count => format!("Sync all · {count} new"),
+                        })
+                        .when(new_games > 0, |button| {
+                            button.tooltip(match new_games {
+                                1 => "1 player has new games".to_string(),
+                                count => format!("{count} players have new games"),
+                            })
+                        })
                         .loading(busy)
                         .disabled(busy)
                         .on_click(|_, window, cx| {
@@ -1124,5 +1196,30 @@ impl Render for ImportDialog {
                             })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_new_games;
+    use serde_json::json;
+
+    #[test]
+    fn a_longer_play_time_than_at_the_sync_means_new_games() {
+        let synced = json!({ "syncedPlayTime": 1000 });
+        assert!(has_new_games(
+            &synced,
+            &json!({ "playTime": { "total": 1300 } })
+        ));
+        assert!(!has_new_games(
+            &synced,
+            &json!({ "playTime": { "total": 1000 } })
+        ));
+        // Without a play time saved at a sync, or in the profile, nothing is claimed.
+        assert!(!has_new_games(
+            &json!({}),
+            &json!({ "playTime": { "total": 1300 } })
+        ));
+        assert!(!has_new_games(&synced, &json!({})));
     }
 }

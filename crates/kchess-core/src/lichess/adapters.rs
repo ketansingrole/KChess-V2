@@ -136,6 +136,22 @@ impl LichessStore for DbLichessStore {
         })
     }
 
+    fn save_synced_play_time<'a>(
+        &'a self,
+        account: &'a str,
+        play_time: i64,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async move {
+            self.database
+                .call_async_with("store.games.saveSyncedPlayTime", || {
+                    Ok(vec![json!(account), json!(play_time), json!(current())])
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
     fn read_api_cache<'a>(
         &'a self,
         key: &'a str,

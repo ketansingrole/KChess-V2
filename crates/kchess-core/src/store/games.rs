@@ -212,6 +212,8 @@ pub struct Account {
     pub connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_synced_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced_play_time: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -371,6 +373,10 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             let games: Vec<Value> = arg(args, 1, "games")?;
             let synced_at: Option<i64> = optional_arg(args, 2, "syncedAt")?;
             save_games(ctx.host, db, &username, &games, synced_at, current(args, 3))
+        }),
+        "saveSyncedPlayTime" => arg(args, 0, "username").and_then(|username: String| {
+            let play_time: i64 = arg(args, 1, "playTime")?;
+            save_synced_play_time(db, &username, play_time, current(args, 2))
         }),
         // The one-time import from an earlier release, run by the first read (`ensureMigrated`).
         // The plaintext tokens it finds go back to the caller, which encrypts and stores them.
@@ -699,7 +705,9 @@ fn get_settings(db: &Connection) -> Result<Value> {
 
 fn load_app_data(db: &Connection) -> Result<AppData> {
     let mut statement = db
-        .prepare("SELECT username, connected, lastSyncedAt FROM accounts ORDER BY rowid")
+        .prepare(
+            "SELECT username, connected, lastSyncedAt, syncedPlayTime FROM accounts ORDER BY rowid",
+        )
         .sql()?;
     let accounts = statement
         .query_map([], |row| {
@@ -707,6 +715,7 @@ fn load_app_data(db: &Connection) -> Result<AppData> {
                 username: row.get(0)?,
                 connected: row.get::<_, i64>(1)? == 1,
                 last_synced_at: row.get(2)?,
+                synced_play_time: row.get(3)?,
             })
         })
         .sql()?
@@ -1266,7 +1275,7 @@ fn clear_account_data(host: &dyn Host, db: &Connection, username: &str) -> Resul
         // The account and its data-usage history stay; only what was downloaded goes.
         purge_account_data(db, username, false).sql()?;
         db.execute(
-            "UPDATE accounts SET lastSyncedAt = NULL WHERE username = ? COLLATE NOCASE",
+            "UPDATE accounts SET lastSyncedAt = NULL, syncedPlayTime = NULL WHERE username = ? COLLATE NOCASE",
             [username],
         )
         .sql()?;
@@ -1404,6 +1413,24 @@ fn save_games(
         &[],
     )?;
     as_json(load_app_data(db)?)
+}
+
+/// The player's Lichess play time as of their last sync, which a later profile is compared with.
+fn save_synced_play_time(
+    db: &Connection,
+    username: &str,
+    play_time: i64,
+    still_current: bool,
+) -> Result<Value> {
+    if !still_current {
+        return Err(CoreError::new("Sync was cancelled."));
+    }
+    db.execute(
+        "UPDATE accounts SET syncedPlayTime = ? WHERE username = ? COLLATE NOCASE",
+        params![play_time, username],
+    )
+    .sql()?;
+    Ok(Value::Null)
 }
 
 #[cfg(test)]

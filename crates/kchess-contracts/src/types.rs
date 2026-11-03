@@ -503,6 +503,9 @@ pub struct LichessAccount {
     pub username: String,
     pub connected: bool,
     pub last_synced_at: Option<f64>,
+    /// Lichess's `playTime.total` of the player when their games were last synced.
+    #[serde(default)]
+    pub synced_play_time: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
