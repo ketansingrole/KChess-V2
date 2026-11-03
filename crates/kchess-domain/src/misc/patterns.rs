@@ -230,8 +230,11 @@ mod tests {
         if std::env::var_os("KCHESS_WRITE_UNICODE").is_some() {
             std::fs::write(path, &text).expect("write tables");
         }
+        // A Windows checkout with `core.autocrlf` has the file in CRLF.
         assert_eq!(
-            std::fs::read_to_string(path).expect("read tables"),
+            std::fs::read_to_string(path)
+                .expect("read tables")
+                .replace("\r\n", "\n"),
             text,
             "unicode_tables.rs is stale; rerun with KCHESS_WRITE_UNICODE=1"
         );
