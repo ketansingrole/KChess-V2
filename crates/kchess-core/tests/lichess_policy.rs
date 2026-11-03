@@ -185,10 +185,15 @@ async fn a_rate_limit_cools_the_next_request_down_for_retry_after() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn interactive_game_moves_go_before_background_reads() {
-    let (release, gate) = watch::channel(false);
+    // Each slow request has a gate of its own, so one slot is freed at a time: freed together,
+    // the move and the read ran side by side and reached the server in either order.
+    let (release_one, gate_one) = watch::channel(false);
+    let (release_two, gate_two) = watch::channel(false);
     let fixture = serve(move |seen| {
-        if seen.path().starts_with("/api/hold/") {
-            Reply::Gated(gate.clone(), Box::new(Reply::Json(200, "{}".into())))
+        if seen.path() == "/api/hold/one" {
+            Reply::Gated(gate_one.clone(), Box::new(Reply::Json(200, "{}".into())))
+        } else if seen.path() == "/api/hold/two" {
+            Reply::Gated(gate_two.clone(), Box::new(Reply::Json(200, "{}".into())))
         } else {
             Reply::Json(200, "{}".into())
         }
@@ -237,8 +242,12 @@ async fn interactive_game_moves_go_before_background_reads() {
     });
     settle().await;
 
-    release.send(true).unwrap();
-    for handle in holds.into_iter().chain([background, game_move]) {
+    // The one freed slot goes to the move, though the read queued before it; the read gets
+    // the slot only once the move's answer has come back.
+    release_one.send(true).unwrap();
+    game_move.await.unwrap().unwrap();
+    release_two.send(true).unwrap();
+    for handle in holds.into_iter().chain([background]) {
         handle.await.unwrap().unwrap();
     }
     let order: Vec<String> = fixture

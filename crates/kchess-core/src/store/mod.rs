@@ -384,7 +384,8 @@ mod scheduling_tests {
             "close waits for the detached database worker"
         );
         release.send(()).expect("release");
-        tokio::time::timeout(Duration::from_secs(1), close)
+        // A bound, not a wait: the worker's open can take over a second on a loaded Windows PC.
+        tokio::time::timeout(Duration::from_secs(10), close)
             .await
             .expect("close completes")
             .expect("close task");
