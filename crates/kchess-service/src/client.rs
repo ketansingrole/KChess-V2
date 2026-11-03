@@ -158,9 +158,13 @@ impl Client {
 
         let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
         let (sender, mut queue) = mpsc::channel::<Frame>(1024);
+        // Dropped when the writer ends, which ends the reader too: the connection closes only
+        // once both halves are gone.
+        let (writer_done, mut written) = oneshot::channel::<()>();
         {
             let pending = Arc::clone(&pending);
             tokio::spawn(async move {
+                let _writer_done = writer_done;
                 while let Some(frame) = queue.recv().await {
                     if write_frame(&mut writer, &frame).await.is_err() {
                         // Nothing more reaches the core: waiting calls would never be answered.
@@ -168,7 +172,9 @@ impl Client {
                         return;
                     }
                 }
-                // Every handle was dropped: the core sees this client leave.
+                // Every handle was dropped: the core sees this client leave. A Unix socket
+                // sees the shutdown at once; a Windows named pipe has no half-close and closes
+                // only when the reader lets go too.
                 let _ = tokio::io::AsyncWriteExt::shutdown(&mut writer).await;
             });
         }
@@ -176,7 +182,14 @@ impl Client {
         {
             let pending = Arc::clone(&pending);
             tokio::spawn(async move {
-                while let Ok(Some(frame)) = read_frame(&mut reader).await {
+                loop {
+                    let frame = tokio::select! {
+                        read = read_frame(&mut reader) => match read {
+                            Ok(Some(frame)) => frame,
+                            _ => break,
+                        },
+                        _ = &mut written => break,
+                    };
                     match frame {
                         Frame::Result { id, value, error } => {
                             let waiting = pending
