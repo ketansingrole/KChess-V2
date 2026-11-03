@@ -154,6 +154,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
       - run: cargo test -p kchess-gpui -p kchess-cli -p xtask --locked
+      # The headless packages run everywhere else in `check` (Linux); here they keep building and
+      # passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
+      - if: runner.os == 'Windows'
+        run: cargo clippy -p kchess-domain -p kchess-core -p kchess-service --all-targets --locked -- -D warnings
+      - if: runner.os == 'Windows'
+        run: cargo test -p kchess-domain -p kchess-core -p kchess-service --locked
 
   # The packages as the Release workflow makes them (ad hoc signed on macOS), with the release
   # profile's dependencies cached apart from the tests' debug ones. `windows-upgrade` packages
