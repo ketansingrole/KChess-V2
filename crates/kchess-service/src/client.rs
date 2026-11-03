@@ -19,8 +19,11 @@ use crate::protocol::{
 };
 use crate::transport;
 
-/// How long a started core has to accept its first client.
-const START_DEADLINE: Duration = Duration::from_secs(5);
+/// How long a started core has to accept its first client: a bound, not a wait, since a client
+/// connects the moment the core serves. Starting copies the core into this release's folder and
+/// opens the profile; on a loaded Windows PC, whose virus scanner reads the new executable first,
+/// that took over 5 s, and the app said it could not open the profile while the core came up.
+const START_DEADLINE: Duration = Duration::from_secs(30);
 /// How long a core has to answer `hello`.
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(5);
 const STOPPED: &str = "The KChess core stopped.";
