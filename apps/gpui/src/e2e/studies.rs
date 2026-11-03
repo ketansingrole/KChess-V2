@@ -91,11 +91,15 @@ fn import_study(app: &mut Harness, name: &str, pgn: &str) {
 }
 
 /// A new study through the empty Studies page, which opens it on the analysis board.
+/// A new study, once the core has made it: its bar shows at once, but its menu offers the study's
+/// own actions only from then on. A menu opened before that had no "Delete study", and Windows
+/// CI failed `a_study_deleted_from_the_board_is_gone_from_the_list` waiting for it now and then.
 fn new_study(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
     app.open("Studies");
     app.click("empty-new-study");
     app.find("study-actions");
+    wait_for_value(&mut app, "Study name", "Untitled study");
     app
 }
 

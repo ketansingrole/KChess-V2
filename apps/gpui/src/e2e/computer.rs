@@ -3,10 +3,19 @@
 
 use super::Harness;
 
+/// The page, once its game takes moves: the board shows at once, but moves wait for the engine to
+/// be ready. Clicks before that were ignored, and Windows CI, where each test binary's engine
+/// starts cold, failed `a_clicked_move_is_played` with no move played now and then.
 fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
     app.open("Play with computer");
     app.find("chess-board");
+    app.wait_for("the game to take moves", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Enter a chess move in SAN or UCI")
+            .is_some_and(|entry| entry.disabled() != Some(true))
+    });
     app
 }
 

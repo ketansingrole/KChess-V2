@@ -107,6 +107,12 @@ impl Harness {
             .join("opened-urls.txt");
         // Only this sign-in's login page counts.
         let _ = std::fs::remove_file(&opened);
+        // A sign-in asked for while the accounts are busy (an earlier one still syncing) is
+        // dropped, as the disabled button would be: Windows CI, slow enough to ask while the first
+        // account synced, timed out `switching_accounts_moves_the_event_stream` waiting for it.
+        self.wait_for("the accounts to be free for a sign-in", |_, cx| {
+            !crate::accounts::handle(cx).read(cx).busy
+        });
         self.cx
             .update_window(self.window, |_, window, cx| {
                 crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
