@@ -389,3 +389,34 @@ fn a_clock_face_can_be_turned_for_the_player_across_the_table(cx: &mut gpui_kit:
         Some("Rotate Player 2 clock, currently 0 degrees")
     );
 }
+
+/// Every square is a whole number of device pixels and starts on one, at any window size and
+/// interface size. A 798px board (Puzzles in a 1936×1048 window on a 96 DPI display) made
+/// squares of 99.75px: each piece, rasterized at 100px, was resampled into its square and blurred.
+#[gpui_kit::test]
+fn the_boards_squares_land_on_whole_pixels(cx: &mut gpui_kit::TestAppContext) {
+    use crate::interface_zoom::{Setting, choose};
+    use gpui_kit::{px, size};
+    let mut app = board(cx);
+    for percent in [100, 110, 125] {
+        app.with_window(|window, cx| choose(Setting::Percent(percent), window, cx));
+        for (width, height) in [(1920., 1017.), (1321., 877.), (1023., 769.), (641., 619.)] {
+            app.cx
+                .simulate_window_resize(app.window, size(px(width), px(height)));
+            for _ in 0..4 {
+                app.tick();
+            }
+            let scale = app.with_window(|window, _| window.scale_factor());
+            let board = app.find("chess-board").bounds();
+            let square = board.size.width.as_f32() * scale / 8.;
+            let left = board.origin.x.as_f32() * scale;
+            let top = board.origin.y.as_f32() * scale;
+            let whole = |value: f32| (value - value.round()).abs() < 0.01;
+            assert!(
+                whole(square) && whole(left) && whole(top),
+                "at {width}×{height}, {percent}%: squares of {square} device pixels from \
+                 ({left}, {top})"
+            );
+        }
+    }
+}

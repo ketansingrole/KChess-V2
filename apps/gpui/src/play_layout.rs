@@ -42,6 +42,14 @@ pub fn side_padding(window: &Window) -> Pixels {
         .min(px(36.))
 }
 
+/// `side`, down to a board whose squares are each a whole number of device pixels at `scale`.
+/// Layout puts the board's edges on device pixels; a fractional square would put the squares
+/// between them and resample every piece, which a 1x display shows as blur.
+fn whole_squares(side: Pixels, scale: f32) -> Pixels {
+    let square = (side.as_f32() * scale / 8.).floor().max(1.);
+    px(square * 8. / scale)
+}
+
 /// An area measured as it is laid out, so the next frame can size what goes in it.
 #[derive(Default)]
 pub struct Measured {
@@ -158,10 +166,13 @@ impl PlayLayout {
         let portrait = viewport.height > viewport.width;
         if page_width <= px(STACK_WIDTH) || (portrait && page_width <= px(PORTRAIT_STACK_WIDTH)) {
             let floor = if portrait { px(260.) } else { px(0.) };
-            let size = (width - side_padding(window) * 2.)
-                .min((viewport.height - px(STACKED_CHROME)).max(floor))
-                .min(px(STACKED_BOARD_MAX))
-                .max(px(160.));
+            let size = whole_squares(
+                (width - side_padding(window) * 2.)
+                    .min((viewport.height - px(STACKED_CHROME)).max(floor))
+                    .min(px(STACKED_BOARD_MAX))
+                    .max(px(160.)),
+                window.scale_factor(),
+            );
             self.stacked.set(Some(size + extra_width));
             return size;
         }
@@ -169,7 +180,10 @@ impl PlayLayout {
         let chrome = PAGE_TOP + PAGE_BOTTOM + around;
         let by_height = height - chrome;
         let by_width = width - side_padding(window) * 2. - px(344.);
-        by_height.min(by_width).max(px(260.)).min(px(1200.))
+        whole_squares(
+            by_height.min(by_width).max(px(260.)).min(px(1200.)),
+            window.scale_factor(),
+        )
     }
 
     /// The panel goes under the board on this page now.
