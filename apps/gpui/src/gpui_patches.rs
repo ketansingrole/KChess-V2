@@ -42,3 +42,48 @@ fn text_not_shown_for_a_while_is_not_shaped_again(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// Icons scaled to a size they were not drawn for put lines between pixels on a 1x display.
+/// An icon is drawn with the drawing made for its size, or one scaled a whole number of times.
+#[test]
+fn an_icon_uses_the_drawing_made_for_its_size() {
+    let fluent = [12, 16, 20, 24, 28, 32, 48];
+    // 1x: a 14 px box takes the 16 px drawing, whose margin it fits in.
+    assert_eq!(gpui_kit::icon_drawing(14., &fluent), Some((16, 16)));
+    assert_eq!(gpui_kit::icon_drawing(16., &fluent), Some((16, 16)));
+    assert_eq!(gpui_kit::icon_drawing(18., &fluent), Some((20, 20)));
+    assert_eq!(gpui_kit::icon_drawing(12., &fluent), Some((12, 12)));
+    // 2x: the same boxes take the 28 and 32 px drawings.
+    assert_eq!(gpui_kit::icon_drawing(28., &fluent), Some((32, 32)));
+    assert_eq!(gpui_kit::icon_drawing(32., &fluent), Some((32, 32)));
+    // KChess's own icons are drawn at 16 px only: doubled on a Retina display.
+    assert_eq!(gpui_kit::icon_drawing(28., &[16]), Some((16, 32)));
+    assert_eq!(gpui_kit::icon_drawing(14., &[16]), Some((16, 16)));
+    // Too small for any drawing: the icon's own file is scaled.
+    assert_eq!(gpui_kit::icon_drawing(12., &[16, 20]), None);
+}
+
+/// Looking for the sizes an icon is drawn at asked the app's assets for `monitor@12.svg`, which
+/// does not exist; GPUI Kit's assets answer that with an error, and every icon without a 12 px
+/// drawing (most of the sidebar's) was not drawn at all.
+#[test]
+fn an_icon_without_every_size_still_finds_its_drawing() {
+    let renderer = gpui_kit::SvgRenderer::new(std::sync::Arc::new(crate::assets::Assets));
+    let params = |name: &str, device: i32| gpui_kit::RenderSvgParams {
+        path: format!("icons/{name}.svg").into(),
+        size: gpui_kit::size(
+            gpui_kit::DevicePixels(device * 2),
+            gpui_kit::DevicePixels(device * 2),
+        ),
+    };
+    let side = |name: &str, device: i32| {
+        renderer
+            .icon_drawing_for(&params(name, device))
+            .map(|(_, side)| side)
+    };
+    assert_eq!(side("monitor", 14), Some(16));
+    assert_eq!(side("monitor", 28), Some(32));
+    // KChess's own drawings exist at 16 px only.
+    assert_eq!(side("swords", 14), Some(16));
+    assert_eq!(side("swords", 28), Some(32));
+}

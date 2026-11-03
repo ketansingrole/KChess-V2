@@ -39,7 +39,7 @@ const HELP: &str = "cargo xtask <command>
   download-release-snap Fetch and verify the published release's Snap (CI)
   notices               Check THIRD_PARTY_NOTICES.md names every shipped dependency
   app-icon              Draw the app icon in every size and format the app needs
-  icons [--check]       Write the Lucide icons the app names (or check they match)
+  icons [--check]       Write the icons the app names (or check they match)
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
   package [--skip-build] [--snap]

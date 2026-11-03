@@ -6,6 +6,7 @@ use image::Frame;
 use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     hash::Hash,
     sync::{Arc, LazyLock, OnceLock},
 };
@@ -235,6 +236,20 @@ impl SvgRenderer {
     ) -> Result<Option<(Size<DevicePixels>, Vec<u8>)>> {
         anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
+        // KChess patch: an icon drawn for this size, at a whole multiple of it (`icon_drawing`).
+        if bytes.is_none()
+            && let Some((bytes, side)) = self.icon_drawing_for(params)
+        {
+            let side = DevicePixels((side as f32 * SMOOTH_SVG_SCALE_FACTOR) as i32);
+            let pixmap = self.render_pixmap(&bytes, SvgSize::Size(Size::new(side, side)))?;
+            let size = Size::new(
+                DevicePixels(pixmap.width() as i32),
+                DevicePixels(pixmap.height() as i32),
+            );
+            let alpha_mask = pixmap.pixels().iter().map(|p| p.alpha()).collect();
+            return Ok(Some((size, alpha_mask)));
+        }
+
         let render_pixmap = |bytes| {
             let pixmap = self.render_pixmap(bytes, SvgSize::Size(params.size))?;
 
@@ -265,6 +280,59 @@ impl SvgRenderer {
         let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
         rasterize_tree(&tree, size)
     }
+
+    /// KChess patch: the drawing of `params.path` (`icons/name.svg`) made for its size, among
+    /// the sizes the asset source has as `icons/name@N.svg`, and the side it is drawn at.
+    pub fn icon_drawing_for(&self, params: &RenderSvgParams) -> Option<(Cow<'static, [u8]>, u32)> {
+        let stem = params
+            .path
+            .strip_prefix("icons/")
+            .and_then(|name| name.strip_suffix(".svg"))?;
+        let device = params.size.width.0 as f32 / SMOOTH_SVG_SCALE_FACTOR;
+        // A size the icon is not drawn at is absent, whether a source says so or fails to find
+        // it (GPUI Kit's answers an error for a file it does not have).
+        let drawn: Vec<(u32, Cow<'static, [u8]>)> = ICON_SIZES
+            .into_iter()
+            .filter_map(|size| {
+                let path = format!("icons/{stem}@{size}.svg");
+                Some((size, self.asset_source.load(&path).ok().flatten()?))
+            })
+            .collect();
+        let sizes: Vec<u32> = drawn.iter().map(|(size, _)| *size).collect();
+        let (size, side) = icon_drawing(device, &sizes)?;
+        drawn
+            .into_iter()
+            .find(|(drawn, _)| *drawn == size)
+            .map(|(_, bytes)| (bytes, side))
+    }
+}
+
+/// KChess patch: the sizes an icon may have drawings for, as `icons/name@N.svg`.
+pub const ICON_SIZES: [u32; 7] = [12, 16, 20, 24, 28, 32, 48];
+
+/// KChess patch: which of an icon's drawings (`drawn`, their sizes in pixels) to use in a box
+/// `device` pixels wide, and the side to draw it at: a drawing at its own size or scaled a whole
+/// number of times, at most 8/7 of the box. Each drawing puts its lines on its own pixel grid,
+/// which a whole-number scale keeps, and keeps a margin inside its frame, so a 16 px drawing fits
+/// a 14 px box. Scaling any other amount puts lines between pixels: a 2-unit stroke on a 24-unit
+/// grid is 1.17 px wide at 14 px.
+///
+/// The least scale whose largest fitting drawing nearly fills the box wins, so detail drawn for a
+/// size is kept (32 px stays the 32 px drawing, not 12 px tripled); else the largest that fits.
+/// `None` when even the smallest drawing is too large; the icon's own file is scaled then.
+pub fn icon_drawing(device: f32, drawn: &[u32]) -> Option<(u32, u32)> {
+    let limit = device * 8. / 7. + 0.01;
+    let best = |times: u32| {
+        drawn
+            .iter()
+            .map(|&size| (size, size * times))
+            .filter(|(_, side)| *side as f32 <= limit)
+            .max_by_key(|(_, side)| *side)
+    };
+    (1..=3)
+        .filter_map(best)
+        .find(|(_, side)| *side as f32 >= device * 0.85)
+        .or_else(|| (1..=3).filter_map(best).max_by_key(|(_, side)| *side))
 }
 
 fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Error> {

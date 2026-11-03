@@ -1,4 +1,4 @@
-//! What the app draws and plays: the Lucide icons it names, GPUI Kit's component icons, and its
+//! What the app draws and plays: the icons it names, GPUI Kit's component icons, and its
 //! boards, piece sets and sounds (`apps/gpui/assets`, the Electron app's own), embedded once.
 
 use std::borrow::Cow;
@@ -6,13 +6,14 @@ use std::borrow::Cow;
 use gpui_kit::component::Icon;
 use gpui_kit::{AssetSource, Result, SharedString};
 
-/// The Lucide icons the app names (`icon`), written by `cargo xtask icons`.
+/// The icons the app names (`icon`), at each size they are drawn for (`name@16.svg`), written
+/// by `cargo xtask icons`.
 #[derive(rust_embed::RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/*.svg"]
 struct Icons;
 
-/// A Lucide icon by its name (`circle-dot`). `cargo xtask icons` finds every `icon("…")` in the
+/// An icon by its name (`circle-dot`). `cargo xtask icons` finds every `icon("…")` in the
 /// sources, so the name must be written here as a literal.
 pub fn icon(name: &'static str) -> Icon {
     Icon::empty().path(format!("icons/{name}.svg"))

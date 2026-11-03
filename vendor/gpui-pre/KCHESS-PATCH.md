@@ -5,8 +5,8 @@ used through `[patch.crates-io]` in the workspace `Cargo.toml`. Its `examples/` 
 are left out, and so are their targets in `Cargo.toml`. Everything else is unchanged except for
 the lines marked `KChess patch`, which add a **window zoom** for the GPUI app's Settings →
 Interface size: the whole window scales like a browser's page zoom (GPUI Kit sizes its widgets
-in pixels, so scaling `rem` alone could not do this), and make **reusing cached views** cheaper
-(see below).
+in pixels, so scaling `rem` alone could not do this), make **reusing cached views** cheaper, and
+draw **icons with the drawing made for their size** (see below).
 
 ## What the zoom patch does
 
@@ -65,6 +65,25 @@ patches make that replay cheaper, and one keeps shaped text; none changes what i
   last use, so a page opened again shaped all its text with CoreText again. Lines no frame has
   used for two frames are kept, up to 16,384 of them, and dropped when new fonts are added.
   `apps/gpui/src/gpui_patches.rs` checks it.
+
+## Icons drawn for their size
+
+An icon set draws each icon on a pixel grid; scaled to another size its lines fall between
+pixels and blur on a 1x display (Lucide's 2-unit strokes on a 24-unit grid were 1.17 px wide at
+14 px). The app's icons (`apps/gpui/assets/icons`, `cargo xtask icons`) come as `name.svg` plus
+the drawings made for each size, `name@16.svg`, `name@20.svg` and so on.
+
+- `SvgRenderer::render_alpha_mask` (`src/svg_renderer.rs`) draws `icons/name.svg` with the
+  drawing `icon_drawing` picks for the icon's size in device pixels: one at its own size or
+  scaled a whole number of times, at most 8/7 of the box (a 16 px drawing keeps a margin, so it
+  fits a 14 px box), preferring the least scale that nearly fills it. The tile is that drawing's
+  size, and `paint_svg` centres it in the icon's bounds as before. With no drawing small enough,
+  `name.svg` is scaled to the box as upstream does.
+- `icon_drawing_for` treats a size the asset source cannot load as absent: GPUI Kit's asset
+  source answers an error for a file it does not have, which once hid every icon without a
+  12 px drawing.
+
+`apps/gpui/src/gpui_patches.rs` checks the choice and the lookup.
 
 The app's end-to-end tests draw as the window does (cached views reused), and
 `e2e::screens` checks that every page drawn again from its cached frame is pixel for pixel the
