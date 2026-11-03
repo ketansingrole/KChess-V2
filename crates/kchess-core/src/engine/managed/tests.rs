@@ -9,6 +9,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -44,6 +45,7 @@ impl Host for RecordingHost {
 }
 
 impl RecordingHost {
+    #[cfg(unix)]
     fn usage_events(&self) -> Vec<Value> {
         self.events
             .lock()
@@ -135,6 +137,7 @@ const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uc
 /// One archive member.
 enum Member<'a> {
     File(&'a str, &'a [u8]),
+    #[cfg(unix)]
     Dir(&'a str),
     Link(&'a str, &'a str),
 }
@@ -158,6 +161,7 @@ fn tar_gz(members: &[Member]) -> Vec<u8> {
                 header.set_cksum();
                 builder.append(&header, *data).unwrap();
             }
+            #[cfg(unix)]
             Member::Dir(name) => {
                 header.set_entry_type(tar::EntryType::Directory);
                 header.set_size(0);
@@ -240,6 +244,7 @@ impl Drop for Resume {
 enum HandoffMode {
     Allow,
     Refuse,
+    #[cfg(unix)]
     Hang,
 }
 
@@ -268,6 +273,7 @@ impl EngineHandoff for TestHandoff {
                     Ok(Box::new(Resume(Arc::clone(&self.resumed))) as EngineGuard)
                 }
                 HandoffMode::Refuse => Err(CoreError::new("owners refused")),
+                #[cfg(unix)]
                 HandoffMode::Hang => std::future::pending().await,
             }
         })
@@ -323,6 +329,8 @@ async fn deletes_only_its_own_directory_under_engine_maintenance() {
     assert!(!engine.exists());
 }
 
+// The release is a Linux archive whose engine is a shell script.
+#[cfg(unix)]
 #[tokio::test]
 async fn skips_the_download_when_the_installed_engine_matches_the_release() {
     let (base, hits) = serve(|_| {
@@ -424,6 +432,8 @@ async fn installs_the_verified_release_and_records_its_version() {
     );
 }
 
+// The release is a Linux archive whose engine is a shell script.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_token_authenticates_the_release_check_but_not_the_download() {
     // Packaging in CI was refused by GitHub's anonymous rate limit (403).
@@ -864,6 +874,8 @@ async fn the_probe_waits_out_a_busy_executable() {
     release.await.unwrap();
 }
 
+// The release is a Linux archive whose engine is a shell script.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_refused_handoff_keeps_the_old_engine_and_resumes_nothing() {
     let archive = tar_gz(&[Member::File("stockfish", FAKE_ENGINE.as_bytes())]);
@@ -901,6 +913,8 @@ async fn a_refused_handoff_keeps_the_old_engine_and_resumes_nothing() {
     assert_kept_old_version(&engine);
 }
 
+// The release is a Linux archive whose engine is a shell script.
+#[cfg(unix)]
 #[tokio::test]
 async fn owners_that_do_not_exit_time_out_and_keep_the_old_engine() {
     let archive = tar_gz(&[Member::File("stockfish", FAKE_ENGINE.as_bytes())]);

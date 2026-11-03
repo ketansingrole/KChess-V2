@@ -80,19 +80,6 @@ fn open(dir: &Path, host: &Arc<Wire>) -> Arc<Core> {
     Arc::new(Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens"))
 }
 
-/// An executable that runs the scripted fake engine in `mode`.
-fn engine_script(dir: &Path, mode: &str) -> String {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join(format!("engine-{mode}.sh"));
-    std::fs::write(
-        &path,
-        format!("#!/bin/sh\nexec '{}' {mode}\n", support::fake_path()),
-    )
-    .expect("engine script");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("engine mode");
-    path.display().to_string()
-}
-
 /// Trusts `path` as the engine and saves it as the configured executable.
 fn configure_engine(core: &Core, path: &str) {
     core.call_sync("engine.trust", vec![json!(path)])
@@ -115,7 +102,7 @@ async fn closing_ends_an_engine_search_in_flight() {
     let dir = tempfile::tempdir().expect("profile");
     let host = Arc::new(Wire::default());
     let core = open(dir.path(), &host);
-    configure_engine(&core, &engine_script(dir.path(), "search"));
+    configure_engine(&core, &support::engine_copy(dir.path(), "search"));
     // Assistance waits until the core has confirmed there is no live game.
     core.call("resumeOnline", vec![]).await.expect("resume");
 

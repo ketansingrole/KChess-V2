@@ -3,12 +3,16 @@
 
 mod support;
 
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use kchess_core::engine::uci::{UciController, search_cancelled};
+#[cfg(unix)]
 use kchess_core::error::CoreError;
+#[cfg(unix)]
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +23,7 @@ async fn cancel_after(token: &CancellationToken, delay: Duration) {
     token.cancel();
 }
 
+#[cfg(unix)]
 async fn wait_until(what: &str, condition: impl Fn() -> bool) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while !condition() {

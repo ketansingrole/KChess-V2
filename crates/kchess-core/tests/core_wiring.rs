@@ -8,7 +8,7 @@
 mod support;
 
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -83,21 +83,6 @@ fn core(host: &Arc<Wire>, dir: &Path) -> Core {
     Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens")
 }
 
-/// An executable that runs the scripted fake engine in `mode`, so a configured engine path can
-/// name it (the engine checks require an executable file).
-fn engine_script(dir: &Path, mode: &str) -> String {
-    let path: PathBuf = dir.join(format!("engine-{mode}.sh"));
-    std::fs::write(
-        &path,
-        format!("#!/bin/sh\nexec '{}' {mode}\n", support::fake_path()),
-    )
-    .expect("engine script");
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-        .expect("engine script mode");
-    path.display().to_string()
-}
-
 fn expected_threads_on_battery() -> usize {
     let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
     default_budget(cpus).min(2)
@@ -108,7 +93,7 @@ async fn a_lease_never_waits_on_an_unanswered_battery_request() {
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
-    let script = engine_script(dir.path(), "search");
+    let script = support::engine_copy(dir.path(), "search");
     // The host never answers `onBattery`: the search must still start and finish.
     let answer = tokio::time::timeout(
         WAIT,
@@ -167,7 +152,7 @@ async fn managed_replacement_stops_running_engines_before_it_publishes() {
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
-    let script = engine_script(dir.path(), "search");
+    let script = support::engine_copy(dir.path(), "search");
     let id = core
         .call(
             "analysis.start",
@@ -215,7 +200,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
-    let script = engine_script(dir.path(), "search");
+    let script = support::engine_copy(dir.path(), "search");
     let id = core
         .call(
             "analysis.start",
@@ -280,7 +265,7 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
-    let script = engine_script(dir.path(), "review");
+    let script = support::engine_copy(dir.path(), "review");
     // Point the review at the scripted engine through the settings the store keeps.
     let mut settings = core
         .call_sync("store.games.getSettings", vec![])
@@ -336,7 +321,7 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = Arc::new(core(&host, dir.path()));
-    let script = engine_script(dir.path(), "search");
+    let script = support::engine_copy(dir.path(), "search");
     core.call(
         "analysis.start",
         vec![

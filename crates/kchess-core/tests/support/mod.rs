@@ -75,6 +75,14 @@ pub fn fake_path() -> String {
         .to_string()
 }
 
+/// A copy of the fake engine in `dir` that runs in `mode` with no arguments, as the core starts
+/// a configured engine. A copy rather than a shell script, so it runs on Windows too.
+pub fn engine_copy(dir: &Path, mode: &str) -> String {
+    let path = dir.join(format!("engine-{mode}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(fake_path(), &path).expect("the engine copy");
+    path.display().to_string()
+}
+
 /// The lines the fake engine has received so far, in order.
 pub fn received(log: &Path) -> Vec<String> {
     std::fs::read_to_string(log)

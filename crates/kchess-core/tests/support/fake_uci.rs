@@ -187,10 +187,16 @@ fn lock(state: &Mutex<Search>) -> std::sync::MutexGuard<'_, Search> {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    // Started as an app starts its engine, with no arguments, the mode comes from
-    // `KCHESS_FAKE_UCI_MODE` (the GPUI app's end-to-end tests, `apps/gpui/src/e2e`).
+    // Started as an app starts its engine, with no arguments, the mode comes from a copy's name
+    // (`engine-search`, `support::engine_copy`), or else `KCHESS_FAKE_UCI_MODE` (the GPUI app's
+    // end-to-end tests, `apps/gpui/src/e2e`).
     let mode = args
         .next()
+        .or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            let stem = exe.file_stem()?.to_str()?;
+            Some(stem.strip_prefix("engine-")?.to_string())
+        })
         .or_else(|| std::env::var("KCHESS_FAKE_UCI_MODE").ok())
         .unwrap_or_else(|| "handshake".to_string());
     // `slow-review`: the review script, taking 20 ms per search so reviews overlap in tests.
