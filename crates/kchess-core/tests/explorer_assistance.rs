@@ -49,7 +49,8 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         biased;
         _ = &mut lookup => panic!("the gated fixture holds the lookup"),
         _ = async {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            // Bounds, not waits: a loaded Windows PC filtering 127.0.0.1 took over 5 s here.
+            tokio::time::timeout(Duration::from_secs(30), async {
                 while fixture.requests().is_empty() {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
@@ -70,7 +71,7 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         json!(true)
     );
     gate_open.send(true).unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(5), lookup)
+    let error = tokio::time::timeout(Duration::from_secs(30), lookup)
         .await
         .expect("the gated lookup resolves")
         .unwrap_err();
