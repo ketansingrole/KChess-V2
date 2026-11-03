@@ -117,6 +117,70 @@ async fn a_cancelled_watch_reports_nothing_after_it_is_stopped() {
     assert_ne!(first, second);
 }
 
+#[tokio::test]
+async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
+    // Lichess's description of a streamed game carries `initialFen` and no `fen`: the watch page
+    // once waited on "Connecting…" for an arena game, every record after it dropped.
+    let fixture = serve(|seen: &Seen| {
+        if seen.path() != "/api/stream/game/VuAqDosj" {
+            return Reply::Hang;
+        }
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        let italian = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 1";
+        for record in [
+            json!({
+                "id": "VuAqDosj",
+                "variant": { "key": "fromPosition", "name": "From Position" },
+                "speed": "rapid", "rated": true, "source": "arena", "initialFen": italian,
+                "players": {
+                    "white": { "user": { "name": "Thot_x_Thor" }, "rating": 2155 },
+                    "black": { "user": { "name": "stefanoschor" }, "rating": 1766 }
+                }
+            }),
+            json!({ "fen": italian, "wc": 600, "bc": 600 }),
+            json!({
+                "fen": "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 1 2",
+                "lm": "f8c5", "wc": 600, "bc": 598
+            }),
+        ] {
+            tx.send(record.to_string() + "\n").unwrap();
+        }
+        std::mem::forget(tx);
+        Reply::Stream(rx)
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    let session = spectator.watch(WatchTarget::Game("VuAqDosj".into()));
+    wait_until("the position after the first move", || {
+        sink.frames.lock().unwrap().len() >= 3
+    })
+    .await;
+    let frames = sink.frames.lock().unwrap().clone();
+    let first = &frames[0];
+    assert_eq!(first.session, session);
+    assert_eq!(first.game_id, "VuAqDosj");
+    assert!(
+        first
+            .fen
+            .starts_with("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b")
+    );
+    assert_eq!(
+        first.variant, STANDARD,
+        "a game from a position plays standard rules"
+    );
+    let last = frames.last().unwrap();
+    assert!(last.fen.starts_with("r1bqk1nr/pppp1ppp/2n5/2b1p3/"));
+    assert_eq!(last.last_move.as_deref(), Some("f8c5"));
+    assert_eq!(last.black_clock, Some(598.));
+    assert_eq!(last.game_id, "VuAqDosj");
+    spectator.stop();
+}
+
 fn tv_frame(id: &str, fen: &str) -> String {
     json!({
         "t": "featured",

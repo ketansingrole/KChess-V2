@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::feed::{player_of, position_key, take_utf16, uci_or_none};
+use super::feed::{player_of, position_key, take_utf16, uci_or_none, variant_from_lichess};
 use super::{
     BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvPastGame,
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
@@ -77,6 +77,9 @@ struct Keyed {
 struct GameRecord {
     #[serde(default)]
     fen: Loose<String>,
+    /// Where the game started; Lichess's description of a game carries this, not its `fen`.
+    #[serde(default)]
+    initial_fen: Loose<String>,
     #[serde(default)]
     id: Loose<String>,
     #[serde(default)]
@@ -96,6 +99,9 @@ struct GameRecord {
     #[serde(default)]
     bc: Loose<f64>,
 }
+
+/// The standard start, for a game described without a position.
+const STANDARD_START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// What a viewer is told when a feed's task panicked (the panic hook logged it).
 const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
@@ -714,10 +720,16 @@ impl Inner {
                         CoreError::new(format!("Lichess sent an unreadable game record: {cause}"))
                     })?;
                     let record: GameRecord = read(&data).unwrap_or_default();
-                    let Some(fen) = display_fen(record.fen.0.as_deref().unwrap_or("")) else {
-                        return Ok(());
-                    };
+                    let fen = display_fen(record.fen.0.as_deref().unwrap_or(""));
                     if let Some(id) = record.id.0.as_deref() {
+                        // The description has no `fen` of its own: the game is shown from its
+                        // start until the position that follows it.
+                        let Some(fen) = fen
+                            .or_else(|| display_fen(record.initial_fen.0.as_deref()?))
+                            .or_else(|| display_fen(STANDARD_START))
+                        else {
+                            return Ok(());
+                        };
                         // The description of the game: first, and again when it ends.
                         let status = record.status.0.and_then(|status| status.name.0);
                         let players = record.players.0.unwrap_or_default();
@@ -742,11 +754,11 @@ impl Inner {
                             last_move: uci_or_none(record.last_move.as_ref()),
                             white_clock: current.as_ref().and_then(|c| c.white_clock),
                             black_clock: current.as_ref().and_then(|c| c.black_clock),
-                            variant: record
-                                .variant
-                                .0
-                                .and_then(|variant| variant.key.0)
-                                .unwrap_or_else(|| "standard".into()),
+                            variant: {
+                                let key = record.variant.0.and_then(|variant| variant.key.0);
+                                variant_from_lichess(key.as_deref())
+                                    .map_or_else(|| key.unwrap_or_default(), String::from)
+                            },
                             speed: details.speed,
                             rated: details.rated,
                             clock: details.clock,
@@ -757,7 +769,7 @@ impl Inner {
                             moves: None,
                             previous: None,
                         });
-                    } else if let Some(previous) = current.as_ref() {
+                    } else if let (Some(fen), Some(previous)) = (fen, current.as_ref()) {
                         current = Some(WatchFrame {
                             fen,
                             last_move: uci_or_none(record.lm.as_ref()),

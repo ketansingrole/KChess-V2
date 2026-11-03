@@ -585,7 +585,7 @@ fn featured_clock(featured: &Value, color: Color, elapsed: f64) -> Option<(Strin
     Some((text.as_str()?.to_string(), running))
 }
 
-/// The games being played now, each watched with a click.
+/// The games being played now: a row each, watched with a click anywhere on it.
 fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
     let duels = detail["duels"]
         .as_array()
@@ -593,44 +593,60 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
         .clone();
     Some(
         widgets::card(palette)
-            .gap(px(8.))
+            .gap(px(4.))
             .child(widgets::heading("Playing now", palette))
             .children(duels.into_iter().enumerate().map(|(index, duel)| {
                 let id = duel["id"].as_str().unwrap_or_default().to_string();
+                let name = |key: &str| duel[key]["name"].as_str().unwrap_or("?").to_string();
+                let label = format!("Watch {} against {}", name("white"), name("black"));
                 let side = |key: &str, slot: usize| {
                     h_flex()
                         .gap(px(8.))
                         .min_w_0()
-                        .children(duel[key]["rank"].as_f64().map(|rank| {
+                        // Ranks in a column of their own, so the names line up.
+                        .child(
                             div()
+                                .w(px(40.))
+                                .flex_none()
+                                .font_features(widgets::tabular())
                                 .text_color(palette.text_muted)
-                                .child(format!("#{rank}"))
-                        }))
+                                .children(
+                                    duel[key]["rank"].as_f64().map(|rank| format!("#{rank}")),
+                                ),
+                        )
                         .child(player_link(
                             ("duel-player", index * 2 + slot),
-                            duel[key]["name"].as_str().unwrap_or("?").to_string(),
+                            name(key),
                             palette.primary,
                         ))
                 };
                 h_flex()
+                    .id(("duel-watch", index))
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(label)
                     .gap(px(8.))
+                    .mx(px(-8.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(radii::MD)
                     .text_size(px(13.))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(palette.accented))
+                    .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
+                            .gap(px(2.))
                             .child(side("white", 0))
                             .child(side("black", 1)),
                     )
                     .child(
-                        Button::new(("duel-watch", index))
-                            .xsmall()
-                            .ghost()
-                            .icon(icon("tv"))
-                            .accessibility_label("Watch")
-                            .on_click(move |_, window, cx| {
-                                crate::shell::watch_game(&id, window, cx)
-                            }),
+                        icon("tv")
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(palette.text_muted),
                     )
             })),
     )

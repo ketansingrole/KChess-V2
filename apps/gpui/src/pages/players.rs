@@ -1577,7 +1577,11 @@ pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Statef
         .cursor_pointer()
         .hover(|link| link.underline())
         .child(name.clone())
-        .on_click(move |_, window, cx| crate::shell::open_player(&name, window, cx))
+        .on_click(move |_, window, cx| {
+            // A name inside a clickable row opens the player, not the row.
+            cx.stop_propagation();
+            crate::shell::open_player(&name, window, cx)
+        })
 }
 
 impl Render for PlayersPage {
