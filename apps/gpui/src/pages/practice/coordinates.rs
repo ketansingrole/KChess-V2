@@ -536,6 +536,7 @@ impl Coordinates {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         Switch::new(id)
+            .small()
             .checked(crate::prefs::get(cx, key, false))
             .disabled(disabled)
             .label(label)

@@ -19,7 +19,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{Disableable as _, Icon, IndexPath, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::{
@@ -502,6 +502,7 @@ impl Rows {
         let change = Rc::new(change);
         let control = h_flex().child(
             Switch::new(id)
+                .small()
                 .checked(on)
                 .disabled(!enabled)
                 .accessibility_label(title)
