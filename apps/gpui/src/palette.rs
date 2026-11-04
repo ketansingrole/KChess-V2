@@ -678,12 +678,12 @@ fn tournament_commands(cx: &App) -> Vec<Command> {
     )
 }
 
-/// The actions of the Practice trainer on screen: an endgame drill's, the repertoire's or the
-/// mistakes'.
+/// The actions of the Practice trainer on screen: an endgame lesson's or drill's, the
+/// repertoire's or the mistakes'.
 fn practice_commands(cx: &App) -> Vec<Command> {
     use crate::pages::practice::{
-        Action, PracticePage, endgame_drills::DrillAction, mistakes::MistakeAction,
-        repertoire::RepertoireAction,
+        Action, PracticePage, endgame_drills::DrillAction, endgame_lesson::LessonAction,
+        mistakes::MistakeAction, repertoire::RepertoireAction,
     };
     let Some(page) = crate::shell::view_of::<PracticePage>(Page::Practice, cx) else {
         return Vec::new();
@@ -699,6 +699,24 @@ fn practice_commands(cx: &App) -> Vec<Command> {
                 ("flip", "Flip board", "arrow-up-down", "turn rotate")
             }
             Action::Drill(DrillAction::Restart) => ("restart", "Restart", "rotate-ccw", "again"),
+            Action::Lesson(LessonAction::Back) => {
+                ("courses", "All courses", "chevron-left", "back lessons")
+            }
+            Action::Lesson(LessonAction::Hint) => ("lesson-hint", "Hint", "lightbulb", "help"),
+            Action::Lesson(LessonAction::TakeBack) => {
+                ("lesson-takeback", "Take back", "undo-2", "undo")
+            }
+            Action::Lesson(LessonAction::Flip) => {
+                ("lesson-flip", "Flip board", "arrow-up-down", "turn rotate")
+            }
+            Action::Lesson(LessonAction::Retry) => ("retry", "Retry", "rotate-ccw", "again"),
+            Action::Lesson(LessonAction::Previous) => {
+                ("previous", "Previous step", "chevron-left", "back")
+            }
+            Action::Lesson(LessonAction::Next) => ("next-step", "Next", "chevron-right", "step"),
+            Action::Lesson(LessonAction::NextChapter) => {
+                ("next-chapter", "Next chapter", "chevron-right", "lesson")
+            }
             Action::Repertoire(RepertoireAction::ShowMove) => {
                 ("show-move", "Show move", "lightbulb", "hint answer")
             }

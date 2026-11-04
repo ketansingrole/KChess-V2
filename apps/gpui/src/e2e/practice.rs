@@ -224,6 +224,29 @@ fn a_checkmate_lesson_takes_back_a_wrong_move_and_accepts_the_mate(
     app.find("card-checkmate-patterns-2");
 }
 
+/// A lesson's buttons are in Quick Pick: its steps are gone through from there.
+#[gpui_kit::test]
+fn a_lesson_is_stepped_through_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 3);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-next");
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    run(&mut app, "Next");
+    assert_eq!(app.status(), "Your turn");
+    run(&mut app, "Previous step");
+    app.wait_gone("lesson-previous");
+    run(&mut app, "All courses");
+    app.find("card-checkmate-patterns-2");
+}
+
 #[gpui_kit::test]
 fn an_empty_repertoire_and_empty_mistakes_lead_elsewhere(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);

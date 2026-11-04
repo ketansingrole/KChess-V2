@@ -3,7 +3,7 @@
 
 mod coordinates;
 pub(crate) mod endgame_drills;
-mod endgame_lesson;
+pub(crate) mod endgame_lesson;
 mod endgames;
 mod engine_move;
 mod knight;
@@ -36,6 +36,7 @@ const TABS: [(&str, &str); 6] = [
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Action {
     Drill(endgame_drills::DrillAction),
+    Lesson(endgame_lesson::LessonAction),
     Repertoire(repertoire::RepertoireAction),
     Mistakes(mistakes::MistakeAction),
 }
@@ -85,16 +86,33 @@ impl PracticePage {
         self.mistakes.clone()
     }
 
+    /// The endgame lesson, while it is on screen.
+    fn lesson(&self, cx: &App) -> Option<Entity<endgame_lesson::EndgameLesson>> {
+        if Self::tab(cx) != "endgames" {
+            return None;
+        }
+        self.endgames.as_ref()?.read(cx).shown_lesson(cx)
+    }
+
     /// What the trainer on screen can do now.
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
         match Self::tab(cx) {
-            "endgames" => self
-                .drills(cx)
-                .map(|drills| drills.read(cx).actions())
-                .unwrap_or_default()
-                .into_iter()
-                .map(Action::Drill)
-                .collect(),
+            "endgames" => {
+                if let Some(lesson) = self.lesson(cx) {
+                    return lesson
+                        .read(cx)
+                        .actions()
+                        .into_iter()
+                        .map(Action::Lesson)
+                        .collect();
+                }
+                self.drills(cx)
+                    .map(|drills| drills.read(cx).actions())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Action::Drill)
+                    .collect()
+            }
             "openings" => self
                 .repertoire
                 .as_ref()
@@ -121,6 +139,11 @@ impl PracticePage {
             Action::Drill(action) => {
                 if let Some(drills) = self.drills(cx) {
                     drills.update(cx, |drills, cx| drills.act(action, cx));
+                }
+            }
+            Action::Lesson(action) => {
+                if let Some(lesson) = self.lesson(cx) {
+                    lesson.update(cx, |lesson, cx| lesson.act(action, cx));
                 }
             }
             Action::Mistakes(action) => {

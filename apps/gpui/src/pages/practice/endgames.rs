@@ -192,6 +192,14 @@ impl Endgames {
         .detach();
     }
 
+    /// The lesson, while it is on screen.
+    pub(crate) fn shown_lesson(&self, cx: &App) -> Option<Entity<EndgameLesson>> {
+        let view = Self::view(cx);
+        self.lesson
+            .clone()
+            .filter(|lesson| lesson.read(cx).course_id() == view)
+    }
+
     /// The drills, while they are on screen.
     pub(crate) fn shown_drills(&self, cx: &App) -> Option<Entity<EndgameDrills>> {
         self.drills.clone().filter(|_| Self::view(cx) == DRILLS)
