@@ -28,7 +28,7 @@ Commands:
   puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
   review <link|file|moves>         Review a game with Stockfish: accuracy and faulted moves
-  explore [masters|opening|tablebase] <fen|startpos>
+  explore [masters|opening|tablebase] <fen|startpos|moves>
                                    Look a position up (the tablebase for 7 pieces or fewer)
   methods                          List available CoreApi methods
 
@@ -378,10 +378,10 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
         .first()
         .and_then(|word| KINDS.iter().find(|kind| **kind == word.as_str()));
     let words = if named.is_some() { &words[1..] } else { words };
-    let fen = analysis_fen(words).map_err(|_| match words.is_empty() {
-        true => "explore requires a FEN.".to_string(),
-        false => format!("Not a legal position: {}", words.join(" ")),
-    })?;
+    let fen = analysis_request(words).map_err(|cause| cause.replace("analyze", "explore"))?["fen"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     let kind = named.copied().unwrap_or_else(|| {
         let mut fields = fen.split(' ');
         let pieces = fields
@@ -501,12 +501,19 @@ mod tests {
             Ok(("masters", castling.to_string()))
         );
         assert_eq!(
+            explore_request(&strings(&["opening", "1.", "e4", "c5"])),
+            Ok((
+                "opening",
+                "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".to_string()
+            ))
+        );
+        assert_eq!(
             explore_request(&strings(&["tablebase"])),
-            Err("explore requires a FEN.".into())
+            Err("explore requires a FEN or moves.".into())
         );
         assert_eq!(
             explore_request(&strings(&["8/8/8/8/8/3k4/8/K4Q2 w - - 0 1"])),
-            Err("Not a legal position: 8/8/8/8/8/3k4/8/K4Q2 w - - 0 1".into())
+            Err("Not a legal position or moves: 8/8/8/8/8/3k4/8/K4Q2 w - - 0 1".into())
         );
     }
 
