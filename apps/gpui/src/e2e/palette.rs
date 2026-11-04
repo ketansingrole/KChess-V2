@@ -224,3 +224,36 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
     wait_for_setting(&mut app, Setting::Auto);
     assert_eq!(saved(&app)["zoom"], json!("auto"));
 }
+
+/// A FEN typed or pasted into Quick Pick is analysed or edited from there; a Lichess game link
+/// opens that game.
+#[gpui_kit::test]
+fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    wait_for_first(&mut app, "Analyse this position");
+    assert!(lists(&mut app, "Edit this position"));
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Analysis));
+    // Only this position's king reaches d2.
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Kd2");
+    app.press("enter");
+    app.find("tree-e1d2");
+
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "lichess.org/{}#2",
+        super::fake_lichess::LINKED_GAME
+    ));
+    wait_for_first(&mut app, "Open this game on the analysis board");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    // The board held unsaved moves, so it asks first.
+    app.click("ok");
+    app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
+    assert_eq!(app.find("tree-e2e4 e7e5").selected(), Some(true));
+}

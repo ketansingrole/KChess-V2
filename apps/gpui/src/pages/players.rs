@@ -1611,6 +1611,31 @@ pub fn open_exported(
     window: &mut Window,
     cx: &mut App,
 ) {
+    open_exported_at(id, white, black, orientation, 0, window, cx);
+}
+
+/// A Lichess game by its link (`crate::game::game_link`), from the side and at the move it names.
+pub fn open_linked(link: &crate::game::GameLink, window: &mut Window, cx: &mut App) {
+    open_exported_at(
+        &link.id,
+        Value::Null,
+        Value::Null,
+        link.orientation,
+        link.ply.unwrap_or(0),
+        window,
+        cx,
+    );
+}
+
+fn open_exported_at(
+    id: &str,
+    white: Value,
+    black: Value,
+    orientation: shakmaty::Color,
+    ply: usize,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let export = cx.global::<AppCore>().call("exportGame", vec![json!(id)]);
     let origin = json!({ "white": white, "black": black, "gameId": id });
     window
@@ -1621,7 +1646,7 @@ pub fn open_exported(
                     crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
                         analysis.open_game(
                             &pgn,
-                            0,
+                            ply,
                             Some(orientation),
                             Some(origin.clone()),
                             false,

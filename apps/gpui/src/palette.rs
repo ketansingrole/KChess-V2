@@ -851,6 +851,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
             .collect()
         }
         Mode::All => {
+            let pasted = group(Some("Pasted"), pasted(text));
             let mut results: Vec<Group> = [
                 searched("Go to", text, places(cx), 8),
                 searched("This page", text, page_commands(cx), 8),
@@ -863,9 +864,63 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
             .flatten()
             .collect();
             results.sort_by(|a, b| b.score.total_cmp(&a.score));
-            results
+            // A pasted position or game link is what was meant: its actions come first.
+            pasted.into_iter().chain(results).collect()
         }
     }
+}
+
+/// What a pasted FEN or Lichess game link can open.
+fn pasted(text: &str) -> Vec<Command> {
+    if let Some(link) = crate::game::game_link(text) {
+        let id = link.id.clone();
+        return vec![
+            Command::new(
+                format!("pasted:game:{id}"),
+                "Open this game on the analysis board",
+                icon("microscope"),
+                move |window, cx| crate::pages::players::open_linked(&link, window, cx),
+            )
+            .detail(id),
+        ];
+    }
+    let fen = text
+        .contains('/')
+        .then(|| crate::game::editor_setup(text))
+        .flatten();
+    let Some(fen) = fen
+        .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
+        .and_then(|fen| fen.as_str().map(str::to_string))
+        .filter(|fen| crate::game::position_problem(fen).is_none())
+    else {
+        return Vec::new();
+    };
+    let orientation = if fen.split(' ').nth(1) == Some("b") {
+        shakmaty::Color::Black
+    } else {
+        shakmaty::Color::White
+    };
+    let (analysed, edited) = (fen.clone(), fen);
+    vec![
+        Command::new(
+            "pasted:analyse",
+            "Analyse this position",
+            icon("microscope"),
+            move |window, cx| {
+                let fen = analysed.clone();
+                crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                    analysis.load(Some(&fen), cx);
+                    true
+                });
+            },
+        ),
+        Command::new(
+            "pasted:edit",
+            "Edit this position",
+            icon("pencil-ruler"),
+            move |window, cx| crate::shell::edit_position(edited.clone(), orientation, window, cx),
+        ),
+    ]
 }
 
 pub struct CommandPalette {
