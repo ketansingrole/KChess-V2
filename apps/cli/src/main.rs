@@ -32,6 +32,7 @@ Commands:
                                    Look a position up (the tablebase for 7 pieces or fewer)
   opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
   position <fen|startpos|moves>    Print whose turn, check or mate, and the legal moves
+  watch [channel|link]             Stream a Lichess TV channel or game as JSON lines until Ctrl-C
   methods                          List available CoreApi methods
 
 Options:
@@ -283,6 +284,14 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let pgn = review_input(&core, &args[1..]).await?;
                 print(&review::run(&core, &mut events, &pgn).await?);
             }
+            "watch" => {
+                let target = watch_target(&args[1..])?;
+                core.call("resumeOnline", vec![]).await?;
+                core.call("watch", vec![target]).await?;
+                let watched = watch_frames(&core, &mut events).await;
+                let _ = core.call("stopWatching", vec![]).await;
+                watched?;
+            }
             "explore" => {
                 let (kind, fen) = explore_request(&args[1..])?;
                 core.call("resumeOnline", vec![]).await?;
@@ -317,6 +326,57 @@ async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
     pgn.as_str()
         .map(str::to_string)
         .ok_or_else(|| "Lichess sent no PGN.".into())
+}
+
+/// What `watch` follows: a Lichess TV channel (the best game when none is named), or a game by its
+/// link or id.
+fn watch_target(words: &[String]) -> Result<Value, String> {
+    use kchess_domain::misc::TV_CHANNEL_KEYS;
+    let word = words.first().map_or("best", String::as_str);
+    if let Some(channel) = TV_CHANNEL_KEYS
+        .iter()
+        .find(|channel| channel.eq_ignore_ascii_case(word))
+    {
+        return Ok(json!({ "channel": channel }));
+    }
+    let link = if word.contains('/') {
+        word.to_string()
+    } else {
+        format!("https://lichess.org/{word}")
+    };
+    kchess_domain::links::game_link(&link)
+        .map(|game| json!({ "gameId": game.id }))
+        .ok_or_else(|| {
+            format!(
+                "watch takes a TV channel ({}) or a Lichess game link.",
+                TV_CHANNEL_KEYS.join(", ")
+            )
+        })
+}
+
+/// Print each frame of the watched game as a JSON line until Ctrl-C; an error ends it.
+async fn watch_frames(
+    core: &CoreClient,
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::Event>,
+) -> Result<(), String> {
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
+    loop {
+        tokio::select! {
+            _ = &mut interrupted => return Ok(()),
+            event = events.recv() => match event {
+                None => return Err("The core closed.".into()),
+                Some(event) if event.name == "core:closed" => return Err("The core closed.".into()),
+                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
+                Some(event) if event.name == "watch:frame" => print(&event.payload),
+                Some(event) if event.name == "watch:state" && event.payload["phase"] == "error" => {
+                    let message = event.payload["message"].as_str().unwrap_or("Watching failed.");
+                    return Err(message.to_string());
+                }
+                Some(_) => {}
+            },
+        }
+    }
 }
 
 /// The game `review` was given: a Lichess link, a PGN file, or the PGN or moves themselves.
@@ -486,6 +546,32 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_follows_a_channel_or_a_game() {
+        let words = |text: &str| {
+            text.split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        let target = |text: &str| super::watch_target(&words(text));
+        assert_eq!(target(""), Ok(serde_json::json!({ "channel": "best" })));
+        assert_eq!(
+            target("Blitz"),
+            Ok(serde_json::json!({ "channel": "blitz" }))
+        );
+        assert_eq!(
+            target("ultrabullet"),
+            Ok(serde_json::json!({ "channel": "ultraBullet" }))
+        );
+        let game = serde_json::json!({ "gameId": "q7ZvsdUF" });
+        assert_eq!(
+            target("https://lichess.org/q7ZvsdUF/black").as_ref(),
+            Ok(&game)
+        );
+        assert_eq!(target("q7ZvsdUF").as_ref(), Ok(&game));
+        assert!(target("lichess.org/training").is_err_and(|cause| cause.contains("best, bullet")));
+    }
 
     #[test]
     fn a_position_names_its_turn_mate_and_legal_moves() {

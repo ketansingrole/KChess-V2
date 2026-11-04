@@ -87,6 +87,7 @@ can add them as a friend, challenge them or watch their current game.
   position, from the tablebase when it has seven pieces or fewer, and
   `kchess-cli opening <fen|moves>` names the opening it reaches, offline, and
   `kchess-cli position <fen|moves>` prints whose turn it is, check or mate, and the legal moves.
+  `kchess-cli watch [channel|link]` streams a Lichess TV channel or a game as JSON lines.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 
