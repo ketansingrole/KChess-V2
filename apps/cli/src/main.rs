@@ -32,7 +32,7 @@ Commands:
                                    Look a position up (the tablebase for 7 pieces or fewer)
   opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
   position <fen|startpos|moves>    Print whose turn, check or mate, and the legal moves
-  watch [channel|link]             Stream a Lichess TV channel or game as JSON lines until Ctrl-C
+  watch [channel|link]             Stream Lichess TV, a game or a broadcast as JSON lines
   methods                          List available CoreApi methods
 
 Options:
@@ -287,7 +287,17 @@ async fn run(argv: &[String]) -> Result<(), String> {
             "watch" => {
                 let target = watch_target(&args[1..])?;
                 core.call("resumeOnline", vec![]).await?;
-                core.call("watch", vec![target]).await?;
+                match target {
+                    Watched::Feed(target) => core.call("watch", vec![target]).await?,
+                    Watched::Round(round) => {
+                        core.call("watchBroadcast", vec![json!(round)]).await?
+                    }
+                    Watched::Tour(id) => {
+                        let tour = core.call("broadcastTour", vec![json!(id)]).await?;
+                        let round = live_round(&tour).ok_or("That broadcast has no rounds yet.")?;
+                        core.call("watchBroadcast", vec![json!(round)]).await?
+                    }
+                };
                 let watched = watch_frames(&core, &mut events).await;
                 let _ = core.call("stopWatching", vec![]).await;
                 watched?;
@@ -328,33 +338,63 @@ async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
         .ok_or_else(|| "Lichess sent no PGN.".into())
 }
 
-/// What `watch` follows: a Lichess TV channel (the best game when none is named), or a game by its
-/// link or id.
-fn watch_target(words: &[String]) -> Result<Value, String> {
+/// What `watch` follows.
+#[derive(Debug, PartialEq)]
+enum Watched {
+    /// A TV channel or a game: `{ channel }` or `{ gameId }`.
+    Feed(Value),
+    /// A broadcast round, by id.
+    Round(String),
+    /// A broadcast tournament, at its live round.
+    Tour(String),
+}
+
+/// What `watch` was given: a Lichess TV channel (the best game when none is named), a game by its
+/// link or id, or a broadcast's link.
+fn watch_target(words: &[String]) -> Result<Watched, String> {
+    use kchess_domain::links::{BroadcastLink, broadcast_link, game_link};
     use kchess_domain::misc::TV_CHANNEL_KEYS;
     let word = words.first().map_or("best", String::as_str);
     if let Some(channel) = TV_CHANNEL_KEYS
         .iter()
         .find(|channel| channel.eq_ignore_ascii_case(word))
     {
-        return Ok(json!({ "channel": channel }));
+        return Ok(Watched::Feed(json!({ "channel": channel })));
+    }
+    match broadcast_link(word) {
+        Some(BroadcastLink::Tour(tour)) => return Ok(Watched::Tour(tour)),
+        Some(BroadcastLink::Round { round, .. }) => return Ok(Watched::Round(round)),
+        None => {}
     }
     let link = if word.contains('/') {
         word.to_string()
     } else {
         format!("https://lichess.org/{word}")
     };
-    kchess_domain::links::game_link(&link)
-        .map(|game| json!({ "gameId": game.id }))
+    game_link(&link)
+        .map(|game| Watched::Feed(json!({ "gameId": game.id })))
         .ok_or_else(|| {
             format!(
-                "watch takes a TV channel ({}) or a Lichess game link.",
+                "watch takes a TV channel ({}), or a Lichess game or broadcast link.",
                 TV_CHANNEL_KEYS.join(", ")
             )
         })
 }
 
-/// Print each frame of the watched game as a JSON line until Ctrl-C; an error ends it.
+/// The round a broadcast opens at, as the app opens it: the one Lichess names, else the one being
+/// played, else the last.
+fn live_round(tour: &Value) -> Option<String> {
+    let rounds = tour["rounds"].as_array()?;
+    rounds
+        .iter()
+        .find(|round| round["id"] == tour["defaultRoundId"])
+        .or_else(|| rounds.iter().find(|round| round["ongoing"] == json!(true)))
+        .or(rounds.last())
+        .and_then(|round| round["id"].as_str().map(str::to_string))
+}
+
+/// Print each frame of the watched game, or each update of the broadcast round, as a JSON line
+/// until Ctrl-C; an error, or the round's end, ends it.
 async fn watch_frames(
     core: &CoreClient,
     events: &mut tokio::sync::mpsc::UnboundedReceiver<core::Event>,
@@ -369,6 +409,15 @@ async fn watch_frames(
                 Some(event) if event.name == "core:closed" => return Err("The core closed.".into()),
                 Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
                 Some(event) if event.name == "watch:frame" => print(&event.payload),
+                Some(event) if event.name == "watch:broadcast" => {
+                    if let Some(error) = event.payload["error"].as_str() {
+                        return Err(error.to_string());
+                    }
+                    print(&event.payload);
+                    if event.payload["ended"] == json!(true) {
+                        return Ok(());
+                    }
+                }
                 Some(event) if event.name == "watch:state" && event.payload["phase"] == "error" => {
                     let message = event.payload["message"].as_str().unwrap_or("Watching failed.");
                     return Err(message.to_string());
@@ -548,29 +597,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn watch_follows_a_channel_or_a_game() {
+    fn watch_follows_a_channel_a_game_or_a_broadcast() {
+        use super::Watched::{Feed, Round, Tour};
+        use serde_json::json;
         let words = |text: &str| {
             text.split_whitespace()
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         };
         let target = |text: &str| super::watch_target(&words(text));
-        assert_eq!(target(""), Ok(serde_json::json!({ "channel": "best" })));
-        assert_eq!(
-            target("Blitz"),
-            Ok(serde_json::json!({ "channel": "blitz" }))
-        );
+        assert_eq!(target(""), Ok(Feed(json!({ "channel": "best" }))));
+        assert_eq!(target("Blitz"), Ok(Feed(json!({ "channel": "blitz" }))));
         assert_eq!(
             target("ultrabullet"),
-            Ok(serde_json::json!({ "channel": "ultraBullet" }))
+            Ok(Feed(json!({ "channel": "ultraBullet" })))
         );
-        let game = serde_json::json!({ "gameId": "q7ZvsdUF" });
+        let game = Ok(Feed(json!({ "gameId": "q7ZvsdUF" })));
+        assert_eq!(target("https://lichess.org/q7ZvsdUF/black"), game);
+        assert_eq!(target("q7ZvsdUF"), game);
         assert_eq!(
-            target("https://lichess.org/q7ZvsdUF/black").as_ref(),
-            Ok(&game)
+            target("https://lichess.org/broadcast/kchess-open/round-1/kcRound1"),
+            Ok(Round("kcRound1".into()))
         );
-        assert_eq!(target("q7ZvsdUF").as_ref(), Ok(&game));
+        assert_eq!(
+            target("lichess.org/broadcast/kchess-open/kcTour01"),
+            Ok(Tour("kcTour01".into()))
+        );
         assert!(target("lichess.org/training").is_err_and(|cause| cause.contains("best, bullet")));
+    }
+
+    #[test]
+    fn a_broadcast_opens_at_its_live_round() {
+        use serde_json::json;
+        let rounds = json!([
+            { "id": "r1", "finished": true },
+            { "id": "r2", "ongoing": true },
+            { "id": "r3" },
+        ]);
+        let named = json!({ "rounds": rounds, "defaultRoundId": "r1" });
+        assert_eq!(super::live_round(&named).as_deref(), Some("r1"));
+        let unnamed = json!({ "rounds": rounds });
+        assert_eq!(super::live_round(&unnamed).as_deref(), Some("r2"));
+        let none_live = json!({ "rounds": [{ "id": "r1" }, { "id": "r2" }] });
+        assert_eq!(super::live_round(&none_live).as_deref(), Some("r2"));
+        assert_eq!(super::live_round(&json!({ "rounds": [] })), None);
     }
 
     #[test]
