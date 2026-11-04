@@ -245,3 +245,36 @@ fn a_rating_card_puts_its_speed_on_the_chart(cx: &mut gpui_kit::TestAppContext) 
     });
     assert_eq!(app.find("home-perf-blitz").selected(), Some(false));
 }
+
+/// The account menu sat under the sidebar's own Settings button and offered Settings again, above
+/// a header that repeated the button's name. It now goes to the account's profile and to the
+/// accounts section of Settings.
+#[gpui_kit::test]
+fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+
+    app.click("account-menu");
+    app.click_label("Manage accounts");
+    app.wait_for("Settings to open at its accounts", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Settings)
+            && crate::shell::view_of::<crate::pages::settings::SettingsPage>(
+                crate::pages::Page::Settings,
+                cx,
+            )
+            .is_some_and(|page| {
+                page.read(cx).section() == crate::pages::settings::Section::Accounts
+            })
+    });
+
+    app.click("account-menu");
+    app.click_label("Profile");
+    app.wait_for("the account's own profile", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Players)
+            && crate::shell::view_of::<crate::pages::players::PlayersPage>(
+                crate::pages::Page::Players,
+                cx,
+            )
+            .and_then(|page| page.read(cx).username())
+            .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
+    });
+}

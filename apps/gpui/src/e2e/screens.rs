@@ -410,6 +410,52 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
     });
 }
 
+/// The sidebar's account menu, open, in both appearances: with one account and with two, in the
+/// open sidebar and on its rail. `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui
+/// e2e::screens::account_menu -- --ignored` writes `<dir>/account-menu/<appearance>-<accounts>[-rail].png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn account_menu() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("account-menu");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        for accounts in [1, 2] {
+            let profile = tempfile::tempdir().expect("a temporary profile");
+            let (mut cx, window) = start(profile.path(), 1320., 880.);
+            cx.update(|cx| {
+                crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+            });
+            if accounts == 2 {
+                connect_showcase(&mut cx, window, profile.path(), "Knightowl");
+            }
+            connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
+            let shoot = |cx: &mut HeadlessAppContext, suffix: &str| {
+                cx.update_window(window, |_, window, cx| window.click("account-menu", cx))
+                    .expect("the window");
+                settle(cx, window);
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{name}-{accounts}{suffix}.png")))
+                    .expect("the screenshot saves");
+                // A second press closes it.
+                cx.update_window(window, |_, window, cx| window.click("account-menu", cx))
+                    .expect("the window");
+                settle(cx, window);
+            };
+            shoot(&mut cx, "");
+            cx.update_window(window, |_, window, cx| window.click("sidebar-toggle", cx))
+                .expect("the window");
+            settle(&mut cx, window);
+            shoot(&mut cx, "-rail");
+            let quit = cx.update(crate::core::quit);
+            cx.foreground_executor().block_test(quit);
+            crate::profile::TEST_DATA_DIR.set(None);
+        }
+    }
+}
+
 /// Connect the stand-in Lichess's showcase account as a person would, and sync its games.
 fn connect_showcase(
     cx: &mut HeadlessAppContext,
@@ -420,20 +466,23 @@ fn connect_showcase(
     let (code, session) = super::fake_lichess::session(username, false);
     session.lock().showcase = true;
     let opened = profile.join("opened-urls.txt");
+    // The login pages opened so far: a second account's is the one opened after them.
+    let logins = || -> Vec<String> {
+        std::fs::read_to_string(&opened)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains("/oauth"))
+            .map(str::to_string)
+            .collect()
+    };
+    let earlier = logins().len();
     cx.update_window(window, |_, window, cx| {
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
     })
     .expect("the window");
     for _ in 0..400 {
         settle(cx, window);
-        let url = std::fs::read_to_string(&opened).ok().and_then(|text| {
-            Some(
-                text.lines()
-                    .find(|line| line.contains("/oauth"))?
-                    .to_string(),
-            )
-        });
-        if let Some(url) = url {
+        if let Some(url) = logins().into_iter().nth(earlier) {
             super::fake_lichess::return_from_login(&url, &code);
             break;
         }
