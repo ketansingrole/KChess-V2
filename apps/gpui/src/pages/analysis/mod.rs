@@ -536,7 +536,7 @@ impl AnalysisPage {
         self.go_to(&end, cx);
     }
 
-    fn flip(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.changed(cx);
     }
@@ -1488,6 +1488,18 @@ impl AnalysisPage {
         }
     }
 
+    /// Copy the position shown.
+    pub(crate) fn copy_fen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let fen = self.node().fen.clone();
+        self.copy(fen, "FEN", window, cx);
+    }
+
+    /// Copy the whole game, its variations and comments with it.
+    pub(crate) fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pgn = self.root.to_pgn();
+        self.copy(pgn, "PGN", window, cx);
+    }
+
     fn copy(&self, text: String, what: &str, window: &mut Window, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         window.push_notification(SharedString::from(format!("{what} copied")), cx);
@@ -1518,7 +1530,7 @@ impl AnalysisPage {
         });
     }
 
-    fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.import_error = None;
         self.import
             .update(cx, |text, cx| text.set_value("", window, cx));
@@ -2662,19 +2674,15 @@ impl AnalysisPage {
                                 run(fen, orientation, window, cx);
                             }
                         };
-                        menu.item(PopupMenuItem::new("Copy FEN").icon(icon("copy")).on_click(
-                            action(|page, window, cx| {
-                                let fen = page.node().fen.clone();
-                                page.copy(fen, "FEN", window, cx)
-                            }),
-                        ))
+                        menu.item(
+                            PopupMenuItem::new("Copy FEN")
+                                .icon(icon("copy"))
+                                .on_click(action(|page, window, cx| page.copy_fen(window, cx))),
+                        )
                         .item(
                             PopupMenuItem::new("Copy PGN")
                                 .icon(icon("file-text"))
-                                .on_click(action(|page, window, cx| {
-                                    let pgn = page.root.to_pgn();
-                                    page.copy(pgn, "PGN", window, cx)
-                                })),
+                                .on_click(action(|page, window, cx| page.copy_pgn(window, cx))),
                         )
                         .item(
                             PopupMenuItem::new("Import a position or game…")

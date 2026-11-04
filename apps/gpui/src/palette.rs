@@ -496,8 +496,53 @@ fn page_commands(cx: &App) -> Vec<Command> {
     .kbds("Z");
     match crate::shell::current_page(cx) {
         Some(Page::Computer | Page::Local | Page::Online) => vec![zen],
+        Some(Page::Analysis) => analysis_commands(),
         _ => Vec::new(),
     }
+}
+
+/// The analysis board's own actions, as its menu and keys offer them.
+fn analysis_commands() -> Vec<Command> {
+    use crate::pages::analysis::AnalysisPage;
+    type Act = fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>);
+    let on_board = |act: Act| {
+        move |window: &mut Window, cx: &mut App| {
+            if let Some(board) = crate::shell::analysis_board(window, cx) {
+                board.update(cx, |board, cx| act(board, window, cx));
+            }
+        }
+    };
+    vec![
+        Command::new(
+            "analysis:flip",
+            "Flip board",
+            icon("refresh-cw"),
+            on_board(|board, _, cx| board.flip(cx)),
+        )
+        .keywords("turn rotate orientation")
+        .kbds("F"),
+        Command::new(
+            "analysis:copy-fen",
+            "Copy FEN",
+            icon("copy"),
+            on_board(|board, window, cx| board.copy_fen(window, cx)),
+        )
+        .keywords("position clipboard"),
+        Command::new(
+            "analysis:copy-pgn",
+            "Copy PGN",
+            icon("file-text"),
+            on_board(|board, window, cx| board.copy_pgn(window, cx)),
+        )
+        .keywords("game moves clipboard"),
+        Command::new(
+            "analysis:import",
+            "Import a position or game…",
+            icon("import"),
+            on_board(|board, window, cx| board.open_import(window, cx)),
+        )
+        .keywords("paste pgn fen link"),
+    ]
 }
 
 /// Stockfish at each level and side, online games, a new analysis board (`playCommands`).

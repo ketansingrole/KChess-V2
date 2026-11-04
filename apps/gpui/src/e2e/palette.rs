@@ -349,3 +349,33 @@ fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
             == "racingKings"
     });
 }
+
+/// On the analysis board, Quick Pick copies the position and flips the board, as its menu and F do.
+#[gpui_kit::test]
+fn the_analysis_boards_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Analysis board");
+    app.find("chess-board");
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(label);
+        wait_for_first(app, label);
+        app.press("enter");
+        wait_until_closed(app);
+    };
+    run(&mut app, "Copy FEN");
+    assert_eq!(
+        app.cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
+    );
+    run(&mut app, "Flip board");
+    // Black's pawn is now at the board's bottom.
+    app.click_square("e7", false);
+    app.click_square("e5", false);
+    assert_eq!(app.find("tree-e2e4 e7e5").selected(), Some(true));
+}
