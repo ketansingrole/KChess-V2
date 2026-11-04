@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -73,8 +73,10 @@ impl Session {
 pub struct Handle(Arc<Mutex<Session>>);
 
 impl Handle {
+    /// A test that fails while holding the session must not fail every test after it: the
+    /// server is shared, so a poisoned lock is taken over as it is.
     pub fn lock(&self) -> MutexGuard<'_, Session> {
-        self.0.lock().expect("the session")
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -113,7 +115,7 @@ pub fn play(name: &str, seconds: u64) {
     *server()
         .played
         .lock()
-        .expect("the play times")
+        .unwrap_or_else(PoisonError::into_inner)
         .entry(name.to_lowercase())
         .or_default() += seconds;
 }
@@ -135,7 +137,7 @@ pub fn session(username: &str, game: bool) -> (String, Handle) {
     server
         .sessions
         .lock()
-        .expect("the sessions")
+        .unwrap_or_else(PoisonError::into_inner)
         .insert(code.clone(), session.clone());
     (code, session)
 }
@@ -247,7 +249,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         );
     }
     let session = request.login.as_ref().and_then(|login| {
-        let sessions = server().sessions.lock().expect("the sessions");
+        let sessions = server()
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         sessions.get(login).cloned()
     });
     // A player's activity is public too: a few weeks of it, which each name staggers.
@@ -260,7 +265,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     }
     // Profiles are public: many at once, by the comma-separated names in the body.
     if request.method == "POST" && request.path == "/api/users" {
-        let played = server().played.lock().expect("the play times");
+        let played = server()
+            .played
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let users: Vec<Value> = request
             .body
             .split(',')
@@ -912,7 +920,10 @@ fn showcase_public(path: &str) -> Option<Showcase> {
             Some(_) => return None,
         }
     };
-    let sessions = server().sessions.lock().expect("the sessions");
+    let sessions = server()
+        .sessions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let username = sessions.values().find_map(|session| {
         let session = session.lock();
         (session.showcase && session.username.to_lowercase() == name)

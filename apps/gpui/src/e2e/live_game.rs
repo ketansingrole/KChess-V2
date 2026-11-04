@@ -28,7 +28,13 @@ fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
 fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestAppContext) {
     // A game started on another device that the Board API cannot play once opened Play on
     // Lichess on "Connection interrupted" with Lichess's 400 and a Reconnect that never worked.
-    let (app, lichess) = Harness::signed_in(cx, true);
+    let (mut app, lichess) = Harness::signed_in(cx, true);
+    // This launch's own game stream opens first: under load it once arrived after the count
+    // below was reset, and was counted against the next launch.
+    let first = lichess.clone();
+    app.wait_for("this launch's game stream", move |_, _| {
+        first.lock().board_streams > 0
+    });
     {
         // From the next launch on, the game is one Lichess keeps from apps.
         let mut session = lichess.lock();
