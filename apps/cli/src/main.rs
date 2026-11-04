@@ -32,7 +32,7 @@ Options:
   --engine <path>                  Use a native Stockfish executable
   --embedded                       Run the core in this process, not the shared one
 
-Interactive game commands: e4 or e2e4, undo, resign, new, status, quit.
+Interactive game commands: e4 or e2e4, undo, resign, new, status, pgn, quit.
 Local games also accept draw and pause. Sessions are saved in the core library.
 ";
 

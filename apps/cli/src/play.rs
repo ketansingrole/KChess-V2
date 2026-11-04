@@ -130,6 +130,48 @@ impl Session<'_> {
             .map_or_else(|| text.to_string(), |played| played.uci)
     }
 
+    /// The game as PGN, with its result, as the app's Copy PGN writes it.
+    fn pgn(&self) -> Result<String, String> {
+        let result = match self.result() {
+            None => "*",
+            Some(result) => match result["winner"].as_str() {
+                Some("white") => "1-0",
+                Some("black") => "0-1",
+                _ => "1/2-1/2",
+            },
+        };
+        let (white, black) = match &self.game {
+            Game::Local(_) => ("White".to_string(), "Black".to_string()),
+            Game::Computer(_) => {
+                let player = if self.state()["color"] == json!("black") {
+                    "black"
+                } else {
+                    "white"
+                };
+                let engine = "Stockfish".to_string();
+                if player == "white" {
+                    ("You".to_string(), engine)
+                } else {
+                    (engine, "You".to_string())
+                }
+            }
+        };
+        let headers = json!({
+            "Event": if self.kind() == "computer" { "Computer game (KChess)" } else { "Over the board (KChess)" },
+            "White": white,
+            "Black": black,
+            "Result": result,
+        });
+        kchess_games::rules(
+            "setupPgn",
+            &[self.state()["setup"].clone(), json!(self.moves()), headers],
+        )
+        .map_err(|cause| cause.to_string())?
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "The game could not be written as PGN.".to_string())
+    }
+
     fn show(&self) {
         println!(
             "{}",
@@ -473,6 +515,13 @@ pub async fn interactive(
                     "" => continue,
                     "quit" => break,
                     "status" => {}
+                    "pgn" => {
+                        match session.pgn() {
+                            Ok(pgn) => println!("{}", json!({ "pgn": pgn })),
+                            Err(cause) => eprintln!("{cause}"),
+                        }
+                        continue;
+                    }
                     command => match session.command(command).await {
                         Ok(true) => {}
                         Ok(false) => eprintln!("Illegal move or game unavailable."),

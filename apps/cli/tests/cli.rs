@@ -115,10 +115,19 @@ fn moves_are_typed_in_san_or_uci() {
     let played = cli(
         profile.path(),
         &["local"],
-        "Nf3\nd7d5\ng3\nNc6\nBg2\nBf5\nO-O\nNf3\nquit\n",
+        "Nf3\nd7d5\ng3\nNc6\nBg2\nBf5\nO-O\nNf3\npgn\nquit\n",
     );
     assert!(played.status.success(), "{played:?}");
-    let last = lines(&played).pop().expect("a state");
+    let mut states = lines(&played);
+    // `pgn` prints the game so far, and nothing else.
+    let pgn = states.pop().expect("the PGN");
+    assert!(
+        pgn["pgn"]
+            .as_str()
+            .is_some_and(|pgn| pgn.contains("1. Nf3 d5 2. g3 Nc6 3. Bg2 Bf5 4. O-O *")),
+        "{pgn}"
+    );
+    let last = states.pop().expect("a state");
     assert_eq!(
         last["moves"],
         json!(["g1f3", "d7d5", "g2g3", "b8c6", "f1g2", "c8f5", "e1h1"])
