@@ -31,6 +31,7 @@ Commands:
   explore [masters|opening|tablebase] <fen|startpos|moves>
                                    Look a position up (the tablebase for 7 pieces or fewer)
   opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
+  position <fen|startpos|moves>    Print whose turn, check or mate, and the legal moves
   methods                          List available CoreApi methods
 
 Options:
@@ -197,6 +198,10 @@ async fn run(argv: &[String]) -> Result<(), String> {
         }
         "opening" => {
             print(&opening_name(&args[1..])?);
+            return Ok(());
+        }
+        "position" => {
+            print(&position_info(&args[1..])?);
             return Ok(());
         }
         _ => {}
@@ -392,6 +397,33 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
     Ok(json!({ "eco": named["eco"], "name": named["name"], "fen": request["fen"] }))
 }
 
+/// The position a FEN or line reaches: whose turn, check and how the game stands, and every legal
+/// move in SAN.
+fn position_info(words: &[String]) -> Result<Value, String> {
+    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
+    let setup = json!({ "variant": "standard", "fen": request["fen"] });
+    let call = |method: &str| {
+        kchess_domain::api::call_value(method, std::slice::from_ref(&setup))
+            .map_err(|cause| cause.to_string())
+    };
+    let info = call("position")?;
+    let legal: Vec<Value> = call("legalMoves")?
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| entry["san"].clone())
+        .collect();
+    Ok(json!({
+        "fen": info["fen"],
+        "turn": info["turn"],
+        "check": info["check"],
+        "checkmate": info["checkmate"],
+        "stalemate": info["stalemate"],
+        "insufficient": info["insufficient"],
+        "legal": legal,
+    }))
+}
+
 /// What `explore` looks up: the database named first, else the tablebase when it covers the
 /// position (seven pieces or fewer, no castling rights) and the masters' games when not.
 fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
@@ -454,6 +486,22 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_position_names_its_turn_mate_and_legal_moves() {
+        let words = |text: &str| text.split(' ').map(str::to_string).collect::<Vec<_>>();
+        let start = super::position_info(&words("startpos")).expect("the start");
+        assert_eq!(start["turn"], "white");
+        assert_eq!(start["legal"].as_array().map(Vec::len), Some(20));
+        // Fool's mate: Black has mated, White has no moves.
+        let mated = super::position_info(&words("1. f3 e5 2. g4 Qh4#")).expect("the mate");
+        assert_eq!(mated["checkmate"], true);
+        assert_eq!(mated["turn"], "white");
+        assert_eq!(mated["legal"], serde_json::json!([]));
+        assert!(
+            super::position_info(&words("1. e4 e4")).is_err_and(|cause| cause.starts_with("Move "))
+        );
+    }
 
     #[test]
     fn settings_advice_names_the_cli_fix() {

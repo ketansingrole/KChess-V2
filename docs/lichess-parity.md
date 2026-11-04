@@ -85,7 +85,8 @@ can add them as a friend, challenge them or watch their current game.
   side's accuracy and the inaccuracies, mistakes and blunders.
   `kchess-cli explore [masters|opening|tablebase] <fen|moves>` prints the explorer's moves for a
   position, from the tablebase when it has seven pieces or fewer, and
-  `kchess-cli opening <fen|moves>` names the opening it reaches, offline.
+  `kchess-cli opening <fen|moves>` names the opening it reaches, offline, and
+  `kchess-cli position <fen|moves>` prints whose turn it is, check or mate, and the legal moves.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 
