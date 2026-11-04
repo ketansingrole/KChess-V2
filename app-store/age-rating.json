@@ -17,6 +17,7 @@
   "sexualContentGraphicAndNudity": "NONE",
   "sexualContentOrNudity": "NONE",
   "socialMedia": false,
+  "socialMediaAgeRestricted": false,
   "unrestrictedWebAccess": false,
   "userGeneratedContent": true,
   "violenceCartoonOrFantasy": "NONE",
