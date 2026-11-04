@@ -51,6 +51,30 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// The sidebar marks your move in a Lichess game beside Play; collapsed to its rail it had no room
+/// for the mark and dropped it, so a correspondence move went unseen there.
+#[gpui_kit::test]
+fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.ongoing = vec![serde_json::json!({
+                "gameId": "corr1",
+                "speed": "correspondence",
+                "isMyTurn": true,
+            })];
+            cx.notify();
+        });
+        crate::shell::toggle_sidebar(window, cx);
+    });
+    let mark = app.find("sidebar-game-mark").bounds();
+    let play = app.find("4-0").bounds();
+    assert!(
+        play.contains(&mark.origin) && play.contains(&mark.bottom_right()),
+        "the mark {mark:?} sits on Play on Lichess {play:?}"
+    );
+}
+
 /// Windows gives a press on a drag area to the title bar, so a button left over one never hears
 /// its click: the top bar's Restart to update did nothing there.
 #[gpui_kit::test]

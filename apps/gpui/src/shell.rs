@@ -159,22 +159,27 @@ fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
 /// instead), with a heading between them while Settings is open.
 #[derive(Clone)]
 enum NavBlock {
-    Menu(Option<&'static str>, Box<SidebarMenu>),
+    /// A group: its heading, its rows, and which of its rows carries the Lichess game's mark.
+    Menu(
+        Option<&'static str>,
+        Box<SidebarMenu>,
+        Option<(usize, GameMark)>,
+    ),
     Heading(&'static str, bool),
 }
 
 impl Collapsible for NavBlock {
     fn is_collapsed(&self) -> bool {
         match self {
-            NavBlock::Menu(_, menu) => menu.is_collapsed(),
+            NavBlock::Menu(_, menu, _) => menu.is_collapsed(),
             NavBlock::Heading(_, collapsed) => *collapsed,
         }
     }
 
     fn collapsed(self, collapsed: bool) -> Self {
         match self {
-            NavBlock::Menu(heading, menu) => {
-                NavBlock::Menu(heading, Box::new(menu.collapsed(collapsed)))
+            NavBlock::Menu(heading, menu, mark) => {
+                NavBlock::Menu(heading, Box::new(menu.collapsed(collapsed)), mark)
             }
             NavBlock::Heading(label, _) => NavBlock::Heading(label, collapsed),
         }
@@ -189,14 +194,16 @@ impl SidebarItem for NavBlock {
         cx: &mut App,
     ) -> impl IntoElement {
         match self {
-            NavBlock::Menu(None, menu) => menu.render(id, window, cx).into_any_element(),
-            NavBlock::Menu(Some(heading), menu) => {
+            NavBlock::Menu(None, menu, _) => menu.render(id, window, cx).into_any_element(),
+            NavBlock::Menu(Some(heading), menu, mark) => {
                 let collapsed = menu.is_collapsed();
                 let palette = cx.global::<Palette>();
                 let (dimmed, border) = (palette.dimmed, palette.border);
                 v_flex()
+                    // Midway between the groups: the row above ends 7px below its icon and the
+                    // sidebar's 8px gap follows, so the rule keeps 8px to the rows it heads.
                     .when(collapsed, |group| {
-                        group.child(div().h(px(1.)).w(px(16.)).mx_auto().my(px(4.)).bg(border))
+                        group.child(div().h(px(1.)).w(px(16.)).mx_auto().mb(px(8.)).bg(border))
                     })
                     .when(!collapsed, |group| {
                         group.child(
@@ -210,6 +217,24 @@ impl SidebarItem for NavBlock {
                         )
                     })
                     .child(menu.render(id, window, cx))
+                    // On the rail the row has no room beside its icon: the mark sits on the
+                    // icon's top right corner, cut out of it by a ring of the sidebar's color,
+                    // below the rule and 32px down per row before it.
+                    .when_some(mark.filter(|_| collapsed), |group, (row, mark)| {
+                        group.relative().child(
+                            div()
+                                .id("sidebar-game-mark")
+                                .test_support()
+                                .absolute()
+                                .top(px(9. + 32. * row as f32 + 3.))
+                                .left(px(18.))
+                                .size(px(12.))
+                                .rounded_full()
+                                .border_2()
+                                .border_color(cx.theme().tokens.sidebar)
+                                .bg(game_color(mark, cx)),
+                        )
+                    })
                     .into_any_element()
             }
             // A collapsed sidebar shows icons only.
@@ -1130,10 +1155,15 @@ impl Workspace {
                 .into_iter()
                 .zip(NAV_HEADINGS)
                 .map(|(size, heading)| {
+                    let group: Vec<_> = pages.by_ref().take(size).collect();
+                    let mark = group
+                        .iter()
+                        .position(|(page, _, _)| *page == Page::Online)
+                        .and_then(|row| Some((row, game_mark(cx)?)));
                     NavBlock::Menu(
                         heading,
-                        Box::new(SidebarMenu::new().gap_0().children(
-                            pages.by_ref().take(size).map(|(page, label, glyph)| {
+                        Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
+                            |(page, label, glyph)| {
                                 let marked =
                                     (page == Page::Online).then(|| game_mark(cx)).flatten();
                                 let shown = if open { nav_label(page, label) } else { label };
@@ -1141,32 +1171,18 @@ impl Workspace {
                                     .accessibility_label(label)
                                     .active(current == page)
                                     .when_some(marked, |item, mark| {
-                                        item.suffix(move |_, cx| {
-                                            let theme = cx.theme();
-                                            let color = if mark == GameMark::Turn {
-                                                theme.primary
-                                            } else {
-                                                theme.muted_foreground
-                                            };
-                                            div().size(px(8.)).rounded_full().bg(color).when(
-                                                mark == GameMark::Turn,
-                                                |dot| {
-                                                    dot.shadow(vec![BoxShadow {
-                                                        color: color.opacity(0.25),
-                                                        offset: point(px(0.), px(0.)),
-                                                        blur_radius: px(0.),
-                                                        spread_radius: px(3.),
-                                                        inset: false,
-                                                    }])
-                                                },
-                                            )
+                                        item.accessibility_label(match mark {
+                                            GameMark::Turn => format!("{label}, your move"),
+                                            GameMark::Live => format!("{label}, game in progress"),
                                         })
+                                        .suffix(move |_, cx| game_dot(mark, cx))
                                     })
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.choose(page, window, cx)
                                     }))
-                            }),
-                        )),
+                            },
+                        ))),
+                        mark,
                     )
                 })
                 .collect();
@@ -1184,6 +1200,7 @@ impl Workspace {
                         cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
                     )),
                 ),
+                None,
             ),
             NavBlock::Heading("Settings", false),
             NavBlock::Menu(
@@ -1197,6 +1214,7 @@ impl Workspace {
                             )
                         })),
                 ),
+                None,
             ),
         ]
     }
@@ -1460,6 +1478,30 @@ fn working(cx: &App) -> bool {
 enum GameMark {
     Turn,
     Live,
+}
+
+/// The Lichess game's mark: the primary color on your move, else muted.
+fn game_color(mark: GameMark, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    if mark == GameMark::Turn {
+        theme.primary
+    } else {
+        theme.muted_foreground
+    }
+}
+
+/// The mark beside Play on Lichess: an 8px dot, in a soft round halo on your move. (A box
+/// shadow's spread ignores the corners and drew the halo square.)
+fn game_dot(mark: GameMark, cx: &App) -> Div {
+    let color = game_color(mark, cx);
+    div()
+        .size(px(14.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .when(mark == GameMark::Turn, |halo| halo.bg(color.opacity(0.25)))
+        .child(div().size(px(8.)).rounded_full().bg(color))
 }
 
 fn game_mark(cx: &App) -> Option<GameMark> {

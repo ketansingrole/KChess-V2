@@ -127,7 +127,8 @@ fn the_timeline() {
 /// years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes
 /// `<dir>/home/<state>-<appearance>-<width>.png`; `KCHESS_HOME_STATES` and `KCHESS_HOME_SIZES`
-/// narrow it down, and `KCHESS_HOME_RAIL=1` shoots it with the sidebar collapsed to its rail.
+/// narrow it down, `KCHESS_HOME_RAIL=1` shoots it with the sidebar collapsed to its rail, and
+/// `KCHESS_HOME_TURN=1` with your move waiting in a correspondence game.
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn home() {
@@ -137,6 +138,7 @@ fn home() {
     super::environment();
     let only = std::env::var("KCHESS_HOME_STATES").unwrap_or_default();
     let rail = std::env::var_os("KCHESS_HOME_RAIL").is_some();
+    let turn = std::env::var_os("KCHESS_HOME_TURN").is_some();
     for state in ["new", "finished", "played", "lichess"] {
         if !only.is_empty() && !only.split(',').any(|wanted| wanted == state) {
             continue;
@@ -156,6 +158,16 @@ fn home() {
                 }
                 cx.update_window(window, |_, window, cx| {
                     crate::shell::open(Page::Dashboard, window, cx);
+                    if turn {
+                        crate::online::handle(cx).update(cx, |online, cx| {
+                            online.ongoing = vec![serde_json::json!({
+                                "gameId": "corr1",
+                                "speed": "correspondence",
+                                "isMyTurn": true,
+                            })];
+                            cx.notify();
+                        });
+                    }
                     if rail {
                         crate::shell::toggle_sidebar(window, cx);
                     }
