@@ -11,7 +11,7 @@ use super::{Harness, SIZES};
 use crate::pages::Page;
 
 /// Controls under 24 px today; lower it as they grow, never raise it.
-const SMALL_TARGETS: usize = 19;
+const SMALL_TARGETS: usize = 9;
 
 const CONTROLS: [Role; 7] = [
     Role::Button,

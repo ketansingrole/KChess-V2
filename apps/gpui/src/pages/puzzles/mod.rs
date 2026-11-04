@@ -1211,8 +1211,8 @@ impl PuzzlesPage {
                 })
                 .child(
                     Button::new("puzzle-reset")
-                        .text()
-                        .xsmall()
+                        .ghost()
+                        .small()
                         .label("Reset")
                         .on_click(cx.listener(|this, _, _, cx| this.reset_session(cx))),
                 ),

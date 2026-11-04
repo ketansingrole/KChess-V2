@@ -604,6 +604,8 @@ impl Render for EditorPage {
             let allowed = available[key] == json!(true);
             Checkbox::new(SharedString::from(format!("castling-{key}")))
                 .label(text)
+                .min_h(px(24.))
+                .items_center()
                 .checked(self.setup["castling"][key] == json!(true) && allowed)
                 .disabled(!allowed)
                 .when(!allowed, |checkbox| {
