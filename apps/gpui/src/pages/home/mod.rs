@@ -357,6 +357,7 @@ impl Render for HomePage {
                 .label("Review")
                 .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
         });
+        let has_about = title.is_some();
         let about = v_flex()
             .min_w_0()
             .gap(px(2.))
@@ -395,7 +396,7 @@ impl Render for HomePage {
                         .min_w_0()
                         .self_stretch()
                         .gap(px(14.))
-                        .child(about)
+                        .when(has_about, |side| side.child(about))
                         .child(div().flex_1())
                         .child(actions),
                 ),
@@ -404,7 +405,7 @@ impl Render for HomePage {
             now.w(side_length + px(34.))
                 .gap(px(14.))
                 .child(board_view)
-                .child(about)
+                .when(has_about, |card| card.child(about))
                 .child(div().flex_1())
                 .child(actions)
         };
@@ -540,7 +541,7 @@ impl Render for HomePage {
                                 div()
                                     .text_size(px(13.))
                                     .text_color(palette.text_muted)
-                                    .child("Ratings, games and puzzle progress"),
+                                    .child("Your ratings and games"),
                             ),
                     )
                     .child(
@@ -563,6 +564,13 @@ impl Render for HomePage {
             .gap(px(16.))
             .child(tiles)
             .child(recent);
+        // The connect card is one more card in the grid; a connected account's section, with its
+        // own heading, stands further off.
+        let section_gap = match (connect.is_some(), stacked) {
+            (true, true) => px(16.),
+            (true, false) => px(24.),
+            (false, _) => px(32.),
+        };
         div()
             .id("home-page")
             .track_focus(&self.focus)
@@ -573,7 +581,7 @@ impl Render for HomePage {
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
                     .px(side_padding(window))
-                    .gap(px(32.))
+                    .gap(section_gap)
                     .child(if stacked {
                         v_flex().gap(px(16.)).child(now).child(starts)
                     } else {
