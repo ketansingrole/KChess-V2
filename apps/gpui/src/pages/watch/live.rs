@@ -951,12 +951,16 @@ impl WatchPage {
 
     /// The actions the watched game's panel allows now: none without a game, or on Broadcasts.
     pub(crate) fn actions(&self) -> Vec<Action> {
+        if self.tab == super::Tab::Broadcasts {
+            return if self.broadcasts.current().is_some() {
+                vec![Action::Flip, Action::AllBoards, Action::Analyse]
+            } else {
+                Vec::new()
+            };
+        }
         let Some(frame) = &self.live.frame else {
             return Vec::new();
         };
-        if self.tab == super::Tab::Broadcasts {
-            return Vec::new();
-        }
         let mut actions = vec![Action::Flip];
         if crate::game::analysable(frame["variant"].as_str().unwrap_or("standard")) {
             actions.push(Action::Analyse);
@@ -970,12 +974,20 @@ impl WatchPage {
         if !self.actions().contains(&action) {
             return;
         }
+        let broadcast = self.tab == super::Tab::Broadcasts;
         match action {
+            Action::Flip if broadcast => {
+                self.broadcasts.orientation = !self.broadcasts.orientation;
+                self.broadcasts.redraw(cx);
+                cx.notify();
+            }
             Action::Flip => {
                 self.live.flipped = !self.live.flipped;
                 self.live.redraw(cx);
                 cx.notify();
             }
+            Action::AllBoards => self.all_boards(cx),
+            Action::Analyse if broadcast => self.analyse_broadcast(window, cx),
             Action::Analyse => self.analyse(window, cx),
             Action::Stop => self.stop(cx),
         }
@@ -1043,6 +1055,8 @@ impl WatchPage {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Action {
     Flip,
+    /// Back from a broadcast's board to the round's boards.
+    AllBoards,
     Analyse,
     Stop,
 }

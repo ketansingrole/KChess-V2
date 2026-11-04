@@ -408,7 +408,11 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 "[Event \"Drops\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *\n\n\n",
             );
         }
+        // The finished first round has one board; the live one has none yet.
         ("GET", path) if path.starts_with("/api/stream/broadcast/round/") => {
+            if path.contains(BROADCAST_ROUNDS[0]) {
+                return pgn(&mut out, BROADCAST_BOARD);
+            }
             return pgn(&mut out, "");
         }
         _ => {}
@@ -611,6 +615,10 @@ const STUDY_PGN: &str = "[Event \"KChess study: Queen's Gambit\"]\n[ChapterName 
 /// The broadcast a pasted lichess.org/broadcast link opens, and its two rounds.
 pub const BROADCAST_TOUR: &str = "kcTour01";
 pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];
+/// The first round's one board.
+pub const BROADCAST_BOARD: &str = "[Event \"KChess Open\"]\n[White \"Ada\"]\n[Black \"Bo\"]\n\
+[Result \"*\"]\n[ChapterURL \"https://lichess.org/broadcast/kchess-open/round-1/kcRound1/kcBoard1\"]\n\n\
+1. e4 e5 2. Nf3 *\n\n\n";
 /// The puzzle a pasted lichess.org/training link opens.
 pub const LINKED_PUZZLE: &str = "KcPz1";
 const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\

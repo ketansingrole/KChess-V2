@@ -1027,6 +1027,44 @@ impl WatchPage {
     }
 
     /// One board followed: players and clocks, the moves, All boards and Analyse.
+    /// Open the round's first board, as a click on its cell does; once the round has one.
+    #[cfg(test)]
+    pub(crate) fn open_first_board(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self
+            .broadcasts
+            .games
+            .first()
+            .and_then(|game| game["id"].as_str())
+        else {
+            return false;
+        };
+        self.broadcasts.select_game(id.to_string(), cx);
+        self.engine_changed(cx);
+        true
+    }
+
+    /// Back from the board open to the round's boards.
+    pub(super) fn all_boards(&mut self, cx: &mut Context<Self>) {
+        self.broadcasts.selected.clear();
+        self.broadcasts.redo = None;
+        self.broadcasts.return_to_game();
+        self.engine_changed(cx);
+    }
+
+    /// The board open, on the analysis board at the move shown; once this page is no longer being
+    /// updated, as leaving Watch tells it it is hidden.
+    pub(super) fn analyse_broadcast(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(game) = self.broadcasts.current() else {
+            return;
+        };
+        let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
+        let origin = json!({ "white": game["white"]["name"], "black": game["black"]["name"] });
+        let (ply, orientation) = (self.broadcasts.shown_ply(), self.broadcasts.orientation);
+        window.defer(cx, move |window, cx| {
+            analyse_board(pgn, ply, orientation, origin, window, cx)
+        });
+    }
+
     fn broadcast_game(
         &mut self,
         window: &mut Window,
@@ -1188,12 +1226,7 @@ impl WatchPage {
                             .outline()
                             .icon(icon("layout-grid"))
                             .label("All boards")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.broadcasts.selected.clear();
-                                this.broadcasts.redo = None;
-                                this.broadcasts.return_to_game();
-                                this.engine_changed(cx);
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.all_boards(cx))),
                     )
                     .child(
                         Button::new("broadcast-analyse")
@@ -1201,21 +1234,14 @@ impl WatchPage {
                             .icon(icon("microscope"))
                             .label("Analyse")
                             .on_click(move |_, window, cx| {
-                                let (pgn, origin) = (pgn.clone(), origin.clone());
-                                crate::shell::replace_analysis(
+                                analyse_board(
+                                    pgn.clone(),
+                                    ply,
+                                    orientation,
+                                    origin.clone(),
                                     window,
                                     cx,
-                                    move |analysis, _, cx| {
-                                        analysis.open_game(
-                                            &pgn,
-                                            ply,
-                                            Some(orientation),
-                                            Some(origin.clone()),
-                                            false,
-                                            cx,
-                                        )
-                                    },
-                                );
+                                )
                             }),
                     ),
             );
@@ -1235,6 +1261,27 @@ impl WatchPage {
             .child(panel)
             .into_any_element()
     }
+}
+
+/// A broadcast's board on the analysis board, at `ply`.
+fn analyse_board(
+    pgn: String,
+    ply: usize,
+    orientation: Color,
+    origin: Value,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        analysis.open_game(
+            &pgn,
+            ply,
+            Some(orientation),
+            Some(origin.clone()),
+            false,
+            cx,
+        )
+    });
 }
 
 #[cfg(test)]

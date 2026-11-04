@@ -313,6 +313,57 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     wait_for_round(&mut app, BROADCAST_ROUNDS[1]);
 }
 
+/// A broadcast's open board offers its buttons in Quick Pick: back to all boards, and on to the
+/// analysis board, which leaves Watch while its page is the one acting.
+#[gpui_kit::test]
+fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::BROADCAST_ROUNDS;
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/broadcast/kchess-open/round-1/{}",
+        BROADCAST_ROUNDS[0]
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    let open_board = |app: &mut Harness| {
+        app.wait_for("the round's board", |_, cx| {
+            crate::shell::view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx)
+                .is_some_and(|watch| watch.update(cx, |watch, cx| watch.open_first_board(cx)))
+        });
+        app.find("broadcast-analyse");
+    };
+    open_board(&mut app);
+
+    app.press("secondary-k");
+    app.type_text(">");
+    wait_for_first(&mut app, "Flip board");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert_eq!(&listed[..3], ["Flip board", "All boards", "Analyse"]);
+    app.type_text("All boards");
+    wait_for_first(&mut app, "All boards");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_gone("broadcast-analyse");
+
+    open_board(&mut app);
+    app.press("secondary-k");
+    app.type_text(">Analyse");
+    wait_for_first(&mut app, "Analyse");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Analysis));
+    assert_eq!(app.find("tree-e2e4 e7e5 g1f3").selected(), Some(true));
+}
+
 /// A Lichess tournament link opens the event on the Tournaments page, signed in or not.
 #[gpui_kit::test]
 fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {

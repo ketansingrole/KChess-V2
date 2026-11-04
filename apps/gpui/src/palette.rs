@@ -656,6 +656,7 @@ fn watch_commands(cx: &App) -> Vec<Command> {
         page.read(cx).actions(),
         |action| match action {
             Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::AllBoards => ("all-boards", "All boards", "layout-grid", "round broadcast"),
             Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
             Action::Stop => ("stop", "Stop watching", "square", "close end"),
         },
