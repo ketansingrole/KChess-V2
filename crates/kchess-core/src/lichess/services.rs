@@ -455,6 +455,12 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
+            "studies.publicChapter" => match (text(args, 0), text(args, 1)) {
+                (Ok(id), Ok(chapter)) => to_json(
+                    super::studies::public_study_chapter(&self.lichess, &id, &chapter).await,
+                ),
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
             "studies.chapters" => match (text(args, 0), text(args, 1)) {
                 (Ok(account), Ok(id)) => reply_json(
                     super::studies::lichess_study_chapters(&self.lichess, &account, &id).await,

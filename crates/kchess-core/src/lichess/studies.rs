@@ -244,6 +244,62 @@ pub async fn lichess_study_chapters(
         .await
 }
 
+/// `lichessStudyChapter(id, chapter)`: one chapter of a public study, as a study link names it
+/// (its first when `chapter` is empty), with variations, comments and NAGs; no login needed.
+pub async fn public_study_chapter(
+    lichess: &Lichess,
+    id: &str,
+    chapter: &str,
+) -> CoreResult<LichessStudyChapter> {
+    let cancel = lichess.lifetime().clone();
+    let path = if chapter.is_empty() {
+        format!("/api/study/{}.pgn", path_segment(id))
+    } else {
+        format!(
+            "/api/study/{}/{}.pgn",
+            path_segment(id),
+            path_segment(chapter)
+        )
+    };
+    let query = [
+        ("comments", "true".to_string()),
+        ("variations", "true".to_string()),
+        ("clocks", "false".to_string()),
+        ("orientation", "true".to_string()),
+    ];
+    let text = lichess
+        .client()
+        .policy()
+        .with_usage("", "study", async {
+            lichess
+                .client()
+                .get_text_bounded(
+                    &path,
+                    &query,
+                    "application/x-chess-pgn",
+                    None,
+                    &cancel,
+                    TextLimit {
+                        utf16_units: MAX_STUDY_PGN,
+                        message: "That study is too large to import.",
+                    },
+                )
+                .await
+        })
+        .await?;
+    let pgn = split_pgn(&text)
+        .into_iter()
+        .next()
+        .ok_or_else(|| CoreError::new("That study has no chapter to open."))?;
+    let name = tag_value(&pgn, "ChapterName")
+        .or_else(|| tag_value(&pgn, "Event"))
+        .unwrap_or_else(|| "Chapter 1".into());
+    Ok(LichessStudyChapter {
+        name: take_utf16(&name, 120),
+        pgn,
+    })
+}
+
 /// `exportToLichessStudy(account, studyId, name, pgn)`: adds a game to a Lichess study as new
 /// chapters, or to a new private study when `study_id` is empty. Returns the study id once
 /// Lichess reports a chapter for every game: a full study answers success yet adds none.

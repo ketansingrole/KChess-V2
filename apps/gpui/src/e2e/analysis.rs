@@ -47,7 +47,7 @@ pub(super) fn settle(app: &mut Harness) {
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
-    fill_in_dialog(app, "FEN, PGN or game link", text);
+    fill_in_dialog(app, "FEN, PGN or Lichess link", text);
     app.click("import-run");
     settle(app);
 }
@@ -149,7 +149,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(app.shows("import-run"), "the dialog stays for a correction");
     fill_in_dialog(
         &mut app,
-        "FEN, PGN or game link",
+        "FEN, PGN or Lichess link",
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
     app.click("import-run");
@@ -160,7 +160,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     // A valid position closes it, and play goes on from there: only this king can reach d2.
     fill_in_dialog(
         &mut app,
-        "FEN, PGN or game link",
+        "FEN, PGN or Lichess link",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
     app.click("import-run");
@@ -512,8 +512,41 @@ fn a_game_in_a_variant_the_board_cannot_play_is_refused(cx: &mut gpui_kit::TestA
     assert!(app.shows("import-run"), "the dialog stays");
     assert!(!app.shows("tree-e2e4"));
     // Without the header the same moves are an ordinary game.
-    fill_in_dialog(&mut app, "FEN, PGN or game link", "1. e4 d5 2. exd5 *");
+    fill_in_dialog(&mut app, "FEN, PGN or Lichess link", "1. e4 d5 2. exd5 *");
     app.click("import-run");
     app.wait_gone("import-run");
     app.find("tree-e2e4 d7d5 e4d5");
+}
+
+/// A public Lichess study's link imports the chapter it names, or the study's first; a study in
+/// a variant the board cannot play is refused.
+#[gpui_kit::test]
+fn a_lichess_study_link_imports_its_chapter(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{STUDY, STUDY_CHAPTER, VARIANT_STUDY};
+    let mut app = analysis(cx);
+    app.online();
+    import(
+        &mut app,
+        &format!("https://lichess.org/study/{STUDY}/{STUDY_CHAPTER}"),
+    );
+    app.wait_gone("import-run");
+    app.find("tree-d2d4 d7d5 c2c4 e7e6");
+
+    import(&mut app, &format!("lichess.org/study/{VARIANT_STUDY}"));
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        let error = std::cell::RefCell::new(None);
+        app.wait_for("the variant to be refused", |window, _| {
+            *error.borrow_mut() = window
+                .try_find("import-error")
+                .and_then(|error| error.label().map(str::to_string));
+            error.borrow().is_some()
+        });
+        assert_eq!(
+            error.into_inner().as_deref(),
+            Some("The analysis board plays standard chess and Chess960 only")
+        );
+    }
+    assert!(app.shows("import-run"), "the dialog stays");
+    assert!(app.shows("tree-d2d4"), "the chapter stays on the board");
 }

@@ -1537,13 +1537,22 @@ impl AnalysisPage {
                         div()
                             .text_size(px(14.))
                             .text_color(cx.global::<Palette>().text_muted)
-                            .child("Paste a FEN, a PGN or a Lichess game link"),
+                            .child("Paste a FEN, a PGN, or a Lichess game or study link"),
                     )
-                    .child(Textarea::new(&import).aria_label("FEN, PGN or game link"))
+                    .child(Textarea::new(&import).aria_label("FEN, PGN or Lichess link"))
                     .children(error.map(|error| {
+                        // Spoken when it appears: a link's fetch fails after Import was pressed.
                         div()
+                            .id("import-error")
+                            .test_support()
+                            .aria_label(error.clone())
+                            .relative()
                             .text_size(px(14.))
                             .text_color(cx.global::<Palette>().error)
+                            .child(crate::widgets::live_region(
+                                "import-error-spoken",
+                                error.clone(),
+                            ))
                             .child(error)
                     }))
                     .child(
@@ -1582,6 +1591,9 @@ impl AnalysisPage {
         if let Some(link) = crate::game::game_link(&text) {
             return self.import_game(link, window, cx);
         }
+        if let Some((study, chapter)) = crate::game::study_link(&text) {
+            return self.import_study(study, chapter, window, cx);
+        }
         self.importing = None;
         if let Some(fen) = crate::game::editor_setup(&text)
             .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
@@ -1618,34 +1630,74 @@ impl AnalysisPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let export = cx
+            .global::<AppCore>()
+            .call("exportGame", vec![json!(link.id)]);
+        let pgn = async move {
+            match export.await {
+                Ok(Value::String(pgn)) => Ok(Some(pgn)),
+                Ok(_) => Ok(None),
+                Err(cause) => Err(format!("Could not fetch that game: {}", cause.message)),
+            }
+        };
+        let origin = json!({ "gameId": link.id });
+        // A link without a move opens at the start, as Lichess does.
+        let ply = link.ply.unwrap_or(0);
+        self.import_fetched(pgn, ply, Some(link.orientation), Some(origin), window, cx);
+    }
+
+    /// Fetch a public Lichess study's chapter by its link and open it as the study shows it.
+    fn import_study(
+        &mut self,
+        study: String,
+        chapter: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fetch = cx
+            .global::<AppCore>()
+            .call("lichessStudyChapter", vec![json!(study), json!(chapter)]);
+        let pgn = async move {
+            match fetch.await {
+                Ok(found) => Ok(found["pgn"].as_str().map(str::to_string)),
+                Err(cause) => Err(format!("Could not fetch that study: {}", cause.message)),
+            }
+        };
+        self.import_fetched(pgn, 0, None, None, window, cx);
+    }
+
+    /// Open a game being fetched for the import (`None` when Lichess sent nothing readable).
+    fn import_fetched(
+        &mut self,
+        pgn: impl std::future::Future<Output = Result<Option<String>, String>> + 'static,
+        ply: usize,
+        orientation: Option<Color>,
+        origin: Option<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.import_turn += 1;
         let turn = self.import_turn;
         self.importing = Some(turn);
         self.import_error = None;
         window.refresh();
-        let export = cx
-            .global::<AppCore>()
-            .call("exportGame", vec![json!(link.id)]);
         cx.spawn_in(window, async move |this, cx| {
-            let pgn = export.await;
+            let pgn = pgn.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.importing != Some(turn) {
                     return;
                 }
                 this.importing = None;
-                let unplayable =
-                    matches!(&pgn, Ok(Value::String(pgn)) if !crate::game::pgn_analysable(pgn));
+                let unplayable = matches!(&pgn, Ok(Some(pgn)) if !crate::game::pgn_analysable(pgn));
                 let opened = match pgn {
-                    Ok(Value::String(pgn)) => {
-                        let origin = json!({ "gameId": link.id });
-                        // A link without a move opens at the start, as Lichess does.
-                        let ply = link.ply.unwrap_or(0);
-                        this.open_game(&pgn, ply, Some(link.orientation), Some(origin), false, cx)
+                    Ok(Some(pgn)) => {
+                        let orientation =
+                            orientation.or_else(|| crate::game::pgn_orientation(&pgn));
+                        this.open_game(&pgn, ply, orientation, origin, false, cx)
                     }
-                    Ok(_) => false,
-                    Err(cause) => {
-                        this.import_error =
-                            Some(format!("Could not fetch that game: {}", cause.message).into());
+                    Ok(None) => false,
+                    Err(message) => {
+                        this.import_error = Some(message.into());
                         window.refresh();
                         return;
                     }

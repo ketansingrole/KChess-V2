@@ -1634,33 +1634,70 @@ fn open_exported_at(
 ) {
     let export = cx.global::<AppCore>().call("exportGame", vec![json!(id)]);
     let origin = json!({ "white": white, "black": black, "gameId": id });
+    let pgn = async move {
+        match export.await {
+            Ok(Value::String(pgn)) => Ok(pgn),
+            Ok(_) => Err("That game could not be read".to_string()),
+            Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
+        }
+    };
+    open_fetched(pgn, Some(orientation), ply, Some(origin), window, cx);
+}
+
+/// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
+/// shows it.
+pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
+    let fetch = cx
+        .global::<AppCore>()
+        .call("lichessStudyChapter", vec![json!(study), json!(chapter)]);
     window
         .spawn(cx, async move |cx| {
-            let pgn = export.await;
+            let pgn = match fetch.await {
+                Ok(found) => found["pgn"].as_str().map(str::to_string),
+                Err(cause) => {
+                    let message = format!("Could not open the study: {}", cause.message);
+                    let _ = cx.update(|window, cx| window.push_notification(message, cx));
+                    return;
+                }
+            };
+            let _ = cx.update(|window, cx| {
+                let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
+                let pgn =
+                    async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
+                open_fetched(pgn, orientation, 0, None, window, cx);
+            });
+        })
+        .detach();
+}
+
+/// Open a game fetched from Lichess on the analysis board (asking first when the board holds
+/// unsaved work), or say why it cannot be opened.
+pub fn open_fetched(
+    pgn: impl std::future::Future<Output = Result<String, String>> + 'static,
+    orientation: Option<shakmaty::Color>,
+    ply: usize,
+    origin: Option<Value>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window
+        .spawn(cx, async move |cx| {
+            let pgn = pgn.await;
             let _ = cx.update(|window, cx| match pgn {
                 // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
                 // asking to replace anything.
-                Ok(Value::String(pgn))
+                Ok(pgn)
                     if !crate::game::pgn_analysable(&pgn)
                         || crate::game::tree::TreeNode::from_pgn(&pgn).is_none() =>
                 {
                     window.push_notification("The analysis board cannot open this game", cx)
                 }
-                Ok(Value::String(pgn)) => {
+                Ok(pgn) => {
                     crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-                        analysis.open_game(
-                            &pgn,
-                            ply,
-                            Some(orientation),
-                            Some(origin.clone()),
-                            false,
-                            cx,
-                        )
+                        analysis.open_game(&pgn, ply, orientation, origin.clone(), false, cx)
                     });
                 }
-                Ok(_) => window.push_notification("That game could not be read", cx),
-                Err(cause) => window
-                    .push_notification(format!("Could not open the game: {}", cause.message), cx),
+                Err(message) => window.push_notification(message, cx),
             });
         })
         .detach();

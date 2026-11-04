@@ -42,6 +42,7 @@ pub const FACADE_METHODS: &[&str] = &[
     "positionLookup",
     "lichessStudies",
     "lichessStudyChapters",
+    "lichessStudyChapter",
     "syncLichessStudy",
     "exportToLichessStudy",
     "exportGame",
@@ -616,6 +617,7 @@ impl Core {
             "positionLookup"
             | "lichessStudies"
             | "lichessStudyChapters"
+            | "lichessStudyChapter"
             | "syncLichessStudy"
             | "exportToLichessStudy"
             | "exportGame"

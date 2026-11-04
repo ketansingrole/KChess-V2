@@ -314,6 +314,34 @@ pub fn profile_link(text: &str) -> Option<String> {
     is_username(name).then(|| name.to_string())
 }
 
+/// A Lichess study link (`lichess.org/study/STUDYID`, with `/CHAPTERID` after it): the study's
+/// id and the chapter's, empty for its first.
+pub fn study_link(text: &str) -> Option<(String, String)> {
+    let id = |part: &str| part.len() == 8 && part.bytes().all(|byte| byte.is_ascii_alphanumeric());
+    let path = lichess_path(text)?.strip_prefix("study/")?;
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    match parts.as_slice() {
+        [study] if id(study) => Some(((*study).to_string(), String::new())),
+        [study, chapter] if id(study) && id(chapter) => {
+            Some(((*study).to_string(), (*chapter).to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// The side a Lichess export says to show (`[Orientation "black"]`).
+pub fn pgn_orientation(pgn: &str) -> Option<shakmaty::Color> {
+    match pgn
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("[Orientation "))?
+    {
+        tag if tag.contains("black") => Some(shakmaty::Color::Black),
+        tag if tag.contains("white") => Some(shakmaty::Color::White),
+        _ => None,
+    }
+}
+
 /// A Lichess broadcast link: a tournament's (`broadcast/slug/TOURID`), or a round's
 /// (`broadcast/slug/round-slug/ROUNDID`, with a board's game id after it).
 #[derive(Debug, PartialEq)]
@@ -410,6 +438,28 @@ mod link_tests {
             None
         );
         assert_eq!(broadcast_link("https://lichess.org/abcdefgh"), None);
+    }
+
+    #[test]
+    fn a_study_link_names_its_study_and_chapter() {
+        use super::study_link;
+        let both = |study: &str, chapter: &str| Some((study.to_string(), chapter.to_string()));
+        assert_eq!(
+            study_link("https://lichess.org/study/1wzY0YmD/oOEEUJjV"),
+            both("1wzY0YmD", "oOEEUJjV")
+        );
+        assert_eq!(
+            study_link("lichess.org/study/1wzY0YmD#3"),
+            both("1wzY0YmD", "")
+        );
+        assert_eq!(study_link("https://lichess.org/study/by/thibault"), None);
+        assert_eq!(study_link("https://lichess.org/study/all/popular"), None);
+        assert_eq!(study_link("https://lichess.org/study"), None);
+        assert_eq!(
+            super::pgn_orientation("[Event \"x\"]\n[Orientation \"black\"]\n\n*"),
+            Some(shakmaty::Color::Black)
+        );
+        assert_eq!(super::pgn_orientation("1. e4 *"), None);
     }
 
     #[test]

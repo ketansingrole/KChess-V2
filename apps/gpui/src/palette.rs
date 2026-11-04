@@ -872,6 +872,14 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
 
 /// What a pasted FEN or Lichess game link can open.
 fn pasted(text: &str) -> Vec<Command> {
+    if let Some((study, chapter)) = crate::game::study_link(text) {
+        return vec![Command::new(
+            format!("pasted:study:{study}:{chapter}"),
+            "Open this study chapter on the analysis board",
+            icon("microscope"),
+            move |window, cx| crate::pages::players::open_study(&study, &chapter, window, cx),
+        )];
+    }
     if crate::game::broadcast_link(text).is_some() {
         let text = text.to_string();
         return vec![Command::new(

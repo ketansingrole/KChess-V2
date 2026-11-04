@@ -55,6 +55,11 @@ pub fn methods() -> Vec<Method> {
         ),
         method("lichessStudyChapters", "", vec![req("account"), req("id")]),
         method(
+            "lichessStudyChapter",
+            "One chapter of a public study ({ name, pgn }), its first when chapter is empty.",
+            vec![req("id"), req("chapter")],
+        ),
+        method(
             "syncLichessStudy",
             "Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty).",
             vec![req("request")],

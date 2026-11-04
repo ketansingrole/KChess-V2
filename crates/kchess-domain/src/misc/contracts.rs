@@ -90,6 +90,11 @@ const CORE: &[Row] = &[
         ],
     ),
     ("syncLichessStudy", 1, &[Valid("assertStudySyncRequest")]),
+    (
+        "lichessStudyChapter",
+        2,
+        &[Valid("assertLichessId"), Valid("assertStudyId")],
+    ),
     ("lichessStudies", 1, &[Valid("assertUsername")]),
     (
         "lichessStudyChapters",

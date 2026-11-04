@@ -73,7 +73,9 @@ can add them as a friend, challenge them or watch their current game.
   Settings → Gameplay → _Show opening names_.
 - **Lichess studies**: list your studies, open a chapter, save all chapters to the local study
   library, or send the current analysis to an existing study or a new private one. This needs
-  the `study:read` and `study:write` permissions.
+  the `study:read` and `study:write` permissions. A public study's link (a chapter's, or the
+  study's for its first chapter), pasted into the command palette or Analysis → Import, opens
+  that chapter on the analysis board without signing in.
 - **Import a game by link**: paste a lichess.org game link (with `/black` or `#move` if you
   like) into the analysis board's import, and the game opens there.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn

@@ -380,6 +380,19 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 &json!({ "tour": { "id": BROADCAST_TOUR }, "round": { "id": round } }),
             );
         }
+        // A public study's chapter, and the whole study (two chapters, the first answering).
+        ("GET", path)
+            if path == format!("/api/study/{STUDY}/{STUDY_CHAPTER}.pgn")
+                || path == format!("/api/study/{STUDY}.pgn") =>
+        {
+            return pgn(&mut out, STUDY_PGN);
+        }
+        ("GET", path) if path == format!("/api/study/{VARIANT_STUDY}.pgn") => {
+            return pgn(
+                &mut out,
+                "[Event \"Drops\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *\n\n\n",
+            );
+        }
         ("GET", path) if path.starts_with("/api/stream/broadcast/round/") => {
             return pgn(&mut out, "");
         }
@@ -572,6 +585,13 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 
 /// The game a Lichess link in the analysis board's import names, and its PGN.
 pub const LINKED_GAME: &str = "kchessE2";
+/// A public study, the chapter its link names, and one in a variant the board cannot play.
+pub const STUDY: &str = "kcStudy1";
+pub const STUDY_CHAPTER: &str = "kcChap01";
+pub const VARIANT_STUDY: &str = "kcStudy2";
+const STUDY_PGN: &str = "[Event \"KChess study: Queen's Gambit\"]\n[ChapterName \"Queen's Gambit\"]\n\
+[Orientation \"black\"]\n\n1. d4 d5 2. c4 e6 { Declined } *\n\n\n\
+[Event \"KChess study: Second\"]\n\n1. e4 *\n\n\n";
 /// The broadcast a pasted lichess.org/broadcast link opens, and its two rounds.
 pub const BROADCAST_TOUR: &str = "kcTour01";
 pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];

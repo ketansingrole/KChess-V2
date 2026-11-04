@@ -118,6 +118,14 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
             ],
             true,
         ),
+        (
+            "lichessStudyChapter",
+            vec![json!("abcdEFGH"), json!("chap1234")],
+            vec![
+                "GET /api/study/abcdEFGH/chap1234.pgn?comments=true&variations=true&clocks=false&orientation=true",
+            ],
+            false,
+        ),
         ("tvChannels", vec![], vec!["GET /api/tv/channels"], false),
         (
             "broadcasts",
