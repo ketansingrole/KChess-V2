@@ -653,12 +653,7 @@ impl LocalPage {
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
     pub fn start_from(&mut self, fen: &str, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, "kchess:local-mode", Mode::Board);
-        self.replace_game(
-            json!({ "variant": "standard", "fen": fen }),
-            Value::Null,
-            window,
-            cx,
-        );
+        self.replace_game(crate::game::setup_from_fen(fen), Value::Null, window, cx);
     }
 
     /// Start a game, asking first when one on the board is still being played.
@@ -719,7 +714,7 @@ impl LocalPage {
         }
     }
 
-    /// Analyse the game on the analysis board at the position shown (standard rules only).
+    /// Analyse the game on the analysis board at the position shown (standard and Chess960).
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pgn = rules(
             "setupPgn",
@@ -1603,7 +1598,8 @@ impl LocalPage {
                     ),
             )
             .when(!frontend.zen_mode, |panel| {
-                let standard = self.setup()["variant"].as_str().unwrap_or("standard") == "standard";
+                let analysable =
+                    crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard"));
                 // `.panel-actions`: Copy PGN, Export and Analyse share the row.
                 panel.child(widgets::panel_actions(
                     narrow,
@@ -1629,7 +1625,7 @@ impl LocalPage {
                         .into(),
                     ]
                     .into_iter()
-                    .chain(standard.then(|| {
+                    .chain(analysable.then(|| {
                         Button::new("local-analyse")
                             .ghost()
                             .xsmall()

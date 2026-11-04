@@ -1458,7 +1458,10 @@ impl AnalysisPage {
             self.path.split(' ').count()
         };
         GameExport {
-            variant: "standard".into(),
+            variant: crate::game::setup_from_fen(&self.root.fen)["variant"]
+                .as_str()
+                .unwrap_or("standard")
+                .into(),
             fen: self.root.fen.clone(),
             ply: Some(depth.min(mainline.len())),
             moves: mainline,

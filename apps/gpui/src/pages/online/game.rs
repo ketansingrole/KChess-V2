@@ -873,7 +873,7 @@ impl OnlinePage {
                     )
                 })
         } else {
-            let can_analyse = finished && variant == "standard";
+            let can_analyse = finished && crate::game::analysable(variant);
             let export = finished.then(|| self.game_export(online, model));
             h_flex()
                 .flex_wrap()

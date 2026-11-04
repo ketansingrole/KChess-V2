@@ -640,7 +640,7 @@ pub fn play_computer_from(fen: String, window: &mut Window, cx: &mut App) {
         return;
     }
     if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
-        let setup = serde_json::json!({ "variant": "standard", "fen": fen });
+        let setup = crate::game::setup_from_fen(&fen);
         page.update(cx, |page, cx| page.start_from(setup, color, window, cx));
     }
 }

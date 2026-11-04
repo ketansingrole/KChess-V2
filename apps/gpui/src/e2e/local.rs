@@ -465,3 +465,24 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
             .is_some_and(|label| label.ends_with(": 0"))
     );
 }
+
+/// A Chess960 game goes to the analysis board too, its castling (king takes rook) included, and
+/// the position is played on from there as Chess960.
+#[gpui_kit::test]
+fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let fen = "1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1";
+            let setup = serde_json::json!({ "variant": "chess960", "fen": fen });
+            local.replace_game(setup, serde_json::Value::Null, window, cx);
+        });
+    });
+    type_moves(&mut app, &["O-O-O", "e5"]);
+    app.click("local-analyse");
+    app.find("tree-c1b1");
+    assert_eq!(app.find("tree-c1b1 e7e5").selected(), Some(true));
+}

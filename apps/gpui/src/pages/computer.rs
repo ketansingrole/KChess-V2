@@ -1198,15 +1198,19 @@ impl ComputerPage {
                 |banner, value| banner.detail(value),
             )
             .when_some(
-                // The analysis board and reviews play standard rules (from any position).
-                (!self.moves().is_empty() && self.setup_variant() == "standard").then(|| {
-                    Button::new("review-game")
-                        .outline()
-                        .small()
-                        .label("Review game")
-                        .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
-                        .into_any_element()
-                }),
+                // The analysis board and reviews take standard chess and Chess960.
+                (!self.moves().is_empty() && crate::game::analysable(&self.setup_variant())).then(
+                    || {
+                        Button::new("review-game")
+                            .outline()
+                            .small()
+                            .label("Review game")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.review_game(window, cx)),
+                            )
+                            .into_any_element()
+                    },
+                ),
                 |banner, value| banner.extra(value),
             )
             .into_any_element();

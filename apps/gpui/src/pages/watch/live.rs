@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -744,6 +744,10 @@ impl WatchPage {
                             .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")
+                            // The analysis board plays standard chess and Chess960 only.
+                            .disabled(!crate::game::analysable(
+                                frame["variant"].as_str().unwrap_or("standard"),
+                            ))
                             .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
                             .into_any_element()
                             .into(),

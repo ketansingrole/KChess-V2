@@ -87,3 +87,56 @@ pub fn position_problem(fen: &str) -> Option<&'static str> {
         _ => "This position is not legal",
     })
 }
+
+/// Whether the analysis board, its reviews and the computer can take a game in this variant:
+/// standard chess, and Chess960, which they play with king-takes-rook castling.
+pub fn analysable(variant: &str) -> bool {
+    matches!(variant, "standard" | "chess960")
+}
+
+/// A position's setup for a game started from it: Chess960 when it can still castle with a king
+/// or rook off their usual squares, which an engine reads only with `UCI_Chess960` on, and
+/// standard otherwise.
+pub fn setup_from_fen(fen: &str) -> Value {
+    json!({ "variant": if chess960_castling(fen) { "chess960" } else { "standard" }, "fen": fen })
+}
+
+fn chess960_castling(fen: &str) -> bool {
+    use shakmaty::{CastlingSide, Color, Position as _, Square};
+    let Some(position) = kchess_domain::rules::standard_from_fen(fen) else {
+        return false;
+    };
+    let castles = position.castles();
+    [Color::White, Color::Black].into_iter().any(|color| {
+        let (king, a, h) = match color {
+            Color::White => (Square::E1, Square::A1, Square::H1),
+            Color::Black => (Square::E8, Square::A8, Square::H8),
+        };
+        let rooks = [(CastlingSide::QueenSide, a), (CastlingSide::KingSide, h)];
+        let any = rooks
+            .iter()
+            .any(|(side, _)| castles.rook(color, *side).is_some());
+        any && (position.board().king_of(color) != Some(king)
+            || rooks.iter().any(|(side, usual)| {
+                castles
+                    .rook(color, *side)
+                    .is_some_and(|rook| rook != *usual)
+            }))
+    })
+}
+
+#[cfg(test)]
+mod setup_tests {
+    use super::setup_from_fen;
+
+    #[test]
+    fn a_position_castling_from_unusual_squares_is_chess960() {
+        let variant = |fen: &str| setup_from_fen(fen)["variant"].clone();
+        assert_eq!(variant(super::STANDARD_FEN), "standard");
+        assert_eq!(variant("4k3/8/8/8/8/8/8/4K3 w - - 0 1"), "standard");
+        assert_eq!(variant(&super::chess960(0)), "chess960");
+        assert_eq!(variant("1rk4r/8/8/8/8/8/8/1RK4R w HBhb - 0 1"), "chess960");
+        // Its king and rooks moved, so the position no longer castles at all.
+        assert_eq!(variant("1r5r/2k5/8/8/8/8/2K5/1R5R w - - 0 1"), "standard");
+    }
+}
