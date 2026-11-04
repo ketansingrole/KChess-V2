@@ -83,6 +83,8 @@ can add them as a friend, challenge them or watch their current game.
   `kchess-cli pgn <link>` prints a game's or a public study chapter's PGN, and
   `kchess-cli review <link|file|moves>` reviews a standard game with Stockfish, printing each
   side's accuracy and the inaccuracies, mistakes and blunders.
+  `kchess-cli explore [masters|opening|tablebase] <fen>` prints the explorer's moves for a
+  position, from the tablebase when it has seven pieces or fewer.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 

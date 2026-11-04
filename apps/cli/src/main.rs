@@ -28,6 +28,8 @@ Commands:
   puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
   review <link|file|moves>         Review a game with Stockfish: accuracy and faulted moves
+  explore [masters|opening|tablebase] <fen|startpos>
+                                   Look a position up (the tablebase for 7 pieces or fewer)
   methods                          List available CoreApi methods
 
 Options:
@@ -272,6 +274,15 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let pgn = review_input(&core, &args[1..]).await?;
                 print(&review::run(&core, &mut events, &pgn).await?);
             }
+            "explore" => {
+                let (kind, fen) = explore_request(&args[1..])?;
+                core.call("resumeOnline", vec![]).await?;
+                print(
+                    &core
+                        .call("positionLookup", vec![json!(kind), json!(fen), json!({})])
+                        .await?,
+                );
+            }
             other => return Err(format!("Unknown command: {other}. Run --help.")),
         }
         Ok(())
@@ -339,6 +350,36 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
         return Err(format!("Not a legal position: {fen}"));
     }
     Ok(fen)
+}
+
+/// What `explore` looks up: the database named first, else the tablebase when it covers the
+/// position (seven pieces or fewer, no castling rights) and the masters' games when not.
+fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
+    const KINDS: [&str; 3] = ["masters", "opening", "tablebase"];
+    let named = words
+        .first()
+        .and_then(|word| KINDS.iter().find(|kind| **kind == word.as_str()));
+    let words = if named.is_some() { &words[1..] } else { words };
+    let fen = analysis_fen(words).map_err(|_| match words.is_empty() {
+        true => "explore requires a FEN.".to_string(),
+        false => format!("Not a legal position: {}", words.join(" ")),
+    })?;
+    let kind = named.copied().unwrap_or_else(|| {
+        let mut fields = fen.split(' ');
+        let pieces = fields
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .filter(char::is_ascii_alphabetic)
+            .count();
+        let castling = fields.nth(1).is_some_and(|rights| rights != "-");
+        if pieces <= 7 && !castling {
+            "tablebase"
+        } else {
+            "masters"
+        }
+    });
+    Ok((kind, fen))
 }
 
 #[tokio::main]
@@ -417,6 +458,38 @@ mod tests {
         );
         assert!(super::analysis_fen(&[]).is_err());
         assert!(super::analysis_fen(&strings(&["8/8/8/8/8/8/8/8 w - - 0 1"])).is_err());
+    }
+
+    #[test]
+    fn explore_picks_the_tablebase_for_few_pieces() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(
+            explore_request(&strings(&["startpos"])),
+            Ok(("masters", start.to_string()))
+        );
+        assert_eq!(
+            explore_request(&strings(&["opening", "startpos"])),
+            Ok(("opening", start.to_string()))
+        );
+        let ending = "8/8/8/8/8/3k4/8/K6Q w - - 0 1";
+        assert_eq!(
+            explore_request(&strings(&ending.split(' ').collect::<Vec<_>>())),
+            Ok(("tablebase", ending.to_string()))
+        );
+        // Castling rights keep a few-piece position out of the tablebase.
+        let castling = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
+        assert_eq!(
+            explore_request(&strings(&[castling])),
+            Ok(("masters", castling.to_string()))
+        );
+        assert_eq!(
+            explore_request(&strings(&["tablebase"])),
+            Err("explore requires a FEN.".into())
+        );
+        assert_eq!(
+            explore_request(&strings(&["8/8/8/8/8/3k4/8/K4Q2 w - - 0 1"])),
+            Err("Not a legal position: 8/8/8/8/8/3k4/8/K4Q2 w - - 0 1".into())
+        );
     }
 
     #[test]
