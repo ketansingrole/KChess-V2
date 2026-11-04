@@ -22,7 +22,7 @@ whatever that API does not offer cannot be built in the app.
 | Lifetime score              | Your lifetime score against the opponent (crosstable) shows beside the board.                                                                                                                                                                            | —                                                                           |
 | Variants                    | Seeks and challenges in Chess960, King of the Hill, Three-check, Antichess, Atomic, Horde, Racing Kings and Crazyhouse. Boards replay every variant with chessops rules, and Chess960 castles king onto rook. Crazyhouse pockets sit beside each player; pick a piece and a square, or drag it, to drop it.                                                        | Play Online → _Variant_                                                     |
 | Correspondence              | Seeks and challenges with 1–14 days per move. _Your games_ lists ongoing games with mini boards and _Your move_ flags; _Play_ opens one on the board and _Close game_ frees the board again. KChess checks for your turn on a timer and notifies you.    | Settings → Online play → _Check correspondence games_                       |
-| Finished games              | _Analyse_ (standard and Chess960) and _Export_ (GIF, PNG, PGN).                                                                                                                                                                                                 | —                                                                           |
+| Finished games              | _Analyse_ (standard and Chess960) and _Export_ (GIF, PNG, PGN; Crazyhouse pictures show the pockets).                                                                                                                                                                                                 | —                                                                           |
 
 Engine help, reviews, the explorer and cloud evaluation stay unavailable while a game is on the
 board, as before; this includes an open correspondence game. Closing the correspondence game
@@ -71,6 +71,8 @@ can add them as a friend, challenge them or watch their current game.
 - **Lichess studies**: list your studies, open a chapter, save all chapters to the local study
   library, or send the current analysis to an existing study or a new private one. This needs
   the `study:read` and `study:write` permissions.
+- **Import a game by link**: paste a lichess.org game link (with `/black` or `#move` if you
+  like) into the analysis board's import, and the game opens there.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 
