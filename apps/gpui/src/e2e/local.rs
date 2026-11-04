@@ -432,3 +432,36 @@ fn the_boards_squares_land_on_whole_pixels(cx: &mut gpui_kit::TestAppContext) {
         }
     }
 }
+
+/// Over the board, Crazyhouse captures fill the pockets, and a picked pocket piece drops onto a
+/// square for the side to move: the move list writes a pawn drop as `@e3`.
+#[gpui_kit::test]
+fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+            let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+            local.replace_game(setup, serde_json::Value::Null, window, cx);
+        });
+    });
+    type_moves(&mut app, &["e4", "d5", "exd5", "Qxd5"]);
+    app.click("pocket-White-Pawn");
+    app.click_square("e3", true);
+    app.wait_for_moves(&["e4", "d5", "exd5", "Qxd5", "@e3"]);
+    assert_eq!(app.status(), "Black to move");
+    // Black's pawn is still in hand; White's was spent.
+    assert!(
+        app.find("pocket-Black-Pawn")
+            .label()
+            .is_some_and(|label| label.ends_with(": 1"))
+    );
+    assert!(
+        app.find("pocket-White-Pawn")
+            .label()
+            .is_some_and(|label| label.ends_with(": 0"))
+    );
+}
