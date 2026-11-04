@@ -122,6 +122,12 @@ impl Solving {
         }
     }
 
+    /// The square of the piece to move next, as the Puzzles page's hint shows it.
+    pub fn hint(&self) -> Option<String> {
+        let next = self.solution.get(self.played.len())?;
+        next.get(..2).map(str::to_string)
+    }
+
     /// The moves left, in SAN; the puzzle ends shown.
     pub fn give_up(&mut self) -> Vec<String> {
         let mut shown = Vec::new();
@@ -182,6 +188,7 @@ pub async fn interactive(
                 let shown = match line.trim() {
                     "" => continue,
                     "quit" => break,
+                    "hint" => json!({ "hint": solving.hint() }),
                     "solution" => {
                         let moves = solving.give_up();
                         json!({ "solution": moves, "fen": solving.fen() })
@@ -278,6 +285,17 @@ mod tests {
         assert_eq!(super::named("FPFg0"), "FPFg0");
         assert_eq!(super::named("https://lichess.org/training/FPFg0"), "FPFg0");
         assert_eq!(super::named("lichess.org/training/FPFg0/?a#b"), "FPFg0");
+    }
+
+    #[test]
+    fn a_hint_names_the_square_of_the_piece_to_move() {
+        let mut solving = daily();
+        assert_eq!(solving.hint().as_deref(), Some("e3"));
+        solving.answer("Bc5");
+        // After the reply, White's next move is the b-pawn's.
+        assert_eq!(solving.hint().as_deref(), Some("b2"));
+        solving.give_up();
+        assert_eq!(solving.hint(), None);
     }
 
     #[test]

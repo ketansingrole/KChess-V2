@@ -25,7 +25,7 @@ Commands:
   analyze <fen|startpos|moves>     Stream engine analysis as JSON lines until Ctrl-C
   play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
-  puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
+  puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
   review <link|file|moves>         Review a game with Stockfish: accuracy and faulted moves
   explore [masters|opening|tablebase] <fen|startpos|moves>
