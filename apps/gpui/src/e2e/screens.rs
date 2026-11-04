@@ -172,6 +172,99 @@ fn home() {
     }
 }
 
+/// Players' search before anyone was looked up, with recent names, while a name is typed, after a
+/// name Lichess would refuse, and above a player, in both appearances, wide and narrow:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::players_search -- --ignored`
+/// writes `<dir>/players-search/<state>-<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn players_search() {
+    use gpui_kit::test::TestWindowExt as _;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("players-search");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for state in ["first", "recent", "typing", "invalid", "player"] {
+        for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
+            for (width, height) in [(1320., 900.), (760., 900.)] {
+                let profile = tempfile::tempdir().expect("a temporary profile");
+                let (mut cx, window) = start(profile.path(), width, height);
+                cx.update(|cx| {
+                    crate::settings::change(cx, move |s| s.frontend.appearance = appearance);
+                    if state != "first" {
+                        let recent = ["teknaS", "anicrus", "Anixris007", "bobadya", "Kunjshah45"];
+                        crate::prefs::set(cx, "kchess:players-recent", recent);
+                    }
+                });
+                cx.update_window(window, |_, window, cx| {
+                    crate::shell::open(Page::Players, window, cx)
+                })
+                .expect("the window");
+                settle(&mut cx, window);
+                let typed = match state {
+                    "typing" => Some("mag"),
+                    "invalid" => Some("no one"),
+                    _ => None,
+                };
+                if let Some(typed) = typed {
+                    cx.update_window(window, |_, window, cx| {
+                        use gpui_kit::{
+                            InputEvent as _, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
+                        };
+                        let field = window
+                            .try_find_by_label("Lichess username")
+                            .expect("the search field");
+                        let position = field.bounds().center();
+                        for event in [
+                            MouseDownEvent {
+                                button: MouseButton::Left,
+                                position,
+                                modifiers: Modifiers::default(),
+                                click_count: 1,
+                                first_mouse: false,
+                            }
+                            .to_platform_input(),
+                            MouseUpEvent {
+                                button: MouseButton::Left,
+                                position,
+                                modifiers: Modifiers::default(),
+                                click_count: 1,
+                            }
+                            .to_platform_input(),
+                        ] {
+                            window.dispatch_event(event, cx);
+                            super::draw(window, cx);
+                        }
+                        window.input(typed, cx);
+                        if state == "invalid" {
+                            window.press("enter", cx);
+                        }
+                    })
+                    .expect("the window");
+                }
+                if state == "player" {
+                    connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
+                    cx.update_window(window, |_, window, cx| {
+                        crate::shell::open_player("Rattiestword5", window, cx)
+                    })
+                    .expect("the window");
+                }
+                for _ in 0..8 {
+                    std::thread::sleep(Duration::from_millis(60));
+                    settle(&mut cx, window);
+                }
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{state}-{name}-{width}.png")))
+                    .expect("the screenshot saves");
+                let quit = cx.update(crate::core::quit);
+                cx.foreground_executor().block_test(quit);
+                crate::profile::TEST_DATA_DIR.set(None);
+            }
+        }
+    }
+}
+
 /// The window sizes Home is shot at: wide and narrow, or `KCHESS_HOME_SIZES` ("1920x1100,760x1400").
 fn home_sizes() -> Vec<(f32, f32)> {
     let sizes: Vec<(f32, f32)> = std::env::var("KCHESS_HOME_SIZES")
