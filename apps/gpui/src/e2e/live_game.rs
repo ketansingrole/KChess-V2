@@ -353,6 +353,22 @@ fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.find("online-analyse");
     let over = listed(&mut app);
     assert!(over.contains(&"New game".to_string()), "{over:?}");
+    assert!(over.contains(&"Rematch".to_string()), "{over:?}");
+    // While a rematch is being sent, Quick Pick cannot send another.
+    app.with_window(|_, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.busy = true;
+            cx.notify();
+        })
+    });
+    let sending = listed(&mut app);
+    assert!(!sending.contains(&"Rematch".to_string()), "{sending:?}");
+    app.with_window(|_, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.busy = false;
+            cx.notify();
+        })
+    });
     app.press("secondary-k");
     app.type_text(">Analyse");
     super::palette::wait_for_first(&mut app, "Analyse");

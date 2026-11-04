@@ -61,7 +61,8 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
             let tournament = model["onlineTournament"]
                 .as_str()
                 .is_some_and(|tournament| !tournament.is_empty());
-            if model["lastGame"].is_object() && !tournament {
+            // A rematch on its way is not sent twice: its button shows it loading meanwhile.
+            if model["lastGame"].is_object() && !tournament && !online.busy {
                 actions.push(LiveAction::Rematch);
             }
             if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
