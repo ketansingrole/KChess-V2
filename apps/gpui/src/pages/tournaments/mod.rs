@@ -486,49 +486,59 @@ impl Render for TournamentsPage {
         let header = h_flex()
             .gap(px(8.))
             .flex_wrap()
+            // The key keeps room for two of its entries a line; when the controls leave it less,
+            // they wrap below it rather than squeezing it into a column.
             .child(div().flex_1().min_w_0().when(!showing_event, |lead| {
-                lead.child(timeline::legend(&palette))
+                lead.min_w(px(320.)).child(timeline::legend(&palette))
             }))
-            .when(!showing_event, |row| {
-                row.child(widgets::pills(
-                    "tournaments-filter",
-                    vec![
-                        Pill {
-                            icon: None,
-                            label: "Playable here".into(),
-                            badge: None,
-                            disabled: false,
-                        },
-                        Pill {
-                            icon: None,
-                            label: "All".into(),
-                            badge: None,
-                            disabled: false,
-                        },
-                    ],
-                    usize::from(!self.playable_only),
-                    choose,
-                    true,
-                    &palette,
-                ))
-                .child(
-                    Button::new("tournaments-refresh")
-                        .small()
-                        .outline()
-                        .icon(icon("refresh-cw"))
-                        .label("Refresh")
-                        .loading(self.loading)
-                        .disabled(self.loading)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                )
-            })
+            // The controls wrap as one group.
             .child(
-                Button::new("tournaments-create")
-                    .small()
-                    .primary()
-                    .icon(icon("plus"))
-                    .label("Create arena")
-                    .on_click(cx.listener(|this, _, window, cx| this.start_create(window, cx))),
+                h_flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .when(!showing_event, |row| {
+                        row.child(widgets::pills(
+                            "tournaments-filter",
+                            vec![
+                                Pill {
+                                    icon: None,
+                                    label: "Playable here".into(),
+                                    badge: None,
+                                    disabled: false,
+                                },
+                                Pill {
+                                    icon: None,
+                                    label: "All".into(),
+                                    badge: None,
+                                    disabled: false,
+                                },
+                            ],
+                            usize::from(!self.playable_only),
+                            choose,
+                            true,
+                            &palette,
+                        ))
+                        .child(
+                            Button::new("tournaments-refresh")
+                                .small()
+                                .outline()
+                                .icon(icon("refresh-cw"))
+                                .label("Refresh")
+                                .loading(self.loading)
+                                .disabled(self.loading)
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        )
+                    })
+                    .child(
+                        Button::new("tournaments-create")
+                            .small()
+                            .primary()
+                            .icon(icon("plus"))
+                            .label("Create arena")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.start_create(window, cx)),
+                            ),
+                    ),
             );
         let reconnect = self.reconnect_notice(cx);
         let body = if showing_event {
