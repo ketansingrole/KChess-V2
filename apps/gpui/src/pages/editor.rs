@@ -25,7 +25,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
-use crate::widgets::{self, Pill, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
 /// The spare rows above and below the board, and the voice bar, take this much of its height.
@@ -481,6 +481,7 @@ impl EditorPage {
                 .id(SharedString::from(format!("{id}-{color:?}")))
                 .test_support()
                 .role(gpui_kit::Role::Button)
+                .keyboard_focus(palette.primary)
                 .aria_label(label)
                 .aria_selected(selected)
                 .flex_1()
@@ -527,6 +528,10 @@ impl EditorPage {
             div()
                 .id(SharedString::from(format!("spare-{color:?}-{role:?}")))
                 .test_support()
+                .role(gpui_kit::Role::Button)
+                .keyboard_focus(palette.primary)
+                .aria_label(label.clone())
+                .aria_selected(selected)
                 .flex_1()
                 .h(cell)
                 .flex()
@@ -549,6 +554,10 @@ impl EditorPage {
                 // Pressing a spare piece chooses it, and dragging it puts a new one on the board.
                 .on_mouse_down(
                     MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| this.choose_tool(EditTool::Place(piece), cx)),
+                )
+                // Enter or Space on the focused piece chooses it too.
+                .on_click(
                     cx.listener(move |this, _, _, cx| this.choose_tool(EditTool::Place(piece), cx)),
                 )
                 .on_drag(SparePiece(piece), move |_, _, _, cx| {

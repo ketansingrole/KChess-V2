@@ -311,6 +311,24 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     }
 }
 
+/// The spare pieces are buttons a screen reader names, chosen as the tools beside them are.
+#[gpui_kit::test]
+fn a_spare_piece_is_a_named_button_that_is_chosen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    let queen = app.find("spare-White-Queen");
+    assert_eq!(queen.role(), Some(gpui_kit::Role::Button));
+    assert_eq!(queen.label(), Some("White queen"));
+    assert_eq!(queen.selected(), Some(false));
+    app.click("spare-White-Queen");
+    app.wait_for("the queen to be chosen", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("spare-White-Queen")
+            .is_some_and(|queen| queen.selected() == Some(true))
+    });
+    assert_eq!(app.find("spare-Black-Queen").selected(), Some(false));
+}
+
 #[gpui_kit::test]
 fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
