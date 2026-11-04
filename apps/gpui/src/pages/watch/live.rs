@@ -820,11 +820,7 @@ impl WatchPage {
                 .child(list)
                 .child(widgets::card(palette).flex_1().child(widgets::empty_state(
                     icon("tv"),
-                    if self.target.is_some() {
-                        "Connecting…"
-                    } else {
-                        "Pick something to watch"
-                    },
+                    placeholder(self.target.is_some(), self.phase.as_deref()),
                     None,
                     palette,
                 )))
@@ -999,8 +995,25 @@ impl WatchPage {
     }
 }
 
+/// What the board's place says before a game arrives: a failed feed is not still connecting.
+fn placeholder(target: bool, phase: Option<&str>) -> &'static str {
+    match (target, phase) {
+        (false, _) => "Pick something to watch",
+        (true, Some("error")) => "Not connected",
+        (true, _) => "Connecting…",
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_feed_does_not_say_it_is_connecting() {
+        use super::placeholder;
+        assert_eq!(placeholder(false, None), "Pick something to watch");
+        assert_eq!(placeholder(true, None), "Connecting…");
+        assert_eq!(placeholder(true, Some("error")), "Not connected");
+    }
+
     use super::{base_minutes, info_line, past_result, past_score, points, result_line};
     use serde_json::json;
 
