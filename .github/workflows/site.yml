@@ -3,6 +3,9 @@ name: Site
 # Publishes the landing page (site/) to GitHub Pages: when the page changes on main, and when a
 # release is published so its download links point at the new version. The page is plain HTML and
 # CSS; this job only fills in `{{version}}` and copies the app icon beside it.
+#
+# The github-pages environment deploys only from main, and a release event runs on its tag, so a
+# published release starts this workflow again on main rather than deploying from the tag.
 on:
   push:
     branches: [main]
@@ -23,7 +26,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  dispatch:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Build the page from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run site.yml --ref main
+
   build:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
