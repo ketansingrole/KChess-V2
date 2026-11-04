@@ -275,7 +275,7 @@ impl StudiesPage {
     }
 
     /// `New study`: an empty board, kept as a study at once.
-    fn create(window: &mut Window, cx: &mut App) {
+    pub(crate) fn create(window: &mut Window, cx: &mut App) {
         let name = Self::library(cx).read(cx).fresh_name("Untitled study");
         crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
             analysis.load(None, cx);
@@ -542,7 +542,7 @@ impl StudiesPage {
         .detach();
     }
 
-    fn open_import(window: &mut Window, cx: &mut App) {
+    pub(crate) fn open_import(window: &mut Window, cx: &mut App) {
         let import = cx.new(|cx| ImportStudy::new(window, cx));
         window.open_dialog(cx, move |dialog, _, _| {
             dialog

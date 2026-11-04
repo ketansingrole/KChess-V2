@@ -334,3 +334,25 @@ fn a_study_deleted_from_the_board_is_gone_from_the_list(cx: &mut gpui_kit::TestA
     app.open("Studies");
     app.find("empty-new-study");
 }
+
+/// Quick Pick makes a study and opens the import dialog, as the header's buttons do.
+#[gpui_kit::test]
+fn quick_pick_makes_and_imports_studies(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Studies");
+    app.find("empty-new-study");
+    app.press("secondary-k");
+    app.type_text(">Import PGN");
+    super::palette::wait_for_first(&mut app, "Import PGN");
+    app.press("enter");
+    app.find("import-run");
+    app.click("import-cancel");
+    settle(&mut app);
+
+    app.press("secondary-k");
+    app.type_text(">New study");
+    super::palette::wait_for_first(&mut app, "New study");
+    app.press("enter");
+    app.find("study-actions");
+    wait_for_value(&mut app, "Study name", "Untitled study");
+}

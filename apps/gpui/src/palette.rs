@@ -502,6 +502,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Editor) => editor_commands(cx),
         Some(Page::Puzzles) => puzzle_commands(cx),
         Some(Page::Watch) => watch_commands(cx),
+        Some(Page::Studies) => studies_commands(),
         _ => Vec::new(),
     }
 }
@@ -622,6 +623,27 @@ fn watch_commands(cx: &App) -> Vec<Command> {
         },
         WatchPage::act,
     )
+}
+
+/// The Studies page's header actions.
+fn studies_commands() -> Vec<Command> {
+    use crate::pages::studies::StudiesPage;
+    vec![
+        Command::new(
+            "studies:new",
+            "New study",
+            icon("plus"),
+            StudiesPage::create,
+        )
+        .keywords("create chapter"),
+        Command::new(
+            "studies:import",
+            "Import PGN",
+            icon("import"),
+            StudiesPage::open_import,
+        )
+        .keywords("paste games study"),
+    ]
 }
 
 /// The board editor's actions, as its buttons offer them.
