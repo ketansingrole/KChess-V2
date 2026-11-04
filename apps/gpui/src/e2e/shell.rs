@@ -56,6 +56,11 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
+    // The startup check ends by reloading the games in progress, which clears them with no account
+    // connected: seeded before it, the game was gone again whenever the check finished later.
+    app.wait_for("the startup check to finish", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != crate::online::Phase::Checking
+    });
     app.with_window(|window, cx| {
         crate::online::handle(cx).update(cx, |online, cx| {
             online.ongoing = vec![serde_json::json!({
