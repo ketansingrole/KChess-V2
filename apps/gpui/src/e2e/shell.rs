@@ -173,12 +173,21 @@ fn tab_and_shift_tab_walk_the_same_controls(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(again, forward[1..], "Tab after the shell redrew");
 }
 
-/// A connected account's section: a card for the speed it plays, its record and Sync games.
+/// A connected account's section: its record, Sync games, and rating cards that choose the
+/// chart's speed, the speed played most first.
 #[gpui_kit::test]
-fn the_lichess_section_shows_the_account(cx: &mut gpui_kit::TestAppContext) {
-    let (mut app, _lichess) = Harness::signed_in(cx, false);
-    // The stand-in account plays Rapid only.
-    app.find("home-perf-rapid");
+fn a_rating_card_puts_its_speed_on_the_chart(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.find("home-perf-bullet");
     app.find("home-record");
     assert!(app.enabled("home-sync"));
+    assert_eq!(app.find("home-perf-blitz").selected(), Some(true));
+    app.click("home-perf-puzzle");
+    app.wait_for("Puzzles to be chosen", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("home-perf-puzzle"))
+            .is_some_and(|card| card.selected() == Some(true))
+    });
+    assert_eq!(app.find("home-perf-blitz").selected(), Some(false));
 }

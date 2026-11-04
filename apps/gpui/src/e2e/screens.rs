@@ -135,7 +135,7 @@ fn home() {
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
     let only = std::env::var("KCHESS_HOME_STATES").unwrap_or_default();
-    for state in ["new", "played", "lichess"] {
+    for state in ["new", "finished", "played", "lichess"] {
         if !only.is_empty() && !only.split(',').any(|wanted| wanted == state) {
             continue;
         }
@@ -147,7 +147,7 @@ fn home() {
                     crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
                 });
                 if state != "new" {
-                    seed_played(&mut cx);
+                    seed_played(&mut cx, state != "finished");
                 }
                 if state == "lichess" {
                     connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
@@ -171,8 +171,8 @@ fn home() {
     }
 }
 
-/// An unfinished game against the computer, and a few finished games played here.
-fn seed_played(cx: &mut HeadlessAppContext) {
+/// A few finished games played here, and an unfinished one against the computer if `unfinished`.
+fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
     use crate::game::computer::{ComputerGame, Host};
     let host = Host {
         now: 0.,
@@ -187,13 +187,15 @@ fn seed_played(cx: &mut HeadlessAppContext) {
     let snapshot = ComputerGame::new(Some(&session), &host)
         .expect("the computer game")
         .snapshot(&host);
-    let saved = cx.update(|cx| {
-        cx.global::<crate::core::AppCore>()
-            .call("saveSession", vec![serde_json::json!("computer"), snapshot])
-    });
-    cx.foreground_executor()
-        .block_test(saved)
-        .expect("the computer game is saved");
+    if unfinished {
+        let saved = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .call("saveSession", vec![serde_json::json!("computer"), snapshot])
+        });
+        cx.foreground_executor()
+            .block_test(saved)
+            .expect("the computer game is saved");
+    }
     let moves: Vec<String> = OPERA.split_whitespace().map(str::to_string).collect();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

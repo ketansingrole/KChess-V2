@@ -231,8 +231,14 @@ impl Render for LichessActivity {
                             .update(cx, |accounts, cx| accounts.sync(Some(name), window, cx))
                     }),
             );
-        let cards = h_flex().flex_wrap().items_stretch().gap(px(12.)).children(
-            shown_perfs(&self.profile).into_iter().map(|(key, label)| {
+        let cards = h_flex()
+            .id("home-perfs")
+            .role(Role::TabList)
+            .aria_label("Ratings")
+            .flex_wrap()
+            .items_stretch()
+            .gap(px(12.))
+            .children(shown_perfs(&self.profile).into_iter().map(|(key, label)| {
                 let perf = &self.profile["perfs"][key];
                 let rating = perf["rating"].as_f64();
                 let progress = perf["prog"].as_f64().filter(|prog| *prog != 0.);
@@ -242,8 +248,13 @@ impl Render for LichessActivity {
                 v_flex()
                     .id(SharedString::from(format!("home-perf-{key}")))
                     .test_support()
-                    .role(Role::Button)
-                    .aria_label(format!("{label} rating"))
+                    // The cards choose the chart's speed, as tabs would.
+                    .role(Role::Tab)
+                    .aria_selected(chosen)
+                    .aria_label(match rating {
+                        Some(rating) => format!("{label} rating {rating}"),
+                        None => format!("{label} rating"),
+                    })
                     .keyboard_focus(palette.primary)
                     .flex_1()
                     .flex_basis(px(150.))
@@ -313,8 +324,7 @@ impl Render for LichessActivity {
                                 "\u{a0}".into()
                             }),
                     )
-            }),
-        );
+            }));
         let chart_card = widgets::card(&palette)
             .flex_1()
             .min_w(px(300.))

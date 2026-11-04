@@ -11,7 +11,11 @@ fn page(app: &mut Harness) -> Option<Page> {
 
 /// Whether a result with this name is listed.
 fn lists(app: &mut Harness, name: &str) -> bool {
-    app.with_window(|window, _| !window.find_all_by_label(name).is_empty())
+    app.with_window(|window, _| {
+        (0..64usize)
+            .map_while(|index| window.try_find(("palette-item", index)))
+            .any(|item| item.label() == Some(name))
+    })
 }
 
 /// Wait until a result with this name is listed.

@@ -93,15 +93,6 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     })
 }
 
-/// `localResult`: "1–0", "½–½", or "Unfinished".
-fn result_text(result: &str) -> String {
-    match result {
-        "1/2-1/2" => "½–½".into(),
-        "*" => "Unfinished".into(),
-        result => result.replace('-', "–"),
-    }
-}
-
 /// "Oct 22": the day a game started, in local time.
 fn short_date(millis: f64) -> String {
     use chrono::TimeZone as _;
@@ -177,6 +168,7 @@ fn tile(
 ) -> impl IntoElement {
     h_flex()
         .id(id)
+        .test_support()
         .role(Role::Button)
         .keyboard_focus(palette.primary)
         .aria_label(label)
@@ -305,14 +297,25 @@ impl Render for HomePage {
         };
         // What the board shows: its title, the line under it, and the game it opens.
         let (title, detail, opens) = match (&self.continue_game, &latest) {
-            (Some((game, _)), _) => (Some(game.opponent.clone()), Some(game.state.clone()), None),
+            (Some((game, _)), _) => (
+                Some(game.opponent.clone()),
+                Some(div().child(game.state.clone()).into_any_element()),
+                None,
+            ),
+            // The last game, as its row in Recent games says it: who won, and against whom.
             (None, Some(game)) => (
-                Some(names(game)),
-                Some(format!(
-                    "{} · {}",
-                    result_text(game["result"].as_str().unwrap_or("*")),
-                    short_date(game["startedAt"].as_f64().unwrap_or_default())
-                )),
+                Some(crate::pages::history::opponent(game)),
+                Some(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(crate::pages::history::badge(
+                            &crate::pages::history::outcome(game),
+                            None,
+                            &palette,
+                        ))
+                        .child(short_date(game["startedAt"].as_f64().unwrap_or_default()))
+                        .into_any_element(),
+                ),
                 game["id"].as_str().map(str::to_string),
             ),
             (None, None) => (None, None, None),
@@ -365,14 +368,23 @@ impl Render for HomePage {
             }))
             .children(detail.map(|detail| {
                 div()
+                    .mt(px(2.))
                     .text_size(px(13.))
                     .text_color(palette.text_muted)
                     .child(detail)
             }));
-        let actions = h_flex()
-            .gap(px(8.))
-            .child(div().flex_1().child(primary.w_full()))
-            .children(review);
+        // Side by side under the board; stacked beside the smaller one.
+        let actions = if stacked {
+            v_flex()
+                .gap(px(8.))
+                .child(primary.w_full())
+                .children(review.map(|review| review.w_full()))
+        } else {
+            h_flex()
+                .gap(px(8.))
+                .child(div().flex_1().child(primary.w_full()))
+                .children(review)
+        };
         // The board you left (or last played), what it is, and what to do with it.
         let now = widgets::card(&palette).p(px(16.)).flex_none();
         let now = if stacked {
@@ -385,7 +397,7 @@ impl Render for HomePage {
                         .gap(px(14.))
                         .child(about)
                         .child(div().flex_1())
-                        .child(actions.flex_wrap()),
+                        .child(actions),
                 ),
             )
         } else {
@@ -582,7 +594,7 @@ mod tests {
     use serde_json::json;
     use shakmaty::Color;
 
-    use super::{line, orientation, result_text};
+    use super::{line, orientation};
 
     #[test]
     fn the_board_shows_the_game_from_your_side() {
@@ -597,12 +609,5 @@ mod tests {
         );
         let (_, moves) = line(&json!({ "moves": ["e2e4", "e7e5"] }));
         assert_eq!(moves, ["e2e4", "e7e5"]);
-    }
-
-    #[test]
-    fn results_read_as_on_a_scoresheet() {
-        assert_eq!(result_text("1-0"), "1–0");
-        assert_eq!(result_text("1/2-1/2"), "½–½");
-        assert_eq!(result_text("*"), "Unfinished");
     }
 }
