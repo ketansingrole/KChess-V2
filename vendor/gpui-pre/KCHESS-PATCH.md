@@ -1,6 +1,6 @@
-# gpui-pre 0.3.9, patched for KChess
+# gpui-pre 0.3.11, patched for KChess
 
-This is the published `gpui-pre` 0.3.9 crate (Zed's GPUI, Apache-2.0, see `LICENSE-APACHE`),
+This is the published `gpui-pre` 0.3.11 crate (Zed's GPUI, Apache-2.0, see `LICENSE-APACHE`),
 used through `[patch.crates-io]` in the workspace `Cargo.toml`. Its `examples/` and `tests/`
 are left out, and so are their targets in `Cargo.toml`. Everything else is unchanged except for
 the lines marked `KChess patch`, which add a **window zoom** for the GPUI app's Settings →
@@ -60,7 +60,7 @@ patches make that replay cheaper, and one keeps shaped text; none changes what i
 - **Tab order is sorted when Tab asks for it** (`TabStopMap` in `src/tab_stop.rs`). Upstream kept
   a sorted tree updated on every insert, and a reused view replays all its tab stops each frame.
 
-- **Shaped text is kept for a while** (`LineLayoutCache::retained` in
+- **Shaped text is kept for a while** (`LineLayoutCacheState::retained` in
   `src/text_system/line_layout.rs`). Upstream kept a line's shaping for one frame after its
   last use, so a page opened again shaped all its text with CoreText again. Lines no frame has
   used for two frames are kept, up to 16,384 of them, and dropped when new fonts are added.
@@ -95,3 +95,8 @@ Copy the new release's `src`, `build.rs`, `resources`, `README.md`, `LICENSE-APA
 `Cargo.toml` (dropping its example, test and bench targets) over this folder. Then re-apply the
 `KChess patch` changes; `rg "KChess patch" vendor/gpui-pre` lists them. Check them against the
 new release, since input handling and view caching may have moved.
+
+A three-way merge does most of it: the published the previous release as the base, this folder as one side and
+the new release as the other (0.3.9 → 0.3.11 conflicted only in `src/window.rs` and
+`src/text_system/line_layout.rs`). Keep the gpui-kit pin in `apps/gpui/Cargo.toml` on the
+release whose `gpui-pre` this folder holds.

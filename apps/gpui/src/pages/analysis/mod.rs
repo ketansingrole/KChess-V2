@@ -1429,7 +1429,7 @@ impl AnalysisPage {
     }
 
     /// Lichess steps through moves with the mouse wheel over the board.
-    fn scroll(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let delta = event.delta.pixel_delta(window.line_height());
         if delta.x.abs() > delta.y.abs() {
             return;
@@ -2817,7 +2817,7 @@ impl Render for AnalysisPage {
                         div()
                             .id("analysis-board")
                             .w(board_size)
-                            .on_scroll_wheel(cx.listener(Self::scroll))
+                            .on_scroll(cx.listener(Self::scroll))
                             // The board takes the keys back from the move box, as a click
                             // outside a text field does in the browser.
                             .on_mouse_down(

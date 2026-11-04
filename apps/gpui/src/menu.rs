@@ -76,26 +76,34 @@ pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
     );
 }
 
+/// A binding whose `secondary-` is the host's Cmd or Ctrl. GPUI resolves `secondary-` only when
+/// it loads a binding for the running platform (`KeyBinding::new` refuses it).
+fn bind(keystrokes: &str, action: impl Action, cx: &App) -> KeyBinding {
+    KeyBinding::load(keystrokes, Box::new(action), None, false, None, cx)
+        .unwrap_or_else(|error| panic!("menu binding {keystrokes:?}: {error:?}"))
+}
+
 pub fn init(cx: &mut App) {
-    cx.bind_keys([
+    let bindings = [
         // Cmd on macOS and Ctrl elsewhere, as Electron's `CmdOrCtrl`; the others are macOS's own.
-        KeyBinding::new("secondary-q", Quit, None),
-        KeyBinding::new("cmd-h", Hide, None),
-        KeyBinding::new("alt-cmd-h", HideOthers, None),
-        KeyBinding::new("secondary-w", CloseWindow, None),
-        KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-        KeyBinding::new("secondary-k", Search, None),
-        KeyBinding::new("shift-secondary-p", Commands, None),
-        KeyBinding::new("secondary-,", OpenSettings, None),
+        bind("secondary-q", Quit, cx),
+        bind("cmd-h", Hide, cx),
+        bind("alt-cmd-h", HideOthers, cx),
+        bind("secondary-w", CloseWindow, cx),
+        bind("cmd-m", Minimize, cx),
+        bind("ctrl-cmd-f", ToggleFullScreen, cx),
+        bind("secondary-k", Search, cx),
+        bind("shift-secondary-p", Commands, cx),
+        bind("secondary-,", OpenSettings, cx),
         // Interface size, as Electron takes them: with or without Shift, and the keypad's.
-        KeyBinding::new("secondary-=", ZoomIn, None),
-        KeyBinding::new("secondary-+", ZoomIn, None),
-        KeyBinding::new("secondary-shift-=", ZoomIn, None),
-        KeyBinding::new("secondary--", ZoomOut, None),
-        KeyBinding::new("secondary-shift--", ZoomOut, None),
-        KeyBinding::new("secondary-0", ActualSize, None),
-    ]);
+        bind("secondary-=", ZoomIn, cx),
+        bind("secondary-+", ZoomIn, cx),
+        bind("secondary-shift-=", ZoomIn, cx),
+        bind("secondary--", ZoomOut, cx),
+        bind("secondary-shift--", ZoomOut, cx),
+        bind("secondary-0", ActualSize, cx),
+    ];
+    cx.bind_keys(bindings);
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
     cx.on_action(|_: &ZoomOut, cx| zoom(-1, cx));
     cx.on_action(|_: &ActualSize, cx| zoom(0, cx));

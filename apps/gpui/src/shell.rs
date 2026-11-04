@@ -957,7 +957,7 @@ impl Workspace {
     }
 
     /// A trackpad scroll: a horizontal two-finger swipe goes back or forward.
-    fn scrolled(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn scrolled(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let settings = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
         let (enabled, feedback) = (settings.swipe_navigation, settings.swipe_indicator);
         // A mouse wheel scrolls in lines; only the trackpad's pixels can swipe.
@@ -1713,7 +1713,7 @@ impl Render for Workspace {
                             .min_h_0()
                             .relative()
                             .overflow_hidden()
-                            .on_scroll_wheel(cx.listener(Self::scrolled))
+                            .on_scroll(cx.listener(Self::scrolled))
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                                 if !event.is_held && this.pages.page_focused(window) {
                                     Self::talk_key(&event.keystroke, true, cx);

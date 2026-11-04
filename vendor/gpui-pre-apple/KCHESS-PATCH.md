@@ -1,6 +1,6 @@
-# gpui-pre-apple 0.3.9, patched for KChess
+# gpui-pre-apple 0.3.11, patched for KChess
 
-This is the published `gpui-pre-apple` 0.3.9 crate (Zed's `gpui_apple`, Apache-2.0, see
+This is the published `gpui-pre-apple` 0.3.11 crate (Zed's `gpui_apple`, Apache-2.0, see
 `LICENSE-APACHE`), used through `[patch.crates-io]` in the workspace `Cargo.toml`. Everything is
 unchanged except for the lines marked `KChess patch`.
 

@@ -138,7 +138,14 @@ fn check(page: &str, width: f32, elements: &[ElementSnapshot], findings: &mut Fi
                 "{page}: {name} is cut off at the side ({bounds:?})"
             ));
         }
-        if f32::from(bounds.size.width.min(bounds.size.height)) < 24. {
+        // A text input's accessible element is its editor's text line, not the box around it
+        // (GPUI Kit 0.9 marks the frame presentational), so only its width says how big it is.
+        let reach = if control.role() == Some(Role::TextInput) {
+            bounds.size.width
+        } else {
+            bounds.size.width.min(bounds.size.height)
+        };
+        if f32::from(reach) < 24. {
             findings
                 .small
                 .push(format!("{page}: {name} {:?}", bounds.size));

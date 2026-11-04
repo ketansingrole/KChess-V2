@@ -452,7 +452,7 @@ impl TournamentsPage {
                     .track_scroll(&self.schedule)
                     .overflow_x_scroll()
                     // A sideways scroll here moves the schedule, not between pages.
-                    .on_scroll_wheel(cx.listener(|_, event: &ScrollWheelEvent, _, cx| {
+                    .on_scroll(cx.listener(|_, event: &ScrollEvent, _, cx| {
                         let delta = event.delta.pixel_delta(px(16.));
                         if delta.x.abs() > delta.y.abs() {
                             cx.stop_propagation();
