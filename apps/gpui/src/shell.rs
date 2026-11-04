@@ -46,6 +46,9 @@ const SIDEBAR_WIDTH: Pixels = px(256.);
 /// How long the sidebar's width eases when it opens or closes.
 const SIDEBAR_EASE: Duration = Duration::from_millis(200);
 const SIDEBAR_RAIL: Pixels = px(64.);
+/// Below this window width the sidebar shows as its rail, leaving the page the room; its toggle
+/// opens it there for the moment without changing what wider windows show.
+const NARROW_WINDOW: Pixels = px(800.);
 
 fn sidebar_width(open: bool) -> Pixels {
     if open { SIDEBAR_WIDTH } else { SIDEBAR_RAIL }
@@ -283,7 +286,7 @@ impl SidebarInputs {
     fn of(workspace: &Workspace, cx: &App) -> SidebarInputs {
         let accounts = crate::accounts::handle(cx).read(cx);
         SidebarInputs {
-            open: workspace.sidebar_open,
+            open: workspace.shown(),
             width_from: workspace.sidebar_width_from,
             current: workspace.pages.current(),
             section: workspace
@@ -324,7 +327,7 @@ impl TopbarInputs {
     fn of(workspace: &Workspace, cx: &App) -> TopbarInputs {
         let updates = cx.global::<crate::updates::UpdatesHandle>().0.read(cx);
         TopbarInputs {
-            sidebar_open: workspace.sidebar_open,
+            sidebar_open: workspace.shown(),
             online: crate::network::online(cx),
             working: working(cx),
             update: UpdateInputs {
@@ -496,7 +499,7 @@ pub fn new_analysis(window: &mut Window, cx: &mut App) {
 pub fn sidebar_open(cx: &App) -> bool {
     cx.try_global::<Navigator>()
         .and_then(|navigator| navigator.0.upgrade())
-        .is_none_or(|workspace| workspace.read(cx).sidebar_open)
+        .is_none_or(|workspace| workspace.read(cx).shown())
 }
 
 pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
@@ -748,7 +751,12 @@ struct SwipeFeedback {
 }
 
 pub struct Workspace {
+    /// Whether the sidebar is open in a window wider than `NARROW_WINDOW`, as kept.
     sidebar_open: bool,
+    /// Whether the window is narrower than `NARROW_WINDOW`.
+    narrow: bool,
+    /// Whether the sidebar was opened while the window is narrow.
+    narrow_open: bool,
     /// The width the sidebar's last open or close started from.
     sidebar_width_from: Pixels,
     /// When the sidebar last opened or closed: it is drawn in the shell, not as its `Part`,
@@ -844,6 +852,8 @@ impl Workspace {
         let sidebar_open = crate::prefs::get(cx, SIDEBAR_OPEN, true);
         let mut workspace = Workspace {
             sidebar_open,
+            narrow: false,
+            narrow_open: false,
             sidebar_width_from: sidebar_width(sidebar_open),
             sidebar_toggled: None,
             sidebar: Part::keyed(
@@ -858,7 +868,7 @@ impl Workspace {
             ),
             toggle: Part::keyed(
                 |this, _, cx| this.render_sidebar_toggle(cx).into_any_element(),
-                |this, _| this.sidebar_open,
+                |this, _| this.shown(),
                 cx,
             ),
             history: crate::swipe::History::default(),
@@ -1219,19 +1229,43 @@ impl Workspace {
         ]
     }
 
+    /// Whether the sidebar is open as shown: in a narrow window, only while opened there.
+    fn shown(&self) -> bool {
+        if self.narrow {
+            self.narrow_open
+        } else {
+            self.sidebar_open
+        }
+    }
+
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.sidebar_width_from = sidebar_width(self.sidebar_open);
-        self.sidebar_open = !self.sidebar_open;
+        self.sidebar_width_from = sidebar_width(self.shown());
+        if self.narrow {
+            self.narrow_open = !self.narrow_open;
+        } else {
+            self.sidebar_open = !self.sidebar_open;
+            crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
+        }
         self.sidebar_toggled = Some(std::time::Instant::now());
-        crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
         cx.notify();
+    }
+
+    /// Follow the window across `NARROW_WINDOW`: the rail below it, and above it the sidebar as
+    /// kept. A resize changes the width at once, without the toggle's easing.
+    fn fit_window(&mut self, window: &Window) {
+        let narrow = window.viewport_size().width < NARROW_WINDOW;
+        if narrow != self.narrow {
+            self.narrow = narrow;
+            self.narrow_open = false;
+            self.sidebar_width_from = sidebar_width(self.shown());
+        }
     }
 
     /// `USidebar` with `collapsible="icon"`: the header row the toggle floats over, the pages,
     /// and the footer, divided by lines (`divide-y`); 256px open, a 64px rail of icons collapsed,
     /// its width easing between the two in 200ms.
     fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let open = self.sidebar_open;
+        let open = self.shown();
         let width = sidebar_width(open);
         let border = cx.theme().sidebar_border;
         // macOS keeps the rail's edge out of the header row, where it would cut through the
@@ -1335,7 +1369,7 @@ impl Workspace {
             return self.render_sidebar(window, cx).into_any_element();
         }
         let mut style = StyleRefinement::default();
-        style.size.width = Some(sidebar_width(self.sidebar_open).into());
+        style.size.width = Some(sidebar_width(self.shown()).into());
         style.size.height = Some(relative(1.).into());
         style.flex_shrink = Some(0.);
         self.sidebar.clone().cached(style).into_any_element()
@@ -1345,7 +1379,7 @@ impl Workspace {
     /// whether the sidebar is open or a rail, beside the macOS traffic lights (which ignore the
     /// interface size, so its offset does too), else at the window's edge.
     fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = if self.sidebar_open {
+        let label = if self.shown() {
             "Hide sidebar"
         } else {
             "Show sidebar"
@@ -1363,7 +1397,7 @@ impl Workspace {
                     .accessibility_label(label)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             ))
-            .when(self.sidebar_open, |wrap| {
+            .when(self.shown(), |wrap| {
                 wrap.child(
                     title_bar("sidebar-name")
                         .flex()
@@ -1415,7 +1449,7 @@ impl Workspace {
                     .flex_1()
                     .flex_basis(px(0.))
                     .min_w(px(40.))
-                    .when(cfg!(target_os = "macos") && !self.sidebar_open, |left| {
+                    .when(cfg!(target_os = "macos") && !self.shown(), |left| {
                         left.child(div().flex_none().w(spacer))
                     }),
             )
@@ -1806,6 +1840,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.fit_window(window);
         // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
         let zen = cx
             .global::<SettingsHandle>()
@@ -1857,7 +1892,7 @@ impl Render for Workspace {
                 shell.child(
                     self.toggle
                         .clone()
-                        .cached(toggle_style(self.sidebar_open, window)),
+                        .cached(toggle_style(self.shown(), window)),
                 )
             })
     }

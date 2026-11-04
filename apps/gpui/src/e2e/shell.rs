@@ -164,6 +164,36 @@ fn the_sidebar_collapses_and_is_kept_collapsed(cx: &mut gpui_kit::TestAppContext
     assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
 }
 
+/// A narrow window gives the page the room: the sidebar shows as its rail there, opens for the
+/// moment from its toggle, and a wider window shows it as kept.
+#[gpui_kit::test]
+fn a_narrow_window_shows_the_rail(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{px, size};
+    let mut app = Harness::start(cx);
+    let resize = |app: &mut Harness, width: f32| {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(900.)));
+        for _ in 0..5 {
+            app.tick();
+        }
+    };
+    resize(&mut app, 760.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+    app.click("sidebar-toggle");
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+    resize(&mut app, 1320.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+    resize(&mut app, 760.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+    // Closing it on a wide window is kept; opening it on a narrow one was not.
+    resize(&mut app, 1320.);
+    app.click("sidebar-toggle");
+    resize(&mut app, 760.);
+    app.click("sidebar-toggle");
+    resize(&mut app, 1320.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+}
+
 /// Tab and Shift-Tab walk a page's controls in opposite orders, also after frames in which only
 /// the shell redrew and the page's last frame, its tab stops included, was reused.
 #[gpui_kit::test]
