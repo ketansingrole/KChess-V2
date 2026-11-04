@@ -501,6 +501,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Analysis) => analysis_commands(),
         Some(Page::Editor) => editor_commands(cx),
         Some(Page::Puzzles) => puzzle_commands(cx),
+        Some(Page::Watch) => watch_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -596,6 +597,25 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
             Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
         },
         |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
+    )
+}
+
+/// The watched game's actions, as its panel's buttons offer them.
+fn watch_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::watch::{WatchPage, live::Action};
+    let Some(page) = crate::shell::view_of::<WatchPage>(Page::Watch, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Watch,
+        "watch",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
+            Action::Stop => ("stop", "Stop watching", "square", "close end"),
+        },
+        WatchPage::act,
     )
 }
 

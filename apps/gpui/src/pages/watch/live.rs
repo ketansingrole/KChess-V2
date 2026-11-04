@@ -949,6 +949,45 @@ impl WatchPage {
             .into_any_element()
     }
 
+    /// The actions the watched game's panel allows now: none without a game, or on Broadcasts.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        let Some(frame) = &self.live.frame else {
+            return Vec::new();
+        };
+        if self.tab == super::Tab::Broadcasts {
+            return Vec::new();
+        }
+        let mut actions = vec![Action::Flip];
+        if crate::game::analysable(frame["variant"].as_str().unwrap_or("standard")) {
+            actions.push(Action::Analyse);
+        }
+        actions.push(Action::Stop);
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        match action {
+            Action::Flip => {
+                self.live.flipped = !self.live.flipped;
+                self.live.redraw(cx);
+                cx.notify();
+            }
+            Action::Analyse => self.analyse(window, cx),
+            Action::Stop => self.stop(cx),
+        }
+    }
+
+    /// A game on the board as the feed would send it, for the end-to-end tests.
+    #[cfg(test)]
+    pub(crate) fn show_frame(&mut self, frame: Value, cx: &mut Context<Self>) {
+        self.live.set_frame(frame, cx);
+        cx.notify();
+    }
+
     /// `analyseTv`: the game so far on the analysis board, at the move looked at.
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(frame) = self.live.frame.clone() else {
@@ -993,6 +1032,14 @@ impl WatchPage {
             cx,
         );
     }
+}
+
+/// What the watched game's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    Flip,
+    Analyse,
+    Stop,
 }
 
 /// What the board's place says before a game arrives: a failed feed is not still connecting.

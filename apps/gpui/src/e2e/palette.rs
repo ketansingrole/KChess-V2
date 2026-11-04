@@ -463,3 +463,51 @@ fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppCont
     let after = shown(&mut app);
     assert!(!after.contains(&"Draw".to_string()), "{after:?}");
 }
+
+/// While a TV game is watched, Quick Pick offers its panel's actions, and Stop ends it.
+#[gpui_kit::test]
+fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::watch::WatchPage;
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+    let listed = |app: &mut Harness| -> Vec<String> {
+        app.press("secondary-k");
+        app.type_text(">");
+        app.wait_for("the commands", |window, _| {
+            window.try_find(("palette-item", 0usize)).is_some()
+        });
+        let labels = app.with_window(|window, _| {
+            (0..6usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        wait_until_closed(app);
+        labels
+    };
+    assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        page.update(cx, |page, cx| {
+            page.show_frame(
+                serde_json::json!({
+                    "source": "tv", "channel": "atomic", "variant": "atomic", "gameId": "tv1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "white": { "name": "A" }, "black": { "name": "B" },
+                }),
+                cx,
+            )
+        });
+    });
+    // Atomic cannot go to the analysis board, so Analyse is left out.
+    let watching = listed(&mut app);
+    assert!(watching.contains(&"Flip board".to_string()), "{watching:?}");
+    assert!(!watching.contains(&"Analyse".to_string()), "{watching:?}");
+    app.press("secondary-k");
+    app.type_text(">Stop watching");
+    wait_for_first(&mut app, "Stop watching");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
+}

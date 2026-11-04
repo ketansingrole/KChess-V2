@@ -20,7 +20,7 @@ use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
 
 mod broadcast_engine;
 mod broadcasts;
-mod live;
+pub(crate) mod live;
 
 use broadcasts::Broadcasts;
 use live::Live;
