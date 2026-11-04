@@ -145,6 +145,18 @@ fn the_last_game_is_reviewed_from_home_in_quick_pick(cx: &mut gpui_kit::TestAppC
     app.find("open-analysis");
 }
 
+/// Game history's Lichess tab is in Quick Pick from any page.
+#[gpui_kit::test]
+fn lichess_games_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("Lichess games");
+    super::palette::wait_for_first(&mut app, "Lichess games");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    assert_eq!(app.find(("history-source", 2usize)).selected(), Some(true));
+}
+
 #[gpui_kit::test]
 fn a_resigned_computer_game_is_listed_with_the_computer_games(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
