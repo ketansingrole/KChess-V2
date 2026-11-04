@@ -98,6 +98,21 @@ fn group(label: Option<&'static str>, commands: Vec<Command>) -> Option<Group> {
     })
 }
 
+/// Each command once, in the first group that has it: a page's own toggle (Zen mode) is also a
+/// setting, and searching listed it twice.
+fn once_each(groups: Vec<Group>) -> Vec<Group> {
+    let mut seen = std::collections::HashSet::new();
+    groups
+        .into_iter()
+        .filter_map(|mut group| {
+            group
+                .items
+                .retain(|(command, _)| seen.insert(command.id.clone()));
+            (!group.items.is_empty()).then_some(group)
+        })
+        .collect()
+}
+
 fn searched(
     label: &'static str,
     text: &str,
@@ -511,6 +526,23 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Friends) => following_commands(cx),
         _ => Vec::new(),
     }
+}
+
+/// Every command Quick Pick can offer now, by id and label: recent entries are found by id.
+#[cfg(test)]
+pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
+    [
+        places(cx),
+        page_commands(cx),
+        play_commands(cx),
+        app_commands(cx),
+        settings_commands(cx),
+        player_commands(cx),
+    ]
+    .concat()
+    .into_iter()
+    .map(|command| (command.id.to_string(), command.label.to_string()))
+    .collect()
 }
 
 /// How Quick Pick names a page's action: its id, label, icon and search keywords.
@@ -1196,15 +1228,17 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
         .into_iter()
         .flatten()
         .collect(),
-        Mode::Commands => [
-            searched("This page", text, page_commands(cx), 8),
-            searched("Play", text, play_commands(cx), 12),
-            searched("App", text, app_commands(cx), 8),
-            searched("Settings", text, settings_commands(cx), 8),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        Mode::Commands => once_each(
+            [
+                searched("This page", text, page_commands(cx), 8),
+                searched("Play", text, play_commands(cx), 12),
+                searched("App", text, app_commands(cx), 8),
+                searched("Settings", text, settings_commands(cx), 8),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        ),
         Mode::Settings if text.is_empty() => {
             let all = settings_commands(cx);
             let (sections, toggles): (Vec<Command>, Vec<Command>) =
@@ -1308,7 +1342,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
             .collect();
             results.sort_by(|a, b| b.score.total_cmp(&a.score));
             // A pasted position or game link is what was meant: its actions come first.
-            pasted.into_iter().chain(results).collect()
+            once_each(pasted.into_iter().chain(results).collect())
         }
     }
 }

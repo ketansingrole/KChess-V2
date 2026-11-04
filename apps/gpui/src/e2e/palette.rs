@@ -517,3 +517,57 @@ fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) 
     wait_until_closed(&mut app);
     assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
 }
+
+/// A page's own toggle that is also a setting is listed once when searched for, not under both
+/// This page and Settings.
+#[gpui_kit::test]
+fn zen_mode_is_found_once(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Play with computer");
+    for query in [">zen", "zen"] {
+        app.press("secondary-k");
+        app.type_text(query);
+        wait_for_first(&mut app, "Zen mode");
+        let listed: Vec<String> = app.with_window(|window, _| {
+            (0..12usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        assert_eq!(
+            listed.iter().filter(|label| *label == "Zen mode").count(),
+            1,
+            "{query}: {listed:?}"
+        );
+        app.press("escape");
+        wait_until_closed(&mut app);
+    }
+}
+
+/// On every page, and every Practice trainer, no two different commands share an id: a recently
+/// used entry is found again by its id, so a shared one would run the other command.
+#[gpui_kit::test]
+fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    let labels: Vec<&str> = crate::shell::nav()
+        .iter()
+        .map(|(_, name, _)| *name)
+        .collect();
+    let check = |app: &mut Harness, place: &str| {
+        let commands = app.cx.update(|cx| crate::palette::command_ids(cx));
+        let mut seen = std::collections::HashMap::new();
+        for (id, label) in &commands {
+            let first = seen.entry(id.clone()).or_insert_with(|| label.clone());
+            assert_eq!(first, label, "{place}: {id} names two commands");
+        }
+    };
+    for label in labels {
+        app.open(label);
+        check(&mut app, label);
+    }
+    app.open("Practice");
+    for tab in 0..6usize {
+        app.click(("practice-tabs", tab));
+        check(&mut app, &format!("Practice tab {tab}"));
+    }
+}
