@@ -898,7 +898,7 @@ fn following_commands(cx: &App) -> Vec<Command> {
     )
 }
 
-/// Home's buttons: the last game, and your Lichess games.
+/// Home's Review: the last game.
 fn home_commands(cx: &App) -> Vec<Command> {
     use crate::pages::home::{Action, HomePage};
     let Some(page) = crate::shell::view_of::<HomePage>(Page::Dashboard, cx) else {
@@ -910,7 +910,6 @@ fn home_commands(cx: &App) -> Vec<Command> {
         page.read(cx).actions(cx),
         |action| match action {
             Action::Review => ("review", "Review last game", "microscope", "analyse recent"),
-            Action::Sync => ("sync", "Sync games", "refresh-cw", "lichess download"),
         },
         HomePage::act,
     )

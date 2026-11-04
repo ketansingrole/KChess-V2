@@ -115,13 +115,12 @@ fn short_date(millis: f64) -> String {
         .unwrap_or_default()
 }
 
-/// Home's buttons, as Quick Pick offers them.
+/// Home's buttons, as Quick Pick offers them; its Sync games is the app's own _Sync Lichess
+/// games_ there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Action {
     /// The last game, open in Game history.
     Review,
-    /// Your Lichess games, downloaded again.
-    Sync,
 }
 
 /// Your saved games, newest first; the chess clock's are not games to show.
@@ -170,17 +169,11 @@ impl HomePage {
 
     /// What Home's buttons can do now.
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        let mut actions = Vec::new();
         if self.reviewable(cx).is_some() {
-            actions.push(Action::Review);
+            vec![Action::Review]
+        } else {
+            Vec::new()
         }
-        if self.activity.is_some()
-            && crate::network::online(cx)
-            && !crate::accounts::handle(cx).read(cx).busy
-        {
-            actions.push(Action::Sync);
-        }
-        actions
     }
 
     /// Run an action as its button does, if it is still allowed.
@@ -192,13 +185,6 @@ impl HomePage {
             Action::Review => {
                 if let Some(id) = self.reviewable(cx) {
                     crate::shell::open_game(&id, window, cx);
-                }
-            }
-            Action::Sync => {
-                if let Some((account, _)) = &self.activity {
-                    let name = account.clone();
-                    crate::accounts::handle(cx)
-                        .update(cx, |accounts, cx| accounts.sync(Some(name), window, cx));
                 }
             }
         }
