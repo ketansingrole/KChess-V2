@@ -655,6 +655,19 @@ fn watch_commands(cx: &App) -> Vec<Command> {
     let Some(page) = crate::shell::view_of::<WatchPage>(Page::Watch, cx) else {
         return Vec::new();
     };
+    let channels = page
+        .read(cx)
+        .other_channels(cx)
+        .into_iter()
+        .map(|(key, name)| {
+            Command::new(
+                format!("watch:channel:{key}"),
+                format!("Watch {name}"),
+                icon("tv"),
+                move |window, cx| crate::shell::watch_channel(key.clone(), window, cx),
+            )
+            .keywords("tv channel")
+        });
     page_actions(
         Page::Watch,
         "watch",
@@ -667,6 +680,9 @@ fn watch_commands(cx: &App) -> Vec<Command> {
         },
         WatchPage::act,
     )
+    .into_iter()
+    .chain(channels)
+    .collect()
 }
 
 /// An open line's actions on the Openings page.

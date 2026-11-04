@@ -635,6 +635,38 @@ fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext)
     }
 }
 
+/// Watch's TV channels are in Quick Pick, but for the one already on.
+#[gpui_kit::test]
+fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::watch::{CHANNEL_KEY, WatchPage};
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        page.update(cx, |page, cx| {
+            page.show_channels(
+                vec![
+                    serde_json::json!({ "key": "best", "label": "Top rated" }),
+                    serde_json::json!({ "key": "blitz", "label": "Blitz" }),
+                ],
+                cx,
+            )
+        });
+    });
+    app.press("secondary-k");
+    app.type_text(">Watch Blitz");
+    wait_for_first(&mut app, "Watch Blitz");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for("the Blitz channel", |_, cx| {
+        crate::prefs::get::<String>(cx, CHANNEL_KEY, String::new()) == "blitz"
+    });
+    app.press("secondary-k");
+    app.type_text(">Watch");
+    wait_for_first(&mut app, "Watch Top rated");
+    assert!(!lists(&mut app, "Watch Blitz"));
+}
+
 /// A watched standard game opens on the analysis board, from its button and from Quick Pick:
 /// leaving Watch tells the Watch page it is hidden, which must not happen while it runs the action.
 #[gpui_kit::test]

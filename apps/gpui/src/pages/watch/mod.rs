@@ -575,6 +575,32 @@ impl WatchPage {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn show_channels(&mut self, channels: Vec<Value>, cx: &mut Context<Self>) {
+        self.channels = channels;
+        cx.notify();
+    }
+
+    /// The TV channels Quick Pick can switch to, by key and name: all but the one on the TV tab,
+    /// and none while your own game is on.
+    pub(crate) fn other_channels(&self, cx: &App) -> Vec<(String, String)> {
+        if Self::playing_own_game(cx) {
+            return Vec::new();
+        }
+        let current = match (&self.target, self.tab) {
+            (Some(Target::Channel(channel)), Tab::Tv) => Some(channel.as_str()),
+            _ => None,
+        };
+        self.channels
+            .iter()
+            .filter_map(|channel| {
+                let key = channel["key"].as_str()?;
+                let name = channel["label"].as_str()?;
+                (current != Some(key)).then(|| (key.to_string(), name.to_string()))
+            })
+            .collect()
+    }
+
     fn channel_list(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let disabled = Self::playing_own_game(cx);
         let current = match &self.target {
