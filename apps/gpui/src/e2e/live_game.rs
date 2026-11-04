@@ -280,12 +280,9 @@ fn a_crazyhouse_pawn_is_dropped_from_the_pocket(cx: &mut gpui_kit::TestAppContex
 
     app.click("pocket-White-Pawn");
     app.click_square("e3", true);
-    {
-        use gpui_kit::test::TestWindowExt as _;
-        app.wait_for("the drop to reach Lichess", |_, _| {
-            !lichess.lock().writes.is_empty()
-        });
-    }
+    app.wait_for("the drop to reach Lichess", |_, _| {
+        !lichess.lock().writes.is_empty()
+    });
     assert_eq!(
         writes(&lichess),
         ["POST /api/board/game/E2eGame1/move/P%40e3"]

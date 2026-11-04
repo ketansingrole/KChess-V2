@@ -123,7 +123,7 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
                         .bottom(px(-3.))
                         .px(px(3.))
                         .rounded(radii::SM)
-                        .bg(palette.inverted)
+                        .bg(palette.text)
                         .text_color(palette.bg)
                         .text_size(px(10.))
                         .font_weight(FontWeight::BOLD)

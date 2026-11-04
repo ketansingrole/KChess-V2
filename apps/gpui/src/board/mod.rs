@@ -1136,8 +1136,17 @@ fn far(start: Point<Pixels>, now: Point<Pixels>) -> bool {
     (dx * dx + dy * dy).sqrt() > DRAG_THRESHOLD.as_f32()
 }
 
+/// The pieces of a FEN's placement; a Crazyhouse pocket (`[Pn]`, or a ninth rank) and promoted
+/// marks (`~`) are not pieces on the board.
 fn board_of(fen: &str) -> Board {
-    let placement = fen.split(' ').next().unwrap_or_default();
+    let field = fen.split(' ').next().unwrap_or_default();
+    let field = field.split('[').next().unwrap_or_default();
+    let placement = field
+        .split('/')
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("/")
+        .replace('~', "");
     Board::from_ascii_board_fen(placement.as_bytes()).unwrap_or_else(|_| Board::empty())
 }
 
@@ -1931,5 +1940,29 @@ mod description_tests {
             Some("e2e4"),
         );
         assert_eq!(describe(&after), "Last move e2–e4 · Black to move");
+    }
+}
+
+#[cfg(test)]
+mod fen_tests {
+    use super::board_of;
+    use shakmaty::{Board, Square};
+
+    /// Crazyhouse FENs once showed an empty board: the pocket made the placement unreadable.
+    #[test]
+    fn a_crazyhouse_placement_keeps_its_pieces() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        for fen in [
+            format!("{start}[PPpb] w KQkq - 0 1"),
+            format!("{start}/PPpb w KQkq - 0 1"),
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ~KBNR[] w - - 0 1".to_string(),
+        ] {
+            assert_eq!(board_of(&fen), Board::default(), "{fen}");
+        }
+        assert!(
+            board_of("4k3/8/8/8/8/8/8/3Q~K3[] w - - 0 1")
+                .piece_at(Square::D1)
+                .is_some()
+        );
     }
 }
