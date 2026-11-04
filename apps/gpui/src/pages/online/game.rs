@@ -49,12 +49,14 @@ pub(crate) enum LiveAction {
     Rematch,
     Analyse,
     NewGame,
+    CancelSeek,
 }
 
-/// The actions the game's buttons allow now: while it is played, or once it is over.
+/// The actions the game's buttons allow now: while it is sought, played, or once it is over.
 pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
     match online.phase {
         Phase::Playing => playing_actions(online),
+        Phase::Seeking => vec![LiveAction::CancelSeek],
         Phase::Finished => {
             let model = online.model();
             let mut actions = Vec::new();
@@ -113,7 +115,9 @@ pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut 
         LiveAction::Resign => return ask_resign(window, cx),
         LiveAction::Analyse => return analyse(window, cx),
         LiveAction::Rematch => return online.update(cx, |online, cx| online.rematch(cx)),
-        LiveAction::NewGame => return online.update(cx, |online, cx| online.stop(cx)),
+        LiveAction::NewGame | LiveAction::CancelSeek => {
+            return online.update(cx, |online, cx| online.stop(cx));
+        }
         LiveAction::Berserk => "berserk",
         LiveAction::Takeback => "takeback",
         LiveAction::OfferDraw => "offerDraw",

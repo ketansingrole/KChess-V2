@@ -572,6 +572,7 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
                 LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
                 LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
+                LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
             };
             Command::new(
                 format!("online:{id}"),

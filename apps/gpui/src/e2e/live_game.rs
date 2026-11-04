@@ -377,3 +377,27 @@ fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
         crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
     });
 }
+
+/// While a seek waits for an opponent, Quick Pick cancels it as the page's Cancel does.
+#[gpui_kit::test]
+fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::online::Phase;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Play on Lichess");
+    app.wait_for("the startup check to finish", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != Phase::Checking
+    });
+    app.with_window(|_, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.phase = Phase::Seeking;
+            cx.notify();
+        })
+    });
+    app.press("secondary-k");
+    app.type_text(">Cancel seek");
+    super::palette::wait_for_first(&mut app, "Cancel seek");
+    app.press("enter");
+    app.wait_for("the seek to end", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != Phase::Seeking
+    });
+}
